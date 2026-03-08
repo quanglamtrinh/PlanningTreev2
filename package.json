@@ -1,0 +1,16 @@
+{
+  "name": "planningtree",
+  "version": "0.1.0",
+  "description": "AI-assisted task tree planning — local-first",
+  "private": true,
+  "bin": {
+    "planningtree": "./launcher/cli.js"
+  },
+  "scripts": {
+    "dev": "python scripts/dev.py",
+    "build": "npm run build --prefix frontend",
+    "test": "npm run test:unit --prefix frontend && python -m pytest backend/tests/unit"
+  },
+  "keywords": [],
+  "license": "UNLICENSED"
+}
