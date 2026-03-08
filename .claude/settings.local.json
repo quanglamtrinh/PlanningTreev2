@@ -3,7 +3,10 @@
     "allow": [
       "Bash(ls:*)",
       "Bash(grep:*)",
-      "Bash(do:*)"
+      "Bash(do:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(python:*)"
     ]
   }
 }
