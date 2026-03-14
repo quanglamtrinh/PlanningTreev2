@@ -1,0 +1,48 @@
+.noticeBanner {
+  margin: 12px 16px 0;
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.noticeBannerWarning {
+  border-color: rgba(180, 83, 9, 0.16);
+  background: rgba(180, 83, 9, 0.1);
+  color: #7c2d12;
+}
+
+.noticeBannerMuted {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.packetsSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 24px 0;
+  border-top: 1px solid #ececec;
+  background: #ffffff;
+}
+
+.packetsSectionTitle {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+}
+
+@media (max-width: 640px) {
+  .noticeBanner {
+    margin: 12px 12px 0;
+  }
+
+  .packetsSection {
+    padding: 16px 16px 0;
+  }
+}

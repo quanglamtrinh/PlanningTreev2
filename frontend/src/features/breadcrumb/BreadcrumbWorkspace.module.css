@@ -1,0 +1,383 @@
+.view {
+  --bc-radius-sm: 10px;
+  --bc-radius-md: 12px;
+  --bc-radius-lg: 16px;
+  --bc-radius-pill: 999px;
+  --bc-space-2: 8px;
+  --bc-space-3: 12px;
+  --bc-space-4: 16px;
+  --bc-space-5: 20px;
+  --bc-space-6: 24px;
+  --bc-space-7: 32px;
+
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-app);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.explorer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 8px;
+  background: var(--bg-sidebar);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.explorerItem {
+  height: 40px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-on-dark-muted);
+  padding: 0 8px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.explorerItem:hover:not(:disabled) {
+  background: var(--bg-sidebar-hover);
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.active {
+  background: var(--bg-sidebar-active);
+  color: var(--text-on-dark);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+  padding: 24px;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.placeholder h3,
+.placeholder p {
+  margin: 0;
+}
+
+.placeholder h3 {
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.placeholder p {
+  font-size: 14px;
+  line-height: 22px;
+  color: #6b7280;
+  max-width: 56ch;
+}
+
+.executionStack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.executionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.startExecutionButton {
+  align-self: flex-start;
+  height: 44px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent-primary);
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.startExecutionButton:hover:not(:disabled) {
+  background: var(--accent-primary-hover);
+}
+
+.secondaryExecutionButton {
+  align-self: flex-start;
+  height: 44px;
+  padding: 0 16px;
+  border: 1px solid rgba(17, 24, 39, 0.14);
+  border-radius: 12px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.secondaryExecutionButton:hover:not(:disabled) {
+  background: #f9fafb;
+}
+
+.planCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.specUpdateCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  border: 1px solid rgba(185, 28, 28, 0.14);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(254, 242, 242, 0.92), #ffffff 52%),
+    #ffffff;
+}
+
+.specUpdateCard h4,
+.specUpdateCard p {
+  margin: 0;
+}
+
+.specUpdateCard h4 {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  color: #7f1d1d;
+}
+
+.specUpdateCard p {
+  font-size: 14px;
+  line-height: 22px;
+  color: #4b5563;
+}
+
+.modalBackdrop {
+  position: sticky;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 16px 0 0;
+  z-index: 5;
+}
+
+.modalCard {
+  width: min(720px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(14px);
+}
+
+.modalHeader,
+.modalBody,
+.modalQuestion,
+.modalActions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modalHeader h4,
+.modalHeader p,
+.modalQuestionHeader,
+.modalQuestionText,
+.modalError {
+  margin: 0;
+}
+
+.modalEyebrow {
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #0369a1;
+  margin: 0;
+}
+
+.modalHeader h4 {
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.modalHeader p {
+  font-size: 14px;
+  line-height: 22px;
+  color: #4b5563;
+}
+
+.modalBody {
+  gap: 14px;
+}
+
+.modalQuestion {
+  padding: 16px;
+  border: 1px solid rgba(2, 132, 199, 0.14);
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.92);
+}
+
+.modalQuestionHeader {
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.modalQuestionText {
+  font-size: 14px;
+  line-height: 22px;
+  color: #334155;
+  white-space: pre-wrap;
+}
+
+.optionList {
+  display: grid;
+  gap: 8px;
+}
+
+.optionItem {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 14px;
+  line-height: 22px;
+  color: #334155;
+}
+
+.optionItem input {
+  margin-top: 4px;
+}
+
+.modalTextarea {
+  min-height: 88px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font: inherit;
+  color: #111827;
+  resize: vertical;
+  background: #ffffff;
+}
+
+.modalError {
+  font-size: 14px;
+  line-height: 22px;
+  color: #b91c1c;
+}
+
+.modalActions {
+  align-items: flex-start;
+}
+
+.planCard h4 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.planContent {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  color: #374151;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 320px;
+  color: #6b7280;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .explorer {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .explorerItem {
+    flex: 0 0 auto;
+    padding: 0 14px;
+  }
+
+  .content {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 640px) {
+  .modalBackdrop {
+    padding-top: 0;
+  }
+
+  .modalCard {
+    border-radius: 16px;
+  }
+
+  .footer {
+    justify-content: stretch;
+  }
+}

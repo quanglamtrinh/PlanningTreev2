@@ -106,7 +106,7 @@ useEffect(() => { fetch('/v1/projects/...').then(...) }, [])
 
 ### Finish Task
 - **Finish Task is a client-side navigation action.** It does NOT call any backend endpoint.
-- Implementation: save pending node edits → navigate to `/node/:nodeId/chat` → backend seeds draft.
+- Implementation: save pending node edits → navigate to `/projects/:projectId/nodes/:nodeId/chat` with transient router state → breadcrumb store seeds the local composer.
 
 ---
 

@@ -6,7 +6,12 @@
       "Bash(do:*)",
       "Bash(npm install:*)",
       "Bash(npx tsc:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(find C:\\\\Users\\\\Thong\\\\PlanningTreeMain\\\\backend:*)",
+      "Bash(cd C:/Users/Thong/PlanningTreeMain && uv run pytest backend/tests/unit/test_ask_service.py backend/tests/unit/test_thread_store_ask.py backend/tests/unit/test_delta_context_packet.py backend/tests/integration/test_ask_api.py -v 2>&1 | head -120)",
+      "Bash(find /c/Users/Thong/PlanningTreeMain/backend -name \"*.py\" -path \"*/models*\" -o -name \"*model*\" -path \"*/backend*\" 2>/dev/null | head -20)",
+      "Bash(cd frontend:*)",
+      "Bash(cd C:/Users/Thong/PlanningTreeMain/frontend && npx vitest run --reporter=verbose 2>&1 | tail -40)"
     ]
   }
 }

@@ -1,0 +1,303 @@
+.panel {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.kicker,
+.title,
+.copy,
+.turnMeta,
+.turnBody,
+.itemTitle,
+.itemDesc,
+.metaLine {
+  margin: 0;
+}
+
+.kicker {
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+}
+
+.title {
+  max-width: 78%;
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.copy {
+  max-width: 92%;
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
+  color: #6b7280;
+}
+
+.statusRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  white-space: nowrap;
+}
+
+.statusText {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+  color: #374151;
+  text-transform: capitalize;
+}
+
+.connectionDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #9ca3af;
+}
+
+.connected {
+  background: var(--success);
+}
+
+.connecting,
+.reconnecting {
+  background: var(--warning);
+}
+
+.disconnected {
+  background: var(--danger);
+}
+
+.busyBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  text-transform: lowercase;
+}
+
+.thread {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.turn {
+  padding: 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.userTurn,
+.assistantTurn,
+.toolTurn {
+  border-left: 2px solid #d1d5db;
+}
+
+.turnMetaRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.turnMeta {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+}
+
+.inheritedBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+}
+
+.turnBody {
+  white-space: pre-wrap;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+  color: #111827;
+}
+
+.renderGrid {
+  display: grid;
+  gap: 12px;
+}
+
+.renderCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.subgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 12px;
+  border-left: 2px solid #e5e7eb;
+}
+
+.renderHeading {
+  margin: 0;
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.renderSupporting {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
+  color: #4b5563;
+}
+
+.phaseList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.phaseItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 12px;
+  border-left: 2px solid #e5e7eb;
+}
+
+.itemTitle {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.itemDesc,
+.metaLine {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
+  color: #4b5563;
+}
+
+.metaLabel {
+  font-weight: 500;
+  color: #374151;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: auto;
+}
+
+.actions button {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #374151;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.actions button:hover:not(:disabled) {
+  background: #f9fafb;
+  border-color: #d1d5db;
+  color: #111827;
+}
+
+.actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.emptyState {
+  padding: 20px;
+  border: 1px dashed #d1d5db;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+@media (max-width: 640px) {
+  .header {
+    flex-direction: column;
+    padding: 20px;
+  }
+
+  .title {
+    max-width: 100%;
+    font-size: 22px;
+    line-height: 30px;
+  }
+
+  .copy {
+    max-width: 100%;
+  }
+
+  .turn {
+    padding: 18px 16px;
+  }
+
+  .actions {
+    flex-wrap: wrap;
+  }
+}

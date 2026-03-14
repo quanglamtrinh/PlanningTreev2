@@ -1,0 +1,157 @@
+/* ─── Graph shell: fills the entire parent (position:relative) ─── */
+.graphShell {
+  position: absolute;
+  inset: 0;
+}
+
+/* ─── ReactFlow global overrides ─── */
+.graphShell :global(.react-flow) {
+  background:
+    radial-gradient(circle at 20% 10%, color-mix(in srgb, var(--color-accent) 4%, transparent), transparent 35%),
+    radial-gradient(circle at 80% 90%, color-mix(in srgb, var(--color-border-strong) 7%, transparent), transparent 35%),
+    var(--color-graph-bg);
+}
+
+.graphShell :global(.react-flow__panel) {
+  margin: 12px;
+}
+
+.graphShell :global(.react-flow__controls) {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-xs);
+}
+
+.graphShell :global(.react-flow__controls-button) {
+  background: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  width: 28px;
+  height: 28px;
+}
+
+.graphShell :global(.react-flow__controls-button:hover) {
+  background: var(--color-bg-hover);
+}
+
+.graphShell :global(.react-flow__background pattern circle),
+.graphShell :global(.react-flow__background path) {
+  opacity: 0.35;
+}
+
+/* ─── Fullscreen mode ─── */
+.graphShellFullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+}
+
+/* ─── Fullscreen toggle button ─── */
+.fullscreenButton {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-bg-panel) 92%, transparent);
+  backdrop-filter: blur(6px);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  box-shadow: var(--shadow-xs);
+}
+
+.fullscreenButton:hover:not(:disabled) {
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+}
+
+/* ─── Detail panel (right side) ─── */
+.detailPanel {
+  pointer-events: all;
+}
+
+.detailCard {
+  width: min(340px, calc(100vw - 40px));
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--color-bg-panel) 97%, transparent);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(12px);
+}
+
+.detailCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.detailCardTitle {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary);
+}
+
+.detailCardClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--color-text-secondary);
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.detailCardClose:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+/* ─── Invalid snapshot state ─── */
+.invalidState {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px;
+  text-align: center;
+}
+
+.invalidState h3 {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  font-weight: 500;
+}
+
+.invalidState p {
+  margin: 0;
+  max-width: 400px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  line-height: var(--line-height-relaxed);
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 920px) {
+  .detailCard {
+    width: min(300px, calc(100vw - 32px));
+  }
+}

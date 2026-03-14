@@ -7,15 +7,20 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://127.0.0.1:5174',
     trace: 'on-first-retry',
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   ],
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
+    command: 'python ../scripts/dev_playwright.py',
+    url: 'http://127.0.0.1:5174',
     reuseExistingServer: !process.env.CI,
+    timeout: 120 * 1000,
+    gracefulShutdown: {
+      signal: 'SIGTERM',
+      timeout: 5 * 1000,
+    },
   },
 })

@@ -1,0 +1,87 @@
+.card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.copyBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.title,
+.status,
+.message {
+  margin: 0;
+}
+
+.title {
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.status {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.message {
+  font-size: 13px;
+  line-height: 20px;
+  color: #475569;
+}
+
+.actionButton {
+  flex: 0 0 auto;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 12px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 700;
+}
+
+.actionButton:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.neutral {
+  background: #f8fafc;
+}
+
+.positive {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.negative {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+@media (max-width: 640px) {
+  .card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .actionButton {
+    width: 100%;
+  }
+}

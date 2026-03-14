@@ -1,0 +1,304 @@
+/* ─── Outer wrapper (ReactFlow node container) ─── */
+.wrapper {
+  position: relative;
+  width: 220px;
+  /* overflow:visible so dropdown & badge can extend outside */
+  overflow: visible;
+}
+
+/* ─── Handles ─── */
+.handle {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--color-accent);
+  background: var(--color-bg-panel);
+}
+
+/* ─── Card ─── */
+.card {
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px 12px 13px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
+  box-shadow: var(--shadow-xs);
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.14s ease,
+    box-shadow 0.14s ease,
+    background 0.14s ease;
+}
+
+.card:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+/* ─── States ─── */
+.selected {
+  border-color: var(--color-accent);
+  border-width: 1.5px;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent),
+    var(--shadow-sm);
+}
+
+.current:not(.selected) {
+  border-color: var(--color-status-done);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-status-done) 10%, transparent),
+    var(--shadow-xs);
+}
+
+.locked {
+  border-style: dashed;
+  opacity: 0.55;
+}
+
+.card[data-status='done'] {
+  opacity: 0.7;
+}
+
+.splitting {
+  border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border-subtle));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent),
+    var(--shadow-sm);
+}
+
+/* ─── Header row ─── */
+.header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
+}
+
+.titleWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* ─── Header controls (collapse + info) ─── */
+.headerControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+/* ─── Info button ─── */
+.infoBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  flex-shrink: 0;
+}
+
+.infoBtn:hover {
+  background: var(--color-accent-muted);
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border-subtle));
+  color: var(--color-accent);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: var(--line-height-ui);
+  color: var(--color-text-primary);
+  word-break: break-word;
+}
+
+.number {
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.separator {
+  margin: 0 4px;
+  color: var(--color-border);
+}
+
+/* ─── Description preview ─── */
+.description {
+  margin: 0;
+  min-height: 40px;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-base);
+  color: var(--color-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ─── Meta line ─── */
+.meta {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.activity {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+/* ─── Collapse toggle ─── */
+.collapseToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  transition: background 0.12s ease, border-color 0.12s ease;
+  flex-shrink: 0;
+}
+
+.collapseToggle:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border);
+}
+
+.hiddenCount {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+}
+
+/* ─── Action badge (⚡ button) ─── */
+.menuAnchor {
+  position: absolute;
+  right: -12px;
+  bottom: -12px;
+  z-index: 12;
+}
+
+.badge {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #fff;
+  box-shadow: var(--shadow-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+.badge:hover {
+  background: var(--color-accent-hover);
+  transform: scale(1.06);
+}
+
+.badgeOpen {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent), var(--shadow-sm);
+}
+
+.badgeIcon {
+  width: 13px;
+  height: 13px;
+}
+
+/* ─── Dropdown menu ─── */
+.dropdown {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(10px);
+}
+
+.dropdownSection {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dropdownLabel {
+  margin: 0 0 3px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.menuItem {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  padding: 7px 8px;
+  border-radius: var(--radius-md);
+  text-align: left;
+  border: none;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.menuItem:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+
+.menuTitle {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.menuDesc {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-base);
+  color: var(--color-text-tertiary);
+}

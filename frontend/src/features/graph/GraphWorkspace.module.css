@@ -1,0 +1,289 @@
+/* ─── Root view: fills remaining height after topbar ─── */
+.view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ─── Loading state ─── */
+.loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+/* ════════════════════════════════════════
+   CONTROL RACK — chrome recedes
+   ════════════════════════════════════════ */
+.controlRack {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 12px;
+  height: 44px;
+  flex-shrink: 0;
+  background: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* Each logical section */
+.rackSection {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 10px;
+}
+
+/* Separator between sections */
+.rackSection + .rackSection {
+  border-left: 1px solid var(--color-border-subtle);
+}
+
+/* Push the rightmost group to the far right */
+.rackSectionEnd {
+  margin-left: auto;
+}
+
+/* Section label — muted, not loud */
+.sectionLabel {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* Workspace path monospace chip */
+.workspacePath {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0 8px;
+  height: 26px;
+  line-height: 26px;
+}
+
+/* ── Shared rack button style ── */
+.rackBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.rackBtn:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.rackBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Accent (primary) variant */
+.rackBtnAccent {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.rackBtnAccent:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+  color: var(--color-accent-text);
+}
+
+/* Danger variant */
+.rackBtnDanger {
+  border-color: color-mix(in srgb, #b33a2c 35%, var(--color-border-subtle));
+  color: #8f2c21;
+  background: transparent;
+}
+
+.rackBtnDanger:hover:not(:disabled) {
+  background: #fff1ee;
+  border-color: #c04030;
+  color: #7c241c;
+}
+
+/* ── Inline workspace editor ── */
+.workspaceEditor {
+  padding: 10px 16px 0;
+  flex-shrink: 0;
+}
+
+/* ── Error banner ── */
+.errorBanner {
+  margin: 0;
+  padding: 8px 16px;
+  background: #fff0ee;
+  border-bottom: 1px solid #f0cbc8;
+  color: #8c241f;
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+}
+
+/* ════════════════════════════════════════
+   GRAPH SHELL
+   ════════════════════════════════════════ */
+.graphShell {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Header bar inside graph area ── */
+.graphHeader {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  pointer-events: none;
+}
+
+.graphHeaderLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  pointer-events: none;
+}
+
+.graphHeaderTitle {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+  line-height: var(--line-height-tight);
+}
+
+.graphHeaderSub {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 400px;
+}
+
+.graphHeaderChips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.chip,
+.chipAccent {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg-panel) 90%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  backdrop-filter: blur(4px);
+}
+
+.chipAccent {
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border-subtle));
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent-muted) 60%, transparent);
+}
+
+/* ── Empty state ── */
+.emptyState {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px;
+  text-align: center;
+}
+
+.emptyState h3 {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.emptyState p {
+  margin: 0;
+  max-width: 360px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  line-height: var(--line-height-relaxed);
+}
+
+/* ── Responsive ── */
+@media (max-width: 920px) {
+  .controlRack {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 6px 12px;
+    gap: 4px;
+  }
+
+  .rackSection {
+    padding: 4px 6px;
+    border-left: none !important;
+    border-top: 1px solid var(--color-border-subtle);
+    width: 100%;
+  }
+
+  .rackSection:first-child {
+    border-top: none;
+  }
+
+  .rackSectionEnd {
+    margin-left: 0;
+  }
+
+  .workspacePath {
+    max-width: 100%;
+    flex: 1;
+  }
+}

@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from backend.config.app_config import build_app_paths
+from backend.main import create_app
+from backend.services.node_service import NodeService
+from backend.services.project_service import ProjectService
+from backend.services.tree_service import TreeService
+from backend.storage.storage import Storage
+
+
+@pytest.fixture
+def data_root(tmp_path: Path) -> Path:
+    return tmp_path / "appdata"
+
+
+@pytest.fixture
+def workspace_root(tmp_path: Path) -> Path:
+    path = tmp_path / "workspace"
+    path.mkdir()
+    return path
+
+
+@pytest.fixture
+def storage(data_root: Path) -> Storage:
+    return Storage(build_app_paths(data_root))
+
+
+@pytest.fixture
+def tree_service() -> TreeService:
+    return TreeService()
+
+
+@pytest.fixture
+def project_service(storage: Storage) -> ProjectService:
+    return ProjectService(storage)
+
+
+@pytest.fixture
+def node_service(storage: Storage, tree_service: TreeService) -> NodeService:
+    return NodeService(storage, tree_service)
+
+
+@pytest.fixture
+def client(data_root: Path) -> TestClient:
+    app = create_app(data_root=data_root)
+    with TestClient(app) as test_client:
+        yield test_client

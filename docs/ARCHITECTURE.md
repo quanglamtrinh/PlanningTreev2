@@ -1,7 +1,7 @@
 # Architecture — PlanningTree Rebuild
 
-Version: 0.1.0-scaffold
-Last updated: 2026-03-07
+Version: 0.2.0-phase-c
+Last updated: 2026-03-12
 
 ---
 
@@ -20,7 +20,7 @@ PlanningTree is a local-first single-user desktop application distributed as an 
 | ASGI server | Uvicorn | Dev: `--reload`; prod: bundled via PyInstaller |
 | AI (splits) | OpenAI Responses API | Direct API call; configurable model |
 | AI (chat) | Codex app server subprocess | stdio JSON-RPC; per-node threads |
-| Persistence | File-based JSON | No database |
+| Persistence | File-based JSON + Markdown + YAML | `tree.json` plus per-node document files |
 | Real-time | Server-Sent Events (SSE) | Chat streaming only |
 | Frontend | React 18 + TypeScript | Strict mode |
 | Graph | @xyflow/react | Interactive task tree visualization |
@@ -58,8 +58,10 @@ PlanningTreeMain/
                           ┌─────────────┼──────────────┐
                           ▼             ▼               ▼
                     [filesystem]   [OpenAI API]   [Codex subprocess]
-                    state.json     (splits)        (chat)
-                    meta.json
+                    tree.json      (splits)        (chat)
+                    nodes/*/*.md
+                    nodes/*/state.yaml
+                    thread_state.json
                     chat_state.json
 ```
 
@@ -78,7 +80,7 @@ routes/         ← HTTP layer: parse request, call service, return response
   │
 services/       ← Business logic: node CRUD, tree rules, split orchestration, chat
   │
-storage/        ← Persistence: read/write JSON files atomically
+storage/        ← Persistence: read/write JSON, Markdown, and YAML files atomically
 ai/             ← AI integration: OpenAI API wrapper, Codex subprocess client
 errors/         ← Typed error classes
 config/         ← App config, env var resolution, platform-aware paths
@@ -135,7 +137,8 @@ User clicks "Slice" button
   → services/split_service.py builds context + prompt
   → ai/openai_client.py calls OpenAI Responses API
   → split_service creates child nodes via node_service
-  → storage/project_store.py writes updated state.json
+  → storage/project_store.py writes updated tree.json
+  → storage/node_store.py writes task.md / briefing.md / spec.md / state.yaml
   → route returns updated snapshot
   → project-store updates local state
   → TreeGraph re-renders with new children
@@ -146,13 +149,13 @@ User clicks "Slice" button
 ```
 User clicks "Finish Task" on leaf node
   → client-side only (no API call)
-  → ui-store.setActiveView("breadcrumb", nodeId)
-  → React Router navigates to /node/:nodeId/chat
+  → React Router navigates to /projects/:projectId/nodes/:nodeId/chat
   → BreadcrumbWorkspace loads chat session
-  → chat-store.loadSession(nodeId)
-  → api GET /chat/session → returns session with composer draft
-  → Draft pre-seeded from node title + description (by backend on first load)
+  → chat-store.loadSession(projectId, nodeId)
+  → GraphWorkspace passes a transient router-state seed built from node title + description
+  → BreadcrumbWorkspace applies that seed into the local composer once
   → User edits draft and sends → POST /chat/messages
+  → First accepted message promotes ready → in_progress
   → SSE streams assistant response
   → User clicks "Mark Done"
   → api POST /nodes/{id}/complete
@@ -187,9 +190,16 @@ All configuration is via environment variables. No `.env` file is read at runtim
 │   └── auth.json         # session state, entitlement
 └── projects/
     └── <project-id>/
-        ├── meta.json     # project metadata
-        ├── state.json    # live tree snapshot (schema_version: 2)
-        └── chat_state.json  # per-node chat sessions
+        ├── meta.json         # project metadata
+        ├── tree.json         # live tree index (schema_version: 5)
+        ├── chat_state.json   # per-node chat sessions
+        ├── thread_state.json # planning / execution / ask thread state
+        └── nodes/
+            └── <node-id>/
+                ├── task.md
+                ├── briefing.md
+                ├── spec.md
+                └── state.yaml
 ```
 
 Platform defaults:
