@@ -2,17 +2,23 @@ import { create } from 'zustand'
 
 import {
   createConversationScopeKey,
+  type ConversationEventEnvelope,
   type ConversationMessage,
   type ConversationMessagePart,
+  type ConversationRecord,
   type ConversationScope,
   type ConversationSnapshot,
 } from '../features/conversation/types'
+import { applyConversationEvent } from '../features/conversation/model/applyConversationEvent'
 
 export type ConversationConnectionStatus =
+  | 'idle'
+  | 'loading_snapshot'
   | 'disconnected'
   | 'connecting'
   | 'connected'
   | 'reconnecting'
+  | 'error'
 
 export interface ConversationViewState {
   snapshot: ConversationSnapshot
@@ -30,9 +36,16 @@ type ConversationStoreState = {
   hydrateConversation: (snapshot: ConversationSnapshot) => void
   getConversationIdByScope: (scope: ConversationScope) => string | null
   setComposerDraft: (conversationId: string, draft: string) => void
+  setLoading: (conversationId: string, isLoading: boolean) => void
+  setSending: (conversationId: string, isSending: boolean) => void
+  setError: (conversationId: string, error: string | null) => void
   setConnectionStatus: (
     conversationId: string,
     status: ConversationConnectionStatus,
+  ) => void
+  patchRecord: (
+    conversationId: string,
+    patch: Partial<ConversationRecord>,
   ) => void
   upsertMessage: (conversationId: string, message: ConversationMessage) => void
   upsertPart: (
@@ -42,6 +55,7 @@ type ConversationStoreState = {
   ) => void
   setActiveStream: (conversationId: string, streamId: string | null) => void
   advanceEventSeq: (conversationId: string, eventSeq: number) => void
+  applyEvent: (conversationId: string, event: ConversationEventEnvelope) => void
   clearConversation: (conversationId: string) => void
 }
 
@@ -79,7 +93,7 @@ function createConversationViewState(snapshot: ConversationSnapshot): Conversati
   return {
     snapshot,
     composerDraft: '',
-    connectionStatus: 'disconnected',
+    connectionStatus: 'idle',
     isLoading: false,
     isSending: false,
     error: null,
@@ -154,6 +168,57 @@ export const useConversationStore = create<ConversationStoreState>((set, get) =>
       }
     })
   },
+  setLoading(conversationId, isLoading) {
+    set((state) => {
+      const current = state.conversationsById[conversationId]
+      if (!current) {
+        return {}
+      }
+      return {
+        conversationsById: {
+          ...state.conversationsById,
+          [conversationId]: {
+            ...current,
+            isLoading,
+          },
+        },
+      }
+    })
+  },
+  setSending(conversationId, isSending) {
+    set((state) => {
+      const current = state.conversationsById[conversationId]
+      if (!current) {
+        return {}
+      }
+      return {
+        conversationsById: {
+          ...state.conversationsById,
+          [conversationId]: {
+            ...current,
+            isSending,
+          },
+        },
+      }
+    })
+  },
+  setError(conversationId, error) {
+    set((state) => {
+      const current = state.conversationsById[conversationId]
+      if (!current) {
+        return {}
+      }
+      return {
+        conversationsById: {
+          ...state.conversationsById,
+          [conversationId]: {
+            ...current,
+            error,
+          },
+        },
+      }
+    })
+  },
   setConnectionStatus(conversationId, status) {
     set((state) => {
       const current = state.conversationsById[conversationId]
@@ -166,6 +231,29 @@ export const useConversationStore = create<ConversationStoreState>((set, get) =>
           [conversationId]: {
             ...current,
             connectionStatus: status,
+          },
+        },
+      }
+    })
+  },
+  patchRecord(conversationId, patch) {
+    set((state) => {
+      const current = state.conversationsById[conversationId]
+      if (!current) {
+        return {}
+      }
+      return {
+        conversationsById: {
+          ...state.conversationsById,
+          [conversationId]: {
+            ...current,
+            snapshot: {
+              ...current.snapshot,
+              record: {
+                ...current.snapshot.record,
+                ...patch,
+              },
+            },
           },
         },
       }
@@ -269,6 +357,23 @@ export const useConversationStore = create<ConversationStoreState>((set, get) =>
                 event_seq: eventSeq,
               },
             },
+          },
+        },
+      }
+    })
+  },
+  applyEvent(conversationId, event) {
+    set((state) => {
+      const current = state.conversationsById[conversationId]
+      if (!current) {
+        return {}
+      }
+      return {
+        conversationsById: {
+          ...state.conversationsById,
+          [conversationId]: {
+            ...current,
+            snapshot: applyConversationEvent(current.snapshot, event),
           },
         },
       }

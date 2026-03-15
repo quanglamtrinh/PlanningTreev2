@@ -4,6 +4,8 @@ import type {
   BootstrapStatus,
   ChatSession,
   DeltaContextPacket,
+  ExecutionConversationResponse,
+  ExecutionConversationSendAcceptedResponse,
   NodeBrief,
   NodeBriefing,
   NodeDocuments,
@@ -309,6 +311,38 @@ export const api = {
   },
   askEventsUrl(projectId: string, nodeId: string): string {
     return `/v1/projects/${projectId}/nodes/${nodeId}/ask/events`
+  },
+  getExecutionConversation(
+    projectId: string,
+    nodeId: string,
+  ): Promise<ExecutionConversationResponse> {
+    return jsonFetch(`/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution`)
+  },
+  sendExecutionConversationMessage(
+    projectId: string,
+    nodeId: string,
+    content: string,
+  ): Promise<ExecutionConversationSendAcceptedResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/send`,
+      { method: 'POST' },
+      { content },
+    )
+  },
+  executionConversationEventsUrl(
+    projectId: string,
+    nodeId: string,
+    options: {
+      afterEventSeq: number
+      expectedStreamId?: string | null
+    },
+  ): string {
+    const search = new URLSearchParams()
+    search.set('after_event_seq', String(options.afterEventSeq))
+    if (options.expectedStreamId) {
+      search.set('expected_stream_id', options.expectedStreamId)
+    }
+    return `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/events?${search.toString()}`
   },
   listAskPackets(projectId: string, nodeId: string): Promise<{ packets: DeltaContextPacket[] }> {
     return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/packets`)

@@ -7,6 +7,7 @@ import {
   useChatSessionStream,
   usePlanningEventStream,
 } from "../../api/hooks";
+import { useExecutionConversation } from "../conversation/hooks/useExecutionConversation";
 import { useChatStore } from "../../stores/chat-store";
 import { useProjectStore } from "../../stores/project-store";
 import { useUIStore } from "../../stores/ui-store";
@@ -155,6 +156,11 @@ export function BreadcrumbWorkspace() {
     projectId && node && activeTab === "execution" ? projectId : null,
     node && activeTab === "execution" ? node.node_id : null,
   );
+  useExecutionConversation({
+    projectId: projectId ?? null,
+    nodeId: node?.node_id ?? null,
+    enabled: activeTab === "execution",
+  });
 
   useEffect(() => {
     if (

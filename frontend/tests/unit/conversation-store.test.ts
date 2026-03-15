@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { ConversationSnapshot } from '../../src/features/conversation/types'
+import type {
+  ConversationEventEnvelope,
+  ConversationSnapshot,
+} from '../../src/features/conversation/types'
 import { useConversationStore } from '../../src/stores/conversation-store'
 
 function makeSnapshot(overrides: Partial<ConversationSnapshot> = {}): ConversationSnapshot {
@@ -102,5 +105,171 @@ describe('useConversationStore', () => {
     expect(parts).toHaveLength(2)
     expect(parts[0].part_id).toBe('part_a')
     expect(parts[1].payload).toEqual({ content: 'B2' })
+  })
+
+  it('applies execution conversation events with stable assistant placeholder updates', () => {
+    useConversationStore.getState().ensureConversation(makeSnapshot())
+
+    const userCreated: ConversationEventEnvelope = {
+      event_type: 'message_created',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_1',
+      event_seq: 1,
+      created_at: '2026-03-14T00:00:01Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_user',
+      payload: {
+        message: {
+          message_id: 'msg_user',
+          conversation_id: 'conv_1',
+          turn_id: 'turn_1',
+          role: 'user',
+          runtime_mode: 'execute',
+          status: 'completed',
+          created_at: '2026-03-14T00:00:01Z',
+          updated_at: '2026-03-14T00:00:01Z',
+          lineage: {},
+          usage: null,
+          error: null,
+          parts: [
+            {
+              part_id: 'part_user',
+              part_type: 'user_text',
+              status: 'completed',
+              order: 0,
+              item_key: null,
+              created_at: '2026-03-14T00:00:01Z',
+              updated_at: '2026-03-14T00:00:01Z',
+              payload: { text: 'Ship it' },
+            },
+          ],
+        },
+      },
+    }
+    const assistantCreated: ConversationEventEnvelope = {
+      event_type: 'message_created',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_1',
+      event_seq: 2,
+      created_at: '2026-03-14T00:00:02Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_assistant',
+      payload: {
+        message: {
+          message_id: 'msg_assistant',
+          conversation_id: 'conv_1',
+          turn_id: 'turn_1',
+          role: 'assistant',
+          runtime_mode: 'execute',
+          status: 'pending',
+          created_at: '2026-03-14T00:00:02Z',
+          updated_at: '2026-03-14T00:00:02Z',
+          lineage: {},
+          usage: null,
+          error: null,
+          parts: [
+            {
+              part_id: 'part_assistant',
+              part_type: 'assistant_text',
+              status: 'pending',
+              order: 0,
+              item_key: null,
+              created_at: '2026-03-14T00:00:02Z',
+              updated_at: '2026-03-14T00:00:02Z',
+              payload: { text: '' },
+            },
+          ],
+        },
+      },
+    }
+
+    useConversationStore.getState().applyEvent('conv_1', userCreated)
+    useConversationStore.getState().applyEvent('conv_1', assistantCreated)
+    useConversationStore.getState().applyEvent('conv_1', {
+      event_type: 'assistant_text_delta',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_1',
+      event_seq: 3,
+      created_at: '2026-03-14T00:00:03Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_assistant',
+      item_id: 'part_assistant',
+      payload: {
+        part_id: 'part_assistant',
+        delta: 'Hel',
+        status: 'streaming',
+      },
+    })
+    useConversationStore.getState().applyEvent('conv_1', {
+      event_type: 'assistant_text_final',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_1',
+      event_seq: 4,
+      created_at: '2026-03-14T00:00:04Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_assistant',
+      item_id: 'part_assistant',
+      payload: {
+        part_id: 'part_assistant',
+        text: 'Hello world',
+        status: 'completed',
+      },
+    })
+    useConversationStore.getState().applyEvent('conv_1', {
+      event_type: 'completion_status',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_1',
+      event_seq: 5,
+      created_at: '2026-03-14T00:00:05Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_assistant',
+      payload: {
+        status: 'completed',
+        finished_at: '2026-03-14T00:00:05Z',
+      },
+    })
+
+    const conversation = useConversationStore.getState().conversationsById.conv_1
+    const assistant = conversation.snapshot.messages.find(
+      (message) => message.message_id === 'msg_assistant',
+    )
+
+    expect(conversation.snapshot.record.event_seq).toBe(5)
+    expect(conversation.snapshot.record.status).toBe('completed')
+    expect(conversation.snapshot.record.active_stream_id).toBeNull()
+    expect(assistant?.status).toBe('completed')
+    expect(assistant?.parts[0].part_id).toBe('part_assistant')
+    expect(assistant?.parts[0].payload).toMatchObject({
+      text: 'Hello world',
+      content: 'Hello world',
+    })
+  })
+
+  it('ignores stale execution conversation events', () => {
+    useConversationStore.getState().ensureConversation(
+      makeSnapshot({
+        record: {
+          ...makeSnapshot().record,
+          event_seq: 4,
+        },
+      }),
+    )
+
+    useConversationStore.getState().applyEvent('conv_1', {
+      event_type: 'completion_status',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_1',
+      event_seq: 4,
+      created_at: '2026-03-14T00:00:05Z',
+      payload: {
+        status: 'error',
+        finished_at: '2026-03-14T00:00:05Z',
+        error: 'stale',
+      },
+    })
+
+    const conversation = useConversationStore.getState().conversationsById.conv_1
+    expect(conversation.snapshot.record.event_seq).toBe(4)
+    expect(conversation.snapshot.record.status).toBe('idle')
   })
 })

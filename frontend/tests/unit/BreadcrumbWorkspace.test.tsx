@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,6 +8,9 @@ const { apiMock } = vi.hoisted(() => ({
     agentEventsUrl: vi.fn(),
     chatEventsUrl: vi.fn(),
     askEventsUrl: vi.fn(),
+    getExecutionConversation: vi.fn(),
+    sendExecutionConversationMessage: vi.fn(),
+    executionConversationEventsUrl: vi.fn(),
     getNodeDocuments: vi.fn(),
     startPlan: vi.fn(),
     executeNode: vi.fn(),
@@ -239,6 +242,25 @@ const childSnapshot = {
   },
 }
 
+function makeExecutionConversationSnapshot() {
+  return {
+    record: {
+      conversation_id: 'conv_exec_1',
+      project_id: 'project-1',
+      node_id: 'root',
+      thread_type: 'execution' as const,
+      app_server_thread_id: null,
+      current_runtime_mode: 'execute' as const,
+      status: 'idle' as const,
+      active_stream_id: null,
+      event_seq: 0,
+      created_at: '2026-03-15T00:00:00Z',
+      updated_at: '2026-03-15T00:00:00Z',
+    },
+    messages: [],
+  }
+}
+
 describe('BreadcrumbWorkspace', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -250,6 +272,21 @@ describe('BreadcrumbWorkspace', () => {
     apiMock.agentEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/agent/events')
     apiMock.chatEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/chat/events')
     apiMock.askEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/ask/events')
+    apiMock.getExecutionConversation.mockResolvedValue({
+      conversation: makeExecutionConversationSnapshot(),
+    })
+    apiMock.sendExecutionConversationMessage.mockResolvedValue({
+      status: 'accepted',
+      conversation_id: 'conv_exec_1',
+      turn_id: 'turn_1',
+      stream_id: 'stream_1',
+      user_message_id: 'msg_user',
+      assistant_message_id: 'msg_assistant',
+      assistant_text_part_id: 'part_assistant',
+    })
+    apiMock.executionConversationEventsUrl.mockReturnValue(
+      '/v2/projects/project-1/nodes/root/conversations/execution/events?after_event_seq=0',
+    )
     apiMock.getNodeDocuments.mockResolvedValue(makeNodeDocuments())
   })
 
@@ -811,6 +848,59 @@ describe('BreadcrumbWorkspace', () => {
       ),
     ).toBeInTheDocument()
     expect(loadSession).toHaveBeenCalledWith('project-1', 'child-1')
+    expect(
+      screen.getByPlaceholderText('Planner input is handled through the native modal when needed.'),
+    ).toBeInTheDocument()
+  })
+
+  it('mounts the non-visible execution conversation hook only for the execution tab', async () => {
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'child-1',
+      snapshot: childSnapshot,
+      documentsByNode: { 'child-1': makeNodeDocuments() },
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      loadNodeDocuments: vi.fn(async () => makeNodeDocuments()),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+      startPlan: vi.fn(async () => {}),
+      executeNode: vi.fn(async () => {}),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/child-1/chat',
+            state: { activeTab: 'planning' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Planning Thread')).toBeInTheDocument()
+    expect(apiMock.getExecutionConversation).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Execution' }))
+
+    await waitFor(() => {
+      expect(apiMock.getExecutionConversation).toHaveBeenCalledWith('project-1', 'child-1')
+    })
+    expect(apiMock.executionConversationEventsUrl).toHaveBeenCalled()
     expect(
       screen.getByPlaceholderText('Planner input is handled through the native modal when needed.'),
     ).toBeInTheDocument()

@@ -169,3 +169,28 @@
   - none
 - Next Step:
   - begin work with `Phase 3.1 - Execution Conversation Data Plumbing` only
+
+## 2026-03-15T15:02:06.1300691-07:00
+- Phase: 3
+- Batch ID: P3.1
+- Summary:
+  - added the non-visible execution conversation-v2 frontend plumbing so the execution tab now mounts a parallel keyed execution conversation state path without switching the visible transcript away from the legacy `ChatPanel`
+  - extended the frontend API client and keyed `conversation-store` with execution snapshot, send, events, connection-state, sending-state, error-state, and normalized Phase 2 event reduction support
+  - added `useExecutionConversation` with snapshot-first hydration, execution SSE subscription, reconnect via refreshed snapshot plus resubscribe, and hook-level v2 send capability
+  - kept the visible execution transcript and visible composer legacy-owned in Phase 3.1 while proving the new hook mounts only for the execution tab and leaves the visible execution UI unchanged
+- Files Changed:
+  - `frontend/src/api/client.ts`
+  - `frontend/src/api/types.ts`
+  - `frontend/src/features/conversation/hooks/useExecutionConversation.ts`
+  - `frontend/src/features/conversation/model/applyConversationEvent.ts`
+  - `frontend/src/stores/conversation-store.ts`
+  - `frontend/src/features/breadcrumb/BreadcrumbWorkspace.tsx`
+  - `frontend/tests/unit/conversation-store.test.ts`
+  - `frontend/tests/unit/execution-conversation-stream.test.tsx`
+  - `frontend/tests/unit/BreadcrumbWorkspace.test.tsx`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PROGRESS_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/CHANGELOG.md`
+- Blockers:
+  - none
+- Next Step:
+  - begin `Phase 3.2 - Shared Conversation Surface Presentation` without switching ask or planning into scope

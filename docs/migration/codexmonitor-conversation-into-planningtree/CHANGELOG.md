@@ -76,3 +76,12 @@
   - made it explicit that `Phase 3.1` is non-visible, `Phase 3.2` is presentational and still non-cutover, and `Phase 3.3` is the visible execution cutover
   - added the rule that Phase 3 is complete only when `Phase 3.3` is complete
   - no architecture change, no scope expansion, and no Phase 3 code started in this step
+- Phase 3.1 implementation:
+  - added the execution-only frontend v2 client methods for execution conversation snapshot, send, and SSE event URL construction
+  - added keyed execution conversation connection/sending/error state plus a pure Phase 2 execution event reducer for `message_created`, `assistant_text_delta`, `assistant_text_final`, and `completion_status`
+  - added `useExecutionConversation` for non-visible snapshot-first hydration, execution SSE subscription, reconnect via refreshed snapshot plus resubscribe, and hook-scoped v2 send capability
+  - mounted the new execution-v2 hook from `BreadcrumbWorkspace` only when the execution tab is active and scope is resolvable
+  - kept the visible execution transcript and visible composer on the legacy `ChatPanel` path in Phase 3.1
+- Verification:
+  - `npm run test:unit -- conversation-store.test.ts execution-conversation-stream.test.tsx BreadcrumbWorkspace.test.tsx`
+  - `npm run build`
