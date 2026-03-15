@@ -132,11 +132,15 @@
   - one execution-thread conversation streams end to end through the new v2 gateway
   - same-project session reuse works
   - cross-project isolation works
+  - send-start emits exactly two `message_created` events with explicit `event_seq = n + 1` then `n + 2`
+  - success path emits `assistant_text_final` before `completion_status(completed)`
+  - error or interrupted terminal paths emit `completion_status(...)` without `assistant_text_final`
   - stale-stream mutations are rejected by ownership rules
   - reconnect cannot bind to the wrong stream
   - durable persistence produces replayable normalized conversation records
   - hot-path forwarding remains forward-first and persist-after
   - non-execution-eligible send is rejected without creating live ownership state
+  - app shutdown flushes terminal and other high-value gateway persistence before session-manager shutdown
 
 ### Verification
 - backend integration tests

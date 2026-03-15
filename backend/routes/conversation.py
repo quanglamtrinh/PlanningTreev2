@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any, AsyncGenerator
+
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
+
+from backend.errors.app_errors import InvalidRequest
+
+router = APIRouter(tags=["conversation"])
+
+
+class ExecutionConversationSendRequest(BaseModel):
+    content: str
+
+
+def _conversation_gateway(request: Request):
+    return request.app.state.conversation_gateway
+
+
+def _conversation_event_broker(request: Request):
+    return request.app.state.conversation_event_broker
+
+
+def _format_sse(payload: dict[str, Any]) -> str:
+    return f"event: message\ndata: {json.dumps(payload, ensure_ascii=True)}\n\n"
+
+
+@router.get("/projects/{project_id}/nodes/{node_id}/conversations/execution")
+async def get_execution_conversation(request: Request, project_id: str, node_id: str) -> dict[str, Any]:
+    try:
+        conversation = _conversation_gateway(request).get_execution_conversation(project_id, node_id)
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
+    return {"conversation": conversation}
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/conversations/execution/send")
+async def send_execution_conversation_message(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: ExecutionConversationSendRequest,
+) -> JSONResponse:
+    try:
+        payload = _conversation_gateway(request).send_execution_message(project_id, node_id, body.content)
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
+    return JSONResponse(status_code=202, content=payload)
+
+
+@router.get("/projects/{project_id}/nodes/{node_id}/conversations/execution/events")
+async def stream_execution_conversation_events(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    after_event_seq: int = 0,
+    expected_stream_id: str | None = None,
+) -> StreamingResponse:
+    try:
+        conversation_id = _conversation_gateway(request).prepare_execution_event_stream(
+            project_id,
+            node_id,
+            expected_stream_id=expected_stream_id,
+        )
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        queue = _conversation_event_broker(request).subscribe(project_id, conversation_id)
+        try:
+            while not await request.is_disconnected():
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15)
+                    if int(event.get("event_seq", 0) or 0) <= after_event_seq:
+                        continue
+                    yield _format_sse(event)
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+        finally:
+            _conversation_event_broker(request).unsubscribe(project_id, conversation_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

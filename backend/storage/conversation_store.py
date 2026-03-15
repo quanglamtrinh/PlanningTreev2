@@ -179,6 +179,24 @@ class ConversationStore:
                 self._write_conversation_state_unlocked(project_id, state)
             return copy.deepcopy(snapshot)
 
+    def mutate_conversation(
+        self,
+        project_id: str,
+        conversation_id: str,
+        mutator,
+    ) -> ConversationSnapshot:
+        with self.project_lock(project_id):
+            state = self._read_conversation_state_unlocked(project_id)
+            snapshot = state["conversations"].get(conversation_id)
+            if snapshot is None:
+                raise KeyError(f"Unknown conversation_id: {conversation_id}")
+            working_snapshot = copy.deepcopy(snapshot)
+            mutator(working_snapshot)
+            working_snapshot["record"]["updated_at"] = iso_now()
+            state["conversations"][conversation_id] = working_snapshot
+            self._write_conversation_state_unlocked(project_id, state)
+            return copy.deepcopy(working_snapshot)
+
     def _read_conversation_state_unlocked(self, project_id: str) -> ConversationState:
         raw = load_json(self._conversation_state_path(project_id), default=None)
         if not isinstance(raw, dict):

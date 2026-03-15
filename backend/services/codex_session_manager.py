@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from threading import RLock
@@ -8,6 +9,28 @@ from typing import Any, Callable
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_workspace_root(workspace_root: str) -> str:
+    return os.path.normcase(os.path.normpath(str(workspace_root).strip()))
+
+
+class SessionWorkspaceRootMismatchError(ValueError):
+    def __init__(
+        self,
+        *,
+        project_id: str,
+        existing_workspace_root: str,
+        requested_workspace_root: str,
+    ) -> None:
+        self.project_id = project_id
+        self.existing_workspace_root = existing_workspace_root
+        self.requested_workspace_root = requested_workspace_root
+        super().__init__(
+            "Project-scoped session "
+            f"{project_id!r} is already bound to workspace root {existing_workspace_root!r} "
+            f"and cannot be reused for conflicting workspace root {requested_workspace_root!r}."
+        )
 
 
 @dataclass
@@ -20,7 +43,7 @@ class RuntimeThreadState:
 
 @dataclass
 class SessionHealthState:
-    status: str = "created"
+    status: str = "idle"
     last_checked_at: str | None = None
     last_error: str | None = None
 
@@ -82,9 +105,13 @@ class CodexSessionManager:
                 )
                 self._sessions[project_key] = session
         with session.lock:
+            if _normalize_workspace_root(session.workspace_root) != _normalize_workspace_root(workspace_value):
+                raise SessionWorkspaceRootMismatchError(
+                    project_id=project_key,
+                    existing_workspace_root=session.workspace_root,
+                    requested_workspace_root=workspace_value,
+                )
             session.last_accessed_at = _iso_now()
-            if not session.workspace_root:
-                session.workspace_root = workspace_value
         return session
 
     def get_session(self, project_id: str) -> ProjectCodexSession | None:
@@ -130,7 +157,8 @@ class CodexSessionManager:
                     session.health.status = "ready"
                     session.health.last_error = None
                 else:
-                    session.health.status = session.health.status or "created"
+                    session.health.status = "idle"
+                    session.health.last_error = None
             except Exception as exc:
                 client_status = {}
                 session.health.status = "error"
@@ -160,14 +188,27 @@ class CodexSessionManager:
 
     def _stop_session_client(self, session: ProjectCodexSession) -> None:
         with session.lock:
-            session.active_streams.clear()
-            session.active_turns.clear()
-            session.runtime_request_registry.clear()
-            for thread_state in session.loaded_runtime_threads.values():
-                thread_state.active_turn_id = None
-                thread_state.status = "stopped"
-                thread_state.last_used_at = _iso_now()
+            stopped_at = _iso_now()
+            self._clear_ownership_state(session)
+            self._mark_runtime_threads_stopped(session, stopped_at=stopped_at)
             session.health.status = "stopped"
-            session.health.last_checked_at = _iso_now()
+            session.health.last_checked_at = stopped_at
+            session.health.last_error = None
         if hasattr(session.client, "stop") and callable(session.client.stop):
             session.client.stop()
+
+    def _clear_ownership_state(self, session: ProjectCodexSession) -> None:
+        session.active_streams.clear()
+        session.active_turns.clear()
+        session.runtime_request_registry.clear()
+
+    def _mark_runtime_threads_stopped(
+        self,
+        session: ProjectCodexSession,
+        *,
+        stopped_at: str,
+    ) -> None:
+        for thread_state in session.loaded_runtime_threads.values():
+            thread_state.active_turn_id = None
+            thread_state.status = "stopped"
+            thread_state.last_used_at = stopped_at

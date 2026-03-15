@@ -112,6 +112,10 @@
   - `assistant_text_delta`
   - `assistant_text_final`
   - `completion_status`
+- Send-start emits exactly two `message_created` events:
+  - user `message_created` gets `event_seq = n + 1`
+  - assistant placeholder `message_created` gets `event_seq = n + 2`
+- Later delta, final, and completion events continue monotonically from that durable cursor.
 - Each envelope must include:
   - `conversation_id`
   - `stream_id`
@@ -120,6 +124,15 @@
   - optional `turn_id`
   - optional `message_id`
   - `payload`
+- `message_created` payload contains the full normalized `ConversationMessage`.
+- `assistant_text_delta` payload contains:
+  - `part_id`
+  - `delta`
+  - `status`
+- `assistant_text_final` payload contains:
+  - `part_id`
+  - `text`
+  - `status`
 - `completion_status` is terminal-only in Phase 2 and must include:
   - `conversation_id`
   - `stream_id`
@@ -128,3 +141,5 @@
   - `finished_at`
   - optional `error`
   - optional `usage`
+- `assistant_text_final` exists only on the successful path and must precede `completion_status(completed)`.
+- Error, interrupted, and cancelled paths emit terminal `completion_status(...)` without `assistant_text_final`.

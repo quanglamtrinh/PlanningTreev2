@@ -13,12 +13,14 @@ from fastapi.staticfiles import StaticFiles
 from backend.ai.codex_client import CodexAppClient, CodexTransportError, CodexTransportNotFound, StdioTransport
 from backend.config.app_config import build_app_paths, get_codex_cmd, get_split_timeout
 from backend.errors.app_errors import AppError
-from backend.routes import agent, ask, bootstrap, chat, nodes, projects, settings, split
+from backend.routes import agent, ask, bootstrap, chat, conversation, nodes, projects, settings, split
 from backend.services.agent_operation_service import AgentOperationService
 from backend.services.ask_service import AskService
 from backend.services.brief_generation_service import BriefGenerationService
 from backend.services.chat_service import ChatService
 from backend.services.codex_session_manager import CodexSessionManager
+from backend.services.conversation_context_builder import ConversationContextBuilder
+from backend.services.conversation_gateway import ConversationGateway
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
 from backend.services.snapshot_view_service import SnapshotViewService
@@ -27,6 +29,7 @@ from backend.services.split_service import SplitService
 from backend.services.thread_service import ThreadService
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
+from backend.streaming.conversation_broker import ConversationEventBroker
 from backend.streaming.sse_broker import AgentEventBroker, AskEventBroker, ChatEventBroker, PlanningEventBroker
 
 logger = logging.getLogger(__name__)
@@ -50,6 +53,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     chat_event_broker = ChatEventBroker()
     planning_event_broker = PlanningEventBroker()
     agent_event_broker = AgentEventBroker()
+    conversation_event_broker = ConversationEventBroker()
     agent_operation_service = AgentOperationService(agent_event_broker)
     project_service = ProjectService(storage, snapshot_view_service, thread_service)
     node_service = NodeService(
@@ -94,6 +98,14 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         get_split_timeout(),
         agent_operation_service,
     )
+    conversation_context_builder = ConversationContextBuilder(storage)
+    conversation_gateway = ConversationGateway(
+        storage,
+        tree_service,
+        codex_session_manager,
+        conversation_event_broker,
+        conversation_context_builder,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -103,6 +115,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         brief_generation_service.reconcile_interrupted_generations()
         spec_generation_service.reconcile_interrupted_generations()
         yield
+        conversation_gateway.flush_and_stop()
         codex_session_manager.shutdown()
         codex_client.stop()
 
@@ -135,12 +148,15 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.chat_event_broker = chat_event_broker
     app.state.planning_event_broker = planning_event_broker
     app.state.agent_event_broker = agent_event_broker
+    app.state.conversation_event_broker = conversation_event_broker
     app.state.agent_operation_service = agent_operation_service
     app.state.ask_service = ask_service
     app.state.chat_service = chat_service
     app.state.brief_generation_service = brief_generation_service
     app.state.spec_generation_service = spec_generation_service
     app.state.split_service = split_service
+    app.state.conversation_context_builder = conversation_context_builder
+    app.state.conversation_gateway = conversation_gateway
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
@@ -194,6 +210,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.include_router(agent.router, prefix="/v1")
     app.include_router(ask.router, prefix="/v1")
     app.include_router(chat.router, prefix="/v1")
+    app.include_router(conversation.router, prefix="/v2")
 
     dist = Path(__file__).parent.parent / "frontend" / "dist"
     if dist.exists():

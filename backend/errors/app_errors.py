@@ -135,6 +135,15 @@ class ChatTurnAlreadyActive(AppError):
         )
 
 
+class ConversationStreamMismatch(AppError):
+    def __init__(self) -> None:
+        super().__init__(
+            "conversation_stream_mismatch",
+            "The requested stream is no longer the active live stream for this conversation.",
+            409,
+        )
+
+
 class AuthRequired(AppError):
     def __init__(self) -> None:
         super().__init__("auth_required", "Authentication required.", 401)

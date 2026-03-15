@@ -54,8 +54,34 @@
 - Create a stable assistant placeholder message and stable `assistant_text` part at send-start.
 - Keep the hot path forward-first and persist-after.
 - Persist normalized message updates in parallel with prompt terminal flush behavior.
+- Lock send-start `event_seq` allocation to:
+  - user `message_created = n + 1`
+  - assistant `message_created = n + 2`
+- Emit `assistant_text_final` only on the successful path.
+- Add a gateway-owned persistence worker with `flush_and_stop()`.
 - Validate same-project reuse, cross-project isolation, reconnect safety, stale-stream rejection, and non-execution-eligible send rejection.
 - Blast radius: medium, backend runtime path.
+
+## P2.2a
+- Add `ConversationStore` grouped mutation helper.
+- Add `ConversationEventBroker`.
+- Add `ConversationContextBuilder`.
+- Add `ConversationGateway.get_execution_conversation`.
+- Add `GET /v2/.../conversations/execution`.
+- Add unit coverage for canonical snapshot creation and pre-send `GET`.
+
+## P2.2b
+- Add `POST /v2/.../conversations/execution/send`.
+- Add setup-path seeding for stable user and assistant placeholder messages.
+- Add gateway-owned `event_seq` allocation under the project session lock.
+- Add stale-callback rejection and terminal flush-before-clear ownership behavior.
+- Add unit coverage for placeholder identity, exact send-start sequence allocation, stale-stream rejection, and early-failure cleanup.
+
+## P2.2c
+- Add `GET /v2/.../conversations/execution/events`.
+- Add reconnect mismatch handling with structured `409 conversation_stream_mismatch`.
+- Add worker flush hook coverage and shutdown ordering checks.
+- Add integration coverage for `GET -> POST send -> GET again`, successful and errored streaming, same-project reuse, cross-project isolation, same-conversation rejection, and non-execution-eligible rejection.
 
 ## P3.1
 - Embed the shared conversation surface into execution thread.

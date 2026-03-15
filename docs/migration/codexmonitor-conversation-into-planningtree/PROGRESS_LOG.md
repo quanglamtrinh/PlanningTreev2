@@ -82,3 +82,48 @@
   - none
 - Next Step:
   - begin `P2.2` only after reviewing the execution-only gateway skeleton against the saved Phase 2 doc set
+
+## 2026-03-14T20:05:00-07:00
+- Phase: 2
+- Batch ID: P2.1-hardening
+- Summary:
+  - hardened `codex_session_manager` so conflicting `workspace_root` reuse under the same `project_id` is rejected explicitly instead of being silently accepted
+  - tightened session health semantics to the explicit `idle`, `ready`, `error`, `missing`, and `stopped` vocabulary expected by later Phase 2 work
+  - expanded reset and shutdown cleanup guarantees for ownership registries and loaded runtime thread state and locked those guarantees with focused unit tests
+- Files Changed:
+  - `backend/services/codex_session_manager.py`
+  - `backend/tests/unit/test_codex_session_manager.py`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/GATEWAY_AND_SESSION_ARCHITECTURE.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/DECISION_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PROGRESS_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/CHANGELOG.md`
+- Blockers:
+  - none
+- Next Step:
+  - start `P2.2` execution-only gateway work without changing the hardened project-scoped session contract
+
+## 2026-03-15T11:30:00-07:00
+- Phase: 2
+- Batch ID: P2.2
+- Summary:
+  - implemented the execution-only conversation-v2 gateway path with `GET`, `POST send`, and `GET events` routes in parallel to the legacy chat and execution flows
+  - added `ConversationEventBroker`, `ConversationContextBuilder`, and `ConversationGateway` with gateway-owned `event_seq` allocation, stable assistant placeholder identity, stale-stream rejection, durable-store-first snapshot reads, and a persistence worker with `flush_and_stop()`
+  - wired the new broker and gateway into `backend/main.py` so app shutdown flushes high-value conversation persistence before `codex_session_manager.shutdown()`
+  - added unit and integration coverage for grouped conversation-store mutation, broker fan-out, canonical execution snapshot creation, explicit send-start sequence allocation, terminal success and error handling, reconnect mismatch rejection, same-project session reuse, cross-project isolation, concurrent same-conversation rejection, and non-execution-eligible rejection
+- Files Changed:
+  - `backend/main.py`
+  - `backend/errors/app_errors.py`
+  - `backend/storage/conversation_store.py`
+  - `backend/routes/conversation.py`
+  - `backend/services/conversation_context_builder.py`
+  - `backend/services/conversation_gateway.py`
+  - `backend/streaming/conversation_broker.py`
+  - `backend/tests/unit/test_conversation_store.py`
+  - `backend/tests/unit/test_conversation_broker.py`
+  - `backend/tests/unit/test_conversation_gateway.py`
+  - `backend/tests/integration/test_conversation_gateway_api.py`
+  - migration docs for Phase 2.2 lock-in and verification
+- Blockers:
+  - none
+- Next Step:
+  - use the new execution-only v2 slice as the Phase 2 backend baseline for later execution surface cutover work

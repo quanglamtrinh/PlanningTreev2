@@ -33,4 +33,29 @@
   - added focused unit coverage for session reuse, isolation, reset, missing-session status, shutdown, and app-state wiring
 - Verification:
   - `python -m pytest backend/tests/unit/test_codex_session_manager.py`
+
+## 2026-03-15
+- Phase 2.2 implementation:
+  - added the execution-only conversation-v2 backend slice with:
+    - `GET /v2/projects/{project_id}/nodes/{node_id}/conversations/execution`
+    - `POST /v2/projects/{project_id}/nodes/{node_id}/conversations/execution/send`
+    - `GET /v2/projects/{project_id}/nodes/{node_id}/conversations/execution/events`
+  - added `ConversationEventBroker`, `ConversationContextBuilder`, and `ConversationGateway`
+  - wired gateway-owned persistence worker shutdown ahead of `codex_session_manager.shutdown()`
+  - added grouped `ConversationStore` mutation support for record and message-part updates in one project lock scope
+  - added structured `409 conversation_stream_mismatch` for stale reconnect attempts
+- Event model lock-in:
+  - send-start emits two `message_created` events with explicit `event_seq = n + 1` then `n + 2`
+  - success path emits `assistant_text_final` before `completion_status(completed)`
+  - error path emits terminal `completion_status(error)` without `assistant_text_final`
+- Verification:
+  - `python -m pytest backend/tests/unit/test_conversation_broker.py backend/tests/unit/test_conversation_store.py backend/tests/unit/test_conversation_gateway.py`
+  - `python -m pytest backend/tests/integration/test_conversation_gateway_api.py`
+  - `python -m pytest backend/tests/integration/test_chat_api.py`
   - `python -m pytest backend/tests/unit/test_conversation_store.py`
+- Phase 2 hardening:
+  - rejected same-project conflicting `workspace_root` reuse with an explicit internal session-manager error
+  - tightened session health reporting to `idle`, `ready`, `error`, `missing`, and `stopped`
+  - expanded teardown guarantees so reset and shutdown clear ownership registries and mark loaded runtime threads as stopped
+- Verification:
+  - `python -m pytest backend/tests/unit/test_codex_session_manager.py`

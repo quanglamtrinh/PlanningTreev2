@@ -43,8 +43,12 @@
 - execution-only v2 `get`, `send`, and `events` routes exist in parallel to legacy routes
 - `GET` execution snapshot is durable-store-first and not synthesized from in-memory-only events
 - send-start creates one stable assistant placeholder message and one stable empty `assistant_text` part
+- send-start emits exactly two `message_created` events with `event_seq = n + 1` then `n + 2`
+- success path emits `assistant_text_final` before `completion_status(completed)`
+- error, interrupted, and cancelled paths emit terminal `completion_status(...)` without `assistant_text_final`
 - stream ownership reads and writes happen under the project session lock
 - non-execution-eligible send returns the correct 4xx and does not create active stream ownership
+- gateway shutdown flushes terminal and other high-value writes before session-manager shutdown
 
 ## PlanningTree Wrapper Regression Checks
 - ask packet sidecar behavior remains intact
