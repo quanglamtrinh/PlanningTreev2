@@ -26,6 +26,7 @@
 - different projects remain isolated
 - one cancel does not cross-cancel another conversation
 - stale stream events are rejected after stream ownership changes
+- execution-specific single-active orchestration does not disable same-project session reuse
 
 ## Replay Fidelity Checks
 - reload reconstructs the same rich conversation UI from normalized messages
@@ -36,6 +37,14 @@
 - reconnect uses `conversation_id + event_seq + active_stream_id`
 - reconnect never attaches to the wrong live stream
 - reconnect failure falls back to durable replay plus runtime state check
+- stale `expected_stream_id` reconnect returns structured `409`
+
+## Phase 2 Gateway Checks
+- execution-only v2 `get`, `send`, and `events` routes exist in parallel to legacy routes
+- `GET` execution snapshot is durable-store-first and not synthesized from in-memory-only events
+- send-start creates one stable assistant placeholder message and one stable empty `assistant_text` part
+- stream ownership reads and writes happen under the project session lock
+- non-execution-eligible send returns the correct 4xx and does not create active stream ownership
 
 ## PlanningTree Wrapper Regression Checks
 - ask packet sidecar behavior remains intact

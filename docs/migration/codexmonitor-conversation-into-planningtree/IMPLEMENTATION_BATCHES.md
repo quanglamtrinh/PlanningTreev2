@@ -26,15 +26,35 @@
 
 ## P2.1
 - Add session manager skeleton.
+- Define `RuntimeThreadState` with:
+  - `thread_id`
+  - `last_used_at`
+  - `active_turn_id`
+  - `status`
+- Define `ProjectCodexSession` with:
+  - `project_id`
+  - `workspace_root`
+  - `client`
+  - `loaded_runtime_threads`
+  - `active_streams`
+  - `active_turns`
+  - `runtime_request_registry`
+  - `health`
+  - `lock`
 - Lock project-scoped session identity rules.
+- Require all ownership reads and writes under the project session lock.
 - Add health and ownership interfaces.
 - Blast radius: medium, backend infrastructure only.
 
 ## P2.2
-- Add gateway route and service skeleton.
-- Wire one execution-thread end-to-end stream.
-- Persist normalized message updates in parallel.
-- Validate same-project reuse, cross-project isolation, reconnect safety, and stale-stream rejection.
+- Add execution-only gateway route and service skeleton.
+- Add execution-only context builder.
+- Add one execution-thread end-to-end stream on the conversation-v2 path.
+- Use durable-store-first `GET` snapshots with optional live ownership enrichment.
+- Create a stable assistant placeholder message and stable `assistant_text` part at send-start.
+- Keep the hot path forward-first and persist-after.
+- Persist normalized message updates in parallel with prompt terminal flush behavior.
+- Validate same-project reuse, cross-project isolation, reconnect safety, stale-stream rejection, and non-execution-eligible send rejection.
 - Blast radius: medium, backend runtime path.
 
 ## P3.1

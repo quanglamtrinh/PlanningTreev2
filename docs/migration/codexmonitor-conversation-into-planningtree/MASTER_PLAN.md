@@ -120,6 +120,19 @@
 - Add a per-project or per-workspace `SessionManager`.
 - Request setup path does context building, session resolution, lineage intent, and stream ownership binding.
 - Hot stream path forwards events quickly, stamps ownership metadata, rejects stale streams, and persists normalized updates in parallel.
+- Phase 2 remains backend-only and execution-only.
+- Phase 2 `P2.1` adds only the project-scoped session manager skeleton.
+- Phase 2 `P2.2` adds only the execution-scoped conversation-v2 `get`, `send`, and `events` path in parallel to legacy routes.
+- No ask or planning v2 routes ship in Phase 2.
+- No UI cutover ships in Phase 2.
+
+### Phase 2 Execution-Only Defaults
+- `GET /v2/.../conversations/execution` is durable-store-first and may enrich the snapshot with live ownership metadata if a project session is active.
+- `POST /v2/.../conversations/execution/send` is execution-only and must reject non-execution-eligible nodes.
+- The assistant placeholder `message_id` is created at send-start and remains the stable assistant target for all delta and final text updates of that turn.
+- All ownership reads and writes for `active_streams`, `active_turns`, and `loaded_runtime_threads` must happen under the project session lock.
+- Infrastructure-level concurrency remains supported within a project session.
+- Execution-specific single-active orchestration is enforced separately at the execution conversation level and does not change the project-scoped session reuse model.
 
 ### Rollout And Rollback Strategy
 - Introduce a conversation-v2 path in parallel with the current `/chat`, `/ask`, and `/planning` flows.

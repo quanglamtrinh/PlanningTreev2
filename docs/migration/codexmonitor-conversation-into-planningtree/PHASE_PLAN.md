@@ -85,14 +85,16 @@
 
 ## Phase 2 - Thin Gateway And Session Manager
 ### Goal
-- Implement the gateway and project-scoped session model early.
+- Implement the project-scoped session model first, then the execution-only conversation-v2 gateway path.
 
 ### Scope
-- `ConversationGateway`
-- project session manager
-- stream ownership
-- reconnect support
-- persistence integration
+- `P2.1` project-scoped `CodexSessionManager`
+- `P2.2` execution-only `ConversationGateway`
+- execution-only v2 `get`, `send`, and `events` routes in parallel to legacy routes
+- stream ownership under project-session locks
+- durable-store-first execution snapshot reads
+- reconnect safety for execution SSE subscribers
+- persistence integration with forward-first, persist-after hot-path rules
 
 ### Expected Files Or Folders To Change
 - `backend/main.py`
@@ -107,19 +109,41 @@
 
 ### Out Of Scope
 - broad ask or planning UI cutover
+- ask or planning v2 routes
+- ChatPanel replacement
+- rich renderer migration
 
 ### Risks
 - heavy hot-path proxying
 - incorrect session reuse
 - reconnect ownership bugs
+- accidental dependence on the legacy app-global codex client
 
 ### Acceptance Criteria
 - Phase 2 exit contract passes in full
+- `P2.1` acceptance:
+  - project-scoped session manager exists and is wired into app state
+  - same-project reuse is proven
+  - cross-project isolation is proven
+  - missing-session health inspection is safe
+  - legacy boot path still works
+  - no new v2 code path depends on the legacy app-global client
+- `P2.2` acceptance:
+  - one execution-thread conversation streams end to end through the new v2 gateway
+  - same-project session reuse works
+  - cross-project isolation works
+  - stale-stream mutations are rejected by ownership rules
+  - reconnect cannot bind to the wrong stream
+  - durable persistence produces replayable normalized conversation records
+  - hot-path forwarding remains forward-first and persist-after
+  - non-execution-eligible send is rejected without creating live ownership state
 
 ### Verification
 - backend integration tests
 - one execution-thread end-to-end stream
 - reconnect and stale-stream rejection checks
+- session-manager unit tests for reuse, isolation, reset, missing status, and shutdown
+- execution-only route tests for durable-store-first snapshot behavior and non-execution-eligible send rejection
 
 ## Phase 3 - Shared Conversation Surface, Execution First
 ### Goal

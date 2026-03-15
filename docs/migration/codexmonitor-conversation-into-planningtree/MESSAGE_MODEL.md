@@ -66,7 +66,8 @@
 ## Ordering And Merge Rules
 - Only the active `stream_id` may mutate the active turn for a conversation.
 - Stale stream events are ignored once a stream is cancelled, superseded, or replaced.
-- Assistant text deltas append to the active `assistant_text` part.
+- The assistant placeholder `message_id` is created at send-start and remains the stable assistant target for all delta and final text updates of that turn.
+- Assistant text deltas append to the active placeholder `assistant_text` part.
 - Tool, reasoning, plan, approval, and runtime-input parts update by stable upstream identity when available.
 - If no stable upstream identity exists, append by deterministic normalized part order.
 - `message_id` upserts by exact identity.
@@ -104,3 +105,26 @@
 - `diff_summary` -> create `diff_summary`
 - `file_change_summary` -> create `file_change_summary`
 - `completion_status` -> create or update `status_block`
+
+## Phase 2 Execution Event Envelope
+- Phase 2 keeps a minimal execution-only event envelope:
+  - `message_created`
+  - `assistant_text_delta`
+  - `assistant_text_final`
+  - `completion_status`
+- Each envelope must include:
+  - `conversation_id`
+  - `stream_id`
+  - `event_seq`
+  - `created_at`
+  - optional `turn_id`
+  - optional `message_id`
+  - `payload`
+- `completion_status` is terminal-only in Phase 2 and must include:
+  - `conversation_id`
+  - `stream_id`
+  - `turn_id`
+  - `status`
+  - `finished_at`
+  - optional `error`
+  - optional `usage`

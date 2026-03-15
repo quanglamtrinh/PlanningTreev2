@@ -18,6 +18,7 @@ from backend.services.agent_operation_service import AgentOperationService
 from backend.services.ask_service import AskService
 from backend.services.brief_generation_service import BriefGenerationService
 from backend.services.chat_service import ChatService
+from backend.services.codex_session_manager import CodexSessionManager
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
 from backend.services.snapshot_view_service import SnapshotViewService
@@ -31,12 +32,18 @@ from backend.streaming.sse_broker import AgentEventBroker, AskEventBroker, ChatE
 logger = logging.getLogger(__name__)
 
 
+def _build_project_codex_client(_workspace_root: str) -> CodexAppClient:
+    transport = StdioTransport(codex_cmd=get_codex_cmd() or "codex")
+    return CodexAppClient(transport)
+
+
 def create_app(data_root: Optional[Path] = None) -> FastAPI:
     paths = build_app_paths(data_root)
     storage = Storage(paths)
     tree_service = TreeService()
     transport = StdioTransport(codex_cmd=get_codex_cmd() or "codex")
     codex_client = CodexAppClient(transport)
+    codex_session_manager = CodexSessionManager(client_factory=_build_project_codex_client)
     snapshot_view_service = SnapshotViewService(storage.node_store)
     thread_service = ThreadService(storage, tree_service, codex_client)
     ask_event_broker = AskEventBroker()
@@ -96,6 +103,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         brief_generation_service.reconcile_interrupted_generations()
         spec_generation_service.reconcile_interrupted_generations()
         yield
+        codex_session_manager.shutdown()
         codex_client.stop()
 
     app = FastAPI(
@@ -120,6 +128,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.project_service = project_service
     app.state.node_service = node_service
     app.state.codex_client = codex_client
+    app.state.codex_session_manager = codex_session_manager
     app.state.snapshot_view_service = snapshot_view_service
     app.state.thread_service = thread_service
     app.state.ask_event_broker = ask_event_broker

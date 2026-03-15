@@ -20,6 +20,12 @@
 - Approval requests, runtime input requests, terminal states, and lineage transitions must flush promptly.
 - Planning composer is disabled by default for the initial cutover phase only; future enablement is a later product decision.
 - No shell creep rule is explicit and mandatory.
+- Phase 2 remains backend-only and execution-only.
+- Phase 2 introduces only the execution-scoped conversation-v2 `get`, `send`, and `events` slice.
+- Phase 2 snapshot reads are durable-store-first and may enrich with live ownership metadata.
+- Phase 2 send-start creates a stable assistant placeholder message and stable `assistant_text` part for all delta and final updates of the turn.
+- Execution-specific single-active orchestration is a per-conversation policy and is kept separate from infrastructure-level session reuse and concurrency capability.
+- No public `cancel`, `retry`, `continue`, or `regenerate` routes are added in Phase 2.
 
 ## Chosen Tradeoffs
 - Prefer `reimplement_with_reference` for native and process-bound CodexMonitor pieces rather than direct code copy.
@@ -36,3 +42,5 @@
   - Reason: conflicts with the normalized rich message truth model and increases hot-path coupling.
 - Rejected: implicit migration of CodexMonitor shell components.
   - Reason: outside the locked scope and likely to destabilize PlanningTree wrappers.
+- Rejected: using unlocked ownership snapshots for stream callbacks.
+  - Reason: risks stale-stream races and half-updated ownership reads.

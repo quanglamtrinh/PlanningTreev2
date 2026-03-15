@@ -20,3 +20,17 @@
   - `python -m pytest backend/tests/unit/test_conversation_store.py`
   - `npm run test:unit -- conversation-store.test.ts`
   - `npm run build`
+- Documentation refinement:
+  - reorganized `MODULE_MAPPING.md` by orchestration, renderers, adapters, backend/session/gateway work, and affected legacy target modules
+  - reorganized `DEPENDENCY_MAP.md` by frontend contracts, backend runtime, persistence and replay, styling and rendering, and PlanningTree wrapper dependencies
+- Phase 2 plan refinement:
+  - saved the revised execution-only Phase 2 plan into the doc set before new backend work
+  - made project-scoped sessions, durable-store-first execution snapshots, stable assistant placeholder identity, stream ownership under lock, reconnect safety, and persistence queue flush policy explicit
+  - clarified that execution-specific single-active orchestration is separate from infrastructure-level session reuse and concurrency capability
+- Phase 2 implementation:
+  - added `backend/services/codex_session_manager.py` as the `P2.1` project-scoped session manager skeleton
+  - wired `codex_session_manager` into `backend/main.py` and app shutdown cleanup without replacing the legacy `codex_client`
+  - added focused unit coverage for session reuse, isolation, reset, missing-session status, shutdown, and app-state wiring
+- Verification:
+  - `python -m pytest backend/tests/unit/test_codex_session_manager.py`
+  - `python -m pytest backend/tests/unit/test_conversation_store.py`
