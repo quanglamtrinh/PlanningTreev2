@@ -52,6 +52,14 @@
   - `python -m pytest backend/tests/unit/test_conversation_broker.py backend/tests/unit/test_conversation_store.py backend/tests/unit/test_conversation_gateway.py`
   - `python -m pytest backend/tests/integration/test_conversation_gateway_api.py`
   - `python -m pytest backend/tests/integration/test_chat_api.py`
+- Phase 2.2 closeout hardening:
+  - tightened successful-stream proof coverage for exact event ordering, monotonic `event_seq`, consistent `conversation_id` and `stream_id`, and stable assistant placeholder targeting
+  - tightened route-level durable-store-first snapshot proof so memory-only live assistant text cannot leak into `GET` execution snapshots
+  - removed the terminal persistence timeout before ownership clear and added proof that terminal persistence completes before ownership is considered cleared
+  - added proof that `flush_and_stop()` drains terminal work and that app shutdown invokes gateway flush before session-manager shutdown
+- Verification:
+  - `python -m pytest backend/tests/unit/test_conversation_gateway.py`
+  - `python -m pytest backend/tests/integration/test_conversation_gateway_api.py`
   - `python -m pytest backend/tests/unit/test_conversation_store.py`
 - Phase 2 hardening:
   - rejected same-project conflicting `workspace_root` reuse with an explicit internal session-manager error
@@ -59,3 +67,12 @@
   - expanded teardown guarantees so reset and shutdown clear ownership registries and mark loaded runtime threads as stopped
 - Verification:
   - `python -m pytest backend/tests/unit/test_codex_session_manager.py`
+- Phase 3 docs restructure:
+  - split the execution-first Phase 3 plan into three tracked phases:
+    - `Phase 3.1 - Execution Conversation Data Plumbing`
+    - `Phase 3.2 - Shared Conversation Surface Presentation`
+    - `Phase 3.3 - Execution Tab Visible Cutover`
+  - standardized those names as the canonical tracking identifiers across migration artifacts
+  - made it explicit that `Phase 3.1` is non-visible, `Phase 3.2` is presentational and still non-cutover, and `Phase 3.3` is the visible execution cutover
+  - added the rule that Phase 3 is complete only when `Phase 3.3` is complete
+  - no architecture change, no scope expansion, and no Phase 3 code started in this step

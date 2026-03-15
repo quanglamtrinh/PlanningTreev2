@@ -123,6 +123,7 @@
 - Delta writes should go through a queue or worker.
 - The queue must flush promptly on completion, interruption, cancellation, or final error.
 - Active stream ownership changes and `app_server_thread_id` bindings are high-value writes and must be prioritized for durable flush.
+- On terminal success or error, the gateway must finish terminal persistence before ownership is considered fully cleared for that `conversation_id`.
 - The gateway-owned worker must expose `flush_and_stop()`.
 - App shutdown must wait for terminal and other high-value gateway writes before `codex_session_manager.shutdown()`.
 
@@ -148,7 +149,15 @@
 - one execution-thread conversation streams end to end through the new gateway
 - same-project session reuse works
 - cross-project isolation works
+- success-path event order is explicitly proven:
+  - `message_created(user)`
+  - `message_created(assistant)`
+  - zero or more `assistant_text_delta`
+  - `assistant_text_final`
+  - `completion_status(completed)`
 - stale stream events are rejected by ownership rules
 - execution reconnect does not re-bind to the wrong stream
 - persistence produces replayable normalized conversation records
+- durable-store-first snapshot reads are explicitly proven to enrich only `active_stream_id` and `event_seq`, not transcript content
+- terminal flush and shutdown flush ordering are explicitly proven by tests
 - hot-path forwarding remains thin

@@ -116,6 +116,52 @@ def wait_for_snapshot(
     raise AssertionError(f"conversation did not reach the expected state: {last_snapshot}")
 
 
+async def collect_gateway_events(
+    broker: ConversationEventBroker,
+    *,
+    project_id: str,
+    conversation_id: str,
+    action,
+    terminal_statuses: set[str],
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    queue = broker.subscribe(project_id, conversation_id)
+    try:
+        response = action()
+        events: list[dict[str, object]] = []
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            event = await asyncio.wait_for(queue.get(), timeout=max(0.01, deadline - time.time()))
+            events.append(event)
+            if event.get("event_type") == "completion_status":
+                status = str(event.get("payload", {}).get("status") or "")
+                if status in terminal_statuses:
+                    break
+        return response, events
+    finally:
+        broker.unsubscribe(project_id, conversation_id, queue)
+
+
+def block_completion_persistence(gateway: ConversationGateway, monkeypatch) -> tuple[threading.Event, threading.Event]:
+    completion_started = threading.Event()
+    release_completion = threading.Event()
+    original_build = gateway._build_completion_persistence_task
+
+    def wrapped_build(*args, **kwargs):
+        task = original_build(*args, **kwargs)
+        original_run = task.run
+
+        def run() -> None:
+            completion_started.set()
+            release_completion.wait()
+            original_run()
+
+        task.run = run
+        return task
+
+    monkeypatch.setattr(gateway, "_build_completion_persistence_task", wrapped_build)
+    return completion_started, release_completion
+
+
 def test_get_execution_conversation_creates_one_canonical_snapshot_per_scope(
     storage: Storage,
     tree_service: TreeService,
@@ -230,6 +276,56 @@ def test_assistant_deltas_and_final_text_target_same_placeholder_and_persist_eve
     gateway.flush_and_stop()
 
 
+def test_success_path_emits_strictly_monotonic_events_with_stable_assistant_target(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    set_node_phase(storage, tree_service, project_id, node_id, "executing")
+    fake_client = FakeConversationClient(deltas=["hello ", "world"], final_text="hello world")
+    gateway, broker, _ = build_gateway(storage, tree_service, fake_client)
+    conversation_id = gateway.get_execution_conversation(project_id, node_id)["record"]["conversation_id"]
+
+    response, events = asyncio.run(
+        collect_gateway_events(
+            broker,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            action=lambda: gateway.send_execution_message(project_id, node_id, "hello"),
+            terminal_statuses={"completed"},
+        )
+    )
+
+    event_types = [event["event_type"] for event in events]
+    event_seqs = [int(event["event_seq"]) for event in events]
+    assistant_text_events = [
+        event for event in events if event["event_type"] in {"assistant_text_delta", "assistant_text_final"}
+    ]
+
+    assert event_types == [
+        "message_created",
+        "message_created",
+        "assistant_text_delta",
+        "assistant_text_delta",
+        "assistant_text_final",
+        "completion_status",
+    ]
+    assert event_seqs == [1, 2, 3, 4, 5, 6]
+    assert event_seqs == sorted(event_seqs)
+    assert len(set(event_seqs)) == len(event_seqs)
+    assert {event["conversation_id"] for event in events} == {str(response["conversation_id"])}
+    assert {event["stream_id"] for event in events} == {str(response["stream_id"])}
+    assert events[0]["message_id"] == response["user_message_id"]
+    assert events[1]["message_id"] == response["assistant_message_id"]
+    assert events[-1]["message_id"] == response["assistant_message_id"]
+    assert {event["message_id"] for event in assistant_text_events} == {str(response["assistant_message_id"])}
+    assert {event["item_id"] for event in assistant_text_events} == {str(response["assistant_text_part_id"])}
+
+    gateway.flush_and_stop()
+
+
 def test_stale_stream_callbacks_are_ignored_after_owner_changes(
     storage: Storage,
     tree_service: TreeService,
@@ -326,6 +422,99 @@ def test_terminal_failure_after_setup_seed_emits_error_status_and_clears_ownersh
         assert session.active_turns == {}
 
     gateway.flush_and_stop()
+
+
+def test_terminal_success_keeps_ownership_until_completion_persistence_finishes(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    set_node_phase(storage, tree_service, project_id, node_id, "executing")
+    gateway, _, session_manager = build_gateway(
+        storage,
+        tree_service,
+        FakeConversationClient(final_text="hello world"),
+    )
+    completion_started, release_completion = block_completion_persistence(gateway, monkeypatch)
+
+    response = gateway.send_execution_message(project_id, node_id, "hello")
+    conversation_id = str(response["conversation_id"])
+    session = session_manager.get_session(project_id)
+
+    assert session is not None
+    assert completion_started.wait(timeout=1)
+
+    with session.lock:
+        assert session.active_streams[conversation_id] == response["stream_id"]
+        assert session.active_turns[conversation_id] == response["turn_id"]
+
+    in_flight = storage.conversation_store.get_conversation(project_id, conversation_id)
+    assert in_flight is not None
+    assert in_flight["record"]["status"] == "active"
+    assert in_flight["record"]["active_stream_id"] == response["stream_id"]
+    assert in_flight["record"]["app_server_thread_id"] is None
+
+    release_completion.set()
+    final_snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        conversation_id,
+        lambda item: (
+            item["record"]["status"] == "completed"
+            and item["record"]["active_stream_id"] is None
+            and item["record"]["app_server_thread_id"] == "thread_exec_1"
+        ),
+    )
+
+    assert final_snapshot["record"]["event_seq"] == 4
+    with session.lock:
+        assert session.active_streams == {}
+        assert session.active_turns == {}
+
+    gateway.flush_and_stop()
+
+
+def test_flush_and_stop_waits_for_blocked_terminal_completion_persistence(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    set_node_phase(storage, tree_service, project_id, node_id, "executing")
+    gateway, _, _ = build_gateway(
+        storage,
+        tree_service,
+        FakeConversationClient(final_text="hello world"),
+    )
+    completion_started, release_completion = block_completion_persistence(gateway, monkeypatch)
+
+    response = gateway.send_execution_message(project_id, node_id, "hello")
+    conversation_id = str(response["conversation_id"])
+
+    assert completion_started.wait(timeout=1)
+
+    flush_thread = threading.Thread(target=gateway.flush_and_stop, daemon=True)
+    flush_thread.start()
+    time.sleep(0.1)
+
+    assert flush_thread.is_alive()
+
+    release_completion.set()
+    flush_thread.join(timeout=2)
+
+    assert not flush_thread.is_alive()
+    final_snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        conversation_id,
+        lambda item: item["record"]["status"] == "completed" and item["record"]["active_stream_id"] is None,
+    )
+    assert final_snapshot["record"]["app_server_thread_id"] == "thread_exec_1"
 
 
 def test_get_snapshot_is_durable_store_first_and_only_enriches_live_metadata(

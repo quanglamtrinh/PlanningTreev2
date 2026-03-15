@@ -33,6 +33,14 @@
 - P2.1 hardening compares workspace roots using normalized path keys to avoid false conflicts from raw string differences alone.
 - P2.1 hardening standardizes session health values to `idle`, `ready`, `error`, `missing`, and `stopped`.
 - P2.1 hardening requires reset and shutdown teardown to clear ownership registries and mark loaded runtime threads as `stopped`.
+- Phase 3 is tracked as:
+  - `Phase 3.1 - Execution Conversation Data Plumbing`
+  - `Phase 3.2 - Shared Conversation Surface Presentation`
+  - `Phase 3.3 - Execution Tab Visible Cutover`
+- `Phase 3.1` is non-visible execution plumbing only.
+- `Phase 3.2` is presentational only and does not switch the visible execution transcript by itself.
+- Visible execution host integration and wrapper rewiring remain exclusive to `Phase 3.3`.
+- Phase 3 is not considered complete until `Phase 3.3` is complete.
 
 ## Chosen Tradeoffs
 - Prefer `reimplement_with_reference` for native and process-bound CodexMonitor pieces rather than direct code copy.

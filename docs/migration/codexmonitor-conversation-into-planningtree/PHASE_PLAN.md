@@ -153,39 +153,132 @@
 ### Goal
 - Make execution the first visible cutover.
 
-### Scope
-- shared conversation surface
-- execution embedding
-- basic assistant text streaming
-- history load and replay
+### Canonical Tracking Names
+- Use `Phase 3.1`, `Phase 3.2`, and `Phase 3.3` as the only primary tracking identifiers across migration docs and artifacts.
+- "Part" may appear only as informal prose, not as the main tracking label.
 
-### Expected Files Or Folders To Change
-- `frontend/src/features/conversation/components/`
-- `frontend/src/features/breadcrumb/ChatPanel.tsx`
-- `frontend/src/api/hooks.ts`
+### Overall Completion Rule
+- Phase 3 is not considered complete until `Phase 3.3` is complete.
+- Completion of `Phase 3.1` or `Phase 3.2` is necessary but not sufficient for Phase 3 completion.
 
 ### Dependencies
 - Phase 1 store
 - Phase 2 gateway
 
-### Out Of Scope
+### Phase 3.1 - Execution Conversation Data Plumbing
+#### Goal
+- Establish the execution-only frontend v2 data path without switching the visible execution UI.
+
+#### Scope
+- execution-only v2 client methods
+- keyed execution conversation state hydration
+- snapshot-first load path
+- SSE subscription and reconnect model
+- send flow wiring to v2
+- non-visible execution conversation plumbing
+
+#### Out Of Scope
+- visible execution transcript switch
+- shared surface rollout
 - ask and planning embedding
-- advanced rich blocks beyond initial execution text stream
+- shell migration
+- wrapper cutover work
 
-### Risks
-- execution regression
-- dual-path complexity during rollback window
+#### Risks
+- state drift between legacy visible execution UI and the new non-visible execution conversation state
+- reconnect handling bugs becoming harder to detect before the visible cutover lands
 
-### Acceptance Criteria
-- execution uses the shared surface
-- history loads
-- streaming works
+#### Acceptance Criteria
+- execution conversation data can load, send, stream, and reconnect in frontend state through the v2 path
+- no visible execution cutover happens yet
+- legacy visible execution UI remains active
+
+#### Rollback Note
+- This phase is additive and non-visible; rollback is trivial because the legacy visible execution path remains intact.
+
+#### Verification
+- snapshot load works against the execution v2 `GET`
+- SSE subscribe and reconnect behavior work in keyed frontend state
+- send path is wired through the execution v2 `POST`
+- no visible execution transcript switch occurs yet
+
+### Phase 3.2 - Shared Conversation Surface Presentation
+#### Goal
+- Introduce the shared presentational conversation surface and the minimal render contract.
+
+#### Scope
+- shared conversation surface presentation
+- minimal rendering for user text, assistant text, and streaming assistant text
+- loading, error, and empty states
+- safe degradation for unsupported rich parts
+
+#### Out Of Scope
+- visible execution transcript switch
+- broad wrapper rewiring
+- ask and planning embedding
+- shell migration
+- broad rich parity
+- public retry, continue, regenerate, or cancel controls
+
+#### Risks
+- scope leakage between `Phase 3.2` and `Phase 3.3`
+- presentational assumptions accidentally becoming host-integration constraints too early
+
+#### Acceptance Criteria
+- the shared surface exists and renders the minimal execution-first conversation contract
+- unsupported parts degrade safely
+- the surface is ready to be hosted by execution
+- the visible execution transcript is still not switched by this phase alone
+
+#### Rollback Note
+- Rollback is contained to the presentational layer because execution host integration remains deferred.
+
+#### Verification
+- user and assistant text render correctly
+- streaming assistant text renders correctly
+- loading, error, and empty states render correctly
+- unsupported rich parts degrade safely
+- the visible execution transcript is still not switched by this phase
+
+### Phase 3.3 - Execution Tab Visible Cutover
+#### Goal
+- Switch the execution tab to the new shared conversation surface while preserving execution framing and rollback safety.
+
+#### Scope
+- execution host integration
+- visible execution transcript cutover
+- visible composer and send path through v2
+- execution-tab wrapper integration only as needed for the cutover
+- preserve existing `Plan` / `Execute` framing and wrapper behavior
+
+#### Out Of Scope
+- ask embedding
+- planning embedding
+- shell migration
+- broad parity work
+- new public command controls
+- architecture redesign
+
+#### Risks
+- execution regression during the visible cutover
+- dual-path complexity during the rollback window
+- wrapper regressions if host integration expands beyond execution
+
+#### Acceptance Criteria
+- execution tab visibly uses the new shared conversation surface
+- snapshot load, stream subscription, send, and reconnect work through the v2 path
+- execution framing remains intact
 - rollback remains available
 
-### Verification
+#### Rollback Note
+- Rollback remains a contained host-level revert because ask/planning and shell work are still untouched.
+
+#### Verification
 - manual execution flow
 - reload and replay check
+- reconnect check in the execution tab
 - regression checks against existing execution framing
+- rollback path remains available
 
 ## Phase 4 - Ask And Planning Embedding
 ### Goal

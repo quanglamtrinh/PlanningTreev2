@@ -83,16 +83,30 @@
 - Add worker flush hook coverage and shutdown ordering checks.
 - Add integration coverage for `GET -> POST send -> GET again`, successful and errored streaming, same-project reuse, cross-project isolation, same-conversation rejection, and non-execution-eligible rejection.
 
+## Phase 3 Tracking Rule
+- For now, `Phase 3.1`, `Phase 3.2`, and `Phase 3.3` map 1:1 to tracked implementation batches.
+- If a later sub-batch split is needed, the phase goal and acceptance criteria must remain unchanged.
+
 ## P3.1
-- Embed the shared conversation surface into execution thread.
-- Support basic assistant text streaming first.
-- Preserve rollback path to the old execution flow.
-- Blast radius: medium, execution UI only.
+- Tracks `Phase 3.1 - Execution Conversation Data Plumbing`.
+- Non-visible execution-only frontend plumbing on top of the existing v2 backend path.
+- Covers snapshot hydration, keyed state, SSE subscription, reconnect model, and send-path wiring.
+- Visible execution UI cutover is out of scope.
+- Blast radius: medium, frontend data plumbing only.
 
 ## P3.2
-- Load execution history from normalized rich messages.
-- Replay from durable conversation records after reload.
-- Blast radius: medium, execution UI and load path.
+- Tracks `Phase 3.2 - Shared Conversation Surface Presentation`.
+- Presentational shared conversation surface and minimal render contract only.
+- Covers user and assistant text rendering, streaming text, loading/error/empty states, and safe unsupported-part degradation.
+- Visible execution transcript switch remains out of scope.
+- Blast radius: medium, shared presentation layer only.
+
+## P3.3
+- Tracks `Phase 3.3 - Execution Tab Visible Cutover`.
+- Visible execution-tab cutover and execution-wrapper integration only as needed for that cutover.
+- Covers execution host integration while preserving current execution framing and rollback safety.
+- Ask, planning, and shell work remain out of scope.
+- Blast radius: medium, execution tab host integration only.
 
 ## P4.1
 - Embed the shared surface in ask thread.

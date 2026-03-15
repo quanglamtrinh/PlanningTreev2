@@ -7,7 +7,9 @@ import time
 
 from fastapi.testclient import TestClient
 
+import backend.main as backend_main
 from backend.routes.conversation import stream_execution_conversation_events
+from backend.services.conversation_gateway import _LiveConversationState
 from backend.tests.integration.test_chat_api import FakeCodexClient, attach_fake_client
 
 
@@ -315,12 +317,21 @@ def test_get_post_send_get_again_keeps_same_conversation_id_and_live_enrichment(
     assert accepted.status_code == 202
     assert fake_client.started.wait(timeout=1)
 
+    session = client.app.state.codex_session_manager.get_session(project_id)
+    gateway = client.app.state.conversation_gateway
+    assert session is not None
+    with session.lock:
+        gateway._live_state[(project_id, conversation_id)] = _LiveConversationState(
+            event_seq=7,
+            assistant_text="memory only live text",
+        )
+
     during = client.get(f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution")
     assert during.status_code == 200
     payload = during.json()["conversation"]
     assert payload["record"]["conversation_id"] == conversation_id
     assert payload["record"]["active_stream_id"] == accepted.json()["stream_id"]
-    assert payload["record"]["event_seq"] >= 2
+    assert payload["record"]["event_seq"] == 7
     assert len(payload["messages"]) == 2
     assert payload["messages"][0]["role"] == "user"
     assert payload["messages"][1]["role"] == "assistant"
@@ -362,11 +373,26 @@ def test_execution_conversation_success_streams_in_order_and_persists_normalized
     client.app.state.conversation_gateway.flush_persistence()
 
     event_types = [event["event_type"] for event in events]
+    event_seqs = [int(event["event_seq"]) for event in events]
+    assistant_text_events = [
+        event for event in events if event["event_type"] in {"assistant_text_delta", "assistant_text_final"}
+    ]
+
     assert event_types[0:2] == ["message_created", "message_created"]
     assert event_types[-2:] == ["assistant_text_final", "completion_status"]
     assert "assistant_text_delta" in event_types
+    assert event_seqs == [1, 2, 3, 4, 5, 6]
+    assert event_seqs == sorted(event_seqs)
+    assert len(set(event_seqs)) == len(event_seqs)
+    assert {event["conversation_id"] for event in events} == {conversation_id}
+    assert {event["stream_id"] for event in events} == {accepted.json()["stream_id"]}
     assert events[0]["payload"]["message"]["role"] == "user"
     assert events[1]["payload"]["message"]["role"] == "assistant"
+    assert events[0]["message_id"] == accepted.json()["user_message_id"]
+    assert events[1]["message_id"] == accepted.json()["assistant_message_id"]
+    assert events[-1]["message_id"] == accepted.json()["assistant_message_id"]
+    assert {event["message_id"] for event in assistant_text_events} == {accepted.json()["assistant_message_id"]}
+    assert {event["item_id"] for event in assistant_text_events} == {accepted.json()["assistant_text_part_id"]}
     assert events[-1]["payload"]["status"] == "completed"
 
     persisted = client.app.state.storage.conversation_store.get_conversation(project_id, conversation_id)
@@ -540,3 +566,23 @@ def test_execution_send_rejects_non_executing_node_before_mutation(client: TestC
     assert response.status_code == 409
     assert response.json()["code"] == "node_update_not_allowed"
     assert client.app.state.codex_session_manager.get_session(project_id) is None
+
+
+def test_app_shutdown_flushes_gateway_before_session_manager_shutdown(monkeypatch, data_root) -> None:
+    call_order: list[str] = []
+
+    def record_gateway_flush(self) -> None:
+        call_order.append("gateway_flush")
+
+    def record_session_shutdown(self) -> None:
+        call_order.append("session_shutdown")
+
+    monkeypatch.setattr(backend_main.ConversationGateway, "flush_and_stop", record_gateway_flush)
+    monkeypatch.setattr(backend_main.CodexSessionManager, "shutdown", record_session_shutdown)
+
+    app = backend_main.create_app(data_root=data_root)
+    with TestClient(app) as test_client:
+        response = test_client.get("/health")
+        assert response.status_code == 200
+
+    assert call_order[:2] == ["gateway_flush", "session_shutdown"]

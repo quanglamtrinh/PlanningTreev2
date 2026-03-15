@@ -140,6 +140,10 @@
   - execution first
   - ask second
   - planning third
+- Track the execution-first Phase 3 cutover as:
+  - `Phase 3.1 - Execution Conversation Data Plumbing`
+  - `Phase 3.2 - Shared Conversation Surface Presentation`
+  - `Phase 3.3 - Execution Tab Visible Cutover`
 - If the new path is unstable, execution may temporarily fall back to the legacy path while preserving the new contracts.
 - Legacy removal is forbidden before replay fidelity, concurrency checks, reconnect stability, stale stream rejection, and wrapper regressions are cleared.
 
@@ -147,7 +151,7 @@
 - Phase 0 artifacts are complete and internally consistent.
 - Phase 1 contracts compile and document the durable truth model.
 - Phase 2 proves one execution conversation streams end to end with correct session reuse, isolation, reconnect safety, stale stream rejection, and replayable persistence.
-- Phase 3 cuts execution over to the shared surface without breaking existing execution framing.
+- Phase 3 completes only when `Phase 3.3` cuts execution over to the shared surface without breaking existing execution framing.
 - Phase 4 embeds ask and planning without breaking packet sidecar or split wrappers.
 - Phase 5 reaches CodexMonitor-like semantics for reasoning, tools, plan blocks, approvals, runtime input, diffs, and lineage-aware actions.
 - Phase 6 validates performance, concurrency, replay fidelity, and removes compatibility code only after gates pass.

@@ -127,3 +127,45 @@
   - none
 - Next Step:
   - use the new execution-only v2 slice as the Phase 2 backend baseline for later execution surface cutover work
+
+## 2026-03-15T13:10:00-07:00
+- Phase: 2
+- Batch ID: P2.2-closeout-hardening
+- Summary:
+  - tightened Phase 2.2 proof coverage for the successful execution stream contract, including strict monotonic `event_seq`, shared `conversation_id` and `stream_id`, and stable assistant placeholder `message_id` and `part_id` targeting across deltas and final text
+  - strengthened the durable-store-first execution snapshot tests to prove that route-level `GET -> POST send -> GET again` enrichment is limited to `record.active_stream_id` and `record.event_seq` and never synthesizes transcript content from memory-only live state
+  - hardened terminal flush behavior by removing the best-effort timeout before ownership clear, and added tests proving terminal persistence completes before ownership is considered cleared and that `flush_and_stop()` drains queued terminal work
+  - added an app lifespan test that proves `conversation_gateway.flush_and_stop()` happens before `codex_session_manager.shutdown()`
+- Files Changed:
+  - `backend/services/conversation_gateway.py`
+  - `backend/tests/unit/test_conversation_gateway.py`
+  - `backend/tests/integration/test_conversation_gateway_api.py`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/GATEWAY_AND_SESSION_ARCHITECTURE.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/VALIDATION_CHECKLIST.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PROGRESS_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/CHANGELOG.md`
+- Blockers:
+  - none
+- Next Step:
+  - keep Phase 2 closed and use the hardened execution-only v2 gateway as the stable backend baseline for Phase 3 planning when requested
+
+## 2026-03-15T14:00:00-07:00
+- Phase: 3
+- Batch ID: P3-docs-restructure
+- Summary:
+  - restructured the execution-first Phase 3 plan into three tracked phases without changing architecture, scope, or sequencing
+  - standardized `Phase 3.1`, `Phase 3.2`, and `Phase 3.3` as the canonical tracking names across migration artifacts
+  - made it explicit that `Phase 3.1` is non-visible plumbing, `Phase 3.2` is presentational and still non-cutover, and `Phase 3.3` is the visible execution-tab cutover
+  - added the overall rule that Phase 3 is not complete until `Phase 3.3` is complete
+- Files Changed:
+  - `docs/migration/codexmonitor-conversation-into-planningtree/MASTER_PLAN.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_PLAN.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/IMPLEMENTATION_BATCHES.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/VALIDATION_CHECKLIST.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/DECISION_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PROGRESS_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/CHANGELOG.md`
+- Blockers:
+  - none
+- Next Step:
+  - begin work with `Phase 3.1 - Execution Conversation Data Plumbing` only

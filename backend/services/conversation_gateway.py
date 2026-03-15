@@ -489,7 +489,7 @@ class ConversationGateway:
                 error_holder=error_holder,
             )
         )
-        completion_done.wait(timeout=5)
+        completion_done.wait()
         if error_holder:
             logger.exception("Conversation completion persistence failed", exc_info=error_holder[0])
         with session.lock:
@@ -558,7 +558,7 @@ class ConversationGateway:
                 error_holder=error_holder,
             )
         )
-        completion_done.wait(timeout=5)
+        completion_done.wait()
         if error_holder:
             logger.exception("Conversation error persistence failed", exc_info=error_holder[0])
         with session.lock:
