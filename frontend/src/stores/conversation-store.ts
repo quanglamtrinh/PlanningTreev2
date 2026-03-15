@@ -20,6 +20,8 @@ export type ConversationConnectionStatus =
   | 'reconnecting'
   | 'error'
 
+export type ConversationErrorKind = 'send' | 'reconnect_exhausted' | null
+
 export interface ConversationViewState {
   snapshot: ConversationSnapshot
   composerDraft: string
@@ -27,6 +29,7 @@ export interface ConversationViewState {
   isLoading: boolean
   isSending: boolean
   error: string | null
+  errorKind: ConversationErrorKind
 }
 
 type ConversationStoreState = {
@@ -38,7 +41,11 @@ type ConversationStoreState = {
   setComposerDraft: (conversationId: string, draft: string) => void
   setLoading: (conversationId: string, isLoading: boolean) => void
   setSending: (conversationId: string, isSending: boolean) => void
-  setError: (conversationId: string, error: string | null) => void
+  setError: (
+    conversationId: string,
+    error: string | null,
+    errorKind?: ConversationErrorKind,
+  ) => void
   setConnectionStatus: (
     conversationId: string,
     status: ConversationConnectionStatus,
@@ -97,6 +104,7 @@ function createConversationViewState(snapshot: ConversationSnapshot): Conversati
     isLoading: false,
     isSending: false,
     error: null,
+    errorKind: null,
   }
 }
 
@@ -202,7 +210,7 @@ export const useConversationStore = create<ConversationStoreState>((set, get) =>
       }
     })
   },
-  setError(conversationId, error) {
+  setError(conversationId, error, errorKind = null) {
     set((state) => {
       const current = state.conversationsById[conversationId]
       if (!current) {
@@ -214,6 +222,7 @@ export const useConversationStore = create<ConversationStoreState>((set, get) =>
           [conversationId]: {
             ...current,
             error,
+            errorKind: error ? errorKind : null,
           },
         },
       }

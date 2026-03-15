@@ -19,6 +19,10 @@ function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null
 }
 
+function readEventStreamId(event: ConversationEventEnvelope): string | null {
+  return asString((event as unknown as Record<string, unknown>).stream_id)
+}
+
 function readPartText(part: ConversationMessagePart): string {
   const text = asString(part.payload.text)
   if (text !== null) {
@@ -156,18 +160,48 @@ function toMessageStatus(value: unknown): ConversationMessageStatus | null {
     : null
 }
 
-export function applyConversationEvent(
+export function shouldAcceptConversationEvent(
   snapshot: ConversationSnapshot,
   event: ConversationEventEnvelope,
-): ConversationSnapshot {
+): boolean {
   if (
     event.conversation_id !== snapshot.record.conversation_id ||
     event.event_seq <= snapshot.record.event_seq
   ) {
+    return false
+  }
+
+  const streamId = readEventStreamId(event)
+  if (!streamId) {
+    return false
+  }
+
+  const activeStreamId = snapshot.record.active_stream_id
+  switch (event.event_type) {
+    case 'message_created':
+      return activeStreamId === null || streamId === activeStreamId
+    case 'assistant_text_delta':
+    case 'assistant_text_final':
+    case 'completion_status':
+      return activeStreamId !== null && streamId === activeStreamId
+    default:
+      return false
+  }
+}
+
+export function applyConversationEvent(
+  snapshot: ConversationSnapshot,
+  event: ConversationEventEnvelope,
+): ConversationSnapshot {
+  if (!shouldAcceptConversationEvent(snapshot, event)) {
     return snapshot
   }
 
   const payload = asRecord(event.payload) ?? {}
+  const streamId = readEventStreamId(event)
+  if (!streamId) {
+    return snapshot
+  }
 
   switch (event.event_type) {
     case 'message_created': {
@@ -176,7 +210,7 @@ export function applyConversationEvent(
         return {
           ...snapshot,
           record: updateRecord(snapshot.record, event, {
-            active_stream_id: event.stream_id,
+            active_stream_id: streamId,
             status: 'active',
           }),
         }
@@ -184,7 +218,7 @@ export function applyConversationEvent(
       return {
         ...snapshot,
         record: updateRecord(snapshot.record, event, {
-          active_stream_id: event.stream_id,
+          active_stream_id: streamId,
           current_runtime_mode: message.runtime_mode,
           status: 'active',
         }),
@@ -210,7 +244,7 @@ export function applyConversationEvent(
       return {
         ...snapshot,
         record: updateRecord(snapshot.record, event, {
-          active_stream_id: event.stream_id,
+          active_stream_id: streamId,
           status: 'active',
         }),
         messages: updatedMessages,

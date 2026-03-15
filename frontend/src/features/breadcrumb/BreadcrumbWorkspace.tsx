@@ -7,6 +7,7 @@ import {
   useChatSessionStream,
   usePlanningEventStream,
 } from "../../api/hooks";
+import { isExecutionConversationV2Enabled } from "../../config/featureFlags";
 import { useExecutionConversation } from "../conversation/hooks/useExecutionConversation";
 import { useChatStore } from "../../stores/chat-store";
 import { useProjectStore } from "../../stores/project-store";
@@ -103,6 +104,7 @@ export function BreadcrumbWorkspace() {
   const chatSession = useChatStore((state) => state.session);
   const setComposerDraft = useChatStore((state) => state.setComposerDraft);
   const setActiveSurface = useUIStore((state) => state.setActiveSurface);
+  const executionConversationV2Enabled = isExecutionConversationV2Enabled();
 
   useEffect(() => {
     setActiveSurface("breadcrumb");
@@ -159,7 +161,10 @@ export function BreadcrumbWorkspace() {
   useExecutionConversation({
     projectId: projectId ?? null,
     nodeId: node?.node_id ?? null,
-    enabled: activeTab === "execution",
+    enabled:
+      executionConversationV2Enabled &&
+      activeTab === "execution" &&
+      Boolean(projectId && node?.node_id),
   });
 
   useEffect(() => {

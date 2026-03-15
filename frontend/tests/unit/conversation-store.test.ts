@@ -272,4 +272,176 @@ describe('useConversationStore', () => {
     expect(conversation.snapshot.record.event_seq).toBe(4)
     expect(conversation.snapshot.record.status).toBe('idle')
   })
+
+  it('enforces stream ownership and only lets message_created establish active_stream_id', () => {
+    useConversationStore.getState().ensureConversation(makeSnapshot())
+
+    useConversationStore.getState().applyEvent('conv_1', {
+      event_type: 'assistant_text_delta',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_wrong',
+      event_seq: 1,
+      created_at: '2026-03-14T00:00:01Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_assistant',
+      item_id: 'part_assistant',
+      payload: {
+        part_id: 'part_assistant',
+        delta: 'ignored',
+        status: 'streaming',
+      },
+    })
+
+    let conversation = useConversationStore.getState().conversationsById.conv_1
+    expect(conversation.snapshot.record.active_stream_id).toBeNull()
+    expect(conversation.snapshot.record.event_seq).toBe(0)
+
+    useConversationStore.getState().applyEvent('conv_1', {
+      event_type: 'message_created',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_1',
+      event_seq: 1,
+      created_at: '2026-03-14T00:00:01Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_assistant',
+      payload: {
+        message: {
+          message_id: 'msg_assistant',
+          conversation_id: 'conv_1',
+          turn_id: 'turn_1',
+          role: 'assistant',
+          runtime_mode: 'execute',
+          status: 'pending',
+          created_at: '2026-03-14T00:00:01Z',
+          updated_at: '2026-03-14T00:00:01Z',
+          lineage: {},
+          usage: null,
+          error: null,
+          parts: [
+            {
+              part_id: 'part_assistant',
+              part_type: 'assistant_text',
+              status: 'pending',
+              order: 0,
+              item_key: null,
+              created_at: '2026-03-14T00:00:01Z',
+              updated_at: '2026-03-14T00:00:01Z',
+              payload: { text: '' },
+            },
+          ],
+        },
+      },
+    })
+
+    useConversationStore.getState().applyEvent('conv_1', {
+      event_type: 'assistant_text_delta',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_2',
+      event_seq: 2,
+      created_at: '2026-03-14T00:00:02Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_assistant',
+      item_id: 'part_assistant',
+      payload: {
+        part_id: 'part_assistant',
+        delta: 'wrong stream',
+        status: 'streaming',
+      },
+    })
+
+    conversation = useConversationStore.getState().conversationsById.conv_1
+    const assistant = conversation.snapshot.messages.find((message) => message.message_id === 'msg_assistant')
+
+    expect(conversation.snapshot.record.active_stream_id).toBe('stream_1')
+    expect(conversation.snapshot.record.event_seq).toBe(1)
+    expect(assistant?.parts[0].payload).toMatchObject({ text: '' })
+  })
+
+  it('rejects missing and non-owning completion events', () => {
+    useConversationStore.getState().ensureConversation(
+      makeSnapshot({
+        record: {
+          ...makeSnapshot().record,
+          active_stream_id: 'stream_1',
+          event_seq: 2,
+          status: 'active',
+        },
+        messages: [
+          {
+            message_id: 'msg_assistant',
+            conversation_id: 'conv_1',
+            turn_id: 'turn_1',
+            role: 'assistant',
+            runtime_mode: 'execute',
+            status: 'streaming',
+            created_at: '2026-03-14T00:00:01Z',
+            updated_at: '2026-03-14T00:00:02Z',
+            lineage: {},
+            usage: null,
+            error: null,
+            parts: [
+              {
+                part_id: 'part_assistant',
+                part_type: 'assistant_text',
+                status: 'streaming',
+                order: 0,
+                item_key: null,
+                created_at: '2026-03-14T00:00:01Z',
+                updated_at: '2026-03-14T00:00:02Z',
+                payload: { text: 'Hello' },
+              },
+            ],
+          },
+        ],
+      }),
+    )
+
+    useConversationStore.getState().applyEvent('conv_1', {
+      event_type: 'completion_status',
+      conversation_id: 'conv_1',
+      stream_id: '',
+      event_seq: 3,
+      created_at: '2026-03-14T00:00:03Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_assistant',
+      payload: {
+        status: 'completed',
+        finished_at: '2026-03-14T00:00:03Z',
+      },
+    })
+
+    useConversationStore.getState().applyEvent('conv_1', {
+      event_type: 'completion_status',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_2',
+      event_seq: 4,
+      created_at: '2026-03-14T00:00:04Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_assistant',
+      payload: {
+        status: 'completed',
+        finished_at: '2026-03-14T00:00:04Z',
+      },
+    })
+
+    useConversationStore.getState().applyEvent('conv_1', {
+      event_type: 'completion_status',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_1',
+      event_seq: 5,
+      created_at: '2026-03-14T00:00:05Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_assistant',
+      payload: {
+        status: 'completed',
+        finished_at: '2026-03-14T00:00:05Z',
+      },
+    })
+
+    const conversation = useConversationStore.getState().conversationsById.conv_1
+
+    expect(conversation.snapshot.record.event_seq).toBe(5)
+    expect(conversation.snapshot.record.active_stream_id).toBeNull()
+    expect(conversation.snapshot.record.status).toBe('completed')
+  })
 })

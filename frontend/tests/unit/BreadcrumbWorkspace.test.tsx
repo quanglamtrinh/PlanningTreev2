@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -38,6 +38,7 @@ vi.mock('../../src/api/client', () => {
 import { BreadcrumbWorkspace } from '../../src/features/breadcrumb/BreadcrumbWorkspace'
 import { useAskStore } from '../../src/stores/ask-store'
 import { useChatStore } from '../../src/stores/chat-store'
+import { useConversationStore } from '../../src/stores/conversation-store'
 import { useProjectStore } from '../../src/stores/project-store'
 import { useUIStore } from '../../src/stores/ui-store'
 
@@ -264,8 +265,11 @@ function makeExecutionConversationSnapshot() {
 describe('BreadcrumbWorkspace', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.unstubAllEnvs()
+    vi.stubEnv('VITE_EXECUTION_CONVERSATION_V2_ENABLED', 'false')
     useAskStore.setState(useAskStore.getInitialState())
     useChatStore.setState(useChatStore.getInitialState())
+    useConversationStore.setState(useConversationStore.getInitialState())
     useProjectStore.setState(useProjectStore.getInitialState())
     useUIStore.setState(useUIStore.getInitialState())
     apiMock.planningEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/planning/events')
@@ -288,6 +292,10 @@ describe('BreadcrumbWorkspace', () => {
       '/v2/projects/project-1/nodes/root/conversations/execution/events?after_event_seq=0',
     )
     apiMock.getNodeDocuments.mockResolvedValue(makeNodeDocuments())
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   it('renders the breadcrumb chat shell and applies a transient composer seed', async () => {
@@ -854,6 +862,8 @@ describe('BreadcrumbWorkspace', () => {
   })
 
   it('mounts the non-visible execution conversation hook only for the execution tab', async () => {
+    vi.stubEnv('VITE_EXECUTION_CONVERSATION_V2_ENABLED', 'true')
+
     useProjectStore.setState({
       ...useProjectStore.getInitialState(),
       hasInitialized: true,
@@ -904,5 +914,169 @@ describe('BreadcrumbWorkspace', () => {
     expect(
       screen.getByPlaceholderText('Planner input is handled through the native modal when needed.'),
     ).toBeInTheDocument()
+  })
+
+  it('does not mount hidden execution-v2 plumbing when the feature flag is disabled', async () => {
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'child-1',
+      snapshot: childSnapshot,
+      documentsByNode: { 'child-1': makeNodeDocuments() },
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      loadNodeDocuments: vi.fn(async () => makeNodeDocuments()),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+      startPlan: vi.fn(async () => {}),
+      executeNode: vi.fn(async () => {}),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/child-1/chat',
+            state: { activeTab: 'execution' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('button', { name: 'Plan' })).toBeInTheDocument()
+    expect(apiMock.getExecutionConversation).not.toHaveBeenCalled()
+    expect(apiMock.executionConversationEventsUrl).not.toHaveBeenCalled()
+  })
+
+  it('keeps the visible execution transcript legacy-owned even when execution-v2 store has data', async () => {
+    vi.stubEnv('VITE_EXECUTION_CONVERSATION_V2_ENABLED', 'true')
+
+    const loadSession = vi.fn(async () => {
+      useChatStore.setState({
+        session: {
+          project_id: 'project-1',
+          node_id: 'child-1',
+          active_turn_id: null,
+          event_seq: 1,
+          status: 'active',
+          mode: 'plan',
+          config: {
+            access_mode: 'project_write',
+            cwd: 'C:/workspace/alpha',
+            writable_roots: ['C:/workspace/alpha'],
+            timeout_sec: 120,
+          },
+          pending_input_request: null,
+          messages: [
+            {
+              message_id: 'legacy_msg_1',
+              role: 'assistant',
+              content: 'Legacy execution transcript',
+              created_at: '2026-03-15T00:00:00Z',
+              updated_at: '2026-03-15T00:00:00Z',
+              status: 'completed',
+              error: null,
+            },
+          ],
+        },
+        connectionStatus: 'connected',
+      })
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'child-1',
+      snapshot: childSnapshot,
+      documentsByNode: { 'child-1': makeNodeDocuments() },
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      loadNodeDocuments: vi.fn(async () => makeNodeDocuments()),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+      startPlan: vi.fn(async () => {}),
+      executeNode: vi.fn(async () => {}),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession,
+    })
+    useConversationStore.getState().ensureConversation({
+      record: {
+        conversation_id: 'conv_exec_legacy_guard',
+        project_id: 'project-1',
+        node_id: 'child-1',
+        thread_type: 'execution',
+        app_server_thread_id: null,
+        current_runtime_mode: 'execute',
+        status: 'active',
+        active_stream_id: 'stream_1',
+        event_seq: 2,
+        created_at: '2026-03-15T00:00:00Z',
+        updated_at: '2026-03-15T00:00:02Z',
+      },
+      messages: [
+        {
+          message_id: 'conv_msg_1',
+          conversation_id: 'conv_exec_legacy_guard',
+          turn_id: 'turn_1',
+          role: 'assistant',
+          runtime_mode: 'execute',
+          status: 'completed',
+          created_at: '2026-03-15T00:00:01Z',
+          updated_at: '2026-03-15T00:00:02Z',
+          lineage: {},
+          usage: null,
+          error: null,
+          parts: [
+            {
+              part_id: 'part_assistant',
+              part_type: 'assistant_text',
+              status: 'completed',
+              order: 0,
+              item_key: null,
+              created_at: '2026-03-15T00:00:01Z',
+              updated_at: '2026-03-15T00:00:02Z',
+              payload: { text: 'Execution v2 hidden transcript' },
+            },
+          ],
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/child-1/chat',
+            state: { activeTab: 'execution' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Legacy execution transcript')).toBeInTheDocument()
+    expect(loadSession).toHaveBeenCalledWith('project-1', 'child-1')
+    expect(screen.queryByText('Execution v2 hidden transcript')).not.toBeInTheDocument()
   })
 })

@@ -5,7 +5,12 @@ import type {
   ExecutionConversationEvent,
   ExecutionConversationSendAcceptedResponse,
 } from '../../../api/types'
-import type { ConversationScope, ConversationSnapshot } from '../types'
+import {
+  createConversationScopeKey,
+  type ConversationScope,
+  type ConversationSnapshot,
+} from '../types'
+import { shouldAcceptConversationEvent } from '../model/applyConversationEvent'
 import { useConversationStore, type ConversationViewState } from '../../../stores/conversation-store'
 
 type BootstrapStatus = 'idle' | 'loading_snapshot' | 'error'
@@ -24,6 +29,10 @@ type UseExecutionConversationResult = {
   send: (content: string) => Promise<ExecutionConversationSendAcceptedResponse | void>
 }
 
+const MAX_RECONNECT_ATTEMPTS = 5
+const RECONNECT_DELAY_MS = [250, 500, 1_000, 2_000, 4_000] as const
+const MAX_RECONNECT_DELAY_MS = 5_000
+
 function toErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     return error.message
@@ -34,17 +43,27 @@ function toErrorMessage(error: unknown): string {
   return String(error)
 }
 
+function computeReconnectDelayMs(attempt: number): number {
+  const baseDelay = RECONNECT_DELAY_MS[Math.min(attempt, RECONNECT_DELAY_MS.length - 1)]
+  const jitterFactor = 0.8 + Math.random() * 0.4
+  return Math.min(MAX_RECONNECT_DELAY_MS, Math.round(baseDelay * jitterFactor))
+}
+
 function flushBufferedEvents(
   conversationId: string,
-  snapshot: ConversationSnapshot,
   bufferedEvents: ExecutionConversationEvent[],
 ) {
-  const store = useConversationStore.getState()
   bufferedEvents
     .sort((left, right) => left.event_seq - right.event_seq)
-    .filter((event) => event.event_seq > snapshot.record.event_seq)
     .forEach((event) => {
-      store.applyEvent(conversationId, event)
+      const current = useConversationStore.getState().conversationsById[conversationId]
+      if (!current) {
+        return
+      }
+      if (!shouldAcceptConversationEvent(current.snapshot, event)) {
+        return
+      }
+      useConversationStore.getState().applyEvent(conversationId, event)
     })
   bufferedEvents.length = 0
 }
@@ -56,6 +75,8 @@ export function useExecutionConversation({
 }: UseExecutionConversationOptions): UseExecutionConversationResult {
   const [bootstrapStatus, setBootstrapStatus] = useState<BootstrapStatus>('idle')
   const [bootstrapError, setBootstrapError] = useState<string | null>(null)
+  const generationRef = useRef(0)
+  const sendAttemptRef = useRef(0)
   const conversationIdRef = useRef<string | null>(null)
   const scope: ConversationScope | null =
     projectId && nodeId
@@ -65,6 +86,9 @@ export function useExecutionConversation({
           thread_type: 'execution',
         }
       : null
+  const scopeKey = scope ? createConversationScopeKey(scope) : null
+  const scopeKeyRef = useRef<string | null>(scopeKey)
+  scopeKeyRef.current = scopeKey
   const conversationId = useConversationStore((state) =>
     scope ? state.getConversationIdByScope(scope) : null,
   )
@@ -84,27 +108,55 @@ export function useExecutionConversation({
     }
     const resolvedProjectId = projectId
     const resolvedNodeId = nodeId
+    const generation = generationRef.current + 1
+    generationRef.current = generation
 
     let disposed = false
+    let effectConversationId = conversationId
     let isHydrating = false
+    let reconnectAttempts = 0
     let bufferedEvents: ExecutionConversationEvent[] = []
     let eventSource: EventSource | null = null
+    let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+    let lastReconnectError = 'Execution conversation stream disconnected.'
+
+    function isCurrentGeneration() {
+      return !disposed && generationRef.current === generation
+    }
+
+    function clearReconnectTimer() {
+      if (reconnectTimer !== null) {
+        globalThis.clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+    }
 
     function closeStream() {
       eventSource?.close()
       eventSource = null
     }
 
-    async function hydrateSnapshot(connectionStatus: 'connecting' | 'reconnecting') {
-      const currentConversationId = conversationIdRef.current
+    function markConversationDisconnected() {
+      if (!effectConversationId) {
+        return
+      }
+      const store = useConversationStore.getState()
+      store.setConnectionStatus(effectConversationId, 'disconnected')
+      store.setLoading(effectConversationId, false)
+      store.setSending(effectConversationId, false)
+    }
+
+    async function hydrateSnapshot(
+      connectionStatus: 'connecting' | 'reconnecting',
+    ): Promise<{ conversationId: string; snapshot: ConversationSnapshot } | null> {
       const store = useConversationStore.getState()
       isHydrating = true
       bufferedEvents = []
-      if (currentConversationId) {
-        store.setLoading(currentConversationId, true)
-        store.setError(currentConversationId, null)
+      if (effectConversationId) {
+        store.setLoading(effectConversationId, true)
+        store.setError(effectConversationId, null)
         store.setConnectionStatus(
-          currentConversationId,
+          effectConversationId,
           connectionStatus === 'connecting' ? 'loading_snapshot' : 'reconnecting',
         )
       } else {
@@ -114,7 +166,7 @@ export function useExecutionConversation({
 
       try {
         const response = await api.getExecutionConversation(resolvedProjectId, resolvedNodeId)
-        if (disposed) {
+        if (!isCurrentGeneration()) {
           return null
         }
         const snapshot = response.conversation
@@ -123,21 +175,28 @@ export function useExecutionConversation({
         store.setLoading(nextConversationId, false)
         store.setError(nextConversationId, null)
         store.setConnectionStatus(nextConversationId, 'connecting')
+        effectConversationId = nextConversationId
         conversationIdRef.current = nextConversationId
         setBootstrapStatus('idle')
         setBootstrapError(null)
-        flushBufferedEvents(nextConversationId, snapshot, bufferedEvents)
         return { conversationId: nextConversationId, snapshot }
       } catch (error) {
-        if (disposed) {
+        if (!isCurrentGeneration()) {
           return null
         }
         const message = toErrorMessage(error)
-        const nextConversationId = conversationIdRef.current
-        if (nextConversationId) {
-          store.setLoading(nextConversationId, false)
-          store.setConnectionStatus(nextConversationId, 'error')
-          store.setError(nextConversationId, message)
+        if (connectionStatus === 'reconnecting') {
+          if (effectConversationId) {
+            store.setLoading(effectConversationId, false)
+            store.setConnectionStatus(effectConversationId, 'reconnecting')
+          }
+          lastReconnectError = message
+          return null
+        }
+        if (effectConversationId) {
+          store.setLoading(effectConversationId, false)
+          store.setConnectionStatus(effectConversationId, 'error')
+          store.setError(effectConversationId, message)
         } else {
           setBootstrapStatus('error')
           setBootstrapError(message)
@@ -148,11 +207,24 @@ export function useExecutionConversation({
       }
     }
 
-    function openStream(snapshot: ConversationSnapshot) {
-      const nextConversationId = conversationIdRef.current
-      if (!nextConversationId || disposed) {
+    function finalizeReconnectExhaustion() {
+      if (!effectConversationId) {
+        setBootstrapStatus('error')
+        setBootstrapError(lastReconnectError)
         return
       }
+      const store = useConversationStore.getState()
+      store.setLoading(effectConversationId, false)
+      store.setConnectionStatus(effectConversationId, 'error')
+      store.setError(effectConversationId, lastReconnectError, 'reconnect_exhausted')
+    }
+
+    function openStream(snapshot: ConversationSnapshot) {
+      const nextConversationId = effectConversationId
+      if (!nextConversationId || !isCurrentGeneration()) {
+        return
+      }
+      clearReconnectTimer()
       closeStream()
       eventSource = new EventSource(
         api.executionConversationEventsUrl(resolvedProjectId, resolvedNodeId, {
@@ -162,14 +234,16 @@ export function useExecutionConversation({
       )
 
       eventSource.onopen = () => {
-        if (disposed) {
+        if (!isCurrentGeneration()) {
           return
         }
+        reconnectAttempts = 0
         useConversationStore.getState().setConnectionStatus(nextConversationId, 'connected')
+        useConversationStore.getState().setError(nextConversationId, null)
       }
 
       eventSource.onmessage = (message) => {
-        if (disposed) {
+        if (!isCurrentGeneration()) {
           return
         }
         try {
@@ -181,6 +255,10 @@ export function useExecutionConversation({
             bufferedEvents.push(event)
             return
           }
+          const current = useConversationStore.getState().conversationsById[nextConversationId]
+          if (!current || !shouldAcceptConversationEvent(current.snapshot, event)) {
+            return
+          }
           useConversationStore.getState().applyEvent(nextConversationId, event)
         } catch {
           return
@@ -188,64 +266,121 @@ export function useExecutionConversation({
       }
 
       eventSource.onerror = () => {
-        if (disposed) {
+        if (!isCurrentGeneration()) {
           return
         }
         closeStream()
-        useConversationStore.getState().setConnectionStatus(nextConversationId, 'reconnecting')
-        void reconnect()
+        scheduleReconnect('Execution conversation stream disconnected.')
       }
     }
 
     async function reconnect() {
-      const refreshed = await hydrateSnapshot('reconnecting')
-      if (!refreshed || disposed) {
+      if (!isCurrentGeneration()) {
         return
       }
+      const refreshed = await hydrateSnapshot('reconnecting')
+      if (!isCurrentGeneration()) {
+        return
+      }
+      if (!refreshed) {
+        scheduleReconnect(lastReconnectError)
+        return
+      }
+      flushBufferedEvents(refreshed.conversationId, bufferedEvents)
       openStream(refreshed.snapshot)
+    }
+
+    function scheduleReconnect(message: string) {
+      if (!isCurrentGeneration()) {
+        return
+      }
+      lastReconnectError = message
+      clearReconnectTimer()
+      if (effectConversationId) {
+        const store = useConversationStore.getState()
+        store.setLoading(effectConversationId, false)
+        store.setConnectionStatus(effectConversationId, 'reconnecting')
+        store.setError(effectConversationId, null)
+      }
+      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        finalizeReconnectExhaustion()
+        return
+      }
+      const delayMs = computeReconnectDelayMs(reconnectAttempts)
+      reconnectAttempts += 1
+      reconnectTimer = globalThis.setTimeout(() => {
+        if (!isCurrentGeneration()) {
+          return
+        }
+        void reconnect()
+      }, delayMs)
     }
 
     void (async () => {
       const initial = await hydrateSnapshot('connecting')
-      if (!initial || disposed) {
+      if (!isCurrentGeneration() || !initial) {
         return
       }
+      flushBufferedEvents(initial.conversationId, bufferedEvents)
       openStream(initial.snapshot)
     })()
 
     return () => {
       disposed = true
-      closeStream()
-      const currentConversationId = conversationIdRef.current
-      if (currentConversationId) {
-        const store = useConversationStore.getState()
-        store.setConnectionStatus(currentConversationId, 'disconnected')
-        store.setLoading(currentConversationId, false)
-        store.setSending(currentConversationId, false)
+      if (generationRef.current === generation) {
+        generationRef.current += 1
       }
+      clearReconnectTimer()
+      closeStream()
+      markConversationDisconnected()
     }
   }, [enabled, nodeId, projectId])
 
   async function send(content: string): Promise<ExecutionConversationSendAcceptedResponse | void> {
     const text = content.trim()
-    if (!text || !projectId || !nodeId) {
+    if (!text || !projectId || !nodeId || !scopeKey) {
       return
     }
     const currentConversationId = conversationIdRef.current
     if (!currentConversationId) {
       throw new Error('Execution conversation is not ready yet.')
     }
+    const currentGeneration = generationRef.current
+    const sendAttemptId = sendAttemptRef.current + 1
+    sendAttemptRef.current = sendAttemptId
     const store = useConversationStore.getState()
     store.setSending(currentConversationId, true)
     store.setError(currentConversationId, null)
     try {
       const response = await api.sendExecutionConversationMessage(projectId, nodeId, text)
-      store.setSending(currentConversationId, false)
-      store.setError(currentConversationId, null)
+      const requestStillCurrent =
+        generationRef.current === currentGeneration &&
+        sendAttemptRef.current === sendAttemptId &&
+        scopeKeyRef.current === scopeKey
+
+      if (requestStillCurrent && conversationIdRef.current === response.conversation_id) {
+        const current = useConversationStore.getState().conversationsById[response.conversation_id]
+        const activeStreamId = current?.snapshot.record.active_stream_id ?? null
+        if (!activeStreamId || activeStreamId === response.stream_id) {
+          store.patchRecord(response.conversation_id, {
+            active_stream_id: response.stream_id,
+            status: 'active',
+          })
+        }
+        store.setSending(response.conversation_id, false)
+        store.setError(response.conversation_id, null)
+      }
       return response
     } catch (error) {
-      store.setSending(currentConversationId, false)
-      store.setError(currentConversationId, toErrorMessage(error))
+      const requestStillCurrent =
+        generationRef.current === currentGeneration &&
+        sendAttemptRef.current === sendAttemptId &&
+        scopeKeyRef.current === scopeKey &&
+        conversationIdRef.current === currentConversationId
+      if (requestStillCurrent) {
+        store.setSending(currentConversationId, false)
+        store.setError(currentConversationId, toErrorMessage(error), 'send')
+      }
       throw error
     }
   }
