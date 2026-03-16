@@ -15,3 +15,7 @@ function readBooleanEnvFlag(value: string | undefined, defaultValue: boolean): b
 export function isExecutionConversationV2Enabled(): boolean {
   return readBooleanEnvFlag(import.meta.env.VITE_EXECUTION_CONVERSATION_V2_ENABLED, false)
 }
+
+export function isAskConversationV2Enabled(): boolean {
+  return readBooleanEnvFlag(import.meta.env.VITE_ASK_CONVERSATION_V2_ENABLED, false)
+}

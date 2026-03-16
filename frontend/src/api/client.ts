@@ -1,5 +1,7 @@
 import type {
   AcceptedAgentOperation,
+  AskConversationResponse,
+  AskConversationSendAcceptedResponse,
   AskSession,
   BootstrapStatus,
   ChatSession,
@@ -311,6 +313,38 @@ export const api = {
   },
   askEventsUrl(projectId: string, nodeId: string): string {
     return `/v1/projects/${projectId}/nodes/${nodeId}/ask/events`
+  },
+  getAskConversation(
+    projectId: string,
+    nodeId: string,
+  ): Promise<AskConversationResponse> {
+    return jsonFetch(`/v2/projects/${projectId}/nodes/${nodeId}/conversations/ask`)
+  },
+  sendAskConversationMessage(
+    projectId: string,
+    nodeId: string,
+    content: string,
+  ): Promise<AskConversationSendAcceptedResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/ask/send`,
+      { method: 'POST' },
+      { content },
+    )
+  },
+  askConversationEventsUrl(
+    projectId: string,
+    nodeId: string,
+    options: {
+      afterEventSeq: number
+      expectedStreamId?: string | null
+    },
+  ): string {
+    const search = new URLSearchParams()
+    search.set('after_event_seq', String(options.afterEventSeq))
+    if (options.expectedStreamId) {
+      search.set('expected_stream_id', options.expectedStreamId)
+    }
+    return `/v2/projects/${projectId}/nodes/${nodeId}/conversations/ask/events?${search.toString()}`
   },
   getExecutionConversation(
     projectId: string,

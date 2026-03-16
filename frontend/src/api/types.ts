@@ -568,3 +568,19 @@ export interface ExecutionConversationSendAcceptedResponse {
 }
 
 export type ExecutionConversationEvent = ConversationEventEnvelope
+
+export interface AskConversationResponse {
+  conversation: ConversationSnapshot
+}
+
+export interface AskConversationSendAcceptedResponse {
+  status: 'accepted'
+  conversation_id: string
+  turn_id: string
+  stream_id: string
+  user_message_id: string
+  assistant_message_id: string
+  assistant_text_part_id: string
+}
+
+export type AskConversationEvent = ConversationEventEnvelope

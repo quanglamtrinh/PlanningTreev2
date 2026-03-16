@@ -7,8 +7,13 @@ import {
   useChatSessionStream,
   usePlanningEventStream,
 } from "../../api/hooks";
-import { isExecutionConversationV2Enabled } from "../../config/featureFlags";
+import {
+  isAskConversationV2Enabled,
+  isExecutionConversationV2Enabled,
+} from "../../config/featureFlags";
+import { useAskConversation } from "../conversation/hooks/useAskConversation";
 import { useExecutionConversation } from "../conversation/hooks/useExecutionConversation";
+import { useAskStore } from "../../stores/ask-store";
 import { useChatStore } from "../../stores/chat-store";
 import { useConversationStore } from "../../stores/conversation-store";
 import { useProjectStore } from "../../stores/project-store";
@@ -137,11 +142,13 @@ export function BreadcrumbWorkspace() {
   const bootstrap = useProjectStore((state) => state.bootstrap);
   const chatSession = useChatStore((state) => state.session);
   const setComposerDraft = useChatStore((state) => state.setComposerDraft);
+  const setAskComposerDraft = useAskStore((state) => state.setComposerDraft);
   const setConversationComposerDraft = useConversationStore(
     (state) => state.setComposerDraft,
   );
   const setActiveSurface = useUIStore((state) => state.setActiveSurface);
   const executionConversationV2Enabled = isExecutionConversationV2Enabled();
+  const askConversationV2Enabled = isAskConversationV2Enabled();
   const appliedComposerSeedTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -196,6 +203,14 @@ export function BreadcrumbWorkspace() {
     projectId && node && activeTab === "execution" ? projectId : null,
     node && activeTab === "execution" ? node.node_id : null,
   );
+  const askConversation = useAskConversation({
+    projectId: projectId ?? null,
+    nodeId: node?.node_id ?? null,
+    enabled:
+      askConversationV2Enabled &&
+      activeTab === "ask" &&
+      Boolean(projectId && node?.node_id),
+  });
   const executionConversation = useExecutionConversation({
     projectId: projectId ?? null,
     nodeId: node?.node_id ?? null,
@@ -243,6 +258,7 @@ export function BreadcrumbWorkspace() {
 
     const shouldSeedExecutionV2 =
       executionConversationV2Enabled && activeTab === "execution";
+    const shouldSeedAskV2 = askConversationV2Enabled && activeTab === "ask";
 
     if (shouldSeedExecutionV2) {
       if (!executionConversation.conversationId) {
@@ -252,6 +268,16 @@ export function BreadcrumbWorkspace() {
         executionConversation.conversationId,
         composerSeed,
       );
+    } else if (shouldSeedAskV2) {
+      if (!askConversation.conversationId) {
+        return;
+      }
+      setConversationComposerDraft(
+        askConversation.conversationId,
+        composerSeed,
+      );
+    } else if (activeTab === "ask") {
+      setAskComposerDraft(composerSeed);
     } else {
       setComposerDraft(composerSeed);
     }
@@ -263,6 +289,8 @@ export function BreadcrumbWorkspace() {
     });
   }, [
     activeTab,
+    askConversation.conversationId,
+    askConversationV2Enabled,
     executionConversation.conversationId,
     executionConversationV2Enabled,
     location.pathname,
@@ -272,6 +300,7 @@ export function BreadcrumbWorkspace() {
     node?.node_id,
     nodeId,
     projectId,
+    setAskComposerDraft,
     setConversationComposerDraft,
     setComposerDraft,
   ]);
@@ -428,6 +457,16 @@ export function BreadcrumbWorkspace() {
         bootstrapStatus: executionConversation.bootstrapStatus,
         bootstrapError: executionConversation.bootstrapError,
         send: executionConversation.send,
+      }
+    : undefined;
+  const visibleAskConversation = askConversationV2Enabled
+    ? {
+        conversationId: askConversation.conversationId,
+        conversation: askConversation.conversation,
+        bootstrapStatus: askConversation.bootstrapStatus,
+        bootstrapError: askConversation.bootstrapError,
+        send: askConversation.send,
+        refresh: askConversation.refresh,
       }
     : undefined;
   let executionStatusText = "Confirm Spec before planning.";
@@ -666,7 +705,11 @@ export function BreadcrumbWorkspace() {
             />
           ) : null}
           {activeTab === "ask" ? (
-            <AskPanel node={node} projectId={projectId} />
+            <AskPanel
+              node={node}
+              projectId={projectId}
+              askConversation={visibleAskConversation}
+            />
           ) : null}
           {activeTab === "briefing" ? (
             <BriefingPanel

@@ -8,6 +8,9 @@ const { apiMock } = vi.hoisted(() => ({
     agentEventsUrl: vi.fn(),
     chatEventsUrl: vi.fn(),
     askEventsUrl: vi.fn(),
+    getAskConversation: vi.fn(),
+    sendAskConversationMessage: vi.fn(),
+    askConversationEventsUrl: vi.fn(),
     getExecutionConversation: vi.fn(),
     sendExecutionConversationMessage: vi.fn(),
     executionConversationEventsUrl: vi.fn(),
@@ -304,6 +307,61 @@ function makeExecutionConversationSnapshotWithMessage(
   }
 }
 
+function makeAskConversationSnapshotWithMessage(
+  text: string,
+  overrides: {
+    conversationId?: string
+    nodeId?: string
+    eventSeq?: number
+  } = {},
+) {
+  const conversationId = overrides.conversationId ?? 'conv_ask_1'
+  const nodeId = overrides.nodeId ?? 'root'
+  const eventSeq = overrides.eventSeq ?? 3
+  return {
+    record: {
+      conversation_id: conversationId,
+      project_id: 'project-1',
+      node_id: nodeId,
+      thread_type: 'ask' as const,
+      app_server_thread_id: null,
+      current_runtime_mode: 'ask' as const,
+      status: 'completed' as const,
+      active_stream_id: null,
+      event_seq: eventSeq,
+      created_at: '2026-03-15T00:00:00Z',
+      updated_at: '2026-03-15T00:00:01Z',
+    },
+    messages: [
+      {
+        message_id: 'ask_msg_1',
+        conversation_id: conversationId,
+        turn_id: 'turn_1',
+        role: 'assistant' as const,
+        runtime_mode: 'ask' as const,
+        status: 'completed' as const,
+        created_at: '2026-03-15T00:00:01Z',
+        updated_at: '2026-03-15T00:00:01Z',
+        lineage: {},
+        usage: null,
+        error: null,
+        parts: [
+          {
+            part_id: 'ask_part_1',
+            part_type: 'assistant_text' as const,
+            status: 'completed' as const,
+            order: 0,
+            item_key: null,
+            created_at: '2026-03-15T00:00:01Z',
+            updated_at: '2026-03-15T00:00:01Z',
+            payload: { text },
+          },
+        ],
+      },
+    ],
+  }
+}
+
 function createDeferredPromise<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason?: unknown) => void
@@ -341,6 +399,36 @@ describe('BreadcrumbWorkspace', () => {
     apiMock.agentEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/agent/events')
     apiMock.chatEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/chat/events')
     apiMock.askEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/ask/events')
+    apiMock.getAskConversation.mockResolvedValue({
+      conversation: {
+        record: {
+          conversation_id: 'conv_ask_1',
+          project_id: 'project-1',
+          node_id: 'root',
+          thread_type: 'ask',
+          app_server_thread_id: null,
+          current_runtime_mode: 'ask',
+          status: 'idle',
+          active_stream_id: null,
+          event_seq: 0,
+          created_at: '2026-03-15T00:00:00Z',
+          updated_at: '2026-03-15T00:00:00Z',
+        },
+        messages: [],
+      },
+    })
+    apiMock.sendAskConversationMessage.mockResolvedValue({
+      status: 'accepted',
+      conversation_id: 'conv_ask_1',
+      turn_id: 'turn_1',
+      stream_id: 'ask_stream:turn_1',
+      user_message_id: 'msg_user',
+      assistant_message_id: 'msg_assistant',
+      assistant_text_part_id: 'ask_part:msg_assistant:assistant_text',
+    })
+    apiMock.askConversationEventsUrl.mockReturnValue(
+      '/v2/projects/project-1/nodes/root/conversations/ask/events?after_event_seq=0',
+    )
     apiMock.getExecutionConversation.mockResolvedValue({
       conversation: makeExecutionConversationSnapshot(),
     })
@@ -639,6 +727,157 @@ describe('BreadcrumbWorkspace', () => {
 
     expect(await screen.findByText("Ask a question about this node's plan")).toBeInTheDocument()
     expect(loadAskSession).toHaveBeenCalledWith('project-1', 'root')
+  })
+
+  it('uses ask v2 as the visible transcript source when the ask host flag is on', async () => {
+    vi.stubEnv('VITE_ASK_CONVERSATION_V2_ENABLED', 'true')
+    const loadAskSession = vi.fn(async () => {
+      useAskStore.setState({
+        session: {
+          project_id: 'project-1',
+          node_id: 'root',
+          active_turn_id: null,
+          event_seq: 2,
+          status: 'idle',
+          messages: [
+            {
+              message_id: 'legacy_ask_msg',
+              role: 'assistant',
+              content: 'Legacy ask transcript',
+              status: 'completed',
+              created_at: '2026-03-15T00:00:00Z',
+              updated_at: '2026-03-15T00:00:00Z',
+              error: null,
+            },
+          ],
+          delta_context_packets: [],
+        },
+      })
+    })
+    apiMock.getAskConversation.mockResolvedValue({
+      conversation: makeAskConversationSnapshotWithMessage('Ask v2 transcript'),
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'root',
+      snapshot,
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+    useAskStore.setState({
+      ...useAskStore.getInitialState(),
+      loadSession: loadAskSession,
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/root/chat',
+            state: { activeTab: 'ask' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Ask v2 transcript')).toBeInTheDocument()
+    expect(screen.queryByText('Legacy ask transcript')).not.toBeInTheDocument()
+    expect(apiMock.getAskConversation).toHaveBeenCalledWith('project-1', 'root')
+    expect(loadAskSession).toHaveBeenCalledWith('project-1', 'root')
+  })
+
+  it('keeps ask v2 loading visible without falling back to the legacy ask transcript', async () => {
+    vi.stubEnv('VITE_ASK_CONVERSATION_V2_ENABLED', 'true')
+    const deferredConversation = createDeferredPromise<{
+      conversation: ReturnType<typeof makeAskConversationSnapshotWithMessage>
+    }>()
+    const loadAskSession = vi.fn(async () => {
+      useAskStore.setState({
+        session: {
+          project_id: 'project-1',
+          node_id: 'root',
+          active_turn_id: null,
+          event_seq: 2,
+          status: 'idle',
+          messages: [
+            {
+              message_id: 'legacy_ask_msg',
+              role: 'assistant',
+              content: 'Legacy ask transcript',
+              status: 'completed',
+              created_at: '2026-03-15T00:00:00Z',
+              updated_at: '2026-03-15T00:00:00Z',
+              error: null,
+            },
+          ],
+          delta_context_packets: [],
+        },
+      })
+    })
+    apiMock.getAskConversation.mockImplementation(() => deferredConversation.promise)
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'root',
+      snapshot,
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+    useAskStore.setState({
+      ...useAskStore.getInitialState(),
+      loadSession: loadAskSession,
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/root/chat',
+            state: { activeTab: 'ask' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Loading conversation...')).toBeInTheDocument()
+    expect(screen.queryByText('Legacy ask transcript')).not.toBeInTheDocument()
+
+    deferredConversation.resolve({
+      conversation: makeAskConversationSnapshotWithMessage('Ask v2 transcript'),
+    })
+
+    expect(await screen.findByText('Ask v2 transcript')).toBeInTheDocument()
   })
 
   it('loads node documents when the task tab is opened', async () => {

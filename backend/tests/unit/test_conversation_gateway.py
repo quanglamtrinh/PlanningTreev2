@@ -70,6 +70,19 @@ class FakeConversationClient:
         return None
 
 
+class StubAskService:
+    def __init__(self, session_state: dict[str, object]) -> None:
+        self._session_state = session_state
+
+    def get_session_state(self, project_id: str, node_id: str) -> dict[str, object]:
+        assert self._session_state["project_id"] == project_id
+        assert self._session_state["node_id"] == node_id
+        return self._session_state
+
+    def create_message(self, project_id: str, node_id: str, content: object) -> dict[str, object]:
+        raise NotImplementedError
+
+
 def create_project(project_service: ProjectService, workspace_root: str) -> tuple[str, str]:
     project_service.set_workspace_root(workspace_root)
     snapshot = project_service.create_project("Alpha", "Ship phase 4")
@@ -89,6 +102,7 @@ def build_gateway(
     storage: Storage,
     tree_service: TreeService,
     fake_client: FakeConversationClient,
+    ask_service=None,
 ) -> tuple[ConversationGateway, ConversationEventBroker, CodexSessionManager]:
     session_manager = CodexSessionManager(client_factory=lambda _workspace_root: fake_client)
     broker = ConversationEventBroker()
@@ -98,6 +112,7 @@ def build_gateway(
         session_manager,
         broker,
         ConversationContextBuilder(storage),
+        ask_service,
     )
     return gateway, broker, session_manager
 
@@ -202,6 +217,131 @@ def test_get_execution_conversation_creates_one_canonical_snapshot_per_scope(
     assert first["record"]["event_seq"] == 0
     assert first["record"]["active_stream_id"] is None
     assert first["messages"] == []
+
+    gateway.flush_and_stop()
+
+
+def test_get_ask_conversation_normalizes_legacy_ask_state_into_v2_snapshot(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    ask_service = StubAskService(
+        {
+            "project_id": project_id,
+            "node_id": node_id,
+            "conversation_id": "convask_1",
+            "thread_id": "ask_1",
+            "forked_from_planning_thread_id": "planning_1",
+            "created_at": "2026-03-15T00:00:00Z",
+            "active_turn_id": None,
+            "event_seq": 4,
+            "status": "idle",
+            "delta_context_packets": [],
+            "messages": [
+                {
+                    "message_id": "msg_user_1",
+                    "role": "user",
+                    "turn_id": "turn_1",
+                    "content": "What changed?",
+                    "status": "completed",
+                    "created_at": "2026-03-15T00:00:01Z",
+                    "updated_at": "2026-03-15T00:00:01Z",
+                    "error": None,
+                },
+                {
+                    "message_id": "msg_assistant_1",
+                    "role": "assistant",
+                    "turn_id": "turn_1",
+                    "content": "We tightened the ask host.",
+                    "status": "completed",
+                    "created_at": "2026-03-15T00:00:02Z",
+                    "updated_at": "2026-03-15T00:00:03Z",
+                    "error": None,
+                },
+            ],
+        }
+    )
+    gateway, _, _ = build_gateway(storage, tree_service, FakeConversationClient(), ask_service=ask_service)
+
+    conversation = gateway.get_ask_conversation(project_id, node_id)
+
+    assert conversation["record"]["conversation_id"] == "convask_1"
+    assert conversation["record"]["thread_type"] == "ask"
+    assert conversation["record"]["current_runtime_mode"] == "ask"
+    assert conversation["record"]["status"] == "completed"
+    assert conversation["record"]["active_stream_id"] is None
+    assert conversation["record"]["event_seq"] == 12
+    assert conversation["record"]["app_server_thread_id"] == "ask_1"
+    assert [message["role"] for message in conversation["messages"]] == ["user", "assistant"]
+    assert conversation["messages"][1]["parts"][0]["part_type"] == "assistant_text"
+    assert conversation["messages"][1]["parts"][0]["payload"]["text"] == "We tightened the ask host."
+
+    gateway.flush_and_stop()
+
+
+def test_translate_ask_event_expands_legacy_ask_events_into_normalized_conversation_events(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    gateway, _, _ = build_gateway(storage, tree_service, FakeConversationClient())
+
+    created_events = gateway.translate_ask_event(
+        {
+            "type": "ask_message_created",
+            "event_seq": 1,
+            "conversation_id": "convask_1",
+            "turn_id": "turn_1",
+            "stream_id": "ask_stream:turn_1",
+            "active_turn_id": "turn_1",
+            "user_message": {
+                "message_id": "msg_user_1",
+                "role": "user",
+                "turn_id": "turn_1",
+                "content": "hello",
+                "status": "completed",
+                "created_at": "2026-03-15T00:00:01Z",
+                "updated_at": "2026-03-15T00:00:01Z",
+                "error": None,
+            },
+            "assistant_message": {
+                "message_id": "msg_assistant_1",
+                "role": "assistant",
+                "turn_id": "turn_1",
+                "content": "",
+                "status": "pending",
+                "created_at": "2026-03-15T00:00:01Z",
+                "updated_at": "2026-03-15T00:00:01Z",
+                "error": None,
+            },
+        }
+    )
+    completed_events = gateway.translate_ask_event(
+        {
+            "type": "ask_assistant_completed",
+            "event_seq": 3,
+            "conversation_id": "convask_1",
+            "turn_id": "turn_1",
+            "stream_id": "ask_stream:turn_1",
+            "message_id": "msg_assistant_1",
+            "content": "hello world",
+            "updated_at": "2026-03-15T00:00:03Z",
+        }
+    )
+
+    assert [event["event_type"] for event in created_events] == ["message_created", "message_created"]
+    assert [event["event_seq"] for event in created_events] == [1, 2]
+    assert created_events[0]["payload"]["message"]["role"] == "user"
+    assert created_events[1]["payload"]["message"]["role"] == "assistant"
+    assert [event["event_type"] for event in completed_events] == ["assistant_text_final", "completion_status"]
+    assert [event["event_seq"] for event in completed_events] == [8, 9]
+    assert completed_events[0]["payload"]["text"] == "hello world"
+    assert completed_events[1]["payload"]["status"] == "completed"
 
     gateway.flush_and_stop()
 

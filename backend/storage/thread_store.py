@@ -38,6 +38,7 @@ def _default_execution_state() -> dict[str, Any]:
 
 def _default_ask_state() -> dict[str, Any]:
     return {
+        "conversation_id": None,
         "thread_id": None,
         "forked_from_planning_thread_id": None,
         "status": None,

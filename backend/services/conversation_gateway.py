@@ -22,6 +22,7 @@ from backend.errors.app_errors import (
     NodeNotFound,
     NodeUpdateNotAllowed,
 )
+from backend.services.ask_service import AskService, make_ask_assistant_text_part_id, make_ask_stream_id
 from backend.services.codex_session_manager import CodexSessionManager, ProjectCodexSession, RuntimeThreadState
 from backend.services.conversation_context_builder import ConversationContextBuilder
 from backend.storage.file_utils import iso_now, new_id
@@ -54,12 +55,14 @@ class ConversationGateway:
         session_manager: CodexSessionManager,
         event_broker: ConversationEventBroker,
         context_builder: ConversationContextBuilder,
+        ask_service: AskService | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
         self._session_manager = session_manager
         self._event_broker = event_broker
         self._context_builder = context_builder
+        self._ask_service = ask_service
         self._live_state: dict[tuple[str, str], _LiveConversationState] = {}
         self._live_state_lock = threading.Lock()
         self._persistence_queue: queue.Queue[_PersistenceTask | object] = queue.Queue()
@@ -101,6 +104,167 @@ class ConversationGateway:
                 raise ConversationStreamMismatch()
         return conversation_id
 
+    def get_ask_conversation(self, project_id: str, node_id: str) -> ConversationSnapshot:
+        ask_service = self._require_ask_service()
+        session = ask_service.get_session_state(project_id, node_id)
+        return self._build_ask_conversation_snapshot(session)
+
+    def prepare_ask_event_stream(
+        self,
+        project_id: str,
+        node_id: str,
+        *,
+        expected_stream_id: str | None,
+    ) -> str:
+        snapshot = self.get_ask_conversation(project_id, node_id)
+        conversation_id = str(snapshot["record"]["conversation_id"])
+        expected = str(expected_stream_id or "").strip() or None
+        if expected is None:
+            return conversation_id
+        active_stream_id = snapshot["record"]["active_stream_id"]
+        if active_stream_id is not None and active_stream_id != expected:
+            raise ConversationStreamMismatch()
+        return conversation_id
+
+    def send_ask_message(self, project_id: str, node_id: str, content: Any) -> dict[str, Any]:
+        ask_service = self._require_ask_service()
+        response = ask_service.create_message(project_id, node_id, content)
+        return {
+            "status": str(response.get("status") or "accepted"),
+            "conversation_id": str(response["conversation_id"]),
+            "turn_id": str(response["turn_id"]),
+            "stream_id": str(response["stream_id"]),
+            "user_message_id": str(response["user_message_id"]),
+            "assistant_message_id": str(response["assistant_message_id"]),
+            "assistant_text_part_id": str(response["assistant_text_part_id"]),
+        }
+
+    def translate_ask_event(
+        self,
+        event: dict[str, Any],
+    ) -> list[ConversationEventEnvelope]:
+        event_type = str(event.get("type") or "").strip()
+        if event_type not in {
+            "ask_message_created",
+            "ask_assistant_delta",
+            "ask_assistant_completed",
+            "ask_assistant_error",
+        }:
+            return []
+
+        conversation_id = str(event.get("conversation_id") or "").strip()
+        turn_id = str(event.get("turn_id") or event.get("active_turn_id") or "").strip()
+        stream_id = str(event.get("stream_id") or "").strip() or (make_ask_stream_id(turn_id) if turn_id else "")
+        if not conversation_id or not turn_id or not stream_id:
+            return []
+
+        try:
+            raw_event_seq = max(0, int(event.get("event_seq", 0) or 0))
+        except (TypeError, ValueError):
+            raw_event_seq = 0
+        base_event_seq = raw_event_seq * 3
+        created_at = iso_now()
+
+        if event_type == "ask_message_created":
+            user_message = event.get("user_message")
+            assistant_message = event.get("assistant_message")
+            if not isinstance(user_message, dict) or not isinstance(assistant_message, dict):
+                return []
+            return [
+                self._build_message_created_event(
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    event_seq=max(1, base_event_seq - 2),
+                    created_at=str(user_message.get("created_at") or created_at),
+                    message=self._normalize_ask_message_to_conversation_message(
+                        message=user_message,
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                    ),
+                ),
+                self._build_message_created_event(
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    event_seq=max(1, base_event_seq - 1),
+                    created_at=str(assistant_message.get("created_at") or created_at),
+                    message=self._normalize_ask_message_to_conversation_message(
+                        message=assistant_message,
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                    ),
+                ),
+            ]
+
+        assistant_message_id = str(event.get("message_id") or "").strip()
+        if not assistant_message_id:
+            return []
+        assistant_part_id = make_ask_assistant_text_part_id(assistant_message_id)
+        updated_at = str(event.get("updated_at") or created_at)
+
+        if event_type == "ask_assistant_delta":
+            return [
+                self._build_assistant_text_event(
+                    event_type="assistant_text_delta",
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    message_id=assistant_message_id,
+                    part_id=assistant_part_id,
+                    event_seq=max(1, base_event_seq),
+                    created_at=updated_at,
+                    payload={
+                        "part_id": assistant_part_id,
+                        "delta": str(event.get("delta") or ""),
+                        "status": "streaming",
+                    },
+                )
+            ]
+
+        if event_type == "ask_assistant_completed":
+            final_text = str(event.get("content") or "")
+            return [
+                self._build_assistant_text_event(
+                    event_type="assistant_text_final",
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    message_id=assistant_message_id,
+                    part_id=assistant_part_id,
+                    event_seq=max(1, base_event_seq - 1),
+                    created_at=updated_at,
+                    payload={
+                        "part_id": assistant_part_id,
+                        "text": final_text,
+                        "status": "completed",
+                    },
+                ),
+                self._build_completion_status_event(
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    message_id=assistant_message_id,
+                    event_seq=max(1, base_event_seq),
+                    created_at=updated_at,
+                    status="completed",
+                    error=None,
+                ),
+            ]
+
+        return [
+            self._build_completion_status_event(
+                conversation_id=conversation_id,
+                stream_id=stream_id,
+                turn_id=turn_id,
+                message_id=assistant_message_id,
+                event_seq=max(1, base_event_seq),
+                created_at=updated_at,
+                status="error",
+                error=str(event.get("error") or "Ask conversation failed."),
+            )
+        ]
+
     def flush_persistence(self) -> None:
         self._persistence_queue.join()
 
@@ -131,6 +295,163 @@ class ConversationGateway:
         if not workspace_root:
             raise ValueError("project workspace_root is required for conversation gateway")
         return project_snapshot, node, state, workspace_root
+
+    def _require_ask_service(self) -> AskService:
+        if self._ask_service is None:
+            raise ValueError("ask conversation support is not configured")
+        return self._ask_service
+
+    def _build_ask_conversation_snapshot(
+        self,
+        session: dict[str, Any],
+    ) -> ConversationSnapshot:
+        created_at = str(session.get("created_at") or iso_now())
+        messages = self._normalize_ask_messages_to_conversation_messages(session)
+        latest_assistant_message = next(
+            (message for message in reversed(messages) if message["role"] == "assistant"),
+            None,
+        )
+        record_status = "idle"
+        if session.get("active_turn_id"):
+            record_status = "active"
+        elif latest_assistant_message is not None and latest_assistant_message["status"] == "error":
+            record_status = "error"
+        elif messages:
+            record_status = "completed"
+
+        try:
+            raw_event_seq = max(0, int(session.get("event_seq", 0) or 0))
+        except (TypeError, ValueError):
+            raw_event_seq = 0
+        normalized_event_seq = raw_event_seq * 3
+
+        return {
+            "record": {
+                "conversation_id": str(session["conversation_id"]),
+                "project_id": str(session["project_id"]),
+                "node_id": str(session["node_id"]),
+                "thread_type": "ask",
+                "app_server_thread_id": str(session.get("thread_id") or "").strip() or None,
+                "current_runtime_mode": "ask",
+                "status": record_status,
+                "active_stream_id": (
+                    make_ask_stream_id(str(session["active_turn_id"]))
+                    if session.get("active_turn_id")
+                    else None
+                ),
+                "event_seq": normalized_event_seq,
+                "created_at": created_at,
+                "updated_at": self._ask_snapshot_updated_at(created_at, messages),
+            },
+            "messages": messages,
+        }
+
+    def _normalize_ask_messages_to_conversation_messages(
+        self,
+        session: dict[str, Any],
+    ) -> list[ConversationMessage]:
+        normalized_messages: list[ConversationMessage] = []
+        latest_user_turn_id: str | None = None
+        total_messages = len(session.get("messages", []))
+
+        for index, message in enumerate(session.get("messages", [])):
+            if not isinstance(message, dict):
+                continue
+            explicit_turn_id = str(message.get("turn_id") or "").strip() or None
+            role = "assistant" if str(message.get("role") or "") == "assistant" else "user"
+
+            if explicit_turn_id:
+                turn_id = explicit_turn_id
+            elif role == "user":
+                next_message = session["messages"][index + 1] if index + 1 < total_messages else None
+                if (
+                    session.get("active_turn_id")
+                    and isinstance(next_message, dict)
+                    and str(next_message.get("role") or "") == "assistant"
+                    and index == total_messages - 2
+                ):
+                    turn_id = str(session["active_turn_id"])
+                else:
+                    turn_id = f"legacy_ask_turn:{message.get('message_id')}"
+            elif latest_user_turn_id:
+                turn_id = latest_user_turn_id
+            elif session.get("active_turn_id") and index == total_messages - 1:
+                turn_id = str(session["active_turn_id"])
+            else:
+                turn_id = f"legacy_ask_turn:{message.get('message_id')}"
+
+            if role == "user":
+                latest_user_turn_id = turn_id
+            elif not session.get("active_turn_id"):
+                latest_user_turn_id = None
+
+            normalized_messages.append(
+                self._normalize_ask_message_to_conversation_message(
+                    message=message,
+                    conversation_id=str(session["conversation_id"]),
+                    turn_id=turn_id,
+                )
+            )
+
+        return normalized_messages
+
+    def _normalize_ask_message_to_conversation_message(
+        self,
+        *,
+        message: dict[str, Any],
+        conversation_id: str,
+        turn_id: str,
+    ) -> ConversationMessage:
+        role = "assistant" if str(message.get("role") or "") == "assistant" else "user"
+        message_id = str(message.get("message_id") or new_id("msg"))
+        created_at = str(message.get("created_at") or iso_now())
+        updated_at = str(message.get("updated_at") or created_at)
+        status = self._normalize_ask_message_status(message.get("status"))
+        content = str(message.get("content") or "")
+        part_type = "assistant_text" if role == "assistant" else "user_text"
+        part_id = (
+            make_ask_assistant_text_part_id(message_id)
+            if role == "assistant"
+            else f"ask_part:{message_id}:user_text"
+        )
+        conversation_message = make_conversation_message(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            role=role,
+            runtime_mode="ask",
+            message_id=message_id,
+            status=status,
+            error=str(message.get("error") or "").strip() or None,
+            parts=[
+                make_conversation_part(
+                    part_type=part_type,
+                    order=0,
+                    status=status,
+                    part_id=part_id,
+                    payload={"text": content},
+                )
+            ],
+        )
+        conversation_message["created_at"] = created_at
+        conversation_message["updated_at"] = updated_at
+        conversation_message["parts"][0]["created_at"] = created_at
+        conversation_message["parts"][0]["updated_at"] = updated_at
+        return conversation_message
+
+    def _normalize_ask_message_status(self, raw_status: Any) -> str:
+        status = str(raw_status or "").strip().lower()
+        if status in {"pending", "streaming", "completed", "error"}:
+            return status
+        return "completed"
+
+    def _ask_snapshot_updated_at(
+        self,
+        fallback_created_at: str,
+        messages: list[ConversationMessage],
+    ) -> str:
+        if not messages:
+            return fallback_created_at
+        return str(messages[-1].get("updated_at") or fallback_created_at)
 
     def _enrich_snapshot(self, project_id: str, snapshot: ConversationSnapshot) -> ConversationSnapshot:
         enriched = copy.deepcopy(snapshot)

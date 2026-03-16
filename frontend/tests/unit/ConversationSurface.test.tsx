@@ -382,4 +382,17 @@ describe('ConversationSurface', () => {
     expect(screen.getByText('to send')).toBeInTheDocument()
     expect(onComposerKeyDown).toHaveBeenCalled()
   })
+
+  it('can hide the shared surface header when the host provides its own framing', () => {
+    renderSurface(
+      { messages: [] },
+      {
+        showHeader: false,
+        contextLabel: '1 / Ask Node',
+      },
+    )
+
+    expect(screen.queryByText('1 / Ask Node')).not.toBeInTheDocument()
+    expect(screen.queryByText('connected')).not.toBeInTheDocument()
+  })
 })

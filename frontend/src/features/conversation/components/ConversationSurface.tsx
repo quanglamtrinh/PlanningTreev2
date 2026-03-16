@@ -19,6 +19,7 @@ type Props = {
   contextLabel?: string
   emptyTitle: string
   emptyHint: ReactNode
+  showHeader?: boolean
   showComposer?: boolean
   composerValue?: string
   composerDisabled?: boolean
@@ -61,6 +62,7 @@ export function ConversationSurface({
   contextLabel,
   emptyTitle,
   emptyHint,
+  showHeader = true,
   showComposer = false,
   composerValue = '',
   composerDisabled = false,
@@ -78,13 +80,15 @@ export function ConversationSurface({
 
   return (
     <div className={styles.surface}>
-      <div className={styles.header}>
-        <div className={styles.connectionWrap}>
-          <span className={`${styles.connectionDot} ${styles[connectionState]}`} aria-hidden="true" />
-          <span className={styles.connectionLabel}>{connectionState}</span>
+      {showHeader ? (
+        <div className={styles.header}>
+          <div className={styles.connectionWrap}>
+            <span className={`${styles.connectionDot} ${styles[connectionState]}`} aria-hidden="true" />
+            <span className={styles.connectionLabel}>{connectionState}</span>
+          </div>
+          {contextLabel ? <span className={styles.contextLabel}>{contextLabel}</span> : null}
         </div>
-        {contextLabel ? <span className={styles.contextLabel}>{contextLabel}</span> : null}
-      </div>
+      ) : null}
 
       {errorMessage ? (
         <div className={styles.errorBanner} role="alert">

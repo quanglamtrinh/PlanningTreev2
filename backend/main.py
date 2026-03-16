@@ -105,6 +105,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         codex_session_manager,
         conversation_event_broker,
         conversation_context_builder,
+        ask_service,
     )
 
     @asynccontextmanager
