@@ -1021,6 +1021,9 @@ describe('BreadcrumbWorkspace', () => {
     expect(await screen.findByRole('button', { name: 'Plan' })).toBeInTheDocument()
     expect(apiMock.getExecutionConversation).not.toHaveBeenCalled()
     expect(apiMock.executionConversationEventsUrl).not.toHaveBeenCalled()
+    expect(
+      screen.getByPlaceholderText('Planner input is handled through the native modal when needed.'),
+    ).toBeInTheDocument()
   })
 
   it('shows the visible execution transcript from v2 when the cutover flag is enabled', async () => {

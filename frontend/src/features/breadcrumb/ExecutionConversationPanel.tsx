@@ -85,12 +85,11 @@ export function ExecutionConversationPanel({
 
   const connectionState = mapConnectionState(bootstrapStatus, conversation)
   const hasConversation = conversation !== null && conversationId !== null
-  const isLoading =
-    !hasConversation ||
-    bootstrapStatus === 'loading_snapshot' ||
-    conversation?.isLoading === true ||
-    conversation?.connectionStatus === 'loading_snapshot' ||
-    conversation?.connectionStatus === 'connecting'
+  const isLoading = hasConversation
+    ? conversation.isLoading === true ||
+      conversation.connectionStatus === 'loading_snapshot' ||
+      conversation.connectionStatus === 'connecting'
+    : bootstrapStatus !== 'error'
   const errorMessage = !hasConversation ? bootstrapError : conversation.error
   const composerDisabled =
     !composerEnabled ||

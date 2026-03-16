@@ -283,6 +283,7 @@ describe('ChatPanel', () => {
     )
 
     expect(screen.getByRole('alert')).toHaveTextContent('v2 bootstrap failed')
+    expect(screen.queryByText('Loading conversation...')).not.toBeInTheDocument()
     expect(screen.queryByText('Legacy execution transcript')).not.toBeInTheDocument()
   })
 

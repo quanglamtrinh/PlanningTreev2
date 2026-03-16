@@ -396,13 +396,17 @@ export function BreadcrumbWorkspace() {
   const canMessageExecution =
     node.phase === "executing" &&
     executionState?.run_status === "executing";
-  const executionComposerPlaceholder = pendingInputRequest
-    ? "Planner input is handled through the native modal when needed."
-    : canMessageExecution
-      ? `Message ${node.title}...`
-      : executionState?.plan_status === "ready"
-        ? "Click Execute to start the execution conversation."
-        : "Click Plan to prepare execution.";
+  const legacyExecutionComposerPlaceholder =
+    "Planner input is handled through the native modal when needed.";
+  const executionComposerPlaceholder = executionConversationV2Enabled
+    ? pendingInputRequest
+      ? legacyExecutionComposerPlaceholder
+      : canMessageExecution
+        ? `Message ${node.title}...`
+        : executionState?.plan_status === "ready"
+          ? "Click Execute to start the execution conversation."
+          : "Click Plan to prepare execution."
+    : legacyExecutionComposerPlaceholder;
   const executionEmptyTitle = executionConversationV2Enabled
     ? "Execution Conversation"
     : "Plan Session";
