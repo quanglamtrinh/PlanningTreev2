@@ -85,3 +85,11 @@
 - Verification:
   - `npm run test:unit -- conversation-store.test.ts execution-conversation-stream.test.tsx BreadcrumbWorkspace.test.tsx`
   - `npm run build`
+- Phase 3.2 implementation:
+  - added a new shared `ConversationSurface` under `features/conversation/components` without changing the visible execution host
+  - added a pure `buildConversationRenderModel()` helper so normalized conversation snapshots are flattened before they reach the presentational layer
+  - locked deterministic text-first rendering for supported `user_text` and `assistant_text`, streaming typing state, non-fatal surface and message error treatment, and deterministic unsupported-part fallback
+  - kept `ChatPanel` and `BreadcrumbWorkspace` untouched so no visible execution cutover happened in this phase
+- Verification:
+  - `npm run test:unit -- ConversationSurface.test.tsx`
+  - `npm run build`

@@ -194,3 +194,23 @@
   - none
 - Next Step:
   - begin `Phase 3.2 - Shared Conversation Surface Presentation` without switching ask or planning into scope
+
+## 2026-03-15T17:08:16.8832225-07:00
+- Phase: 3
+- Batch ID: P3.2
+- Summary:
+  - added a new shared `ConversationSurface` under `frontend/src/features/conversation/components/` as a host-agnostic presentational layer without rewiring the visible execution host
+  - added a pure `buildConversationRenderModel()` helper so normalized conversation snapshots are flattened into a deterministic text-first render model before reaching the surface
+  - locked the Phase 3.2 render contract for supported `user_text` and `assistant_text`, streaming typing state, message-level error treatment, deterministic unsupported-part fallback, and optional composer rendering
+  - kept `ChatPanel` as the visible execution host and left `BreadcrumbWorkspace` and execution-v2 host integration untouched for the later Phase 3.3 cutover
+- Files Changed:
+  - `frontend/src/features/conversation/model/buildConversationRenderModel.ts`
+  - `frontend/src/features/conversation/components/ConversationSurface.tsx`
+  - `frontend/src/features/conversation/components/ConversationSurface.module.css`
+  - `frontend/tests/unit/ConversationSurface.test.tsx`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PROGRESS_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/CHANGELOG.md`
+- Blockers:
+  - none
+- Next Step:
+  - begin `Phase 3.3 - Execution Tab Visible Cutover` using the new shared surface without pulling ask or planning into scope
