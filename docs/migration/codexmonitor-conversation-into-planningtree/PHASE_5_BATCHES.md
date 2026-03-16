@@ -197,12 +197,13 @@
 - Title: Execution live path and resolve adapters
 - Status: Complete
 - Objective:
-  - implement execution-native request lifecycle streaming, persistence, and resolution
+  - implement execution-native request lifecycle streaming, persistence, resolution, and duplicate-publish hardening
 - Exact scope:
   - `on_request_user_input`
   - `on_request_resolved`
   - request-response persistence
   - idempotent resolve route
+  - duplicate terminal-publish suppression for local resolve plus native callback overlap
 - Files or modules likely affected:
   - `backend/ai/codex_client.py`
   - `backend/routes/conversation.py`
@@ -213,18 +214,22 @@
 - Implementation notes:
   - request-created and request-resolved writes are high-value flush events
   - guarded refresh is recovery only
+  - route-driven execution resolution is the authoritative terminal publish path for locally initiated user-input resolution
 - Risks:
   - request-resolution events racing behind completion
+  - native callback double-publish after local resolve
 - Done criteria:
-  - execution runtime-input lifecycle is stable on the v2 path and covered by tests
+  - execution runtime-input lifecycle is stable on the v2 path, suppresses duplicate terminal publish, and is covered by tests
 
 ## P5.2.e
 - Title: Planning convergence and closeout
-- Status: In progress
+- Status: Complete
 - Objective:
-  - converge planning interactive semantics only where a clean normalized source exists and keep repo boundaries explicit
+  - converge planning interactive semantics onto the shared v2 request contract where a clean normalized source exists and keep repo boundaries explicit
 - Exact scope:
   - planner request-state normalization
+  - planning v2 resolve route
+  - planning host request ownership from v2 state
   - docs for runtime-blocked approval parity
   - ask/planning boundary validation
 - Files or modules likely affected:
@@ -235,11 +240,13 @@
   - `P5.2.c`
   - `P5.2.d`
 - Implementation notes:
-  - do not imply ask or planning convergence where the repo does not yet have a clean source
+  - planning follows the same latest-unresolved active request policy as execution
+  - do not imply ask convergence where the repo does not yet have a clean source
 - Risks:
   - wrapper-owned shadow interactive state
+  - orphan planning resolve events fabricating active request UI
 - Done criteria:
-  - planning/ask Phase 5.2 claims are limited to real normalized sources
+  - planning runtime-input lifecycle is normalized onto the shared v2 contract, planning host request ownership derives from v2 state, and ask claims remain limited to real normalized sources
 
 ## Phase 5.3 - Lineage-Aware Actions And Command Semantics
 

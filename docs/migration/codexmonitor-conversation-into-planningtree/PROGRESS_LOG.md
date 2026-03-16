@@ -1,5 +1,40 @@
 # Progress Log
 
+## 2026-03-16T18:55:00-07:00
+- Phase: 5
+- Batch ID: P5.2-closeout
+- Summary:
+  - hardened execution request resolution so locally initiated runtime-input resolve remains the authoritative terminal publish path and native `on_request_resolved` callbacks no longer double-publish `request_resolved` or `user_input_resolved`
+  - converged planning runtime-input lifecycle semantics on the shared conversation-v2 contract through planning snapshot normalization, planning lifecycle event translation, deterministic planning request identities, and a planning v2 resolve route
+  - updated the Phase 5 tracking docs so `5.2` is complete for execution + planning runtime-input semantics, while `approval_request` stays explicitly runtime-blocked and the remaining interactive-source gap is narrowed to ask only
+- Files Changed:
+  - `backend/main.py`
+  - `backend/routes/conversation.py`
+  - `backend/services/chat_service.py`
+  - `backend/services/conversation_gateway.py`
+  - `backend/tests/unit/test_conversation_gateway.py`
+  - `backend/tests/integration/test_conversation_gateway_api.py`
+  - `frontend/src/api/client.ts`
+  - `frontend/src/api/types.ts`
+  - `frontend/src/features/conversation/hooks/useConversationRequests.ts`
+  - `frontend/src/features/breadcrumb/BreadcrumbWorkspace.tsx`
+  - `frontend/tests/unit/BreadcrumbWorkspace.test.tsx`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_PLAN.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_PROGRESS.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_BATCHES.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_VALIDATION.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_OPEN_ISSUES.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_CHANGELOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_PLAN.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PROGRESS_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/OPEN_ISSUES.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/CHANGELOG.md`
+- Blockers:
+  - approval live parity remains runtime-blocked while `approvalPolicy: never` remains
+  - ask does not yet expose a clean normalized interactive source on the v2 path in this repo
+- Next Step:
+  - hold the `5.2` boundary steady, keep runtime-blocked approval explicit, and move active implementation planning to `5.3`
+
 ## 2026-03-16T16:45:00-07:00
 - Phase: 5
 - Batch ID: P5-docs

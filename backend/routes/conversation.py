@@ -113,6 +113,29 @@ async def get_planning_conversation(request: Request, project_id: str, node_id: 
     return {"conversation": conversation}
 
 
+@router.post("/projects/{project_id}/nodes/{node_id}/conversations/planning/requests/{request_id}/resolve")
+async def resolve_planning_conversation_request(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    request_id: str,
+    body: ExecutionConversationResolveRequestRequest,
+) -> dict[str, Any]:
+    try:
+        return _conversation_gateway(request).resolve_planning_request(
+            project_id,
+            node_id,
+            request_id,
+            request_kind=body.request_kind,
+            decision=body.decision,
+            answers=body.answers,
+            thread_id=body.thread_id,
+            turn_id=body.turn_id,
+        )
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
+
+
 @router.post("/projects/{project_id}/nodes/{node_id}/conversations/ask/send")
 async def send_ask_conversation_message(
     request: Request,
@@ -239,6 +262,8 @@ async def stream_planning_conversation_events(
                 try:
                     legacy_event = await asyncio.wait_for(queue.get(), timeout=15)
                     translated_events = _conversation_gateway(request).translate_planning_event(
+                        project_id,
+                        node_id,
                         legacy_event
                     )
                     for event in translated_events:

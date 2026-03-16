@@ -11,6 +11,16 @@
 
 ## 2026-03-16
 - Change summary:
+  - hardened `5.2` execution request resolution so locally initiated resolve no longer double-publishes terminal lifecycle events when native callbacks arrive later
+  - converged planning runtime-input lifecycle semantics on the shared conversation-v2 contract through planning snapshot normalization, lifecycle event translation, and a planning v2 resolve route
+  - moved `5.2` tracking to complete while keeping `approval_request` explicitly runtime-blocked and narrowing the remaining non-blocking interactive source gap to ask only
+- Affected subphases:
+  - `5.2`
+- Reason for update:
+  - record the Phase 5.2 closeout work that finished execution hardening and planning-v2 convergence without overstating approval live parity
+
+## 2026-03-16
+- Change summary:
   - created the dedicated `PHASE_5_*` artifact package under the migration docs directory
   - aligned the new package with the actual repo state after the `5.1` hardening pass and `5.2` execution-native runtime-input implementation
   - linked the dedicated package from the existing migration overview and umbrella phase plan

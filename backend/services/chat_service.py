@@ -43,7 +43,7 @@ from backend.services.node_task_fields import load_task_prompt_fields
 from backend.services.thread_service import ThreadService
 from backend.storage.file_utils import iso_now, new_id
 from backend.storage.storage import Storage
-from backend.streaming.sse_broker import ChatEventBroker
+from backend.streaming.sse_broker import ChatEventBroker, PlanningEventBroker
 
 STALE_TURN_ERROR = "Session interrupted - the server restarted before this response completed."
 
@@ -59,15 +59,22 @@ class ChatService:
         thread_service: ThreadService | None = None,
         node_service: NodeService | None = None,
         agent_operation_service: AgentOperationService | None = None,
+        planning_event_broker: PlanningEventBroker | None = None,
     ) -> None:
         self._storage = storage
         self._client = codex_client
         self._event_broker = event_broker
+        self._planning_event_broker = planning_event_broker
         self._thread_service = thread_service
         self._node_service = node_service
         self._agent_operation_service = agent_operation_service
         self._live_turns_lock = threading.Lock()
         self._live_turns: set[tuple[str, str, str]] = set()
+
+    def _publish_plan_lifecycle_event(self, project_id: str, node_id: str, event: dict[str, Any]) -> None:
+        self._event_broker.publish(project_id, node_id, event)
+        if self._planning_event_broker is not None:
+            self._planning_event_broker.publish(project_id, node_id, event)
 
     def reconcile_interrupted_turns(self) -> None:
         for project_id in self._storage.project_store.list_project_ids():
@@ -325,7 +332,7 @@ class ChatService:
                         "user_message": None,
                     },
                 )
-            self._event_broker.publish(project_id, node_id, event)
+            self._publish_plan_lifecycle_event(project_id, node_id, event)
             return {
                 "status": "already_resolved_or_stale",
                 "session": self.get_session(project_id, node_id)["session"],
@@ -395,7 +402,7 @@ class ChatService:
                     "user_message": copy.deepcopy(user_message),
                 },
             )
-        self._event_broker.publish(project_id, node_id, event)
+        self._publish_plan_lifecycle_event(project_id, node_id, event)
         return {
             "status": "resolved",
             "session": self.get_session(project_id, node_id)["session"],

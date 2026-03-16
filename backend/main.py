@@ -88,6 +88,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         thread_service,
         node_service,
         agent_operation_service,
+        planning_event_broker=planning_event_broker,
     )
     split_service = SplitService(
         storage,
@@ -107,6 +108,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         conversation_event_broker,
         conversation_context_builder,
         ask_service,
+        chat_service,
     )
 
     @asynccontextmanager

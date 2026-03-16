@@ -16,6 +16,7 @@ const { apiMock } = vi.hoisted(() => ({
     getExecutionConversation: vi.fn(),
     sendExecutionConversationMessage: vi.fn(),
     resolveExecutionConversationRequest: vi.fn(),
+    resolvePlanningConversationRequest: vi.fn(),
     executionConversationEventsUrl: vi.fn(),
     getNodeDocuments: vi.fn(),
     startPlan: vi.fn(),
@@ -523,6 +524,114 @@ function makePlanningConversationSnapshotWithMessage(
   }
 }
 
+function makePlanningConversationSnapshotWithUserInputRequests() {
+  const snapshot = makePlanningConversationSnapshotWithMessage('Planning v2 transcript', {
+    conversationId: 'conv_plan_requests',
+    nodeId: 'child-1',
+    eventSeq: 8,
+  })
+  return {
+    ...snapshot,
+    record: {
+      ...snapshot.record,
+      status: 'active' as const,
+      active_stream_id: 'planning_stream:turn_plan_1',
+    },
+    messages: [
+      ...snapshot.messages,
+      {
+        message_id: 'planning_request_message:req_old',
+        conversation_id: snapshot.record.conversation_id,
+        turn_id: 'turn_plan_1',
+        role: 'assistant' as const,
+        runtime_mode: 'planning' as const,
+        status: 'pending' as const,
+        created_at: '2026-03-15T00:00:02Z',
+        updated_at: '2026-03-15T00:00:02Z',
+        lineage: {},
+        usage: null,
+        error: null,
+        parts: [
+          {
+            part_id: 'planning_request_message:req_old:user_input_request',
+            part_type: 'user_input_request' as const,
+            status: 'pending' as const,
+            order: 0,
+            item_key: 'req_old',
+            created_at: '2026-03-15T00:00:02Z',
+            updated_at: '2026-03-15T00:00:02Z',
+            payload: {
+              part_id: 'planning_request_message:req_old:user_input_request',
+              request_id: 'req_old',
+              request_kind: 'user_input',
+              resolution_state: 'pending',
+              title: 'Old planner input',
+              thread_id: 'thread_plan_1',
+              turn_id: 'turn_plan_1',
+              questions: [
+                {
+                  id: 'deprecated',
+                  header: 'Deprecated',
+                  question: 'Old question',
+                  options: [],
+                  is_other: false,
+                  is_secret: false,
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        message_id: 'planning_request_message:req_latest',
+        conversation_id: snapshot.record.conversation_id,
+        turn_id: 'turn_plan_1',
+        role: 'assistant' as const,
+        runtime_mode: 'planning' as const,
+        status: 'pending' as const,
+        created_at: '2026-03-15T00:00:03Z',
+        updated_at: '2026-03-15T00:00:03Z',
+        lineage: {},
+        usage: null,
+        error: null,
+        parts: [
+          {
+            part_id: 'planning_request_message:req_latest:user_input_request',
+            part_type: 'user_input_request' as const,
+            status: 'pending' as const,
+            order: 0,
+            item_key: 'req_latest',
+            created_at: '2026-03-15T00:00:03Z',
+            updated_at: '2026-03-15T00:00:03Z',
+            payload: {
+              part_id: 'planning_request_message:req_latest:user_input_request',
+              request_id: 'req_latest',
+              request_kind: 'user_input',
+              resolution_state: 'pending',
+              title: 'Planning runtime input needed',
+              thread_id: 'thread_plan_1',
+              turn_id: 'turn_plan_1',
+              questions: [
+                {
+                  id: 'brand_direction',
+                  header: 'Brand direction',
+                  question: 'What visual direction should we use?',
+                  options: [
+                    { label: 'Editorial', description: 'Structured and dense.' },
+                    { label: 'Playful', description: 'Expressive and bold.' },
+                  ],
+                  is_other: false,
+                  is_secret: false,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  }
+}
+
 function createDeferredPromise<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason?: unknown) => void
@@ -630,6 +739,9 @@ describe('BreadcrumbWorkspace', () => {
       assistant_text_part_id: 'part_assistant',
     })
     apiMock.resolveExecutionConversationRequest.mockResolvedValue({
+      status: 'resolved',
+    })
+    apiMock.resolvePlanningConversationRequest.mockResolvedValue({
       status: 'resolved',
     })
     apiMock.executionConversationEventsUrl.mockReturnValue(
@@ -1726,6 +1838,116 @@ describe('BreadcrumbWorkspace', () => {
         },
       )
     })
+  })
+
+  it('uses planning-v2 request ownership on the planning tab and submits through the planning resolve route', async () => {
+    vi.stubEnv('VITE_PLANNING_CONVERSATION_V2_ENABLED', 'true')
+    apiMock.getPlanningConversation.mockResolvedValue({
+      conversation: makePlanningConversationSnapshotWithUserInputRequests(),
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'child-1',
+      snapshot: childSnapshot,
+      documentsByNode: { 'child-1': makeNodeDocuments() },
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      loadNodeDocuments: vi.fn(async () => makeNodeDocuments()),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+      startPlan: vi.fn(async () => {}),
+      executeNode: vi.fn(async () => {}),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+      session: {
+        project_id: 'project-1',
+        node_id: 'child-1',
+        active_turn_id: 'turn_plan_legacy',
+        event_seq: 1,
+        status: 'active',
+        mode: 'plan',
+        config: {
+          access_mode: 'project_write',
+          cwd: 'C:/workspace/alpha',
+          writable_roots: ['C:/workspace/alpha'],
+          timeout_sec: 120,
+        },
+        pending_input_request: {
+          request_id: 'legacy_req',
+          thread_id: 'thread_legacy',
+          turn_id: 'turn_plan_legacy',
+          node_id: 'child-1',
+          item_id: 'item_legacy',
+          created_at: '2026-03-15T00:00:01Z',
+          resolved_at: null,
+          status: 'pending',
+          answer_payload: null,
+          questions: [
+            {
+              id: 'legacy',
+              header: 'Legacy',
+              question: 'Legacy prompt',
+              is_other: false,
+              is_secret: false,
+              options: [],
+            },
+          ],
+        },
+        runtime_request_registry: [],
+        messages: [],
+      },
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/child-1/chat',
+            state: { activeTab: 'planning' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('One quick answer before the plan can finish')).toBeInTheDocument()
+    const dialog = screen.getByRole('dialog', { name: 'One quick answer before the plan can finish' })
+    expect(within(dialog).getByText('Brand direction')).toBeInTheDocument()
+    expect(within(dialog).queryByText('Deprecated')).not.toBeInTheDocument()
+    expect(within(dialog).queryByText('Legacy')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('radio', { name: /Editorial Structured and dense\./ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue planning' }))
+
+    await waitFor(() => {
+      expect(apiMock.resolvePlanningConversationRequest).toHaveBeenCalledWith(
+        'project-1',
+        'child-1',
+        'req_latest',
+        {
+          request_kind: 'user_input',
+          answers: {
+            brand_direction: {
+              answers: ['Editorial'],
+            },
+          },
+          thread_id: 'thread_plan_1',
+          turn_id: 'turn_plan_1',
+        },
+      )
+    })
+    expect(apiMock.resolveExecutionConversationRequest).not.toHaveBeenCalled()
   })
 
   it('mounts the non-visible execution conversation hook only for the execution tab', async () => {

@@ -1,6 +1,15 @@
 # Migration Changelog
 
 ## 2026-03-16
+- Phase 5.2 closeout:
+  - hardened execution request resolution so locally initiated runtime-input resolve remains the authoritative terminal publish path and native callbacks no longer double-publish `request_resolved` or `user_input_resolved`
+  - converged planning runtime-input lifecycle semantics on the shared conversation-v2 contract through planning snapshot normalization, lifecycle event translation, deterministic request identities, and a planning v2 resolve route
+  - updated Phase 5 tracking so `5.2` is complete for execution + planning runtime-input semantics, while `approval_request` remains explicitly runtime-blocked and the remaining interactive-source gap is narrowed to ask only
+- Verification:
+  - `python -m pytest backend/tests/unit/test_conversation_gateway.py -k "planning or resolve_execution_request"`
+  - `python -m pytest backend/tests/integration/test_conversation_gateway_api.py -k "planning or request or execution_conversation_resolves_runtime_input_requests_through_v2_route"`
+  - `npm run test:unit -- BreadcrumbWorkspace.test.tsx useConversationRequests.test.ts`
+  - `npm run build`
 - Dedicated Phase 5 docs package:
   - added `PHASE_5_PLAN.md`, `PHASE_5_PROGRESS.md`, `PHASE_5_BATCHES.md`, `PHASE_5_VALIDATION.md`, `PHASE_5_OPEN_ISSUES.md`, and `PHASE_5_CHANGELOG.md`
   - linked the dedicated package from `MIGRATION_OVERVIEW.md` and `PHASE_PLAN.md`

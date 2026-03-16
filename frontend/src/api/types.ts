@@ -571,6 +571,10 @@ export interface ExecutionConversationRequestResolvedResponse {
   status: 'resolved' | 'already_resolved_or_stale'
 }
 
+export interface PlanningConversationRequestResolvedResponse {
+  status: 'resolved' | 'already_resolved_or_stale'
+}
+
 export type ExecutionConversationEvent = ConversationEventEnvelope
 
 export interface AskConversationResponse {

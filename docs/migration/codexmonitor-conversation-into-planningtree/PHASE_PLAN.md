@@ -362,8 +362,10 @@
   - normalized shared parts:
     - `user_input_request`
     - `user_input_response`
+- execution duplicate-publish hardening keeps locally initiated resolution as the authoritative terminal publish path and suppresses late native callback republishes
+- planning runtime-input lifecycle semantics now converge on the same conversation-v2 contract through planning snapshot normalization, planning lifecycle event translation, and a planning v2 resolve route
 - `approval_request` is contract-ready and replay-safe, but remains runtime-blocked for live parity while `approvalPolicy: never` remains
-- ask and planning only participate where a clean normalized interactive source exists on the v2 path; current Phase 5.2 closeout in this repo is the execution-native runtime-input path plus shared host request actions
+- ask only participates where a clean normalized interactive source exists on the v2 path; current Phase 5.2 closeout in this repo covers execution and planning runtime-input semantics plus shared host request actions
 
 ### Risks
 - replay mismatch between live and persisted states
@@ -372,6 +374,7 @@
 - reopening historical interactive requests as active UI after reconnect
 - duplicated request ownership between host wrappers and the shared conversation contract
 - runtime approval parity being implied even while `approvalPolicy: never` still blocks live approval emission
+- ask interactive convergence being implied without a clean normalized v2 source
 
 ### Acceptance Criteria
 - Phase 5.1 shared-surface rendering and replay remain stable for passive rich semantics
@@ -382,6 +385,8 @@
 - the shared contract exposes at most one active visible unresolved request at a time on the current lineage
 - that active visible request resolves to the latest unresolved request in normalized durable message/part order on the currently visible lineage
 - execution runtime-input requests and responses persist durably, survive reconnect, and converge between live delivery and replay
+- execution duplicate-suppression keeps local resolve plus native callback overlap single-publish for terminal lifecycle events
+- planning runtime-input requests and responses converge on the same shared contract and latest-unresolved visibility policy as execution
 - `approval_request` remains explicitly documented as runtime-blocked for live parity while `approvalPolicy: never` remains
 
 ### Verification
@@ -389,8 +394,8 @@
 - backend tests for `tool_call` and `plan_block` live emission, persistence, and terminal reconciliation
 - replay fidelity tests for passive semantics that remain replay-only on the backend live path
 - reducer and render-model tests for `request_user_input`, `request_resolved`, and `user_input_resolved`
-- host tests for latest-unresolved active request selection and host-owned submission through the execution v2 request route
-- backend execution tests for request creation, request resolution, user-response persistence, and event ordering under request-resolution races
+- host tests for latest-unresolved active request selection and host-owned submission through the execution and planning v2 request routes
+- backend tests for request creation, duplicate-suppression hardening, planning normalization, user-response persistence, and event ordering under request-resolution races
 
 ## Phase 6 - Performance, Concurrency, Replay, And Cleanup
 ### Goal

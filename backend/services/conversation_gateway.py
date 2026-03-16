@@ -69,6 +69,32 @@ def make_execution_request_response_part_id(request_id: str) -> str:
     return f"{make_execution_request_response_message_id(request_id)}:user_input_response"
 
 
+def make_planning_request_message_id(request_id: str) -> str:
+    return f"planning_request_message:{request_id}"
+
+
+def make_planning_request_part_id(request_id: str, part_type: str) -> str:
+    return f"{make_planning_request_message_id(request_id)}:{part_type}"
+
+
+def make_planning_request_response_message_id(request_id: str) -> str:
+    return f"planning_request_response:{request_id}"
+
+
+def make_planning_request_response_part_id(request_id: str) -> str:
+    return f"{make_planning_request_response_message_id(request_id)}:user_input_response"
+
+
+_TERMINAL_INTERACTIVE_RESOLUTION_STATES = {
+    "resolved",
+    "approved",
+    "declined",
+    "stale",
+    "cancelled",
+    "error",
+}
+
+
 @dataclass
 class _LiveConversationState:
     event_seq: int
@@ -96,6 +122,7 @@ class ConversationGateway:
         event_broker: ConversationEventBroker,
         context_builder: ConversationContextBuilder,
         ask_service: AskService | None = None,
+        chat_service=None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -104,6 +131,7 @@ class ConversationGateway:
         self._event_broker = event_broker
         self._context_builder = context_builder
         self._ask_service = ask_service
+        self._chat_service = chat_service
         self._live_state: dict[tuple[str, str], _LiveConversationState] = {}
         self._live_state_lock = threading.Lock()
         self._persistence_queue: queue.Queue[_PersistenceTask | object] = queue.Queue()
@@ -153,11 +181,13 @@ class ConversationGateway:
     def get_planning_conversation(self, project_id: str, node_id: str) -> ConversationSnapshot:
         _, node, _, _ = self._load_node_context(project_id, node_id)
         planning_state = self._storage.thread_store.get_or_create_planning_conversation_state(project_id, node_id)
+        execution_session = self._storage.thread_store.get_execution_session(project_id, node_id)
         turns = self._thread_service.materialize_inherited_planning_history(project_id, node_id)
         return self._build_planning_conversation_snapshot(
             project_id=project_id,
             node=node,
             planning_state=planning_state,
+            execution_session=execution_session,
             turns=turns,
         )
 
@@ -336,6 +366,8 @@ class ConversationGateway:
 
     def translate_planning_event(
         self,
+        project_id: str,
+        node_id: str,
         event: dict[str, Any],
     ) -> list[ConversationEventEnvelope]:
         event_type = str(event.get("type") or "").strip()
@@ -343,15 +375,32 @@ class ConversationGateway:
             "planning_turn_started",
             "planning_turn_completed",
             "planning_turn_failed",
+            "plan_input_requested",
+            "plan_input_resolved",
         }:
             return []
 
-        conversation_id = str(event.get("conversation_id") or "").strip()
+        planning_state = self._storage.thread_store.get_or_create_planning_conversation_state(project_id, node_id)
+        execution_session = self._storage.thread_store.get_execution_session(project_id, node_id)
+        conversation_id = str(
+            event.get("conversation_id") or planning_state.get("conversation_id") or ""
+        ).strip()
+        if not conversation_id:
+            return []
+
+        if event_type in {"plan_input_requested", "plan_input_resolved"}:
+            return self._translate_planning_runtime_request_event(
+                conversation_id=conversation_id,
+                planning_state=planning_state,
+                execution_session=execution_session,
+                event=event,
+            )
+
         turn_id = str(event.get("turn_id") or "").strip()
         stream_id = str(event.get("stream_id") or "").strip() or (
             make_planning_stream_id(turn_id) if turn_id else ""
         )
-        if not conversation_id or not turn_id or not stream_id:
+        if not turn_id or not stream_id:
             return []
 
         created_at = str(event.get("timestamp") or iso_now())
@@ -464,6 +513,152 @@ class ConversationGateway:
             ),
         ]
 
+    def _translate_planning_runtime_request_event(
+        self,
+        *,
+        conversation_id: str,
+        planning_state: dict[str, Any],
+        execution_session: dict[str, Any],
+        event: dict[str, Any],
+    ) -> list[ConversationEventEnvelope]:
+        event_type = str(event.get("type") or "").strip()
+        raw_event_seq = self._coerce_int(event.get("event_seq"), default=0)
+        base_event_seq = max(1, raw_event_seq * 3)
+        created_at = str(event.get("timestamp") or event.get("resolved_at") or iso_now())
+
+        if event_type == "plan_input_requested":
+            request_payload = event.get("request")
+            if not isinstance(request_payload, dict):
+                return []
+            request_record = self._normalize_planning_request_payload(request_payload)
+            if request_record is None:
+                return []
+            turn_id = str(request_record.get("turn_id") or "").strip()
+            stream_id = str(event.get("stream_id") or "").strip() or (
+                make_planning_stream_id(turn_id) if turn_id else ""
+            )
+            if not turn_id or not stream_id:
+                return []
+            request_message = self._build_planning_user_input_request_message(
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                request=request_record,
+                created_at=str(request_record.get("created_at") or created_at),
+            )
+            request_part = request_message["parts"][0]
+            return [
+                self._build_interactive_message_event(
+                    event_type="request_user_input",
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    message=request_message,
+                    part=request_part,
+                    event_seq=base_event_seq,
+                    created_at=str(request_record.get("created_at") or created_at),
+                )
+            ]
+
+        request_id = str(event.get("request_id") or "").strip()
+        if not request_id:
+            return []
+        request_record = self._find_planning_request_record(execution_session, request_id)
+        if request_record is None:
+            logger.debug(
+                "Ignoring orphan planning request resolution without matching durable request state",
+                extra={
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                    "status": str(event.get("status") or ""),
+                    "suppression_reason": "missing_request_state",
+                },
+            )
+            return []
+
+        updated_request = copy.deepcopy(request_record)
+        updated_request["status"] = str(event.get("status") or updated_request.get("status") or "stale")
+        updated_request["resolved_at"] = str(
+            event.get("resolved_at") or updated_request.get("resolved_at") or iso_now()
+        )
+        turn_id = str(updated_request.get("turn_id") or planning_state.get("active_turn_id") or "").strip()
+        stream_id = str(event.get("stream_id") or "").strip() or (
+            make_planning_stream_id(turn_id) if turn_id else ""
+        )
+        if not turn_id or not stream_id:
+            return []
+
+        request_message = self._build_planning_user_input_request_message(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            request=updated_request,
+            created_at=str(updated_request.get("created_at") or created_at),
+        )
+        request_part = request_message["parts"][0]
+        request_part["updated_at"] = str(updated_request.get("resolved_at") or created_at)
+        request_message["updated_at"] = request_part["updated_at"]
+        request_message["status"] = request_part["status"]
+
+        translated_events: list[ConversationEventEnvelope] = [
+            self._build_passive_part_event(
+                event_type="request_resolved",
+                conversation_id=conversation_id,
+                stream_id=stream_id,
+                turn_id=turn_id,
+                message_id=request_message["message_id"],
+                part=request_part,
+                event_seq=base_event_seq,
+                created_at=request_part["updated_at"],
+            )
+        ]
+        answer_payload = updated_request.get("answer_payload")
+        if isinstance(answer_payload, dict) and str(updated_request.get("status") or "") == "resolved":
+            response_message = self._build_planning_user_input_response_message(
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                request=updated_request,
+                answer_payload=answer_payload,
+                created_at=request_part["updated_at"],
+            )
+            translated_events.append(
+                self._build_interactive_message_event(
+                    event_type="user_input_resolved",
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    message=response_message,
+                    part=response_message["parts"][0],
+                    event_seq=base_event_seq + 1,
+                    created_at=response_message["updated_at"],
+                )
+            )
+        return translated_events
+
+    def _find_planning_request_record(
+        self,
+        execution_session: dict[str, Any],
+        request_id: str,
+    ) -> dict[str, Any] | None:
+        request_key = str(request_id or "").strip()
+        if not request_key:
+            return None
+        pending_request = execution_session.get("pending_input_request")
+        if isinstance(pending_request, dict):
+            normalized_pending = self._normalize_planning_request_payload(pending_request)
+            if (
+                normalized_pending is not None
+                and str(normalized_pending.get("request_id") or "") == request_key
+            ):
+                return normalized_pending
+        for item in list(execution_session.get("runtime_request_registry") or []):
+            if not isinstance(item, dict):
+                continue
+            normalized = self._normalize_planning_request_payload(item)
+            if normalized is None:
+                continue
+            if str(normalized.get("request_id") or "") == request_key:
+                return normalized
+        return None
+
     def flush_persistence(self) -> None:
         self._persistence_queue.join()
 
@@ -551,6 +746,7 @@ class ConversationGateway:
         project_id: str,
         node: dict[str, Any],
         planning_state: dict[str, Any],
+        execution_session: dict[str, Any],
         turns: list[dict[str, Any]],
     ) -> ConversationSnapshot:
         conversation_id = str(planning_state.get("conversation_id") or new_id("convplan"))
@@ -572,12 +768,24 @@ class ConversationGateway:
             )
             messages.extend(pending_messages)
 
+        self._overlay_planning_request_messages(
+            conversation_id=conversation_id,
+            messages=messages,
+            execution_session=execution_session,
+        )
+
         latest_assistant_message = next(
             (message for message in reversed(messages) if message["role"] == "assistant"),
             None,
         )
         record_status = "idle"
-        if active_turn_id or str(planning_state.get("status") or "").strip().lower() == "active":
+        session_active_turn_id = str(execution_session.get("active_turn_id") or "").strip() or None
+        session_mode = str(execution_session.get("mode") or "").strip().lower()
+        if (
+            active_turn_id
+            or str(planning_state.get("status") or "").strip().lower() == "active"
+            or (session_mode == "plan" and session_active_turn_id)
+        ):
             record_status = "active"
         elif latest_assistant_message is not None and latest_assistant_message["status"] == "error":
             record_status = "error"
@@ -590,6 +798,16 @@ class ConversationGateway:
             conversation_event_seq = max(0, int(planning_state.get("conversation_event_seq", 0) or 0))
         except (TypeError, ValueError):
             conversation_event_seq = 0
+        try:
+            execution_event_seq = max(0, int(execution_session.get("event_seq", 0) or 0))
+        except (TypeError, ValueError):
+            execution_event_seq = 0
+        normalized_execution_event_seq = execution_event_seq * 3 + (2 if execution_event_seq > 0 else 0)
+        normalized_event_seq = max(conversation_event_seq, normalized_execution_event_seq)
+        app_server_thread_id = str(planning_state.get("thread_id") or "").strip() or None
+        if app_server_thread_id is None:
+            app_server_thread_id = str(execution_session.get("thread_id") or "").strip() or None
+        visible_active_turn_id = active_turn_id or (session_active_turn_id if session_mode == "plan" else None)
 
         return {
             "record": {
@@ -597,11 +815,11 @@ class ConversationGateway:
                 "project_id": project_id,
                 "node_id": str(node["node_id"]),
                 "thread_type": "planning",
-                "app_server_thread_id": str(planning_state.get("thread_id") or "").strip() or None,
+                "app_server_thread_id": app_server_thread_id,
                 "current_runtime_mode": "planning",
                 "status": record_status,
-                "active_stream_id": make_planning_stream_id(active_turn_id) if active_turn_id else None,
-                "event_seq": conversation_event_seq,
+                "active_stream_id": make_planning_stream_id(visible_active_turn_id) if visible_active_turn_id else None,
+                "event_seq": normalized_event_seq,
                 "created_at": created_at,
                 "updated_at": updated_at,
             },
@@ -720,6 +938,136 @@ class ConversationGateway:
             ),
         ]
 
+    def _overlay_planning_request_messages(
+        self,
+        *,
+        conversation_id: str,
+        messages: list[ConversationMessage],
+        execution_session: dict[str, Any],
+    ) -> None:
+        request_records = self._collect_planning_request_records(execution_session)
+        for request_record in request_records:
+            turn_id = str(request_record.get("turn_id") or "").strip()
+            before_message_id = make_planning_assistant_message_id(turn_id) if turn_id else None
+            request_message = self._build_planning_user_input_request_message(
+                conversation_id=conversation_id,
+                turn_id=turn_id or str(execution_session.get("active_turn_id") or ""),
+                request=request_record,
+                created_at=str(request_record.get("created_at") or iso_now()),
+            )
+            self._upsert_message_before_target(messages, request_message, before_message_id)
+            answer_payload = request_record.get("answer_payload")
+            if (
+                isinstance(answer_payload, dict)
+                and self._interactive_request_is_terminal(request_record)
+            ):
+                response_message = self._build_planning_user_input_response_message(
+                    conversation_id=conversation_id,
+                    turn_id=turn_id or str(execution_session.get("active_turn_id") or ""),
+                    request=request_record,
+                    answer_payload=answer_payload,
+                    created_at=str(
+                        request_record.get("resolved_at")
+                        or request_record.get("created_at")
+                        or iso_now()
+                    ),
+                )
+                self._upsert_message_before_target(messages, response_message, before_message_id)
+
+    def _collect_planning_request_records(
+        self,
+        execution_session: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        request_by_id: dict[str, dict[str, Any]] = {}
+        for item in list(execution_session.get("runtime_request_registry") or []):
+            if not isinstance(item, dict):
+                continue
+            normalized = self._normalize_planning_request_payload(item)
+            if normalized is None:
+                continue
+            request_by_id[str(normalized["request_id"])] = normalized
+
+        pending_request = execution_session.get("pending_input_request")
+        if isinstance(pending_request, dict):
+            normalized_pending = self._normalize_planning_request_payload(pending_request)
+            if normalized_pending is not None:
+                request_by_id[str(normalized_pending["request_id"])] = normalized_pending
+
+        return sorted(
+            request_by_id.values(),
+            key=lambda item: (
+                str(item.get("created_at") or ""),
+                str(item.get("request_id") or ""),
+            ),
+        )
+
+    def _normalize_planning_request_payload(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        request_id = str(payload.get("request_id") or "").strip()
+        thread_id = str(payload.get("thread_id") or "").strip()
+        turn_id = str(payload.get("turn_id") or "").strip()
+        item_id = str(payload.get("item_id") or "").strip()
+        questions_raw = payload.get("questions")
+        if not request_id or not thread_id or not turn_id or not item_id or not isinstance(questions_raw, list):
+            return None
+
+        questions: list[dict[str, Any]] = []
+        for item in questions_raw:
+            if not isinstance(item, dict):
+                continue
+            header = str(item.get("header") or "").strip()
+            question = str(item.get("question") or "").strip()
+            question_id = str(item.get("id") or "").strip()
+            if not question_id or not header or not question:
+                continue
+            normalized_options: list[dict[str, str]] = []
+            for option in list(item.get("options") or []):
+                if not isinstance(option, dict):
+                    continue
+                label = str(option.get("label") or "").strip()
+                if not label:
+                    continue
+                normalized_options.append(
+                    {
+                        "label": label,
+                        "description": str(option.get("description") or "").strip(),
+                    }
+                )
+            questions.append(
+                {
+                    "id": question_id,
+                    "header": header,
+                    "question": question,
+                    "is_other": bool(item.get("is_other") or item.get("isOther")),
+                    "is_secret": bool(item.get("is_secret") or item.get("isSecret")),
+                    "options": normalized_options,
+                }
+            )
+        if not questions:
+            return None
+
+        return {
+            "request_id": request_id,
+            "request_kind": "user_input",
+            "thread_id": thread_id,
+            "turn_id": turn_id,
+            "item_id": item_id,
+            "assistant_message_id": make_planning_assistant_message_id(turn_id),
+            "request_message_id": make_planning_request_message_id(request_id),
+            "request_part_id": make_planning_request_part_id(request_id, "user_input_request"),
+            "response_message_id": make_planning_request_response_message_id(request_id),
+            "response_part_id": make_planning_request_response_part_id(request_id),
+            "questions": copy.deepcopy(questions),
+            "created_at": str(payload.get("created_at") or iso_now()),
+            "resolved_at": str(payload.get("resolved_at") or "") or None,
+            "status": str(payload.get("status") or "pending"),
+            "answer_payload": copy.deepcopy(payload.get("answer_payload"))
+            if payload.get("answer_payload")
+            else None,
+        }
+
     def _build_planning_user_message(
         self,
         *,
@@ -744,6 +1092,96 @@ class ConversationGateway:
                     payload={"text": text},
                 )
             ],
+        )
+        self._stamp_message_timestamps(message, created_at)
+        return message
+
+    def _build_planning_user_input_request_message(
+        self,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        request: dict[str, Any],
+        created_at: str,
+    ) -> ConversationMessage:
+        part_status = self._interactive_request_status_to_message_status(request)
+        payload: dict[str, Any] = {
+            "part_id": str(request["request_part_id"]),
+            "request_id": str(request["request_id"]),
+            "request_kind": "user_input",
+            "title": "Planner input needed",
+            "summary": "One short answer is needed before the current planning turn can continue.",
+            "prompt": "Submit a response from the host-owned request surface to resume planning.",
+            "resolution_state": str(request.get("status") or "pending"),
+            "thread_id": str(request.get("thread_id") or ""),
+            "turn_id": str(request.get("turn_id") or turn_id),
+            "item_id": str(request.get("item_id") or ""),
+            "questions": copy.deepcopy(request.get("questions") or []),
+        }
+        resolved_at = str(request.get("resolved_at") or "").strip()
+        if resolved_at:
+            payload["resolved_at"] = resolved_at
+        if request.get("answer_payload"):
+            payload["answer_payload"] = copy.deepcopy(request["answer_payload"])
+        part = make_conversation_part(
+            part_type="user_input_request",
+            order=0,
+            status=part_status,
+            part_id=str(request["request_part_id"]),
+            item_key=str(request["request_id"]),
+            payload=payload,
+        )
+        message = make_conversation_message(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            role="assistant",
+            runtime_mode="planning",
+            message_id=str(request["request_message_id"]),
+            status=part_status,
+            parts=[part],
+        )
+        self._stamp_message_timestamps(message, created_at)
+        return message
+
+    def _build_planning_user_input_response_message(
+        self,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        request: dict[str, Any],
+        answer_payload: dict[str, Any],
+        created_at: str,
+    ) -> ConversationMessage:
+        response_text = self._render_execution_request_answer_text(request, answer_payload)
+        part = make_conversation_part(
+            part_type="user_input_response",
+            order=0,
+            status="completed",
+            part_id=str(request["response_part_id"]),
+            item_key=str(request["request_id"]),
+            payload={
+                "part_id": str(request["response_part_id"]),
+                "request_id": str(request["request_id"]),
+                "request_kind": "user_input",
+                "title": "Input submitted",
+                "summary": "The planning request was answered and the active turn can continue.",
+                "text": response_text,
+                "content": response_text,
+                "resolved_at": created_at,
+                "answers": copy.deepcopy(
+                    answer_payload.get("answers") if isinstance(answer_payload, dict) else {}
+                ),
+                "questions": copy.deepcopy(request.get("questions") or []),
+            },
+        )
+        message = make_conversation_message(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            role="user",
+            runtime_mode="planning",
+            message_id=str(request["response_message_id"]),
+            status="completed",
+            parts=[part],
         )
         self._stamp_message_timestamps(message, created_at)
         return message
@@ -1503,10 +1941,34 @@ class ConversationGateway:
             existing = session.runtime_request_registry.get(request_id)
             if not isinstance(existing, dict):
                 return
+            if bool(existing.get("local_resolution_inflight")):
+                logger.debug(
+                    "Suppressing duplicate execution request resolution callback during local terminalization",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "request_id": request_id,
+                        "status": str(payload.get("status") or ""),
+                        "suppression_reason": "local_resolution_inflight",
+                    },
+                )
+                return
+            if self._interactive_request_is_terminal(existing):
+                logger.debug(
+                    "Suppressing duplicate execution request resolution callback for terminal request",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "request_id": request_id,
+                        "status": str(payload.get("status") or existing.get("status") or ""),
+                        "suppression_reason": "already_terminal",
+                    },
+                )
+                return
             updated_request = copy.deepcopy(existing)
             next_status = str(payload.get("status") or updated_request.get("status") or "stale")
             updated_request["status"] = next_status
-            updated_request["resolved_at"] = str(payload.get("resolved_at") or updated_request.get("resolved_at") or iso_now())
+            updated_request["resolved_at"] = str(
+                payload.get("resolved_at") or updated_request.get("resolved_at") or iso_now()
+            )
             session.runtime_request_registry[request_id] = copy.deepcopy(updated_request)
             event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
 
@@ -1586,17 +2048,30 @@ class ConversationGateway:
                 raise ValueError("turn_id does not match the pending runtime request.")
             if str(request_record.get("status") or "") != "pending":
                 return {"status": "already_resolved_or_stale"}
+            inflight_request = copy.deepcopy(request_record)
+            inflight_request["local_resolution_inflight"] = True
+            session.runtime_request_registry[request_key] = inflight_request
 
-        resolved_record = session.client.resolve_runtime_request_user_input(
-            request_key,
-            answers=answers or {},
-        )
+        try:
+            resolved_record = session.client.resolve_runtime_request_user_input(
+                request_key,
+                answers=answers or {},
+            )
+        except Exception:
+            with session.lock:
+                request_record = session.runtime_request_registry.get(request_key)
+                if isinstance(request_record, dict):
+                    repaired_request = copy.deepcopy(request_record)
+                    repaired_request.pop("local_resolution_inflight", None)
+                    session.runtime_request_registry[request_key] = repaired_request
+            raise
 
         with session.lock:
             request_record = session.runtime_request_registry.get(request_key)
             if not isinstance(request_record, dict):
                 request_record = {}
             next_request = copy.deepcopy(request_record)
+            next_request.pop("local_resolution_inflight", None)
             if resolved_record is None:
                 next_request["status"] = "stale"
                 next_request["resolved_at"] = iso_now()
@@ -1692,6 +2167,35 @@ class ConversationGateway:
                     )
 
         return {"status": route_status}
+
+    def resolve_planning_request(
+        self,
+        project_id: str,
+        node_id: str,
+        request_id: str,
+        *,
+        request_kind: str,
+        decision: str | None,
+        answers: dict[str, Any] | None,
+        thread_id: str | None,
+        turn_id: str | None,
+    ) -> dict[str, Any]:
+        kind = str(request_kind or "").strip()
+        if kind not in {"approval", "user_input"}:
+            raise ValueError("request_kind must be 'approval' or 'user_input'")
+        if kind == "approval":
+            raise ValueError("Approval request resolution is runtime-blocked while approvalPolicy is never.")
+        if self._chat_service is None:
+            raise ValueError("Planning request resolution is not configured.")
+        result = self._chat_service.resolve_plan_input(
+            project_id,
+            node_id,
+            request_id,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            answers=answers or {},
+        )
+        return {"status": str(result.get("status") or "already_resolved_or_stale")}
 
     def _handle_completion_success(
         self,
@@ -2167,6 +2671,19 @@ class ConversationGateway:
             "status": str(payload.get("status") or "pending"),
             "answer_payload": copy.deepcopy(payload.get("answer_payload")) if payload.get("answer_payload") else None,
         }
+
+    def _coerce_int(self, value: Any, *, default: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _interactive_request_is_terminal(self, request: dict[str, Any] | str | None) -> bool:
+        if isinstance(request, dict):
+            status = str(request.get("status") or request.get("resolution_state") or "").strip().lower()
+        else:
+            status = str(request or "").strip().lower()
+        return status in _TERMINAL_INTERACTIVE_RESOLUTION_STATES
 
     def _interactive_request_status_to_message_status(self, request: dict[str, Any]) -> str:
         status = str(request.get("status") or "pending")

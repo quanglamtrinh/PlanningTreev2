@@ -16,6 +16,7 @@ import type {
   NodeState,
   NodeSpec,
   NodeTask,
+  PlanningConversationRequestResolvedResponse,
   PlanningHistory,
   ProjectSummary,
   RuntimeInputAnswer,
@@ -400,6 +401,24 @@ export const api = {
   ): Promise<ExecutionConversationRequestResolvedResponse> {
     return jsonFetch(
       `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/requests/${requestId}/resolve`,
+      { method: 'POST' },
+      payload,
+    )
+  },
+  resolvePlanningConversationRequest(
+    projectId: string,
+    nodeId: string,
+    requestId: string,
+    payload: {
+      request_kind: 'approval' | 'user_input'
+      decision?: 'approved' | 'declined'
+      answers?: Record<string, RuntimeInputAnswer>
+      thread_id?: string | null
+      turn_id?: string | null
+    },
+  ): Promise<PlanningConversationRequestResolvedResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/planning/requests/${requestId}/resolve`,
       { method: 'POST' },
       payload,
     )

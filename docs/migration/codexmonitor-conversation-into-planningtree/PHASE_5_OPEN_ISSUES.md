@@ -5,7 +5,7 @@
 | --- | --- | --- | --- | --- |
 | `P5-OI-001` | Native transport coverage for remaining passive live semantics | `5.1` | Non-blocking for current replay-only boundary; blocking for wider backend live-parity claims | Open |
 | `P5-OI-002` | Approval live parity blocked by `approvalPolicy: never` | `5.2` | Runtime-blocked | Open |
-| `P5-OI-003` | Ask and planning lack a clean normalized interactive source on the v2 path | `5.2` | Non-blocking for execution-native closeout | Open |
+| `P5-OI-003` | Ask lacks a clean normalized interactive source on the v2 path | `5.2` | Non-blocking for current 5.2 closeout | Open |
 | `P5-OI-004` | Runtime rollback and rewind capability for `retry` and `regenerate` | `5.3` | Blocking | Open |
 | `P5-OI-005` | Cancel/completion race terminalization policy | `5.3` | Blocking | Open |
 | `P5-OI-006` | Superseded-branch replay presentation defaults | `5.3` | Non-blocking | Open |
@@ -44,18 +44,18 @@
 - Classification:
   - Runtime-blocked
 
-#### `P5-OI-003` - Ask and planning lack a clean normalized interactive source on the v2 path
+#### `P5-OI-003` - Ask lacks a clean normalized interactive source on the v2 path
 - Affected subphase: `5.2`
 - Description:
-  - ask and planning do not currently expose a clean durable interactive request source on the v2 path in this repo
+  - planning now converges on the shared request contract in this repo, but ask does not currently expose a clean durable interactive request source on the v2 path
 - Why it matters:
-  - ask/planning interactive convergence should not be implied where no clean source exists
+  - ask interactive convergence should not be implied where no clean source exists
 - Current default assumption:
-  - current `5.2` closeout in this repo is execution-native for runtime-input lifecycle semantics
+  - current `5.2` closeout in this repo covers execution and planning runtime-input lifecycle semantics; ask remains excluded until it has a clean normalized source
 - What decision or experiment is needed:
-  - adopt ask/planning interactive semantics only when a clean normalized v2 source exists and can be used without wrapper-owned shadow state
+  - adopt ask interactive semantics only when a clean normalized v2 source exists and can be used without wrapper-owned shadow state
 - Classification:
-  - Non-blocking for the current execution-native closeout
+  - Non-blocking for the current `5.2` closeout
 
 ### Phase 5.3
 
@@ -119,7 +119,7 @@
 
 ## Replay Fidelity Risks
 - `P5-OI-001` - replay-only passive semantics being mistaken for live-complete semantics
-- `P5-OI-003` - ask/planning interactive semantics being implied without a durable v2 source
+- `P5-OI-003` - ask interactive semantics being implied without a durable v2 source
 - `P5-OI-006` - superseded-branch replay presentation remaining under-specified
 - `P5-OI-007` - lineage metadata and ownership rules not being explicit enough for deterministic replay
 
@@ -137,4 +137,4 @@
 ### Boundary Decisions That Must Stay Explicit
 - Keep `P5-OI-001` explicit while replay-only passive semantics remain transport-gated.
 - Keep `P5-OI-002` explicit while `approvalPolicy: never` remains.
-- Keep `P5-OI-003` explicit until ask or planning exposes a clean normalized interactive source.
+- Keep `P5-OI-003` explicit until ask exposes a clean normalized interactive source.

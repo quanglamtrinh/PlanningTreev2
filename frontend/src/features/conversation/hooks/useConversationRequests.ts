@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { api } from '../../../api/client'
 import type { RuntimeInputAnswer } from '../../../api/types'
 import type {
   ConversationMessage,
@@ -39,11 +38,27 @@ export interface ActiveConversationRequest {
   questions: ConversationRequestQuestion[]
 }
 
+export type ResolveConversationRequestArgs = {
+  requestId: string
+  requestKind: ConversationRequestKind
+  decision?: 'approved' | 'declined'
+  answers?: Record<string, RuntimeInputAnswer>
+  threadId?: string | null
+  turnId?: string | null
+}
+
+export type ResolveConversationRequestResult = 'resolved' | 'already_resolved_or_stale'
+
+export type ResolveConversationRequestFn = (
+  args: ResolveConversationRequestArgs,
+) => Promise<ResolveConversationRequestResult>
+
 type UseConversationRequestsOptions = {
   projectId: string | null
   nodeId: string | null
   conversation: { snapshot: ConversationSnapshot } | null
   refresh?: (() => void) | null
+  resolveRequest: ResolveConversationRequestFn
 }
 
 type SubmitUserInputResponseArgs = {
@@ -65,8 +80,8 @@ type UseConversationRequestsResult = {
   pendingRequestCount: number
   isSubmitting: boolean
   submitError: string | null
-  submitUserInputResponse: (args: SubmitUserInputResponseArgs) => Promise<'resolved' | 'already_resolved_or_stale'>
-  respondToApproval: (args: RespondToApprovalArgs) => Promise<'resolved' | 'already_resolved_or_stale'>
+  submitUserInputResponse: (args: SubmitUserInputResponseArgs) => Promise<ResolveConversationRequestResult>
+  respondToApproval: (args: RespondToApprovalArgs) => Promise<ResolveConversationRequestResult>
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -206,6 +221,7 @@ export function useConversationRequests({
   nodeId,
   conversation,
   refresh,
+  resolveRequest,
 }: UseConversationRequestsOptions): UseConversationRequestsResult {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submittingRequestId, setSubmittingRequestId] = useState<string | null>(null)
@@ -244,21 +260,22 @@ export function useConversationRequests({
 
   async function submitUserInputResponse(
     args: SubmitUserInputResponseArgs,
-  ): Promise<'resolved' | 'already_resolved_or_stale'> {
+  ): Promise<ResolveConversationRequestResult> {
     if (!projectId || !nodeId) {
       throw new Error('Conversation request resolution is not ready yet.')
     }
     setSubmittingRequestId(args.requestId)
     setSubmitError(null)
     try {
-      const response = await api.resolveExecutionConversationRequest(projectId, nodeId, args.requestId, {
-        request_kind: 'user_input',
+      const status = await resolveRequest({
+        requestId: args.requestId,
+        requestKind: 'user_input',
         answers: args.answers,
-        thread_id: args.threadId ?? null,
-        turn_id: args.turnId ?? null,
+        threadId: args.threadId ?? null,
+        turnId: args.turnId ?? null,
       })
       void guardedRefreshIfStillActive(args.requestId)
-      return response.status
+      return status
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not resolve runtime input.'
       setSubmitError(message)
@@ -269,21 +286,22 @@ export function useConversationRequests({
 
   async function respondToApproval(
     args: RespondToApprovalArgs,
-  ): Promise<'resolved' | 'already_resolved_or_stale'> {
+  ): Promise<ResolveConversationRequestResult> {
     if (!projectId || !nodeId) {
       throw new Error('Conversation approval resolution is not ready yet.')
     }
     setSubmittingRequestId(args.requestId)
     setSubmitError(null)
     try {
-      const response = await api.resolveExecutionConversationRequest(projectId, nodeId, args.requestId, {
-        request_kind: 'approval',
+      const status = await resolveRequest({
+        requestId: args.requestId,
+        requestKind: 'approval',
         decision: args.decision,
-        thread_id: args.threadId ?? null,
-        turn_id: args.turnId ?? null,
+        threadId: args.threadId ?? null,
+        turnId: args.turnId ?? null,
       })
       void guardedRefreshIfStillActive(args.requestId)
-      return response.status
+      return status
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not resolve approval request.'
       setSubmitError(message)

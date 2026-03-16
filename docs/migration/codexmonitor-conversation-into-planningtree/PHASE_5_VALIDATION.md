@@ -19,7 +19,7 @@
 ### Integration Test Expectations
 - [x] implemented execution live paths converge with durable replay for current `5.1` and `5.2` semantics
 - [x] host wrappers do not own a second authoritative request lifecycle on the execution v2 path
-- [ ] ask and planning interactive convergence is covered where a clean normalized source exists
+- [x] planning interactive convergence is covered where a clean normalized source exists; ask remains out of scope until it has one
 
 ### Replay / Reconnect Expectations
 - [x] reload reconstructs passive and interactive semantics from normalized durable messages on the implemented paths
@@ -81,25 +81,27 @@
 - [x] execution streaming emits and persists normalized `request_user_input`
 - [x] `serverRequest/resolved` maps to `request_resolved`
 - [x] successful runtime-input resolution persists a `user_input_response`
-- [ ] planning adapter snapshot and events normalize planner request state into the same v2 shapes
+- [x] planning adapter snapshot and events normalize planner request state into the same v2 shapes
 - [ ] approval live-path parity is validated end-to-end
 
 ### Replay / Reconnect Expectations
 - [x] reload during an active request restores exactly one active visible unresolved request on the execution path
 - [x] that active request is the latest unresolved request on the currently visible lineage
 - [x] reload after request resolution preserves historical request/response state without reopening controls
-- [ ] ask/planning reconnect behavior is covered where interactive semantics exist
+- [x] planning reconnect behavior is covered where interactive semantics exist; ask remains out of scope until it has a clean source
 
 ### Manual QA Scenarios
 - [ ] reload while an execution runtime-input request is active
+- [ ] reload while a planning runtime-input request is active
 - [ ] verify host-owned submit controls and transcript state stay aligned after submit
 - [ ] inspect approval rendering from replay-safe snapshots
 
 ### Regression Guardrails
 - [x] host submit surfaces derive from v2 request state on the execution path
+- [x] planning host submit surfaces derive from v2 request state when planning v2 is enabled
 - [x] approval remains documented as runtime-blocked while `approvalPolicy: never` remains
 - [x] historical resolved requests do not reopen as active UI
-- [ ] no ask/planning interactive convergence is implied without a clean normalized source
+- [x] no ask interactive convergence is implied without a clean normalized source
 
 ## Phase 5.3 Validation
 ### Current Status

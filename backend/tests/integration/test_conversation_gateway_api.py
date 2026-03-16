@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import threading
 import time
@@ -461,6 +462,97 @@ def test_get_planning_conversation_route_normalizes_visible_planning_transcript(
     assert payload["messages"][1]["parts"][1]["part_type"] == "tool_call"
 
 
+def test_get_planning_conversation_route_includes_normalized_runtime_input_request_history(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = create_project(client, str(workspace_root))
+    client.app.state.storage.thread_store.replace_planning_turns(
+        project_id,
+        node_id,
+        [
+            {
+                "turn_id": "turn_plan_1",
+                "role": "user",
+                "content": "Split this node into slices.",
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:01Z",
+            },
+            {
+                "turn_id": "turn_plan_1",
+                "role": "assistant",
+                "content": "",
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:02Z",
+            },
+        ],
+    )
+    client.app.state.storage.thread_store.set_planning_status(
+        project_id,
+        node_id,
+        thread_id="planning_thread_1",
+        status="active",
+        active_turn_id="turn_plan_1",
+    )
+    execution_session = client.app.state.storage.thread_store.get_execution_session(project_id, node_id)
+    execution_session["mode"] = "plan"
+    execution_session["status"] = "active"
+    execution_session["thread_id"] = "thread_plan_1"
+    execution_session["active_turn_id"] = "turn_plan_1"
+    execution_session["event_seq"] = 2
+    execution_session["runtime_request_registry"] = [
+        {
+            "request_id": "req_hist",
+            "thread_id": "thread_plan_1",
+            "turn_id": "turn_plan_1",
+            "item_id": "item_hist",
+            "status": "resolved",
+            "created_at": "2026-03-15T00:00:03Z",
+            "resolved_at": "2026-03-15T00:00:04Z",
+            "questions": [
+                {
+                    "id": "brand_direction",
+                    "header": "Brand direction",
+                    "question": "What visual direction should we use?",
+                    "options": [],
+                }
+            ],
+            "answer_payload": {"answers": {"brand_direction": {"answers": ["Editorial"]}}},
+        },
+        {
+            "request_id": "req_latest",
+            "thread_id": "thread_plan_1",
+            "turn_id": "turn_plan_1",
+            "item_id": "item_latest",
+            "status": "pending",
+            "created_at": "2026-03-15T00:00:05Z",
+            "questions": [
+                {
+                    "id": "tone",
+                    "header": "Tone",
+                    "question": "Which tone should we use?",
+                    "options": [{"label": "Playful", "description": "Expressive and bold."}],
+                }
+            ],
+        },
+    ]
+    execution_session["pending_input_request"] = copy.deepcopy(execution_session["runtime_request_registry"][1])
+    client.app.state.storage.thread_store.write_execution_session(project_id, node_id, execution_session)
+
+    response = client.get(f"/v2/projects/{project_id}/nodes/{node_id}/conversations/planning")
+
+    assert response.status_code == 200
+    payload = response.json()["conversation"]
+    message_ids = [message["message_id"] for message in payload["messages"]]
+    assert "planning_request_message:req_hist" in message_ids
+    assert "planning_request_response:req_hist" in message_ids
+    assert "planning_request_message:req_latest" in message_ids
+    assert payload["record"]["active_stream_id"] == "planning_stream:turn_plan_1"
+    assert payload["record"]["event_seq"] == 8
+
+
 def test_planning_events_route_translates_planning_broker_events_to_normalized_sse(
     client: TestClient,
     workspace_root,
@@ -527,6 +619,134 @@ def test_planning_events_route_translates_planning_broker_events_to_normalized_s
     assert any(f'"conversation_id": "{conversation_id}"' in chunk for chunk in chunks)
     assert any('"role": "user"' in chunk for chunk in chunks)
     assert any('"role": "assistant"' in chunk for chunk in chunks)
+
+
+def test_planning_events_route_translates_plan_input_lifecycle_events_to_normalized_sse(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = create_project(client, str(workspace_root))
+    client.app.state.storage.thread_store.set_planning_status(
+        project_id,
+        node_id,
+        thread_id="planning_thread_1",
+        status="active",
+        active_turn_id="turn_plan_1",
+    )
+    execution_session = client.app.state.storage.thread_store.get_execution_session(project_id, node_id)
+    execution_session["mode"] = "plan"
+    execution_session["status"] = "active"
+    execution_session["thread_id"] = "thread_plan_1"
+    execution_session["active_turn_id"] = "turn_plan_1"
+    execution_session["event_seq"] = 2
+    execution_session["runtime_request_registry"] = [
+        {
+            "request_id": "req_plan_1",
+            "thread_id": "thread_plan_1",
+            "turn_id": "turn_plan_1",
+            "item_id": "item_plan_1",
+            "status": "resolved",
+            "created_at": "2026-03-15T00:00:03Z",
+            "resolved_at": "2026-03-15T00:00:04Z",
+            "questions": [
+                {
+                    "id": "brand_direction",
+                    "header": "Brand direction",
+                    "question": "What visual direction should we use?",
+                    "options": [],
+                }
+            ],
+            "answer_payload": {"answers": {"brand_direction": {"answers": ["Editorial"]}}},
+        }
+    ]
+    execution_session["pending_input_request"] = copy.deepcopy(execution_session["runtime_request_registry"][0])
+    client.app.state.storage.thread_store.write_execution_session(project_id, node_id, execution_session)
+    planning_state = client.app.state.storage.thread_store.get_or_create_planning_conversation_state(
+        project_id,
+        node_id,
+    )
+    conversation_id = str(planning_state["conversation_id"])
+    broker = client.app.state.planning_event_broker
+    request = _FakeStreamRequest(client.app)
+
+    async def collect_chunks() -> list[str]:
+        response = await stream_planning_conversation_events(
+            request,
+            project_id,
+            node_id,
+            after_event_seq=0,
+            expected_stream_id=None,
+        )
+        chunk_task = asyncio.create_task(anext(response.body_iterator))
+        deadline = time.time() + 1
+        while time.time() < deadline:
+            if broker._queues.get((project_id, node_id), set()):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            request._disconnected = True
+            await response.body_iterator.aclose()
+            raise AssertionError("planning event stream did not subscribe in time")
+
+        broker.publish(
+            project_id,
+            node_id,
+            {
+                "type": "plan_input_requested",
+                "event_seq": 3,
+                "timestamp": "2026-03-15T00:00:05Z",
+                "request": {
+                    "request_id": "req_plan_2",
+                    "thread_id": "thread_plan_1",
+                    "turn_id": "turn_plan_1",
+                    "item_id": "item_plan_2",
+                    "status": "pending",
+                    "created_at": "2026-03-15T00:00:05Z",
+                    "questions": [
+                        {
+                            "id": "tone",
+                            "header": "Tone",
+                            "question": "Which tone should we use?",
+                            "options": [{"label": "Playful", "description": "Expressive and bold."}],
+                        }
+                    ],
+                },
+            },
+        )
+        first_chunk = await asyncio.wait_for(chunk_task, timeout=1)
+
+        chunk_task = asyncio.create_task(anext(response.body_iterator))
+        broker.publish(
+            project_id,
+            node_id,
+            {
+                "type": "plan_input_resolved",
+                "event_seq": 4,
+                "request_id": "req_plan_1",
+                "status": "resolved",
+                "resolved_at": "2026-03-15T00:00:04Z",
+            },
+        )
+        second_chunk = await asyncio.wait_for(chunk_task, timeout=1)
+        chunk_task = asyncio.create_task(anext(response.body_iterator))
+        third_chunk = await asyncio.wait_for(chunk_task, timeout=1)
+
+        try:
+            return [
+                first_chunk.decode("utf-8") if isinstance(first_chunk, bytes) else str(first_chunk),
+                second_chunk.decode("utf-8") if isinstance(second_chunk, bytes) else str(second_chunk),
+                third_chunk.decode("utf-8") if isinstance(third_chunk, bytes) else str(third_chunk),
+            ]
+        finally:
+            request._disconnected = True
+            await response.body_iterator.aclose()
+
+    chunks = asyncio.run(collect_chunks())
+
+    assert any('"event_type": "request_user_input"' in chunk for chunk in chunks)
+    assert any('"event_type": "request_resolved"' in chunk for chunk in chunks)
+    assert any('"event_type": "user_input_resolved"' in chunk for chunk in chunks)
+    assert any(f'"conversation_id": "{conversation_id}"' in chunk for chunk in chunks)
 
 
 def test_get_post_send_get_again_keeps_same_conversation_id_and_live_enrichment(
@@ -778,6 +998,14 @@ def test_execution_conversation_resolves_runtime_input_requests_through_v2_route
                         ],
                     }
                 ],
+            }
+        ],
+        request_resolutions=[
+            {
+                "request_id": "req_exec_3",
+                "turn_id": "turn_1",
+                "status": "resolved",
+                "resolved_at": "2026-03-15T00:00:04Z",
             }
         ],
         final_text="Continuing after input.",

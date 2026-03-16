@@ -8,7 +8,7 @@
   - `Phase 5.3 - Lineage-Aware Actions And Command Semantics`
 - Current repo status:
   - `5.1` is in progress with shared renderer and replay support in place and backend live completeness limited to transport-supported passive semantics
-  - `5.2` is in progress with execution-native runtime-input lifecycle semantics implemented and approval live parity still runtime-blocked
+  - `5.2` is complete for execution duplicate-suppression hardening and planning-v2 runtime-input convergence, with approval live parity still runtime-blocked
   - `5.3` has not started
 
 ## Positioning
@@ -34,7 +34,7 @@
 | Subphase | Status | Purpose | Current Boundary |
 | --- | --- | --- | --- |
 | `5.1` | In progress | Passive rich semantics plus renderer/replay parity | Shared renderer and replay are in place; backend live completeness is currently limited to `tool_call` and `plan_block` |
-| `5.2` | In progress | Interactive request/response lifecycle semantics | Execution runtime-input lifecycle is live + replay complete; `approval_request` is contract-ready but runtime-blocked for live parity |
+| `5.2` | Complete | Interactive request/response lifecycle semantics | Execution and planning runtime-input lifecycle semantics converge on the shared v2 contract; `approval_request` is contract-ready but runtime-blocked for live parity |
 | `5.3` | Not started | Lineage-aware actions and command semantics | Waiting on stable replay, terminal-state, and fallback-policy decisions |
 
 ## Dependencies Between 5.1 / 5.2 / 5.3
@@ -137,7 +137,7 @@ Phase 5 is complete when:
 
 ## Phase 5.2 - Interactive Request/Response Semantics
 ### Status
-- In progress
+- Complete
 
 ### Goal
 - Add durable, reconnect-safe request/response lifecycle semantics to the shared conversation contract without requiring host-wrapper submit parity.
@@ -166,28 +166,36 @@ Phase 5 is complete when:
   - `request_user_input`
   - `request_resolved`
   - `user_input_resolved`
+- execution duplicate-publish hardening is in place so locally initiated request resolution remains the authoritative terminal publish path and native callbacks do not republish terminal lifecycle events
+- planning runtime-input lifecycle semantics now converge on the same shared contract through planning snapshot normalization, planning lifecycle event translation, and a planning v2 resolve route
 - normalized shared parts in use:
   - `user_input_request`
   - `user_input_response`
 - `approval_request` is contract-ready and replay-safe, but remains runtime-blocked for live parity while `approvalPolicy: never` remains
-- ask and planning only participate where a clean normalized interactive source exists on the v2 path
+- ask only participates where a clean normalized interactive source exists on the v2 path
 
 ### Core Rules
 - the shared contract exposes at most one active visible unresolved request at a time on the current lineage
 - the active visible request is the latest unresolved request in normalized durable message/part order on the currently visible lineage
 - historical resolved requests remain replayable but must not reopen as active UI
 - durable request state is conversation-owned even when submit controls remain host-owned
+- execution route-driven resolution is the authoritative terminal publish path for locally initiated execution user-input resolution
+- native resolution callbacks must not republish terminal lifecycle events for requests that are already terminal
+- planning active-request selection must follow the same latest-unresolved policy as execution on the currently visible unsuperseded lineage
 - guarded snapshot refresh is recovery only, not the primary lifecycle source
 
 ### Risks
 - reopening historical requests as active UI after reconnect
 - duplicated request ownership between host wrappers and the shared conversation contract
 - implying approval live parity even while `approvalPolicy: never` blocks emission
+- ask interactive semantics being implied without a clean normalized v2 source
 
 ### Acceptance Criteria
 - `approval_request`, `user_input_request`, and `user_input_response` render on the shared contract without unsupported fallback
 - the active visible request resolves to the latest unresolved request on the currently visible lineage
 - execution runtime-input requests and responses persist durably, survive reconnect, and converge between live delivery and replay
+- execution request resolution remains single-publish when local resolution and native callbacks race or arrive out of order
+- planning runtime-input requests and responses normalize into the same v2 contract, use the same latest-unresolved visibility policy, and remain host-owned only for submit affordances
 - `request_resolved` updates durable lifecycle state without fabricating a separate approval response part
 - approval semantics remain contract-ready and replay-safe, with any live-path runtime block documented explicitly
 

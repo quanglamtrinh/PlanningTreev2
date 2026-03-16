@@ -40,9 +40,9 @@
 
 ## OI-006
 - Severity: low
-- Issue: ask and planning do not currently expose a clean normalized interactive request source on the v2 path in this repo.
+- Issue: ask does not currently expose a clean normalized interactive request source on the v2 path in this repo.
 - Impact:
-  - current Phase 5.2 closeout is execution-native for runtime-input lifecycle semantics
-  - ask/planning-specific interactive convergence should not be implied where no clean current-path source exists
+  - current Phase 5.2 closeout covers execution and planning runtime-input lifecycle semantics
+  - ask-specific interactive convergence should not be implied where no clean current-path source exists
 - Follow-Up:
-  - normalize additional interactive semantics on ask or planning only when a durable v2 source exists and can be adopted without wrapper-owned shadow state
+  - normalize additional interactive semantics on ask only when a durable v2 source exists and can be adopted without wrapper-owned shadow state

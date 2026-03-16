@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import threading
 import time
 
@@ -587,6 +588,8 @@ def test_translate_planning_event_expands_legacy_planning_events_into_normalized
     gateway, _, _ = build_gateway(storage, tree_service, FakeConversationClient())
 
     started_events = gateway.translate_planning_event(
+        project_id,
+        node_id,
         {
             "type": "planning_turn_started",
             "conversation_id": "convplan_1",
@@ -599,6 +602,8 @@ def test_translate_planning_event_expands_legacy_planning_events_into_normalized
         }
     )
     completed_events = gateway.translate_planning_event(
+        project_id,
+        node_id,
         {
             "type": "planning_turn_completed",
             "conversation_id": "convplan_1",
@@ -611,6 +616,8 @@ def test_translate_planning_event_expands_legacy_planning_events_into_normalized
         }
     )
     failed_events = gateway.translate_planning_event(
+        project_id,
+        node_id,
         {
             "type": "planning_turn_failed",
             "conversation_id": "convplan_1",
@@ -642,6 +649,141 @@ def test_translate_planning_event_expands_legacy_planning_events_into_normalized
     assert failed_events[0]["payload"]["status"] == "error"
     assert failed_events[1]["payload"]["status"] == "error"
     assert failed_events[1]["payload"]["error"] == "Split failed: planner crashed"
+
+    gateway.flush_and_stop()
+
+
+def test_translate_planning_request_events_and_snapshot_converge_on_normalized_interactive_messages(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    storage.thread_store.replace_planning_turns(
+        project_id,
+        node_id,
+        [
+            {
+                "turn_id": "turn_plan_1",
+                "role": "user",
+                "content": "Split this node into slices.",
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:01Z",
+            },
+            {
+                "turn_id": "turn_plan_1",
+                "role": "assistant",
+                "content": "",
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:02Z",
+            },
+        ],
+    )
+    storage.thread_store.set_planning_status(
+        project_id,
+        node_id,
+        thread_id="planning_thread_1",
+        status="active",
+        active_turn_id="turn_plan_1",
+    )
+    execution_session = storage.thread_store.get_execution_session(project_id, node_id)
+    execution_session["mode"] = "plan"
+    execution_session["status"] = "active"
+    execution_session["thread_id"] = "thread_plan_1"
+    execution_session["active_turn_id"] = "turn_plan_1"
+    execution_session["event_seq"] = 2
+    execution_session["runtime_request_registry"] = [
+        {
+            "request_id": "req_hist",
+            "thread_id": "thread_plan_1",
+            "turn_id": "turn_plan_1",
+            "item_id": "item_hist",
+            "status": "resolved",
+            "created_at": "2026-03-15T00:00:03Z",
+            "resolved_at": "2026-03-15T00:00:04Z",
+            "questions": [
+                {
+                    "id": "brand_direction",
+                    "header": "Brand direction",
+                    "question": "What visual direction should we use?",
+                    "options": [],
+                }
+            ],
+            "answer_payload": {"answers": {"brand_direction": {"answers": ["Editorial"]}}},
+        },
+        {
+            "request_id": "req_latest",
+            "thread_id": "thread_plan_1",
+            "turn_id": "turn_plan_1",
+            "item_id": "item_latest",
+            "status": "pending",
+            "created_at": "2026-03-15T00:00:05Z",
+            "questions": [
+                {
+                    "id": "tone",
+                    "header": "Tone",
+                    "question": "Which tone should we use?",
+                    "options": [{"label": "Playful", "description": "Expressive and bold."}],
+                }
+            ],
+        },
+    ]
+    execution_session["pending_input_request"] = copy.deepcopy(execution_session["runtime_request_registry"][1])
+    storage.thread_store.write_execution_session(project_id, node_id, execution_session)
+
+    gateway, _, _ = build_gateway(storage, tree_service, FakeConversationClient())
+
+    snapshot = gateway.get_planning_conversation(project_id, node_id)
+    message_ids = [message["message_id"] for message in snapshot["messages"]]
+
+    assert "planning_request_message:req_hist" in message_ids
+    assert "planning_request_response:req_hist" in message_ids
+    assert "planning_request_message:req_latest" in message_ids
+    assert snapshot["record"]["active_stream_id"] == "planning_stream:turn_plan_1"
+    assert snapshot["record"]["event_seq"] == 8
+
+    requested_events = gateway.translate_planning_event(
+        project_id,
+        node_id,
+        {
+            "type": "plan_input_requested",
+            "event_seq": 3,
+            "request": copy.deepcopy(execution_session["pending_input_request"]),
+            "timestamp": "2026-03-15T00:00:05Z",
+        },
+    )
+    resolved_events = gateway.translate_planning_event(
+        project_id,
+        node_id,
+        {
+            "type": "plan_input_resolved",
+            "event_seq": 4,
+            "request_id": "req_hist",
+            "status": "resolved",
+            "resolved_at": "2026-03-15T00:00:04Z",
+        },
+    )
+    orphan_events = gateway.translate_planning_event(
+        project_id,
+        node_id,
+        {
+            "type": "plan_input_resolved",
+            "event_seq": 5,
+            "request_id": "req_missing",
+            "status": "resolved",
+            "resolved_at": "2026-03-15T00:00:06Z",
+        },
+    )
+
+    assert [event["event_type"] for event in requested_events] == ["request_user_input"]
+    assert requested_events[0]["payload"]["message"]["message_id"] == "planning_request_message:req_latest"
+    assert [event["event_type"] for event in resolved_events] == ["request_resolved", "user_input_resolved"]
+    assert resolved_events[0]["message_id"] == "planning_request_message:req_hist"
+    assert resolved_events[1]["payload"]["message"]["message_id"] == "planning_request_response:req_hist"
+    assert orphan_events == []
 
     gateway.flush_and_stop()
 
@@ -1157,6 +1299,97 @@ def test_resolve_execution_request_persists_response_and_emits_interactive_event
     }
     request_message = next(message for message in snapshot["messages"] if message["message_id"] == "request_message:req_exec_2")
     assert request_message["parts"][0]["payload"]["resolution_state"] == "resolved"
+
+    gateway.flush_and_stop()
+
+
+def test_resolve_execution_request_suppresses_duplicate_native_resolution_callback_publish(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    set_node_phase(storage, tree_service, project_id, node_id, "executing")
+    fake_client = FakeConversationClient(
+        runtime_requests=[
+            {
+                "request_id": "req_exec_dup",
+                "turn_id": "turn_1",
+                "item_id": "item_req_dup",
+                "wait_for_resolution": True,
+                "questions": [
+                    {
+                        "id": "brand_direction",
+                        "header": "Brand direction",
+                        "question": "What visual direction should we use?",
+                        "options": [],
+                    }
+                ],
+            }
+        ],
+        request_resolutions=[
+            {
+                "request_id": "req_exec_dup",
+                "turn_id": "turn_1",
+                "status": "resolved",
+                "resolved_at": "2026-03-15T00:00:04Z",
+            }
+        ],
+        final_text="Continuing after input.",
+    )
+    gateway, broker, _ = build_gateway(storage, tree_service, fake_client)
+    conversation_id = gateway.get_execution_conversation(project_id, node_id)["record"]["conversation_id"]
+
+    async def run() -> tuple[dict[str, object], dict[str, object], list[dict[str, object]]]:
+        queue = broker.subscribe(project_id, conversation_id)
+        try:
+            response = gateway.send_execution_message(project_id, node_id, "continue")
+            events: list[dict[str, object]] = []
+            while True:
+                event = await asyncio.wait_for(queue.get(), timeout=1)
+                events.append(event)
+                if event["event_type"] == "request_user_input":
+                    break
+
+            resolution = gateway.resolve_execution_request(
+                project_id,
+                node_id,
+                "req_exec_dup",
+                request_kind="user_input",
+                decision=None,
+                answers={"brand_direction": {"answers": ["Editorial"]}},
+                thread_id="thread_exec_1",
+                turn_id="turn_1",
+            )
+
+            deadline = time.time() + 3
+            while time.time() < deadline:
+                event = await asyncio.wait_for(queue.get(), timeout=max(0.01, deadline - time.time()))
+                events.append(event)
+                if event["event_type"] == "completion_status":
+                    break
+            return response, resolution, events
+        finally:
+            broker.unsubscribe(project_id, conversation_id, queue)
+
+    response, resolution, events = asyncio.run(run())
+    snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        str(response["conversation_id"]),
+        lambda item: item["record"]["status"] == "completed",
+    )
+
+    assert resolution == {"status": "resolved"}
+    assert [event["event_type"] for event in events].count("request_resolved") == 1
+    assert [event["event_type"] for event in events].count("user_input_resolved") == 1
+    response_message = next(
+        message for message in snapshot["messages"] if message["message_id"] == "request_response:req_exec_dup"
+    )
+    assert response_message["parts"][0]["payload"]["answers"] == {
+        "brand_direction": {"answers": ["Editorial"]}
+    }
 
     gateway.flush_and_stop()
 

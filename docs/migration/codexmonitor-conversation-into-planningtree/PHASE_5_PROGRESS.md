@@ -4,7 +4,7 @@
 | Field | Value |
 | --- | --- |
 | Status | In progress |
-| Current focus | Publish the dedicated Phase 5 artifact package, keep `5.1` and `5.2` boundaries explicit, and prepare `5.3` planning |
+| Current focus | Keep `5.1` and runtime-blocked `5.2` boundaries explicit, validate planning-v2 interactive convergence, and prepare `5.3` planning |
 | Last updated | `2026-03-16` |
 | Phase owner | `TBD` |
 
@@ -12,27 +12,29 @@
 | Subphase | Status | Owner | Validation Status | Latest Update | Open Issues |
 | --- | --- | --- | --- | --- | --- |
 | `5.1` | In progress | `TBD` | Partially validated | `2026-03-16` passive hardening and backend live-path boundary update | `P5-OI-001` |
-| `5.2` | In progress | `TBD` | Partially validated | `2026-03-16` execution-native runtime-input lifecycle implementation | `P5-OI-002`, `P5-OI-003` |
+| `5.2` | Complete | `TBD` | Partially validated | `2026-03-16` execution duplicate-suppression hardening and planning-v2 convergence | `P5-OI-002`, `P5-OI-003` |
 | `5.3` | Not started | `TBD` | Not started | Planning only | `P5-OI-004`, `P5-OI-005`, `P5-OI-006`, `P5-OI-007` |
 
 ## Current Focus
 - keep the dedicated Phase 5 package aligned with the actual repo state
 - keep `5.1` replay-only backend semantics explicit until native transport support exists
 - keep `5.2` approval live parity explicitly runtime-blocked while `approvalPolicy: never` remains
-- use the package to prepare `5.3` lineage and fallback-policy decisions
+- use the package to prepare `5.3` lineage and fallback-policy decisions now that `5.2` runtime-input closeout has landed
 
 ## Completed
 - `5.1` shared passive renderer and durable replay support are in place
 - `5.1` passive-event targeting now rejects non-deterministic assistant attachment and logs observable diagnostics
 - `5.1` backend live + replay completeness is implemented for `tool_call` and `plan_block`
 - `5.2` execution-native runtime-input lifecycle is normalized, persisted, and rendered through the shared conversation contract
+- `5.2` execution request resolution now suppresses duplicate terminal publish when local resolution and native callbacks overlap
 - `5.2` active visible request selection now uses the latest unresolved request on the currently visible lineage
+- `5.2` planning runtime-input lifecycle now converges on the same conversation-v2 contract through snapshot normalization, lifecycle event translation, and a planning v2 resolve route
 - dedicated `PHASE_5_*` tracking files have been added to the migration docs
 
 ## In Progress
 - `5.1` remaining passive semantics stay replay-only on the backend live path until native transport support exists
 - `5.2` approval semantics are contract-ready and replay-safe, but live parity remains runtime-blocked
-- `5.2` ask and planning interactive convergence remains limited to paths with a clean normalized source
+- ask interactive convergence remains limited to paths with a clean normalized source
 
 ## Not Started
 - `5.3` lineage metadata
@@ -42,7 +44,7 @@
 ## Blocked / At Risk
 - `P5-OI-001`: missing native transport live signals for several passive semantics
 - `P5-OI-002`: approval live parity remains blocked by `approvalPolicy: never`
-- `P5-OI-003`: ask and planning do not yet expose a clean normalized interactive source on the v2 path
+- `P5-OI-003`: ask does not yet expose a clean normalized interactive source on the v2 path
 - `P5-OI-004`: runtime rollback and rewind capability for `retry` and `regenerate` is not locked
 - `P5-OI-005`: cancel/completion race semantics are not yet defined
 
@@ -85,29 +87,31 @@
 ### Status Table
 | Field | Value |
 | --- | --- |
-| Status | In progress |
+| Status | Complete |
 | Owner | `TBD` |
-| Latest update | `2026-03-16` execution-native runtime-input lifecycle landed |
+| Latest update | `2026-03-16` execution duplicate-suppression hardening and planning-v2 convergence landed |
 | Validation status | Partially validated |
-| Blockers | Approval live parity remains runtime-blocked; ask/planning convergence depends on a clean normalized source |
-| Next recommended step | Keep the execution-native boundary explicit and avoid implying approval or host-specific parity that the repo does not yet provide |
+| Blockers | Approval live parity remains runtime-blocked; ask still lacks a clean normalized interactive source on the v2 path |
+| Next recommended step | Hold the `5.2` boundary steady, keep approval runtime-blocked in docs, and move active implementation focus to `5.3` |
 
 ### Completed Implementation Items
 - normalized `request_resolved` event added to the shared conversation-v2 contract
 - shared render-model support for `approval_request`, `user_input_request`, and `user_input_response`
 - execution-native request creation, request resolution, and user-response persistence
+- execution duplicate terminal-publish suppression for local resolve plus native callback overlap
 - shared request-actions hook for host-owned submit surfaces
 - latest-unresolved active request selection on the currently visible lineage
+- planning snapshot normalization, event translation, and resolve routing now converge planning runtime-input semantics on the same v2 request contract
 
 ### Remaining Implementation Items
 - keep approval live parity explicitly runtime-blocked until runtime policy changes
-- normalize ask or planning interactive semantics only when a clean durable v2 source exists
+- normalize ask interactive semantics only when a clean durable v2 source exists
 - keep replay/reconnect and host submit behavior aligned with the documented contract
 
 ### Validation Status
 - reducer and renderer tests cover `request_user_input`, `request_resolved`, and `user_input_resolved`
-- host tests cover latest-unresolved active request selection and execution-host submission through the v2 resolve route
-- backend tests cover request creation, resolution, persistence, and publish ordering on the execution path
+- host tests cover latest-unresolved active request selection plus execution and planning host submission through the v2 resolve routes
+- backend tests cover request creation, duplicate-suppression hardening, planning normalization, persistence, and publish ordering on the execution and planning paths
 - approval live-path parity is intentionally unvalidated because it is runtime-blocked
 
 ### Blockers
@@ -117,7 +121,7 @@
 ### Next Recommended Steps
 - keep approval documented as runtime-blocked rather than partially implied
 - keep submit controls host-owned unless the shared surface intentionally becomes the primary submit surface later
-- do not claim ask/planning interactive convergence where no clean normalized source exists
+- do not claim ask interactive convergence where no clean normalized source exists
 
 ## Phase 5.3 Status
 ### Status Table
