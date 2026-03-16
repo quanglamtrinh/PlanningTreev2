@@ -214,3 +214,28 @@
   - none
 - Next Step:
   - begin `Phase 3.3 - Execution Tab Visible Cutover` using the new shared surface without pulling ask or planning into scope
+
+## 2026-03-15T18:02:00-07:00
+- Phase: 3
+- Batch ID: P3.3
+- Summary:
+  - cut the visible execution tab over to the execution-v2 conversation path by turning `ChatPanel` into a thin host adapter and routing the visible execution branch through the shared `ConversationSurface`
+  - kept `BreadcrumbWorkspace` as the owner of execution wrapper controls, planner-modal orchestration, hidden execution-v2 hook mounting, and legacy chat-session support needed outside visible transcript ownership
+  - moved visible execution draft ownership to keyed `conversation-store` when the cutover flag is on, including delayed route-state composer seed application after execution-v2 hydration
+  - tightened visible node-status patching so `ready -> in_progress` only derives from live execution-v2 activity signals instead of any persisted execution history
+- Files Changed:
+  - `frontend/src/features/breadcrumb/ChatPanel.tsx`
+  - `frontend/src/features/breadcrumb/LegacyExecutionChatPanel.tsx`
+  - `frontend/src/features/breadcrumb/ExecutionConversationPanel.tsx`
+  - `frontend/src/features/breadcrumb/BreadcrumbWorkspace.tsx`
+  - `frontend/src/features/conversation/components/ConversationSurface.tsx`
+  - `frontend/src/features/conversation/components/ConversationSurface.module.css`
+  - `frontend/tests/unit/ChatPanel.test.tsx`
+  - `frontend/tests/unit/BreadcrumbWorkspace.test.tsx`
+  - `frontend/tests/unit/ConversationSurface.test.tsx`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PROGRESS_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/CHANGELOG.md`
+- Blockers:
+  - none
+- Next Step:
+  - keep ask, planning, shell migration, and richer command controls deferred until a later tracked phase requests them

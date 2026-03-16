@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { apiMock } = vi.hoisted(() => ({
@@ -248,7 +248,7 @@ function makeExecutionConversationSnapshot() {
     record: {
       conversation_id: 'conv_exec_1',
       project_id: 'project-1',
-      node_id: 'root',
+      node_id: 'child-1',
       thread_type: 'execution' as const,
       app_server_thread_id: null,
       current_runtime_mode: 'execute' as const,
@@ -260,6 +260,71 @@ function makeExecutionConversationSnapshot() {
     },
     messages: [],
   }
+}
+
+function makeExecutionConversationSnapshotWithMessage(
+  text: string,
+  overrides: Partial<ReturnType<typeof makeExecutionConversationSnapshot>> = {},
+) {
+  const snapshot = makeExecutionConversationSnapshot()
+  return {
+    ...snapshot,
+    ...overrides,
+    record: {
+      ...snapshot.record,
+      ...(overrides.record ?? {}),
+    },
+    messages: [
+      {
+        message_id: 'conv_msg_1',
+        conversation_id: snapshot.record.conversation_id,
+        turn_id: 'turn_1',
+        role: 'assistant' as const,
+        runtime_mode: 'execute' as const,
+        status: 'completed' as const,
+        created_at: '2026-03-15T00:00:01Z',
+        updated_at: '2026-03-15T00:00:01Z',
+        lineage: {},
+        usage: null,
+        error: null,
+        parts: [
+          {
+            part_id: 'part_assistant',
+            part_type: 'assistant_text' as const,
+            status: 'completed' as const,
+            order: 0,
+            item_key: null,
+            created_at: '2026-03-15T00:00:01Z',
+            updated_at: '2026-03-15T00:00:01Z',
+            payload: { text },
+          },
+        ],
+      },
+    ],
+  }
+}
+
+function createDeferredPromise<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+function WorkspaceWithLocationProbe() {
+  const location = useLocation()
+  const hasComposerSeed =
+    typeof (location.state as { composerSeed?: unknown } | null)?.composerSeed === 'string'
+
+  return (
+    <>
+      <BreadcrumbWorkspace />
+      <div data-testid="composer-seed-state">{hasComposerSeed ? 'present' : 'cleared'}</div>
+    </>
+  )
 }
 
 describe('BreadcrumbWorkspace', () => {
@@ -911,9 +976,7 @@ describe('BreadcrumbWorkspace', () => {
       expect(apiMock.getExecutionConversation).toHaveBeenCalledWith('project-1', 'child-1')
     })
     expect(apiMock.executionConversationEventsUrl).toHaveBeenCalled()
-    expect(
-      screen.getByPlaceholderText('Planner input is handled through the native modal when needed.'),
-    ).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Click Plan to prepare execution.')).toBeInTheDocument()
   })
 
   it('does not mount hidden execution-v2 plumbing when the feature flag is disabled', async () => {
@@ -960,9 +1023,88 @@ describe('BreadcrumbWorkspace', () => {
     expect(apiMock.executionConversationEventsUrl).not.toHaveBeenCalled()
   })
 
-  it('keeps the visible execution transcript legacy-owned even when execution-v2 store has data', async () => {
+  it('shows the visible execution transcript from v2 when the cutover flag is enabled', async () => {
     vi.stubEnv('VITE_EXECUTION_CONVERSATION_V2_ENABLED', 'true')
 
+    const loadSession = vi.fn(async () => {
+      useChatStore.setState({
+        session: {
+          project_id: 'project-1',
+          node_id: 'child-1',
+          active_turn_id: null,
+          event_seq: 1,
+          status: 'active',
+          mode: 'plan',
+          config: {
+            access_mode: 'project_write',
+            cwd: 'C:/workspace/alpha',
+            writable_roots: ['C:/workspace/alpha'],
+            timeout_sec: 120,
+          },
+          pending_input_request: null,
+          messages: [
+            {
+              message_id: 'legacy_msg_1',
+              role: 'assistant',
+              content: 'Legacy execution transcript',
+              created_at: '2026-03-15T00:00:00Z',
+              updated_at: '2026-03-15T00:00:00Z',
+              status: 'completed',
+              error: null,
+            },
+          ],
+        },
+        connectionStatus: 'connected',
+      })
+    })
+    apiMock.getExecutionConversation.mockResolvedValue({
+      conversation: makeExecutionConversationSnapshotWithMessage('Execution v2 visible transcript'),
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'child-1',
+      snapshot: childSnapshot,
+      documentsByNode: { 'child-1': makeNodeDocuments() },
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      loadNodeDocuments: vi.fn(async () => makeNodeDocuments()),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+      startPlan: vi.fn(async () => {}),
+      executeNode: vi.fn(async () => {}),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession,
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/child-1/chat',
+            state: { activeTab: 'execution' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Execution v2 visible transcript')).toBeInTheDocument()
+    expect(loadSession).toHaveBeenCalledWith('project-1', 'child-1')
+    expect(screen.queryByText('Legacy execution transcript')).not.toBeInTheDocument()
+  })
+
+  it('keeps the visible execution transcript legacy-owned when the cutover flag is disabled', async () => {
     const loadSession = vi.fn(async () => {
       useChatStore.setState({
         session: {
@@ -1016,48 +1158,9 @@ describe('BreadcrumbWorkspace', () => {
       ...useChatStore.getInitialState(),
       loadSession,
     })
-    useConversationStore.getState().ensureConversation({
-      record: {
-        conversation_id: 'conv_exec_legacy_guard',
-        project_id: 'project-1',
-        node_id: 'child-1',
-        thread_type: 'execution',
-        app_server_thread_id: null,
-        current_runtime_mode: 'execute',
-        status: 'active',
-        active_stream_id: 'stream_1',
-        event_seq: 2,
-        created_at: '2026-03-15T00:00:00Z',
-        updated_at: '2026-03-15T00:00:02Z',
-      },
-      messages: [
-        {
-          message_id: 'conv_msg_1',
-          conversation_id: 'conv_exec_legacy_guard',
-          turn_id: 'turn_1',
-          role: 'assistant',
-          runtime_mode: 'execute',
-          status: 'completed',
-          created_at: '2026-03-15T00:00:01Z',
-          updated_at: '2026-03-15T00:00:02Z',
-          lineage: {},
-          usage: null,
-          error: null,
-          parts: [
-            {
-              part_id: 'part_assistant',
-              part_type: 'assistant_text',
-              status: 'completed',
-              order: 0,
-              item_key: null,
-              created_at: '2026-03-15T00:00:01Z',
-              updated_at: '2026-03-15T00:00:02Z',
-              payload: { text: 'Execution v2 hidden transcript' },
-            },
-          ],
-        },
-      ],
-    })
+    useConversationStore.getState().ensureConversation(
+      makeExecutionConversationSnapshotWithMessage('Execution v2 transcript'),
+    )
 
     render(
       <MemoryRouter
@@ -1077,6 +1180,212 @@ describe('BreadcrumbWorkspace', () => {
 
     expect(await screen.findByText('Legacy execution transcript')).toBeInTheDocument()
     expect(loadSession).toHaveBeenCalledWith('project-1', 'child-1')
-    expect(screen.queryByText('Execution v2 hidden transcript')).not.toBeInTheDocument()
+    expect(apiMock.getExecutionConversation).not.toHaveBeenCalled()
+    expect(screen.queryByText('Execution v2 transcript')).not.toBeInTheDocument()
+  })
+
+  it('applies a delayed execution-v2 composer seed exactly once after hydration, then clears route state', async () => {
+    vi.stubEnv('VITE_EXECUTION_CONVERSATION_V2_ENABLED', 'true')
+
+    const deferredSnapshot = createDeferredPromise<{ conversation: ReturnType<typeof makeExecutionConversationSnapshot> }>()
+    const seed = 'Ship the execution follow-up'
+    const setComposerDraftSpy = vi.spyOn(useConversationStore.getState(), 'setComposerDraft')
+
+    apiMock.getExecutionConversation.mockReturnValue(deferredSnapshot.promise)
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'child-1',
+      snapshot: childSnapshot,
+      documentsByNode: { 'child-1': makeNodeDocuments() },
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      loadNodeDocuments: vi.fn(async () => makeNodeDocuments()),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+      startPlan: vi.fn(async () => {}),
+      executeNode: vi.fn(async () => {}),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/child-1/chat',
+            state: {
+              activeTab: 'execution' as const,
+              composerSeed: seed,
+            },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<WorkspaceWithLocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByTestId('composer-seed-state')).toHaveTextContent('present')
+    expect(setComposerDraftSpy).not.toHaveBeenCalled()
+
+    await act(async () => {
+      deferredSnapshot.resolve({
+        conversation: {
+          ...makeExecutionConversationSnapshot(),
+          record: {
+            ...makeExecutionConversationSnapshot().record,
+            node_id: 'child-1',
+          },
+        },
+      })
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(
+        useConversationStore.getState().conversationsById.conv_exec_1.composerDraft,
+      ).toBe(seed)
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('composer-seed-state')).toHaveTextContent('cleared')
+    })
+    expect(setComposerDraftSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not patch node status from old completed execution history alone when v2 is visible', async () => {
+    vi.stubEnv('VITE_EXECUTION_CONVERSATION_V2_ENABLED', 'true')
+
+    const patchNodeStatus = vi.fn()
+    apiMock.getExecutionConversation.mockResolvedValue({
+      conversation: makeExecutionConversationSnapshotWithMessage('Old completed run', {
+        record: {
+          node_id: 'child-1',
+          status: 'completed',
+          active_stream_id: null,
+        },
+      }),
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'child-1',
+      snapshot: childSnapshot,
+      documentsByNode: { 'child-1': makeNodeDocuments() },
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      loadNodeDocuments: vi.fn(async () => makeNodeDocuments()),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus,
+      startPlan: vi.fn(async () => {}),
+      executeNode: vi.fn(async () => {}),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/child-1/chat',
+            state: { activeTab: 'execution' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Old completed run')).toBeInTheDocument()
+    expect(patchNodeStatus).not.toHaveBeenCalled()
+  })
+
+  it('patches node status from live execution-v2 activity when the cutover flag is enabled', async () => {
+    vi.stubEnv('VITE_EXECUTION_CONVERSATION_V2_ENABLED', 'true')
+
+    const patchNodeStatus = vi.fn((targetNodeId: string, status: 'in_progress') => {
+      useProjectStore.setState((state) => ({
+        snapshot: state.snapshot
+          ? {
+              ...state.snapshot,
+              tree_state: {
+                ...state.snapshot.tree_state,
+                node_registry: state.snapshot.tree_state.node_registry.map((item) =>
+                  item.node_id === targetNodeId ? { ...item, status } : item,
+                ),
+              },
+            }
+          : state.snapshot,
+      }))
+    })
+    apiMock.getExecutionConversation.mockResolvedValue({
+      conversation: makeExecutionConversationSnapshotWithMessage('Live execution run', {
+        record: {
+          node_id: 'child-1',
+          status: 'active',
+          active_stream_id: 'stream_1',
+        },
+      }),
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'child-1',
+      snapshot: childSnapshot,
+      documentsByNode: { 'child-1': makeNodeDocuments() },
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      loadNodeDocuments: vi.fn(async () => makeNodeDocuments()),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus,
+      startPlan: vi.fn(async () => {}),
+      executeNode: vi.fn(async () => {}),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/child-1/chat',
+            state: { activeTab: 'execution' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Live execution run')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(patchNodeStatus).toHaveBeenCalledWith('child-1', 'in_progress')
+    })
   })
 })

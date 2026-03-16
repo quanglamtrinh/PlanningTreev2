@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 
 import type { ConversationRenderModel } from '../model/buildConversationRenderModel'
 import styles from './ConversationSurface.module.css'
@@ -23,8 +23,10 @@ type Props = {
   composerValue?: string
   composerDisabled?: boolean
   composerPlaceholder?: string
+  composerHint?: ReactNode
   onComposerValueChange?: (draft: string) => void
   onComposerSubmit?: () => void
+  onComposerKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void
 }
 
 function fallbackCopy(unsupportedPartTypes: string[]): string {
@@ -63,8 +65,10 @@ export function ConversationSurface({
   composerValue = '',
   composerDisabled = false,
   composerPlaceholder = 'Write a message...',
+  composerHint,
   onComposerValueChange,
   onComposerSubmit,
+  onComposerKeyDown,
 }: Props) {
   const messages = model?.messages ?? []
   const showTranscript = messages.length > 0
@@ -143,6 +147,7 @@ export function ConversationSurface({
               placeholder={composerPlaceholder}
               disabled={composerDisabled}
               onChange={(event) => onComposerValueChange(event.target.value)}
+              onKeyDown={onComposerKeyDown}
             />
             <button
               type="button"
@@ -153,6 +158,7 @@ export function ConversationSurface({
               Send
             </button>
           </div>
+          {composerHint ? <div className={styles.composerHint}>{composerHint}</div> : null}
         </div>
       ) : null}
     </div>

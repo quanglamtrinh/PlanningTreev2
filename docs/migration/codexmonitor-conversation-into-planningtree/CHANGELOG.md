@@ -93,3 +93,12 @@
 - Verification:
   - `npm run test:unit -- ConversationSurface.test.tsx`
   - `npm run build`
+- Phase 3.3 implementation:
+  - turned `ChatPanel` into a thin host adapter with separate legacy and visible execution-v2 branches
+  - added `ExecutionConversationPanel` so the visible execution tab now renders `ConversationSurface` from keyed execution-v2 state when `VITE_EXECUTION_CONVERSATION_V2_ENABLED=true`
+  - kept `BreadcrumbWorkspace` as the owner of the hidden execution-v2 hook, execution wrapper controls, planner-modal behavior, and legacy compatibility outside visible transcript ownership
+  - moved visible execution draft seeding onto keyed conversation state when the cutover flag is on and tightened `ready -> in_progress` patching to live execution-v2 activity only
+  - extended `ConversationSurface` only where needed for the cutover by adding optional composer hint and textarea keydown support
+- Verification:
+  - `npm run test:unit -- ChatPanel.test.tsx BreadcrumbWorkspace.test.tsx ConversationSurface.test.tsx execution-conversation-stream.test.tsx`
+  - `npm run build`

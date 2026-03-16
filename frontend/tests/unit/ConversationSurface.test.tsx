@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react'
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ConversationSurface } from '../../src/features/conversation/components/ConversationSurface'
@@ -356,5 +356,30 @@ describe('ConversationSurface', () => {
 
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument()
+  })
+
+  it('renders composer hint content and forwards composer keydown events', () => {
+    const onComposerKeyDown = vi.fn()
+
+    renderSurface(
+      { messages: [] },
+      {
+        showComposer: true,
+        composerValue: 'Draft',
+        composerHint: (
+          <>
+            <kbd>Enter</kbd> to send
+          </>
+        ),
+        onComposerValueChange: vi.fn(),
+        onComposerSubmit: vi.fn(),
+        onComposerKeyDown,
+      },
+    )
+
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' })
+
+    expect(screen.getByText('to send')).toBeInTheDocument()
+    expect(onComposerKeyDown).toHaveBeenCalled()
   })
 })

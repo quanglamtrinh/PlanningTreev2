@@ -271,6 +271,9 @@
 }
 
 .composerWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   padding: 12px 24px 16px;
   border-top: 1px solid #ececec;
   background: #ffffff;
@@ -325,6 +328,25 @@
   background: var(--accent-primary-hover);
   border-color: var(--accent-primary-hover);
   color: #ffffff;
+}
+
+.composerHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: #9ca3af;
+  text-align: center;
+}
+
+.composerHint kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #f3f4f6;
+  color: #4b5563;
 }
 
 @media (max-width: 640px) {

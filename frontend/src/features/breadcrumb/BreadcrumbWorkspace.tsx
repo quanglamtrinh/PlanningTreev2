@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/client";
 import {
@@ -10,6 +10,7 @@ import {
 import { isExecutionConversationV2Enabled } from "../../config/featureFlags";
 import { useExecutionConversation } from "../conversation/hooks/useExecutionConversation";
 import { useChatStore } from "../../stores/chat-store";
+import { useConversationStore } from "../../stores/conversation-store";
 import { useProjectStore } from "../../stores/project-store";
 import { useUIStore } from "../../stores/ui-store";
 import { AgentActivityCard } from "./AgentActivityCard";
@@ -49,6 +50,39 @@ function resolveRequestedTab(value: RequestedTabId | undefined): TabId {
     return value;
   }
   return "planning";
+}
+
+function readComposerSeed(state: unknown): string {
+  if (!state || typeof state !== "object") {
+    return "";
+  }
+  const composerSeed = (state as { composerSeed?: unknown }).composerSeed;
+  return typeof composerSeed === "string" ? composerSeed : "";
+}
+
+function clearComposerSeedFromLocationState(state: unknown): Record<string, unknown> | null {
+  if (!state || typeof state !== "object") {
+    return null;
+  }
+  const nextState = { ...(state as Record<string, unknown>) };
+  delete nextState.composerSeed;
+  return Object.keys(nextState).length > 0 ? nextState : null;
+}
+
+function hasLiveExecutionConversationActivity(
+  conversation: ReturnType<typeof useExecutionConversation>["conversation"],
+): boolean {
+  if (!conversation) {
+    return false;
+  }
+  const latestMessage =
+    conversation.snapshot.messages[conversation.snapshot.messages.length - 1] ?? null;
+  return (
+    conversation.snapshot.record.active_stream_id !== null ||
+    conversation.snapshot.record.status === "active" ||
+    latestMessage?.status === "pending" ||
+    latestMessage?.status === "streaming"
+  );
 }
 
 export function BreadcrumbWorkspace() {
@@ -103,8 +137,12 @@ export function BreadcrumbWorkspace() {
   const bootstrap = useProjectStore((state) => state.bootstrap);
   const chatSession = useChatStore((state) => state.session);
   const setComposerDraft = useChatStore((state) => state.setComposerDraft);
+  const setConversationComposerDraft = useConversationStore(
+    (state) => state.setComposerDraft,
+  );
   const setActiveSurface = useUIStore((state) => state.setActiveSurface);
   const executionConversationV2Enabled = isExecutionConversationV2Enabled();
+  const appliedComposerSeedTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     setActiveSurface("breadcrumb");
@@ -158,7 +196,7 @@ export function BreadcrumbWorkspace() {
     projectId && node && activeTab === "execution" ? projectId : null,
     node && activeTab === "execution" ? node.node_id : null,
   );
-  useExecutionConversation({
+  const executionConversation = useExecutionConversation({
     projectId: projectId ?? null,
     nodeId: node?.node_id ?? null,
     enabled:
@@ -193,23 +231,48 @@ export function BreadcrumbWorkspace() {
     if (!projectId || !nodeId || !node) {
       return;
     }
-    const composerSeed =
-      typeof (location.state as { composerSeed?: string } | null)
-        ?.composerSeed === "string"
-        ? ((location.state as { composerSeed?: string }).composerSeed ?? "")
-        : "";
+    const composerSeed = readComposerSeed(location.state);
     if (!composerSeed.trim()) {
       return;
     }
-    setComposerDraft(composerSeed);
-    navigate(location.pathname, { replace: true, state: null });
+
+    const seedToken = `${location.key}:${composerSeed}`;
+    if (appliedComposerSeedTokenRef.current === seedToken) {
+      return;
+    }
+
+    const shouldSeedExecutionV2 =
+      executionConversationV2Enabled && activeTab === "execution";
+
+    if (shouldSeedExecutionV2) {
+      if (!executionConversation.conversationId) {
+        return;
+      }
+      setConversationComposerDraft(
+        executionConversation.conversationId,
+        composerSeed,
+      );
+    } else {
+      setComposerDraft(composerSeed);
+    }
+
+    appliedComposerSeedTokenRef.current = seedToken;
+    navigate(location.pathname, {
+      replace: true,
+      state: clearComposerSeedFromLocationState(location.state),
+    });
   }, [
+    activeTab,
+    executionConversation.conversationId,
+    executionConversationV2Enabled,
     location.pathname,
+    location.key,
     location.state,
     navigate,
     node?.node_id,
     nodeId,
     projectId,
+    setConversationComposerDraft,
     setComposerDraft,
   ]);
 
@@ -223,20 +286,37 @@ export function BreadcrumbWorkspace() {
   }, [location.state]);
 
   useEffect(() => {
-    if (
-      !nodeId ||
-      !node ||
-      node.status !== "ready" ||
-      !chatSession ||
-      chatSession.node_id !== nodeId
-    ) {
+    if (!nodeId || !node || node.status !== "ready") {
+      return;
+    }
+
+    if (executionConversationV2Enabled) {
+      if (activeTab !== "execution") {
+        return;
+      }
+      if (!hasLiveExecutionConversationActivity(executionConversation.conversation)) {
+        return;
+      }
+      patchNodeStatus(nodeId, "in_progress");
+      return;
+    }
+
+    if (!chatSession || chatSession.node_id !== nodeId) {
       return;
     }
     if (chatSession.messages.length === 0 && !chatSession.active_turn_id) {
       return;
     }
     patchNodeStatus(nodeId, "in_progress");
-  }, [chatSession, node, nodeId, patchNodeStatus]);
+  }, [
+    activeTab,
+    chatSession,
+    executionConversation.conversation,
+    executionConversationV2Enabled,
+    node,
+    nodeId,
+    patchNodeStatus,
+  ]);
 
   useEffect(() => {
     if (
@@ -313,7 +393,39 @@ export function BreadcrumbWorkspace() {
         executionState.active_plan_input_version &&
       !chatSession?.active_turn_id,
     ) && !isExecutingAction;
-  const canReplyToPlanner = false;
+  const canMessageExecution =
+    node.phase === "executing" &&
+    executionState?.run_status === "executing";
+  const executionComposerPlaceholder = pendingInputRequest
+    ? "Planner input is handled through the native modal when needed."
+    : canMessageExecution
+      ? `Message ${node.title}...`
+      : executionState?.plan_status === "ready"
+        ? "Click Execute to start the execution conversation."
+        : "Click Plan to prepare execution.";
+  const executionEmptyTitle = executionConversationV2Enabled
+    ? "Execution Conversation"
+    : "Plan Session";
+  const executionEmptyHint = executionConversationV2Enabled
+    ? pendingInputRequest
+      ? "Planner input is handled through the native modal when needed."
+      : executionState?.run_status === "executing"
+        ? "Execution messages will appear here as the current run progresses."
+        : executionState?.plan_status === "ready"
+          ? "The current plan is ready. Review it above, then click Execute."
+          : "Click Plan to start an execution planning turn for this node."
+    : executionState?.plan_status === "ready"
+      ? "The current plan is ready. Review it above, then click Execute."
+      : "Click Plan to start an execution planning turn for this node.";
+  const visibleExecutionConversation = executionConversationV2Enabled
+    ? {
+        conversationId: executionConversation.conversationId,
+        conversation: executionConversation.conversation,
+        bootstrapStatus: executionConversation.bootstrapStatus,
+        bootstrapError: executionConversation.bootstrapError,
+        send: executionConversation.send,
+      }
+    : undefined;
   let executionStatusText = "Confirm Spec before planning.";
   if (
     node.phase === "executing" &&
@@ -646,18 +758,15 @@ export function BreadcrumbWorkspace() {
               <ChatPanel
                 node={node}
                 projectId={projectId}
-                composerEnabled={canReplyToPlanner}
-                composerPlaceholder={
-                  canReplyToPlanner
-                    ? `Reply to the planner for ${node.title}...`
-                    : "Planner input is handled through the native modal when needed."
+                composerEnabled={
+                  executionConversationV2Enabled
+                    ? canMessageExecution
+                    : false
                 }
-                emptyTitle="Plan Session"
-                emptyHint={
-                  executionState?.plan_status === "ready"
-                    ? "The current plan is ready. Review it above, then click Execute."
-                    : "Click Plan to start an execution planning turn for this node."
-                }
+                composerPlaceholder={executionComposerPlaceholder}
+                emptyTitle={executionEmptyTitle}
+                emptyHint={executionEmptyHint}
+                executionConversation={visibleExecutionConversation}
               />
               {plannerInputModal}
             </div>
