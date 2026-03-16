@@ -4,7 +4,10 @@ import asyncio
 import threading
 import time
 
+import pytest
+
 from backend.conversation.contracts import make_conversation_message, make_conversation_part
+from backend.errors.app_errors import ConversationPersistenceUnavailable
 from backend.services.codex_session_manager import CodexSessionManager
 from backend.services.conversation_context_builder import ConversationContextBuilder
 from backend.services.conversation_gateway import ConversationGateway, _LiveConversationState
@@ -162,6 +165,27 @@ def block_completion_persistence(gateway: ConversationGateway, monkeypatch) -> t
     return completion_started, release_completion
 
 
+def block_send_start_persistence(gateway: ConversationGateway, monkeypatch) -> tuple[threading.Event, threading.Event]:
+    send_start_started = threading.Event()
+    release_send_start = threading.Event()
+    original_build = gateway._build_send_start_persistence_task
+
+    def wrapped_build(*args, **kwargs):
+        task = original_build(*args, **kwargs)
+        original_run = task.run
+
+        def run() -> None:
+            send_start_started.set()
+            release_send_start.wait()
+            original_run()
+
+        task.run = run
+        return task
+
+    monkeypatch.setattr(gateway, "_build_send_start_persistence_task", wrapped_build)
+    return send_start_started, release_send_start
+
+
 def test_get_execution_conversation_creates_one_canonical_snapshot_per_scope(
     storage: Storage,
     tree_service: TreeService,
@@ -186,6 +210,7 @@ def test_send_execution_message_seeds_stable_messages_and_explicit_message_creat
     storage: Storage,
     tree_service: TreeService,
     workspace_root,
+    monkeypatch,
 ) -> None:
     project_service = ProjectService(storage)
     project_id, node_id = create_project(project_service, str(workspace_root))
@@ -196,6 +221,7 @@ def test_send_execution_message_seeds_stable_messages_and_explicit_message_creat
         tree_service,
         FakeConversationClient(block_event=release, final_text=""),
     )
+    send_start_started, release_send_start = block_send_start_persistence(gateway, monkeypatch)
     conversation_id = gateway.get_execution_conversation(project_id, node_id)["record"]["conversation_id"]
 
     async def run() -> tuple[dict[str, object], list[dict[str, object]]]:
@@ -221,9 +247,19 @@ def test_send_execution_message_seeds_stable_messages_and_explicit_message_creat
     assert events[1]["event_seq"] == 2
     assert events[1]["payload"]["message"]["role"] == "assistant"
     assert snapshot is not None
-    assert snapshot["record"]["status"] == "active"
-    assert snapshot["record"]["active_stream_id"] == response["stream_id"]
-    assert snapshot["record"]["event_seq"] == 2
+    assert send_start_started.wait(timeout=1)
+    assert snapshot["record"]["status"] == "idle"
+    assert snapshot["record"]["active_stream_id"] is None
+    assert snapshot["record"]["event_seq"] == 0
+    assert snapshot["messages"] == []
+
+    release_send_start.set()
+    snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        conversation_id,
+        lambda item: item["record"]["status"] == "active" and item["record"]["active_stream_id"] == response["stream_id"],
+    )
     assert len(snapshot["messages"]) == 2
     assert snapshot["messages"][1]["message_id"] == response["assistant_message_id"]
     assert snapshot["messages"][1]["parts"][0]["part_id"] == response["assistant_text_part_id"]
@@ -276,6 +312,70 @@ def test_assistant_deltas_and_final_text_target_same_placeholder_and_persist_eve
     gateway.flush_and_stop()
 
 
+def test_send_start_persistence_is_enqueued_before_delta_and_completion_tasks(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    set_node_phase(storage, tree_service, project_id, node_id, "executing")
+    fake_client = FakeConversationClient(deltas=["hello"], final_text="hello")
+    gateway, _, _ = build_gateway(storage, tree_service, fake_client)
+
+    def tag_builder(kind: str, original):
+        def wrapped(*args, **kwargs):
+            task = original(*args, **kwargs)
+            setattr(task, "_kind", kind)
+            return task
+
+        return wrapped
+
+    monkeypatch.setattr(
+        gateway,
+        "_build_send_start_persistence_task",
+        tag_builder("send_start", gateway._build_send_start_persistence_task),
+    )
+    monkeypatch.setattr(
+        gateway,
+        "_build_delta_persistence_task",
+        tag_builder("delta", gateway._build_delta_persistence_task),
+    )
+    monkeypatch.setattr(
+        gateway,
+        "_build_final_text_persistence_task",
+        tag_builder("final_text", gateway._build_final_text_persistence_task),
+    )
+    monkeypatch.setattr(
+        gateway,
+        "_build_completion_persistence_task",
+        tag_builder("completion", gateway._build_completion_persistence_task),
+    )
+
+    enqueued: list[str] = []
+    original_enqueue = gateway._enqueue_persistence_task
+
+    def wrapped_enqueue(task) -> None:
+        enqueued.append(str(getattr(task, "_kind", "unknown")))
+        original_enqueue(task)
+
+    monkeypatch.setattr(gateway, "_enqueue_persistence_task", wrapped_enqueue)
+
+    response = gateway.send_execution_message(project_id, node_id, "hello")
+    wait_for_snapshot(
+        storage,
+        project_id,
+        str(response["conversation_id"]),
+        lambda item: item["record"]["status"] == "completed" and item["record"]["active_stream_id"] is None,
+    )
+
+    assert enqueued[0] == "send_start"
+    assert "delta" in enqueued[1:]
+    assert "completion" in enqueued[1:]
+    gateway.flush_and_stop()
+
+
 def test_success_path_emits_strictly_monotonic_events_with_stable_assistant_target(
     storage: Storage,
     tree_service: TreeService,
@@ -323,6 +423,98 @@ def test_success_path_emits_strictly_monotonic_events_with_stable_assistant_targ
     assert {event["message_id"] for event in assistant_text_events} == {str(response["assistant_message_id"])}
     assert {event["item_id"] for event in assistant_text_events} == {str(response["assistant_text_part_id"])}
 
+    gateway.flush_and_stop()
+
+
+def test_send_execution_message_fails_before_publish_when_persistence_handoff_is_unavailable(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    set_node_phase(storage, tree_service, project_id, node_id, "executing")
+    gateway, broker, session_manager = build_gateway(storage, tree_service, FakeConversationClient())
+    conversation_id = gateway.get_execution_conversation(project_id, node_id)["record"]["conversation_id"]
+    gateway.flush_and_stop()
+
+    async def run() -> None:
+        queue = broker.subscribe(project_id, conversation_id)
+        try:
+            with pytest.raises(ConversationPersistenceUnavailable):
+                gateway.send_execution_message(project_id, node_id, "hello")
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(queue.get(), timeout=0.05)
+        finally:
+            broker.unsubscribe(project_id, conversation_id, queue)
+
+    asyncio.run(run())
+    snapshot = storage.conversation_store.get_conversation(project_id, conversation_id)
+    assert snapshot is not None
+    assert snapshot["record"]["status"] == "idle"
+    assert snapshot["record"]["active_stream_id"] is None
+    assert snapshot["messages"] == []
+    session = session_manager.get_session(project_id)
+    assert session is not None
+    with session.lock:
+        assert session.active_streams == {}
+        assert session.active_turns == {}
+
+
+def test_send_execution_message_repairs_interrupted_state_when_send_start_enqueue_fails_after_publish(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    set_node_phase(storage, tree_service, project_id, node_id, "executing")
+    fake_client = FakeConversationClient(block_event=threading.Event(), final_text="")
+    gateway, broker, session_manager = build_gateway(storage, tree_service, fake_client)
+    conversation_id = gateway.get_execution_conversation(project_id, node_id)["record"]["conversation_id"]
+
+    call_count = 0
+
+    def fail_first_enqueue(task) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("send-start enqueue failed")
+        gateway._persistence_queue.put(task)
+
+    monkeypatch.setattr(gateway, "_enqueue_persistence_task", fail_first_enqueue)
+
+    async def run() -> list[dict[str, object]]:
+        queue = broker.subscribe(project_id, conversation_id)
+        try:
+            with pytest.raises(ConversationPersistenceUnavailable):
+                gateway.send_execution_message(project_id, node_id, "hello")
+            return [
+                await asyncio.wait_for(queue.get(), timeout=1),
+                await asyncio.wait_for(queue.get(), timeout=1),
+            ]
+        finally:
+            broker.unsubscribe(project_id, conversation_id, queue)
+
+    events = asyncio.run(run())
+    snapshot = storage.conversation_store.get_conversation(project_id, conversation_id)
+
+    assert [event["event_type"] for event in events] == ["message_created", "message_created"]
+    assert fake_client.started.is_set() is False
+    assert snapshot is not None
+    assert snapshot["record"]["status"] == "interrupted"
+    assert snapshot["record"]["active_stream_id"] is None
+    assert snapshot["record"]["event_seq"] == 2
+    assert len(snapshot["messages"]) == 2
+    assert snapshot["messages"][1]["status"] == "interrupted"
+    assert snapshot["messages"][1]["parts"][0]["status"] == "interrupted"
+    assert snapshot["messages"][1]["error"] == "Execution conversation was interrupted before completion."
+    session = session_manager.get_session(project_id)
+    assert session is not None
+    with session.lock:
+        assert session.active_streams == {}
+        assert session.active_turns == {}
     gateway.flush_and_stop()
 
 
@@ -559,5 +751,72 @@ def test_get_snapshot_is_durable_store_first_and_only_enriches_live_metadata(
     assert enriched["record"]["active_stream_id"] == "stream_live"
     assert enriched["record"]["event_seq"] == 7
     assert enriched["messages"][0]["parts"][0]["payload"]["text"] == "durable"
+
+    gateway.flush_and_stop()
+
+
+def test_get_execution_conversation_repairs_orphaned_active_execution_snapshot_once(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    gateway, _, _ = build_gateway(storage, tree_service, FakeConversationClient())
+    snapshot = gateway.get_execution_conversation(project_id, node_id)
+    conversation_id = snapshot["record"]["conversation_id"]
+
+    user_message = make_conversation_message(
+        conversation_id=conversation_id,
+        turn_id="turn_1",
+        role="user",
+        runtime_mode="execute",
+        status="completed",
+        parts=[make_conversation_part(part_type="user_text", order=0, status="completed", payload={"text": "hello"})],
+    )
+    assistant_message = make_conversation_message(
+        conversation_id=conversation_id,
+        turn_id="turn_1",
+        role="assistant",
+        runtime_mode="execute",
+        status="pending",
+        parts=[
+            make_conversation_part(
+                part_type="assistant_text",
+                order=0,
+                status="pending",
+                payload={"text": ""},
+            )
+        ],
+    )
+    storage.conversation_store.upsert_message(project_id, conversation_id, user_message)
+    storage.conversation_store.upsert_message(project_id, conversation_id, assistant_message)
+    storage.conversation_store.mutate_conversation(
+        project_id,
+        conversation_id,
+        lambda working_snapshot: working_snapshot["record"].update(
+            {
+                "status": "active",
+                "active_stream_id": "stream_stale",
+                "event_seq": 2,
+            }
+        ),
+    )
+    gateway._live_state[(project_id, conversation_id)] = _LiveConversationState(
+        event_seq=3,
+        assistant_text="stale text",
+    )
+
+    repaired = gateway.get_execution_conversation(project_id, node_id)
+    repaired_again = gateway.get_execution_conversation(project_id, node_id)
+
+    assert repaired["record"]["status"] == "interrupted"
+    assert repaired["record"]["active_stream_id"] is None
+    assert repaired["record"]["event_seq"] == 2
+    assert repaired["messages"][1]["status"] == "interrupted"
+    assert repaired["messages"][1]["parts"][0]["status"] == "interrupted"
+    assert repaired["messages"][1]["error"] == "Execution conversation was interrupted before completion."
+    assert (project_id, conversation_id) not in gateway._live_state
+    assert repaired_again == repaired
 
     gateway.flush_and_stop()

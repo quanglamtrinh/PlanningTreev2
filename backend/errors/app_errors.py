@@ -144,6 +144,15 @@ class ConversationStreamMismatch(AppError):
         )
 
 
+class ConversationPersistenceUnavailable(AppError):
+    def __init__(self) -> None:
+        super().__init__(
+            "conversation_persistence_unavailable",
+            "Execution conversation persistence is temporarily unavailable. Retry the request.",
+            503,
+        )
+
+
 class AuthRequired(AppError):
     def __init__(self) -> None:
         super().__init__("auth_required", "Authentication required.", 401)

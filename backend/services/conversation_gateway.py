@@ -15,7 +15,13 @@ from backend.conversation.contracts import (
     make_conversation_message,
     make_conversation_part,
 )
-from backend.errors.app_errors import ChatTurnAlreadyActive, ConversationStreamMismatch, NodeNotFound, NodeUpdateNotAllowed
+from backend.errors.app_errors import (
+    ChatTurnAlreadyActive,
+    ConversationPersistenceUnavailable,
+    ConversationStreamMismatch,
+    NodeNotFound,
+    NodeUpdateNotAllowed,
+)
 from backend.services.codex_session_manager import CodexSessionManager, ProjectCodexSession, RuntimeThreadState
 from backend.services.conversation_context_builder import ConversationContextBuilder
 from backend.storage.file_utils import iso_now, new_id
@@ -23,6 +29,8 @@ from backend.storage.storage import Storage
 from backend.streaming.conversation_broker import ConversationEventBroker
 
 logger = logging.getLogger(__name__)
+
+EXECUTION_INTERRUPTED_MESSAGE = "Execution conversation was interrupted before completion."
 
 
 @dataclass
@@ -69,6 +77,7 @@ class ConversationGateway:
             "execution",
             "execute",
         )
+        snapshot = self._recover_orphaned_execution_if_needed(project_id, snapshot)
         return self._enrich_snapshot(project_id, snapshot)
 
     def prepare_execution_event_stream(
@@ -138,6 +147,43 @@ class ConversationGateway:
                 enriched["record"]["event_seq"] = live_event_seq
         return enriched
 
+    def _recover_orphaned_execution_if_needed(
+        self,
+        project_id: str,
+        snapshot: ConversationSnapshot,
+    ) -> ConversationSnapshot:
+        record = snapshot["record"]
+        if record.get("active_stream_id") is None and str(record.get("status") or "") != "active":
+            return snapshot
+
+        conversation_id = str(record["conversation_id"])
+        session = self._session_manager.get_session(project_id)
+        if session is not None:
+            with session.lock:
+                current_stream_id = session.active_streams.get(conversation_id)
+                if current_stream_id:
+                    return snapshot
+                session.active_turns.pop(conversation_id, None)
+                app_server_thread_id = str(record.get("app_server_thread_id") or "").strip() or None
+                if app_server_thread_id:
+                    existing = session.loaded_runtime_threads.get(app_server_thread_id)
+                    if existing is not None:
+                        existing.active_turn_id = None
+                        existing.status = "idle"
+                        existing.last_used_at = iso_now()
+
+        repaired = self._storage.conversation_store.mutate_conversation(
+            project_id,
+            conversation_id,
+            lambda working_snapshot: self._apply_orphaned_execution_recovery_mutation(
+                snapshot=working_snapshot,
+                error_message=EXECUTION_INTERRUPTED_MESSAGE,
+            ),
+        )
+        with self._live_state_lock:
+            self._live_state.pop((project_id, conversation_id), None)
+        return repaired
+
     def send_execution_message(self, project_id: str, node_id: str, content: Any) -> dict[str, Any]:
         text = str(content or "").strip()
         if not text:
@@ -160,6 +206,14 @@ class ConversationGateway:
         conversation_id = str(record["conversation_id"])
         app_server_thread_id = str(record.get("app_server_thread_id") or "").strip() or None
         session = self._session_manager.get_or_create_session(project_id, workspace_root)
+        request_context = self._context_builder.build_execution_request(
+            project_id=project_id,
+            snapshot=project_snapshot,
+            node=node,
+            state=state,
+            user_message=text,
+        )
+        self._assert_persistence_handoff_available()
 
         turn_id = new_id("turn")
         stream_id = new_id("stream")
@@ -210,17 +264,13 @@ class ConversationGateway:
             )
             user_event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
             assistant_event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
-
-        self._storage.conversation_store.mutate_conversation(
-            project_id,
-            conversation_id,
-            lambda snapshot: self._apply_send_start_mutation(
-                snapshot=snapshot,
-                user_message=user_message,
-                assistant_message=assistant_message,
-                stream_id=stream_id,
-                event_seq=assistant_event_seq,
-            ),
+        send_start_task = self._build_send_start_persistence_task(
+            project_id=project_id,
+            conversation_id=conversation_id,
+            user_message=user_message,
+            assistant_message=assistant_message,
+            stream_id=stream_id,
+            event_seq=assistant_event_seq,
         )
 
         self._event_broker.publish(
@@ -247,14 +297,33 @@ class ConversationGateway:
                 message=assistant_message,
             ),
         )
+        try:
+            self._enqueue_persistence_task(send_start_task)
+        except BaseException as exc:  # noqa: BLE001
+            logger.exception("Execution send-start persistence handoff failed", exc_info=exc)
+            with session.lock:
+                self._clear_ownership_locked(
+                    session,
+                    project_id=project_id,
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    app_server_thread_id=app_server_thread_id,
+                )
+            try:
+                self._repair_interrupted_send_start_state(
+                    project_id=project_id,
+                    conversation_id=conversation_id,
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                    event_seq=assistant_event_seq,
+                    error_message=EXECUTION_INTERRUPTED_MESSAGE,
+                )
+            except BaseException as repair_exc:  # noqa: BLE001
+                logger.exception("Execution send-start failure repair did not complete", exc_info=repair_exc)
+                raise ConversationPersistenceUnavailable() from repair_exc
+            raise ConversationPersistenceUnavailable() from exc
 
-        request_context = self._context_builder.build_execution_request(
-            project_id=project_id,
-            snapshot=project_snapshot,
-            node=node,
-            state=state,
-            user_message=text,
-        )
         threading.Thread(
             target=self._run_execution_turn,
             kwargs={
@@ -662,6 +731,122 @@ class ConversationGateway:
         snapshot["record"]["active_stream_id"] = stream_id
         snapshot["record"]["event_seq"] = event_seq
 
+    def _build_send_start_persistence_task(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        user_message: ConversationMessage,
+        assistant_message: ConversationMessage,
+        stream_id: str,
+        event_seq: int,
+    ) -> _PersistenceTask:
+        def run() -> None:
+            self._storage.conversation_store.mutate_conversation(
+                project_id,
+                conversation_id,
+                lambda snapshot: self._apply_send_start_mutation(
+                    snapshot=snapshot,
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                    stream_id=stream_id,
+                    event_seq=event_seq,
+                ),
+            )
+
+        return _PersistenceTask(run=run)
+
+    def _repair_interrupted_send_start_state(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        user_message: ConversationMessage,
+        assistant_message: ConversationMessage,
+        event_seq: int,
+        error_message: str,
+    ) -> ConversationSnapshot:
+        return self._storage.conversation_store.mutate_conversation(
+            project_id,
+            conversation_id,
+            lambda snapshot: self._apply_interrupted_send_start_mutation(
+                snapshot=snapshot,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                event_seq=event_seq,
+                error_message=error_message,
+            ),
+        )
+
+    def _apply_interrupted_send_start_mutation(
+        self,
+        *,
+        snapshot: ConversationSnapshot,
+        user_message: ConversationMessage,
+        assistant_message: ConversationMessage,
+        event_seq: int,
+        error_message: str,
+    ) -> None:
+        interrupted_at = iso_now()
+        repaired_user_message = copy.deepcopy(user_message)
+        repaired_assistant_message = copy.deepcopy(assistant_message)
+        repaired_assistant_message["status"] = "interrupted"
+        repaired_assistant_message["error"] = error_message
+        repaired_assistant_message["updated_at"] = interrupted_at
+        for part in repaired_assistant_message["parts"]:
+            if part["part_type"] == "assistant_text":
+                part["status"] = "interrupted"
+                part["updated_at"] = interrupted_at
+        self._upsert_message_in_snapshot(snapshot["messages"], repaired_user_message)
+        self._upsert_message_in_snapshot(snapshot["messages"], repaired_assistant_message)
+        snapshot["record"]["status"] = "interrupted"
+        snapshot["record"]["current_runtime_mode"] = "execute"
+        snapshot["record"]["active_stream_id"] = None
+        snapshot["record"]["event_seq"] = max(int(snapshot["record"].get("event_seq", 0) or 0), event_seq)
+
+    def _apply_orphaned_execution_recovery_mutation(
+        self,
+        *,
+        snapshot: ConversationSnapshot,
+        error_message: str,
+    ) -> None:
+        snapshot["record"]["status"] = "interrupted"
+        snapshot["record"]["active_stream_id"] = None
+        self._mark_latest_in_flight_assistant_message_interrupted(
+            snapshot=snapshot,
+            error_message=error_message,
+        )
+
+    def _mark_latest_in_flight_assistant_message_interrupted(
+        self,
+        *,
+        snapshot: ConversationSnapshot,
+        error_message: str,
+    ) -> None:
+        latest_message = self._find_latest_in_flight_assistant_message(snapshot["messages"])
+        if latest_message is None:
+            return
+
+        interrupted_at = iso_now()
+        latest_message["status"] = "interrupted"
+        latest_message["error"] = error_message
+        latest_message["updated_at"] = interrupted_at
+        latest_part = self._find_latest_assistant_text_part(latest_message)
+        if latest_part is not None and latest_part["status"] in {"pending", "streaming"}:
+            latest_part["status"] = "interrupted"
+            latest_part["updated_at"] = interrupted_at
+
+    def _upsert_message_in_snapshot(
+        self,
+        messages: list[ConversationMessage],
+        next_message: ConversationMessage,
+    ) -> None:
+        for index, existing_message in enumerate(messages):
+            if existing_message["message_id"] == next_message["message_id"]:
+                messages[index] = copy.deepcopy(next_message)
+                return
+        messages.append(copy.deepcopy(next_message))
+
     def _build_delta_persistence_task(
         self,
         *,
@@ -823,6 +1008,29 @@ class ConversationGateway:
                 return part
         return None
 
+    def _find_latest_in_flight_assistant_message(
+        self,
+        messages: list[ConversationMessage],
+    ) -> ConversationMessage | None:
+        for message in reversed(messages):
+            if message["role"] != "assistant":
+                continue
+            if message["status"] in {"pending", "streaming"}:
+                return message
+            latest_part = self._find_latest_assistant_text_part(message)
+            if latest_part is not None and latest_part["status"] in {"pending", "streaming"}:
+                return message
+        return None
+
+    def _find_latest_assistant_text_part(
+        self,
+        message: ConversationMessage,
+    ) -> ConversationMessagePart | None:
+        for part in reversed(message["parts"]):
+            if part["part_type"] == "assistant_text":
+                return part
+        return None
+
     def _claim_ownership_locked(
         self,
         session: ProjectCodexSession,
@@ -920,6 +1128,11 @@ class ConversationGateway:
         live_state = self._ensure_live_state_locked(project_id, conversation_id, durable_event_seq=0)
         live_state.event_seq += 1
         return live_state.event_seq
+
+    def _assert_persistence_handoff_available(self) -> None:
+        with self._worker_guard:
+            if self._worker_stopped or not self._worker_thread.is_alive():
+                raise ConversationPersistenceUnavailable()
 
     def _enqueue_persistence_task(self, task: _PersistenceTask) -> None:
         self._persistence_queue.put(task)

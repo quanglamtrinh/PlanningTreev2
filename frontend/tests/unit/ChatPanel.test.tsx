@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NodeRecord } from '../../src/api/types'
@@ -47,8 +47,8 @@ function makeConversationSnapshot(
       thread_type: 'execution',
       app_server_thread_id: null,
       current_runtime_mode: 'execute',
-      status: 'active',
-      active_stream_id: 'stream_1',
+      status: 'completed',
+      active_stream_id: null,
       event_seq: 1,
       created_at: '2026-03-15T00:00:00Z',
       updated_at: '2026-03-15T00:00:01Z',
@@ -307,6 +307,35 @@ describe('ChatPanel', () => {
     })
   })
 
+  it('keeps the composer disabled while the execution conversation is still busy after send acceptance', async () => {
+    const snapshot = makeConversationSnapshot()
+    const conversationId = useConversationStore.getState().ensureConversation(snapshot)
+    useConversationStore.getState().hydrateConversation(snapshot)
+    useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
+    useConversationStore.getState().setComposerDraft(conversationId, 'Stay disabled')
+    const send = vi.fn(async () => {
+      useConversationStore.getState().patchRecord(conversationId, {
+        active_stream_id: 'stream_live',
+        status: 'active',
+      })
+      useConversationStore.getState().setSending(conversationId, false)
+      return { status: 'accepted' }
+    })
+
+    render(<ExecutionConversationHarness conversationId={conversationId} send={send} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => {
+      expect(send).toHaveBeenCalledWith('Stay disabled')
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('textbox')).toBeDisabled()
+    })
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    expect(useConversationStore.getState().conversationsById[conversationId].composerDraft).toBe('')
+  })
+
   it('preserves the keyed composer draft and surfaces the v2 error on send failure', async () => {
     const snapshot = makeConversationSnapshot()
     const conversationId = useConversationStore.getState().ensureConversation(snapshot)
@@ -351,6 +380,32 @@ describe('ChatPanel', () => {
 
     await waitFor(() => {
       expect(send).toHaveBeenCalledWith('Keyboard send')
+    })
+  })
+
+  it('re-enables the composer after the execution conversation reaches a terminal state', async () => {
+    const snapshot = makeConversationSnapshot()
+    const conversationId = useConversationStore.getState().ensureConversation(snapshot)
+    useConversationStore.getState().hydrateConversation(snapshot)
+    useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
+    useConversationStore.getState().patchRecord(conversationId, {
+      active_stream_id: 'stream_live',
+      status: 'active',
+    })
+
+    render(<ExecutionConversationHarness conversationId={conversationId} />)
+
+    expect(screen.getByRole('textbox')).toBeDisabled()
+
+    act(() => {
+      useConversationStore.getState().patchRecord(conversationId, {
+        active_stream_id: null,
+        status: 'interrupted',
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox')).not.toBeDisabled()
     })
   })
 

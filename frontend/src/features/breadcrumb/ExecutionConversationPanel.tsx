@@ -4,6 +4,7 @@ import type { KeyboardEvent, ReactNode } from 'react'
 import type { NodeRecord } from '../../api/types'
 import { ConversationSurface, type ConversationSurfaceConnectionState } from '../conversation/components/ConversationSurface'
 import { buildConversationRenderModel } from '../conversation/model/buildConversationRenderModel'
+import { deriveExecutionBusy } from '../conversation/model/deriveExecutionBusy'
 import { useConversationStore, type ConversationViewState } from '../../stores/conversation-store'
 
 type BootstrapStatus = 'idle' | 'loading_snapshot' | 'error'
@@ -85,6 +86,7 @@ export function ExecutionConversationPanel({
 
   const connectionState = mapConnectionState(bootstrapStatus, conversation)
   const hasConversation = conversation !== null && conversationId !== null
+  const isBusy = hasConversation ? deriveExecutionBusy(conversation.snapshot) : false
   const isLoading = hasConversation
     ? conversation.isLoading === true ||
       conversation.connectionStatus === 'loading_snapshot' ||
@@ -95,6 +97,7 @@ export function ExecutionConversationPanel({
     !composerEnabled ||
     !hasConversation ||
     conversation?.isSending === true ||
+    isBusy ||
     connectionState !== 'connected'
 
   async function handleSend() {
