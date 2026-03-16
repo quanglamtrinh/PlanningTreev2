@@ -1,12 +1,37 @@
 import type {
   ConversationEventEnvelope,
+  ConversationEventType,
   ConversationMessage,
   ConversationMessagePart,
+  ConversationMessagePartType,
   ConversationMessageStatus,
   ConversationRecord,
   ConversationSnapshot,
   ConversationStatus,
 } from '../types'
+
+type PassiveConversationEventType =
+  | 'reasoning_state'
+  | 'tool_call_start'
+  | 'tool_call_update'
+  | 'tool_call_finish'
+  | 'tool_result'
+  | 'plan_block'
+  | 'plan_step_status_change'
+  | 'diff_summary'
+  | 'file_change_summary'
+
+const PASSIVE_EVENT_TO_PART: Record<PassiveConversationEventType, ConversationMessagePartType> = {
+  reasoning_state: 'reasoning',
+  tool_call_start: 'tool_call',
+  tool_call_update: 'tool_call',
+  tool_call_finish: 'tool_call',
+  tool_result: 'tool_result',
+  plan_block: 'plan_block',
+  plan_step_status_change: 'plan_step_update',
+  diff_summary: 'diff_summary',
+  file_change_summary: 'file_change_summary',
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -17,6 +42,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 function readEventStreamId(event: ConversationEventEnvelope): string | null {
@@ -44,21 +73,23 @@ function mergeMessages(
   return next
 }
 
+function sortParts(parts: ConversationMessagePart[]): ConversationMessagePart[] {
+  return [...parts].sort(
+    (left, right) => left.order - right.order || left.part_id.localeCompare(right.part_id),
+  )
+}
+
 function mergeParts(
   parts: ConversationMessagePart[],
   nextPart: ConversationMessagePart,
 ): ConversationMessagePart[] {
   const index = parts.findIndex((part) => part.part_id === nextPart.part_id)
   if (index < 0) {
-    return [...parts, nextPart].sort(
-      (left, right) => left.order - right.order || left.part_id.localeCompare(right.part_id),
-    )
+    return sortParts([...parts, nextPart])
   }
   const next = [...parts]
   next[index] = nextPart
-  return next.sort(
-    (left, right) => left.order - right.order || left.part_id.localeCompare(right.part_id),
-  )
+  return sortParts(next)
 }
 
 function updateRecord(
@@ -160,6 +191,200 @@ function toMessageStatus(value: unknown): ConversationMessageStatus | null {
     : null
 }
 
+function isPassiveConversationEventType(
+  eventType: ConversationEventType,
+): eventType is PassiveConversationEventType {
+  return eventType in PASSIVE_EVENT_TO_PART
+}
+
+function findMessageById(
+  messages: ConversationMessage[],
+  messageId: string | null,
+): ConversationMessage | null {
+  if (!messageId) {
+    return null
+  }
+  return messages.find((message) => message.message_id === messageId) ?? null
+}
+
+function resolvePassiveTargetMessage(
+  messages: ConversationMessage[],
+  event: ConversationEventEnvelope,
+  payload: Record<string, unknown>,
+): ConversationMessage | null {
+  const explicitMessage =
+    findMessageById(messages, asString(event.message_id)) ??
+    findMessageById(messages, asString(payload.message_id))
+  if (explicitMessage) {
+    return explicitMessage
+  }
+
+  const turnId = asString(event.turn_id) ?? asString(payload.turn_id)
+  if (!turnId) {
+    return null
+  }
+
+  const assistantMatches = messages.filter(
+    (message) => message.turn_id === turnId && message.role === 'assistant',
+  )
+  if (assistantMatches.length > 0) {
+    return assistantMatches[assistantMatches.length - 1] ?? null
+  }
+
+  const turnMatches = messages.filter((message) => message.turn_id === turnId)
+  if (turnMatches.length === 1) {
+    return turnMatches[0] ?? null
+  }
+
+  return null
+}
+
+function readSemanticSpecificIdentity(
+  eventType: PassiveConversationEventType,
+  payload: Record<string, unknown>,
+): string | null {
+  switch (eventType) {
+    case 'reasoning_state':
+      return asString(payload.reasoning_id)
+    case 'tool_call_start':
+    case 'tool_call_update':
+    case 'tool_call_finish':
+      return asString(payload.tool_call_id) ?? asString(payload.call_id)
+    case 'tool_result':
+      return (
+        asString(payload.tool_result_id) ??
+        asString(payload.result_for_item_id) ??
+        asString(payload.result_for_tool_call_id) ??
+        asString(payload.tool_call_id)
+      )
+    case 'plan_block':
+      return asString(payload.plan_id)
+    case 'plan_step_status_change':
+      return asString(payload.step_id)
+    case 'diff_summary':
+      return asString(payload.summary_id) ?? asString(payload.diff_id)
+    case 'file_change_summary':
+      return asString(payload.summary_id) ?? asString(payload.file_id) ?? asString(payload.file_path)
+    default:
+      return null
+  }
+}
+
+function buildDeterministicPassivePartId(
+  messageId: string,
+  partType: ConversationMessagePartType,
+  stableIdentity: string,
+): string {
+  return `${messageId}:${partType}:${stableIdentity}`
+}
+
+function findExistingPassivePart(
+  parts: ConversationMessagePart[],
+  partId: string | null,
+  itemKey: string | null,
+): ConversationMessagePart | null {
+  if (partId) {
+    const direct = parts.find((part) => part.part_id === partId)
+    if (direct) {
+      return direct
+    }
+  }
+  if (itemKey) {
+    const keyed = parts.find((part) => part.item_key === itemKey)
+    if (keyed) {
+      return keyed
+    }
+  }
+  return null
+}
+
+function resolvePassivePartTarget(
+  message: ConversationMessage,
+  event: ConversationEventEnvelope,
+  payload: Record<string, unknown>,
+  eventType: PassiveConversationEventType,
+  partType: ConversationMessagePartType,
+): { partId: string; itemKey: string | null; existing: ConversationMessagePart | null } | null {
+  const explicitPartId = asString(event.item_id) ?? asString(payload.part_id)
+  const semanticKey = readSemanticSpecificIdentity(eventType, payload)
+  const stableKey = semanticKey ?? explicitPartId
+  if (!explicitPartId && !stableKey) {
+    return null
+  }
+
+  const resolvedPartId =
+    explicitPartId ?? buildDeterministicPassivePartId(message.message_id, partType, stableKey as string)
+  const existing = findExistingPassivePart(message.parts, resolvedPartId, stableKey)
+
+  return {
+    partId: existing?.part_id ?? resolvedPartId,
+    itemKey: existing?.item_key ?? stableKey ?? null,
+    existing,
+  }
+}
+
+function resolvePassiveStatus(
+  eventType: PassiveConversationEventType,
+  payload: Record<string, unknown>,
+): ConversationMessageStatus {
+  const explicit = toMessageStatus(payload.status)
+  if (explicit) {
+    return explicit
+  }
+  switch (eventType) {
+    case 'tool_call_start':
+    case 'tool_call_update':
+      return 'streaming'
+    default:
+      return 'completed'
+  }
+}
+
+function resolvePassiveOrder(
+  message: ConversationMessage,
+  existing: ConversationMessagePart | null,
+  payload: Record<string, unknown>,
+): number {
+  if (existing) {
+    return existing.order
+  }
+  const explicitOrder = asNumber(payload.order)
+  if (explicitOrder !== null) {
+    return explicitOrder
+  }
+  const maxOrder = message.parts.reduce((current, part) => Math.max(current, part.order), -1)
+  return maxOrder + 1
+}
+
+function copyPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  return { ...payload }
+}
+
+function upsertPassivePart(
+  message: ConversationMessage,
+  event: ConversationEventEnvelope,
+  partType: ConversationMessagePartType,
+  target: { partId: string; itemKey: string | null; existing: ConversationMessagePart | null },
+  payload: Record<string, unknown>,
+  status: ConversationMessageStatus,
+): ConversationMessage {
+  const nextPart: ConversationMessagePart = {
+    part_id: target.partId,
+    part_type: partType,
+    status,
+    order: resolvePassiveOrder(message, target.existing, payload),
+    item_key: target.itemKey,
+    created_at: target.existing?.created_at ?? event.created_at,
+    updated_at: event.created_at,
+    payload: copyPayload(payload),
+  }
+  return {
+    ...message,
+    updated_at: event.created_at,
+    parts: mergeParts(message.parts, nextPart),
+  }
+}
+
 export function shouldAcceptConversationEvent(
   snapshot: ConversationSnapshot,
   event: ConversationEventEnvelope,
@@ -183,6 +408,16 @@ export function shouldAcceptConversationEvent(
     case 'assistant_text_delta':
     case 'assistant_text_final':
     case 'completion_status':
+      return activeStreamId !== null && streamId === activeStreamId
+    case 'reasoning_state':
+    case 'tool_call_start':
+    case 'tool_call_update':
+    case 'tool_call_finish':
+    case 'tool_result':
+    case 'plan_block':
+    case 'plan_step_status_change':
+    case 'diff_summary':
+    case 'file_change_summary':
       return activeStreamId !== null && streamId === activeStreamId
     default:
       return false
@@ -235,10 +470,8 @@ export function applyConversationEvent(
         if (message.message_id !== event.message_id || !partId) {
           return message
         }
-        const currentPart =
-          message.parts.find((part) => part.part_id === partId) ?? null
-        const nextText =
-          text ?? `${currentPart ? readPartText(currentPart) : ''}${delta}`
+        const currentPart = message.parts.find((part) => part.part_id === partId) ?? null
+        const nextText = text ?? `${currentPart ? readPartText(currentPart) : ''}${delta}`
         return updateAssistantTextPart(message, partId, nextText, messageStatus, event.created_at)
       })
       return {
@@ -271,7 +504,48 @@ export function applyConversationEvent(
         ),
       }
     }
-    default:
-      return snapshot
+    default: {
+      const passiveEventType = event.event_type
+      if (!isPassiveConversationEventType(passiveEventType)) {
+        return snapshot
+      }
+
+      const partType = PASSIVE_EVENT_TO_PART[passiveEventType]
+      const targetMessage = resolvePassiveTargetMessage(snapshot.messages, event, payload)
+      if (!targetMessage) {
+        return snapshot
+      }
+
+      const target = resolvePassivePartTarget(
+        targetMessage,
+        event,
+        payload,
+        passiveEventType,
+        partType,
+      )
+      if (!target) {
+        return snapshot
+      }
+
+      return {
+        ...snapshot,
+        record: updateRecord(snapshot.record, event, {
+          active_stream_id: streamId,
+          status: 'active',
+        }),
+        messages: snapshot.messages.map((message) =>
+          message.message_id === targetMessage.message_id
+            ? upsertPassivePart(
+                message,
+                event,
+                partType,
+                target,
+                payload,
+                resolvePassiveStatus(passiveEventType, payload),
+              )
+            : message,
+        ),
+      }
+    }
   }
 }

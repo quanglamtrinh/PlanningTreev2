@@ -50,6 +50,86 @@ export type ConversationEventType =
   | 'stream_interrupted'
   | 'stream_cancelled'
 
+export interface ConversationReasoningPayload extends Record<string, unknown> {
+  reasoning_id?: string
+  summary?: string
+  text?: string
+  content?: string
+  title?: string
+}
+
+export interface ConversationToolCallPayload extends Record<string, unknown> {
+  part_id?: string
+  tool_call_id?: string
+  call_id?: string
+  tool_name?: string
+  name?: string
+  arguments?: Record<string, unknown>
+}
+
+export interface ConversationToolResultPayload extends Record<string, unknown> {
+  part_id?: string
+  tool_call_id?: string
+  result_for_item_id?: string
+  result_for_tool_call_id?: string
+  text?: string
+  content?: string
+  summary?: string
+  output?: unknown
+  result?: unknown
+}
+
+export interface ConversationPlanBlockPayload extends Record<string, unknown> {
+  part_id?: string
+  plan_id?: string
+  title?: string
+  summary?: string
+  text?: string
+  content?: string
+  steps?: unknown[]
+}
+
+export interface ConversationPlanStepUpdatePayload extends Record<string, unknown> {
+  part_id?: string
+  step_id?: string
+  title?: string
+  step_title?: string
+  label?: string
+  status?: string
+  state?: string
+  text?: string
+  content?: string
+  summary?: string
+}
+
+export interface ConversationDiffSummaryPayload extends Record<string, unknown> {
+  part_id?: string
+  summary_id?: string
+  diff_id?: string
+  title?: string
+  summary?: string
+  text?: string
+  content?: string
+  files?: unknown[]
+  added?: number
+  removed?: number
+  changed?: number
+}
+
+export interface ConversationFileChangeSummaryPayload extends Record<string, unknown> {
+  part_id?: string
+  summary_id?: string
+  file_id?: string
+  file_path?: string
+  path?: string
+  filename?: string
+  change_type?: string
+  status?: string
+  summary?: string
+  text?: string
+  content?: string
+}
+
 export interface ConversationScope {
   project_id: string
   node_id: string

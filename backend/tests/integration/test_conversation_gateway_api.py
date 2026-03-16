@@ -21,12 +21,14 @@ class FakeConversationClient:
         self,
         *,
         deltas: list[str] | None = None,
+        tool_calls: list[dict[str, object]] | None = None,
         final_text: str | None = None,
         block_event: threading.Event | None = None,
         raise_error: Exception | None = None,
         returned_thread_id: str = "thread_exec_1",
     ) -> None:
         self.deltas = list(deltas or [])
+        self.tool_calls = list(tool_calls or [])
         self.final_text = final_text
         self.block_event = block_event
         self.raise_error = raise_error
@@ -42,6 +44,7 @@ class FakeConversationClient:
         cwd: str | None = None,
         writable_roots: list[str] | None = None,
         on_delta=None,
+        on_tool_call=None,
     ) -> dict[str, object]:
         self.calls.append(
             {
@@ -57,12 +60,21 @@ class FakeConversationClient:
             self.block_event.wait(timeout=5)
         if self.raise_error is not None:
             raise self.raise_error
+        if callable(on_tool_call):
+            for tool_call in self.tool_calls:
+                on_tool_call(
+                    str(tool_call.get("tool_name") or ""),
+                    tool_call.get("arguments")
+                    if isinstance(tool_call.get("arguments"), dict)
+                    else {},
+                )
         if callable(on_delta):
             for delta in self.deltas:
                 on_delta(delta)
         return {
             "stdout": self.final_text if self.final_text is not None else "".join(self.deltas),
             "thread_id": self.returned_thread_id,
+            "tool_calls": list(self.tool_calls),
         }
 
     def stop(self) -> None:
@@ -537,6 +549,65 @@ def test_execution_conversation_success_streams_in_order_and_persists_normalized
     assert persisted["record"]["app_server_thread_id"] == "thread_exec_1"
     assert [message["role"] for message in persisted["messages"]] == ["user", "assistant"]
     assert persisted["messages"][1]["parts"][0]["payload"]["text"] == "hello world"
+
+
+def test_execution_conversation_persists_tool_call_parts_and_streams_passive_tool_events(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    fake_client = FakeConversationClient(
+        tool_calls=[
+            {
+                "tool_name": "emit_render_data",
+                "arguments": {
+                    "kind": "split_result",
+                    "payload": {
+                        "subtasks": [
+                            {"order": 1, "prompt": "Setup repo"},
+                        ]
+                    },
+                },
+            }
+        ],
+        final_text="Rendered a structured split result.",
+    )
+    attach_session_client_factory(client, lambda _workspace_root: fake_client)
+    project_id, node_id = create_project(client, str(workspace_root))
+    set_node_phase(client, project_id, node_id, "executing")
+    conversation = client.get(f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution").json()["conversation"]
+    conversation_id = conversation["record"]["conversation_id"]
+    accepted, events = asyncio.run(
+        collect_broker_events(
+            client,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            action=lambda: client.post(
+                f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution/send",
+                json={"content": "render split"},
+            ),
+            terminal_statuses={"completed"},
+        )
+    )
+
+    assert accepted.status_code == 202
+    client.app.state.conversation_gateway.flush_persistence()
+
+    event_types = [event["event_type"] for event in events]
+    assert event_types == [
+        "message_created",
+        "message_created",
+        "tool_call_start",
+        "assistant_text_final",
+        "completion_status",
+    ]
+    assert events[2]["payload"]["tool_name"] == "emit_render_data"
+    assert events[2]["item_id"] == f"{accepted.json()['assistant_message_id']}:tool_call:0"
+
+    persisted = client.app.state.storage.conversation_store.get_conversation(project_id, conversation_id)
+    assert persisted is not None
+    assert persisted["messages"][1]["parts"][1]["part_type"] == "tool_call"
+    assert persisted["messages"][1]["parts"][1]["payload"]["tool_name"] == "emit_render_data"
+    assert persisted["messages"][1]["parts"][1]["payload"]["arguments"]["kind"] == "split_result"
 
 
 def test_execution_conversation_error_path_emits_completion_only_and_clears_ownership(

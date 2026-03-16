@@ -169,6 +169,13 @@
   gap: 6px;
 }
 
+.messageItems {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .user {
   justify-content: flex-end;
 }
@@ -187,6 +194,10 @@
   white-space: pre-wrap;
   word-break: break-word;
   color: #111827;
+}
+
+.messageBlock {
+  min-width: 0;
 }
 
 .assistant .messageBody {
@@ -213,6 +224,11 @@
   line-height: 22px;
 }
 
+.assistantTextItem,
+.userTextItem {
+  min-width: 0;
+}
+
 .typingIndicator {
   display: inline-flex;
   align-items: center;
@@ -230,6 +246,149 @@
   color: #6b7280;
   font-size: 13px;
   line-height: 18px;
+}
+
+.richBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #f8fafc;
+  color: #111827;
+}
+
+.blockKicker {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.blockHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.blockTitle {
+  margin: 0;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.blockSummary,
+.blockText,
+.blockMetaLine {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: #374151;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.blockMetaLabel {
+  font-weight: 600;
+  color: #111827;
+}
+
+.blockTag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #e5eef9;
+  color: #1d4ed8;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+}
+
+.blockGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.blockCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.blockCardSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.blockCardTitle {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.blockCardText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: #4b5563;
+  white-space: pre-wrap;
+}
+
+.blockList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.blockListItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  line-height: 20px;
+  color: #374151;
+}
+
+.blockBullets {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 20px;
+  color: #374151;
+}
+
+.codeBlock {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #111827;
+  color: #e5e7eb;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .messageMeta {

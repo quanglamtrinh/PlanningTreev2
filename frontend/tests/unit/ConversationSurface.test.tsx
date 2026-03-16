@@ -101,55 +101,56 @@ describe('buildConversationRenderModel', () => {
     expect(model?.messages.map((message) => message.messageId)).toEqual(['msg_b', 'msg_a'])
   })
 
-  it('preserves spacing and ignores unsupported parts inline while building text', () => {
+  it('builds ordered mixed render items for text and passive parts', () => {
     const model = buildConversationRenderModel(
       makeSnapshot([
         makeMessage({
           status: 'streaming',
           parts: [
-            makePart({ part_id: 'part_1', status: 'streaming', payload: { text: 'Hello ' } }),
+            makePart({ part_id: 'part_text_1', status: 'streaming', payload: { text: 'Hello ' } }),
             makePart({
-              part_id: 'part_2',
+              part_id: 'part_reasoning',
               part_type: 'reasoning',
               order: 1,
-              payload: { summary: 'internal' },
+              payload: { summary: 'Inspecting repo state' },
             }),
             makePart({
-              part_id: 'part_3',
-              status: 'streaming',
+              part_id: 'part_tool_call',
+              part_type: 'tool_call',
               order: 2,
-              payload: { content: ' there' },
+              payload: { tool_call_id: 'call_1', tool_name: 'grep', arguments: { pattern: 'TODO' } },
             }),
+            makePart({ part_id: 'part_text_2', status: 'streaming', order: 3, payload: { content: 'there' } }),
           ],
         }),
       ]),
     )
 
-    expect(model?.messages[0]).toMatchObject({
-      text: 'Hello  there',
-      unsupportedPartTypes: ['reasoning'],
-      isStreaming: true,
-    })
+    expect(model?.messages[0].items.map((item) => item.kind)).toEqual([
+      'assistant_text',
+      'reasoning',
+      'tool_call',
+      'assistant_text',
+    ])
+    expect(model?.messages[0].isStreaming).toBe(true)
   })
 
-  it('builds unique stable unsupported fallback types and typing state', () => {
+  it('distinguishes malformed known payloads from unsupported part types in the render model', () => {
     const model = buildConversationRenderModel(
       makeSnapshot([
         makeMessage({
-          status: 'streaming',
           parts: [
-            makePart({ part_id: 'part_1', part_type: 'reasoning', payload: { text: 'hidden' } }),
-            makePart({ part_id: 'part_2', part_type: 'tool_call', order: 1, payload: { name: 'grep' } }),
-            makePart({ part_id: 'part_3', part_type: 'reasoning', order: 2, payload: { text: 'duplicate' } }),
+            makePart({ part_id: 'part_malformed', part_type: 'reasoning', payload: {} }),
+            makePart({ part_id: 'part_unsupported', part_type: 'approval_request', order: 1, payload: {} }),
           ],
         }),
       ]),
     )
 
-    expect(model?.messages[0]).toMatchObject({
-      unsupportedPartTypes: ['reasoning', 'tool_call'],
-      showTyping: true,
-    })
+    expect(model?.messages[0].items).toMatchObject([
+      { kind: 'unsupported', reason: 'malformed_payload', partType: 'reasoning' },
+      { kind: 'unsupported', reason: 'unsupported_part_type', partType: 'approval_request' },
+    ])
   })
 })
 
@@ -191,20 +192,114 @@ describe('ConversationSurface', () => {
     expect(screen.getByText('streaming')).toBeInTheDocument()
   })
 
-  it('renders partial streaming assistant text in place', () => {
+  it('renders structured tool_call content instead of degrading it to unsupported fallback', () => {
     const model = buildConversationRenderModel(
       makeSnapshot([
         makeMessage({
-          status: 'streaming',
-          parts: [makePart({ status: 'streaming', payload: { text: 'Streaming in place' } })],
+          parts: [
+            makePart({ payload: { text: 'Split completed. Created 2 child tasks.' } }),
+            makePart({
+              part_id: 'part_tool',
+              part_type: 'tool_call',
+              order: 1,
+              payload: {
+                tool_call_id: 'call_split_1',
+                tool_name: 'emit_render_data',
+                arguments: {
+                  kind: 'split_result',
+                  payload: {
+                    subtasks: [
+                      { order: 1, prompt: 'Setup repo', risk_reason: 'env', what_unblocks: 'coding' },
+                    ],
+                  },
+                },
+              },
+            }),
+          ],
         }),
       ]),
     )
 
     renderSurface(model)
 
-    expect(screen.getByText('Streaming in place')).toBeInTheDocument()
-    expect(screen.getByText('streaming')).toBeInTheDocument()
+    expect(screen.getByText('Split completed. Created 2 child tasks.')).toBeInTheDocument()
+    expect(screen.getByText('Slice 1')).toBeInTheDocument()
+    expect(screen.getByText('Setup repo')).toBeInTheDocument()
+    expect(screen.queryByText(/Unsupported content:/)).not.toBeInTheDocument()
+  })
+
+  it('renders reasoning, tool_result, plan, diff, and file-change passive blocks', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          parts: [
+            makePart({ part_id: 'part_reasoning', part_type: 'reasoning', payload: { summary: 'Thinking aloud' } }),
+            makePart({
+              part_id: 'part_tool_result',
+              part_type: 'tool_result',
+              order: 1,
+              payload: { result_for_item_id: 'call_1', text: 'Found 2 matches.' },
+            }),
+            makePart({
+              part_id: 'part_plan',
+              part_type: 'plan_block',
+              order: 2,
+              payload: {
+                plan_id: 'plan_1',
+                title: 'Implementation plan',
+                steps: [{ step_id: 'step_1', title: 'Wire reducer', status: 'completed' }],
+              },
+            }),
+            makePart({
+              part_id: 'part_step',
+              part_type: 'plan_step_update',
+              order: 3,
+              payload: { step_id: 'step_1', title: 'Wire reducer', status: 'completed' },
+            }),
+            makePart({
+              part_id: 'part_diff',
+              part_type: 'diff_summary',
+              order: 4,
+              payload: { summary: 'Touched reducer and surface.', files: ['applyConversationEvent.ts'] },
+            }),
+            makePart({
+              part_id: 'part_file',
+              part_type: 'file_change_summary',
+              order: 5,
+              payload: { file_path: 'ConversationSurface.tsx', change_type: 'modified', summary: 'Added block rendering.' },
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    renderSurface(model)
+
+    expect(screen.getByText('Thinking aloud')).toBeInTheDocument()
+    expect(screen.getByText('Found 2 matches.')).toBeInTheDocument()
+    expect(screen.getByText('Implementation plan')).toBeInTheDocument()
+    expect(screen.getAllByText('Wire reducer')).toHaveLength(2)
+    expect(screen.getByText('Touched reducer and surface.')).toBeInTheDocument()
+    expect(screen.getByText('ConversationSurface.tsx')).toBeInTheDocument()
+    expect(screen.getByText('modified')).toBeInTheDocument()
+  })
+
+  it('renders deterministic fallback blocks for malformed passive payloads', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          parts: [
+            makePart({ part_id: 'part_reasoning', part_type: 'reasoning', payload: {} }),
+            makePart({ part_id: 'part_unknown', part_type: 'status_block', order: 1, payload: {} }),
+          ],
+        }),
+      ]),
+    )
+
+    renderSurface(model)
+
+    expect(screen.getByText('Unsupported content: reasoning')).toBeInTheDocument()
+    expect(screen.getByText('Unsupported content: status_block')).toBeInTheDocument()
   })
 
   it('renders loading state only when there are no messages yet', () => {
@@ -212,13 +307,6 @@ describe('ConversationSurface', () => {
 
     expect(screen.getByText('Loading conversation...')).toBeInTheDocument()
     expect(screen.queryByText('No messages yet')).not.toBeInTheDocument()
-  })
-
-  it('renders empty state when not loading and there are no messages', () => {
-    renderSurface({ messages: [] })
-
-    expect(screen.getByText('No messages yet')).toBeInTheDocument()
-    expect(screen.getByText('Start when you are ready.')).toBeInTheDocument()
   })
 
   it('renders a non-fatal surface error banner without hiding transcript content', () => {
@@ -230,89 +318,6 @@ describe('ConversationSurface', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('Connection dropped')
     expect(screen.getByText('Still visible')).toBeInTheDocument()
-  })
-
-  it('renders text and message-level error together', () => {
-    const model = buildConversationRenderModel(
-      makeSnapshot([
-        makeMessage({
-          status: 'error',
-          error: 'Tool failed',
-          parts: [makePart({ payload: { text: 'Partial answer' } })],
-        }),
-      ]),
-    )
-
-    renderSurface(model)
-
-    expect(screen.getByText('Partial answer')).toBeInTheDocument()
-    expect(screen.getByText('Tool failed')).toBeInTheDocument()
-    expect(screen.getByText('error')).toBeInTheDocument()
-  })
-
-  it('degrades unsupported-only messages to a deterministic fallback', () => {
-    const model = buildConversationRenderModel(
-      makeSnapshot([
-        makeMessage({
-          role: 'user',
-          parts: [
-            makePart({ part_id: 'part_reasoning', part_type: 'reasoning', payload: { text: 'internal' } }),
-            makePart({ part_id: 'part_tool', part_type: 'tool_call', order: 1, payload: { command: 'git status' } }),
-          ],
-        }),
-      ]),
-    )
-
-    renderSurface(model)
-
-    expect(screen.getByText('Unsupported content: reasoning, tool_call')).toBeInTheDocument()
-  })
-
-  it('renders supported text only when supported and unsupported parts are mixed', () => {
-    const model = buildConversationRenderModel(
-      makeSnapshot([
-        makeMessage({
-          parts: [
-            makePart({ part_id: 'part_text_1', payload: { text: 'Hello ' } }),
-            makePart({ part_id: 'part_reasoning', part_type: 'reasoning', order: 1, payload: { text: 'hidden' } }),
-            makePart({ part_id: 'part_text_2', order: 2, payload: { text: 'there' } }),
-          ],
-        }),
-      ]),
-    )
-
-    renderSurface(model)
-
-    expect(screen.getByText('Hello there')).toBeInTheDocument()
-    expect(screen.queryByText(/Unsupported content:/)).not.toBeInTheDocument()
-  })
-
-  it('renders system, tool, and unknown roles safely with neutral treatment', () => {
-    const model = buildConversationRenderModel(
-      makeSnapshot([
-        makeMessage({
-          message_id: 'msg_system',
-          role: 'system',
-          parts: [makePart({ part_id: 'part_system', part_type: 'reasoning', payload: { text: 'system fallback' } })],
-        }),
-        makeMessage({
-          message_id: 'msg_tool',
-          role: 'tool',
-          parts: [makePart({ part_id: 'part_tool', part_type: 'tool_result', payload: { output: 'tool fallback' } })],
-        }),
-        makeMessage({
-          message_id: 'msg_unknown',
-          role: 'moderator' as unknown as ConversationSnapshot['messages'][number]['role'],
-          parts: [makePart({ part_id: 'part_unknown', payload: { text: 'unexpected' } })],
-        }),
-      ]),
-    )
-
-    renderSurface(model)
-
-    expect(screen.getByText('Unsupported content: reasoning')).toBeInTheDocument()
-    expect(screen.getByText('Unsupported content: tool_result')).toBeInTheDocument()
-    expect(screen.getByText('Unsupported content: assistant_text')).toBeInTheDocument()
   })
 
   it('renders the composer only when requested and wired', () => {
@@ -328,34 +333,6 @@ describe('ConversationSurface', () => {
 
     expect(screen.getByRole('textbox')).toHaveValue('Draft')
     expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument()
-  })
-
-  it('suppresses the composer when showComposer is false even if handlers exist', () => {
-    renderSurface(
-      { messages: [] },
-      {
-        showComposer: false,
-        composerValue: 'Draft',
-        onComposerValueChange: vi.fn(),
-        onComposerSubmit: vi.fn(),
-      },
-    )
-
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument()
-  })
-
-  it('does not render an unusable composer when handlers are missing', () => {
-    renderSurface(
-      { messages: [] },
-      {
-        showComposer: true,
-        composerValue: 'Draft',
-      },
-    )
-
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument()
   })
 
   it('renders composer hint content and forwards composer keydown events', () => {

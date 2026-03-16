@@ -45,10 +45,15 @@ logger = logging.getLogger(__name__)
 EXECUTION_INTERRUPTED_MESSAGE = "Execution conversation was interrupted before completion."
 
 
+def make_execution_tool_call_part_id(assistant_message_id: str, index: int) -> str:
+    return f"{assistant_message_id}:tool_call:{index}"
+
+
 @dataclass
 class _LiveConversationState:
     event_seq: int
     assistant_text: str = ""
+    tool_call_count: int = 0
 
 
 @dataclass
@@ -766,7 +771,10 @@ class ConversationGateway:
             order=index + 1,
             status="completed",
             part_id=make_planning_tool_call_part_id(turn_id, index),
+            item_key=make_planning_tool_call_part_id(turn_id, index),
             payload={
+                "part_id": make_planning_tool_call_part_id(turn_id, index),
+                "tool_call_id": make_planning_tool_call_part_id(turn_id, index),
                 "tool_name": str(raw_turn.get("tool_name") or ""),
                 "arguments": copy.deepcopy(raw_turn.get("arguments"))
                 if isinstance(raw_turn.get("arguments"), dict)
@@ -1146,6 +1154,15 @@ class ConversationGateway:
                     assistant_part_id=assistant_part_id,
                     delta=delta,
                 ),
+                on_tool_call=lambda tool_name, arguments: self._handle_tool_call(
+                    project_id=project_id,
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    assistant_message_id=assistant_message_id,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                ),
             )
         except Exception as exc:
             self._handle_completion_error(
@@ -1170,6 +1187,7 @@ class ConversationGateway:
             assistant_message_id=assistant_message_id,
             assistant_part_id=assistant_part_id,
             final_text=final_text,
+            tool_calls=response.get("tool_calls"),
             app_server_thread_id=response_thread_id,
         )
 
@@ -1229,6 +1247,61 @@ class ConversationGateway:
             )
         )
 
+    def _handle_tool_call(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        stream_id: str,
+        turn_id: str,
+        assistant_message_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> None:
+        session = self._session_manager.get_session(project_id)
+        if session is None:
+            return
+
+        created_at = iso_now()
+        with session.lock:
+            if not self._owns_turn_locked(session, conversation_id, stream_id, turn_id):
+                return
+            live_state = self._ensure_live_state_locked(project_id, conversation_id, durable_event_seq=0)
+            tool_call_index = live_state.tool_call_count
+            live_state.tool_call_count += 1
+            event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
+
+        part = self._build_execution_tool_call_part(
+            assistant_message_id=assistant_message_id,
+            tool_call_index=tool_call_index,
+            tool_name=tool_name,
+            arguments=arguments,
+            created_at=created_at,
+        )
+        self._event_broker.publish(
+            project_id,
+            conversation_id,
+            self._build_passive_part_event(
+                event_type="tool_call_start",
+                conversation_id=conversation_id,
+                stream_id=stream_id,
+                turn_id=turn_id,
+                message_id=assistant_message_id,
+                part=part,
+                event_seq=event_seq,
+                created_at=created_at,
+            ),
+        )
+        self._enqueue_persistence_task(
+            self._build_tool_call_persistence_task(
+                project_id=project_id,
+                conversation_id=conversation_id,
+                assistant_message_id=assistant_message_id,
+                tool_call_part=part,
+                event_seq=event_seq,
+            )
+        )
+
     def _handle_completion_success(
         self,
         *,
@@ -1239,21 +1312,68 @@ class ConversationGateway:
         assistant_message_id: str,
         assistant_part_id: str,
         final_text: str,
+        tool_calls: Any,
         app_server_thread_id: str | None,
     ) -> None:
         session = self._session_manager.get_session(project_id)
         if session is None:
             return
         created_at = iso_now()
+        late_tool_calls: list[tuple[int, int, ConversationMessagePart]] = []
         with session.lock:
             if not self._owns_turn_locked(session, conversation_id, stream_id, turn_id):
                 return
             live_state = self._ensure_live_state_locked(project_id, conversation_id, durable_event_seq=0)
+            normalized_tool_calls = [
+                item
+                for item in tool_calls
+                if isinstance(item, dict)
+            ] if isinstance(tool_calls, list) else []
+            if normalized_tool_calls and live_state.tool_call_count < len(normalized_tool_calls):
+                for tool_call_index in range(live_state.tool_call_count, len(normalized_tool_calls)):
+                    raw_tool_call = normalized_tool_calls[tool_call_index]
+                    part = self._build_execution_tool_call_part(
+                        assistant_message_id=assistant_message_id,
+                        tool_call_index=tool_call_index,
+                        tool_name=str(raw_tool_call.get("tool_name") or ""),
+                        arguments=copy.deepcopy(raw_tool_call.get("arguments"))
+                        if isinstance(raw_tool_call.get("arguments"), dict)
+                        else {},
+                        created_at=created_at,
+                    )
+                    event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
+                    late_tool_calls.append((tool_call_index, event_seq, part))
+                live_state.tool_call_count = len(normalized_tool_calls)
             if final_text:
                 live_state.assistant_text = final_text
             full_text = live_state.assistant_text
             final_event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
             completion_event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
+
+        for _, event_seq, part in late_tool_calls:
+            self._event_broker.publish(
+                project_id,
+                conversation_id,
+                self._build_passive_part_event(
+                    event_type="tool_call_finish",
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    message_id=assistant_message_id,
+                    part=part,
+                    event_seq=event_seq,
+                    created_at=created_at,
+                ),
+            )
+            self._enqueue_persistence_task(
+                self._build_tool_call_persistence_task(
+                    project_id=project_id,
+                    conversation_id=conversation_id,
+                    assistant_message_id=assistant_message_id,
+                    tool_call_part=part,
+                    event_seq=event_seq,
+                )
+            )
 
         self._event_broker.publish(
             project_id,
@@ -1446,6 +1566,32 @@ class ConversationGateway:
             "payload": copy.deepcopy(payload),
         }
 
+    def _build_passive_part_event(
+        self,
+        *,
+        event_type: str,
+        conversation_id: str,
+        stream_id: str,
+        turn_id: str,
+        message_id: str,
+        part: ConversationMessagePart,
+        event_seq: int,
+        created_at: str,
+    ) -> ConversationEventEnvelope:
+        payload = copy.deepcopy(part["payload"])
+        payload["part_id"] = part["part_id"]
+        return {
+            "event_type": event_type,
+            "conversation_id": conversation_id,
+            "stream_id": stream_id,
+            "turn_id": turn_id,
+            "message_id": message_id,
+            "item_id": part["part_id"],
+            "event_seq": event_seq,
+            "created_at": created_at,
+            "payload": payload,
+        }
+
     def _build_completion_status_event(
         self,
         *,
@@ -1474,6 +1620,72 @@ class ConversationGateway:
             "created_at": created_at,
             "payload": payload,
         }
+
+    def _build_execution_tool_call_part(
+        self,
+        *,
+        assistant_message_id: str,
+        tool_call_index: int,
+        tool_name: str,
+        arguments: dict[str, Any],
+        created_at: str,
+    ) -> ConversationMessagePart:
+        part_id = make_execution_tool_call_part_id(assistant_message_id, tool_call_index)
+        part = make_conversation_part(
+            part_type="tool_call",
+            order=tool_call_index + 1,
+            status="completed",
+            part_id=part_id,
+            item_key=part_id,
+            payload={
+                "part_id": part_id,
+                "tool_call_id": part_id,
+                "tool_name": tool_name,
+                "arguments": copy.deepcopy(arguments),
+            },
+        )
+        part["created_at"] = created_at
+        part["updated_at"] = created_at
+        return part
+
+    def _build_tool_call_persistence_task(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        assistant_message_id: str,
+        tool_call_part: ConversationMessagePart,
+        event_seq: int,
+    ) -> _PersistenceTask:
+        def run() -> None:
+            self._storage.conversation_store.mutate_conversation(
+                project_id,
+                conversation_id,
+                lambda snapshot: self._apply_tool_call_mutation(
+                    snapshot=snapshot,
+                    assistant_message_id=assistant_message_id,
+                    tool_call_part=tool_call_part,
+                    event_seq=event_seq,
+                ),
+            )
+
+        return _PersistenceTask(run=run)
+
+    def _apply_tool_call_mutation(
+        self,
+        *,
+        snapshot: ConversationSnapshot,
+        assistant_message_id: str,
+        tool_call_part: ConversationMessagePart,
+        event_seq: int,
+    ) -> None:
+        message = self._find_message(snapshot["messages"], assistant_message_id)
+        if message is None:
+            raise KeyError(f"Unknown assistant message_id: {assistant_message_id}")
+        self._upsert_part_in_message(message["parts"], tool_call_part)
+        message["updated_at"] = tool_call_part["updated_at"]
+        snapshot["record"]["current_runtime_mode"] = "execute"
+        snapshot["record"]["event_seq"] = max(int(snapshot["record"].get("event_seq", 0) or 0), event_seq)
 
     def _apply_send_start_mutation(
         self,
@@ -1606,6 +1818,19 @@ class ConversationGateway:
                 messages[index] = copy.deepcopy(next_message)
                 return
         messages.append(copy.deepcopy(next_message))
+
+    def _upsert_part_in_message(
+        self,
+        parts: list[ConversationMessagePart],
+        next_part: ConversationMessagePart,
+    ) -> None:
+        for index, existing_part in enumerate(parts):
+            if existing_part["part_id"] == next_part["part_id"]:
+                parts[index] = copy.deepcopy(next_part)
+                break
+        else:
+            parts.append(copy.deepcopy(next_part))
+        parts.sort(key=lambda part: (int(part.get("order", 0) or 0), str(part.get("part_id") or "")))
 
     def _build_delta_persistence_task(
         self,

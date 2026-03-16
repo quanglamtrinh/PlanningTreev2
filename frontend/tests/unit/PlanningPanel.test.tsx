@@ -351,6 +351,31 @@ describe('PlanningPanel', () => {
 
   it('renders the planning-v2 branch through the shared surface without falling back to legacy planning history', async () => {
     const planningSnapshot = makePlanningConversationSnapshot('Split completed. Created 2 child tasks.')
+    planningSnapshot.messages[0]?.parts.push({
+      part_id: 'planning_part:turn_1:tool_call:0',
+      part_type: 'tool_call',
+      status: 'completed',
+      order: 1,
+      item_key: 'planning_part:turn_1:tool_call:0',
+      created_at: '2026-03-15T00:00:03Z',
+      updated_at: '2026-03-15T00:00:03Z',
+      payload: {
+        part_id: 'planning_part:turn_1:tool_call:0',
+        tool_call_id: 'planning_part:turn_1:tool_call:0',
+        tool_name: 'emit_render_data',
+        arguments: {
+          kind: 'split_result',
+          payload: {
+            subtasks: [
+              {
+                order: 1,
+                prompt: 'Setup repo',
+              },
+            ],
+          },
+        },
+      },
+    })
     const conversationId = useConversationStore.getState().ensureConversation(planningSnapshot)
     useConversationStore.getState().hydrateConversation(planningSnapshot)
     useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
@@ -376,7 +401,10 @@ describe('PlanningPanel', () => {
     render(<PlanningConversationHarness conversationId={conversationId} />)
 
     expect(await screen.findByText('Split completed. Created 2 child tasks.')).toBeInTheDocument()
+    expect(screen.getByText('Slice 1')).toBeInTheDocument()
+    expect(screen.getByText('Setup repo')).toBeInTheDocument()
     expect(screen.queryByText('Legacy planning transcript')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Unsupported content:/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Walking Skeleton/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()

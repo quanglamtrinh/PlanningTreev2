@@ -1,6 +1,7 @@
 import type { KeyboardEvent, ReactNode } from 'react'
 
 import type { ConversationRenderModel } from '../model/buildConversationRenderModel'
+import { renderConversationBlock } from './ConversationBlocks'
 import styles from './ConversationSurface.module.css'
 
 export type ConversationSurfaceConnectionState =
@@ -28,10 +29,6 @@ type Props = {
   onComposerValueChange?: (draft: string) => void
   onComposerSubmit?: () => void
   onComposerKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void
-}
-
-function fallbackCopy(unsupportedPartTypes: string[]): string {
-  return `Unsupported content: ${unsupportedPartTypes.join(', ')}`
 }
 
 function TypingIndicator() {
@@ -113,19 +110,35 @@ export function ConversationSurface({
 
         {showTranscript
           ? messages.map((message) => {
-              const showFallback = message.text.length === 0 && message.unsupportedPartTypes.length > 0
               return (
                 <article
                   key={message.messageId}
                   className={`${styles.message} ${styles[message.roleTone]}`}
                 >
                   <div className={styles.messageInner}>
-                    <div className={styles.messageBody}>
-                      {message.text}
-                      {message.showTyping ? <TypingIndicator /> : null}
-                      {showFallback ? (
-                        <div className={styles.unsupportedFallback}>
-                          {fallbackCopy(message.unsupportedPartTypes)}
+                    <div className={styles.messageItems}>
+                      {message.items.map((item) => {
+                        if (item.kind === 'assistant_text' || item.kind === 'user_text') {
+                          return (
+                            <div
+                              key={item.key}
+                              className={`${styles.messageBody} ${
+                                item.kind === 'user_text' ? styles.userTextItem : styles.assistantTextItem
+                              }`}
+                            >
+                              {item.text}
+                            </div>
+                          )
+                        }
+                        return (
+                          <div key={item.key} className={styles.messageBlock}>
+                            {renderConversationBlock(item)}
+                          </div>
+                        )
+                      })}
+                      {message.showTyping ? (
+                        <div className={`${styles.messageBody} ${styles.assistantTextItem}`}>
+                          <TypingIndicator />
                         </div>
                       ) : null}
                     </div>
