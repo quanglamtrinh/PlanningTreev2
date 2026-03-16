@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     planningEventsUrl: vi.fn(),
+    getPlanningConversation: vi.fn(),
+    planningConversationEventsUrl: vi.fn(),
     agentEventsUrl: vi.fn(),
     chatEventsUrl: vi.fn(),
     askEventsUrl: vi.fn(),
@@ -362,6 +364,61 @@ function makeAskConversationSnapshotWithMessage(
   }
 }
 
+function makePlanningConversationSnapshotWithMessage(
+  text: string,
+  overrides: {
+    conversationId?: string
+    nodeId?: string
+    eventSeq?: number
+  } = {},
+) {
+  const conversationId = overrides.conversationId ?? 'conv_plan_1'
+  const nodeId = overrides.nodeId ?? 'root'
+  const eventSeq = overrides.eventSeq ?? 5
+  return {
+    record: {
+      conversation_id: conversationId,
+      project_id: 'project-1',
+      node_id: nodeId,
+      thread_type: 'planning' as const,
+      app_server_thread_id: null,
+      current_runtime_mode: 'planning' as const,
+      status: 'completed' as const,
+      active_stream_id: null,
+      event_seq: eventSeq,
+      created_at: '2026-03-15T00:00:00Z',
+      updated_at: '2026-03-15T00:00:01Z',
+    },
+    messages: [
+      {
+        message_id: 'planning_msg_1',
+        conversation_id: conversationId,
+        turn_id: 'turn_1',
+        role: 'assistant' as const,
+        runtime_mode: 'planning' as const,
+        status: 'completed' as const,
+        created_at: '2026-03-15T00:00:01Z',
+        updated_at: '2026-03-15T00:00:01Z',
+        lineage: {},
+        usage: null,
+        error: null,
+        parts: [
+          {
+            part_id: 'planning_part_1',
+            part_type: 'assistant_text' as const,
+            status: 'completed' as const,
+            order: 0,
+            item_key: null,
+            created_at: '2026-03-15T00:00:01Z',
+            updated_at: '2026-03-15T00:00:01Z',
+            payload: { text },
+          },
+        ],
+      },
+    ],
+  }
+}
+
 function createDeferredPromise<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason?: unknown) => void
@@ -390,12 +447,19 @@ describe('BreadcrumbWorkspace', () => {
     vi.clearAllMocks()
     vi.unstubAllEnvs()
     vi.stubEnv('VITE_EXECUTION_CONVERSATION_V2_ENABLED', 'false')
+    vi.stubEnv('VITE_PLANNING_CONVERSATION_V2_ENABLED', 'false')
     useAskStore.setState(useAskStore.getInitialState())
     useChatStore.setState(useChatStore.getInitialState())
     useConversationStore.setState(useConversationStore.getInitialState())
     useProjectStore.setState(useProjectStore.getInitialState())
     useUIStore.setState(useUIStore.getInitialState())
     apiMock.planningEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/planning/events')
+    apiMock.getPlanningConversation.mockResolvedValue({
+      conversation: makePlanningConversationSnapshotWithMessage('Planning v2 transcript'),
+    })
+    apiMock.planningConversationEventsUrl.mockReturnValue(
+      '/v2/projects/project-1/nodes/root/conversations/planning/events?after_event_seq=0',
+    )
     apiMock.agentEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/agent/events')
     apiMock.chatEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/chat/events')
     apiMock.askEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/ask/events')
@@ -878,6 +942,126 @@ describe('BreadcrumbWorkspace', () => {
     })
 
     expect(await screen.findByText('Ask v2 transcript')).toBeInTheDocument()
+  })
+
+  it('uses planning v2 as the visible transcript source when the planning host flag is on', async () => {
+    vi.stubEnv('VITE_PLANNING_CONVERSATION_V2_ENABLED', 'true')
+    apiMock.getPlanningConversation.mockResolvedValue({
+      conversation: makePlanningConversationSnapshotWithMessage('Planning v2 transcript'),
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'root',
+      snapshot,
+      planningHistoryByNode: {
+        root: [
+          {
+            turn_id: 'legacy-turn',
+            role: 'assistant',
+            content: 'Legacy planning transcript',
+            is_inherited: false,
+            origin_node_id: 'root',
+            timestamp: '2026-03-15T00:00:00Z',
+          },
+        ],
+      },
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/root/chat',
+            state: { activeTab: 'planning' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Planning v2 transcript')).toBeInTheDocument()
+    expect(screen.queryByText('Legacy planning transcript')).not.toBeInTheDocument()
+    expect(apiMock.getPlanningConversation).toHaveBeenCalledWith('project-1', 'root')
+  })
+
+  it('keeps planning v2 loading visible without falling back to the legacy planning transcript', async () => {
+    vi.stubEnv('VITE_PLANNING_CONVERSATION_V2_ENABLED', 'true')
+    const deferredConversation = createDeferredPromise<{
+      conversation: ReturnType<typeof makePlanningConversationSnapshotWithMessage>
+    }>()
+    apiMock.getPlanningConversation.mockImplementation(() => deferredConversation.promise)
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'root',
+      snapshot,
+      planningHistoryByNode: {
+        root: [
+          {
+            turn_id: 'legacy-turn',
+            role: 'assistant',
+            content: 'Legacy planning transcript',
+            is_inherited: false,
+            origin_node_id: 'root',
+            timestamp: '2026-03-15T00:00:00Z',
+          },
+        ],
+      },
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/root/chat',
+            state: { activeTab: 'planning' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Loading conversation...')).toBeInTheDocument()
+    expect(screen.queryByText('Legacy planning transcript')).not.toBeInTheDocument()
+
+    deferredConversation.resolve({
+      conversation: makePlanningConversationSnapshotWithMessage('Planning v2 transcript'),
+    })
+
+    expect(await screen.findByText('Planning v2 transcript')).toBeInTheDocument()
   })
 
   it('loads node documents when the task tab is opened', async () => {

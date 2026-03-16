@@ -21,6 +21,11 @@ from backend.services.agent_operation_service import (
     set_last_agent_failure,
 )
 from backend.services.node_task_fields import enrich_nodes_with_task_fields
+from backend.services.planning_conversation_adapter import (
+    build_planning_split_summary,
+    extract_split_payload,
+    make_planning_stream_id,
+)
 from backend.services.thread_service import ThreadService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now, load_json, new_id
@@ -88,6 +93,7 @@ class SplitService:
         try:
             self._thread_service.ensure_planning_thread(project_id, node_id)
             turn_id = new_id("planturn")
+            visible_user_message = self._build_visible_user_message(project_id, node_id, mode)
             with self._storage.project_lock(project_id):
                 snapshot = self._storage.project_store.load_snapshot(project_id)
                 node_by_id = self._tree_service.node_index(snapshot)
@@ -102,6 +108,15 @@ class SplitService:
                 state = self._storage.node_store.load_state(project_id, node_id)
                 clear_last_agent_failure(state)
                 self._storage.node_store.save_state(project_id, node_id, state)
+                planning_start = self._storage.thread_store.start_planning_conversation_turn(
+                    project_id,
+                    node_id,
+                    thread_id=str(parent.get("planning_thread_id") or "").strip() or None,
+                    forked_from_node=str(parent.get("planning_thread_forked_from_node") or "").strip() or None,
+                    active_turn_id=turn_id,
+                    pending_user_content=visible_user_message,
+                    pending_started_at=iso_now(),
+                )
                 self._thread_service.set_planning_status(
                     project_id,
                     node_id,
@@ -130,6 +145,11 @@ class SplitService:
                 "turn_id": turn_id,
                 "mode": mode,
                 "timestamp": started_at,
+                "conversation_id": planning_start["planning"]["conversation_id"],
+                "stream_id": make_planning_stream_id(turn_id),
+                "user_content": visible_user_message,
+                "user_event_seq": planning_start["user_event_seq"],
+                "assistant_event_seq": planning_start["assistant_event_seq"],
             },
         )
         self._start_background_split(
@@ -138,6 +158,7 @@ class SplitService:
             mode=mode,
             confirm_replace=confirm_replace,
             turn_id=turn_id,
+            visible_user_message=visible_user_message,
             handle=handle,
         )
         return {
@@ -174,6 +195,7 @@ class SplitService:
         mode: str,
         confirm_replace: bool,
         turn_id: str,
+        visible_user_message: str,
         handle: AgentOperationHandle | None,
     ) -> None:
         threading.Thread(
@@ -184,6 +206,7 @@ class SplitService:
                 "mode": mode,
                 "confirm_replace": confirm_replace,
                 "turn_id": turn_id,
+                "visible_user_message": visible_user_message,
                 "handle": handle,
             },
             daemon=True,
@@ -197,9 +220,9 @@ class SplitService:
         mode: str,
         confirm_replace: bool,
         turn_id: str,
+        visible_user_message: str,
         handle: AgentOperationHandle | None,
     ) -> None:
-        visible_user_message = self._build_visible_user_message(project_id, node_id, mode)
         try:
             result = self._execute_split_turn(
                 project_id=project_id,
@@ -207,6 +230,7 @@ class SplitService:
                 mode=mode,
                 confirm_replace=confirm_replace,
                 turn_id=turn_id,
+                user_message_override=visible_user_message,
             )
             visible_user_message = result["user_message"]
             tool_calls = result["tool_calls"]
@@ -215,6 +239,10 @@ class SplitService:
             fallback_used = bool(result["fallback_used"])
             created_child_ids = list(result["created_child_ids"])
             tool_event_published = bool(result["tool_event_published"])
+            readable_summary = build_planning_split_summary(
+                payload=extract_split_payload(tool_calls),
+                created_child_ids=created_child_ids,
+            )
             if not tool_event_published:
                 for tool_call in tool_calls:
                     self._planning_event_broker.publish(
@@ -223,12 +251,7 @@ class SplitService:
                         self._planning_tool_call_event(node_id, turn_id, tool_call),
                     )
 
-            self._thread_service.set_planning_status(
-                project_id,
-                node_id,
-                status="idle",
-                active_turn_id=None,
-            )
+            planning_finish = self._storage.thread_store.finish_planning_conversation_turn(project_id, node_id)
             self._planning_event_broker.publish(
                 project_id,
                 node_id,
@@ -239,6 +262,11 @@ class SplitService:
                     "created_child_ids": created_child_ids,
                     "fallback_used": fallback_used,
                     "timestamp": timestamp,
+                    "conversation_id": planning_finish["planning"]["conversation_id"],
+                    "stream_id": make_planning_stream_id(turn_id),
+                    "assistant_text": readable_summary,
+                    "assistant_text_event_seq": planning_finish["assistant_text_event_seq"],
+                    "completion_event_seq": planning_finish["completion_event_seq"],
                 },
             )
             if handle is not None and self._agent_operation_service is not None:
@@ -265,12 +293,7 @@ class SplitService:
                     assistant_content=f"Split failed: {exc}",
                     timestamp=timestamp,
                 )
-            self._thread_service.set_planning_status(
-                project_id,
-                node_id,
-                status="idle",
-                active_turn_id=None,
-            )
+            planning_finish = self._storage.thread_store.finish_planning_conversation_turn(project_id, node_id)
             self._planning_event_broker.publish(
                 project_id,
                 node_id,
@@ -280,6 +303,11 @@ class SplitService:
                     "turn_id": turn_id,
                     "message": str(exc),
                     "timestamp": timestamp,
+                    "conversation_id": planning_finish["planning"]["conversation_id"],
+                    "stream_id": make_planning_stream_id(turn_id),
+                    "assistant_text": f"Split failed: {exc}",
+                    "assistant_text_event_seq": planning_finish["assistant_text_event_seq"],
+                    "completion_event_seq": planning_finish["completion_event_seq"],
                 },
             )
             if handle is not None and self._agent_operation_service is not None:
@@ -320,6 +348,7 @@ class SplitService:
         mode: str,
         confirm_replace: bool,
         turn_id: str,
+        user_message_override: str | None = None,
     ) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
@@ -336,7 +365,7 @@ class SplitService:
         if not planning_thread_id:
             planning_thread_id = self._thread_service.ensure_planning_thread(project_id, node_id)
 
-        user_message = build_split_user_message(mode, task_context)
+        user_message = user_message_override or build_split_user_message(mode, task_context)
         tool_event_published = False
 
         def on_visible_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:

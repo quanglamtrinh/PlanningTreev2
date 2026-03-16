@@ -8,7 +8,10 @@ import time
 from fastapi.testclient import TestClient
 
 import backend.main as backend_main
-from backend.routes.conversation import stream_execution_conversation_events
+from backend.routes.conversation import (
+    stream_execution_conversation_events,
+    stream_planning_conversation_events,
+)
 from backend.services.conversation_gateway import _LiveConversationState
 from backend.tests.integration.test_chat_api import FakeCodexClient, attach_fake_client
 
@@ -293,6 +296,138 @@ def test_execution_events_route_streams_sse_payload(client: TestClient, workspac
     assert response.status_code == 200
     assert "event: message" in chunk
     assert f"data: {json.dumps(payload, ensure_ascii=True)}" in chunk
+
+
+def test_get_planning_conversation_route_normalizes_visible_planning_transcript(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = create_project(client, str(workspace_root))
+    client.app.state.storage.thread_store.replace_planning_turns(
+        project_id,
+        node_id,
+        [
+            {
+                "turn_id": "turn_split_1",
+                "role": "user",
+                "content": "Split this node into slices.",
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:01Z",
+            },
+            {
+                "turn_id": "turn_split_1",
+                "role": "tool_call",
+                "tool_name": "emit_render_data",
+                "arguments": {
+                    "kind": "split_result",
+                    "payload": {
+                        "subtasks": [
+                            {"order": 1, "prompt": "Setup repo"},
+                            {"order": 2, "prompt": "Wire planning host"},
+                        ]
+                    },
+                },
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:02Z",
+            },
+            {
+                "turn_id": "turn_split_1",
+                "role": "assistant",
+                "content": "",
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:03Z",
+            },
+        ],
+    )
+    client.app.state.storage.thread_store.set_planning_status(
+        project_id,
+        node_id,
+        thread_id="planning_thread_1",
+        status="idle",
+        active_turn_id=None,
+    )
+
+    response = client.get(f"/v2/projects/{project_id}/nodes/{node_id}/conversations/planning")
+
+    assert response.status_code == 200
+    payload = response.json()["conversation"]
+    assert payload["record"]["thread_type"] == "planning"
+    assert payload["record"]["app_server_thread_id"] == "planning_thread_1"
+    assert payload["messages"][0]["role"] == "user"
+    assert payload["messages"][1]["role"] == "assistant"
+    assert payload["messages"][1]["parts"][0]["payload"]["text"] == "Split completed. Created 2 child tasks."
+    assert payload["messages"][1]["parts"][1]["part_type"] == "tool_call"
+
+
+def test_planning_events_route_translates_planning_broker_events_to_normalized_sse(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = create_project(client, str(workspace_root))
+    planning_state = client.app.state.storage.thread_store.get_or_create_planning_conversation_state(
+        project_id,
+        node_id,
+    )
+    conversation_id = str(planning_state["conversation_id"])
+    broker = client.app.state.planning_event_broker
+    request = _FakeStreamRequest(client.app)
+
+    async def collect_chunks() -> list[str]:
+        response = await stream_planning_conversation_events(
+            request,
+            project_id,
+            node_id,
+            after_event_seq=0,
+            expected_stream_id=None,
+        )
+        chunk_task = asyncio.create_task(anext(response.body_iterator))
+        deadline = time.time() + 1
+        while time.time() < deadline:
+            if broker._queues.get((project_id, node_id), set()):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            request._disconnected = True
+            await response.body_iterator.aclose()
+            raise AssertionError("planning event stream did not subscribe in time")
+        broker.publish(
+            project_id,
+            node_id,
+            {
+                "type": "planning_turn_started",
+                "node_id": node_id,
+                "turn_id": "turn_1",
+                "mode": "slice",
+                "timestamp": "2026-03-15T00:00:01Z",
+                "conversation_id": conversation_id,
+                "stream_id": "planning_stream:turn_1",
+                "user_content": "Split this node into slices.",
+                "user_event_seq": 1,
+                "assistant_event_seq": 2,
+            },
+        )
+
+        chunks: list[str] = []
+        try:
+            for _ in range(2):
+                chunk = await asyncio.wait_for(chunk_task, timeout=1)
+                text = chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+                chunks.append(text)
+                chunk_task = asyncio.create_task(anext(response.body_iterator))
+        finally:
+            request._disconnected = True
+            await response.body_iterator.aclose()
+        return chunks
+
+    chunks = asyncio.run(collect_chunks())
+
+    assert any('"event_type": "message_created"' in chunk for chunk in chunks)
+    assert any(f'"conversation_id": "{conversation_id}"' in chunk for chunk in chunks)
+    assert any('"role": "user"' in chunk for chunk in chunks)
+    assert any('"role": "assistant"' in chunk for chunk in chunks)
 
 
 def test_get_post_send_get_again_keeps_same_conversation_id_and_live_enrichment(

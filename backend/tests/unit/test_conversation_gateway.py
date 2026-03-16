@@ -12,6 +12,7 @@ from backend.services.codex_session_manager import CodexSessionManager
 from backend.services.conversation_context_builder import ConversationContextBuilder
 from backend.services.conversation_gateway import ConversationGateway, _LiveConversationState
 from backend.services.project_service import ProjectService
+from backend.services.thread_service import PLANNING_STALE_TURN_ERROR, ThreadService
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
 from backend.streaming.conversation_broker import ConversationEventBroker
@@ -109,6 +110,7 @@ def build_gateway(
     gateway = ConversationGateway(
         storage,
         tree_service,
+        ThreadService(storage, tree_service, fake_client),
         session_manager,
         broker,
         ConversationContextBuilder(storage),
@@ -342,6 +344,205 @@ def test_translate_ask_event_expands_legacy_ask_events_into_normalized_conversat
     assert [event["event_seq"] for event in completed_events] == [8, 9]
     assert completed_events[0]["payload"]["text"] == "hello world"
     assert completed_events[1]["payload"]["status"] == "completed"
+
+    gateway.flush_and_stop()
+
+
+def test_get_planning_conversation_normalizes_planning_history_into_v2_snapshot(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    storage.thread_store.replace_planning_turns(
+        project_id,
+        node_id,
+        [
+            {
+                "turn_id": "turn_split_1",
+                "role": "user",
+                "content": "Split this node into slices.",
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:01Z",
+            },
+            {
+                "turn_id": "turn_split_1",
+                "role": "tool_call",
+                "tool_name": "emit_render_data",
+                "arguments": {
+                    "kind": "split_result",
+                    "payload": {
+                        "subtasks": [
+                            {"order": 1, "prompt": "Setup repo"},
+                            {"order": 2, "prompt": "Wire planning host"},
+                        ]
+                    },
+                },
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:02Z",
+            },
+            {
+                "turn_id": "turn_split_1",
+                "role": "assistant",
+                "content": "",
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:03Z",
+            },
+            {
+                "turn_id": "turn_merge_1",
+                "role": "context_merge",
+                "summary": "Preserve dependency constraint",
+                "content": "Keep the shared dependency stable before splitting.",
+                "packet_id": "packet_1",
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:04Z",
+            },
+        ],
+    )
+    storage.thread_store.set_planning_status(
+        project_id,
+        node_id,
+        thread_id="planning_thread_1",
+        status="idle",
+        active_turn_id=None,
+    )
+    gateway, _, _ = build_gateway(storage, tree_service, FakeConversationClient())
+
+    conversation = gateway.get_planning_conversation(project_id, node_id)
+
+    assert conversation["record"]["thread_type"] == "planning"
+    assert conversation["record"]["current_runtime_mode"] == "planning"
+    assert conversation["record"]["conversation_id"]
+    assert conversation["record"]["app_server_thread_id"] == "planning_thread_1"
+    assert conversation["record"]["status"] == "completed"
+    assert conversation["record"]["event_seq"] == 12
+    assert [message["role"] for message in conversation["messages"]] == [
+        "user",
+        "assistant",
+        "assistant",
+    ]
+    split_message = conversation["messages"][1]
+    assert split_message["parts"][0]["payload"]["text"] == "Split completed. Created 2 child tasks."
+    assert split_message["parts"][1]["part_type"] == "tool_call"
+    assert split_message["parts"][1]["payload"]["tool_name"] == "emit_render_data"
+    assert conversation["messages"][2]["parts"][0]["payload"]["text"] == (
+        "Preserve dependency constraint\n\nKeep the shared dependency stable before splitting."
+    )
+
+    gateway.flush_and_stop()
+
+
+def test_get_planning_conversation_surfaces_recovered_stale_turn_as_terminal_visible_error(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    storage.thread_store.replace_planning_turns(
+        project_id,
+        node_id,
+        [
+            {
+                "turn_id": "turn_stale_1",
+                "role": "user",
+                "content": "Split this node.",
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:01Z",
+            },
+            {
+                "turn_id": "turn_stale_1",
+                "role": "assistant",
+                "content": PLANNING_STALE_TURN_ERROR,
+                "is_inherited": False,
+                "origin_node_id": node_id,
+                "timestamp": "2026-03-15T00:00:02Z",
+            },
+        ],
+    )
+    gateway, _, _ = build_gateway(storage, tree_service, FakeConversationClient())
+
+    conversation = gateway.get_planning_conversation(project_id, node_id)
+
+    assert conversation["record"]["status"] == "error"
+    assert conversation["messages"][-1]["status"] == "error"
+    assert conversation["messages"][-1]["error"] == PLANNING_STALE_TURN_ERROR
+    assert conversation["messages"][-1]["parts"][0]["payload"]["text"] == PLANNING_STALE_TURN_ERROR
+
+    gateway.flush_and_stop()
+
+
+def test_translate_planning_event_expands_legacy_planning_events_into_normalized_conversation_events(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    gateway, _, _ = build_gateway(storage, tree_service, FakeConversationClient())
+
+    started_events = gateway.translate_planning_event(
+        {
+            "type": "planning_turn_started",
+            "conversation_id": "convplan_1",
+            "turn_id": "turn_1",
+            "stream_id": "planning_stream:turn_1",
+            "user_content": "Split this node into slices.",
+            "user_event_seq": 1,
+            "assistant_event_seq": 2,
+            "timestamp": "2026-03-15T00:00:01Z",
+        }
+    )
+    completed_events = gateway.translate_planning_event(
+        {
+            "type": "planning_turn_completed",
+            "conversation_id": "convplan_1",
+            "turn_id": "turn_1",
+            "stream_id": "planning_stream:turn_1",
+            "assistant_text": "Split completed. Created 2 child tasks.",
+            "assistant_text_event_seq": 3,
+            "completion_event_seq": 4,
+            "timestamp": "2026-03-15T00:00:03Z",
+        }
+    )
+    failed_events = gateway.translate_planning_event(
+        {
+            "type": "planning_turn_failed",
+            "conversation_id": "convplan_1",
+            "turn_id": "turn_2",
+            "stream_id": "planning_stream:turn_2",
+            "assistant_text": "Split failed: planner crashed",
+            "assistant_text_event_seq": 5,
+            "completion_event_seq": 6,
+            "timestamp": "2026-03-15T00:00:05Z",
+        }
+    )
+
+    assert [event["event_type"] for event in started_events] == ["message_created", "message_created"]
+    assert started_events[0]["payload"]["message"]["role"] == "user"
+    assert started_events[1]["payload"]["message"]["role"] == "assistant"
+    assert started_events[1]["payload"]["message"]["status"] == "pending"
+
+    assert [event["event_type"] for event in completed_events] == [
+        "assistant_text_final",
+        "completion_status",
+    ]
+    assert completed_events[0]["payload"]["text"] == "Split completed. Created 2 child tasks."
+    assert completed_events[1]["payload"]["status"] == "completed"
+
+    assert [event["event_type"] for event in failed_events] == [
+        "assistant_text_final",
+        "completion_status",
+    ]
+    assert failed_events[0]["payload"]["status"] == "error"
+    assert failed_events[1]["payload"]["status"] == "error"
+    assert failed_events[1]["payload"]["error"] == "Split failed: planner crashed"
 
     gateway.flush_and_stop()
 

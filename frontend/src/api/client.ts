@@ -2,6 +2,7 @@ import type {
   AcceptedAgentOperation,
   AskConversationResponse,
   AskConversationSendAcceptedResponse,
+  PlanningConversationResponse,
   AskSession,
   BootstrapStatus,
   ChatSession,
@@ -320,6 +321,12 @@ export const api = {
   ): Promise<AskConversationResponse> {
     return jsonFetch(`/v2/projects/${projectId}/nodes/${nodeId}/conversations/ask`)
   },
+  getPlanningConversation(
+    projectId: string,
+    nodeId: string,
+  ): Promise<PlanningConversationResponse> {
+    return jsonFetch(`/v2/projects/${projectId}/nodes/${nodeId}/conversations/planning`)
+  },
   sendAskConversationMessage(
     projectId: string,
     nodeId: string,
@@ -345,6 +352,21 @@ export const api = {
       search.set('expected_stream_id', options.expectedStreamId)
     }
     return `/v2/projects/${projectId}/nodes/${nodeId}/conversations/ask/events?${search.toString()}`
+  },
+  planningConversationEventsUrl(
+    projectId: string,
+    nodeId: string,
+    options: {
+      afterEventSeq: number
+      expectedStreamId?: string | null
+    },
+  ): string {
+    const search = new URLSearchParams()
+    search.set('after_event_seq', String(options.afterEventSeq))
+    if (options.expectedStreamId) {
+      search.set('expected_stream_id', options.expectedStreamId)
+    }
+    return `/v2/projects/${projectId}/nodes/${nodeId}/conversations/planning/events?${search.toString()}`
   },
   getExecutionConversation(
     projectId: string,

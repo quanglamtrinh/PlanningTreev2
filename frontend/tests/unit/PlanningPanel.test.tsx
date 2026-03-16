@@ -1,7 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PlanningPanel } from '../../src/features/breadcrumb/PlanningPanel'
+import type { ConversationSnapshot } from '../../src/features/conversation/types'
+import { useConversationStore } from '../../src/stores/conversation-store'
 import { useProjectStore } from '../../src/stores/project-store'
 
 const snapshot = {
@@ -68,9 +70,85 @@ const snapshot = {
   updated_at: '2026-03-07T10:05:00Z',
 }
 
+function makePlanningConversationSnapshot(
+  text: string,
+  recordOverrides: Partial<ConversationSnapshot['record']> = {},
+): ConversationSnapshot {
+  return {
+    record: {
+      conversation_id: 'conv_plan_1',
+      project_id: 'project-1',
+      node_id: 'child-1',
+      thread_type: 'planning',
+      app_server_thread_id: null,
+      current_runtime_mode: 'planning',
+      status: 'completed',
+      active_stream_id: null,
+      event_seq: 5,
+      created_at: '2026-03-15T00:00:00Z',
+      updated_at: '2026-03-15T00:00:03Z',
+      ...recordOverrides,
+    },
+    messages: [
+      {
+        message_id: 'planning_msg:turn_1:assistant',
+        conversation_id: 'conv_plan_1',
+        turn_id: 'turn_1',
+        role: 'assistant',
+        runtime_mode: 'planning',
+        status: 'completed',
+        created_at: '2026-03-15T00:00:03Z',
+        updated_at: '2026-03-15T00:00:03Z',
+        lineage: {},
+        usage: null,
+        error: null,
+        parts: [
+          {
+            part_id: 'planning_part:turn_1:assistant_text',
+            part_type: 'assistant_text',
+            status: 'completed',
+            order: 0,
+            item_key: null,
+            created_at: '2026-03-15T00:00:03Z',
+            updated_at: '2026-03-15T00:00:03Z',
+            payload: { text },
+          },
+        ],
+      },
+    ],
+  }
+}
+
+function PlanningConversationHarness({
+  conversationId,
+  bootstrapStatus = 'idle',
+  bootstrapError = null,
+}: {
+  conversationId: string | null
+  bootstrapStatus?: 'idle' | 'loading_snapshot' | 'error'
+  bootstrapError?: string | null
+}) {
+  const conversation = useConversationStore((state) =>
+    conversationId ? state.conversationsById[conversationId] ?? null : null,
+  )
+
+  return (
+    <PlanningPanel
+      node={snapshot.tree_state.node_registry[1]}
+      planningConversation={{
+        conversationId,
+        conversation,
+        bootstrapStatus,
+        bootstrapError,
+      }}
+    />
+  )
+}
+
 describe('PlanningPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    useConversationStore.setState(useConversationStore.getInitialState())
     useProjectStore.setState(useProjectStore.getInitialState())
   })
 
@@ -215,5 +293,99 @@ describe('PlanningPanel', () => {
 
     expect(screen.getByRole('button', { name: /Walking Skeleton/i })).toBeDisabled()
     expect(screen.getByRole('button', { name: /Slice/i })).toBeDisabled()
+  })
+
+  it('renders the planning-v2 branch through the shared surface without falling back to legacy planning history', async () => {
+    const planningSnapshot = makePlanningConversationSnapshot('Split completed. Created 2 child tasks.')
+    const conversationId = useConversationStore.getState().ensureConversation(planningSnapshot)
+    useConversationStore.getState().hydrateConversation(planningSnapshot)
+    useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      snapshot,
+      planningConnectionStatus: 'connected',
+      planningHistoryByNode: {
+        'child-1': [
+          {
+            turn_id: 'legacy-turn',
+            role: 'assistant',
+            content: 'Legacy planning transcript',
+            is_inherited: false,
+            origin_node_id: 'child-1',
+            timestamp: '2026-03-07T10:05:00Z',
+          },
+        ],
+      },
+      splitNode: vi.fn(async () => {}),
+    })
+
+    render(<PlanningConversationHarness conversationId={conversationId} />)
+
+    expect(await screen.findByText('Split completed. Created 2 child tasks.')).toBeInTheDocument()
+    expect(screen.queryByText('Legacy planning transcript')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Walking Skeleton/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  })
+
+  it('shows planning-v2 loading without falling back to legacy planning history', async () => {
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      snapshot,
+      planningConnectionStatus: 'connected',
+      planningHistoryByNode: {
+        'child-1': [
+          {
+            turn_id: 'legacy-turn',
+            role: 'assistant',
+            content: 'Legacy planning transcript',
+            is_inherited: false,
+            origin_node_id: 'child-1',
+            timestamp: '2026-03-07T10:05:00Z',
+          },
+        ],
+      },
+      splitNode: vi.fn(async () => {}),
+    })
+
+    render(<PlanningConversationHarness conversationId={null} bootstrapStatus="loading_snapshot" />)
+
+    expect(await screen.findByText('Loading conversation...')).toBeInTheDocument()
+    expect(screen.queryByText('Legacy planning transcript')).not.toBeInTheDocument()
+  })
+
+  it('shows planning-v2 error without showing loading or legacy fallback', async () => {
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      snapshot,
+      planningConnectionStatus: 'connected',
+      planningHistoryByNode: {
+        'child-1': [
+          {
+            turn_id: 'legacy-turn',
+            role: 'assistant',
+            content: 'Legacy planning transcript',
+            is_inherited: false,
+            origin_node_id: 'child-1',
+            timestamp: '2026-03-07T10:05:00Z',
+          },
+        ],
+      },
+      splitNode: vi.fn(async () => {}),
+    })
+
+    render(
+      <PlanningConversationHarness
+        conversationId={null}
+        bootstrapStatus="error"
+        bootstrapError="Planning conversation failed."
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Planning conversation failed.')
+    })
+    expect(screen.queryByText('Loading conversation...')).not.toBeInTheDocument()
+    expect(screen.queryByText('Legacy planning transcript')).not.toBeInTheDocument()
   })
 })

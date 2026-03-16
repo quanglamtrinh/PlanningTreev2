@@ -102,6 +102,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     conversation_gateway = ConversationGateway(
         storage,
         tree_service,
+        thread_service,
         codex_session_manager,
         conversation_event_broker,
         conversation_context_builder,

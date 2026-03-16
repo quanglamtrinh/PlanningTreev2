@@ -25,6 +25,17 @@ from backend.errors.app_errors import (
 from backend.services.ask_service import AskService, make_ask_assistant_text_part_id, make_ask_stream_id
 from backend.services.codex_session_manager import CodexSessionManager, ProjectCodexSession, RuntimeThreadState
 from backend.services.conversation_context_builder import ConversationContextBuilder
+from backend.services.planning_conversation_adapter import (
+    build_context_merge_text,
+    build_planning_split_summary,
+    extract_split_payload,
+    make_planning_assistant_message_id,
+    make_planning_assistant_text_part_id,
+    make_planning_stream_id,
+    make_planning_tool_call_part_id,
+    make_planning_user_message_id,
+)
+from backend.services.thread_service import PLANNING_STALE_TURN_ERROR
 from backend.storage.file_utils import iso_now, new_id
 from backend.storage.storage import Storage
 from backend.streaming.conversation_broker import ConversationEventBroker
@@ -52,6 +63,7 @@ class ConversationGateway:
         self,
         storage: Storage,
         tree_service,
+        thread_service,
         session_manager: CodexSessionManager,
         event_broker: ConversationEventBroker,
         context_builder: ConversationContextBuilder,
@@ -59,6 +71,7 @@ class ConversationGateway:
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
+        self._thread_service = thread_service
         self._session_manager = session_manager
         self._event_broker = event_broker
         self._context_builder = context_builder
@@ -109,6 +122,17 @@ class ConversationGateway:
         session = ask_service.get_session_state(project_id, node_id)
         return self._build_ask_conversation_snapshot(session)
 
+    def get_planning_conversation(self, project_id: str, node_id: str) -> ConversationSnapshot:
+        _, node, _, _ = self._load_node_context(project_id, node_id)
+        planning_state = self._storage.thread_store.get_or_create_planning_conversation_state(project_id, node_id)
+        turns = self._thread_service.materialize_inherited_planning_history(project_id, node_id)
+        return self._build_planning_conversation_snapshot(
+            project_id=project_id,
+            node=node,
+            planning_state=planning_state,
+            turns=turns,
+        )
+
     def prepare_ask_event_stream(
         self,
         project_id: str,
@@ -117,6 +141,23 @@ class ConversationGateway:
         expected_stream_id: str | None,
     ) -> str:
         snapshot = self.get_ask_conversation(project_id, node_id)
+        conversation_id = str(snapshot["record"]["conversation_id"])
+        expected = str(expected_stream_id or "").strip() or None
+        if expected is None:
+            return conversation_id
+        active_stream_id = snapshot["record"]["active_stream_id"]
+        if active_stream_id is not None and active_stream_id != expected:
+            raise ConversationStreamMismatch()
+        return conversation_id
+
+    def prepare_planning_event_stream(
+        self,
+        project_id: str,
+        node_id: str,
+        *,
+        expected_stream_id: str | None,
+    ) -> str:
+        snapshot = self.get_planning_conversation(project_id, node_id)
         conversation_id = str(snapshot["record"]["conversation_id"])
         expected = str(expected_stream_id or "").strip() or None
         if expected is None:
@@ -265,6 +306,136 @@ class ConversationGateway:
             )
         ]
 
+    def translate_planning_event(
+        self,
+        event: dict[str, Any],
+    ) -> list[ConversationEventEnvelope]:
+        event_type = str(event.get("type") or "").strip()
+        if event_type not in {
+            "planning_turn_started",
+            "planning_turn_completed",
+            "planning_turn_failed",
+        }:
+            return []
+
+        conversation_id = str(event.get("conversation_id") or "").strip()
+        turn_id = str(event.get("turn_id") or "").strip()
+        stream_id = str(event.get("stream_id") or "").strip() or (
+            make_planning_stream_id(turn_id) if turn_id else ""
+        )
+        if not conversation_id or not turn_id or not stream_id:
+            return []
+
+        created_at = str(event.get("timestamp") or iso_now())
+        assistant_message_id = make_planning_assistant_message_id(turn_id)
+        assistant_part_id = make_planning_assistant_text_part_id(turn_id)
+
+        if event_type == "planning_turn_started":
+            user_content = str(event.get("user_content") or "").strip()
+            try:
+                user_event_seq = max(1, int(event.get("user_event_seq", 0) or 0))
+                assistant_event_seq = max(1, int(event.get("assistant_event_seq", 0) or 0))
+            except (TypeError, ValueError):
+                return []
+            user_message = self._build_planning_user_message(
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                text=user_content or "Split requested.",
+                created_at=created_at,
+            )
+            assistant_message = self._build_planning_assistant_message(
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                text="",
+                created_at=created_at,
+                status="pending",
+                error=None,
+                tool_calls=None,
+            )
+            return [
+                self._build_message_created_event(
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    event_seq=user_event_seq,
+                    created_at=created_at,
+                    message=user_message,
+                ),
+                self._build_message_created_event(
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    event_seq=assistant_event_seq,
+                    created_at=created_at,
+                    message=assistant_message,
+                ),
+            ]
+
+        assistant_text = str(event.get("assistant_text") or "").strip()
+        try:
+            assistant_text_event_seq = max(1, int(event.get("assistant_text_event_seq", 0) or 0))
+            completion_event_seq = max(1, int(event.get("completion_event_seq", 0) or 0))
+        except (TypeError, ValueError):
+            return []
+
+        if event_type == "planning_turn_completed":
+            return [
+                self._build_assistant_text_event(
+                    event_type="assistant_text_final",
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    message_id=assistant_message_id,
+                    part_id=assistant_part_id,
+                    event_seq=assistant_text_event_seq,
+                    created_at=created_at,
+                    payload={
+                        "part_id": assistant_part_id,
+                        "text": assistant_text or "Split completed.",
+                        "status": "completed",
+                    },
+                ),
+                self._build_completion_status_event(
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    message_id=assistant_message_id,
+                    event_seq=completion_event_seq,
+                    created_at=created_at,
+                    status="completed",
+                    error=None,
+                ),
+            ]
+
+        error_text = assistant_text or f"Split failed: {event.get('message') or 'Planning failed.'}"
+        return [
+            self._build_assistant_text_event(
+                event_type="assistant_text_final",
+                conversation_id=conversation_id,
+                stream_id=stream_id,
+                turn_id=turn_id,
+                message_id=assistant_message_id,
+                part_id=assistant_part_id,
+                event_seq=assistant_text_event_seq,
+                created_at=created_at,
+                payload={
+                    "part_id": assistant_part_id,
+                    "text": error_text,
+                    "status": "error",
+                },
+            ),
+            self._build_completion_status_event(
+                conversation_id=conversation_id,
+                stream_id=stream_id,
+                turn_id=turn_id,
+                message_id=assistant_message_id,
+                event_seq=completion_event_seq,
+                created_at=created_at,
+                status="error",
+                error=error_text,
+            ),
+        ]
+
     def flush_persistence(self) -> None:
         self._persistence_queue.join()
 
@@ -345,6 +516,274 @@ class ConversationGateway:
             },
             "messages": messages,
         }
+
+    def _build_planning_conversation_snapshot(
+        self,
+        *,
+        project_id: str,
+        node: dict[str, Any],
+        planning_state: dict[str, Any],
+        turns: list[dict[str, Any]],
+    ) -> ConversationSnapshot:
+        conversation_id = str(planning_state.get("conversation_id") or new_id("convplan"))
+        messages = self._normalize_planning_turns_to_conversation_messages(turns, conversation_id)
+        active_turn_id = str(planning_state.get("active_turn_id") or "").strip() or None
+        pending_user_content = str(planning_state.get("pending_user_content") or "").strip()
+        pending_started_at = str(
+            planning_state.get("pending_started_at")
+            or node.get("created_at")
+            or iso_now()
+        )
+
+        if active_turn_id and not any(message["turn_id"] == active_turn_id for message in messages):
+            pending_messages = self._build_pending_planning_messages(
+                conversation_id=conversation_id,
+                turn_id=active_turn_id,
+                user_content=pending_user_content or "Split requested.",
+                created_at=pending_started_at,
+            )
+            messages.extend(pending_messages)
+
+        latest_assistant_message = next(
+            (message for message in reversed(messages) if message["role"] == "assistant"),
+            None,
+        )
+        record_status = "idle"
+        if active_turn_id or str(planning_state.get("status") or "").strip().lower() == "active":
+            record_status = "active"
+        elif latest_assistant_message is not None and latest_assistant_message["status"] == "error":
+            record_status = "error"
+        elif messages:
+            record_status = "completed"
+
+        created_at = str(messages[0]["created_at"] if messages else node.get("created_at") or iso_now())
+        updated_at = str(messages[-1]["updated_at"] if messages else created_at)
+        try:
+            conversation_event_seq = max(0, int(planning_state.get("conversation_event_seq", 0) or 0))
+        except (TypeError, ValueError):
+            conversation_event_seq = 0
+
+        return {
+            "record": {
+                "conversation_id": conversation_id,
+                "project_id": project_id,
+                "node_id": str(node["node_id"]),
+                "thread_type": "planning",
+                "app_server_thread_id": str(planning_state.get("thread_id") or "").strip() or None,
+                "current_runtime_mode": "planning",
+                "status": record_status,
+                "active_stream_id": make_planning_stream_id(active_turn_id) if active_turn_id else None,
+                "event_seq": conversation_event_seq,
+                "created_at": created_at,
+                "updated_at": updated_at,
+            },
+            "messages": messages,
+        }
+
+    def _normalize_planning_turns_to_conversation_messages(
+        self,
+        turns: list[dict[str, Any]],
+        conversation_id: str,
+    ) -> list[ConversationMessage]:
+        messages: list[ConversationMessage] = []
+        buffered_tool_calls: dict[str, list[dict[str, Any]]] = {}
+
+        for raw_turn in turns:
+            if not isinstance(raw_turn, dict):
+                continue
+            turn_id = str(raw_turn.get("turn_id") or "").strip()
+            role = str(raw_turn.get("role") or "").strip()
+            if not turn_id or not role:
+                continue
+            timestamp = str(raw_turn.get("timestamp") or iso_now())
+
+            if role == "tool_call":
+                buffered_tool_calls.setdefault(turn_id, []).append(copy.deepcopy(raw_turn))
+                continue
+
+            if role == "user":
+                content = str(raw_turn.get("content") or "").strip()
+                messages.append(
+                    self._build_planning_user_message(
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                        text=content,
+                        created_at=timestamp,
+                    )
+                )
+                continue
+
+            if role == "context_merge":
+                text = build_context_merge_text(
+                    summary=str(raw_turn.get("summary") or "").strip() or None,
+                    content=str(raw_turn.get("content") or "").strip() or None,
+                )
+                messages.append(
+                    self._build_planning_assistant_message(
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                        text=text,
+                        created_at=timestamp,
+                        status="completed",
+                        error=None,
+                        tool_calls=None,
+                    )
+                )
+                continue
+
+            if role == "assistant":
+                tool_turns = buffered_tool_calls.pop(turn_id, [])
+                tool_calls = [self._normalize_planning_tool_call(turn_id, index, tool_turn) for index, tool_turn in enumerate(tool_turns)]
+                assistant_text = str(raw_turn.get("content") or "").strip()
+                error_text = None
+                message_status = "completed"
+                if tool_turns:
+                    assistant_text = build_planning_split_summary(
+                        payload=extract_split_payload(
+                            [
+                                {
+                                    "tool_name": str(tool_turn.get("tool_name") or ""),
+                                    "arguments": tool_turn.get("arguments"),
+                                }
+                                for tool_turn in tool_turns
+                            ]
+                        ),
+                    )
+                if assistant_text.startswith("Split failed:") or assistant_text == PLANNING_STALE_TURN_ERROR:
+                    message_status = "error"
+                    error_text = assistant_text
+                messages.append(
+                    self._build_planning_assistant_message(
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                        text=assistant_text,
+                        created_at=timestamp,
+                        status=message_status,
+                        error=error_text,
+                        tool_calls=tool_calls,
+                    )
+                )
+
+        return messages
+
+    def _build_pending_planning_messages(
+        self,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        user_content: str,
+        created_at: str,
+    ) -> list[ConversationMessage]:
+        return [
+            self._build_planning_user_message(
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                text=user_content,
+                created_at=created_at,
+            ),
+            self._build_planning_assistant_message(
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                text="",
+                created_at=created_at,
+                status="pending",
+                error=None,
+                tool_calls=None,
+            ),
+        ]
+
+    def _build_planning_user_message(
+        self,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        text: str,
+        created_at: str,
+    ) -> ConversationMessage:
+        message = make_conversation_message(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            role="user",
+            runtime_mode="planning",
+            message_id=make_planning_user_message_id(turn_id),
+            status="completed",
+            parts=[
+                make_conversation_part(
+                    part_type="user_text",
+                    order=0,
+                    status="completed",
+                    part_id=f"planning_part:{turn_id}:user_text",
+                    payload={"text": text},
+                )
+            ],
+        )
+        self._stamp_message_timestamps(message, created_at)
+        return message
+
+    def _build_planning_assistant_message(
+        self,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        text: str,
+        created_at: str,
+        status: str,
+        error: str | None,
+        tool_calls: list[ConversationMessagePart] | None,
+    ) -> ConversationMessage:
+        parts = [
+            make_conversation_part(
+                part_type="assistant_text",
+                order=0,
+                status=status,
+                part_id=make_planning_assistant_text_part_id(turn_id),
+                payload={"text": text},
+            )
+        ]
+        for tool_call in tool_calls or []:
+            parts.append(tool_call)
+        message = make_conversation_message(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            role="assistant",
+            runtime_mode="planning",
+            message_id=make_planning_assistant_message_id(turn_id),
+            status=status,
+            error=error,
+            parts=parts,
+        )
+        self._stamp_message_timestamps(message, created_at)
+        return message
+
+    def _normalize_planning_tool_call(
+        self,
+        turn_id: str,
+        index: int,
+        raw_turn: dict[str, Any],
+    ) -> ConversationMessagePart:
+        part = make_conversation_part(
+            part_type="tool_call",
+            order=index + 1,
+            status="completed",
+            part_id=make_planning_tool_call_part_id(turn_id, index),
+            payload={
+                "tool_name": str(raw_turn.get("tool_name") or ""),
+                "arguments": copy.deepcopy(raw_turn.get("arguments"))
+                if isinstance(raw_turn.get("arguments"), dict)
+                else {},
+            },
+        )
+        created_at = str(raw_turn.get("timestamp") or iso_now())
+        part["created_at"] = created_at
+        part["updated_at"] = created_at
+        return part
+
+    def _stamp_message_timestamps(self, message: ConversationMessage, created_at: str) -> None:
+        message["created_at"] = created_at
+        message["updated_at"] = created_at
+        for part in message["parts"]:
+            part["created_at"] = created_at
+            part["updated_at"] = created_at
 
     def _normalize_ask_messages_to_conversation_messages(
         self,

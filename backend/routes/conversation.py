@@ -33,6 +33,10 @@ def _ask_event_broker(request: Request):
     return request.app.state.ask_event_broker
 
 
+def _planning_event_broker(request: Request):
+    return request.app.state.planning_event_broker
+
+
 def _format_sse(payload: dict[str, Any]) -> str:
     return f"event: message\ndata: {json.dumps(payload, ensure_ascii=True)}\n\n"
 
@@ -64,6 +68,15 @@ async def send_execution_conversation_message(
 async def get_ask_conversation(request: Request, project_id: str, node_id: str) -> dict[str, Any]:
     try:
         conversation = _conversation_gateway(request).get_ask_conversation(project_id, node_id)
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
+    return {"conversation": conversation}
+
+
+@router.get("/projects/{project_id}/nodes/{node_id}/conversations/planning")
+async def get_planning_conversation(request: Request, project_id: str, node_id: str) -> dict[str, Any]:
+    try:
+        conversation = _conversation_gateway(request).get_planning_conversation(project_id, node_id)
     except ValueError as exc:
         raise InvalidRequest(str(exc)) from exc
     return {"conversation": conversation}
@@ -159,6 +172,54 @@ async def stream_ask_conversation_events(
                     yield ": heartbeat\n\n"
         finally:
             _ask_event_broker(request).unsubscribe(project_id, node_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/projects/{project_id}/nodes/{node_id}/conversations/planning/events")
+async def stream_planning_conversation_events(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    after_event_seq: int = 0,
+    expected_stream_id: str | None = None,
+) -> StreamingResponse:
+    try:
+        conversation_id = _conversation_gateway(request).prepare_planning_event_stream(
+            project_id,
+            node_id,
+            expected_stream_id=expected_stream_id,
+        )
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        queue = _planning_event_broker(request).subscribe(project_id, node_id)
+        try:
+            while not await request.is_disconnected():
+                try:
+                    legacy_event = await asyncio.wait_for(queue.get(), timeout=15)
+                    translated_events = _conversation_gateway(request).translate_planning_event(
+                        legacy_event
+                    )
+                    for event in translated_events:
+                        if int(event.get("event_seq", 0) or 0) <= after_event_seq:
+                            continue
+                        if str(event.get("conversation_id") or "") != conversation_id:
+                            continue
+                        yield _format_sse(event)
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+        finally:
+            _planning_event_broker(request).unsubscribe(project_id, node_id, queue)
 
     return StreamingResponse(
         event_generator(),

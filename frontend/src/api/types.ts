@@ -573,6 +573,10 @@ export interface AskConversationResponse {
   conversation: ConversationSnapshot
 }
 
+export interface PlanningConversationResponse {
+  conversation: ConversationSnapshot
+}
+
 export interface AskConversationSendAcceptedResponse {
   status: 'accepted'
   conversation_id: string
@@ -584,3 +588,4 @@ export interface AskConversationSendAcceptedResponse {
 }
 
 export type AskConversationEvent = ConversationEventEnvelope
+export type PlanningConversationEvent = ConversationEventEnvelope

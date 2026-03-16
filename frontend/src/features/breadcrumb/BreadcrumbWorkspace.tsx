@@ -10,9 +10,11 @@ import {
 import {
   isAskConversationV2Enabled,
   isExecutionConversationV2Enabled,
+  isPlanningConversationV2Enabled,
 } from "../../config/featureFlags";
 import { useAskConversation } from "../conversation/hooks/useAskConversation";
 import { useExecutionConversation } from "../conversation/hooks/useExecutionConversation";
+import { usePlanningConversation } from "../conversation/hooks/usePlanningConversation";
 import { useAskStore } from "../../stores/ask-store";
 import { useChatStore } from "../../stores/chat-store";
 import { useConversationStore } from "../../stores/conversation-store";
@@ -149,6 +151,7 @@ export function BreadcrumbWorkspace() {
   const setActiveSurface = useUIStore((state) => state.setActiveSurface);
   const executionConversationV2Enabled = isExecutionConversationV2Enabled();
   const askConversationV2Enabled = isAskConversationV2Enabled();
+  const planningConversationV2Enabled = isPlanningConversationV2Enabled();
   const appliedComposerSeedTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -217,6 +220,14 @@ export function BreadcrumbWorkspace() {
     enabled:
       executionConversationV2Enabled &&
       activeTab === "execution" &&
+      Boolean(projectId && node?.node_id),
+  });
+  const planningConversation = usePlanningConversation({
+    projectId: projectId ?? null,
+    nodeId: node?.node_id ?? null,
+    enabled:
+      planningConversationV2Enabled &&
+      activeTab === "planning" &&
       Boolean(projectId && node?.node_id),
   });
 
@@ -469,6 +480,14 @@ export function BreadcrumbWorkspace() {
         refresh: askConversation.refresh,
       }
     : undefined;
+  const visiblePlanningConversation = planningConversationV2Enabled
+    ? {
+        conversationId: planningConversation.conversationId,
+        conversation: planningConversation.conversation,
+        bootstrapStatus: planningConversation.bootstrapStatus,
+        bootstrapError: planningConversation.bootstrapError,
+      }
+    : undefined;
   let executionStatusText = "Confirm Spec before planning.";
   if (
     node.phase === "executing" &&
@@ -684,6 +703,7 @@ export function BreadcrumbWorkspace() {
               node={node}
               documents={nodeDocuments}
               activity={nodeActivity}
+              planningConversation={visiblePlanningConversation}
             />
           ) : null}
           {activeTab === "task" ? (

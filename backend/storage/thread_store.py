@@ -4,19 +4,23 @@ import copy
 from typing import Any, Dict
 
 from backend.config.app_config import AppPaths
-from backend.storage.file_utils import atomic_write_json, load_json
+from backend.storage.file_utils import atomic_write_json, load_json, new_id
 from backend.storage.project_ids import normalize_project_id
 from backend.storage.project_locks import ProjectLockRegistry
 
 
 def _default_planning_state() -> dict[str, Any]:
     return {
+        "conversation_id": None,
         "thread_id": None,
         "forked_from_node": None,
         "status": None,
         "active_turn_id": None,
+        "pending_user_content": None,
+        "pending_started_at": None,
         "turns": [],
         "event_seq": 0,
+        "conversation_event_seq": 0,
     }
 
 
@@ -51,10 +55,15 @@ def _default_ask_state() -> dict[str, Any]:
 
 
 _ASK_FIELD_UNSET = object()
+_PLANNING_FIELD_UNSET = object()
 
 
 def _bump_event_seq(bucket: dict[str, Any]) -> None:
     bucket["event_seq"] = int(bucket.get("event_seq", 0) or 0) + 1
+
+
+def _bump_planning_conversation_event_seq(bucket: dict[str, Any], amount: int = 1) -> None:
+    bucket["conversation_event_seq"] = int(bucket.get("conversation_event_seq", 0) or 0) + max(0, amount)
 
 
 class ThreadStore:
@@ -127,6 +136,7 @@ class ThreadStore:
             planning = node_state["planning"]
             planning["turns"].append(copy.deepcopy(turn))
             planning["event_seq"] = int(planning.get("event_seq", 0) or 0) + 1
+            _bump_planning_conversation_event_seq(planning)
             self._write_thread_state_unlocked(project_id, state)
             return copy.deepcopy(planning)
 
@@ -145,6 +155,14 @@ class ThreadStore:
             except (TypeError, ValueError):
                 current_event_seq = 0
             planning["event_seq"] = max(current_event_seq, len(turns))
+            try:
+                current_conversation_event_seq = int(planning.get("conversation_event_seq", 0) or 0)
+            except (TypeError, ValueError):
+                current_conversation_event_seq = 0
+            planning["conversation_event_seq"] = max(
+                current_conversation_event_seq,
+                int(planning["event_seq"]) * 3,
+            )
             self._write_thread_state_unlocked(project_id, state)
             return copy.deepcopy(planning)
 
@@ -153,22 +171,105 @@ class ThreadStore:
         project_id: str,
         node_id: str,
         *,
+        conversation_id: Any = _PLANNING_FIELD_UNSET,
         thread_id: str | None = None,
         forked_from_node: str | None = None,
         status: str | None = None,
         active_turn_id: str | None = None,
+        pending_user_content: Any = _PLANNING_FIELD_UNSET,
+        pending_started_at: Any = _PLANNING_FIELD_UNSET,
+        conversation_event_seq: Any = _PLANNING_FIELD_UNSET,
     ) -> dict[str, Any]:
         with self.project_lock(project_id):
             state = self._read_thread_state_unlocked(project_id)
             planning = self._ensure_node_state_unlocked(state, node_id)["planning"]
+            if conversation_id is not _PLANNING_FIELD_UNSET:
+                planning["conversation_id"] = conversation_id
             if thread_id is not None:
                 planning["thread_id"] = thread_id
             if forked_from_node is not None:
                 planning["forked_from_node"] = forked_from_node
             planning["status"] = status
             planning["active_turn_id"] = active_turn_id
+            if pending_user_content is not _PLANNING_FIELD_UNSET:
+                planning["pending_user_content"] = pending_user_content
+            if pending_started_at is not _PLANNING_FIELD_UNSET:
+                planning["pending_started_at"] = pending_started_at
+            if conversation_event_seq is not _PLANNING_FIELD_UNSET:
+                planning["conversation_event_seq"] = conversation_event_seq
             self._write_thread_state_unlocked(project_id, state)
             return copy.deepcopy(planning)
+
+    def get_or_create_planning_conversation_state(
+        self,
+        project_id: str,
+        node_id: str,
+    ) -> dict[str, Any]:
+        with self.project_lock(project_id):
+            state = self._read_thread_state_unlocked(project_id)
+            planning = self._ensure_node_state_unlocked(state, node_id)["planning"]
+            changed = self._normalize_planning_conversation_state_unlocked(planning)
+            if changed:
+                self._write_thread_state_unlocked(project_id, state)
+            return copy.deepcopy(planning)
+
+    def start_planning_conversation_turn(
+        self,
+        project_id: str,
+        node_id: str,
+        *,
+        thread_id: str | None = None,
+        forked_from_node: str | None = None,
+        active_turn_id: str,
+        pending_user_content: str,
+        pending_started_at: str,
+    ) -> dict[str, Any]:
+        with self.project_lock(project_id):
+            state = self._read_thread_state_unlocked(project_id)
+            planning = self._ensure_node_state_unlocked(state, node_id)["planning"]
+            self._normalize_planning_conversation_state_unlocked(planning)
+            if thread_id is not None:
+                planning["thread_id"] = thread_id
+            if forked_from_node is not None:
+                planning["forked_from_node"] = forked_from_node
+            planning["status"] = "active"
+            planning["active_turn_id"] = active_turn_id
+            planning["pending_user_content"] = pending_user_content
+            planning["pending_started_at"] = pending_started_at
+            current_event_seq = int(planning.get("conversation_event_seq", 0) or 0)
+            user_event_seq = current_event_seq + 1
+            assistant_event_seq = current_event_seq + 2
+            planning["conversation_event_seq"] = assistant_event_seq
+            self._write_thread_state_unlocked(project_id, state)
+            return {
+                "planning": copy.deepcopy(planning),
+                "user_event_seq": user_event_seq,
+                "assistant_event_seq": assistant_event_seq,
+            }
+
+    def finish_planning_conversation_turn(
+        self,
+        project_id: str,
+        node_id: str,
+    ) -> dict[str, Any]:
+        with self.project_lock(project_id):
+            state = self._read_thread_state_unlocked(project_id)
+            planning = self._ensure_node_state_unlocked(state, node_id)["planning"]
+            self._normalize_planning_conversation_state_unlocked(planning)
+            planning["status"] = "idle"
+            planning["active_turn_id"] = None
+            planning["pending_user_content"] = None
+            planning["pending_started_at"] = None
+            current_event_seq = int(planning.get("conversation_event_seq", 0) or 0)
+            assistant_text_event_seq = current_event_seq + 1
+            completion_event_seq = current_event_seq + 2
+            planning["conversation_event_seq"] = completion_event_seq
+            self._write_thread_state_unlocked(project_id, state)
+            return {
+                "planning": copy.deepcopy(planning),
+                "assistant_text_event_seq": assistant_text_event_seq,
+                "completion_event_seq": completion_event_seq,
+            }
 
     def get_planning_turns(self, project_id: str, node_id: str) -> list[dict[str, Any]]:
         with self.project_lock(project_id):
@@ -232,6 +333,7 @@ class ThreadStore:
             planning = node_state["planning"]
             planning["turns"].append(copy.deepcopy(planning_turn))
             planning["event_seq"] = int(planning.get("event_seq", 0) or 0) + 1
+            _bump_planning_conversation_event_seq(planning)
             planning["status"] = planning_status
             planning["active_turn_id"] = planning_active_turn_id
 
@@ -354,6 +456,33 @@ class ThreadStore:
         node_state.setdefault("execution", _default_execution_state())
         node_state.setdefault("ask", _default_ask_state())
         return node_state
+
+    def _normalize_planning_conversation_state_unlocked(self, planning: dict[str, Any]) -> bool:
+        changed = False
+        if not isinstance(planning.get("conversation_id"), str) or not str(planning.get("conversation_id") or "").strip():
+            planning["conversation_id"] = new_id("convplan")
+            changed = True
+        if "pending_user_content" not in planning:
+            planning["pending_user_content"] = None
+            changed = True
+        if "pending_started_at" not in planning:
+            planning["pending_started_at"] = None
+            changed = True
+        try:
+            current_event_seq = int(planning.get("conversation_event_seq", 0) or 0)
+        except (TypeError, ValueError):
+            current_event_seq = 0
+        try:
+            legacy_event_seq = int(planning.get("event_seq", 0) or 0)
+        except (TypeError, ValueError):
+            legacy_event_seq = 0
+        baseline_event_seq = max(current_event_seq, legacy_event_seq * 3)
+        if planning.get("active_turn_id"):
+            baseline_event_seq = max(baseline_event_seq, legacy_event_seq * 3 + 2)
+        if current_event_seq != baseline_event_seq:
+            planning["conversation_event_seq"] = baseline_event_seq
+            changed = True
+        return changed
 
     def _default_node_state(self) -> dict[str, Any]:
         return {

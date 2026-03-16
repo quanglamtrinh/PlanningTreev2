@@ -364,6 +364,8 @@ class ThreadService:
                         planning = raw_node_state.get("planning")
                         if not isinstance(planning, dict):
                             continue
+                        if not isinstance(planning.get("conversation_id"), str) or not str(planning.get("conversation_id") or "").strip():
+                            planning["conversation_id"] = f"convplan_{node_id}"
                         if str(planning.get("status") or "").strip().lower() != "active":
                             continue
 
@@ -372,6 +374,8 @@ class ThreadService:
                         active_turn_id = str(planning.get("active_turn_id") or "").strip()
                         planning["status"] = "idle"
                         planning["active_turn_id"] = None
+                        planning["pending_user_content"] = None
+                        planning["pending_started_at"] = None
 
                         if not active_turn_id or node_id not in node_by_id:
                             continue
@@ -392,6 +396,9 @@ class ThreadService:
                             )
                         )
                         planning["event_seq"] = int(planning.get("event_seq", 0) or 0) + 1
+                        planning["conversation_event_seq"] = int(
+                            planning.get("conversation_event_seq", planning.get("event_seq", 0) * 3) or 0
+                        ) + 2
                         appended_failures += 1
 
                     if did_change:
