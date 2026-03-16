@@ -317,28 +317,45 @@
 
 ## Phase 5 - Advanced Semantics And Rich Components
 ### Goal
-- Reach CodexMonitor-like semantic parity for rich conversation behavior.
+- Reach semantic parity for advanced conversation-v2 semantics without requiring shell or pixel parity with CodexMonitor source UI.
 
 ### Scope
-- reasoning blocks
-- tool and result cards
-- plan blocks
-- plan step status
-- approval requests
-- runtime input
-- diff and file summaries
-- retry, continue, regenerate, cancel controls
+- passive rich semantics
+- interactive request and response semantics
+- lineage-aware action semantics
+
+### Current Phase 5.1 Hardening Boundary
+- frontend shared-surface renderer and durable replay support remain the Phase 5.1 baseline
+- backend live-path completeness is tracked separately from replay support
+- replay-only means a semantic may appear through durable snapshot replay or guarded terminal snapshot refresh, but is not required to appear as fine-grained live events on the current transport path
+
+### Current Phase 5.1 Backend Live-Path Matrix
+- live + replay on the current backend path:
+  - `tool_call`
+  - `plan_block`
+- replay-only on the current backend live path until native transport support exists:
+  - `reasoning`
+  - `tool_result`
+  - `plan_step_update`
+  - `diff_summary`
+  - `file_change_summary`
+- this matrix applies to backend live-path completeness only, not to frontend shared-surface replay or render support
 
 ### Risks
 - replay mismatch between live and persisted states
+- over-claiming backend live parity when a semantic is replay-only
+- passive-event attachment drift when `message_id` is missing
 
 ### Acceptance Criteria
-- rich components render live and replay correctly
-- lineage-aware actions work on the new path
+- Phase 5.1 shared-surface rendering and replay remain stable for passive rich semantics
+- passive events attach only to deterministic assistant targets on the Phase 5.1 path
+- backend live-path claims are limited to semantics the transport can emit natively and deterministically
+- replay-only semantics are explicitly documented as replay-only rather than silently implied as live-complete
 
 ### Verification
-- event-to-part mapping tests
-- replay fidelity tests
+- reducer tests for deterministic passive targeting and duplicate-delivery idempotency
+- backend tests for `tool_call` and `plan_block` live emission, persistence, and terminal reconciliation
+- replay fidelity tests for passive semantics that remain replay-only on the backend live path
 
 ## Phase 6 - Performance, Concurrency, Replay, And Cleanup
 ### Goal

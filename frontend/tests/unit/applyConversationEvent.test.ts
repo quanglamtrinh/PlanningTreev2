@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { applyConversationEvent } from '../../src/features/conversation/model/applyConversationEvent'
 import type { ConversationEventEnvelope, ConversationSnapshot } from '../../src/features/conversation/types'
@@ -140,6 +140,7 @@ describe('applyConversationEvent passive semantics', () => {
   })
 
   it('ignores passive updates when deterministic message attachment cannot be resolved', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const next = applyConversationEvent(
       makeSnapshot({
         messages: [],
@@ -157,6 +158,107 @@ describe('applyConversationEvent passive semantics', () => {
 
     expect(next.messages).toEqual([])
     expect(next.record.event_seq).toBe(2)
+    expect(warn).toHaveBeenCalledWith(
+      '[conversation] dropped passive event',
+      expect.objectContaining({
+        reason: 'missing_assistant_target_for_turn',
+        eventType: 'diff_summary',
+      }),
+    )
+    warn.mockRestore()
+  })
+
+  it('rejects passive events that only match a non-assistant message for the same turn', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const next = applyConversationEvent(
+      makeSnapshot({
+        messages: [
+          {
+            ...makeSnapshot().messages[0],
+            message_id: 'msg_user_only',
+            role: 'user',
+            parts: [
+              {
+                part_id: 'part_user',
+                part_type: 'user_text',
+                status: 'completed',
+                order: 0,
+                item_key: null,
+                created_at: '2026-03-15T00:00:01Z',
+                updated_at: '2026-03-15T00:00:01Z',
+                payload: { text: 'hello' },
+              },
+            ],
+          },
+        ],
+      }),
+      makeEvent(
+        {
+          event_type: 'plan_block',
+          message_id: undefined,
+        },
+        {
+          turn_id: 'turn_1',
+          plan_id: 'plan_1',
+          text: 'Wire reducer first.',
+        },
+      ),
+    )
+
+    expect(next.messages[0].parts).toHaveLength(1)
+    expect(warn).toHaveBeenCalledWith(
+      '[conversation] dropped passive event',
+      expect.objectContaining({
+        reason: 'missing_assistant_target_for_turn',
+        eventType: 'plan_block',
+      }),
+    )
+    warn.mockRestore()
+  })
+
+  it('updates plan_block in place by stable plan_id without duplicating renderable parts', () => {
+    const initial = applyConversationEvent(
+      makeSnapshot(),
+      makeEvent(
+        {
+          event_type: 'plan_block',
+          event_seq: 3,
+          created_at: '2026-03-15T00:00:03Z',
+        },
+        {
+          plan_id: 'plan_1',
+          text: 'Draft plan',
+          steps: [{ step_id: 'step_1', title: 'Wire reducer', status: 'pending' }],
+        },
+      ),
+    )
+
+    const next = applyConversationEvent(
+      initial,
+      makeEvent(
+        {
+          event_type: 'plan_block',
+          event_seq: 4,
+          created_at: '2026-03-15T00:00:04Z',
+        },
+        {
+          plan_id: 'plan_1',
+          text: 'Finalized plan',
+          steps: [{ step_id: 'step_1', title: 'Wire reducer', status: 'completed' }],
+        },
+      ),
+    )
+
+    const planParts = next.messages[0].parts.filter((part) => part.part_type === 'plan_block')
+
+    expect(planParts).toHaveLength(1)
+    expect(planParts[0]).toMatchObject({
+      item_key: 'plan_1',
+      payload: {
+        plan_id: 'plan_1',
+        text: 'Finalized plan',
+      },
+    })
   })
 
   it('keeps tool_result association stable without depending on adjacency', () => {

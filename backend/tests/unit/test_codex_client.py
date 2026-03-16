@@ -42,3 +42,32 @@ def test_send_prompt_streaming_uses_internal_turn_helper_without_reentering_publ
         "runtime_request_ids": [],
     }
     assert rpc_calls == ["thread/start", "turn/start"]
+
+
+def test_send_prompt_streaming_forwards_optional_plan_delta_callback(monkeypatch) -> None:
+    transport = StdioTransport()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(transport, "is_alive", lambda: True)
+
+    def fake_send_prompt_modern(prompt: str, **kwargs: object) -> dict[str, object]:
+        captured["prompt"] = prompt
+        captured.update(kwargs)
+        return {
+            "stdout": "ok",
+            "thread_id": "thread_1",
+            "turn_id": "turn_1",
+            "tool_calls": [],
+            "turn_status": None,
+            "final_plan_item": None,
+            "runtime_request_ids": [],
+        }
+
+    monkeypatch.setattr(transport, "_send_prompt_modern", fake_send_prompt_modern)
+
+    callback = lambda delta, item: None
+    response = transport.send_prompt_streaming("hello", on_plan_delta=callback)
+
+    assert response["stdout"] == "ok"
+    assert captured["prompt"] == "hello"
+    assert captured["on_plan_delta"] is callback

@@ -21,15 +21,19 @@ class FakeConversationClient:
         self,
         *,
         deltas: list[str] | None = None,
+        plan_deltas: list[dict[str, object]] | None = None,
         tool_calls: list[dict[str, object]] | None = None,
         final_text: str | None = None,
+        final_plan_item: dict[str, object] | None = None,
         block_event: threading.Event | None = None,
         raise_error: Exception | None = None,
         returned_thread_id: str = "thread_exec_1",
     ) -> None:
         self.deltas = list(deltas or [])
+        self.plan_deltas = list(plan_deltas or [])
         self.tool_calls = list(tool_calls or [])
         self.final_text = final_text
+        self.final_plan_item = dict(final_plan_item) if isinstance(final_plan_item, dict) else None
         self.block_event = block_event
         self.raise_error = raise_error
         self.returned_thread_id = returned_thread_id
@@ -45,6 +49,7 @@ class FakeConversationClient:
         writable_roots: list[str] | None = None,
         on_delta=None,
         on_tool_call=None,
+        on_plan_delta=None,
     ) -> dict[str, object]:
         self.calls.append(
             {
@@ -68,6 +73,16 @@ class FakeConversationClient:
                     if isinstance(tool_call.get("arguments"), dict)
                     else {},
                 )
+        if callable(on_plan_delta):
+            for plan_delta in self.plan_deltas:
+                on_plan_delta(
+                    str(plan_delta.get("delta") or ""),
+                    {
+                        "id": str(plan_delta.get("id") or ""),
+                        "turn_id": str(plan_delta.get("turn_id") or ""),
+                        "thread_id": str(plan_delta.get("thread_id") or self.returned_thread_id),
+                    },
+                )
         if callable(on_delta):
             for delta in self.deltas:
                 on_delta(delta)
@@ -75,6 +90,7 @@ class FakeConversationClient:
             "stdout": self.final_text if self.final_text is not None else "".join(self.deltas),
             "thread_id": self.returned_thread_id,
             "tool_calls": list(self.tool_calls),
+            "final_plan_item": dict(self.final_plan_item) if self.final_plan_item is not None else None,
         }
 
     def stop(self) -> None:
@@ -606,8 +622,68 @@ def test_execution_conversation_persists_tool_call_parts_and_streams_passive_too
     persisted = client.app.state.storage.conversation_store.get_conversation(project_id, conversation_id)
     assert persisted is not None
     assert persisted["messages"][1]["parts"][1]["part_type"] == "tool_call"
+    assert persisted["messages"][1]["parts"][1]["payload"]["tool_call_id"] == persisted["messages"][1]["parts"][1]["part_id"]
     assert persisted["messages"][1]["parts"][1]["payload"]["tool_name"] == "emit_render_data"
     assert persisted["messages"][1]["parts"][1]["payload"]["arguments"]["kind"] == "split_result"
+
+
+def test_execution_conversation_persists_plan_block_parts_and_streams_passive_plan_events(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    fake_client = FakeConversationClient(
+        plan_deltas=[
+            {"id": "plan_1", "turn_id": "turn_1", "delta": "Draft "},
+            {"id": "plan_1", "turn_id": "turn_1", "delta": "plan"},
+        ],
+        final_plan_item={
+            "id": "plan_1",
+            "text": "Final plan",
+            "turn_id": "turn_1",
+            "thread_id": "thread_exec_1",
+        },
+        final_text="Plan is ready.",
+    )
+    attach_session_client_factory(client, lambda _workspace_root: fake_client)
+    project_id, node_id = create_project(client, str(workspace_root))
+    set_node_phase(client, project_id, node_id, "executing")
+    conversation = client.get(f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution").json()["conversation"]
+    conversation_id = conversation["record"]["conversation_id"]
+    accepted, events = asyncio.run(
+        collect_broker_events(
+            client,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            action=lambda: client.post(
+                f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution/send",
+                json={"content": "plan this"},
+            ),
+            terminal_statuses={"completed"},
+        )
+    )
+
+    assert accepted.status_code == 202
+    client.app.state.conversation_gateway.flush_persistence()
+
+    plan_events = [event for event in events if event["event_type"] == "plan_block"]
+    assert [event["event_type"] for event in events] == [
+        "message_created",
+        "message_created",
+        "plan_block",
+        "plan_block",
+        "plan_block",
+        "assistant_text_final",
+        "completion_status",
+    ]
+    assert {event["item_id"] for event in plan_events} == {
+        f"{accepted.json()['assistant_message_id']}:plan_block:plan_1"
+    }
+
+    persisted = client.app.state.storage.conversation_store.get_conversation(project_id, conversation_id)
+    assert persisted is not None
+    assert [part["part_type"] for part in persisted["messages"][1]["parts"]] == ["assistant_text", "plan_block"]
+    assert persisted["messages"][1]["parts"][1]["part_id"] == f"{accepted.json()['assistant_message_id']}:plan_block:plan_1"
+    assert persisted["messages"][1]["parts"][1]["payload"]["text"] == "Final plan"
 
 
 def test_execution_conversation_error_path_emits_completion_only_and_clears_ownership(

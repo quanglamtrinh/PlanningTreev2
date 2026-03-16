@@ -23,15 +23,19 @@ class FakeConversationClient:
         self,
         *,
         deltas: list[str] | None = None,
+        plan_deltas: list[dict[str, object]] | None = None,
         tool_calls: list[dict[str, object]] | None = None,
         final_text: str | None = None,
+        final_plan_item: dict[str, object] | None = None,
         block_event: threading.Event | None = None,
         raise_error: Exception | None = None,
         returned_thread_id: str = "thread_exec_1",
     ) -> None:
         self.deltas = list(deltas or [])
+        self.plan_deltas = list(plan_deltas or [])
         self.tool_calls = list(tool_calls or [])
         self.final_text = final_text
+        self.final_plan_item = dict(final_plan_item) if isinstance(final_plan_item, dict) else None
         self.block_event = block_event
         self.raise_error = raise_error
         self.returned_thread_id = returned_thread_id
@@ -47,6 +51,7 @@ class FakeConversationClient:
         writable_roots: list[str] | None = None,
         on_delta=None,
         on_tool_call=None,
+        on_plan_delta=None,
     ) -> dict[str, object]:
         self.calls.append(
             {
@@ -70,6 +75,16 @@ class FakeConversationClient:
                     if isinstance(tool_call.get("arguments"), dict)
                     else {},
                 )
+        if callable(on_plan_delta):
+            for plan_delta in self.plan_deltas:
+                on_plan_delta(
+                    str(plan_delta.get("delta") or ""),
+                    {
+                        "id": str(plan_delta.get("id") or ""),
+                        "turn_id": str(plan_delta.get("turn_id") or ""),
+                        "thread_id": str(plan_delta.get("thread_id") or self.returned_thread_id),
+                    },
+                )
         if callable(on_delta):
             for delta in self.deltas:
                 on_delta(delta)
@@ -77,6 +92,7 @@ class FakeConversationClient:
             "stdout": self.final_text if self.final_text is not None else "".join(self.deltas),
             "thread_id": self.returned_thread_id,
             "tool_calls": list(self.tool_calls),
+            "final_plan_item": dict(self.final_plan_item) if self.final_plan_item is not None else None,
         }
 
     def stop(self) -> None:
@@ -837,8 +853,73 @@ def test_success_path_emits_and_persists_execution_tool_calls(
     assert len(assistant_message["parts"]) == 2
     assert assistant_message["parts"][1]["part_type"] == "tool_call"
     assert assistant_message["parts"][1]["part_id"] == f"{response['assistant_message_id']}:tool_call:0"
+    assert assistant_message["parts"][1]["payload"]["tool_call_id"] == assistant_message["parts"][1]["part_id"]
     assert assistant_message["parts"][1]["payload"]["tool_name"] == "emit_render_data"
     assert assistant_message["parts"][1]["payload"]["arguments"]["kind"] == "split_result"
+
+    gateway.flush_and_stop()
+
+
+def test_success_path_emits_and_reconciles_execution_plan_blocks_without_duplicate_parts(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    set_node_phase(storage, tree_service, project_id, node_id, "executing")
+    fake_client = FakeConversationClient(
+        plan_deltas=[
+            {"id": "plan_1", "turn_id": "turn_1", "delta": "Draft "},
+            {"id": "plan_1", "turn_id": "turn_1", "delta": "plan"},
+        ],
+        final_plan_item={
+            "id": "plan_1",
+            "text": "Final plan",
+            "turn_id": "turn_1",
+            "thread_id": "thread_exec_1",
+        },
+        final_text="Plan is ready.",
+    )
+    gateway, broker, _ = build_gateway(storage, tree_service, fake_client)
+    conversation_id = gateway.get_execution_conversation(project_id, node_id)["record"]["conversation_id"]
+
+    response, events = asyncio.run(
+        collect_gateway_events(
+            broker,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            action=lambda: gateway.send_execution_message(project_id, node_id, "plan this"),
+            terminal_statuses={"completed"},
+        )
+    )
+    snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        str(response["conversation_id"]),
+        lambda item: item["record"]["status"] == "completed",
+    )
+    assistant_message = snapshot["messages"][-1]
+    plan_events = [event for event in events if event["event_type"] == "plan_block"]
+
+    assert [event["event_type"] for event in events] == [
+        "message_created",
+        "message_created",
+        "plan_block",
+        "plan_block",
+        "plan_block",
+        "assistant_text_final",
+        "completion_status",
+    ]
+    assert [int(event["event_seq"]) for event in events] == [1, 2, 3, 4, 5, 6, 7]
+    assert len(plan_events) == 3
+    assert {event["item_id"] for event in plan_events} == {
+        f"{response['assistant_message_id']}:plan_block:plan_1"
+    }
+    assert [part["part_type"] for part in assistant_message["parts"]] == ["assistant_text", "plan_block"]
+    assert assistant_message["parts"][1]["part_id"] == f"{response['assistant_message_id']}:plan_block:plan_1"
+    assert assistant_message["parts"][1]["item_key"] == "plan_1"
+    assert assistant_message["parts"][1]["payload"]["text"] == "Final plan"
 
     gateway.flush_and_stop()
 

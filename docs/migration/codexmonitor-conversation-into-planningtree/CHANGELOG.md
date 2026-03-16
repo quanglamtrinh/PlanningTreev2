@@ -1,5 +1,17 @@
 # Migration Changelog
 
+## 2026-03-16
+- Phase 5.1 hardening:
+  - tightened passive-event targeting so passive updates attach only to deterministic assistant messages and log observable drop diagnostics instead of silently falling back to a generic turn match
+  - extended the execution streaming path to emit and persist native `plan_block` events using the existing plan-delta transport signal and final-plan reconciliation
+  - documented the current Phase 5.1 backend live-path support matrix explicitly:
+    - live + replay: `tool_call`, `plan_block`
+    - replay-only on the backend live path: `reasoning`, `tool_result`, `plan_step_update`, `diff_summary`, `file_change_summary`
+- Verification:
+  - `npm run test:unit -- applyConversationEvent.test.ts`
+  - `python -m pytest backend/tests/unit/test_codex_client.py backend/tests/unit/test_conversation_gateway.py -k "plan_block or tool_call or passive or send_prompt_streaming_forwards_optional_plan_delta_callback"`
+  - `python -m pytest backend/tests/integration/test_conversation_gateway_api.py -k "plan_block or tool_call"`
+
 ## 2026-03-14
 - Formalized Plan 1 into the authoritative master plan.
 - Added the full migration artifact set under `docs/migration/codexmonitor-conversation-into-planningtree/`.

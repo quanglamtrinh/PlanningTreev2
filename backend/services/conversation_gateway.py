@@ -4,7 +4,7 @@ import copy
 import logging
 import queue
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from backend.conversation.contracts import (
@@ -49,11 +49,18 @@ def make_execution_tool_call_part_id(assistant_message_id: str, index: int) -> s
     return f"{assistant_message_id}:tool_call:{index}"
 
 
+def make_execution_plan_block_part_id(assistant_message_id: str, plan_id: str) -> str:
+    return f"{assistant_message_id}:plan_block:{plan_id}"
+
+
 @dataclass
 class _LiveConversationState:
     event_seq: int
     assistant_text: str = ""
     tool_call_count: int = 0
+    plan_block_text_by_id: dict[str, str] = field(default_factory=dict)
+    passive_part_orders: dict[str, int] = field(default_factory=dict)
+    next_passive_part_order: int = 1
 
 
 @dataclass
@@ -1163,6 +1170,15 @@ class ConversationGateway:
                     tool_name=tool_name,
                     arguments=arguments,
                 ),
+                on_plan_delta=lambda delta, item: self._handle_plan_delta(
+                    project_id=project_id,
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    assistant_message_id=assistant_message_id,
+                    delta=delta,
+                    item=item,
+                ),
             )
         except Exception as exc:
             self._handle_completion_error(
@@ -1188,6 +1204,7 @@ class ConversationGateway:
             assistant_part_id=assistant_part_id,
             final_text=final_text,
             tool_calls=response.get("tool_calls"),
+            final_plan_item=response.get("final_plan_item"),
             app_server_thread_id=response_thread_id,
         )
 
@@ -1269,6 +1286,8 @@ class ConversationGateway:
             live_state = self._ensure_live_state_locked(project_id, conversation_id, durable_event_seq=0)
             tool_call_index = live_state.tool_call_count
             live_state.tool_call_count += 1
+            part_id = make_execution_tool_call_part_id(assistant_message_id, tool_call_index)
+            order = self._resolve_passive_part_order_locked(live_state, f"tool_call:{part_id}")
             event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
 
         part = self._build_execution_tool_call_part(
@@ -1277,6 +1296,7 @@ class ConversationGateway:
             tool_name=tool_name,
             arguments=arguments,
             created_at=created_at,
+            order=order,
         )
         self._event_broker.publish(
             project_id,
@@ -1302,6 +1322,67 @@ class ConversationGateway:
             )
         )
 
+    def _handle_plan_delta(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        stream_id: str,
+        turn_id: str,
+        assistant_message_id: str,
+        delta: str,
+        item: dict[str, Any],
+    ) -> None:
+        plan_id = str(item.get("id") or "").strip()
+        if not plan_id or not delta:
+            return
+        session = self._session_manager.get_session(project_id)
+        if session is None:
+            return
+
+        created_at = iso_now()
+        with session.lock:
+            if not self._owns_turn_locked(session, conversation_id, stream_id, turn_id):
+                return
+            live_state = self._ensure_live_state_locked(project_id, conversation_id, durable_event_seq=0)
+            full_text = f"{live_state.plan_block_text_by_id.get(plan_id, '')}{delta}"
+            live_state.plan_block_text_by_id[plan_id] = full_text
+            order = self._resolve_passive_part_order_locked(live_state, f"plan_block:{plan_id}")
+            event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
+
+        part = self._build_execution_plan_block_part(
+            assistant_message_id=assistant_message_id,
+            plan_id=plan_id,
+            text=full_text,
+            created_at=created_at,
+            order=order,
+            thread_id=str(item.get("thread_id") or "").strip() or None,
+            turn_id=str(item.get("turn_id") or "").strip() or None,
+        )
+        self._event_broker.publish(
+            project_id,
+            conversation_id,
+            self._build_passive_part_event(
+                event_type="plan_block",
+                conversation_id=conversation_id,
+                stream_id=stream_id,
+                turn_id=turn_id,
+                message_id=assistant_message_id,
+                part=part,
+                event_seq=event_seq,
+                created_at=created_at,
+            ),
+        )
+        self._enqueue_persistence_task(
+            self._build_plan_block_persistence_task(
+                project_id=project_id,
+                conversation_id=conversation_id,
+                assistant_message_id=assistant_message_id,
+                plan_block_part=part,
+                event_seq=event_seq,
+            )
+        )
+
     def _handle_completion_success(
         self,
         *,
@@ -1313,6 +1394,7 @@ class ConversationGateway:
         assistant_part_id: str,
         final_text: str,
         tool_calls: Any,
+        final_plan_item: Any,
         app_server_thread_id: str | None,
     ) -> None:
         session = self._session_manager.get_session(project_id)
@@ -1320,6 +1402,7 @@ class ConversationGateway:
             return
         created_at = iso_now()
         late_tool_calls: list[tuple[int, int, ConversationMessagePart]] = []
+        final_plan_block: tuple[int, ConversationMessagePart] | None = None
         with session.lock:
             if not self._owns_turn_locked(session, conversation_id, stream_id, turn_id):
                 return
@@ -1340,10 +1423,41 @@ class ConversationGateway:
                         if isinstance(raw_tool_call.get("arguments"), dict)
                         else {},
                         created_at=created_at,
+                        order=self._resolve_passive_part_order_locked(
+                            live_state,
+                            f"tool_call:{make_execution_tool_call_part_id(assistant_message_id, tool_call_index)}",
+                        ),
                     )
                     event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
                     late_tool_calls.append((tool_call_index, event_seq, part))
                 live_state.tool_call_count = len(normalized_tool_calls)
+            normalized_final_plan = (
+                final_plan_item if isinstance(final_plan_item, dict) else None
+            )
+            if normalized_final_plan is not None:
+                plan_id = str(normalized_final_plan.get("id") or "").strip()
+                plan_text = str(normalized_final_plan.get("text") or "")
+                if plan_id and plan_text:
+                    previous_text = live_state.plan_block_text_by_id.get(plan_id)
+                    live_state.plan_block_text_by_id[plan_id] = plan_text
+                    if previous_text != plan_text:
+                        order = self._resolve_passive_part_order_locked(
+                            live_state,
+                            f"plan_block:{plan_id}",
+                        )
+                        event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
+                        final_plan_block = (
+                            event_seq,
+                            self._build_execution_plan_block_part(
+                                assistant_message_id=assistant_message_id,
+                                plan_id=plan_id,
+                                text=plan_text,
+                                created_at=created_at,
+                                order=order,
+                                thread_id=str(normalized_final_plan.get("thread_id") or "").strip() or None,
+                                turn_id=str(normalized_final_plan.get("turn_id") or "").strip() or None,
+                            ),
+                        )
             if final_text:
                 live_state.assistant_text = final_text
             full_text = live_state.assistant_text
@@ -1372,6 +1486,32 @@ class ConversationGateway:
                     assistant_message_id=assistant_message_id,
                     tool_call_part=part,
                     event_seq=event_seq,
+                )
+            )
+
+        if final_plan_block is not None:
+            plan_event_seq, plan_part = final_plan_block
+            self._event_broker.publish(
+                project_id,
+                conversation_id,
+                self._build_passive_part_event(
+                    event_type="plan_block",
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    message_id=assistant_message_id,
+                    part=plan_part,
+                    event_seq=plan_event_seq,
+                    created_at=created_at,
+                ),
+            )
+            self._enqueue_persistence_task(
+                self._build_plan_block_persistence_task(
+                    project_id=project_id,
+                    conversation_id=conversation_id,
+                    assistant_message_id=assistant_message_id,
+                    plan_block_part=plan_part,
+                    event_seq=plan_event_seq,
                 )
             )
 
@@ -1629,11 +1769,12 @@ class ConversationGateway:
         tool_name: str,
         arguments: dict[str, Any],
         created_at: str,
+        order: int,
     ) -> ConversationMessagePart:
         part_id = make_execution_tool_call_part_id(assistant_message_id, tool_call_index)
         part = make_conversation_part(
             part_type="tool_call",
-            order=tool_call_index + 1,
+            order=order,
             status="completed",
             part_id=part_id,
             item_key=part_id,
@@ -1643,6 +1784,40 @@ class ConversationGateway:
                 "tool_name": tool_name,
                 "arguments": copy.deepcopy(arguments),
             },
+        )
+        part["created_at"] = created_at
+        part["updated_at"] = created_at
+        return part
+
+    def _build_execution_plan_block_part(
+        self,
+        *,
+        assistant_message_id: str,
+        plan_id: str,
+        text: str,
+        created_at: str,
+        order: int,
+        thread_id: str | None,
+        turn_id: str | None,
+    ) -> ConversationMessagePart:
+        part_id = make_execution_plan_block_part_id(assistant_message_id, plan_id)
+        payload: dict[str, Any] = {
+            "part_id": part_id,
+            "plan_id": plan_id,
+            "text": text,
+            "content": text,
+        }
+        if thread_id:
+            payload["thread_id"] = thread_id
+        if turn_id:
+            payload["turn_id"] = turn_id
+        part = make_conversation_part(
+            part_type="plan_block",
+            order=order,
+            status="completed",
+            part_id=part_id,
+            item_key=plan_id,
+            payload=payload,
         )
         part["created_at"] = created_at
         part["updated_at"] = created_at
@@ -1671,6 +1846,29 @@ class ConversationGateway:
 
         return _PersistenceTask(run=run)
 
+    def _build_plan_block_persistence_task(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        assistant_message_id: str,
+        plan_block_part: ConversationMessagePart,
+        event_seq: int,
+    ) -> _PersistenceTask:
+        def run() -> None:
+            self._storage.conversation_store.mutate_conversation(
+                project_id,
+                conversation_id,
+                lambda snapshot: self._apply_plan_block_mutation(
+                    snapshot=snapshot,
+                    assistant_message_id=assistant_message_id,
+                    plan_block_part=plan_block_part,
+                    event_seq=event_seq,
+                ),
+            )
+
+        return _PersistenceTask(run=run)
+
     def _apply_tool_call_mutation(
         self,
         *,
@@ -1684,6 +1882,22 @@ class ConversationGateway:
             raise KeyError(f"Unknown assistant message_id: {assistant_message_id}")
         self._upsert_part_in_message(message["parts"], tool_call_part)
         message["updated_at"] = tool_call_part["updated_at"]
+        snapshot["record"]["current_runtime_mode"] = "execute"
+        snapshot["record"]["event_seq"] = max(int(snapshot["record"].get("event_seq", 0) or 0), event_seq)
+
+    def _apply_plan_block_mutation(
+        self,
+        *,
+        snapshot: ConversationSnapshot,
+        assistant_message_id: str,
+        plan_block_part: ConversationMessagePart,
+        event_seq: int,
+    ) -> None:
+        message = self._find_message(snapshot["messages"], assistant_message_id)
+        if message is None:
+            raise KeyError(f"Unknown assistant message_id: {assistant_message_id}")
+        self._upsert_part_in_message(message["parts"], plan_block_part)
+        message["updated_at"] = plan_block_part["updated_at"]
         snapshot["record"]["current_runtime_mode"] = "execute"
         snapshot["record"]["event_seq"] = max(int(snapshot["record"].get("event_seq", 0) or 0), event_seq)
 
@@ -2108,6 +2322,19 @@ class ConversationGateway:
         with self._live_state_lock:
             state = self._live_state.get((project_id, conversation_id))
             return state.event_seq if state is not None else 0
+
+    def _resolve_passive_part_order_locked(
+        self,
+        live_state: _LiveConversationState,
+        stable_key: str,
+    ) -> int:
+        order = live_state.passive_part_orders.get(stable_key)
+        if order is not None:
+            return order
+        order = live_state.next_passive_part_order
+        live_state.passive_part_orders[stable_key] = order
+        live_state.next_passive_part_order += 1
+        return order
 
     def _allocate_event_seq_locked(self, project_id: str, conversation_id: str) -> int:
         live_state = self._ensure_live_state_locked(project_id, conversation_id, durable_event_seq=0)

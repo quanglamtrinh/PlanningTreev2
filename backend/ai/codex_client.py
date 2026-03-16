@@ -134,6 +134,7 @@ class CodexTransport(ABC):
         writable_roots: list[str] | None = None,
         on_delta: Callable[[str], None] | None = None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
+        on_plan_delta: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Send a prompt and stream deltas when available."""
 
@@ -253,6 +254,7 @@ class StdioTransport(CodexTransport):
         writable_roots: list[str] | None = None,
         on_delta: Callable[[str], None] | None = None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
+        on_plan_delta: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
             raise CodexTransportNotFound("StdioTransport process is not alive")
@@ -264,6 +266,7 @@ class StdioTransport(CodexTransport):
             writable_roots=writable_roots,
             on_delta=on_delta,
             on_tool_call=on_tool_call,
+            on_plan_delta=on_plan_delta,
         )
 
     def start_thread(
@@ -455,6 +458,7 @@ class StdioTransport(CodexTransport):
         writable_roots: list[str] | None,
         on_delta: Callable[[str], None] | None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None,
+        on_plan_delta: Callable[[str, dict[str, Any]], None] | None,
     ) -> dict[str, Any]:
         self._initialize_session(timeout_sec)
         resolved_thread_id = thread_id
@@ -491,7 +495,7 @@ class StdioTransport(CodexTransport):
             writable_roots=writable_roots,
             on_delta=on_delta,
             on_tool_call=on_tool_call,
-            on_plan_delta=None,
+            on_plan_delta=on_plan_delta,
             on_request_user_input=None,
             on_request_resolved=None,
             on_thread_status=None,
@@ -1203,6 +1207,7 @@ class CodexAppClient:
         writable_roots: list[str] | None = None,
         on_delta: Callable[[str], None] | None = None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
+        on_plan_delta: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
             self.start()
@@ -1212,6 +1217,7 @@ class CodexAppClient:
             "cwd": cwd,
             "on_delta": on_delta,
             "on_tool_call": on_tool_call,
+            "on_plan_delta": on_plan_delta,
         }
         if writable_roots is not None:
             transport_kwargs["writable_roots"] = writable_roots

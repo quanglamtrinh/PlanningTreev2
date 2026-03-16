@@ -17,3 +17,13 @@
 - Issue: planning composer remains disabled by default for the initial cutover, but future product behavior is intentionally undecided.
 - Impact: avoid encoding this as a permanent product rule.
 - Follow-Up: revisit only after planning embedding is stable.
+
+## OI-004
+- Severity: medium
+- Issue: the current execution transport does not yet expose native live signals for `reasoning`, `tool_result`, `plan_step_update`, `diff_summary`, or `file_change_summary`.
+- Impact:
+  - Phase 5.1 backend live-path completeness is currently limited to `tool_call` and `plan_block`
+  - the remaining passive semantics must stay replay-only on the backend live path until native transport support exists
+- Follow-Up:
+  - confirm native transport availability for the remaining passive semantics before expanding backend live-path claims
+  - keep replay-only semantics available through durable snapshot replay or guarded terminal snapshot refresh without synthesizing fake live events

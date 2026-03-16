@@ -1,5 +1,32 @@
 # Progress Log
 
+## 2026-03-16T12:05:00-07:00
+- Phase: 5
+- Batch ID: P5.1-hardening
+- Summary:
+  - hardened passive-event targeting on the shared reducer so Phase 5.1 passive semantics attach only to deterministic assistant messages and emit observable diagnostics when dropped
+  - extended the execution streaming path to plumb native `plan_block` live updates through the transport, execution gateway, event broker, and durable conversation persistence
+  - tightened the Phase 5 tracking docs so backend live-complete passive semantics are distinguished from replay-only passive semantics on the current transport path
+  - current backend live-path matrix:
+    - live + replay: `tool_call`, `plan_block`
+    - replay-only: `reasoning`, `tool_result`, `plan_step_update`, `diff_summary`, `file_change_summary`
+- Files Changed:
+  - `backend/ai/codex_client.py`
+  - `backend/services/conversation_gateway.py`
+  - `backend/tests/unit/test_codex_client.py`
+  - `backend/tests/unit/test_conversation_gateway.py`
+  - `backend/tests/integration/test_conversation_gateway_api.py`
+  - `frontend/src/features/conversation/model/applyConversationEvent.ts`
+  - `frontend/tests/unit/applyConversationEvent.test.ts`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_PLAN.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PROGRESS_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/OPEN_ISSUES.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/CHANGELOG.md`
+- Blockers:
+  - native transport live signals are still missing for `reasoning`, `tool_result`, `plan_step_update`, `diff_summary`, and `file_change_summary`
+- Next Step:
+  - keep unsupported passive live semantics explicitly replay-only until native transport support exists and avoid synthesizing fake live events from final stdout or wrapper-local state
+
 ## 2026-03-14T17:38:10.4291634-07:00
 - Phase: 0 and 1
 - Batch ID: P0.1, P1.1, P1.2

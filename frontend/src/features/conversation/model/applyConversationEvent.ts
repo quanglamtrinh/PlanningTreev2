@@ -207,36 +207,65 @@ function findMessageById(
   return messages.find((message) => message.message_id === messageId) ?? null
 }
 
+type PassiveTargetMessageResolution =
+  | { message: ConversationMessage; reason: null }
+  | { message: null; reason: string }
+
 function resolvePassiveTargetMessage(
   messages: ConversationMessage[],
   event: ConversationEventEnvelope,
   payload: Record<string, unknown>,
-): ConversationMessage | null {
-  const explicitMessage =
-    findMessageById(messages, asString(event.message_id)) ??
-    findMessageById(messages, asString(payload.message_id))
-  if (explicitMessage) {
-    return explicitMessage
+): PassiveTargetMessageResolution {
+  const explicitEventMessage = findMessageById(messages, asString(event.message_id))
+  if (explicitEventMessage) {
+    if (explicitEventMessage.role !== 'assistant') {
+      return {
+        message: null,
+        reason: 'explicit_message_not_assistant',
+      }
+    }
+    return {
+      message: explicitEventMessage,
+      reason: null,
+    }
+  }
+
+  const explicitPayloadMessage = findMessageById(messages, asString(payload.message_id))
+  if (explicitPayloadMessage) {
+    if (explicitPayloadMessage.role !== 'assistant') {
+      return {
+        message: null,
+        reason: 'payload_message_not_assistant',
+      }
+    }
+    return {
+      message: explicitPayloadMessage,
+      reason: null,
+    }
   }
 
   const turnId = asString(event.turn_id) ?? asString(payload.turn_id)
   if (!turnId) {
-    return null
+    return {
+      message: null,
+      reason: 'missing_target_message',
+    }
   }
 
   const assistantMatches = messages.filter(
     (message) => message.turn_id === turnId && message.role === 'assistant',
   )
   if (assistantMatches.length > 0) {
-    return assistantMatches[assistantMatches.length - 1] ?? null
+    return {
+      message: assistantMatches[assistantMatches.length - 1] ?? null,
+      reason: null,
+    }
   }
 
-  const turnMatches = messages.filter((message) => message.turn_id === turnId)
-  if (turnMatches.length === 1) {
-    return turnMatches[0] ?? null
+  return {
+    message: null,
+    reason: 'missing_assistant_target_for_turn',
   }
-
-  return null
 }
 
 function readSemanticSpecificIdentity(
@@ -358,6 +387,26 @@ function resolvePassiveOrder(
 
 function copyPayload(payload: Record<string, unknown>): Record<string, unknown> {
   return { ...payload }
+}
+
+function reportDroppedPassiveUpdate(
+  reason: string,
+  event: ConversationEventEnvelope,
+  payload: Record<string, unknown>,
+) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') {
+    return
+  }
+  console.warn('[conversation] dropped passive event', {
+    reason,
+    eventType: event.event_type,
+    conversationId: event.conversation_id,
+    streamId: readEventStreamId(event),
+    eventSeq: event.event_seq,
+    messageId: asString(event.message_id) ?? asString(payload.message_id),
+    turnId: asString(event.turn_id) ?? asString(payload.turn_id),
+    itemId: asString(event.item_id) ?? asString(payload.part_id),
+  })
 }
 
 function upsertPassivePart(
@@ -511,10 +560,12 @@ export function applyConversationEvent(
       }
 
       const partType = PASSIVE_EVENT_TO_PART[passiveEventType]
-      const targetMessage = resolvePassiveTargetMessage(snapshot.messages, event, payload)
-      if (!targetMessage) {
+      const targetMessageResolution = resolvePassiveTargetMessage(snapshot.messages, event, payload)
+      if (!targetMessageResolution.message) {
+        reportDroppedPassiveUpdate(targetMessageResolution.reason, event, payload)
         return snapshot
       }
+      const targetMessage = targetMessageResolution.message
 
       const target = resolvePassivePartTarget(
         targetMessage,
@@ -524,6 +575,7 @@ export function applyConversationEvent(
         partType,
       )
       if (!target) {
+        reportDroppedPassiveUpdate('missing_target_part', event, payload)
         return snapshot
       }
 
