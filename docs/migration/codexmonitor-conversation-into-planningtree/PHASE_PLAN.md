@@ -316,6 +316,16 @@
 - manual ask and planning thread validation
 
 ## Phase 5 - Advanced Semantics And Rich Components
+### Dedicated Phase 5 Package
+- Detailed Phase 5 planning and tracking now lives in:
+  - `PHASE_5_PLAN.md`
+  - `PHASE_5_PROGRESS.md`
+  - `PHASE_5_BATCHES.md`
+  - `PHASE_5_VALIDATION.md`
+  - `PHASE_5_OPEN_ISSUES.md`
+  - `PHASE_5_CHANGELOG.md`
+- Keep this file as the umbrella summary across phases.
+
 ### Goal
 - Reach semantic parity for advanced conversation-v2 semantics without requiring shell or pixel parity with CodexMonitor source UI.
 

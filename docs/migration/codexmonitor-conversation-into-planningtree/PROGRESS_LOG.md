@@ -1,5 +1,28 @@
 # Progress Log
 
+## 2026-03-16T16:45:00-07:00
+- Phase: 5
+- Batch ID: P5-docs
+- Summary:
+  - created a dedicated `PHASE_5_*` tracking package under `docs/migration/codexmonitor-conversation-into-planningtree/`
+  - aligned the new package with the current repo state instead of the earlier chat-only draft
+  - linked the package from `MIGRATION_OVERVIEW.md` and the umbrella `PHASE_PLAN.md`
+- Files Changed:
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_PLAN.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_PROGRESS.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_BATCHES.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_VALIDATION.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_OPEN_ISSUES.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_CHANGELOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/MIGRATION_OVERVIEW.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_PLAN.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PROGRESS_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/CHANGELOG.md`
+- Blockers:
+  - none for the docs-package creation itself
+- Next Step:
+  - use the dedicated Phase 5 package as the detailed source of truth for future `5.1`, `5.2`, and `5.3` tracking updates
+
 ## 2026-03-16T15:10:00-07:00
 - Phase: 5
 - Batch ID: P5.2

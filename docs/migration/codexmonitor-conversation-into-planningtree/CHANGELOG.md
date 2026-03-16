@@ -1,6 +1,10 @@
 # Migration Changelog
 
 ## 2026-03-16
+- Dedicated Phase 5 docs package:
+  - added `PHASE_5_PLAN.md`, `PHASE_5_PROGRESS.md`, `PHASE_5_BATCHES.md`, `PHASE_5_VALIDATION.md`, `PHASE_5_OPEN_ISSUES.md`, and `PHASE_5_CHANGELOG.md`
+  - linked the dedicated package from `MIGRATION_OVERVIEW.md` and `PHASE_PLAN.md`
+  - aligned the package contents with the actual repo state after the current `5.1` and `5.2` implementation work
 - Phase 5.2 implementation:
   - added interactive request lifecycle support on the shared conversation-v2 contract for `approval_request`, `user_input_request`, `user_input_response`, and `request_resolved`
   - wired the execution conversation-v2 backend path to persist and stream runtime-input request creation and resolution through durable request and response messages

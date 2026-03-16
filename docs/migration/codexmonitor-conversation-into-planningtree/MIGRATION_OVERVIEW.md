@@ -57,3 +57,14 @@
 - Build gateway and session manager in parallel with the old path.
 - Cut over execution first, then ask, then planning.
 - Keep rollback options until Phase 6 cleanup gates pass.
+
+## Dedicated Phase Tracking
+- Phase 5 now has a dedicated tracking package under this directory:
+  - `PHASE_5_PLAN.md`
+  - `PHASE_5_PROGRESS.md`
+  - `PHASE_5_BATCHES.md`
+  - `PHASE_5_VALIDATION.md`
+  - `PHASE_5_OPEN_ISSUES.md`
+  - `PHASE_5_CHANGELOG.md`
+- Use the dedicated package for detailed Phase 5 scope, progress, validation, and open-issue tracking.
+- Keep `PHASE_PLAN.md` as the umbrella cross-phase summary.
