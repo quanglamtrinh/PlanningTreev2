@@ -8,6 +8,7 @@ import {
   type ConversationSurfaceConnectionState,
 } from '../conversation/components/ConversationSurface'
 import { buildConversationRenderModel } from '../conversation/model/buildConversationRenderModel'
+import { deriveConversationBusy } from '../conversation/model/deriveConversationBusy'
 import { AgentActivityCard } from './AgentActivityCard'
 import styles from './PlanningPanel.module.css'
 
@@ -104,7 +105,9 @@ export function PlanningConversationPanel({
       .filter((child) => Boolean(child && !child.is_superseded))
   }, [node.child_ids, snapshot])
 
-  const isBusy = isSplittingNode && splittingNodeId === node.node_id
+  const hasLivePlanningConversationActivity = deriveConversationBusy(conversation?.snapshot)
+  const optimisticBusy = isSplittingNode && splittingNodeId === node.node_id
+  const isBusy = hasLivePlanningConversationActivity || optimisticBusy
   const connectionState = mapConnectionState(bootstrapStatus, conversation)
   const wrapperConnection = mapWrapperConnectionState(connectionState)
   const hasConversation = conversation !== null && conversationId !== null

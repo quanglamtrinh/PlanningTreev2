@@ -12,6 +12,7 @@ import {
   isExecutionConversationV2Enabled,
   isPlanningConversationV2Enabled,
 } from "../../config/featureFlags";
+import { deriveConversationBusy } from "../conversation/model/deriveConversationBusy";
 import { useAskConversation } from "../conversation/hooks/useAskConversation";
 import { useExecutionConversation } from "../conversation/hooks/useExecutionConversation";
 import { usePlanningConversation } from "../conversation/hooks/usePlanningConversation";
@@ -142,6 +143,9 @@ export function BreadcrumbWorkspace() {
   const isGeneratingSpec = useProjectStore((state) => state.isGeneratingSpec);
   const isConfirmingNode = useProjectStore((state) => state.isConfirmingNode);
   const bootstrap = useProjectStore((state) => state.bootstrap);
+  const setPlanningNodeBusyState = useProjectStore(
+    (state) => state.setPlanningNodeBusyState,
+  );
   const chatSession = useChatStore((state) => state.session);
   const setComposerDraft = useChatStore((state) => state.setComposerDraft);
   const setAskComposerDraft = useAskStore((state) => state.setComposerDraft);
@@ -153,6 +157,7 @@ export function BreadcrumbWorkspace() {
   const askConversationV2Enabled = isAskConversationV2Enabled();
   const planningConversationV2Enabled = isPlanningConversationV2Enabled();
   const appliedComposerSeedTokenRef = useRef<string | null>(null);
+  const managedPlanningBusyNodeIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setActiveSurface("breadcrumb");
@@ -190,9 +195,10 @@ export function BreadcrumbWorkspace() {
     );
   }, [nodeId, snapshot]);
 
+  // Legacy planning transcript/history is non-authoritative on the planning v2 host path.
   usePlanningEventStream(
-    projectId && node ? projectId : null,
-    node ? node.node_id : null,
+    planningConversationV2Enabled ? null : projectId && node ? projectId : null,
+    planningConversationV2Enabled ? null : node ? node.node_id : null,
   );
   useAgentEventStream(
     projectId && node ? projectId : null,
@@ -230,6 +236,46 @@ export function BreadcrumbWorkspace() {
       activeTab === "planning" &&
       Boolean(projectId && node?.node_id),
   });
+
+  useEffect(() => {
+    const managedNodeId =
+      planningConversationV2Enabled && activeTab === "planning" && node?.node_id
+        ? node.node_id
+        : null;
+    const previousManagedNodeId = managedPlanningBusyNodeIdRef.current;
+
+    if (previousManagedNodeId && previousManagedNodeId !== managedNodeId) {
+      setPlanningNodeBusyState(previousManagedNodeId, false);
+    }
+
+    managedPlanningBusyNodeIdRef.current = managedNodeId;
+
+    if (!managedNodeId) {
+      return;
+    }
+
+    setPlanningNodeBusyState(
+      managedNodeId,
+      deriveConversationBusy(planningConversation.conversation?.snapshot),
+    );
+  }, [
+    activeTab,
+    node?.node_id,
+    planningConversation.conversation?.snapshot,
+    planningConversationV2Enabled,
+    setPlanningNodeBusyState,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      const managedNodeId = managedPlanningBusyNodeIdRef.current;
+      if (!managedNodeId) {
+        return;
+      }
+      setPlanningNodeBusyState(managedNodeId, false);
+      managedPlanningBusyNodeIdRef.current = null;
+    };
+  }, [setPlanningNodeBusyState]);
 
   useEffect(() => {
     if (

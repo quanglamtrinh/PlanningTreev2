@@ -119,6 +119,60 @@ function makePlanningConversationSnapshot(
   }
 }
 
+function makeLivePlanningConversationSnapshot({
+  recordOverrides = {},
+  messageStatus = 'pending',
+  partStatus = 'pending',
+}: {
+  recordOverrides?: Partial<ConversationSnapshot['record']>
+  messageStatus?: ConversationSnapshot['messages'][number]['status']
+  partStatus?: ConversationSnapshot['messages'][number]['parts'][number]['status']
+} = {}): ConversationSnapshot {
+  return {
+    record: {
+      conversation_id: 'conv_plan_1',
+      project_id: 'project-1',
+      node_id: 'child-1',
+      thread_type: 'planning',
+      app_server_thread_id: null,
+      current_runtime_mode: 'planning',
+      status: 'active',
+      active_stream_id: 'planning_stream:turn_1',
+      event_seq: 5,
+      created_at: '2026-03-15T00:00:00Z',
+      updated_at: '2026-03-15T00:00:03Z',
+      ...recordOverrides,
+    },
+    messages: [
+      {
+        message_id: 'planning_msg:turn_1:assistant',
+        conversation_id: 'conv_plan_1',
+        turn_id: 'turn_1',
+        role: 'assistant',
+        runtime_mode: 'planning',
+        status: messageStatus,
+        created_at: '2026-03-15T00:00:03Z',
+        updated_at: '2026-03-15T00:00:03Z',
+        lineage: {},
+        usage: null,
+        error: null,
+        parts: [
+          {
+            part_id: 'planning_part:turn_1:assistant_text',
+            part_type: 'assistant_text',
+            status: partStatus,
+            order: 0,
+            item_key: null,
+            created_at: '2026-03-15T00:00:03Z',
+            updated_at: '2026-03-15T00:00:03Z',
+            payload: { text: '' },
+          },
+        ],
+      },
+    ],
+  }
+}
+
 function PlanningConversationHarness({
   conversationId,
   bootstrapStatus = 'idle',
@@ -387,5 +441,96 @@ describe('PlanningPanel', () => {
     })
     expect(screen.queryByText('Loading conversation...')).not.toBeInTheDocument()
     expect(screen.queryByText('Legacy planning transcript')).not.toBeInTheDocument()
+  })
+
+  it('keeps split disabled when the planning v2 snapshot still has an active stream', async () => {
+    const planningSnapshot = makeLivePlanningConversationSnapshot({
+      recordOverrides: {
+        status: 'completed',
+      },
+      messageStatus: 'completed',
+      partStatus: 'completed',
+    })
+    const conversationId = useConversationStore.getState().ensureConversation(planningSnapshot)
+    useConversationStore.getState().hydrateConversation(planningSnapshot)
+    useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      snapshot,
+      planningConnectionStatus: 'connected',
+      splitNode: vi.fn(async () => {}),
+    })
+
+    render(<PlanningConversationHarness conversationId={conversationId} />)
+
+    expect(screen.getByRole('button', { name: /Walking Skeleton/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Slice/i })).toBeDisabled()
+    expect(screen.getByText('planning')).toBeInTheDocument()
+  })
+
+  it('keeps split disabled when the planning v2 snapshot record is active without a stream id', async () => {
+    const planningSnapshot = makeLivePlanningConversationSnapshot({
+      recordOverrides: {
+        active_stream_id: null,
+      },
+      messageStatus: 'completed',
+      partStatus: 'completed',
+    })
+    const conversationId = useConversationStore.getState().ensureConversation(planningSnapshot)
+    useConversationStore.getState().hydrateConversation(planningSnapshot)
+    useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      snapshot,
+      planningConnectionStatus: 'connected',
+      splitNode: vi.fn(async () => {}),
+    })
+
+    render(<PlanningConversationHarness conversationId={conversationId} />)
+
+    expect(screen.getByRole('button', { name: /Walking Skeleton/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Slice/i })).toBeDisabled()
+  })
+
+  it('keeps split disabled when the latest assistant turn is still pending without optimistic wrapper busy', async () => {
+    const planningSnapshot = makeLivePlanningConversationSnapshot({
+      recordOverrides: {
+        active_stream_id: null,
+        status: 'completed',
+      },
+    })
+    const conversationId = useConversationStore.getState().ensureConversation(planningSnapshot)
+    useConversationStore.getState().hydrateConversation(planningSnapshot)
+    useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      snapshot,
+      planningConnectionStatus: 'connected',
+      splitNode: vi.fn(async () => {}),
+    })
+
+    render(<PlanningConversationHarness conversationId={conversationId} />)
+
+    expect(screen.getByRole('button', { name: /Walking Skeleton/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Slice/i })).toBeDisabled()
+  })
+
+  it('re-enables split once the planning v2 snapshot is terminal and non-live', async () => {
+    const planningSnapshot = makePlanningConversationSnapshot('Split completed. Created 2 child tasks.')
+    const conversationId = useConversationStore.getState().ensureConversation(planningSnapshot)
+    useConversationStore.getState().hydrateConversation(planningSnapshot)
+    useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      snapshot,
+      planningConnectionStatus: 'connected',
+      splitNode: vi.fn(async () => {}),
+    })
+
+    render(<PlanningConversationHarness conversationId={conversationId} />)
+
+    expect(screen.getByRole('button', { name: /Walking Skeleton/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /Slice/i })).toBeEnabled()
+    expect(screen.queryByText('planning')).not.toBeInTheDocument()
   })
 })

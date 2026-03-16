@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { apiMock } = vi.hoisted(() => ({
@@ -438,6 +438,26 @@ function WorkspaceWithLocationProbe() {
     <>
       <BreadcrumbWorkspace />
       <div data-testid="composer-seed-state">{hasComposerSeed ? 'present' : 'cleared'}</div>
+    </>
+  )
+}
+
+function PlanningWorkspaceWithNodeSwitch() {
+  const navigate = useNavigate()
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() =>
+          navigate('/projects/project-1/nodes/child-1/chat', {
+            state: { activeTab: 'planning' as const },
+          })
+        }
+      >
+        Switch Planning Node
+      </button>
+      <BreadcrumbWorkspace />
     </>
   )
 }
@@ -999,6 +1019,7 @@ describe('BreadcrumbWorkspace', () => {
     expect(await screen.findByText('Planning v2 transcript')).toBeInTheDocument()
     expect(screen.queryByText('Legacy planning transcript')).not.toBeInTheDocument()
     expect(apiMock.getPlanningConversation).toHaveBeenCalledWith('project-1', 'root')
+    expect(apiMock.planningEventsUrl).not.toHaveBeenCalled()
   })
 
   it('keeps planning v2 loading visible without falling back to the legacy planning transcript', async () => {
@@ -1056,12 +1077,192 @@ describe('BreadcrumbWorkspace', () => {
 
     expect(await screen.findByText('Loading conversation...')).toBeInTheDocument()
     expect(screen.queryByText('Legacy planning transcript')).not.toBeInTheDocument()
+    expect(apiMock.planningEventsUrl).not.toHaveBeenCalled()
 
     deferredConversation.resolve({
       conversation: makePlanningConversationSnapshotWithMessage('Planning v2 transcript'),
     })
 
     expect(await screen.findByText('Planning v2 transcript')).toBeInTheDocument()
+  })
+
+  it('clears planning busy state when a terminal planning v2 snapshot loads without the legacy planning stream', async () => {
+    vi.stubEnv('VITE_PLANNING_CONVERSATION_V2_ENABLED', 'true')
+    apiMock.getPlanningConversation.mockResolvedValue({
+      conversation: makePlanningConversationSnapshotWithMessage('Planning v2 transcript'),
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'root',
+      snapshot,
+      isSplittingNode: true,
+      splittingNodeId: 'root',
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/root/chat',
+            state: { activeTab: 'planning' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Planning v2 transcript')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(useProjectStore.getState().isSplittingNode).toBe(false)
+      expect(useProjectStore.getState().splittingNodeId).toBeNull()
+    })
+  })
+
+  it('keeps planning busy state scoped to the current node when the planning v2 host switches nodes', async () => {
+    vi.stubEnv('VITE_PLANNING_CONVERSATION_V2_ENABLED', 'true')
+    apiMock.getPlanningConversation.mockImplementation(async (_projectId: string, nodeId: string) => {
+      if (nodeId === 'root') {
+        const activeConversation = makePlanningConversationSnapshotWithMessage('Planning root transcript')
+        activeConversation.record.status = 'active'
+        activeConversation.record.active_stream_id = 'planning_stream:root'
+        activeConversation.messages[0].status = 'pending'
+        activeConversation.messages[0].parts[0].status = 'pending'
+        return { conversation: activeConversation }
+      }
+
+      return {
+        conversation: makePlanningConversationSnapshotWithMessage('Planning child transcript', {
+          conversationId: 'conv_plan_child',
+          nodeId: 'child-1',
+          eventSeq: 1,
+        }),
+      }
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'root',
+      snapshot: childSnapshot,
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/root/chat',
+            state: { activeTab: 'planning' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat"
+            element={<PlanningWorkspaceWithNodeSwitch />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Planning root transcript')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(useProjectStore.getState().isSplittingNode).toBe(true)
+      expect(useProjectStore.getState().splittingNodeId).toBe('root')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch Planning Node' }))
+
+    expect(await screen.findByText('Planning child transcript')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(useProjectStore.getState().isSplittingNode).toBe(false)
+      expect(useProjectStore.getState().splittingNodeId).toBeNull()
+    })
+  })
+
+  it('clears scoped planning busy state when the planning v2 host unmounts', async () => {
+    vi.stubEnv('VITE_PLANNING_CONVERSATION_V2_ENABLED', 'true')
+    apiMock.getPlanningConversation.mockImplementation(async () => {
+      const activeConversation = makePlanningConversationSnapshotWithMessage('Planning root transcript')
+      activeConversation.record.status = 'active'
+      activeConversation.record.active_stream_id = 'planning_stream:root'
+      activeConversation.messages[0].status = 'pending'
+      activeConversation.messages[0].parts[0].status = 'pending'
+      return { conversation: activeConversation }
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'root',
+      snapshot,
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+
+    const view = render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/root/chat',
+            state: { activeTab: 'planning' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Planning root transcript')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(useProjectStore.getState().isSplittingNode).toBe(true)
+      expect(useProjectStore.getState().splittingNodeId).toBe('root')
+    })
+
+    view.unmount()
+
+    expect(useProjectStore.getState().isSplittingNode).toBe(false)
+    expect(useProjectStore.getState().splittingNodeId).toBeNull()
   })
 
   it('loads node documents when the task tab is opened', async () => {
