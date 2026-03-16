@@ -341,21 +341,46 @@
   - `file_change_summary`
 - this matrix applies to backend live-path completeness only, not to frontend shared-surface replay or render support
 
+### Current Phase 5.2 Interactive Boundary
+- interactive request and response semantics now render on the shared conversation surface instead of degrading as unsupported content
+- active visible request selection uses the latest unresolved request in normalized durable message/part order on the currently visible lineage
+- host wrappers may keep outer submit affordances, but durable request lifecycle state is conversation-owned
+- runtime-input lifecycle semantics are live + replay complete on the current execution backend path:
+  - `request_user_input`
+  - `request_resolved`
+  - `user_input_resolved`
+  - normalized shared parts:
+    - `user_input_request`
+    - `user_input_response`
+- `approval_request` is contract-ready and replay-safe, but remains runtime-blocked for live parity while `approvalPolicy: never` remains
+- ask and planning only participate where a clean normalized interactive source exists on the v2 path; current Phase 5.2 closeout in this repo is the execution-native runtime-input path plus shared host request actions
+
 ### Risks
 - replay mismatch between live and persisted states
 - over-claiming backend live parity when a semantic is replay-only
 - passive-event attachment drift when `message_id` is missing
+- reopening historical interactive requests as active UI after reconnect
+- duplicated request ownership between host wrappers and the shared conversation contract
+- runtime approval parity being implied even while `approvalPolicy: never` still blocks live approval emission
 
 ### Acceptance Criteria
 - Phase 5.1 shared-surface rendering and replay remain stable for passive rich semantics
 - passive events attach only to deterministic assistant targets on the Phase 5.1 path
 - backend live-path claims are limited to semantics the transport can emit natively and deterministically
 - replay-only semantics are explicitly documented as replay-only rather than silently implied as live-complete
+- `approval_request`, `user_input_request`, and `user_input_response` render on the shared contract without unsupported fallback
+- the shared contract exposes at most one active visible unresolved request at a time on the current lineage
+- that active visible request resolves to the latest unresolved request in normalized durable message/part order on the currently visible lineage
+- execution runtime-input requests and responses persist durably, survive reconnect, and converge between live delivery and replay
+- `approval_request` remains explicitly documented as runtime-blocked for live parity while `approvalPolicy: never` remains
 
 ### Verification
 - reducer tests for deterministic passive targeting and duplicate-delivery idempotency
 - backend tests for `tool_call` and `plan_block` live emission, persistence, and terminal reconciliation
 - replay fidelity tests for passive semantics that remain replay-only on the backend live path
+- reducer and render-model tests for `request_user_input`, `request_resolved`, and `user_input_resolved`
+- host tests for latest-unresolved active request selection and host-owned submission through the execution v2 request route
+- backend execution tests for request creation, request resolution, user-response persistence, and event ordering under request-resolution races
 
 ## Phase 6 - Performance, Concurrency, Replay, And Cleanup
 ### Goal

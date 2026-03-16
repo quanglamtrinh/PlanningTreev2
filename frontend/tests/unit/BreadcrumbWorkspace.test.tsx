@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -15,6 +15,7 @@ const { apiMock } = vi.hoisted(() => ({
     askConversationEventsUrl: vi.fn(),
     getExecutionConversation: vi.fn(),
     sendExecutionConversationMessage: vi.fn(),
+    resolveExecutionConversationRequest: vi.fn(),
     executionConversationEventsUrl: vi.fn(),
     getNodeDocuments: vi.fn(),
     startPlan: vi.fn(),
@@ -309,6 +310,109 @@ function makeExecutionConversationSnapshotWithMessage(
   }
 }
 
+function makeExecutionConversationSnapshotWithUserInputRequest() {
+  const snapshot = makeExecutionConversationSnapshot()
+  return {
+    ...snapshot,
+    record: {
+      ...snapshot.record,
+      node_id: 'child-1',
+      status: 'active' as const,
+      active_stream_id: 'stream_1',
+      event_seq: 5,
+    },
+    messages: [
+      {
+        message_id: 'msg_exec_request:req_old',
+        conversation_id: snapshot.record.conversation_id,
+        turn_id: 'turn_1',
+        role: 'assistant' as const,
+        runtime_mode: 'execute' as const,
+        status: 'pending' as const,
+        created_at: '2026-03-15T00:00:01Z',
+        updated_at: '2026-03-15T00:00:01Z',
+        lineage: {},
+        usage: null,
+        error: null,
+        parts: [
+          {
+            part_id: 'msg_exec_request:req_old:user_input_request',
+            part_type: 'user_input_request' as const,
+            status: 'pending' as const,
+            order: 0,
+            item_key: 'req_old',
+            created_at: '2026-03-15T00:00:01Z',
+            updated_at: '2026-03-15T00:00:01Z',
+            payload: {
+              part_id: 'msg_exec_request:req_old:user_input_request',
+              request_id: 'req_old',
+              request_kind: 'user_input',
+              resolution_state: 'pending',
+              title: 'Old request',
+              questions: [
+                {
+                  id: 'deprecated',
+                  header: 'Deprecated',
+                  question: 'Old question',
+                  options: [],
+                  is_other: true,
+                  is_secret: false,
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        message_id: 'msg_exec_request:req_latest',
+        conversation_id: snapshot.record.conversation_id,
+        turn_id: 'turn_1',
+        role: 'assistant' as const,
+        runtime_mode: 'execute' as const,
+        status: 'pending' as const,
+        created_at: '2026-03-15T00:00:02Z',
+        updated_at: '2026-03-15T00:00:02Z',
+        lineage: {},
+        usage: null,
+        error: null,
+        parts: [
+          {
+            part_id: 'msg_exec_request:req_latest:user_input_request',
+            part_type: 'user_input_request' as const,
+            status: 'pending' as const,
+            order: 0,
+            item_key: 'req_latest',
+            created_at: '2026-03-15T00:00:02Z',
+            updated_at: '2026-03-15T00:00:02Z',
+            payload: {
+              part_id: 'msg_exec_request:req_latest:user_input_request',
+              request_id: 'req_latest',
+              request_kind: 'user_input',
+              resolution_state: 'pending',
+              title: 'Runtime input needed',
+              thread_id: 'thread_exec_1',
+              turn_id: 'turn_1',
+              questions: [
+                {
+                  id: 'brand_direction',
+                  header: 'Brand direction',
+                  question: 'What visual direction should we use?',
+                  options: [
+                    { label: 'Editorial', description: 'Structured and dense.' },
+                    { label: 'Playful', description: 'Expressive and bold.' },
+                  ],
+                  is_other: false,
+                  is_secret: false,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  }
+}
+
 function makeAskConversationSnapshotWithMessage(
   text: string,
   overrides: {
@@ -524,6 +628,9 @@ describe('BreadcrumbWorkspace', () => {
       user_message_id: 'msg_user',
       assistant_message_id: 'msg_assistant',
       assistant_text_part_id: 'part_assistant',
+    })
+    apiMock.resolveExecutionConversationRequest.mockResolvedValue({
+      status: 'resolved',
     })
     apiMock.executionConversationEventsUrl.mockReturnValue(
       '/v2/projects/project-1/nodes/root/conversations/execution/events?after_event_seq=0',
@@ -1548,6 +1655,77 @@ describe('BreadcrumbWorkspace', () => {
     expect(
       screen.getByPlaceholderText('Planner input is handled through the native modal when needed.'),
     ).toBeInTheDocument()
+  })
+
+  it('uses the latest unresolved execution-v2 request for the planner modal and submits through the v2 resolve route', async () => {
+    vi.stubEnv('VITE_EXECUTION_CONVERSATION_V2_ENABLED', 'true')
+    apiMock.getExecutionConversation.mockResolvedValue({
+      conversation: makeExecutionConversationSnapshotWithUserInputRequest(),
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      bootstrap: { ready: true, workspace_configured: true },
+      activeProjectId: 'project-1',
+      selectedNodeId: 'child-1',
+      snapshot: childSnapshot,
+      documentsByNode: { 'child-1': makeNodeDocuments() },
+      initialize: vi.fn(async () => {}),
+      loadProject: vi.fn(async () => {}),
+      loadPlanningHistory: vi.fn(async () => {}),
+      loadNodeDocuments: vi.fn(async () => makeNodeDocuments()),
+      selectNode: vi.fn(async () => {}),
+      patchNodeStatus: vi.fn(),
+      startPlan: vi.fn(async () => {}),
+      executeNode: vi.fn(async () => {}),
+    })
+    useChatStore.setState({
+      ...useChatStore.getInitialState(),
+      loadSession: vi.fn(async () => {}),
+    })
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/projects/project-1/nodes/child-1/chat',
+            state: { activeTab: 'execution' as const },
+          },
+        ]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbWorkspace />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('One quick answer before the plan can finish')).toBeInTheDocument()
+    const dialog = screen.getByRole('dialog', { name: 'One quick answer before the plan can finish' })
+    expect(within(dialog).getByText('Brand direction')).toBeInTheDocument()
+    expect(within(dialog).queryByText('Deprecated')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('radio', { name: /Editorial Structured and dense\./ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue planning' }))
+
+    await waitFor(() => {
+      expect(apiMock.resolveExecutionConversationRequest).toHaveBeenCalledWith(
+        'project-1',
+        'child-1',
+        'req_latest',
+        {
+          request_kind: 'user_input',
+          answers: {
+            brand_direction: {
+              answers: ['Editorial'],
+            },
+          },
+          thread_id: 'thread_exec_1',
+          turn_id: 'turn_1',
+        },
+      )
+    })
   })
 
   it('mounts the non-visible execution conversation hook only for the execution tab', async () => {

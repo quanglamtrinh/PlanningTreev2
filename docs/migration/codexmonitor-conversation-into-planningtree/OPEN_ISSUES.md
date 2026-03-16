@@ -27,3 +27,22 @@
 - Follow-Up:
   - confirm native transport availability for the remaining passive semantics before expanding backend live-path claims
   - keep replay-only semantics available through durable snapshot replay or guarded terminal snapshot refresh without synthesizing fake live events
+
+## OI-005
+- Severity: medium
+- Issue: approval live parity remains blocked because the current execution and planning runtime paths still use `approvalPolicy: never`.
+- Impact:
+  - `approval_request` can be made contract-ready and replay-safe in Phase 5.2
+  - live approval emission and end-to-end approval lifecycle parity cannot be claimed until runtime policy changes
+- Follow-Up:
+  - keep approval explicitly documented as runtime-blocked in Phase 5.2 tracking
+  - revisit only if runtime approval policy changes in a later phase
+
+## OI-006
+- Severity: low
+- Issue: ask and planning do not currently expose a clean normalized interactive request source on the v2 path in this repo.
+- Impact:
+  - current Phase 5.2 closeout is execution-native for runtime-input lifecycle semantics
+  - ask/planning-specific interactive convergence should not be implied where no clean current-path source exists
+- Follow-Up:
+  - normalize additional interactive semantics on ask or planning only when a durable v2 source exists and can be adopted without wrapper-owned shadow state

@@ -21,6 +21,14 @@ class AskConversationSendRequest(BaseModel):
     content: str
 
 
+class ExecutionConversationResolveRequestRequest(BaseModel):
+    request_kind: str
+    decision: str | None = None
+    answers: dict[str, Any] | None = None
+    thread_id: str | None = None
+    turn_id: str | None = None
+
+
 def _conversation_gateway(request: Request):
     return request.app.state.conversation_gateway
 
@@ -62,6 +70,29 @@ async def send_execution_conversation_message(
     except ValueError as exc:
         raise InvalidRequest(str(exc)) from exc
     return JSONResponse(status_code=202, content=payload)
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/conversations/execution/requests/{request_id}/resolve")
+async def resolve_execution_conversation_request(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    request_id: str,
+    body: ExecutionConversationResolveRequestRequest,
+) -> dict[str, Any]:
+    try:
+        return _conversation_gateway(request).resolve_execution_request(
+            project_id,
+            node_id,
+            request_id,
+            request_kind=body.request_kind,
+            decision=body.decision,
+            answers=body.answers,
+            thread_id=body.thread_id,
+            turn_id=body.turn_id,
+        )
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
 
 
 @router.get("/projects/{project_id}/nodes/{node_id}/conversations/ask")

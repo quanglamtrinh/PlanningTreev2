@@ -141,7 +141,7 @@ describe('buildConversationRenderModel', () => {
         makeMessage({
           parts: [
             makePart({ part_id: 'part_malformed', part_type: 'reasoning', payload: {} }),
-            makePart({ part_id: 'part_unsupported', part_type: 'approval_request', order: 1, payload: {} }),
+            makePart({ part_id: 'part_unsupported', part_type: 'status_block', order: 1, payload: {} }),
           ],
         }),
       ]),
@@ -149,8 +149,74 @@ describe('buildConversationRenderModel', () => {
 
     expect(model?.messages[0].items).toMatchObject([
       { kind: 'unsupported', reason: 'malformed_payload', partType: 'reasoning' },
-      { kind: 'unsupported', reason: 'unsupported_part_type', partType: 'approval_request' },
+      { kind: 'unsupported', reason: 'unsupported_part_type', partType: 'status_block' },
     ])
+  })
+
+  it('builds dedicated render items for interactive request and response parts', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          parts: [
+            makePart({
+              part_id: 'part_approval',
+              part_type: 'approval_request',
+              payload: {
+                request_id: 'req_approval_1',
+                title: 'Approve execution',
+                prompt: 'Approve the workspace write step.',
+                resolution_state: 'pending',
+              },
+            }),
+            makePart({
+              part_id: 'part_input_request',
+              part_type: 'user_input_request',
+              order: 1,
+              payload: {
+                request_id: 'req_input_1',
+                title: 'Need runtime input',
+                prompt: 'Choose a direction.',
+                resolution_state: 'resolved',
+                questions: [
+                  {
+                    id: 'brand_direction',
+                    header: 'Brand direction',
+                    question: 'What visual direction should we use?',
+                    options: [{ label: 'Editorial' }, { label: 'Playful' }],
+                  },
+                ],
+              },
+            }),
+          ],
+        }),
+        makeMessage({
+          message_id: 'msg_user_response',
+          role: 'user',
+          parts: [
+            makePart({
+              part_id: 'part_input_response',
+              part_type: 'user_input_response',
+              payload: {
+                request_id: 'req_input_1',
+                title: 'Input submitted',
+                text: 'Brand direction\nEditorial',
+                answers: {
+                  brand_direction: {
+                    answers: ['Editorial'],
+                  },
+                },
+              },
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    expect(model?.messages[0].items.map((item) => item.kind)).toEqual([
+      'approval_request',
+      'user_input_request',
+    ])
+    expect(model?.messages[1].items.map((item) => item.kind)).toEqual(['user_input_response'])
   })
 })
 
@@ -300,6 +366,77 @@ describe('ConversationSurface', () => {
 
     expect(screen.getByText('Unsupported content: reasoning')).toBeInTheDocument()
     expect(screen.getByText('Unsupported content: status_block')).toBeInTheDocument()
+  })
+
+  it('renders approval, runtime input request, and runtime input response blocks', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          parts: [
+            makePart({
+              part_id: 'part_approval',
+              part_type: 'approval_request',
+              payload: {
+                request_id: 'req_approval_1',
+                title: 'Approve execution',
+                prompt: 'Approve the workspace write step.',
+                resolution_state: 'pending',
+              },
+            }),
+            makePart({
+              part_id: 'part_input_request',
+              part_type: 'user_input_request',
+              order: 1,
+              payload: {
+                request_id: 'req_input_1',
+                title: 'Need runtime input',
+                prompt: 'Choose a direction.',
+                resolution_state: 'resolved',
+                questions: [
+                  {
+                    id: 'brand_direction',
+                    header: 'Brand direction',
+                    question: 'What visual direction should we use?',
+                    options: [{ label: 'Editorial' }, { label: 'Playful' }],
+                  },
+                ],
+              },
+            }),
+          ],
+        }),
+        makeMessage({
+          message_id: 'msg_user_response',
+          role: 'user',
+          parts: [
+            makePart({
+              part_id: 'part_input_response',
+              part_type: 'user_input_response',
+              payload: {
+                request_id: 'req_input_1',
+                title: 'Input submitted',
+                text: 'Brand direction\nEditorial',
+                answers: {
+                  brand_direction: {
+                    answers: ['Editorial'],
+                  },
+                },
+              },
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    renderSurface(model)
+
+    expect(screen.getByText('Approve execution')).toBeInTheDocument()
+    expect(screen.getByText('Approve the workspace write step.')).toBeInTheDocument()
+    expect(screen.getByText('Need runtime input')).toBeInTheDocument()
+    expect(screen.getByText('What visual direction should we use?')).toBeInTheDocument()
+    expect(screen.getByText('Options: Editorial, Playful')).toBeInTheDocument()
+    expect(screen.getByText('Input submitted')).toBeInTheDocument()
+    expect(screen.getByText('Brand direction')).toBeInTheDocument()
+    expect(screen.getByText('Editorial')).toBeInTheDocument()
   })
 
   it('renders loading state only when there are no messages yet', () => {

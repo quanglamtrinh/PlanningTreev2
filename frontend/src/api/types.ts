@@ -567,6 +567,10 @@ export interface ExecutionConversationSendAcceptedResponse {
   assistant_text_part_id: string
 }
 
+export interface ExecutionConversationRequestResolvedResponse {
+  status: 'resolved' | 'already_resolved_or_stale'
+}
+
 export type ExecutionConversationEvent = ConversationEventEnvelope
 
 export interface AskConversationResponse {

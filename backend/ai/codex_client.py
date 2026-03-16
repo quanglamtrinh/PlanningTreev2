@@ -135,6 +135,8 @@ class CodexTransport(ABC):
         on_delta: Callable[[str], None] | None = None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
         on_plan_delta: Callable[[str, dict[str, Any]], None] | None = None,
+        on_request_user_input: Callable[[dict[str, Any]], None] | None = None,
+        on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Send a prompt and stream deltas when available."""
 
@@ -255,6 +257,8 @@ class StdioTransport(CodexTransport):
         on_delta: Callable[[str], None] | None = None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
         on_plan_delta: Callable[[str, dict[str, Any]], None] | None = None,
+        on_request_user_input: Callable[[dict[str, Any]], None] | None = None,
+        on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
             raise CodexTransportNotFound("StdioTransport process is not alive")
@@ -267,6 +271,8 @@ class StdioTransport(CodexTransport):
             on_delta=on_delta,
             on_tool_call=on_tool_call,
             on_plan_delta=on_plan_delta,
+            on_request_user_input=on_request_user_input,
+            on_request_resolved=on_request_resolved,
         )
 
     def start_thread(
@@ -459,6 +465,8 @@ class StdioTransport(CodexTransport):
         on_delta: Callable[[str], None] | None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None,
         on_plan_delta: Callable[[str, dict[str, Any]], None] | None,
+        on_request_user_input: Callable[[dict[str, Any]], None] | None,
+        on_request_resolved: Callable[[dict[str, Any]], None] | None,
     ) -> dict[str, Any]:
         self._initialize_session(timeout_sec)
         resolved_thread_id = thread_id
@@ -496,8 +504,8 @@ class StdioTransport(CodexTransport):
             on_delta=on_delta,
             on_tool_call=on_tool_call,
             on_plan_delta=on_plan_delta,
-            on_request_user_input=None,
-            on_request_resolved=None,
+            on_request_user_input=on_request_user_input,
+            on_request_resolved=on_request_resolved,
             on_thread_status=None,
             output_schema=None,
             initialize_session=False,
@@ -1208,6 +1216,8 @@ class CodexAppClient:
         on_delta: Callable[[str], None] | None = None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
         on_plan_delta: Callable[[str, dict[str, Any]], None] | None = None,
+        on_request_user_input: Callable[[dict[str, Any]], None] | None = None,
+        on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
             self.start()
@@ -1218,6 +1228,8 @@ class CodexAppClient:
             "on_delta": on_delta,
             "on_tool_call": on_tool_call,
             "on_plan_delta": on_plan_delta,
+            "on_request_user_input": on_request_user_input,
+            "on_request_resolved": on_request_resolved,
         }
         if writable_roots is not None:
             transport_kwargs["writable_roots"] = writable_roots

@@ -68,6 +68,48 @@ export interface ConversationPlanStepUpdateRenderItem extends ConversationRender
   text: string | null
 }
 
+export interface ConversationInteractiveQuestionSummary {
+  key: string
+  header: string | null
+  question: string | null
+  options: string[]
+}
+
+export interface ConversationApprovalRequestRenderItem extends ConversationRenderItemBase {
+  kind: 'approval_request'
+  requestId: string | null
+  title: string | null
+  summary: string | null
+  prompt: string | null
+  resolutionState: string | null
+  decision: string | null
+}
+
+export interface ConversationUserInputRequestRenderItem extends ConversationRenderItemBase {
+  kind: 'user_input_request'
+  requestId: string | null
+  title: string | null
+  summary: string | null
+  prompt: string | null
+  resolutionState: string | null
+  questions: ConversationInteractiveQuestionSummary[]
+}
+
+export interface ConversationInteractiveAnswerSummary {
+  key: string
+  label: string
+  values: string[]
+}
+
+export interface ConversationUserInputResponseRenderItem extends ConversationRenderItemBase {
+  kind: 'user_input_response'
+  requestId: string | null
+  title: string | null
+  summary: string | null
+  text: string | null
+  answers: ConversationInteractiveAnswerSummary[]
+}
+
 export interface ConversationDiffSummaryRenderItem extends ConversationRenderItemBase {
   kind: 'diff_summary'
   title: string | null
@@ -100,6 +142,9 @@ export type ConversationRenderItem =
   | ConversationToolResultRenderItem
   | ConversationPlanBlockRenderItem
   | ConversationPlanStepUpdateRenderItem
+  | ConversationApprovalRequestRenderItem
+  | ConversationUserInputRequestRenderItem
+  | ConversationUserInputResponseRenderItem
   | ConversationDiffSummaryRenderItem
   | ConversationFileChangeSummaryRenderItem
   | ConversationUnsupportedRenderItem
@@ -346,6 +391,139 @@ function buildPlanStepUpdateItem(part: ConversationMessagePart): ConversationRen
   }
 }
 
+function buildInteractiveQuestions(value: unknown): ConversationInteractiveQuestionSummary[] {
+  const questions = asArray(value)
+  if (!questions) {
+    return []
+  }
+  return questions.flatMap((entry, index) => {
+    const question = asRecord(entry)
+    if (!question) {
+      return []
+    }
+    const optionsValue = asArray(question.options)
+    const options =
+      optionsValue?.flatMap((option) => {
+        const typedOption = asRecord(option)
+        const label = typedOption ? asString(typedOption.label) : typeof option === 'string' ? option : null
+        return label ? [label] : []
+      }) ?? []
+    return [
+      {
+        key: asString(question.id) ?? `question-${index}`,
+        header: asString(question.header),
+        question: asString(question.question),
+        options,
+      },
+    ]
+  })
+}
+
+function buildInteractiveAnswers(value: unknown): ConversationInteractiveAnswerSummary[] {
+  const answers = asRecord(value)
+  if (!answers) {
+    return []
+  }
+  return Object.entries(answers).flatMap(([key, entry]) => {
+    const answerRecord = asRecord(entry)
+    const rawAnswers = asArray(answerRecord?.answers)
+    const values =
+      rawAnswers?.flatMap((answer) => {
+        const normalized = typeof answer === 'string' ? answer.trim() : ''
+        return normalized ? [normalized] : []
+      }) ?? []
+    return [
+      {
+        key,
+        label: key,
+        values,
+      },
+    ]
+  })
+}
+
+function buildApprovalRequestItem(part: ConversationMessagePart): ConversationRenderItem {
+  const payload = asRecord(part.payload)
+  if (!payload) {
+    return makeUnsupportedItem(part, 'malformed_payload')
+  }
+  const requestId = asString(payload.request_id) ?? part.item_key
+  const title = asString(payload.title)
+  const summary = asString(payload.summary)
+  const prompt = asString(payload.prompt) ?? asString(payload.details)
+  const resolutionState = asString(payload.resolution_state)
+  const decision = asString(payload.decision)
+  if (!requestId && !title && !summary && !prompt) {
+    return makeUnsupportedItem(part, 'malformed_payload')
+  }
+  return {
+    kind: 'approval_request',
+    key: part.part_id,
+    partId: part.part_id,
+    status: part.status,
+    requestId,
+    title,
+    summary,
+    prompt,
+    resolutionState,
+    decision,
+  }
+}
+
+function buildUserInputRequestItem(part: ConversationMessagePart): ConversationRenderItem {
+  const payload = asRecord(part.payload)
+  if (!payload) {
+    return makeUnsupportedItem(part, 'malformed_payload')
+  }
+  const requestId = asString(payload.request_id) ?? part.item_key
+  const title = asString(payload.title)
+  const summary = asString(payload.summary)
+  const prompt = asString(payload.prompt) ?? asString(payload.details)
+  const resolutionState = asString(payload.resolution_state)
+  const questions = buildInteractiveQuestions(payload.questions)
+  if (!requestId && !title && !summary && !prompt && questions.length === 0) {
+    return makeUnsupportedItem(part, 'malformed_payload')
+  }
+  return {
+    kind: 'user_input_request',
+    key: part.part_id,
+    partId: part.part_id,
+    status: part.status,
+    requestId,
+    title,
+    summary,
+    prompt,
+    resolutionState,
+    questions,
+  }
+}
+
+function buildUserInputResponseItem(part: ConversationMessagePart): ConversationRenderItem {
+  const payload = asRecord(part.payload)
+  if (!payload) {
+    return makeUnsupportedItem(part, 'malformed_payload')
+  }
+  const requestId = asString(payload.request_id) ?? part.item_key
+  const title = asString(payload.title)
+  const summary = asString(payload.summary)
+  const text = readPrimaryText(payload)
+  const answers = buildInteractiveAnswers(payload.answers)
+  if (!requestId && !title && !summary && !text && answers.length === 0) {
+    return makeUnsupportedItem(part, 'malformed_payload')
+  }
+  return {
+    kind: 'user_input_response',
+    key: part.part_id,
+    partId: part.part_id,
+    status: part.status,
+    requestId,
+    title,
+    summary,
+    text,
+    answers,
+  }
+}
+
 function readFileList(value: unknown): string[] {
   const files = asArray(value)
   if (!files) {
@@ -452,13 +630,16 @@ function buildRenderItem(part: ConversationMessagePart): ConversationRenderItem 
       return buildPlanBlockItem(part)
     case 'plan_step_update':
       return buildPlanStepUpdateItem(part)
+    case 'approval_request':
+      return buildApprovalRequestItem(part)
+    case 'user_input_request':
+      return buildUserInputRequestItem(part)
+    case 'user_input_response':
+      return buildUserInputResponseItem(part)
     case 'diff_summary':
       return buildDiffSummaryItem(part)
     case 'file_change_summary':
       return buildFileChangeSummaryItem(part)
-    case 'approval_request':
-    case 'user_input_request':
-    case 'user_input_response':
     case 'status_block':
       return makeUnsupportedItem(part, 'unsupported_part_type')
     default:

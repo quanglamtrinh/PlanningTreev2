@@ -8,6 +8,7 @@ import type {
   ChatSession,
   DeltaContextPacket,
   ExecutionConversationResponse,
+  ExecutionConversationRequestResolvedResponse,
   ExecutionConversationSendAcceptedResponse,
   NodeBrief,
   NodeBriefing,
@@ -383,6 +384,24 @@ export const api = {
       `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/send`,
       { method: 'POST' },
       { content },
+    )
+  },
+  resolveExecutionConversationRequest(
+    projectId: string,
+    nodeId: string,
+    requestId: string,
+    payload: {
+      request_kind: 'approval' | 'user_input'
+      decision?: 'approved' | 'declined'
+      answers?: Record<string, RuntimeInputAnswer>
+      thread_id?: string | null
+      turn_id?: string | null
+    },
+  ): Promise<ExecutionConversationRequestResolvedResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/requests/${requestId}/resolve`,
+      { method: 'POST' },
+      payload,
     )
   },
   executionConversationEventsUrl(

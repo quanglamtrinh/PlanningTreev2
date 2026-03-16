@@ -8,6 +8,7 @@ import time
 from fastapi.testclient import TestClient
 
 import backend.main as backend_main
+from backend.ai.codex_client import RuntimeRequestRecord
 from backend.routes.conversation import (
     stream_execution_conversation_events,
     stream_planning_conversation_events,
@@ -23,6 +24,8 @@ class FakeConversationClient:
         deltas: list[str] | None = None,
         plan_deltas: list[dict[str, object]] | None = None,
         tool_calls: list[dict[str, object]] | None = None,
+        runtime_requests: list[dict[str, object]] | None = None,
+        request_resolutions: list[dict[str, object]] | None = None,
         final_text: str | None = None,
         final_plan_item: dict[str, object] | None = None,
         block_event: threading.Event | None = None,
@@ -32,6 +35,8 @@ class FakeConversationClient:
         self.deltas = list(deltas or [])
         self.plan_deltas = list(plan_deltas or [])
         self.tool_calls = list(tool_calls or [])
+        self.runtime_requests = [dict(item) for item in (runtime_requests or [])]
+        self.request_resolutions = [dict(item) for item in (request_resolutions or [])]
         self.final_text = final_text
         self.final_plan_item = dict(final_plan_item) if isinstance(final_plan_item, dict) else None
         self.block_event = block_event
@@ -39,6 +44,8 @@ class FakeConversationClient:
         self.returned_thread_id = returned_thread_id
         self.started = threading.Event()
         self.calls: list[dict[str, object]] = []
+        self.pending_requests: dict[str, dict[str, object]] = {}
+        self.resolved_answers: dict[str, dict[str, object]] = {}
 
     def send_prompt_streaming(
         self,
@@ -50,6 +57,8 @@ class FakeConversationClient:
         on_delta=None,
         on_tool_call=None,
         on_plan_delta=None,
+        on_request_user_input=None,
+        on_request_resolved=None,
     ) -> dict[str, object]:
         self.calls.append(
             {
@@ -83,6 +92,41 @@ class FakeConversationClient:
                         "thread_id": str(plan_delta.get("thread_id") or self.returned_thread_id),
                     },
                 )
+        if callable(on_request_user_input):
+            for request in self.runtime_requests:
+                request_id = str(request.get("request_id") or f"req_{len(self.pending_requests) + 1}")
+                wait_for_resolution = bool(request.get("wait_for_resolution"))
+                wait_event = threading.Event() if wait_for_resolution else None
+                normalized_request = {
+                    "request_id": request_id,
+                    "thread_id": str(request.get("thread_id") or self.returned_thread_id),
+                    "turn_id": str(request.get("turn_id") or ""),
+                    "item_id": str(request.get("item_id") or f"item_{request_id}"),
+                    "status": str(request.get("status") or "pending"),
+                    "created_at": str(request.get("created_at") or "2026-03-15T00:00:02Z"),
+                    "questions": list(request.get("questions") or []),
+                    "title": request.get("title"),
+                    "summary": request.get("summary"),
+                    "prompt": request.get("prompt"),
+                }
+                self.pending_requests[request_id] = {
+                    "payload": normalized_request,
+                    "wait_event": wait_event,
+                }
+                on_request_user_input(normalized_request)
+                if wait_event is not None:
+                    wait_event.wait(timeout=5)
+        if callable(on_request_resolved):
+            for resolution in self.request_resolutions:
+                on_request_resolved(
+                    {
+                        "request_id": str(resolution.get("request_id") or ""),
+                        "thread_id": str(resolution.get("thread_id") or self.returned_thread_id),
+                        "turn_id": str(resolution.get("turn_id") or ""),
+                        "status": str(resolution.get("status") or "resolved"),
+                        "resolved_at": str(resolution.get("resolved_at") or "2026-03-15T00:00:03Z"),
+                    }
+                )
         if callable(on_delta):
             for delta in self.deltas:
                 on_delta(delta)
@@ -95,6 +139,33 @@ class FakeConversationClient:
 
     def stop(self) -> None:
         return None
+
+    def resolve_runtime_request_user_input(
+        self,
+        request_id: str,
+        *,
+        answers: dict[str, object],
+    ) -> RuntimeRequestRecord | None:
+        pending = self.pending_requests.get(request_id)
+        if pending is None:
+            return None
+        payload = pending["payload"]
+        self.resolved_answers[request_id] = {"answers": answers}
+        wait_event = pending.get("wait_event")
+        if isinstance(wait_event, threading.Event):
+            wait_event.set()
+        return RuntimeRequestRecord(
+            request_id=request_id,
+            rpc_request_id=request_id,
+            thread_id=str(payload.get("thread_id") or self.returned_thread_id),
+            turn_id=str(payload.get("turn_id") or ""),
+            node_id=None,
+            item_id=str(payload.get("item_id") or f"item_{request_id}"),
+            prompt_payload={},
+            answer_payload={"answers": answers},
+            status="resolved",
+            resolved_at="2026-03-15T00:00:05Z",
+        )
 
 
 class FakeConversationClientFactory:
@@ -684,6 +755,116 @@ def test_execution_conversation_persists_plan_block_parts_and_streams_passive_pl
     assert [part["part_type"] for part in persisted["messages"][1]["parts"]] == ["assistant_text", "plan_block"]
     assert persisted["messages"][1]["parts"][1]["part_id"] == f"{accepted.json()['assistant_message_id']}:plan_block:plan_1"
     assert persisted["messages"][1]["parts"][1]["payload"]["text"] == "Final plan"
+
+
+def test_execution_conversation_resolves_runtime_input_requests_through_v2_route(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    fake_client = FakeConversationClient(
+        runtime_requests=[
+            {
+                "request_id": "req_exec_3",
+                "turn_id": "turn_1",
+                "item_id": "item_req_3",
+                "wait_for_resolution": True,
+                "questions": [
+                    {
+                        "id": "brand_direction",
+                        "header": "Brand direction",
+                        "question": "What visual direction should we use?",
+                        "options": [
+                            {"label": "Editorial", "description": "Structured and dense."},
+                        ],
+                    }
+                ],
+            }
+        ],
+        final_text="Continuing after input.",
+    )
+    attach_session_client_factory(client, lambda _workspace_root: fake_client)
+    project_id, node_id = create_project(client, str(workspace_root))
+    set_node_phase(client, project_id, node_id, "executing")
+    conversation = client.get(f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution").json()["conversation"]
+    conversation_id = conversation["record"]["conversation_id"]
+
+    async def run() -> tuple[object, object, list[dict[str, object]]]:
+        broker = client.app.state.conversation_event_broker
+        queue = broker.subscribe(project_id, conversation_id)
+        send_thread, send_result, send_error = _start_request_thread(
+            lambda: client.post(
+                f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution/send",
+                json={"content": "continue"},
+            )
+        )
+        events: list[dict[str, object]] = []
+        try:
+            while True:
+                event = await asyncio.wait_for(queue.get(), timeout=1)
+                events.append(event)
+                if event["event_type"] == "request_user_input":
+                    break
+
+            resolve_response = client.post(
+                f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution/requests/req_exec_3/resolve",
+                json={
+                    "request_kind": "user_input",
+                    "thread_id": "thread_exec_1",
+                    "turn_id": "turn_1",
+                    "answers": {"brand_direction": {"answers": ["Editorial"]}},
+                },
+            )
+
+            deadline = time.time() + 3
+            seen_required = {"completion_status": False, "request_resolved": False, "user_input_resolved": False}
+            while time.time() < deadline:
+                event = await asyncio.wait_for(queue.get(), timeout=max(0.01, deadline - time.time()))
+                events.append(event)
+                event_type = str(event.get("event_type") or "")
+                if event_type in seen_required:
+                    seen_required[event_type] = True
+                if all(seen_required.values()):
+                    break
+        finally:
+            broker.unsubscribe(project_id, conversation_id, queue)
+
+        send_thread.join(timeout=2)
+        if send_thread.is_alive():
+            raise AssertionError("execution send thread did not finish in time")
+        if "exc" in send_error:
+            raise send_error["exc"]
+        return send_result.get("response"), resolve_response, events
+
+    accepted, resolved, events = asyncio.run(run())
+
+    assert accepted.status_code == 202
+    assert resolved.status_code == 200
+    assert resolved.json() == {"status": "resolved"}
+    event_types = [event["event_type"] for event in events]
+    event_seqs = [int(event["event_seq"]) for event in events]
+    assert event_types[:3] == [
+        "message_created",
+        "message_created",
+        "request_user_input",
+    ]
+    assert event_types.count("request_resolved") == 1
+    assert event_types.count("user_input_resolved") == 1
+    assert event_types.count("assistant_text_final") == 1
+    assert event_types.count("completion_status") == 1
+    assert event_seqs == sorted(event_seqs)
+
+    persisted = client.app.state.storage.conversation_store.get_conversation(project_id, conversation_id)
+    assert persisted is not None
+    request_message = next(message for message in persisted["messages"] if message["message_id"] == "request_message:req_exec_3")
+    response_message = next(
+        message for message in persisted["messages"] if message["message_id"] == "request_response:req_exec_3"
+    )
+    assert request_message["parts"][0]["payload"]["resolution_state"] == "resolved"
+    assert response_message["role"] == "user"
+    assert response_message["parts"][0]["part_type"] == "user_input_response"
+    assert response_message["parts"][0]["payload"]["answers"] == {
+        "brand_direction": {"answers": ["Editorial"]}
+    }
 
 
 def test_execution_conversation_error_path_emits_completion_only_and_clears_ownership(

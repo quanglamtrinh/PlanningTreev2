@@ -14,6 +14,7 @@ import {
 } from "../../config/featureFlags";
 import { deriveConversationBusy } from "../conversation/model/deriveConversationBusy";
 import { useAskConversation } from "../conversation/hooks/useAskConversation";
+import { useConversationRequests } from "../conversation/hooks/useConversationRequests";
 import { useExecutionConversation } from "../conversation/hooks/useExecutionConversation";
 import { usePlanningConversation } from "../conversation/hooks/usePlanningConversation";
 import { useAskStore } from "../../stores/ask-store";
@@ -228,6 +229,14 @@ export function BreadcrumbWorkspace() {
       activeTab === "execution" &&
       Boolean(projectId && node?.node_id),
   });
+  const executionConversationRequests = useConversationRequests({
+    projectId: executionConversationV2Enabled ? projectId ?? null : null,
+    nodeId: executionConversationV2Enabled ? node?.node_id ?? null : null,
+    conversation: executionConversationV2Enabled
+      ? executionConversation.conversation
+      : null,
+    refresh: executionConversation.refresh,
+  });
   const planningConversation = usePlanningConversation({
     projectId: projectId ?? null,
     nodeId: node?.node_id ?? null,
@@ -419,7 +428,23 @@ export function BreadcrumbWorkspace() {
   }, [activeTab, loadNodeDocuments, node]);
 
   useEffect(() => {
-    const pendingRequest = chatSession?.pending_input_request;
+    const pendingRequest = executionConversationV2Enabled
+      ? executionConversationRequests.activeRequest?.requestKind === "user_input"
+        ? {
+            request_id: executionConversationRequests.activeRequest.requestId,
+            thread_id: executionConversationRequests.activeRequest.threadId,
+            turn_id: executionConversationRequests.activeRequest.turnId,
+            questions: executionConversationRequests.activeRequest.questions.map((question) => ({
+              id: question.id,
+              header: question.header,
+              question: question.question,
+              is_other: question.isOther,
+              is_secret: question.isSecret,
+              options: question.options,
+            })),
+          }
+        : null
+      : chatSession?.pending_input_request;
     if (!pendingRequest) {
       setPlanInputDrafts({});
       setPlanInputError(null);
@@ -436,7 +461,11 @@ export function BreadcrumbWorkspace() {
       return next;
     });
     setPlanInputError(null);
-  }, [chatSession?.pending_input_request]);
+  }, [
+    chatSession?.pending_input_request,
+    executionConversationRequests.activeRequest,
+    executionConversationV2Enabled,
+  ]);
 
   if (
     isInitializing ||
@@ -455,7 +484,23 @@ export function BreadcrumbWorkspace() {
   const nodeDocuments = documentsByNode[node.node_id];
   const nodeActivity = agentActivityByNode[node.node_id];
   const executionState = nodeDocuments?.state;
-  const pendingInputRequest = chatSession?.pending_input_request ?? null;
+  const pendingInputRequest = executionConversationV2Enabled
+    ? executionConversationRequests.activeRequest?.requestKind === "user_input"
+      ? {
+          request_id: executionConversationRequests.activeRequest.requestId,
+          thread_id: executionConversationRequests.activeRequest.threadId,
+          turn_id: executionConversationRequests.activeRequest.turnId,
+          questions: executionConversationRequests.activeRequest.questions.map((question) => ({
+            id: question.id,
+            header: question.header,
+            question: question.question,
+            is_other: question.isOther,
+            is_secret: question.isSecret,
+            options: question.options,
+          })),
+        }
+      : null
+    : chatSession?.pending_input_request ?? null;
   const currentPlan = nodeDocuments?.plan?.content?.trim() ?? "";
   const canPlan =
     Boolean(
@@ -610,11 +655,34 @@ export function BreadcrumbWorkspace() {
       pendingInputRequest.questions.every(
         (question) => (planInputDrafts[question.id] ?? "").trim().length > 0,
       ) &&
-      !isResolvingPlanInput,
+      !(executionConversationV2Enabled
+        ? executionConversationRequests.isSubmitting
+        : isResolvingPlanInput),
   );
 
   async function handleResolvePlanInput() {
     if (!projectId || !node || !pendingInputRequest || !canSubmitPlanInput) {
+      return;
+    }
+    if (executionConversationV2Enabled) {
+      setPlanInputError(null);
+      try {
+        await executionConversationRequests.submitUserInputResponse({
+          requestId: pendingInputRequest.request_id,
+          threadId: pendingInputRequest.thread_id,
+          turnId: pendingInputRequest.turn_id,
+          answers: Object.fromEntries(
+            pendingInputRequest.questions.map((question) => [
+              question.id,
+              { answers: [(planInputDrafts[question.id] ?? "").trim()] },
+            ]),
+          ),
+        });
+      } catch (error) {
+        setPlanInputError(
+          error instanceof Error ? error.message : "Could not resolve planner input.",
+        );
+      }
       return;
     }
     setIsResolvingPlanInput(true);
@@ -638,6 +706,13 @@ export function BreadcrumbWorkspace() {
       return;
     }
   }
+
+  const visiblePlanInputError = executionConversationV2Enabled
+    ? executionConversationRequests.submitError ?? planInputError
+    : planInputError;
+  const isPlanInputSubmitting = executionConversationV2Enabled
+    ? executionConversationRequests.isSubmitting
+    : isResolvingPlanInput;
 
   const plannerInputModal = pendingInputRequest ? (
     <div className={styles.modalBackdrop} role="presentation">
@@ -708,7 +783,7 @@ export function BreadcrumbWorkspace() {
             );
           })}
         </div>
-        {planInputError ? <p className={styles.modalError}>{planInputError}</p> : null}
+        {visiblePlanInputError ? <p className={styles.modalError}>{visiblePlanInputError}</p> : null}
         <div className={styles.modalActions}>
           <button
             type="button"
@@ -716,7 +791,7 @@ export function BreadcrumbWorkspace() {
             disabled={!canSubmitPlanInput}
             onClick={() => void handleResolvePlanInput()}
           >
-            {isResolvingPlanInput ? "Submitting..." : "Continue planning"}
+            {isPlanInputSubmitting ? "Submitting..." : "Continue planning"}
           </button>
         </div>
       </section>

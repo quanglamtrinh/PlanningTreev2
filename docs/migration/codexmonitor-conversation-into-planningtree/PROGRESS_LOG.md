@@ -1,5 +1,46 @@
 # Progress Log
 
+## 2026-03-16T15:10:00-07:00
+- Phase: 5
+- Batch ID: P5.2
+- Summary:
+  - implemented interactive request lifecycle support on the shared conversation-v2 contract for `approval_request`, `user_input_request`, `user_input_response`, and the new `request_resolved` event
+  - extended the execution v2 backend path to normalize, persist, and stream runtime-input request creation and resolution with durable request and response messages
+  - added a shared request-actions hook and wired the execution host modal to derive from the latest unresolved v2 request state instead of legacy local request ownership
+  - current interactive boundary:
+    - live + replay on the execution backend path: `request_user_input`, `request_resolved`, `user_input_resolved`
+    - contract-ready and replay-safe but runtime-blocked for live parity: `approval_request`
+    - active visible request selection uses the latest unresolved request in normalized durable order on the currently visible lineage
+- Files Changed:
+  - `backend/conversation/contracts.py`
+  - `backend/routes/conversation.py`
+  - `backend/services/conversation_gateway.py`
+  - `backend/ai/codex_client.py`
+  - `backend/tests/unit/test_conversation_gateway.py`
+  - `backend/tests/integration/test_conversation_gateway_api.py`
+  - `frontend/src/api/client.ts`
+  - `frontend/src/api/types.ts`
+  - `frontend/src/features/conversation/types.ts`
+  - `frontend/src/features/conversation/hooks/useExecutionConversation.ts`
+  - `frontend/src/features/conversation/hooks/useConversationRequests.ts`
+  - `frontend/src/features/conversation/model/applyConversationEvent.ts`
+  - `frontend/src/features/conversation/model/buildConversationRenderModel.ts`
+  - `frontend/src/features/conversation/components/ConversationBlocks.tsx`
+  - `frontend/src/features/breadcrumb/BreadcrumbWorkspace.tsx`
+  - `frontend/tests/unit/applyConversationEvent.test.ts`
+  - `frontend/tests/unit/ConversationSurface.test.tsx`
+  - `frontend/tests/unit/BreadcrumbWorkspace.test.tsx`
+  - `frontend/tests/unit/useConversationRequests.test.ts`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_PLAN.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PROGRESS_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/OPEN_ISSUES.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/CHANGELOG.md`
+- Blockers:
+  - live approval parity remains runtime-blocked while `approvalPolicy: never` remains
+  - ask and planning do not yet expose a clean normalized interactive source on the v2 path in this repo
+- Next Step:
+  - keep approval explicitly runtime-blocked in docs and move to Phase 5.3 lineage/action semantics unless a clean additional interactive source is introduced
+
 ## 2026-03-16T12:05:00-07:00
 - Phase: 5
 - Batch ID: P5.1-hardening

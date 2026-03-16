@@ -21,6 +21,12 @@ type PassiveConversationEventType =
   | 'diff_summary'
   | 'file_change_summary'
 
+type InteractiveConversationEventType =
+  | 'approval_request'
+  | 'request_user_input'
+  | 'request_resolved'
+  | 'user_input_resolved'
+
 const PASSIVE_EVENT_TO_PART: Record<PassiveConversationEventType, ConversationMessagePartType> = {
   reasoning_state: 'reasoning',
   tool_call_start: 'tool_call',
@@ -31,6 +37,15 @@ const PASSIVE_EVENT_TO_PART: Record<PassiveConversationEventType, ConversationMe
   plan_step_status_change: 'plan_step_update',
   diff_summary: 'diff_summary',
   file_change_summary: 'file_change_summary',
+}
+
+const INTERACTIVE_EVENT_TO_PART: Record<
+  Exclude<InteractiveConversationEventType, 'request_resolved'>,
+  ConversationMessagePartType
+> = {
+  approval_request: 'approval_request',
+  request_user_input: 'user_input_request',
+  user_input_resolved: 'user_input_response',
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -195,6 +210,17 @@ function isPassiveConversationEventType(
   eventType: ConversationEventType,
 ): eventType is PassiveConversationEventType {
   return eventType in PASSIVE_EVENT_TO_PART
+}
+
+function isInteractiveConversationEventType(
+  eventType: ConversationEventType,
+): eventType is InteractiveConversationEventType {
+  return (
+    eventType === 'approval_request' ||
+    eventType === 'request_user_input' ||
+    eventType === 'request_resolved' ||
+    eventType === 'user_input_resolved'
+  )
 }
 
 function findMessageById(
@@ -389,6 +415,32 @@ function copyPayload(payload: Record<string, unknown>): Record<string, unknown> 
   return { ...payload }
 }
 
+function readResolutionState(payload: Record<string, unknown>): string | null {
+  return asString(payload.resolution_state)
+}
+
+function resolveInteractiveStatusFromPayload(
+  payload: Record<string, unknown>,
+): ConversationMessageStatus {
+  const explicit = toMessageStatus(payload.status)
+  if (explicit) {
+    return explicit
+  }
+  switch (readResolutionState(payload)) {
+    case 'resolved':
+    case 'approved':
+    case 'declined':
+      return 'completed'
+    case 'stale':
+    case 'cancelled':
+      return 'cancelled'
+    case 'error':
+      return 'error'
+    default:
+      return 'pending'
+  }
+}
+
 function reportDroppedPassiveUpdate(
   reason: string,
   event: ConversationEventEnvelope,
@@ -407,6 +459,98 @@ function reportDroppedPassiveUpdate(
     turnId: asString(event.turn_id) ?? asString(payload.turn_id),
     itemId: asString(event.item_id) ?? asString(payload.part_id),
   })
+}
+
+function reportDroppedInteractiveUpdate(
+  reason: string,
+  event: ConversationEventEnvelope,
+  payload: Record<string, unknown>,
+) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') {
+    return
+  }
+  console.warn('[conversation] dropped interactive event', {
+    reason,
+    eventType: event.event_type,
+    conversationId: event.conversation_id,
+    streamId: readEventStreamId(event),
+    eventSeq: event.event_seq,
+    messageId: asString(event.message_id) ?? asString(payload.message_id),
+    requestId: asString(payload.request_id),
+    turnId: asString(event.turn_id) ?? asString(payload.turn_id),
+    itemId: asString(event.item_id) ?? asString(payload.part_id),
+  })
+}
+
+function readConversationMessage(payload: Record<string, unknown>): ConversationMessage | null {
+  const message = payload.message
+  if (!message || typeof message !== 'object' || Array.isArray(message)) {
+    return null
+  }
+  return message as ConversationMessage
+}
+
+function resolveRequestPartType(
+  payload: Record<string, unknown>,
+  existingPart: ConversationMessagePart | null,
+): ConversationMessagePartType | null {
+  if (existingPart) {
+    return existingPart.part_type
+  }
+  const requestKind = asString(payload.request_kind)
+  if (requestKind === 'approval') {
+    return 'approval_request'
+  }
+  if (requestKind === 'user_input') {
+    return 'user_input_request'
+  }
+  return null
+}
+
+function findRequestTarget(
+  messages: ConversationMessage[],
+  payload: Record<string, unknown>,
+  event: ConversationEventEnvelope,
+): { message: ConversationMessage; part: ConversationMessagePart } | null {
+  const explicitMessageId = asString(event.message_id) ?? asString(payload.message_id)
+  const explicitPartId = asString(event.item_id) ?? asString(payload.part_id)
+  const requestId = asString(payload.request_id)
+
+  if (explicitMessageId && explicitPartId) {
+    const message = messages.find((candidate) => candidate.message_id === explicitMessageId) ?? null
+    const part = message?.parts.find((candidate) => candidate.part_id === explicitPartId) ?? null
+    if (message && part) {
+      return { message, part }
+    }
+  }
+
+  if (explicitPartId) {
+    for (const message of messages) {
+      const part = message.parts.find((candidate) => candidate.part_id === explicitPartId) ?? null
+      if (part) {
+        return { message, part }
+      }
+    }
+  }
+
+  if (requestId) {
+    const matches: Array<{ message: ConversationMessage; part: ConversationMessagePart }> = []
+    for (const message of messages) {
+      for (const part of message.parts) {
+        if (
+          (part.part_type === 'approval_request' || part.part_type === 'user_input_request') &&
+          asString(part.payload.request_id) === requestId
+        ) {
+          matches.push({ message, part })
+        }
+      }
+    }
+    if (matches.length === 1) {
+      return matches[0] ?? null
+    }
+  }
+
+  return null
 }
 
 function upsertPassivePart(
@@ -430,6 +574,33 @@ function upsertPassivePart(
   return {
     ...message,
     updated_at: event.created_at,
+    parts: mergeParts(message.parts, nextPart),
+  }
+}
+
+function upsertInteractivePart(
+  message: ConversationMessage,
+  partType: ConversationMessagePartType,
+  partId: string,
+  payload: Record<string, unknown>,
+  updatedAt: string,
+): ConversationMessage {
+  const existing = message.parts.find((part) => part.part_id === partId) ?? null
+  const nextStatus = resolveInteractiveStatusFromPayload(payload)
+  const nextPart: ConversationMessagePart = {
+    part_id: partId,
+    part_type: partType,
+    status: nextStatus,
+    order: existing?.order ?? (asNumber(payload.order) ?? message.parts.length),
+    item_key: existing?.item_key ?? asString(payload.request_id) ?? null,
+    created_at: existing?.created_at ?? updatedAt,
+    updated_at: updatedAt,
+    payload: copyPayload(payload),
+  }
+  return {
+    ...message,
+    status: nextStatus,
+    updated_at: updatedAt,
     parts: mergeParts(message.parts, nextPart),
   }
 }
@@ -467,6 +638,10 @@ export function shouldAcceptConversationEvent(
     case 'plan_step_status_change':
     case 'diff_summary':
     case 'file_change_summary':
+    case 'approval_request':
+    case 'request_user_input':
+    case 'request_resolved':
+    case 'user_input_resolved':
       return activeStreamId !== null && streamId === activeStreamId
     default:
       return false
@@ -553,9 +728,71 @@ export function applyConversationEvent(
         ),
       }
     }
+    case 'approval_request':
+    case 'request_user_input':
+    case 'user_input_resolved': {
+      const message = readConversationMessage(payload)
+      if (!message) {
+        reportDroppedInteractiveUpdate('missing_message_payload', event, payload)
+        return snapshot
+      }
+      const partType = INTERACTIVE_EVENT_TO_PART[event.event_type]
+      const nextMessage =
+        partType === 'user_input_response'
+          ? {
+              ...message,
+              status: message.status ?? resolveInteractiveStatusFromPayload(payload),
+            }
+          : message
+      return {
+        ...snapshot,
+        record: updateRecord(snapshot.record, event, {
+          active_stream_id: streamId,
+          status: 'active',
+        }),
+        messages: mergeMessages(snapshot.messages, nextMessage),
+      }
+    }
+    case 'request_resolved': {
+      const target = findRequestTarget(snapshot.messages, payload, event)
+      if (!target) {
+        reportDroppedInteractiveUpdate('missing_request_target', event, payload)
+        return snapshot
+      }
+      const partType = resolveRequestPartType(payload, target.part)
+      if (!partType) {
+        reportDroppedInteractiveUpdate('missing_request_kind', event, payload)
+        return snapshot
+      }
+      return {
+        ...snapshot,
+        record: updateRecord(snapshot.record, event, {
+          active_stream_id: streamId,
+          status: 'active',
+        }),
+        messages: snapshot.messages.map((message) =>
+          message.message_id === target.message.message_id
+            ? upsertInteractivePart(
+                message,
+                partType,
+                target.part.part_id,
+                {
+                  ...target.part.payload,
+                  ...copyPayload(payload),
+                  part_id: target.part.part_id,
+                },
+                event.created_at,
+              )
+            : message,
+        ),
+      }
+    }
     default: {
       const passiveEventType = event.event_type
       if (!isPassiveConversationEventType(passiveEventType)) {
+        if (isInteractiveConversationEventType(passiveEventType)) {
+          return snapshot
+        }
         return snapshot
       }
 

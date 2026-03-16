@@ -1,10 +1,13 @@
 import type {
+  ConversationApprovalRequestRenderItem,
   ConversationDiffSummaryRenderItem,
   ConversationFileChangeSummaryRenderItem,
   ConversationPlanBlockRenderItem,
   ConversationPlanStepUpdateRenderItem,
   ConversationReasoningRenderItem,
   ConversationRenderItem,
+  ConversationUserInputRequestRenderItem,
+  ConversationUserInputResponseRenderItem,
   ConversationToolCallRenderItem,
   ConversationToolResultRenderItem,
   ConversationUnsupportedRenderItem,
@@ -208,6 +211,74 @@ export function PlanStepUpdateBlock({ item }: { item: ConversationPlanStepUpdate
   )
 }
 
+function renderInteractiveStateTag(label: string | null) {
+  if (!label) {
+    return null
+  }
+  return <span className={styles.blockTag}>{label}</span>
+}
+
+export function ApprovalRequestBlock({ item }: { item: ConversationApprovalRequestRenderItem }) {
+  return (
+    <section className={styles.richBlock}>
+      <p className={styles.blockKicker}>Approval Request</p>
+      <div className={styles.blockHeaderRow}>
+        <h5 className={styles.blockTitle}>{item.title ?? 'Approval needed'}</h5>
+        {renderInteractiveStateTag(item.resolutionState)}
+      </div>
+      {item.summary ? <p className={styles.blockSummary}>{item.summary}</p> : null}
+      {item.prompt ? <p className={styles.blockText}>{item.prompt}</p> : null}
+      {item.decision ? <p className={styles.blockMetaLine}>Decision: {item.decision}</p> : null}
+    </section>
+  )
+}
+
+export function UserInputRequestBlock({ item }: { item: ConversationUserInputRequestRenderItem }) {
+  return (
+    <section className={styles.richBlock}>
+      <p className={styles.blockKicker}>Runtime Input</p>
+      <div className={styles.blockHeaderRow}>
+        <h5 className={styles.blockTitle}>{item.title ?? 'Input requested'}</h5>
+        {renderInteractiveStateTag(item.resolutionState)}
+      </div>
+      {item.summary ? <p className={styles.blockSummary}>{item.summary}</p> : null}
+      {item.prompt ? <p className={styles.blockText}>{item.prompt}</p> : null}
+      {item.questions.length > 0 ? (
+        <div className={styles.blockList}>
+          {item.questions.map((question) => (
+            <div key={question.key} className={styles.blockListItem}>
+              <strong>{question.header ?? question.key}</strong>
+              {question.question ? <span>{question.question}</span> : null}
+              {question.options.length > 0 ? <span>Options: {question.options.join(', ')}</span> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+export function UserInputResponseBlock({ item }: { item: ConversationUserInputResponseRenderItem }) {
+  return (
+    <section className={styles.richBlock}>
+      <p className={styles.blockKicker}>Runtime Input Response</p>
+      <h5 className={styles.blockTitle}>{item.title ?? 'Answer submitted'}</h5>
+      {item.summary ? <p className={styles.blockSummary}>{item.summary}</p> : null}
+      {item.text ? <p className={styles.blockText}>{item.text}</p> : null}
+      {item.answers.length > 0 ? (
+        <div className={styles.blockList}>
+          {item.answers.map((answer) => (
+            <div key={answer.key} className={styles.blockListItem}>
+              <strong>{answer.label}</strong>
+              {answer.values.length > 0 ? <span>{answer.values.join(', ')}</span> : <span>(no answer text)</span>}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 export function DiffSummaryBlock({ item }: { item: ConversationDiffSummaryRenderItem }) {
   const stats = statsText(item)
   return (
@@ -252,6 +323,12 @@ export function renderConversationBlock(item: ConversationRenderItem) {
       return <PlanBlock item={item} />
     case 'plan_step_update':
       return <PlanStepUpdateBlock item={item} />
+    case 'approval_request':
+      return <ApprovalRequestBlock item={item} />
+    case 'user_input_request':
+      return <UserInputRequestBlock item={item} />
+    case 'user_input_response':
+      return <UserInputResponseBlock item={item} />
     case 'diff_summary':
       return <DiffSummaryBlock item={item} />
     case 'file_change_summary':

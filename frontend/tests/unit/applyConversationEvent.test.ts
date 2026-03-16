@@ -300,4 +300,151 @@ describe('applyConversationEvent passive semantics', () => {
       text: 'Found 2 matches.',
     })
   })
+
+  it('creates a user_input_request message from request_user_input and resolves it in place', () => {
+    const requested = applyConversationEvent(
+      makeSnapshot(),
+      makeEvent(
+        {
+          event_type: 'request_user_input',
+          event_seq: 3,
+        },
+        {
+          message: {
+            message_id: 'msg_exec_request:req_1',
+            conversation_id: 'conv_1',
+            turn_id: 'turn_1',
+            role: 'assistant',
+            runtime_mode: 'execute',
+            status: 'pending',
+            created_at: '2026-03-15T00:00:03Z',
+            updated_at: '2026-03-15T00:00:03Z',
+            lineage: {},
+            usage: null,
+            error: null,
+            parts: [
+              {
+                part_id: 'msg_exec_request:req_1:user_input_request',
+                part_type: 'user_input_request',
+                status: 'pending',
+                order: 0,
+                item_key: 'req_1',
+                created_at: '2026-03-15T00:00:03Z',
+                updated_at: '2026-03-15T00:00:03Z',
+                payload: {
+                  part_id: 'msg_exec_request:req_1:user_input_request',
+                  request_id: 'req_1',
+                  request_kind: 'user_input',
+                  resolution_state: 'pending',
+                  title: 'Runtime input needed',
+                  questions: [
+                    {
+                      id: 'brand_direction',
+                      header: 'Brand direction',
+                      question: 'What visual direction should we use?',
+                      options: [{ label: 'Editorial' }],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      ),
+    )
+
+    const resolved = applyConversationEvent(
+      requested,
+      makeEvent(
+        {
+          event_type: 'request_resolved',
+          event_seq: 4,
+          message_id: 'msg_exec_request:req_1',
+          item_id: 'msg_exec_request:req_1:user_input_request',
+        },
+        {
+          request_id: 'req_1',
+          request_kind: 'user_input',
+          resolution_state: 'resolved',
+          resolved_at: '2026-03-15T00:00:04Z',
+        },
+      ),
+    )
+
+    const requestMessage = resolved.messages.find((message) => message.message_id === 'msg_exec_request:req_1')
+    expect(requestMessage?.parts[0]).toMatchObject({
+      part_type: 'user_input_request',
+      payload: {
+        request_id: 'req_1',
+        resolution_state: 'resolved',
+      },
+      status: 'completed',
+    })
+  })
+
+  it('creates a user_input_response message from user_input_resolved', () => {
+    const next = applyConversationEvent(
+      makeSnapshot(),
+      makeEvent(
+        {
+          event_type: 'user_input_resolved',
+          event_seq: 3,
+        },
+        {
+          message: {
+            message_id: 'msg_exec_request_response:req_1',
+            conversation_id: 'conv_1',
+            turn_id: 'turn_1',
+            role: 'user',
+            runtime_mode: 'execute',
+            status: 'completed',
+            created_at: '2026-03-15T00:00:03Z',
+            updated_at: '2026-03-15T00:00:03Z',
+            lineage: {},
+            usage: null,
+            error: null,
+            parts: [
+              {
+                part_id: 'msg_exec_request_response:req_1:user_input_response',
+                part_type: 'user_input_response',
+                status: 'completed',
+                order: 0,
+                item_key: 'req_1',
+                created_at: '2026-03-15T00:00:03Z',
+                updated_at: '2026-03-15T00:00:03Z',
+                payload: {
+                  part_id: 'msg_exec_request_response:req_1:user_input_response',
+                  request_id: 'req_1',
+                  request_kind: 'user_input',
+                  title: 'Input submitted',
+                  text: 'Brand direction\nEditorial',
+                  answers: {
+                    brand_direction: {
+                      answers: ['Editorial'],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ),
+    )
+
+    const responseMessage = next.messages.find(
+      (message) => message.message_id === 'msg_exec_request_response:req_1',
+    )
+    expect(responseMessage).toMatchObject({
+      role: 'user',
+      parts: [
+        {
+          part_type: 'user_input_response',
+          payload: {
+            request_id: 'req_1',
+            title: 'Input submitted',
+          },
+        },
+      ],
+    })
+  })
 })

@@ -47,6 +47,7 @@ ConversationEventType = Literal[
     "plan_step_status_change",
     "approval_request",
     "request_user_input",
+    "request_resolved",
     "user_input_resolved",
     "diff_summary",
     "file_change_summary",

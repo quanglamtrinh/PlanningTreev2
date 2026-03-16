@@ -43,6 +43,7 @@ export type ConversationEventType =
   | 'plan_step_status_change'
   | 'approval_request'
   | 'request_user_input'
+  | 'request_resolved'
   | 'user_input_resolved'
   | 'diff_summary'
   | 'file_change_summary'
@@ -114,6 +115,87 @@ export interface ConversationDiffSummaryPayload extends Record<string, unknown> 
   added?: number
   removed?: number
   changed?: number
+}
+
+export type ConversationInteractiveResolutionState =
+  | 'pending'
+  | 'resolved'
+  | 'approved'
+  | 'declined'
+  | 'stale'
+  | 'cancelled'
+  | 'error'
+
+export interface ConversationInteractiveOption extends Record<string, unknown> {
+  label?: string
+  description?: string
+}
+
+export interface ConversationInteractiveQuestion extends Record<string, unknown> {
+  id?: string
+  header?: string
+  question?: string
+  is_other?: boolean
+  is_secret?: boolean
+  options?: ConversationInteractiveOption[] | null
+}
+
+export interface ConversationInteractiveAnswer extends Record<string, unknown> {
+  answers?: string[]
+}
+
+export interface ConversationApprovalRequestPayload extends Record<string, unknown> {
+  part_id?: string
+  request_id?: string
+  request_kind?: 'approval'
+  title?: string
+  summary?: string
+  prompt?: string
+  details?: string
+  decision?: string
+  resolution_state?: ConversationInteractiveResolutionState
+  thread_id?: string
+  turn_id?: string
+  item_id?: string
+}
+
+export interface ConversationUserInputRequestPayload extends Record<string, unknown> {
+  part_id?: string
+  request_id?: string
+  request_kind?: 'user_input'
+  title?: string
+  summary?: string
+  prompt?: string
+  details?: string
+  resolution_state?: ConversationInteractiveResolutionState
+  thread_id?: string
+  turn_id?: string
+  item_id?: string
+  questions?: ConversationInteractiveQuestion[]
+  answer_payload?: { answers?: Record<string, ConversationInteractiveAnswer> } | null
+  resolved_at?: string | null
+}
+
+export interface ConversationUserInputResponsePayload extends Record<string, unknown> {
+  part_id?: string
+  request_id?: string
+  request_kind?: 'user_input'
+  title?: string
+  summary?: string
+  text?: string
+  content?: string
+  resolved_at?: string | null
+  answers?: Record<string, ConversationInteractiveAnswer>
+}
+
+export interface ConversationRequestResolvedPayload extends Record<string, unknown> {
+  part_id?: string
+  request_id?: string
+  request_kind?: 'approval' | 'user_input'
+  decision?: string
+  resolution_state?: ConversationInteractiveResolutionState
+  resolved_at?: string | null
+  answer_payload?: { answers?: Record<string, ConversationInteractiveAnswer> } | null
 }
 
 export interface ConversationFileChangeSummaryPayload extends Record<string, unknown> {

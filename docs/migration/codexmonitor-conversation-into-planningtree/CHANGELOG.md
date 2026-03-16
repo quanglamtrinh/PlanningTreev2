@@ -1,6 +1,18 @@
 # Migration Changelog
 
 ## 2026-03-16
+- Phase 5.2 implementation:
+  - added interactive request lifecycle support on the shared conversation-v2 contract for `approval_request`, `user_input_request`, `user_input_response`, and `request_resolved`
+  - wired the execution conversation-v2 backend path to persist and stream runtime-input request creation and resolution through durable request and response messages
+  - added latest-unresolved active request selection and a shared request-actions hook so the execution host modal derives from v2 request state instead of legacy local ownership
+  - documented the current Phase 5.2 support boundary explicitly:
+    - live + replay on the execution backend path: `request_user_input`, `request_resolved`, `user_input_resolved`
+    - contract-ready and replay-safe but runtime-blocked for live parity: `approval_request`
+- Verification:
+  - `npm run test:unit -- applyConversationEvent.test.ts ConversationSurface.test.tsx BreadcrumbWorkspace.test.tsx useConversationRequests.test.ts`
+  - `python -m pytest backend/tests/unit/test_conversation_gateway.py backend/tests/integration/test_conversation_gateway_api.py`
+  - `python -m pytest backend/tests/integration/test_chat_api.py`
+  - `npm run build`
 - Phase 5.1 hardening:
   - tightened passive-event targeting so passive updates attach only to deterministic assistant messages and log observable drop diagnostics instead of silently falling back to a generic turn match
   - extended the execution streaming path to emit and persist native `plan_block` events using the existing plan-delta transport signal and final-plan reconciliation

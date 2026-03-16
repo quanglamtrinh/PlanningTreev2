@@ -27,6 +27,7 @@ type UseExecutionConversationResult = {
   bootstrapStatus: BootstrapStatus
   bootstrapError: string | null
   send: (content: string) => Promise<ExecutionConversationSendAcceptedResponse | void>
+  refresh: () => void
 }
 
 const MAX_RECONNECT_ATTEMPTS = 5
@@ -75,6 +76,7 @@ export function useExecutionConversation({
 }: UseExecutionConversationOptions): UseExecutionConversationResult {
   const [bootstrapStatus, setBootstrapStatus] = useState<BootstrapStatus>('idle')
   const [bootstrapError, setBootstrapError] = useState<string | null>(null)
+  const [refreshToken, setRefreshToken] = useState(0)
   const generationRef = useRef(0)
   const sendAttemptRef = useRef(0)
   const conversationIdRef = useRef<string | null>(null)
@@ -334,7 +336,7 @@ export function useExecutionConversation({
       closeStream()
       markConversationDisconnected()
     }
-  }, [enabled, nodeId, projectId])
+  }, [enabled, nodeId, projectId, refreshToken])
 
   async function send(content: string): Promise<ExecutionConversationSendAcceptedResponse | void> {
     const text = content.trim()
@@ -385,11 +387,16 @@ export function useExecutionConversation({
     }
   }
 
+  function refresh() {
+    setRefreshToken((current) => current + 1)
+  }
+
   return {
     conversationId,
     conversation,
     bootstrapStatus,
     bootstrapError,
     send,
+    refresh,
   }
 }
