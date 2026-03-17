@@ -1908,8 +1908,12 @@ class ConversationGateway:
         with session.lock:
             if not self._owns_turn_locked(session, conversation_id, stream_id, turn_id):
                 return
-            request_key = str(request_record["request_id"])
-            session.runtime_request_registry[request_key] = copy.deepcopy(request_record)
+            request_record["conversation_id"] = conversation_id
+            self._set_execution_request_locked(
+                session,
+                conversation_id=conversation_id,
+                request_record=request_record,
+            )
             event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
 
         self._storage.conversation_store.mutate_conversation(
@@ -1938,6 +1942,34 @@ class ConversationGateway:
             ),
         )
 
+    @staticmethod
+    def _execution_request_registry_key(conversation_id: str, request_id: str) -> str:
+        return f"{str(conversation_id or '').strip()}:{str(request_id or '').strip()}"
+
+    def _get_execution_request_locked(
+        self,
+        session,
+        *,
+        conversation_id: str,
+        request_id: str,
+    ) -> dict[str, Any] | None:
+        key = self._execution_request_registry_key(conversation_id, request_id)
+        existing = session.runtime_request_registry.get(key)
+        return copy.deepcopy(existing) if isinstance(existing, dict) else None
+
+    def _set_execution_request_locked(
+        self,
+        session,
+        *,
+        conversation_id: str,
+        request_record: dict[str, Any],
+    ) -> None:
+        request_id = str(request_record.get("request_id") or "").strip()
+        if not request_id:
+            return
+        key = self._execution_request_registry_key(conversation_id, request_id)
+        session.runtime_request_registry[key] = copy.deepcopy(request_record)
+
     def _handle_request_resolved(
         self,
         *,
@@ -1957,7 +1989,11 @@ class ConversationGateway:
         with session.lock:
             if not self._owns_turn_locked(session, conversation_id, stream_id, turn_id):
                 return
-            existing = session.runtime_request_registry.get(request_id)
+            existing = self._get_execution_request_locked(
+                session,
+                conversation_id=conversation_id,
+                request_id=request_id,
+            )
             if not isinstance(existing, dict):
                 return
             if bool(existing.get("local_resolution_inflight")):
@@ -1988,7 +2024,12 @@ class ConversationGateway:
             updated_request["resolved_at"] = str(
                 payload.get("resolved_at") or updated_request.get("resolved_at") or iso_now()
             )
-            session.runtime_request_registry[request_id] = copy.deepcopy(updated_request)
+            updated_request["conversation_id"] = conversation_id
+            self._set_execution_request_locked(
+                session,
+                conversation_id=conversation_id,
+                request_record=updated_request,
+            )
             event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
 
         request_message = self._build_execution_user_input_request_message(
@@ -2056,7 +2097,11 @@ class ConversationGateway:
             return {"status": "already_resolved_or_stale"}
 
         with session.lock:
-            request_record = session.runtime_request_registry.get(request_key)
+            request_record = self._get_execution_request_locked(
+                session,
+                conversation_id=conversation_id,
+                request_id=request_key,
+            )
             if not isinstance(request_record, dict):
                 return {"status": "already_resolved_or_stale"}
             expected_thread_id = str(request_record.get("thread_id") or "").strip()
@@ -2069,7 +2114,12 @@ class ConversationGateway:
                 return {"status": "already_resolved_or_stale"}
             inflight_request = copy.deepcopy(request_record)
             inflight_request["local_resolution_inflight"] = True
-            session.runtime_request_registry[request_key] = inflight_request
+            inflight_request["conversation_id"] = conversation_id
+            self._set_execution_request_locked(
+                session,
+                conversation_id=conversation_id,
+                request_record=inflight_request,
+            )
 
         try:
             resolved_record = session.client.resolve_runtime_request_user_input(
@@ -2078,15 +2128,28 @@ class ConversationGateway:
             )
         except Exception:
             with session.lock:
-                request_record = session.runtime_request_registry.get(request_key)
+                request_record = self._get_execution_request_locked(
+                    session,
+                    conversation_id=conversation_id,
+                    request_id=request_key,
+                )
                 if isinstance(request_record, dict):
                     repaired_request = copy.deepcopy(request_record)
                     repaired_request.pop("local_resolution_inflight", None)
-                    session.runtime_request_registry[request_key] = repaired_request
+                    repaired_request["conversation_id"] = conversation_id
+                    self._set_execution_request_locked(
+                        session,
+                        conversation_id=conversation_id,
+                        request_record=repaired_request,
+                    )
             raise
 
         with session.lock:
-            request_record = session.runtime_request_registry.get(request_key)
+            request_record = self._get_execution_request_locked(
+                session,
+                conversation_id=conversation_id,
+                request_id=request_key,
+            )
             if not isinstance(request_record, dict):
                 request_record = {}
             next_request = copy.deepcopy(request_record)
@@ -2103,7 +2166,12 @@ class ConversationGateway:
                 if answer_payload is not None:
                     next_request["answer_payload"] = copy.deepcopy(answer_payload)
                 route_status = "resolved" if str(next_request.get("status") or "") == "resolved" else "already_resolved_or_stale"
-            session.runtime_request_registry[request_key] = copy.deepcopy(next_request)
+            next_request["conversation_id"] = conversation_id
+            self._set_execution_request_locked(
+                session,
+                conversation_id=conversation_id,
+                request_record=next_request,
+            )
             current_stream_id = (
                 session.active_streams.get(conversation_id)
                 or str(conversation["record"].get("active_stream_id") or "")

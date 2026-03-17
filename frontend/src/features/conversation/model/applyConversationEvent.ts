@@ -27,6 +27,22 @@ type InteractiveConversationEventType =
   | 'request_resolved'
   | 'user_input_resolved'
 
+export type ConversationEventAcceptanceDecision = 'accept' | 'ignore' | 'recover'
+
+export type ConversationEventAcceptanceReason =
+  | 'conversation_mismatch'
+  | 'stale_or_duplicate_event'
+  | 'event_gap'
+  | 'missing_stream_id'
+  | 'terminal_without_new_stream_authority'
+  | 'stream_ownership_mismatch'
+  | 'unsupported_event_type'
+
+export interface ConversationEventAcceptance {
+  decision: ConversationEventAcceptanceDecision
+  reason: ConversationEventAcceptanceReason
+}
+
 const PASSIVE_EVENT_TO_PART: Record<PassiveConversationEventType, ConversationMessagePartType> = {
   reasoning_state: 'reasoning',
   tool_call_start: 'tool_call',
@@ -578,6 +594,32 @@ function upsertPassivePart(
   }
 }
 
+function isTerminalConversationStatus(status: ConversationStatus): boolean {
+  return (
+    status === 'completed' ||
+    status === 'interrupted' ||
+    status === 'cancelled' ||
+    status === 'error'
+  )
+}
+
+function isMessageCreatedOwnershipAllowed(snapshot: ConversationSnapshot): boolean {
+  return (
+    snapshot.record.active_stream_id === null && !isTerminalConversationStatus(snapshot.record.status)
+  )
+}
+
+function eventTurnMatchesTarget(
+  message: ConversationMessage | null,
+  event: ConversationEventEnvelope,
+): boolean {
+  const eventTurnId = asString(event.turn_id)
+  if (!message || !eventTurnId) {
+    return true
+  }
+  return message.turn_id === eventTurnId
+}
+
 function upsertInteractivePart(
   message: ConversationMessage,
   partType: ConversationMessagePartType,
@@ -605,30 +647,53 @@ function upsertInteractivePart(
   }
 }
 
-export function shouldAcceptConversationEvent(
+export function evaluateConversationEventAcceptance(
   snapshot: ConversationSnapshot,
   event: ConversationEventEnvelope,
-): boolean {
-  if (
-    event.conversation_id !== snapshot.record.conversation_id ||
-    event.event_seq <= snapshot.record.event_seq
-  ) {
-    return false
+): ConversationEventAcceptance {
+  if (event.conversation_id !== snapshot.record.conversation_id) {
+    return {
+      decision: 'ignore',
+      reason: 'conversation_mismatch',
+    }
+  }
+
+  if (event.event_seq <= snapshot.record.event_seq) {
+    return {
+      decision: 'ignore',
+      reason: 'stale_or_duplicate_event',
+    }
+  }
+
+  if (event.event_seq > snapshot.record.event_seq + 1) {
+    return {
+      decision: 'recover',
+      reason: 'event_gap',
+    }
   }
 
   const streamId = readEventStreamId(event)
   if (!streamId) {
-    return false
+    return {
+      decision: 'ignore',
+      reason: 'missing_stream_id',
+    }
   }
 
   const activeStreamId = snapshot.record.active_stream_id
   switch (event.event_type) {
     case 'message_created':
-      return activeStreamId === null || streamId === activeStreamId
+      if (activeStreamId === null) {
+        return isMessageCreatedOwnershipAllowed(snapshot)
+          ? { decision: 'accept', reason: 'unsupported_event_type' }
+          : { decision: 'ignore', reason: 'terminal_without_new_stream_authority' }
+      }
+      return streamId === activeStreamId
+        ? { decision: 'accept', reason: 'unsupported_event_type' }
+        : { decision: 'ignore', reason: 'stream_ownership_mismatch' }
     case 'assistant_text_delta':
     case 'assistant_text_final':
     case 'completion_status':
-      return activeStreamId !== null && streamId === activeStreamId
     case 'reasoning_state':
     case 'tool_call_start':
     case 'tool_call_update':
@@ -643,9 +708,21 @@ export function shouldAcceptConversationEvent(
     case 'request_resolved':
     case 'user_input_resolved':
       return activeStreamId !== null && streamId === activeStreamId
+        ? { decision: 'accept', reason: 'unsupported_event_type' }
+        : { decision: 'ignore', reason: 'stream_ownership_mismatch' }
     default:
-      return false
+      return {
+        decision: 'ignore',
+        reason: 'unsupported_event_type',
+      }
   }
+}
+
+export function shouldAcceptConversationEvent(
+  snapshot: ConversationSnapshot,
+  event: ConversationEventEnvelope,
+): boolean {
+  return evaluateConversationEventAcceptance(snapshot, event).decision === 'accept'
 }
 
 export function applyConversationEvent(
@@ -674,6 +751,9 @@ export function applyConversationEvent(
           }),
         }
       }
+      if (!eventTurnMatchesTarget(message, event)) {
+        return snapshot
+      }
       return {
         ...snapshot,
         record: updateRecord(snapshot.record, event, {
@@ -692,6 +772,9 @@ export function applyConversationEvent(
       const text = asString(payload.text)
       const updatedMessages = snapshot.messages.map((message) => {
         if (message.message_id !== event.message_id || !partId) {
+          return message
+        }
+        if (!eventTurnMatchesTarget(message, event)) {
           return message
         }
         const currentPart = message.parts.find((part) => part.part_id === partId) ?? null
@@ -722,7 +805,7 @@ export function applyConversationEvent(
           updated_at: finishedAt,
         },
         messages: snapshot.messages.map((message) =>
-          message.message_id === event.message_id
+          message.message_id === event.message_id && eventTurnMatchesTarget(message, event)
             ? updateMessageStatus(message, messageStatus, finishedAt, error)
             : message,
         ),
@@ -734,6 +817,10 @@ export function applyConversationEvent(
       const message = readConversationMessage(payload)
       if (!message) {
         reportDroppedInteractiveUpdate('missing_message_payload', event, payload)
+        return snapshot
+      }
+      if (!eventTurnMatchesTarget(message, event)) {
+        reportDroppedInteractiveUpdate('stale_turn_target', event, payload)
         return snapshot
       }
       const partType = INTERACTIVE_EVENT_TO_PART[event.event_type]
@@ -757,6 +844,10 @@ export function applyConversationEvent(
       const target = findRequestTarget(snapshot.messages, payload, event)
       if (!target) {
         reportDroppedInteractiveUpdate('missing_request_target', event, payload)
+        return snapshot
+      }
+      if (!eventTurnMatchesTarget(target.message, event)) {
+        reportDroppedInteractiveUpdate('stale_turn_target', event, payload)
         return snapshot
       }
       const partType = resolveRequestPartType(payload, target.part)
@@ -803,6 +894,10 @@ export function applyConversationEvent(
         return snapshot
       }
       const targetMessage = targetMessageResolution.message
+      if (!eventTurnMatchesTarget(targetMessage, event)) {
+        reportDroppedPassiveUpdate('stale_turn_target', event, payload)
+        return snapshot
+      }
 
       const target = resolvePassivePartTarget(
         targetMessage,

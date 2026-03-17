@@ -68,13 +68,14 @@ function makeSnapshot(
 }
 
 function makeAssistantStreamingSnapshot(streamId = 'ask_stream:turn_1'): ConversationSnapshot {
+  const derivedTurnId = streamId.includes(':') ? streamId.split(':').at(-1) ?? 'turn_1' : 'turn_1'
   return makeSnapshot(
     {
       messages: [
         {
           message_id: 'msg_assistant',
           conversation_id: 'conv_ask_1',
-          turn_id: 'turn_1',
+          turn_id: derivedTurnId,
           role: 'assistant',
           runtime_mode: 'ask',
           status: 'streaming',
@@ -278,6 +279,96 @@ describe('useAskConversation', () => {
       expect(apiMock.getAskConversation).toHaveBeenCalledTimes(2)
     })
     expect(useConversationStore.getState().conversationsById.conv_ask_1.snapshot.record.event_seq).toBe(12)
+    expect(useConversationStore.getState().conversationsById.conv_ask_1.snapshot.messages).toEqual([])
+  })
+
+  it('ignores an older refresh result after the mounted ask scope switches', async () => {
+    let resolveRefresh: ((value: { conversation: ConversationSnapshot }) => void) | null = null
+    apiMock.getAskConversation
+      .mockResolvedValueOnce({
+        conversation: makeSnapshot({}, { event_seq: 2, status: 'active', active_stream_id: 'ask_stream:turn_1' }),
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve
+          }),
+      )
+      .mockResolvedValueOnce({
+        conversation: makeSnapshot(
+          {},
+          {
+            conversation_id: 'conv_ask_2',
+            node_id: 'node-2',
+            event_seq: 4,
+            status: 'idle',
+          },
+        ),
+      })
+
+    const view = render(<HookHarness projectId="project-1" nodeId="node-1" enabled />)
+
+    await waitFor(() => {
+      expect(latestHookState?.conversationId).toBe('conv_ask_1')
+    })
+
+    await act(async () => {
+      latestHookState?.refresh()
+    })
+
+    view.rerender(<HookHarness projectId="project-1" nodeId="node-2" enabled />)
+
+    await waitFor(() => {
+      expect(
+        useConversationStore.getState().getConversationIdByScope({
+          project_id: 'project-1',
+          node_id: 'node-2',
+          thread_type: 'ask',
+        }),
+      ).toBe('conv_ask_2')
+    })
+
+    await act(async () => {
+      resolveRefresh?.({
+        conversation: makeSnapshot(
+          {
+            messages: [
+              {
+                message_id: 'msg_stale',
+                conversation_id: 'conv_ask_1',
+                turn_id: 'turn_old',
+                role: 'assistant',
+                runtime_mode: 'ask',
+                status: 'completed',
+                created_at: '2026-03-15T00:00:01Z',
+                updated_at: '2026-03-15T00:00:09Z',
+                lineage: {},
+                usage: null,
+                error: null,
+                parts: [
+                  {
+                    part_id: 'ask_part:msg_stale:assistant_text',
+                    part_type: 'assistant_text',
+                    status: 'completed',
+                    order: 0,
+                    item_key: null,
+                    created_at: '2026-03-15T00:00:01Z',
+                    updated_at: '2026-03-15T00:00:09Z',
+                    payload: { text: 'stale refresh result' },
+                  },
+                ],
+              },
+            ],
+          },
+          { event_seq: 9, status: 'completed' },
+        ),
+      })
+      await Promise.resolve()
+    })
+
+    expect(latestHookState?.conversationId).toBe('conv_ask_2')
+    expect(useConversationStore.getState().conversationsById.conv_ask_2.snapshot.record.event_seq).toBe(4)
+    expect(useConversationStore.getState().conversationsById.conv_ask_1.snapshot.record.event_seq).toBe(2)
     expect(useConversationStore.getState().conversationsById.conv_ask_1.snapshot.messages).toEqual([])
   })
 

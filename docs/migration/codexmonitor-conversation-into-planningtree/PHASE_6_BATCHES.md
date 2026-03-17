@@ -30,17 +30,9 @@
   - normalization and merge baseline
   - transcript render baseline for long mixed conversations
   - hotspot inventory by measured cost
-- Implementation notes:
-  - use the same migrated path category for before/after comparisons
-  - record scenario name, harness or command, and environment notes with every baseline
-  - while this batch is active, lock the dense-event corpus inputs and expected semantic checks needed for `P6.1-G2`
 - Done criteria:
   - baseline evidence exists and can anchor `P6.1-G1`
   - dense-event corpus definition work is documented well enough to unblock `P6.1-G2`
-  - completed via:
-    - `src/test/phase6_1DenseEventCorpus.ts`
-    - `scripts/phase6_1_dense_event_benchmark.ts`
-    - `PHASE_6_1_VALIDATION.md`
 
 ## P6.1.b
 - Title: Event ingress and reducer hardening
@@ -49,27 +41,12 @@
   - optimize confirmed event-ingress and reducer hot paths without semantic drift
 - Exact scope:
   - event fanout and listener dispatch overhead
-  - app-server event parse and route overhead
   - repeated reducer work under dense streams
   - repeated normalization and preparation on partial updates
   - merge and upsert cost on long mixed transcripts
-- Implementation notes:
-  - comparison anchors:
-    - `src/services/events.ts`
-    - `src/features/app/hooks/useAppServerEvents.ts`
-    - `src/features/threads/hooks/useThreadsReducer.ts`
-    - `src/features/threads/hooks/threadReducer/threadItemsSlice.ts`
-    - `src/utils/threadItems.ts`
-  - keep reducer semantics identical under dense streams
 - Done criteria:
   - event-ingress optimizations satisfy `P6.1-G3`
   - reducer and normalization optimizations satisfy `P6.1-G4`
-  - completed via:
-    - `src/features/app/hooks/appServerEventRouter.ts`
-    - `src/features/app/hooks/useAppServerEvents.ts`
-    - `src/utils/threadItems.ts`
-    - `src/features/threads/hooks/useThreadActions.ts`
-    - `src/features/threads/hooks/threadReducer/threadItemsSlice.test.ts`
 
 ## P6.1.c
 - Title: Render and long-transcript hardening
@@ -81,85 +58,87 @@
   - transcript rendering cost
   - long-transcript grouping and expansion state
   - derived render metadata on mixed conversations
-- Implementation notes:
-  - comparison anchors:
-    - `src/features/messages/components/Messages.tsx`
-    - `src/features/messages/utils/messageRenderUtils.ts`
-    - `src/utils/threadItems.ts`
-  - no batching, memoization, truncation, or virtualization may change semantic outcome
 - Done criteria:
   - render-path optimizations satisfy `P6.1-G5`
   - end-to-end dense-event validation satisfies `P6.1-G6`
-  - completed via:
-    - `src/features/messages/utils/messageRenderUtils.ts`
-    - `src/features/messages/components/Messages.tsx`
-    - `src/test/phase6_1DenseEventValidation.test.ts`
-    - `PHASE_6_1_VALIDATION.md`
 
-## Phase 6.2 - Concurrency, Reconnect, And Replay Robustness
+## Phase 6.2 - PlanningTreeMain Concurrency, Reconnect, And Replay Robustness
 
 ## P6.2.a
-- Title: Concurrency matrix and isolation proof
+- Title: Lock the concurrency matrix and isolation rules
 - Status: Complete
 - Objective:
-  - prove isolation across threads, conversations, and hosts
+  - prove isolation across scope, conversation, stream, turn, and request ownership
 - Exact scope:
-  - wrong-stream prevention
-  - wrong-thread attachment prevention
-  - cross-cancel prevention
-  - cross-request leakage prevention
-- Implementation notes:
-  - prove isolation, not just absence of crashes
-  - the reviewed `bb3f01b` patch remains docs-only, while the actual proof landed in `924cbd3`
-- Done criteria:
-  - concurrency matrix exists and isolation checks pass for scoped scenarios
-  - completed via:
-    - `src/features/app/hooks/appServerEventRouter.test.ts`
-    - `src/features/app/hooks/useAppServerEvents.test.tsx`
-    - `src/features/threads/hooks/useThreadTurnEvents.test.tsx`
-    - `src/features/threads/hooks/useThreadMessaging.test.tsx`
-    - `src/features/threads/hooks/useThreads.integration.test.tsx`
-    - `PHASE_6_2_VALIDATION.md`
+  - wrong-scope no-op behavior
+  - wrong-conversation no-op behavior
+  - stale-seq and stale-turn no-op behavior
+  - request scoping by `conversation_id + request_id`
+  - broker isolation by `project_id + conversation_id`
+- Completed via:
+  - `frontend/src/features/conversation/model/applyConversationEvent.ts`
+  - `frontend/src/stores/conversation-store.ts`
+  - `backend/services/conversation_gateway.py`
+  - `backend/tests/unit/test_conversation_broker.py`
+  - `frontend/tests/unit/applyConversationEvent.test.ts`
+  - `frontend/tests/unit/conversation-store.test.ts`
+  - `backend/tests/integration/test_conversation_gateway_api.py`
 
 ## P6.2.b
-- Title: Reconnect and guarded-refresh hardening
+- Title: Reconnect sequencing and stale-attempt suppression
 - Status: Complete
 - Objective:
-  - harden reconnect under detach, focus changes, missed events, and guarded refresh
+  - make reconnect owned by current scope plus bootstrap generation and suppress stale completions
 - Exact scope:
-  - resubscribe behavior
-  - refresh recovery
-  - detach recovery
-  - active host switching
-- Implementation notes:
-  - durable replay remains authoritative
-  - the reviewed `bb3f01b` patch remains docs-only, while the actual proof landed in `924cbd3`
-- Done criteria:
-  - reconnect behavior is stress-tested and recovery-only fallbacks stay explicit
-  - completed via:
-    - `src/features/app/hooks/useRemoteThreadLiveConnection.ts`
-    - `src/features/app/hooks/useRemoteThreadLiveConnection.test.tsx`
-    - `src/test/phase6_2ConcurrencyValidation.test.tsx`
-    - `PHASE_6_2_VALIDATION.md`
+  - gap-triggered recovery
+  - same-scope reconnect coherence
+  - stale reconnect no-op behavior after scope switch or remount
+  - buffered old-stream emission rejection
+- Completed via:
+  - `frontend/src/features/conversation/hooks/streamRuntime.ts`
+  - `frontend/src/features/conversation/hooks/useExecutionConversation.ts`
+  - `frontend/src/features/conversation/hooks/usePlanningConversation.ts`
+  - `frontend/src/features/conversation/hooks/useAskConversation.ts`
+  - `frontend/tests/unit/execution-conversation-stream.test.tsx`
+  - `frontend/tests/unit/planning-conversation-stream.test.tsx`
+  - `frontend/tests/unit/ask-conversation-stream.test.tsx`
 
 ## P6.2.c
-- Title: Replay fidelity across reload and restart
+- Title: Guarded refresh hardening
 - Status: Complete
 - Objective:
-  - prove faithful replay after refresh, reload, and restart under stress
+  - keep refresh durable-first and prevent older refresh results from overwriting newer accepted live state
 - Exact scope:
-  - long transcript replay
-  - restart recovery
-  - guarded refresh convergence
-- Implementation notes:
-  - memory-only live state must never become replay authority
-  - the reviewed `bb3f01b` patch remains docs-only, while the actual proof landed in `924cbd3`
-- Done criteria:
-  - replay equivalence is proven on the scoped migrated paths
-  - completed via:
-    - `src/features/threads/hooks/useThreadActions.test.tsx`
-    - `src/test/phase6_2ConcurrencyValidation.test.tsx`
-    - `PHASE_6_2_VALIDATION.md`
+  - snapshot-first reconnect
+  - terminal refresh convergence
+  - older refresh suppression after scope switch
+  - refresh overlap with current live generation
+- Completed via:
+  - `frontend/src/features/conversation/hooks/streamRuntime.ts`
+  - `frontend/src/features/conversation/hooks/useExecutionConversation.ts`
+  - `frontend/src/features/conversation/hooks/usePlanningConversation.ts`
+  - `frontend/src/features/conversation/hooks/useAskConversation.ts`
+  - `frontend/src/stores/conversation-store.ts`
+  - `frontend/tests/unit/planning-conversation-stream.test.tsx`
+  - `frontend/tests/unit/ask-conversation-stream.test.tsx`
+  - `frontend/tests/unit/conversation-store.test.ts`
+
+## P6.2.d
+- Title: Replay fidelity across refresh, reload, and restart
+- Status: Complete
+- Objective:
+  - prove semantic equivalence after remount and durable replay
+- Exact scope:
+  - same visible ordering after remount
+  - same pending request set after remount
+  - same active stream and active turn ownership after durable recovery
+  - stale old-stream emissions ignored after remount
+- Completed via:
+  - `frontend/tests/unit/conversation-recovery-orchestration.test.tsx`
+  - `frontend/tests/unit/ConversationSurface.test.tsx`
+  - `backend/tests/unit/test_conversation_gateway.py`
+  - `backend/tests/unit/test_conversation_store.py`
+  - `PHASE_6_2_VALIDATION.md`
 
 ## Phase 6.3 - Compatibility Cleanup And Gate-Based Removal
 
@@ -173,8 +152,6 @@
   - duplicate routing
   - shadow state
   - redundant reconnect paths
-- Implementation notes:
-  - every target must be classified as removable, blocked, intentionally permanent, or uncertain
 - Done criteria:
   - compatibility inventory exists and `PHASE_6_CLEANUP_LOG.md` is populated with initial classifications
 
@@ -187,10 +164,8 @@
   - bounded removals
   - replacement-path verification
   - rollback impact records
-- Implementation notes:
-  - no removal without named gate evidence
 - Done criteria:
-  - every removal is tied to a `P6.1-G*` or `P6.2-G*` gate and logged in `PHASE_6_CLEANUP_LOG.md`
+  - every removal is tied to named gate evidence and logged in `PHASE_6_CLEANUP_LOG.md`
 
 ## P6.3.c
 - Title: Post-removal verification and permanent architecture record
@@ -201,7 +176,5 @@
   - regression checks
   - documentation updates
   - permanent-vs-transitional record
-- Implementation notes:
-  - cleanup closeout must increase confidence, not reduce it
 - Done criteria:
   - removed and surviving compatibility paths are explicitly documented and verified

@@ -226,6 +226,48 @@ describe('useExecutionConversation', () => {
     expect(conversation.snapshot.messages[0]?.parts[0]?.payload).toMatchObject({ text: 'Hi' })
   })
 
+  it('treats gapful live events as recovery triggers instead of applying them locally', async () => {
+    apiMock.getExecutionConversation.mockResolvedValue({
+      conversation: makeAssistantStreamingSnapshot('stream_1'),
+    })
+
+    render(<HookHarness projectId="project-1" nodeId="node-1" enabled />)
+
+    await waitFor(() => {
+      expect(useConversationStore.getState().conversationsById.conv_exec_1.snapshot.record.event_seq).toBe(
+        1,
+      )
+    })
+
+    const [eventSource] = mockEventSources()
+    act(() => {
+      eventSource.emitOpen()
+      eventSource.emitMessage(
+        JSON.stringify({
+          event_type: 'assistant_text_delta',
+          conversation_id: 'conv_exec_1',
+          stream_id: 'stream_1',
+          event_seq: 3,
+          created_at: '2026-03-15T00:00:03Z',
+          turn_id: 'turn_1',
+          message_id: 'msg_assistant',
+          item_id: 'part_assistant',
+          payload: {
+            part_id: 'part_assistant',
+            delta: ' skipped',
+            status: 'streaming',
+          },
+        }),
+      )
+    })
+
+    const conversation = useConversationStore.getState().conversationsById.conv_exec_1
+    expect(eventSource.readyState).toBe(2)
+    expect(conversation.connectionStatus).toBe('reconnecting')
+    expect(conversation.snapshot.record.event_seq).toBe(1)
+    expect(conversation.snapshot.messages[0]?.parts[0]?.payload).toMatchObject({ text: 'Hi' })
+  })
+
   it('reconnects snapshot-first with refreshed cursor metadata and ignores stale event sequences', async () => {
     let resolveReconnectSnapshot: (() => void) | null = null
     apiMock.getExecutionConversation

@@ -328,6 +328,45 @@ describe('usePlanningConversation', () => {
     })
   })
 
+  it('reconnects instead of applying gapful planning events out of sequence', async () => {
+    apiMock.getPlanningConversation.mockResolvedValue({
+      conversation: makeActiveSnapshot(),
+    })
+
+    render(<HookHarness projectId="project-1" nodeId="node-1" enabled />)
+
+    await waitFor(() => {
+      expect(latestHookState?.conversationId).toBe('conv_plan_1')
+    })
+
+    const [eventSource] = mockEventSources()
+    act(() => {
+      eventSource.emitOpen()
+      eventSource.emitMessage(
+        JSON.stringify({
+          event_type: 'assistant_text_final',
+          conversation_id: 'conv_plan_1',
+          stream_id: 'planning_stream:turn_1',
+          event_seq: 4,
+          created_at: '2026-03-15T00:00:04Z',
+          turn_id: 'turn_1',
+          message_id: 'planning_msg:turn_1:assistant',
+          item_id: 'planning_part:turn_1:assistant_text',
+          payload: {
+            part_id: 'planning_part:turn_1:assistant_text',
+            text: 'gapful',
+            status: 'completed',
+          },
+        }),
+      )
+    })
+
+    const conversation = useConversationStore.getState().conversationsById.conv_plan_1
+    expect(eventSource.readyState).toBe(2)
+    expect(conversation.connectionStatus).toBe('reconnecting')
+    expect(conversation.snapshot.record.event_seq).toBe(2)
+  })
+
   it('triggers a guarded refresh after terminal completion and converges to the refreshed planning snapshot', async () => {
     apiMock.getPlanningConversation
       .mockResolvedValueOnce({

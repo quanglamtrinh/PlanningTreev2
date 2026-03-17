@@ -273,6 +273,39 @@ describe('useConversationStore', () => {
     expect(conversation.snapshot.record.status).toBe('idle')
   })
 
+  it('ignores gapful execution conversation events until recovery rebases the snapshot', () => {
+    useConversationStore.getState().ensureConversation(
+      makeSnapshot({
+        record: {
+          ...makeSnapshot().record,
+          active_stream_id: 'stream_1',
+          event_seq: 1,
+          status: 'active',
+        },
+      }),
+    )
+
+    useConversationStore.getState().applyEvent('conv_1', {
+      event_type: 'assistant_text_delta',
+      conversation_id: 'conv_1',
+      stream_id: 'stream_1',
+      event_seq: 3,
+      created_at: '2026-03-14T00:00:03Z',
+      turn_id: 'turn_1',
+      message_id: 'msg_assistant',
+      item_id: 'part_assistant',
+      payload: {
+        part_id: 'part_assistant',
+        delta: 'missing seq 2',
+        status: 'streaming',
+      },
+    })
+
+    const conversation = useConversationStore.getState().conversationsById.conv_1
+    expect(conversation.snapshot.record.event_seq).toBe(1)
+    expect(conversation.snapshot.record.active_stream_id).toBe('stream_1')
+  })
+
   it('enforces stream ownership and only lets message_created establish active_stream_id', () => {
     useConversationStore.getState().ensureConversation(makeSnapshot())
 
@@ -428,7 +461,7 @@ describe('useConversationStore', () => {
       event_type: 'completion_status',
       conversation_id: 'conv_1',
       stream_id: 'stream_1',
-      event_seq: 5,
+      event_seq: 3,
       created_at: '2026-03-14T00:00:05Z',
       turn_id: 'turn_1',
       message_id: 'msg_assistant',
@@ -440,8 +473,94 @@ describe('useConversationStore', () => {
 
     const conversation = useConversationStore.getState().conversationsById.conv_1
 
-    expect(conversation.snapshot.record.event_seq).toBe(5)
+    expect(conversation.snapshot.record.event_seq).toBe(3)
     expect(conversation.snapshot.record.active_stream_id).toBeNull()
     expect(conversation.snapshot.record.status).toBe('completed')
+  })
+
+  it('does not let an older hydrated snapshot overwrite newer accepted live state', () => {
+    useConversationStore.getState().ensureConversation(
+      makeSnapshot({
+        record: {
+          ...makeSnapshot().record,
+          active_stream_id: 'stream_1',
+          event_seq: 5,
+          status: 'active',
+          updated_at: '2026-03-14T00:00:05Z',
+        },
+        messages: [
+          {
+            message_id: 'msg_assistant',
+            conversation_id: 'conv_1',
+            turn_id: 'turn_1',
+            role: 'assistant',
+            runtime_mode: 'execute',
+            status: 'streaming',
+            created_at: '2026-03-14T00:00:01Z',
+            updated_at: '2026-03-14T00:00:05Z',
+            lineage: {},
+            usage: null,
+            error: null,
+            parts: [
+              {
+                part_id: 'part_assistant',
+                part_type: 'assistant_text',
+                status: 'streaming',
+                order: 0,
+                item_key: null,
+                created_at: '2026-03-14T00:00:01Z',
+                updated_at: '2026-03-14T00:00:05Z',
+                payload: { text: 'newer live state' },
+              },
+            ],
+          },
+        ],
+      }),
+    )
+
+    useConversationStore.getState().hydrateConversation(
+      makeSnapshot({
+        record: {
+          ...makeSnapshot().record,
+          active_stream_id: 'stream_1',
+          event_seq: 3,
+          status: 'active',
+          updated_at: '2026-03-14T00:00:03Z',
+        },
+        messages: [
+          {
+            message_id: 'msg_assistant',
+            conversation_id: 'conv_1',
+            turn_id: 'turn_1',
+            role: 'assistant',
+            runtime_mode: 'execute',
+            status: 'streaming',
+            created_at: '2026-03-14T00:00:01Z',
+            updated_at: '2026-03-14T00:00:03Z',
+            lineage: {},
+            usage: null,
+            error: null,
+            parts: [
+              {
+                part_id: 'part_assistant',
+                part_type: 'assistant_text',
+                status: 'streaming',
+                order: 0,
+                item_key: null,
+                created_at: '2026-03-14T00:00:01Z',
+                updated_at: '2026-03-14T00:00:03Z',
+                payload: { text: 'older snapshot' },
+              },
+            ],
+          },
+        ],
+      }),
+    )
+
+    const conversation = useConversationStore.getState().conversationsById.conv_1
+    expect(conversation.snapshot.record.event_seq).toBe(5)
+    expect(conversation.snapshot.messages[0]?.parts[0]?.payload).toMatchObject({
+      text: 'newer live state',
+    })
   })
 })

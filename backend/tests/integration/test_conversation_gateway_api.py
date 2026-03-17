@@ -1207,6 +1207,149 @@ def test_execution_conversation_resolves_runtime_input_requests_through_v2_route
     }
 
 
+def test_execution_request_resolution_is_scoped_by_conversation_when_request_ids_repeat(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    fake_client = FakeConversationClient(final_text="Waiting for input.")
+    attach_session_client_factory(client, lambda _workspace_root: fake_client)
+    project_id, root_id = create_project(client, str(workspace_root))
+    child_id = create_child_node(client, project_id, root_id)
+    set_node_phase(client, project_id, root_id, "executing")
+    set_node_phase(client, project_id, child_id, "executing")
+
+    root_send = client.post(
+        f"/v2/projects/{project_id}/nodes/{root_id}/conversations/execution/send",
+        json={"content": "root request"},
+    )
+    child_send = client.post(
+        f"/v2/projects/{project_id}/nodes/{child_id}/conversations/execution/send",
+        json={"content": "child request"},
+    )
+
+    assert root_send.status_code == 202
+    assert child_send.status_code == 202
+
+    root_turn_id = str(root_send.json()["turn_id"])
+    child_turn_id = str(child_send.json()["turn_id"])
+    assert root_turn_id != child_turn_id
+
+    gateway = client.app.state.conversation_gateway
+    storage = client.app.state.storage
+    project_snapshot = storage.project_store.load_snapshot(project_id)
+    session = client.app.state.codex_session_manager.get_or_create_session(
+        project_id,
+        str(project_snapshot["project"]["project_workspace_root"]),
+    )
+
+    def seed_pending_request(node_id: str, turn_id: str, assistant_message_id: str) -> None:
+        conversation = client.get(
+            f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution"
+        ).json()["conversation"]
+        conversation_id = str(conversation["record"]["conversation_id"])
+        event_seq = int(conversation["record"]["event_seq"]) + 1
+        request_record = {
+            "request_id": "req_shared",
+            "thread_id": "thread_exec_1",
+            "turn_id": turn_id,
+            "item_id": f"item_req_shared_{node_id}",
+            "created_at": "2026-03-15T00:00:02Z",
+            "status": "pending",
+            "stream_id": f"stream_req_{node_id}",
+            "assistant_message_id": assistant_message_id,
+            "request_message_id": "request_message:req_shared",
+            "request_part_id": "request_message:req_shared:user_input_request",
+            "response_message_id": "request_response:req_shared",
+            "response_part_id": "request_response:req_shared:user_input_response",
+            "questions": [
+                {
+                    "id": "brand_direction",
+                    "header": "Brand direction",
+                    "question": "What visual direction should we use?",
+                    "options": [{"label": "Editorial", "description": "Structured and dense."}],
+                }
+            ],
+            "conversation_id": conversation_id,
+        }
+        request_message = gateway._build_execution_user_input_request_message(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            request=request_record,
+            created_at=str(request_record["created_at"]),
+        )
+        storage.conversation_store.mutate_conversation(
+            project_id,
+            conversation_id,
+            lambda snapshot: gateway._apply_interactive_messages_mutation(
+                snapshot=snapshot,
+                event_seq=event_seq,
+                request_message=request_message,
+                response_message=None,
+                assistant_message_id=assistant_message_id,
+            ),
+        )
+        with session.lock:
+            session.runtime_request_registry[
+                gateway._execution_request_registry_key(conversation_id, "req_shared")
+            ] = copy.deepcopy(request_record)
+
+    seed_pending_request(root_id, root_turn_id, str(root_send.json()["assistant_message_id"]))
+    seed_pending_request(child_id, child_turn_id, str(child_send.json()["assistant_message_id"]))
+    fake_client.pending_requests["req_shared"] = {
+        "payload": {
+            "request_id": "req_shared",
+            "thread_id": "thread_exec_1",
+            "turn_id": root_turn_id,
+            "item_id": f"item_req_shared_{root_id}",
+        },
+        "wait_event": None,
+    }
+
+    def request_resolution_state(node_id: str) -> str:
+        payload = client.get(
+            f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution"
+        ).json()["conversation"]
+        request_message = next(
+            message for message in payload["messages"] if message["message_id"] == "request_message:req_shared"
+        )
+        return str(request_message["parts"][0]["payload"]["resolution_state"])
+
+    wait_for_conversation(
+        client,
+        project_id,
+        root_id,
+        lambda item: any(message["message_id"] == "request_message:req_shared" for message in item["messages"]),
+    )
+    wait_for_conversation(
+        client,
+        project_id,
+        child_id,
+        lambda item: any(message["message_id"] == "request_message:req_shared" for message in item["messages"]),
+    )
+
+    resolved = client.post(
+        f"/v2/projects/{project_id}/nodes/{root_id}/conversations/execution/requests/req_shared/resolve",
+        json={
+            "request_kind": "user_input",
+            "thread_id": "thread_exec_1",
+            "turn_id": root_turn_id,
+            "answers": {"brand_direction": {"answers": ["Editorial"]}},
+        },
+    )
+
+    assert resolved.status_code == 200
+    assert resolved.json() == {"status": "resolved"}
+
+    wait_for_conversation(
+        client,
+        project_id,
+        root_id,
+        lambda item: request_resolution_state(root_id) == "resolved",
+    )
+    assert request_resolution_state(root_id) == "resolved"
+    assert request_resolution_state(child_id) == "pending"
+
+
 def test_execution_conversation_error_path_emits_completion_only_and_clears_ownership(
     client: TestClient,
     workspace_root,

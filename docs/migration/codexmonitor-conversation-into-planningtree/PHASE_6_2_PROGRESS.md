@@ -4,42 +4,47 @@
 | Field | Value |
 | --- | --- |
 | Status | Complete |
-| Current focus | Phase 6.2 closeout is complete; next work should move to Phase 6.3 compatibility cleanup and gate-based removal |
+| Current focus | Phase 6.2 closeout is complete in `PlanningTreeMain`; next work should move to Phase 6.3 compatibility inventory and gate-based cleanup |
 | Last updated | `2026-03-17` |
 | Owner | `TBD` |
 
 ## Gate Board
 | Gate | Status | Meaning |
 | --- | --- | --- |
-| `P6.2-G1` | Complete | Concurrency, reconnect, and replay matrix is recorded |
-| `P6.2-G2` | Complete | Mixed workspace, thread, turn, and request isolation is proven |
-| `P6.2-G3` | Complete | Reconnect race scenarios pass with no stale attach or wrong-state flip |
-| `P6.2-G4` | Complete | Guarded refresh paths are proven recovery-only |
-| `P6.2-G5` | Complete | Replay after refresh, reload, and restart is proven durable-store-first |
-| `P6.2-G6` | Complete | End-to-end stress validation and docs closeout both pass |
+| `P6.2-G1` | Complete | The PlanningTreeMain-native validation matrix is locked |
+| `P6.2-G2` | Complete | Scope, stream, turn, and request isolation are proven |
+| `P6.2-G3` | Complete | Reconnect behavior is sequence-safe and stale-safe |
+| `P6.2-G4` | Complete | Guarded refresh is durable-first and recovery-only |
+| `P6.2-G5` | Complete | Refresh, remount, reload, and restart replay reconstruct the same semantic state |
+| `P6.2-G6` | Complete | Targeted validation, typecheck, build, backend pytest, and docs all agree on closure |
 
 ## Completed In 6.2
-- the reviewed `PlanningTreeMain` commit `bb3f01b` remains classified as docs-only and insufficient by itself for Phase 6.2 completion
-- the real proof patch landed in `CodexMonitor` commit `924cbd3`
-- added pure router stress coverage in `src/features/app/hooks/appServerEventRouter.test.ts`
-- expanded shared listener proof in `src/features/app/hooks/useAppServerEvents.test.tsx`
-- hardened `useRemoteThreadLiveConnection.ts` so `codex/connected` does not auto-recover while the window is blurred
-- expanded reconnect-race coverage in `src/features/app/hooks/useRemoteThreadLiveConnection.test.tsx`
-- added thread and request isolation proof across:
-  - `useThreadTurnEvents.test.tsx`
-  - `useThreadMessaging.test.tsx`
-  - `useThreadActions.test.tsx`
-  - `useThreads.integration.test.tsx`
-- added the focused orchestration validation harness in `src/test/phase6_2ConcurrencyValidation.test.tsx`
-- updated `PHASE_6_2_*`, `PHASE_6_PROGRESS.md`, `PHASE_6_OPEN_ISSUES.md`, `PHASE_6_BATCHES.md`, and `PHASE_6_CHANGELOG.md`
+- added canonical acceptance decisions in `frontend/src/features/conversation/model/applyConversationEvent.ts` so wrong-conversation, stale-seq, gapful-seq, stale-stream, stale-turn, and stale-request paths are explicit `ignore` or `recover` outcomes
+- hardened `frontend/src/stores/conversation-store.ts` so older hydrated snapshots cannot overwrite newer accepted live state
+- added `frontend/src/features/conversation/hooks/streamRuntime.ts` to centralize authoritative snapshot reads, buffered-event flushing, and recover-on-gap behavior
+- hardened `useExecutionConversation.ts`, `usePlanningConversation.ts`, and `useAskConversation.ts` with bootstrap-generation-aware reconnect and stale refresh suppression
+- added frontend proof for:
+  - stale `event_seq` rejection
+  - gap-triggered reconnect
+  - wrong-stream rejection
+  - older refresh result suppression after scope switch
+  - remount recovery with stale old-stream emission rejection
+- hardened `backend/services/conversation_gateway.py` so execution runtime requests are scoped by `conversation_id + request_id`, preventing same-project cross-conversation collisions when request ids repeat
+- added backend proof for:
+  - broker isolation by `project_id + conversation_id`
+  - gateway durable-store-first snapshot behavior
+  - repeated request-id resolution isolation across execution conversations
+- added dedicated `typecheck` scripts in `frontend/package.json` and the root `package.json`
 
 ## Final Checkpoint
-- the locked 6.2 matrix now has committed proving surfaces for wrong-workspace events, stale-thread detach, request-id isolation, reconnect race handling, and durable remount or replay convergence
-- the runtime/test proof commit is `924cbd3`
-- targeted Phase 6.2 validation passed against that proof patch:
-  - `npm test -- src/features/app/hooks/appServerEventRouter.test.ts src/features/app/hooks/useAppServerEvents.test.tsx src/features/app/hooks/useRemoteThreadLiveConnection.test.tsx src/features/threads/hooks/useThreadTurnEvents.test.tsx src/features/threads/hooks/useThreadMessaging.test.tsx src/features/threads/hooks/useThreadActions.test.tsx src/features/threads/hooks/useThreads.integration.test.tsx src/test/phase6_2ConcurrencyValidation.test.tsx`
-  - `npm run typecheck`
+- frontend proof command passed:
+  - `npm run test:unit -- execution-conversation-stream.test.tsx planning-conversation-stream.test.tsx ask-conversation-stream.test.tsx conversation-store.test.ts applyConversationEvent.test.ts ConversationSurface.test.tsx useConversationRequests.test.ts conversation-recovery-orchestration.test.tsx`
+- frontend `npm run typecheck` passed
+- frontend `npm run build` passed
+- backend proof command passed:
+  - `python -m pytest backend/tests/unit/test_conversation_gateway.py backend/tests/unit/test_conversation_broker.py backend/tests/unit/test_conversation_store.py backend/tests/integration/test_conversation_gateway_api.py`
 
 ## Notes
-- `git show --stat --name-only bb3f01b` remains the basis for classifying the earlier `PlanningTreeMain` patch as docs-only.
-- The existing `useThreads.integration.test.tsx` file still emits pre-existing React `act(...)` warnings in older scenarios, but the targeted 6.2 assertions passed cleanly and those warnings did not block gate closure.
+- The frontend `test:unit` script currently prefixes `vitest run tests/unit`, so the closeout command runs the named proof files plus the broader `tests/unit` directory.
+- That broader run still emits pre-existing React `act(...)` warnings in older tests such as `GraphWorkspace.test.tsx` and `ConversationSurface.test.tsx`, but the suite passed cleanly and the new 6.2 assertions stayed green.
+- The production build emits an advisory chunk-size warning only; it did not block closeout.

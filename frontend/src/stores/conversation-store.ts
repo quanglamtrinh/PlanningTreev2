@@ -108,6 +108,19 @@ function createConversationViewState(snapshot: ConversationSnapshot): Conversati
   }
 }
 
+function selectHydratedSnapshot(
+  current: ConversationViewState | undefined,
+  nextSnapshot: ConversationSnapshot,
+): ConversationSnapshot {
+  if (!current) {
+    return nextSnapshot
+  }
+  if (nextSnapshot.record.event_seq < current.snapshot.record.event_seq) {
+    return current.snapshot
+  }
+  return nextSnapshot
+}
+
 export const useConversationStore = create<ConversationStoreState>((set, get) => ({
   conversationsById: {},
   scopeIndex: {},
@@ -141,12 +154,13 @@ export const useConversationStore = create<ConversationStoreState>((set, get) =>
     const scopeKey = createConversationScopeKey(snapshot.record)
     set((state) => {
       const current = state.conversationsById[conversationId]
+      const hydratedSnapshot = selectHydratedSnapshot(current, snapshot)
       return {
         conversationsById: {
           ...state.conversationsById,
           [conversationId]: {
-            ...(current ?? createConversationViewState(snapshot)),
-            snapshot,
+            ...(current ?? createConversationViewState(hydratedSnapshot)),
+            snapshot: hydratedSnapshot,
           },
         },
         scopeIndex: {

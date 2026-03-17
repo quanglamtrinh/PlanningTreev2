@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { applyConversationEvent } from '../../src/features/conversation/model/applyConversationEvent'
+import {
+  applyConversationEvent,
+  evaluateConversationEventAcceptance,
+} from '../../src/features/conversation/model/applyConversationEvent'
 import type { ConversationEventEnvelope, ConversationSnapshot } from '../../src/features/conversation/types'
 
 function makeSnapshot(overrides: Partial<ConversationSnapshot> = {}): ConversationSnapshot {
@@ -66,6 +69,30 @@ function makeEvent(
 }
 
 describe('applyConversationEvent passive semantics', () => {
+  it('marks gapful event sequences for recovery instead of local synthesis', () => {
+    const acceptance = evaluateConversationEventAcceptance(
+      makeSnapshot(),
+      makeEvent(
+        {
+          event_type: 'assistant_text_delta',
+          event_seq: 5,
+          message_id: 'msg_assistant',
+          item_id: 'part_text',
+        },
+        {
+          part_id: 'part_text',
+          delta: ' skipped',
+          status: 'streaming',
+        },
+      ),
+    )
+
+    expect(acceptance).toEqual({
+      decision: 'recover',
+      reason: 'event_gap',
+    })
+  })
+
   it('resolves a target message by turn_id and a target part by semantic-specific tool_call_id', () => {
     const next = applyConversationEvent(
       makeSnapshot(),
@@ -380,6 +407,81 @@ describe('applyConversationEvent passive semantics', () => {
       },
       status: 'completed',
     })
+  })
+
+  it('ignores request resolution events from a stale turn even when request ids match', () => {
+    const requested = applyConversationEvent(
+      makeSnapshot(),
+      makeEvent(
+        {
+          event_type: 'request_user_input',
+          event_seq: 3,
+        },
+        {
+          message: {
+            message_id: 'msg_exec_request:req_1',
+            conversation_id: 'conv_1',
+            turn_id: 'turn_1',
+            role: 'assistant',
+            runtime_mode: 'execute',
+            status: 'pending',
+            created_at: '2026-03-15T00:00:03Z',
+            updated_at: '2026-03-15T00:00:03Z',
+            lineage: {},
+            usage: null,
+            error: null,
+            parts: [
+              {
+                part_id: 'msg_exec_request:req_1:user_input_request',
+                part_type: 'user_input_request',
+                status: 'pending',
+                order: 0,
+                item_key: 'req_1',
+                created_at: '2026-03-15T00:00:03Z',
+                updated_at: '2026-03-15T00:00:03Z',
+                payload: {
+                  part_id: 'msg_exec_request:req_1:user_input_request',
+                  request_id: 'req_1',
+                  request_kind: 'user_input',
+                  resolution_state: 'pending',
+                  title: 'Runtime input needed',
+                  questions: [],
+                },
+              },
+            ],
+          },
+        },
+      ),
+    )
+
+    const resolved = applyConversationEvent(
+      requested,
+      makeEvent(
+        {
+          event_type: 'request_resolved',
+          event_seq: 4,
+          turn_id: 'turn_2',
+          message_id: 'msg_exec_request:req_1',
+          item_id: 'msg_exec_request:req_1:user_input_request',
+        },
+        {
+          request_id: 'req_1',
+          request_kind: 'user_input',
+          resolution_state: 'resolved',
+          resolved_at: '2026-03-15T00:00:04Z',
+        },
+      ),
+    )
+
+    const requestMessage = resolved.messages.find((message) => message.message_id === 'msg_exec_request:req_1')
+    expect(requestMessage?.parts[0]).toMatchObject({
+      payload: {
+        request_id: 'req_1',
+        resolution_state: 'pending',
+      },
+      status: 'pending',
+    })
+    expect(resolved.record.event_seq).toBe(3)
   })
 
   it('creates a user_input_response message from user_input_resolved', () => {

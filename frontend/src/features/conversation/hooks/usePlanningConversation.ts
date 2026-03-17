@@ -6,8 +6,12 @@ import {
   type ConversationScope,
   type ConversationSnapshot,
 } from '../types'
-import { shouldAcceptConversationEvent } from '../model/applyConversationEvent'
 import { useConversationStore, type ConversationViewState } from '../../../stores/conversation-store'
+import {
+  applyIncomingConversationEvent,
+  flushBufferedConversationEvents,
+  getAuthoritativeConversationSnapshot,
+} from './streamRuntime'
 
 type BootstrapStatus = 'idle' | 'loading_snapshot' | 'error'
 
@@ -44,22 +48,6 @@ function computeReconnectDelayMs(attempt: number): number {
   const baseDelay = RECONNECT_DELAY_MS[Math.min(attempt, RECONNECT_DELAY_MS.length - 1)]
   const jitterFactor = 0.8 + Math.random() * 0.4
   return Math.min(MAX_RECONNECT_DELAY_MS, Math.round(baseDelay * jitterFactor))
-}
-
-function flushBufferedEvents(
-  conversationId: string,
-  bufferedEvents: PlanningConversationEvent[],
-) {
-  bufferedEvents
-    .sort((left, right) => left.event_seq - right.event_seq)
-    .forEach((event) => {
-      const current = useConversationStore.getState().conversationsById[conversationId]
-      if (!current || !shouldAcceptConversationEvent(current.snapshot, event)) {
-        return
-      }
-      useConversationStore.getState().applyEvent(conversationId, event)
-    })
-  bufferedEvents.length = 0
 }
 
 export function usePlanningConversation({
@@ -162,13 +150,14 @@ export function usePlanningConversation({
         const snapshot = response.conversation
         const nextConversationId = store.ensureConversation(snapshot)
         store.hydrateConversation(snapshot)
+        const authoritativeSnapshot = getAuthoritativeConversationSnapshot(nextConversationId, snapshot)
         store.setLoading(nextConversationId, false)
         store.setError(nextConversationId, null)
         store.setConnectionStatus(nextConversationId, 'connecting')
         effectConversationId = nextConversationId
         setBootstrapStatus('idle')
         setBootstrapError(null)
-        return { conversationId: nextConversationId, snapshot }
+        return { conversationId: nextConversationId, snapshot: authoritativeSnapshot }
       } catch (error) {
         if (!isCurrentGeneration()) {
           return null
@@ -253,11 +242,12 @@ export function usePlanningConversation({
             bufferedEvents.push(event)
             return
           }
-          const current = useConversationStore.getState().conversationsById[nextConversationId]
-          if (!current || !shouldAcceptConversationEvent(current.snapshot, event)) {
+          const result = applyIncomingConversationEvent(nextConversationId, event)
+          if (result.decision === 'recover') {
+            closeStream()
+            scheduleReconnect('Planning conversation stream lost event continuity.')
             return
           }
-          useConversationStore.getState().applyEvent(nextConversationId, event)
           if (
             event.event_type === 'completion_status' &&
             TERMINAL_STATUSES.has(String(event.payload.status ?? ''))
@@ -290,8 +280,16 @@ export function usePlanningConversation({
         scheduleReconnect(lastReconnectError)
         return
       }
-      flushBufferedEvents(refreshed.conversationId, bufferedEvents)
-      openStream(refreshed.snapshot)
+      const flushed = flushBufferedConversationEvents(refreshed.conversationId, bufferedEvents)
+      for (const event of flushed.appliedEvents) {
+        if (
+          event.event_type === 'completion_status' &&
+          TERMINAL_STATUSES.has(String(event.payload.status ?? ''))
+        ) {
+          scheduleTerminalRefresh(event)
+        }
+      }
+      openStream(flushed.latestSnapshot ?? refreshed.snapshot)
     }
 
     function scheduleReconnect(message: string) {
@@ -325,8 +323,16 @@ export function usePlanningConversation({
       if (!isCurrentGeneration() || !initial) {
         return
       }
-      flushBufferedEvents(initial.conversationId, bufferedEvents)
-      openStream(initial.snapshot)
+      const flushed = flushBufferedConversationEvents(initial.conversationId, bufferedEvents)
+      for (const event of flushed.appliedEvents) {
+        if (
+          event.event_type === 'completion_status' &&
+          TERMINAL_STATUSES.has(String(event.payload.status ?? ''))
+        ) {
+          scheduleTerminalRefresh(event)
+        }
+      }
+      openStream(flushed.latestSnapshot ?? initial.snapshot)
     })()
 
     return () => {
