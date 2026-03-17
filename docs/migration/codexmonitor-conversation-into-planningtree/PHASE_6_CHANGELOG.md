@@ -1,0 +1,136 @@
+# Phase 6 Changelog
+
+## Entry Format
+- Date: `YYYY-MM-DD`
+- Change summary:
+  - short factual bullets only
+- Affected subphases:
+  - one or more of `6.1`, `6.2`, `6.3`
+- Files or artifacts changed:
+  - list the key artifact files touched
+- Reason for update:
+  - why the plan, status, gate, or cleanup state changed
+
+## 2026-03-17
+- Change summary:
+  - completed Phase 6.2 closeout with mixed-workspace router stress coverage, reconnect-race hardening, request and turn isolation proof, and a focused orchestration replay harness
+  - hardened `useRemoteThreadLiveConnection.ts` so `codex/connected` does not auto-recover while the window is blurred
+  - closed `P6.2-G1` through `P6.2-G6` and resolved `P6-OI-003` plus `P6-OI-004`
+- Affected subphases:
+  - `6.2`
+- Files or artifacts changed:
+  - `src/features/app/hooks/appServerEventRouter.test.ts`
+  - `src/features/app/hooks/useAppServerEvents.test.tsx`
+  - `src/features/app/hooks/useRemoteThreadLiveConnection.ts`
+  - `src/features/app/hooks/useRemoteThreadLiveConnection.test.tsx`
+  - `src/features/threads/hooks/useThreadTurnEvents.test.tsx`
+  - `src/features/threads/hooks/useThreadMessaging.test.tsx`
+  - `src/features/threads/hooks/useThreadActions.test.tsx`
+  - `src/features/threads/hooks/useThreads.integration.test.tsx`
+  - `src/test/phase6_2ConcurrencyValidation.test.tsx`
+  - `PHASE_6_2_PLAN.md`
+  - `PHASE_6_2_PROGRESS.md`
+  - `PHASE_6_2_VALIDATION.md`
+  - `PHASE_6_2_OPEN_ISSUES.md`
+  - `PHASE_6_PROGRESS.md`
+  - `PHASE_6_OPEN_ISSUES.md`
+  - `PHASE_6_BATCHES.md`
+  - `PHASE_6_CHANGELOG.md`
+- Reason for update:
+  - Phase 6.2 now has implementation-backed isolation, reconnect, and replay validation proof rather than a planning-only scaffold
+
+## 2026-03-17
+- Change summary:
+  - completed Phase 6.1 closeout with a shared dense-event corpus, scenario-aware benchmark harness, pure app-server router extraction, single-pass thread hydrate helper, and end-to-end dense-event validation
+  - recorded same-path benchmark evidence for all five Phase 6.1 path classes and closed `P6.1-G1` through `P6.1-G6`
+  - moved Phase 6.1 from in-progress to complete and resolved `P6-OI-001` plus `P6-OI-002`
+- Affected subphases:
+  - `6.1`
+- Files or artifacts changed:
+  - `src/test/phase6_1DenseEventCorpus.ts`
+  - `src/test/phase6_1DenseEventValidation.test.ts`
+  - `scripts/phase6_1_dense_event_benchmark.ts`
+  - `src/features/app/hooks/appServerEventRouter.ts`
+  - `src/features/app/hooks/useAppServerEvents.ts`
+  - `src/features/app/hooks/useAppServerEvents.test.tsx`
+  - `src/utils/appServerEvents.ts`
+  - `src/utils/threadItems.ts`
+  - `src/utils/threadItems.test.ts`
+  - `src/features/threads/hooks/useThreadActions.ts`
+  - `src/features/threads/hooks/threadReducer/threadItemsSlice.test.ts`
+  - `src/features/messages/utils/messageRenderUtils.ts`
+  - `src/features/messages/utils/messageRenderUtils.test.ts`
+  - `src/features/messages/components/Messages.tsx`
+  - `PHASE_6_1_PROGRESS.md`
+  - `PHASE_6_1_VALIDATION.md`
+  - `PHASE_6_1_OPEN_ISSUES.md`
+  - `PHASE_6_PROGRESS.md`
+  - `PHASE_6_OPEN_ISSUES.md`
+  - `PHASE_6_BATCHES.md`
+  - `PHASE_6_CHANGELOG.md`
+- Reason for update:
+  - Phase 6.1 now has recorded evidence, locked corpus coverage, and validation proof sufficient to close the subphase rather than leaving it as a partially implemented performance slice
+
+## 2026-03-17
+- Change summary:
+  - implemented the first real `6.1` optimization slice across dense-event preparation, merge, render grouping, and event fanout hot paths
+  - added dense-event regression coverage for repeated reducer deltas, render grouping, and multi-subscriber event dispatch
+  - added a dev-only benchmark harness at `scripts/phase6_1_dense_event_benchmark.ts` and recorded initial reducer/render/merge timing output from it
+  - moved `6.1` from planned to in-progress while keeping `P6.1-G1` and `P6.1-G2` explicitly open
+- Affected subphases:
+  - `6.1`
+- Files or artifacts changed:
+  - `src/utils/threadItems.ts`
+  - `src/utils/threadItems.test.ts`
+  - `src/features/messages/utils/messageRenderUtils.ts`
+  - `src/features/messages/utils/messageRenderUtils.test.ts`
+  - `src/features/messages/components/Messages.tsx`
+  - `src/services/events.ts`
+  - `src/services/events.test.ts`
+  - `src/features/app/hooks/useAppServerEvents.ts`
+  - `src/features/threads/hooks/useThreadActions.ts`
+  - `src/features/threads/hooks/threadReducer/threadItemsSlice.test.ts`
+  - `scripts/phase6_1_dense_event_benchmark.ts`
+  - `PHASE_6_1_PROGRESS.md`
+  - `PHASE_6_PROGRESS.md`
+  - `PHASE_6_CHANGELOG.md`
+- Reason for update:
+  - Phase 6.1 now has concrete hot-path implementation and measurement tooling, not only planning artifacts
+
+## 2026-03-17
+- Change summary:
+  - expanded `6.1` from a stub into a decision-complete subphase package with explicit gates, scoped path classes, dense-event corpus rules, and validation requirements
+  - aligned `PHASE_6_1_PLAN.md`, `PHASE_6_1_PROGRESS.md`, `PHASE_6_1_VALIDATION.md`, `PHASE_6_1_OPEN_ISSUES.md`, `PHASE_6_BATCHES.md`, and `PHASE_6_PROGRESS.md` around the same `P6.1-G1` to `P6.1-G6` model
+  - corrected `PHASE_6_BATCHES.md` so `P6.1.b` and `P6.1.c` match the subphase plan as optimization batches, while the dense-event corpus remains a pre-optimization gate
+- Affected subphases:
+  - `6.1`
+- Files or artifacts changed:
+  - `PHASE_6_1_PLAN.md`
+  - `PHASE_6_1_PROGRESS.md`
+  - `PHASE_6_1_VALIDATION.md`
+  - `PHASE_6_1_OPEN_ISSUES.md`
+  - `PHASE_6_BATCHES.md`
+  - `PHASE_6_PROGRESS.md`
+  - `PHASE_6_CHANGELOG.md`
+- Reason for update:
+  - replace the initial Phase 6.1 stub with an implementation-ready subphase spec before any baseline capture or optimization work begins
+
+## 2026-03-17
+- Change summary:
+  - created the dedicated Phase 6 artifact package and canonical umbrella scaffold
+  - locked shared Phase 6 entry conditions, invariants, gate model, and cleanup-log rules
+  - derived initial `6.1`, `6.2`, and `6.3` subphase tracking stubs from the umbrella rules
+- Affected subphases:
+  - `6.1`
+  - `6.2`
+  - `6.3`
+- Files or artifacts changed:
+  - `PHASE_6_PLAN.md`
+  - `PHASE_6_PROGRESS.md`
+  - `PHASE_6_BATCHES.md`
+  - `PHASE_6_VALIDATION.md`
+  - `PHASE_6_OPEN_ISSUES.md`
+  - `PHASE_6_CHANGELOG.md`
+  - `PHASE_6_CLEANUP_LOG.md`
+- Reason for update:
+  - establish the canonical Phase 6 scaffolding before baseline capture, stress validation, or cleanup work begins
