@@ -1769,7 +1769,7 @@ describe('BreadcrumbWorkspace', () => {
     ).toBeInTheDocument()
   })
 
-  it('uses the latest unresolved execution-v2 request for the planner modal and submits through the v2 resolve route', async () => {
+  it('renders the latest unresolved execution-v2 request inline and submits through the v2 resolve route', async () => {
     vi.stubEnv('VITE_EXECUTION_CONVERSATION_V2_ENABLED', 'true')
     apiMock.getExecutionConversation.mockResolvedValue({
       conversation: makeExecutionConversationSnapshotWithUserInputRequest(),
@@ -1813,13 +1813,16 @@ describe('BreadcrumbWorkspace', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText('One quick answer before the plan can finish')).toBeInTheDocument()
-    const dialog = screen.getByRole('dialog', { name: 'One quick answer before the plan can finish' })
-    expect(within(dialog).getByText('Brand direction')).toBeInTheDocument()
-    expect(within(dialog).queryByText('Deprecated')).not.toBeInTheDocument()
+    expect(await screen.findByText('Runtime input needed')).toBeInTheDocument()
+    expect(screen.getByText('Brand direction')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByText('Deprecated')).not.toBeInTheDocument()
+    expect(
+      screen.getByPlaceholderText('Answer the inline runtime request to continue the current execution.'),
+    ).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('radio', { name: /Editorial Structured and dense\./ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Continue planning' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
     await waitFor(() => {
       expect(apiMock.resolveExecutionConversationRequest).toHaveBeenCalledWith(

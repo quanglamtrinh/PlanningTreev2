@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react'
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ConversationSurface } from '../../src/features/conversation/components/ConversationSurface'
@@ -586,5 +586,182 @@ describe('ConversationSurface', () => {
 
     expect(screen.queryByText('1 / Ask Node')).not.toBeInTheDocument()
     expect(screen.queryByText('connected')).not.toBeInTheDocument()
+  })
+
+  it('renders markdown text, code-copy, quote, and done polish in the execution variant', async () => {
+    const onQuoteMessage = vi.fn()
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          message_id: 'msg_exec_markdown',
+          parts: [
+            makePart({
+              part_id: 'part_exec_markdown',
+              payload: {
+                text: '**Bold move**\n\n```ts\nconst ship = true\n```',
+              },
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    renderSurface(model, {
+      variant: 'codex_execution',
+      onQuoteMessage,
+      transcriptStatus: {
+        isStreaming: false,
+        lastDurationMs: 2400,
+      },
+    })
+
+    expect(screen.getByText('Bold move')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Copy message' }))
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      '**Bold move**\n\n```ts\nconst ship = true\n```',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('const ship = true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quote message' }))
+    expect(onQuoteMessage).toHaveBeenCalledWith('> **Bold move**\n>\n> ```ts\n> const ship = true\n> ```')
+
+    expect(screen.getByText('Done')).toBeInTheDocument()
+    expect(screen.getByText('2s')).toBeInTheDocument()
+  })
+
+  it('submits inline runtime input and keeps approval actions disabled in the execution variant', async () => {
+    const submitUserInputResponse = vi.fn(async () => ({ status: 'resolved' }))
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          message_id: 'msg_exec_requests',
+          parts: [
+            makePart({
+              part_id: 'part_exec_approval',
+              part_type: 'approval_request',
+              payload: {
+                request_id: 'req_approval_1',
+                title: 'Approve execution',
+                prompt: 'Approve the workspace write step.',
+                resolution_state: 'pending',
+              },
+            }),
+            makePart({
+              part_id: 'part_exec_input_request',
+              part_type: 'user_input_request',
+              order: 1,
+              payload: {
+                request_id: 'req_input_1',
+                title: 'Need runtime input',
+                prompt: 'Choose a direction.',
+                resolution_state: 'pending',
+                questions: [
+                  {
+                    id: 'brand_direction',
+                    header: 'Brand direction',
+                    question: 'What visual direction should we use?',
+                    options: [{ label: 'Editorial', description: 'Structured and dense.' }],
+                  },
+                ],
+              },
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    renderSurface(model, {
+      variant: 'codex_execution',
+      activeRequest: {
+        requestId: 'req_input_1',
+        requestKind: 'user_input',
+        resolutionState: 'pending',
+        messageId: 'msg_exec_requests',
+        partId: 'part_exec_input_request',
+        threadId: 'thread_exec_1',
+        turnId: 'turn_1',
+        itemId: null,
+        title: 'Need runtime input',
+        summary: null,
+        prompt: 'Choose a direction.',
+        questions: [
+          {
+            id: 'brand_direction',
+            header: 'Brand direction',
+            question: 'What visual direction should we use?',
+            isOther: false,
+            isSecret: false,
+            options: [{ label: 'Editorial', description: 'Structured and dense.' }],
+          },
+        ],
+      },
+      requestUi: {
+        isSubmitting: false,
+        error: null,
+        submitUserInputResponse,
+        respondToApproval: vi.fn(async () => ({ status: 'resolved' })),
+      },
+    })
+
+    expect(screen.getByRole('button', { name: 'Approve request' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Decline request' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('radio', { name: /Editorial Structured and dense\./ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+
+    await waitFor(() => {
+      expect(submitUserInputResponse).toHaveBeenCalledWith({
+        requestId: 'req_input_1',
+        threadId: 'thread_exec_1',
+        turnId: 'turn_1',
+        answers: {
+          brand_direction: {
+            answers: ['Editorial'],
+          },
+        },
+      })
+    })
+  })
+
+  it('auto-follows near the bottom but stops forcing scroll after the user scrolls away', () => {
+    const scrollIntoView = vi.mocked(HTMLElement.prototype.scrollIntoView)
+    const initialModel = buildConversationRenderModel(
+      makeSnapshot([makeMessage({ parts: [makePart({ payload: { text: 'First row' } })] })]),
+    )
+    const nextModel = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({ message_id: 'msg_first', parts: [makePart({ payload: { text: 'First row' } })] }),
+        makeMessage({
+          message_id: 'msg_second',
+          parts: [makePart({ part_id: 'part_second', payload: { text: 'Second row' } })],
+        }),
+      ]),
+    )
+
+    const view = renderSurface(initialModel, { variant: 'codex_execution' })
+    const thread = view.container.querySelector('[class*="thread_"]') as HTMLDivElement
+    expect(thread).not.toBeNull()
+
+    Object.defineProperty(thread, 'scrollHeight', { configurable: true, value: 640 })
+    Object.defineProperty(thread, 'clientHeight', { configurable: true, value: 120 })
+    Object.defineProperty(thread, 'scrollTop', { configurable: true, writable: true, value: 0 })
+
+    scrollIntoView.mockClear()
+    fireEvent.scroll(thread)
+    view.rerender(
+      <ConversationSurface
+        model={nextModel}
+        variant="codex_execution"
+        connectionState="connected"
+        isLoading={false}
+        errorMessage={null}
+        emptyTitle="No messages yet"
+        emptyHint="Start when you are ready."
+      />,
+    )
+
+    expect(scrollIntoView).not.toHaveBeenCalled()
   })
 })

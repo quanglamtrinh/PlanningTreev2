@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 
 import type { NodeRecord } from '../../api/types'
 import type { ConversationViewState } from '../../stores/conversation-store'
+import type { ConversationSurfaceRequestUi } from '../conversation/components/ConversationSurface.types'
+import type { ActiveConversationRequest } from '../conversation/hooks/useConversationRequests'
 import { ExecutionConversationPanel } from './ExecutionConversationPanel'
 import { LegacyExecutionChatPanel } from './LegacyExecutionChatPanel'
 
@@ -11,10 +13,12 @@ type ExecutionConversationHost = {
   bootstrapStatus: 'idle' | 'loading_snapshot' | 'error'
   bootstrapError: string | null
   send: (content: string) => Promise<unknown>
-  continueFromMessage: (messageId: string) => Promise<unknown>
-  retryFromMessage: (messageId: string) => Promise<unknown>
-  regenerateFromMessage: (messageId: string) => Promise<unknown>
-  cancelStream: (streamId: string | null) => Promise<unknown>
+  continueFromMessage?: (messageId: string) => Promise<unknown>
+  retryFromMessage?: (messageId: string) => Promise<unknown>
+  regenerateFromMessage?: (messageId: string) => Promise<unknown>
+  cancelStream?: (streamId: string | null) => Promise<unknown>
+  activeRequest?: ActiveConversationRequest | null
+  requestUi?: ConversationSurfaceRequestUi | null
 }
 
 type Props = {
@@ -53,6 +57,8 @@ export function ChatPanel({
         retryFromMessage={executionConversation.retryFromMessage}
         regenerateFromMessage={executionConversation.regenerateFromMessage}
         cancelStream={executionConversation.cancelStream}
+        activeRequest={executionConversation.activeRequest}
+        requestUi={executionConversation.requestUi}
       />
     )
   }

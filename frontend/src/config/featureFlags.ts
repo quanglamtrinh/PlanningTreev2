@@ -13,7 +13,7 @@ function readBooleanEnvFlag(value: string | undefined, defaultValue: boolean): b
 }
 
 export function isExecutionConversationV2Enabled(): boolean {
-  return readBooleanEnvFlag(import.meta.env.VITE_EXECUTION_CONVERSATION_V2_ENABLED, false)
+  return readBooleanEnvFlag(import.meta.env.VITE_EXECUTION_CONVERSATION_V2_ENABLED, true)
 }
 
 export function isAskConversationV2Enabled(): boolean {

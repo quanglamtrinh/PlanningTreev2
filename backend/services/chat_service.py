@@ -992,17 +992,58 @@ class ChatService:
             payload = parse_plan_turn_response(raw_output)
             issues = plan_turn_issues(payload)
             if not issues and payload is not None:
+                structured_result = normalize_plan_turn_payload(payload)
+                bound_turn_id = str(response.get("turn_id") or turn_id)
                 return {
-                    "structured_result": normalize_plan_turn_payload(payload),
-                    "bound_turn_id": str(response.get("turn_id") or turn_id),
+                    "structured_result": structured_result,
+                    "bound_turn_id": bound_turn_id,
                     "turn_status": str(response.get("turn_status") or ""),
-                    "final_plan_item": copy.deepcopy(response.get("final_plan_item")),
+                    "final_plan_item": self._resolve_plan_turn_final_plan_item(
+                        response=response,
+                        structured_result=structured_result,
+                        bound_turn_id=bound_turn_id,
+                        fallback_thread_id=str(thread_id or ""),
+                    ),
                     "runtime_request_ids": list(response.get("runtime_request_ids") or []),
                 }
             last_issues = issues
             retry_feedback = build_plan_turn_retry_feedback(issues)
 
         raise PlanExecuteInvalidResponse(last_issues)
+
+    def _resolve_plan_turn_final_plan_item(
+        self,
+        *,
+        response: dict[str, Any],
+        structured_result: dict[str, Any],
+        bound_turn_id: str,
+        fallback_thread_id: str,
+    ) -> dict[str, Any] | None:
+        final_plan_item = copy.deepcopy(response.get("final_plan_item"))
+        if isinstance(final_plan_item, dict):
+            item_id = str(final_plan_item.get("id") or "").strip()
+            item_text = str(final_plan_item.get("text") or "").strip()
+            item_turn_id = str(final_plan_item.get("turn_id") or "").strip()
+            if item_id and item_text and item_turn_id == bound_turn_id:
+                if not str(final_plan_item.get("thread_id") or "").strip():
+                    final_plan_item["thread_id"] = (
+                        str(response.get("thread_id") or "").strip() or fallback_thread_id
+                    )
+                return final_plan_item
+
+        if str(structured_result.get("kind") or "").strip() != "plan_ready":
+            return final_plan_item if isinstance(final_plan_item, dict) else None
+
+        plan_markdown = str(structured_result.get("plan_markdown") or "").strip()
+        if not plan_markdown:
+            return final_plan_item if isinstance(final_plan_item, dict) else None
+
+        return {
+            "id": f"synthetic_plan_item_{bound_turn_id}",
+            "text": plan_markdown,
+            "turn_id": bound_turn_id,
+            "thread_id": str(response.get("thread_id") or "").strip() or fallback_thread_id,
+        }
 
     def _handle_plan_input_requested(
         self,

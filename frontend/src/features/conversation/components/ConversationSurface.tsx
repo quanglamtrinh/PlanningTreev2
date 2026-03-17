@@ -1,52 +1,13 @@
-import type { KeyboardEvent, ReactNode } from 'react'
-
-import type {
-  ConversationRenderMessage,
-  ConversationRenderModel,
-} from '../model/buildConversationRenderModel'
+import type { ConversationRenderMessage } from '../model/buildConversationRenderModel'
 import { renderConversationBlock } from './ConversationBlocks'
+import { ExecutionConversationSurface } from './ExecutionConversationSurface'
+import type {
+  ConversationSurfaceMessageAction,
+  ConversationSurfaceProps,
+} from './ConversationSurface.types'
 import styles from './ConversationSurface.module.css'
 
-export type ConversationSurfaceConnectionState =
-  | 'idle'
-  | 'loading'
-  | 'connected'
-  | 'reconnecting'
-  | 'disconnected'
-  | 'error'
-
-type Props = {
-  model: ConversationRenderModel | null
-  connectionState: ConversationSurfaceConnectionState
-  isLoading: boolean
-  errorMessage: string | null
-  contextLabel?: string
-  emptyTitle: string
-  emptyHint: ReactNode
-  showHeader?: boolean
-  showComposer?: boolean
-  composerValue?: string
-  composerDisabled?: boolean
-  composerPlaceholder?: string
-  composerHint?: ReactNode
-  onComposerValueChange?: (draft: string) => void
-  onComposerSubmit?: () => void
-  onComposerKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void
-  messageActions?: Record<
-    string,
-    Array<{
-      key: string
-      label: string
-      disabled?: boolean
-      onPress: () => void
-    }>
-  >
-  streamAction?: {
-    label: string
-    disabled?: boolean
-    onPress: () => void
-  } | null
-}
+export type { ConversationSurfaceConnectionState } from './ConversationSurface.types'
 
 function TypingIndicator() {
   return (
@@ -70,12 +31,7 @@ function LoadingDots() {
 
 function renderConversationMessage(
   message: ConversationRenderMessage,
-  actions: Array<{
-    key: string
-    label: string
-    disabled?: boolean
-    onPress: () => void
-  }> = [],
+  actions: ConversationSurfaceMessageAction[] = [],
 ) {
   return (
     <article key={message.messageId} className={`${styles.message} ${styles[message.roleTone]}`}>
@@ -131,7 +87,7 @@ function renderConversationMessage(
   )
 }
 
-export function ConversationSurface({
+function MinimalConversationSurface({
   model,
   connectionState,
   isLoading,
@@ -150,7 +106,7 @@ export function ConversationSurface({
   onComposerKeyDown,
   messageActions = {},
   streamAction = null,
-}: Props) {
+}: ConversationSurfaceProps) {
   const entries = model?.entries ?? []
   const showTranscript = entries.length > 0
   const canRenderComposer =
@@ -203,10 +159,7 @@ export function ConversationSurface({
         {showTranscript
           ? entries.map((entry) => {
               if (entry.kind === 'message') {
-                return renderConversationMessage(
-                  entry.message,
-                  messageActions[entry.message.messageId] ?? [],
-                )
+                return renderConversationMessage(entry.message, messageActions[entry.message.messageId] ?? [])
               }
               return (
                 <details key={entry.key} className={styles.replayGroup}>
@@ -248,4 +201,11 @@ export function ConversationSurface({
       ) : null}
     </div>
   )
+}
+
+export function ConversationSurface(props: ConversationSurfaceProps) {
+  if (props.variant === 'codex_execution') {
+    return <ExecutionConversationSurface {...props} />
+  }
+  return <MinimalConversationSurface {...props} />
 }

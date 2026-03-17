@@ -7,6 +7,7 @@ from backend.ai.json_extract import extract_first_json_object
 
 PLAN_TURN_FIELDS = (
     "kind",
+    "plan_markdown",
     "assistant_summary",
     "change_summary",
     "changed_contract_axes",
@@ -53,9 +54,9 @@ def build_plan_turn_prompt(
             "that changes the confirmed contract, do not silently continue with a ready plan."
         ),
         (
-            "When the confirmed contract still holds, produce the execution plan as a plan item. "
-            "The final assistant message must contain only the structured branching JSON. "
-            "Do not include plan text in the final JSON."
+            "When the confirmed contract still holds, produce the execution plan as a plan item whenever supported. "
+            "Also include the same final plan text in plan_markdown so the app can still bind the plan if the native "
+            "plan item is unavailable. The final assistant message must contain only the structured branching JSON."
         ),
         (
             "When the user answer changes the confirmed contract, return kind='requires_spec_update' with a concise "
@@ -64,6 +65,10 @@ def build_plan_turn_prompt(
         (
             "Return exactly one JSON object. Do not use markdown fences. "
             "Do not include any explanation before or after the JSON."
+        ),
+        (
+            "Always include every top-level JSON field from the required schema. "
+            "Use null for fields that do not apply to the selected kind."
         ),
         "Canonical planning context:",
         json.dumps(context, indent=2, ensure_ascii=True),
@@ -88,37 +93,52 @@ def build_plan_turn_prompt(
 def plan_turn_output_schema() -> dict[str, Any]:
     return {
         "type": "object",
-        "oneOf": [
-            {
-                "type": "object",
-                "properties": {
-                    "kind": {"const": "plan_ready"},
-                    "assistant_summary": {"type": "string", "minLength": 1},
-                },
-                "required": ["kind", "assistant_summary"],
-                "additionalProperties": False,
+        "properties": {
+            "kind": {"type": "string", "enum": sorted(VALID_PLAN_KINDS)},
+            "plan_markdown": {
+                "anyOf": [
+                    {"type": "string", "minLength": 1},
+                    {"type": "null"},
+                ]
             },
-            {
-                "type": "object",
-                "properties": {
-                    "kind": {"const": "requires_spec_update"},
-                    "change_summary": {"type": "string", "minLength": 1},
-                    "changed_contract_axes": {
+            "assistant_summary": {
+                "anyOf": [
+                    {"type": "string", "minLength": 1},
+                    {"type": "null"},
+                ]
+            },
+            "change_summary": {
+                "anyOf": [
+                    {"type": "string", "minLength": 1},
+                    {"type": "null"},
+                ]
+            },
+            "changed_contract_axes": {
+                "anyOf": [
+                    {
                         "type": "array",
                         "minItems": 1,
                         "items": {"type": "string", "enum": sorted(ALLOWED_CONTRACT_AXES)},
                     },
-                    "recommended_next_step": {"type": "string", "minLength": 1},
-                },
-                "required": [
-                    "kind",
-                    "change_summary",
-                    "changed_contract_axes",
-                    "recommended_next_step",
-                ],
-                "additionalProperties": False,
+                    {"type": "null"},
+                ]
             },
+            "recommended_next_step": {
+                "anyOf": [
+                    {"type": "string", "minLength": 1},
+                    {"type": "null"},
+                ]
+            },
+        },
+        "required": [
+            "kind",
+            "plan_markdown",
+            "assistant_summary",
+            "change_summary",
+            "changed_contract_axes",
+            "recommended_next_step",
         ],
+        "additionalProperties": False,
     }
 
 
@@ -126,7 +146,11 @@ def parse_plan_turn_response(raw_text: str) -> dict[str, Any] | None:
     payload = extract_first_json_object(raw_text)
     if payload is None or not isinstance(payload, dict):
         return None
-    return {field: payload[field] for field in PLAN_TURN_FIELDS if field in payload}
+    return {
+        field: payload[field]
+        for field in PLAN_TURN_FIELDS
+        if field in payload and payload[field] is not None
+    }
 
 
 def plan_turn_issues(payload: dict[str, Any] | None) -> list[str]:
@@ -144,9 +168,14 @@ def plan_turn_issues(payload: dict[str, Any] | None) -> list[str]:
     recommended_next_step = payload.get("recommended_next_step")
 
     if kind == "plan_ready":
+        plan_markdown = payload.get("plan_markdown")
+        if not isinstance(plan_markdown, str) or not plan_markdown.strip():
+            issues.append("plan_markdown is required when kind='plan_ready'.")
         if not isinstance(assistant_summary, str) or not assistant_summary.strip():
             issues.append("assistant_summary is required when kind='plan_ready'.")
-        unknown_fields = [field for field in payload if field not in {"kind", "assistant_summary"}]
+        unknown_fields = [
+            field for field in payload if field not in {"kind", "plan_markdown", "assistant_summary"}
+        ]
         if unknown_fields:
             issues.append(
                 f"Unknown top-level fields for kind='plan_ready': {', '.join(sorted(unknown_fields))}."
@@ -204,6 +233,7 @@ def normalize_plan_turn_payload(payload: dict[str, Any]) -> dict[str, Any]:
         }
     return {
         "kind": "plan_ready",
+        "plan_markdown": str(payload.get("plan_markdown") or "").strip(),
         "assistant_summary": str(payload.get("assistant_summary") or "").strip(),
     }
 
@@ -224,5 +254,9 @@ def build_plan_turn_retry_feedback(issues: list[str]) -> str:
 def plan_turn_schema_example() -> dict[str, Any]:
     return {
         "kind": "plan_ready",
+        "plan_markdown": "# Execution Plan\n\n1. Inspect the current node context.\n2. Apply the approved change.\n3. Verify the outcome.",
         "assistant_summary": "Plan is ready and bound to the current confirmed contract.",
+        "change_summary": None,
+        "changed_contract_axes": None,
+        "recommended_next_step": None,
     }

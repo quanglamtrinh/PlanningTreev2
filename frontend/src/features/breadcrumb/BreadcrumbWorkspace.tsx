@@ -310,12 +310,10 @@ export function BreadcrumbWorkspace() {
       return response.status;
     },
   });
-  const activeConversationRequests =
+  const activePlanningConversationRequests =
     planningConversationV2Enabled && activeTab === "planning"
       ? planningConversationRequests
-      : executionConversationV2Enabled
-        ? executionConversationRequests
-        : null;
+      : null;
 
   useEffect(() => {
     const managedNodeId =
@@ -499,13 +497,13 @@ export function BreadcrumbWorkspace() {
   }, [activeTab, loadNodeDocuments, node]);
 
   useEffect(() => {
-    const pendingRequest = activeConversationRequests
-      ? activeConversationRequests.activeRequest?.requestKind === "user_input"
+    const pendingRequest = activePlanningConversationRequests
+      ? activePlanningConversationRequests.activeRequest?.requestKind === "user_input"
         ? {
-            request_id: activeConversationRequests.activeRequest.requestId,
-            thread_id: activeConversationRequests.activeRequest.threadId,
-            turn_id: activeConversationRequests.activeRequest.turnId,
-            questions: activeConversationRequests.activeRequest.questions.map((question) => ({
+            request_id: activePlanningConversationRequests.activeRequest.requestId,
+            thread_id: activePlanningConversationRequests.activeRequest.threadId,
+            turn_id: activePlanningConversationRequests.activeRequest.turnId,
+            questions: activePlanningConversationRequests.activeRequest.questions.map((question) => ({
               id: question.id,
               header: question.header,
               question: question.question,
@@ -533,7 +531,7 @@ export function BreadcrumbWorkspace() {
     });
     setPlanInputError(null);
   }, [
-    activeConversationRequests?.activeRequest,
+    activePlanningConversationRequests?.activeRequest,
     chatSession?.pending_input_request,
   ]);
 
@@ -554,13 +552,13 @@ export function BreadcrumbWorkspace() {
   const nodeDocuments = documentsByNode[node.node_id];
   const nodeActivity = agentActivityByNode[node.node_id];
   const executionState = nodeDocuments?.state;
-  const pendingInputRequest = activeConversationRequests
-    ? activeConversationRequests.activeRequest?.requestKind === "user_input"
+  const plannerPendingInputRequest = activePlanningConversationRequests
+    ? activePlanningConversationRequests.activeRequest?.requestKind === "user_input"
       ? {
-          request_id: activeConversationRequests.activeRequest.requestId,
-          thread_id: activeConversationRequests.activeRequest.threadId,
-          turn_id: activeConversationRequests.activeRequest.turnId,
-          questions: activeConversationRequests.activeRequest.questions.map((question) => ({
+          request_id: activePlanningConversationRequests.activeRequest.requestId,
+          thread_id: activePlanningConversationRequests.activeRequest.threadId,
+          turn_id: activePlanningConversationRequests.activeRequest.turnId,
+          questions: activePlanningConversationRequests.activeRequest.questions.map((question) => ({
             id: question.id,
             header: question.header,
             question: question.question,
@@ -571,6 +569,10 @@ export function BreadcrumbWorkspace() {
         }
       : null
     : chatSession?.pending_input_request ?? null;
+  const executionPendingInputRequest =
+    executionConversationRequests.activeRequest?.requestKind === "user_input"
+      ? executionConversationRequests.activeRequest
+      : null;
   const currentPlan = nodeDocuments?.plan?.content?.trim() ?? "";
   const canPlan =
     Boolean(
@@ -600,8 +602,8 @@ export function BreadcrumbWorkspace() {
   const legacyExecutionComposerPlaceholder =
     "Planner input is handled through the native modal when needed.";
   const executionComposerPlaceholder = executionConversationV2Enabled
-    ? pendingInputRequest
-      ? legacyExecutionComposerPlaceholder
+    ? executionPendingInputRequest
+      ? "Answer the inline runtime request to continue the current execution."
       : canMessageExecution
         ? `Message ${node.title}...`
         : executionState?.plan_status === "ready"
@@ -612,8 +614,8 @@ export function BreadcrumbWorkspace() {
     ? "Execution Conversation"
     : "Plan Session";
   const executionEmptyHint = executionConversationV2Enabled
-    ? pendingInputRequest
-      ? "Planner input is handled through the native modal when needed."
+    ? executionPendingInputRequest
+      ? "Runtime input requests now appear inline in the execution transcript."
       : executionState?.run_status === "executing"
         ? "Execution messages will appear here as the current run progresses."
         : executionState?.plan_status === "ready"
@@ -633,6 +635,14 @@ export function BreadcrumbWorkspace() {
         retryFromMessage: executionConversation.retryFromMessage,
         regenerateFromMessage: executionConversation.regenerateFromMessage,
         cancelStream: executionConversation.cancelStream,
+        activeRequest: executionConversationRequests.activeRequest,
+        requestUi: {
+          isSubmitting: executionConversationRequests.isSubmitting,
+          error: executionConversationRequests.submitError,
+          submitUserInputResponse:
+            executionConversationRequests.submitUserInputResponse,
+          respondToApproval: executionConversationRequests.respondToApproval,
+        },
       }
     : undefined;
   const visibleAskConversation = askConversationV2Enabled
@@ -725,28 +735,28 @@ export function BreadcrumbWorkspace() {
   ) : null;
 
   const canSubmitPlanInput = Boolean(
-    pendingInputRequest &&
-      pendingInputRequest.questions.every(
+    plannerPendingInputRequest &&
+      plannerPendingInputRequest.questions.every(
         (question) => (planInputDrafts[question.id] ?? "").trim().length > 0,
       ) &&
-      !(activeConversationRequests
-        ? activeConversationRequests.isSubmitting
+      !(activePlanningConversationRequests
+        ? activePlanningConversationRequests.isSubmitting
         : isResolvingPlanInput),
   );
 
   async function handleResolvePlanInput() {
-    if (!projectId || !node || !pendingInputRequest || !canSubmitPlanInput) {
+    if (!projectId || !node || !plannerPendingInputRequest || !canSubmitPlanInput) {
       return;
     }
-    if (activeConversationRequests) {
+    if (activePlanningConversationRequests) {
       setPlanInputError(null);
       try {
-        await activeConversationRequests.submitUserInputResponse({
-          requestId: pendingInputRequest.request_id,
-          threadId: pendingInputRequest.thread_id,
-          turnId: pendingInputRequest.turn_id,
+        await activePlanningConversationRequests.submitUserInputResponse({
+          requestId: plannerPendingInputRequest.request_id,
+          threadId: plannerPendingInputRequest.thread_id,
+          turnId: plannerPendingInputRequest.turn_id,
           answers: Object.fromEntries(
-            pendingInputRequest.questions.map((question) => [
+            plannerPendingInputRequest.questions.map((question) => [
               question.id,
               { answers: [(planInputDrafts[question.id] ?? "").trim()] },
             ]),
@@ -762,11 +772,11 @@ export function BreadcrumbWorkspace() {
     setIsResolvingPlanInput(true);
     setPlanInputError(null);
     try {
-      await api.resolvePlanInput(projectId, node.node_id, pendingInputRequest.request_id, {
-        thread_id: pendingInputRequest.thread_id,
-        turn_id: pendingInputRequest.turn_id,
+      await api.resolvePlanInput(projectId, node.node_id, plannerPendingInputRequest.request_id, {
+        thread_id: plannerPendingInputRequest.thread_id,
+        turn_id: plannerPendingInputRequest.turn_id,
         answers: Object.fromEntries(
-          pendingInputRequest.questions.map((question) => [
+          plannerPendingInputRequest.questions.map((question) => [
             question.id,
             { answers: [(planInputDrafts[question.id] ?? "").trim()] },
           ]),
@@ -781,14 +791,14 @@ export function BreadcrumbWorkspace() {
     }
   }
 
-  const visiblePlanInputError = activeConversationRequests
-    ? activeConversationRequests.submitError ?? planInputError
+  const visiblePlanInputError = activePlanningConversationRequests
+    ? activePlanningConversationRequests.submitError ?? planInputError
     : planInputError;
-  const isPlanInputSubmitting = activeConversationRequests
-    ? activeConversationRequests.isSubmitting
+  const isPlanInputSubmitting = activePlanningConversationRequests
+    ? activePlanningConversationRequests.isSubmitting
     : isResolvingPlanInput;
 
-  const plannerInputModal = pendingInputRequest ? (
+  const plannerInputModal = plannerPendingInputRequest ? (
     <div className={styles.modalBackdrop} role="presentation">
       <section
         className={styles.modalCard}
@@ -805,7 +815,7 @@ export function BreadcrumbWorkspace() {
           </p>
         </div>
         <div className={styles.modalBody}>
-          {pendingInputRequest.questions.map((question) => {
+          {plannerPendingInputRequest.questions.map((question) => {
             const answer = planInputDrafts[question.id] ?? "";
             const options = question.options ?? [];
             return (

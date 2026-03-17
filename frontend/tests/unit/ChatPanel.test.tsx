@@ -100,6 +100,7 @@ function ExecutionConversationHarness({
   emptyTitle = 'Execution Conversation',
   emptyHint = 'Execution messages will appear here.',
   send = vi.fn(async () => undefined),
+  cancelStream = vi.fn(async () => undefined),
 }: {
   conversationId: string | null
   bootstrapStatus?: 'idle' | 'loading_snapshot' | 'error'
@@ -109,6 +110,7 @@ function ExecutionConversationHarness({
   emptyTitle?: string
   emptyHint?: string
   send?: (content: string) => Promise<unknown>
+  cancelStream?: (streamId: string | null) => Promise<unknown>
 }) {
   const conversation = useConversationStore((state) =>
     conversationId ? state.conversationsById[conversationId] ?? null : null,
@@ -128,6 +130,7 @@ function ExecutionConversationHarness({
         bootstrapStatus,
         bootstrapError,
         send,
+        cancelStream,
       }}
     />
   )
@@ -307,7 +310,7 @@ describe('ChatPanel', () => {
     })
   })
 
-  it('keeps the composer disabled while the execution conversation is still busy after send acceptance', async () => {
+  it('shows Stop while keeping the composer disabled after send acceptance leaves execution busy', async () => {
     const snapshot = makeConversationSnapshot()
     const conversationId = useConversationStore.getState().ensureConversation(snapshot)
     useConversationStore.getState().hydrateConversation(snapshot)
@@ -332,7 +335,7 @@ describe('ChatPanel', () => {
     await waitFor(() => {
       expect(screen.getByRole('textbox')).toBeDisabled()
     })
-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
     expect(useConversationStore.getState().conversationsById[conversationId].composerDraft).toBe('')
   })
 
@@ -418,5 +421,51 @@ describe('ChatPanel', () => {
     render(<ExecutionConversationHarness conversationId={conversationId} />)
 
     expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument()
+  })
+
+  it('quotes assistant text back into the keyed composer draft in the execution-v2 branch', async () => {
+    const snapshot = makeConversationSnapshotWithAssistantText('Quote this answer')
+    const conversationId = useConversationStore.getState().ensureConversation(snapshot)
+    useConversationStore.getState().hydrateConversation(snapshot)
+    useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
+
+    render(<ExecutionConversationHarness conversationId={conversationId} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Quote message' }))
+
+    await waitFor(() => {
+      expect(useConversationStore.getState().conversationsById[conversationId].composerDraft).toBe(
+        '> Quote this answer\n\n',
+      )
+    })
+    expect(screen.getByRole('textbox')).toHaveValue('> Quote this answer\n\n')
+  })
+
+  it('shows Stop while streaming and routes cancellation through the execution host', async () => {
+    const snapshot = makeConversationSnapshotWithAssistantText('Streaming output')
+    const conversationId = useConversationStore.getState().ensureConversation(snapshot)
+    useConversationStore.getState().hydrateConversation({
+      ...snapshot,
+      record: {
+        ...snapshot.record,
+        active_stream_id: 'stream_live',
+        status: 'active',
+      },
+    })
+    useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
+    const cancelStream = vi.fn(async () => ({ status: 'accepted' }))
+
+    render(
+      <ExecutionConversationHarness
+        conversationId={conversationId}
+        cancelStream={cancelStream}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+
+    await waitFor(() => {
+      expect(cancelStream).toHaveBeenCalledWith('stream_live')
+    })
   })
 })

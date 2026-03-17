@@ -86,6 +86,7 @@ class FakeCodexClient:
             turn_id = f"turn_plan_{self._plan_turn_counter}"
             payload = {
                 "kind": "plan_ready",
+                "plan_markdown": "1. Execute the approved work.\n2. Verify the outcome.",
                 "assistant_summary": "The plan is ready.",
             }
             return {
@@ -287,6 +288,7 @@ class StreamingPlanCodexClient(FakeCodexClient):
         outcome = self.plan_outcomes.pop(0) if self.plan_outcomes else {
             "final_result": {
                 "kind": "plan_ready",
+                "plan_markdown": "1. Execute the approved work.\n2. Verify the outcome.",
                 "assistant_summary": "The plan is ready.",
             },
             "final_plan_text": "1. Execute the approved work.\n2. Verify the outcome.",
@@ -331,6 +333,7 @@ class StreamingPlanCodexClient(FakeCodexClient):
             if isinstance(outcome, dict) and isinstance(outcome.get("final_result"), dict)
             else {
                 "kind": "plan_ready",
+                "plan_markdown": "1. Execute the approved work.\n2. Verify the outcome.",
                 "assistant_summary": "The plan is ready.",
             }
         )
@@ -341,6 +344,10 @@ class StreamingPlanCodexClient(FakeCodexClient):
         )
         if not final_plan_text and final_result.get("kind") == "plan_ready":
             final_plan_text = "1. Execute the approved work.\n2. Verify the outcome."
+        if final_result.get("kind") == "plan_ready" and not str(final_result.get("plan_markdown") or "").strip():
+            final_result = dict(final_result)
+            final_result["plan_markdown"] = final_plan_text
+        omit_final_plan_item = bool(outcome.get("omit_final_plan_item")) if isinstance(outcome, dict) else False
         return {
             "stdout": json.dumps(final_result),
             "thread_id": thread_id,
@@ -354,7 +361,7 @@ class StreamingPlanCodexClient(FakeCodexClient):
                     "turn_id": turn_id,
                     "thread_id": thread_id,
                 }
-                if final_result.get("kind") == "plan_ready"
+                if final_result.get("kind") == "plan_ready" and not omit_final_plan_item
                 else None
             ),
             "runtime_request_ids": runtime_request_ids,
@@ -683,6 +690,7 @@ def test_plan_message_returns_accepted_and_streams_follow_up_delta(client: TestC
                 },
                 "final_result": {
                     "kind": "plan_ready",
+                    "plan_markdown": "1. Execute the approved work.\n2. Verify the outcome.",
                     "assistant_summary": "The plan is ready.",
                 },
                 "final_plan_text": "1. Execute the approved work.\n2. Verify the outcome.",
@@ -745,6 +753,50 @@ def test_plan_message_returns_accepted_and_streams_follow_up_delta(client: TestC
         and state["bound_plan_input_version"] == state["active_plan_input_version"],
     )
     assert final_state["last_agent_failure"] is None
+
+
+def test_plan_start_binds_plan_markdown_when_native_plan_item_is_missing(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    plan_text = "1. Inspect the approved scope.\n2. Apply the change.\n3. Verify the outcome."
+    fake_client = StreamingPlanCodexClient(
+        plan_outcomes=[
+            {
+                "final_result": {
+                    "kind": "plan_ready",
+                    "plan_markdown": plan_text,
+                    "assistant_summary": "The plan is ready.",
+                },
+                "omit_final_plan_item": True,
+            },
+        ]
+    )
+    project_id, node_id = create_project(client, str(workspace_root), fake_client)
+    advance_node_to_ready_for_execution(client, project_id, node_id)
+
+    response, events = asyncio.run(
+        _collect_chat_events(
+            client,
+            project_id,
+            node_id,
+            lambda: client.post(f"/v1/projects/{project_id}/nodes/{node_id}/plan/start"),
+            {"assistant_completed"},
+        )
+    )
+
+    assert response is not None
+    assert response.status_code == 202
+    assert events[-1]["type"] == "assistant_completed"
+    final_state = wait_for_node_state(
+        client,
+        project_id,
+        node_id,
+        lambda state: state["plan_status"] == "ready" and state["run_status"] == "idle",
+    )
+    assert final_state["final_plan_item_id"].startswith("synthetic_plan_item_")
+    assert final_state["last_agent_failure"] is None
+    assert client.app.state.storage.node_store.load_plan(project_id, node_id)["content"] == plan_text
 
 
 def test_chat_route_returns_404_for_missing_node(client: TestClient, workspace_root) -> None:

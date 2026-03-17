@@ -38,6 +38,12 @@ class MockEventSource {
 }
 
 vi.stubGlobal('EventSource', MockEventSource as unknown as typeof EventSource)
+vi.stubGlobal('navigator', {
+  ...globalThis.navigator,
+  clipboard: {
+    writeText: vi.fn(async () => undefined),
+  },
+})
 
 Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
   configurable: true,
