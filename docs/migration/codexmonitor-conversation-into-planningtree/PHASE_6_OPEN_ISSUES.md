@@ -11,11 +11,16 @@
 | `P6-OI-001` | Baseline performance evidence not yet recorded | `6.1` | Resolved on `2026-03-17` |
 | `P6-OI-002` | Dense-event corpus and thresholds not yet locked | `6.1` | Resolved on `2026-03-17` |
 
-## Resolved In 6.2
+## Phase 6.2
+
 | Issue ID | Title | Affected Subphase | Resolution status |
 | --- | --- | --- | --- |
-| `P6-OI-003` | Concurrency isolation matrix not yet proven | `6.2` | Resolved on `2026-03-17` |
-| `P6-OI-004` | Reconnect and replay stress proof not yet complete | `6.2` | Resolved on `2026-03-17` |
+| `P6-OI-003` | Concurrency isolation matrix not yet proven | `6.2` | Resolved on `2026-03-17` by `924cbd3` |
+| `P6-OI-004` | Reconnect and replay stress proof not yet complete | `6.2` | Resolved on `2026-03-17` by `924cbd3` |
+
+### Phase 6.2 Notes
+- The reviewed `PlanningTreeMain` commit `bb3f01b` remains intentionally classified as docs-only.
+- The actual runtime/test proof for Phase 6.2 landed in `CodexMonitor` commit `924cbd3`.
 
 ## Phase 6.3
 

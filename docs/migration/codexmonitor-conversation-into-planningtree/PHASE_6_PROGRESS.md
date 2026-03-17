@@ -12,7 +12,7 @@
 | Subphase | Status | Owner | Validation Status | Latest Update | Open Issues |
 | --- | --- | --- | --- | --- | --- |
 | `6.1` | Complete | `TBD` | Complete | Baseline evidence, locked corpus, end-to-end dense-event validation, and benchmark-driven closeout landed | None |
-| `6.2` | Complete | `TBD` | Complete | Concurrency matrix, reconnect race proof, orchestration validation, and replay remount proof landed | None |
+| `6.2` | Complete | `TBD` | Complete | Runtime/test proof landed in `924cbd3`; concurrency matrix, reconnect race proof, orchestration validation, and replay remount proof are now closed | None |
 | `6.3` | Not started | `TBD` | Not started | Artifact scaffold created | `P6-OI-005` |
 
 ## Completed
@@ -47,7 +47,7 @@
 | --- | --- |
 | Status | Complete |
 | Owner | `TBD` |
-| Latest update | Concurrency matrix, reconnect race proof, and remount or replay validation landed on `2026-03-17` |
+| Latest update | Runtime/test proof landed in `924cbd3` on `2026-03-17`; the earlier `bb3f01b` docs-only patch remains intentionally classified as insufficient by itself |
 | Validation status | Complete |
 | Blockers | None |
 | Next recommended step | Start Phase 6.3 cleanup only after building the compatibility inventory and naming the removal gates |

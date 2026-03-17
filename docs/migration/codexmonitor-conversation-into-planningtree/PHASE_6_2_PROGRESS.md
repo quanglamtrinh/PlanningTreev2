@@ -19,6 +19,8 @@
 | `P6.2-G6` | Complete | End-to-end stress validation and docs closeout both pass |
 
 ## Completed In 6.2
+- the reviewed `PlanningTreeMain` commit `bb3f01b` remains classified as docs-only and insufficient by itself for Phase 6.2 completion
+- the real proof patch landed in `CodexMonitor` commit `924cbd3`
 - added pure router stress coverage in `src/features/app/hooks/appServerEventRouter.test.ts`
 - expanded shared listener proof in `src/features/app/hooks/useAppServerEvents.test.tsx`
 - hardened `useRemoteThreadLiveConnection.ts` so `codex/connected` does not auto-recover while the window is blurred
@@ -32,11 +34,12 @@
 - updated `PHASE_6_2_*`, `PHASE_6_PROGRESS.md`, `PHASE_6_OPEN_ISSUES.md`, `PHASE_6_BATCHES.md`, and `PHASE_6_CHANGELOG.md`
 
 ## Final Checkpoint
-- the locked 6.2 matrix now has proving surfaces for wrong-workspace events, stale-thread detach, request-id isolation, reconnect race handling, and durable remount or replay convergence
-- targeted Phase 6.2 validation passed:
+- the locked 6.2 matrix now has committed proving surfaces for wrong-workspace events, stale-thread detach, request-id isolation, reconnect race handling, and durable remount or replay convergence
+- the runtime/test proof commit is `924cbd3`
+- targeted Phase 6.2 validation passed against that proof patch:
   - `npm test -- src/features/app/hooks/appServerEventRouter.test.ts src/features/app/hooks/useAppServerEvents.test.tsx src/features/app/hooks/useRemoteThreadLiveConnection.test.tsx src/features/threads/hooks/useThreadTurnEvents.test.tsx src/features/threads/hooks/useThreadMessaging.test.tsx src/features/threads/hooks/useThreadActions.test.tsx src/features/threads/hooks/useThreads.integration.test.tsx src/test/phase6_2ConcurrencyValidation.test.tsx`
   - `npm run typecheck`
 
 ## Notes
-- The targeted 6.2 suite passes cleanly, but the existing `useThreads.integration.test.tsx` file still emits pre-existing React `act(...)` warnings in some older scenarios. Those warnings were not introduced by 6.2 and did not block gate closure because the assertions and semantic outcomes still passed.
-- Phase 6.2 closes with recovery behavior still durable-store-first and without adding any new product semantics.
+- `git show --stat --name-only bb3f01b` remains the basis for classifying the earlier `PlanningTreeMain` patch as docs-only.
+- The existing `useThreads.integration.test.tsx` file still emits pre-existing React `act(...)` warnings in older scenarios, but the targeted 6.2 assertions passed cleanly and those warnings did not block gate closure.

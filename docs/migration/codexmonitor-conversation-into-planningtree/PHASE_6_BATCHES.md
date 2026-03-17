@@ -110,6 +110,7 @@
   - cross-request leakage prevention
 - Implementation notes:
   - prove isolation, not just absence of crashes
+  - the reviewed `bb3f01b` patch remains docs-only, while the actual proof landed in `924cbd3`
 - Done criteria:
   - concurrency matrix exists and isolation checks pass for scoped scenarios
   - completed via:
@@ -132,6 +133,7 @@
   - active host switching
 - Implementation notes:
   - durable replay remains authoritative
+  - the reviewed `bb3f01b` patch remains docs-only, while the actual proof landed in `924cbd3`
 - Done criteria:
   - reconnect behavior is stress-tested and recovery-only fallbacks stay explicit
   - completed via:
@@ -151,6 +153,7 @@
   - guarded refresh convergence
 - Implementation notes:
   - memory-only live state must never become replay authority
+  - the reviewed `bb3f01b` patch remains docs-only, while the actual proof landed in `924cbd3`
 - Done criteria:
   - replay equivalence is proven on the scoped migrated paths
   - completed via:

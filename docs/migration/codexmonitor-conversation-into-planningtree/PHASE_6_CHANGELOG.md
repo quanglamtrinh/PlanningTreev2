@@ -13,6 +13,53 @@
 
 ## 2026-03-17
 - Change summary:
+  - landed the real Phase 6.2 runtime/test proof in `CodexMonitor` commit `924cbd3`
+  - verified the committed proof with the targeted hook/router/orchestration suite plus `npm run typecheck`
+  - moved Phase 6.2 back to complete, resolved `P6-OI-003` plus `P6-OI-004`, and recorded `bb3f01b` as docs-only history rather than proof
+- Affected subphases:
+  - `6.2`
+- Files or artifacts changed:
+  - `src/features/app/hooks/useRemoteThreadLiveConnection.ts`
+  - `src/features/app/hooks/useAppServerEvents.test.tsx`
+  - `src/features/app/hooks/useRemoteThreadLiveConnection.test.tsx`
+  - `src/features/app/hooks/appServerEventRouter.test.ts`
+  - `src/features/threads/hooks/useThreadTurnEvents.test.tsx`
+  - `src/features/threads/hooks/useThreadMessaging.test.tsx`
+  - `src/features/threads/hooks/useThreadActions.test.tsx`
+  - `src/features/threads/hooks/useThreads.integration.test.tsx`
+  - `src/test/phase6_2ConcurrencyValidation.test.tsx`
+  - `PHASE_6_2_PLAN.md`
+  - `PHASE_6_2_PROGRESS.md`
+  - `PHASE_6_2_VALIDATION.md`
+  - `PHASE_6_2_OPEN_ISSUES.md`
+  - `PHASE_6_PROGRESS.md`
+  - `PHASE_6_OPEN_ISSUES.md`
+  - `PHASE_6_BATCHES.md`
+  - `PHASE_6_CHANGELOG.md`
+- Reason for update:
+  - the earlier docs-only patch could not honestly close Phase 6.2, so a real proof patch was landed first and the docs were only then moved back to complete
+
+## 2026-03-17
+- Change summary:
+  - corrected the Phase 6.2 trackers after confirming the reviewed `PlanningTreeMain` commit `bb3f01b (chat-phase-6.2)` was docs-only
+  - reopened `P6.2-G2` through `P6.2-G6` and reopened `P6-OI-003` plus `P6-OI-004`
+  - moved Phase 6.2 back from complete to in-progress until a real committed runtime/test patch exists
+- Affected subphases:
+  - `6.2`
+- Files or artifacts changed:
+  - `PHASE_6_2_PLAN.md`
+  - `PHASE_6_2_PROGRESS.md`
+  - `PHASE_6_2_VALIDATION.md`
+  - `PHASE_6_2_OPEN_ISSUES.md`
+  - `PHASE_6_PROGRESS.md`
+  - `PHASE_6_OPEN_ISSUES.md`
+  - `PHASE_6_BATCHES.md`
+  - `PHASE_6_CHANGELOG.md`
+- Reason for update:
+  - the reviewed patch under discussion changed only docs artifacts, so prior docs overstated Phase 6.2 completion and needed to be corrected
+
+## 2026-03-17
+- Change summary:
   - completed Phase 6.2 closeout with mixed-workspace router stress coverage, reconnect-race hardening, request and turn isolation proof, and a focused orchestration replay harness
   - hardened `useRemoteThreadLiveConnection.ts` so `codex/connected` does not auto-recover while the window is blurred
   - closed `P6.2-G1` through `P6.2-G6` and resolved `P6-OI-003` plus `P6-OI-004`

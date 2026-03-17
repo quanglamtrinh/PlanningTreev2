@@ -3,7 +3,12 @@
 ## Current Status
 - Complete
 
-## Validation Commands
+## Reviewed Commit Basis
+- The reviewed `PlanningTreeMain` commit `bb3f01b (chat-phase-6.2)` is docs-only per `git show --stat --name-only bb3f01b`.
+- It is sufficient to show that the Phase 6.2 matrix and trackers were written, but it was not sufficient to claim runtime/test proof or gate closure beyond `P6.2-G1`.
+- The actual runtime/test proof later landed in `CodexMonitor` commit `924cbd3`.
+
+## Verification Commands
 - `npm test -- src/features/app/hooks/appServerEventRouter.test.ts src/features/app/hooks/useAppServerEvents.test.tsx src/features/app/hooks/useRemoteThreadLiveConnection.test.tsx src/features/threads/hooks/useThreadTurnEvents.test.tsx src/features/threads/hooks/useThreadMessaging.test.tsx src/features/threads/hooks/useThreadActions.test.tsx src/features/threads/hooks/useThreads.integration.test.tsx src/test/phase6_2ConcurrencyValidation.test.tsx`
 - `npm run typecheck`
 
@@ -40,4 +45,5 @@
 - [x] memory-only live state never overrides confident durable replay state
 
 ## Notes
+- The proof patch for these checks is `924cbd3`.
 - `useThreads.integration.test.tsx` still emits pre-existing React `act(...)` warnings in older scenarios, but the targeted 6.2 assertions pass and those warnings did not indicate semantic drift in the new 6.2 coverage.

@@ -7,6 +7,9 @@
 ## Summary
 - Phase 6.2 proves that the migrated conversation-v2 path stays isolated under concurrent activity and remains durable-store-first under reconnect, refresh, reload, and restart stress.
 - This subphase does not add new conversation semantics or new product flows.
+- Status note:
+  - the reviewed `PlanningTreeMain` commit `bb3f01b (chat-phase-6.2)` was docs-only per `git show --stat --name-only bb3f01b` and was not sufficient by itself to satisfy Phase 6.2 code-pass requirements
+  - the actual runtime/test proof later landed in `CodexMonitor` commit `924cbd3`
 - It is complete only when:
   - `P6.2-G1` the concurrency and replay matrix is locked
   - `P6.2-G2` workspace, thread, turn, and request isolation is proven
@@ -112,3 +115,4 @@ Required scenario groups:
 - Durable normalized state remains the replay authority.
 - Guarded refresh and live reconnect remain transient recovery aids only.
 - Phase 6.2 does not absorb performance work from `6.1` or cleanup work from `6.3`.
+- No Phase 6.2 gate beyond `P6.2-G1` may be treated as complete until the required runtime and test proof exists in committed history, as it now does in `924cbd3`.
