@@ -149,8 +149,44 @@ describe('buildConversationRenderModel', () => {
 
     expect(model?.messages[0].items).toMatchObject([
       { kind: 'unsupported', reason: 'malformed_payload', partType: 'reasoning' },
-      { kind: 'unsupported', reason: 'unsupported_part_type', partType: 'status_block' },
+      { kind: 'unsupported', reason: 'malformed_payload', partType: 'status_block' },
     ])
+  })
+
+  it('supports status_block render items and collapsed replay groups for superseded branches', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          message_id: 'msg_user_1',
+          role: 'user',
+          parts: [makePart({ part_id: 'part_user_1', part_type: 'user_text', payload: { text: 'Hello' } })],
+        }),
+        makeMessage({
+          message_id: 'msg_assistant_old',
+          turn_id: 'turn_1',
+          status: 'superseded',
+          lineage: { parent_message_id: 'msg_user_1', superseded_by_message_id: 'msg_assistant_new' },
+          parts: [
+            makePart({ part_id: 'part_old_text', payload: { text: 'Old answer' } }),
+            makePart({
+              part_id: 'part_old_status',
+              part_type: 'status_block',
+              order: 1,
+              payload: { title: 'Superseded result', summary: 'Replaced by a newer branch.', status: 'superseded' },
+            }),
+          ],
+        }),
+        makeMessage({
+          message_id: 'msg_assistant_new',
+          turn_id: 'turn_2',
+          lineage: { parent_message_id: 'msg_user_1', regenerate_of_message_id: 'msg_assistant_old' },
+          parts: [makePart({ part_id: 'part_new_text', payload: { text: 'New answer' } })],
+        }),
+      ]),
+    )
+
+    expect(model?.messages.map((message) => message.messageId)).toEqual(['msg_user_1', 'msg_assistant_new'])
+    expect(model?.entries.map((entry) => entry.kind)).toEqual(['message', 'replay_group', 'message'])
   })
 
   it('builds dedicated render items for interactive request and response parts', () => {
@@ -366,6 +402,48 @@ describe('ConversationSurface', () => {
 
     expect(screen.getByText('Unsupported content: reasoning')).toBeInTheDocument()
     expect(screen.getByText('Unsupported content: status_block')).toBeInTheDocument()
+  })
+
+  it('renders replay groups inline and supports status blocks intentionally', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          message_id: 'msg_user_1',
+          role: 'user',
+          parts: [makePart({ part_id: 'part_user_1', part_type: 'user_text', payload: { text: 'Hello' } })],
+        }),
+        makeMessage({
+          message_id: 'msg_assistant_old',
+          turn_id: 'turn_1',
+          status: 'superseded',
+          lineage: { parent_message_id: 'msg_user_1', superseded_by_message_id: 'msg_assistant_new' },
+          parts: [
+            makePart({ part_id: 'part_old_text', payload: { text: 'Old answer' } }),
+            makePart({
+              part_id: 'part_old_status',
+              part_type: 'status_block',
+              order: 1,
+              payload: { title: 'Superseded result', summary: 'Replaced by a newer branch.', status: 'superseded' },
+            }),
+          ],
+        }),
+        makeMessage({
+          message_id: 'msg_assistant_new',
+          turn_id: 'turn_2',
+          lineage: { parent_message_id: 'msg_user_1', regenerate_of_message_id: 'msg_assistant_old' },
+          parts: [makePart({ part_id: 'part_new_text', payload: { text: 'New answer' } })],
+        }),
+      ]),
+    )
+
+    renderSurface(model)
+
+    expect(screen.getByText('Hello')).toBeInTheDocument()
+    expect(screen.getByText('New answer')).toBeInTheDocument()
+    expect(screen.getByText('Replay branch (1 message)')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Replay branch (1 message)'))
+    expect(screen.getByText('Old answer')).toBeInTheDocument()
+    expect(screen.getAllByText('Superseded result').length).toBeGreaterThan(0)
   })
 
   it('renders approval, runtime input request, and runtime input response blocks', () => {

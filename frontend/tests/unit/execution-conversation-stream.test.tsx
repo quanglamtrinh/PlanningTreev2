@@ -6,6 +6,10 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getExecutionConversation: vi.fn(),
     sendExecutionConversationMessage: vi.fn(),
+    continueExecutionConversationMessage: vi.fn(),
+    retryExecutionConversationMessage: vi.fn(),
+    regenerateExecutionConversationMessage: vi.fn(),
+    cancelExecutionConversation: vi.fn(),
     executionConversationEventsUrl: vi.fn(),
   },
 }))
@@ -457,6 +461,99 @@ describe('useExecutionConversation', () => {
     expect(conversation.snapshot.record.active_stream_id).toBe('stream_1')
     expect(conversation.snapshot.record.status).toBe('active')
     expect(conversation.snapshot.record.event_seq).toBe(0)
+  })
+
+  it('patches supersession locally after an accepted regenerate action', async () => {
+    apiMock.getExecutionConversation.mockResolvedValue({
+      conversation: makeSnapshot({
+        messages: [
+          {
+            message_id: 'msg_user',
+            conversation_id: 'conv_exec_1',
+            turn_id: 'turn_1',
+            role: 'user',
+            runtime_mode: 'execute',
+            status: 'completed',
+            created_at: '2026-03-15T00:00:01Z',
+            updated_at: '2026-03-15T00:00:01Z',
+            lineage: {},
+            usage: null,
+            error: null,
+            parts: [
+              {
+                part_id: 'part_user',
+                part_type: 'user_text',
+                status: 'completed',
+                order: 0,
+                item_key: null,
+                created_at: '2026-03-15T00:00:01Z',
+                updated_at: '2026-03-15T00:00:01Z',
+                payload: { text: 'Hello' },
+              },
+            ],
+          },
+          {
+            message_id: 'msg_assistant',
+            conversation_id: 'conv_exec_1',
+            turn_id: 'turn_1',
+            role: 'assistant',
+            runtime_mode: 'execute',
+            status: 'completed',
+            created_at: '2026-03-15T00:00:02Z',
+            updated_at: '2026-03-15T00:00:02Z',
+            lineage: { parent_message_id: 'msg_user' },
+            usage: null,
+            error: null,
+            parts: [
+              {
+                part_id: 'part_assistant',
+                part_type: 'assistant_text',
+                status: 'completed',
+                order: 0,
+                item_key: null,
+                created_at: '2026-03-15T00:00:02Z',
+                updated_at: '2026-03-15T00:00:02Z',
+                payload: { text: 'Initial answer' },
+              },
+            ],
+          },
+        ],
+      }),
+    })
+    apiMock.regenerateExecutionConversationMessage.mockResolvedValue({
+      conversation_id: 'conv_exec_1',
+      action: 'regenerate',
+      action_status: 'accepted',
+      target_message_id: 'msg_assistant',
+      new_message_id: 'msg_regenerated',
+      stream_id: 'stream_regenerated',
+      turn_id: 'turn_2',
+      assistant_text_part_id: 'part_regenerated',
+    })
+
+    render(<HookHarness projectId="project-1" nodeId="node-1" enabled />)
+
+    await waitFor(() => {
+      expect(latestHookState?.conversationId).toBe('conv_exec_1')
+    })
+
+    await act(async () => {
+      await latestHookState?.regenerateFromMessage('msg_assistant')
+    })
+
+    const conversation = useConversationStore.getState().conversationsById.conv_exec_1
+    const targetMessage =
+      conversation.snapshot.messages.find((message) => message.message_id === 'msg_assistant') ?? null
+
+    expect(apiMock.regenerateExecutionConversationMessage).toHaveBeenCalledWith(
+      'project-1',
+      'node-1',
+      'msg_assistant',
+    )
+    expect(conversation.snapshot.record.active_stream_id).toBe('stream_regenerated')
+    expect(conversation.snapshot.record.status).toBe('active')
+    expect(targetMessage?.status).toBe('superseded')
+    expect(targetMessage?.lineage.superseded_by_message_id).toBe('msg_regenerated')
   })
 
   it('surfaces initial snapshot failures without opening SSE', async () => {

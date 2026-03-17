@@ -11,6 +11,16 @@
 
 ## 2026-03-16
 - Change summary:
+  - implemented execution-first lineage-aware actions on the conversation-v2 path for `continue`, `retry`, `regenerate`, and `cancel`
+  - seeded durable execution lineage for ordinary sends, added lazy idempotent lineage backfill for legacy execution transcripts, and added collapsed inline replay plus `status_block` support on the shared execution surface
+  - updated Phase 5 tracking so `5.3` is now in progress with execution-first implementation landed, no open lineage-policy blockers, and remaining closeout work limited to replay/reconnect validation and manual QA
+- Affected subphases:
+  - `5.3`
+- Reason for update:
+  - record the execution-first 5.3 implementation boundary without overstating replay/reconnect closeout as fully validated
+
+## 2026-03-16
+- Change summary:
   - hardened `5.2` execution request resolution so locally initiated resolve no longer double-publishes terminal lifecycle events when native callbacks arrive later
   - converged planning runtime-input lifecycle semantics on the shared conversation-v2 contract through planning snapshot normalization, lifecycle event translation, and a planning v2 resolve route
   - moved `5.2` tracking to complete while keeping `approval_request` explicitly runtime-blocked and narrowing the remaining non-blocking interactive source gap to ask only

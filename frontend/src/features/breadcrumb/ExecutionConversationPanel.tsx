@@ -4,6 +4,7 @@ import type { KeyboardEvent, ReactNode } from 'react'
 import type { NodeRecord } from '../../api/types'
 import { ConversationSurface, type ConversationSurfaceConnectionState } from '../conversation/components/ConversationSurface'
 import { buildConversationRenderModel } from '../conversation/model/buildConversationRenderModel'
+import { deriveExecutionLineageView } from '../conversation/model/deriveExecutionLineage'
 import { deriveConversationBusy } from '../conversation/model/deriveConversationBusy'
 import { useConversationStore, type ConversationViewState } from '../../stores/conversation-store'
 
@@ -20,6 +21,10 @@ type Props = {
   bootstrapStatus: BootstrapStatus
   bootstrapError: string | null
   send: (content: string) => Promise<unknown>
+  continueFromMessage: (messageId: string) => Promise<unknown>
+  retryFromMessage: (messageId: string) => Promise<unknown>
+  regenerateFromMessage: (messageId: string) => Promise<unknown>
+  cancelStream: (streamId: string | null) => Promise<unknown>
 }
 
 function mapConnectionState(
@@ -74,6 +79,10 @@ export function ExecutionConversationPanel({
   bootstrapStatus,
   bootstrapError,
   send,
+  continueFromMessage,
+  retryFromMessage,
+  regenerateFromMessage,
+  cancelStream,
 }: Props) {
   const composerDraft = useConversationStore((state) =>
     conversationId ? state.conversationsById[conversationId]?.composerDraft ?? '' : '',
@@ -81,6 +90,10 @@ export function ExecutionConversationPanel({
   const setComposerDraft = useConversationStore((state) => state.setComposerDraft)
   const model = useMemo(
     () => buildConversationRenderModel(conversation?.snapshot ?? null),
+    [conversation?.snapshot],
+  )
+  const lineageView = useMemo(
+    () => deriveExecutionLineageView(conversation?.snapshot ?? null),
     [conversation?.snapshot],
   )
 
@@ -121,6 +134,48 @@ export function ExecutionConversationPanel({
     }
   }
 
+  const messageActions = useMemo(() => {
+    if (!lineageView) {
+      return {}
+    }
+    return Object.fromEntries(
+      Object.entries(lineageView.actionEligibilityByMessageId).map(([messageId, eligibility]) => {
+        const actions = [
+          eligibility.canContinue
+            ? {
+                key: `continue:${messageId}`,
+                label: 'Continue',
+                onPress: () => void continueFromMessage(messageId),
+              }
+            : null,
+          eligibility.canRetry
+            ? {
+                key: `retry:${messageId}`,
+                label: 'Retry',
+                onPress: () => void retryFromMessage(messageId),
+              }
+            : null,
+          eligibility.canRegenerate
+            ? {
+                key: `regenerate:${messageId}`,
+                label: 'Regenerate',
+                onPress: () => void regenerateFromMessage(messageId),
+              }
+            : null,
+        ].filter((value): value is NonNullable<typeof value> => value !== null)
+        return [messageId, actions]
+      }),
+    )
+  }, [continueFromMessage, lineageView, regenerateFromMessage, retryFromMessage])
+
+  const streamAction =
+    hasConversation && conversation.snapshot.record.active_stream_id
+      ? {
+          label: 'Cancel',
+          onPress: () => void cancelStream(conversation.snapshot.record.active_stream_id),
+        }
+      : null
+
   return (
     <ConversationSurface
       model={model}
@@ -141,6 +196,8 @@ export function ExecutionConversationPanel({
       composerDisabled={composerDisabled}
       composerPlaceholder={composerPlaceholder}
       composerHint={defaultComposerHint()}
+      messageActions={messageActions}
+      streamAction={streamAction}
       onComposerValueChange={(draft) => {
         if (!conversationId) {
           return

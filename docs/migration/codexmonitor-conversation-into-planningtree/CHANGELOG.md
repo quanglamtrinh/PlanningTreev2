@@ -1,6 +1,15 @@
 # Migration Changelog
 
 ## 2026-03-16
+- Phase 5.3 implementation:
+  - added execution-first lineage-aware routes for `continue`, `retry`, `regenerate`, and `cancel` on the conversation-v2 execution path
+  - seeded durable execution lineage for ordinary sends, added lazy idempotent lineage backfill for legacy execution transcripts, and implemented explicit branch semantics for retry/regenerate plus terminalizing cancel semantics without branch creation
+  - added shared execution replay presentation for collapsed inline branch history and supported `status_block` rendering
+  - updated Phase 5 tracking so `5.3` is in progress with execution-first implementation landed, no open lineage-policy blockers, and remaining closeout work limited to replay/reconnect validation and manual QA
+- Verification:
+  - `python -m pytest backend/tests/unit/test_conversation_gateway.py backend/tests/integration/test_conversation_gateway_api.py`
+  - `npm run test:unit -- ConversationSurface.test.tsx execution-conversation-stream.test.tsx`
+  - `npm run build`
 - Phase 5.2 closeout:
   - hardened execution request resolution so locally initiated runtime-input resolve remains the authoritative terminal publish path and native callbacks no longer double-publish `request_resolved` or `user_input_resolved`
   - converged planning runtime-input lifecycle semantics on the shared conversation-v2 contract through planning snapshot normalization, lifecycle event translation, deterministic request identities, and a planning v2 resolve route

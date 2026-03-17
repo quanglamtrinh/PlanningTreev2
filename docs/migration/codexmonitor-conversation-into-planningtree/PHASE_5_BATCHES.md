@@ -252,7 +252,7 @@
 
 ## P5.3.a
 - Title: Lineage metadata and supersession baseline
-- Status: Not started
+- Status: Complete
 - Objective:
   - define the durable lineage model required for retry, continue, and regenerate
 - Exact scope:
@@ -266,15 +266,18 @@
   - `P5.1`
   - `P5.2`
 - Implementation notes:
-  - lineage must be durable state, not UI-only metadata
+  - lineage is durable state, not UI-only metadata
+  - ordinary execution sends now seed `parent_message_id` for user and assistant messages
+  - legacy execution transcripts are repaired lazily and idempotently before snapshot read or action validation
+  - visible lineage selection uses the latest eligible unsuperseded execution assistant head by durable order
 - Risks:
   - hidden loss of superseded history
 - Done criteria:
-  - durable lineage metadata and replay semantics are locked
+  - durable lineage metadata and replay semantics are locked and implemented for the execution-first scope
 
 ## P5.3.b
 - Title: Cancel semantics and terminalization policy
-- Status: Not started
+- Status: Complete
 - Objective:
   - implement `cancel` as active-operation control on the current lineage
 - Exact scope:
@@ -289,6 +292,7 @@
   - `P5.3.a`
 - Implementation notes:
   - cancel must not fabricate a new branch
+  - accepted cancel clears active stream ownership before late callbacks can restamp terminal state
 - Risks:
   - cancel being implemented as pseudo-regenerate
 - Done criteria:
@@ -296,7 +300,7 @@
 
 ## P5.3.c
 - Title: Retry, continue, and regenerate action surfaces
-- Status: Not started
+- Status: Complete
 - Objective:
   - implement lineage-aware mutation semantics and explicit fallback behavior
 - Exact scope:
@@ -312,6 +316,8 @@
   - `P5.3.b`
 - Implementation notes:
   - never imply true rewind if the runtime cannot provide it
+  - `continue` returns `action_status = unavailable` when the runtime cannot prepare a resumable thread
+  - `retry` and `regenerate` create explicit branches rather than overwriting prior history
 - Risks:
   - destructive behavior hidden behind fallback policy
 - Done criteria:
@@ -319,7 +325,7 @@
 
 ## P5.3.d
 - Title: Lineage replay, reconnect, and closeout hardening
-- Status: Not started
+- Status: In progress
 - Objective:
   - prove replay fidelity and reconnect stability after lineage-changing actions
 - Exact scope:
@@ -335,6 +341,7 @@
   - `P5.3.c`
 - Implementation notes:
   - validate semantic replay, not only button behavior
+  - shared rendering now includes collapsed inline replay groups and `status_block` support for execution transcripts
 - Risks:
   - reconnect attaching to the wrong branch
 - Done criteria:

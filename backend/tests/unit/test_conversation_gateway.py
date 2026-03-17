@@ -34,6 +34,10 @@ class FakeConversationClient:
         block_event: threading.Event | None = None,
         raise_error: Exception | None = None,
         returned_thread_id: str = "thread_exec_1",
+        resumed_thread_id: str | None = None,
+        forked_thread_id: str | None = None,
+        resume_error: Exception | None = None,
+        fork_error: Exception | None = None,
     ) -> None:
         self.deltas = list(deltas or [])
         self.plan_deltas = list(plan_deltas or [])
@@ -45,8 +49,14 @@ class FakeConversationClient:
         self.block_event = block_event
         self.raise_error = raise_error
         self.returned_thread_id = returned_thread_id
+        self.resumed_thread_id = resumed_thread_id or returned_thread_id
+        self.forked_thread_id = forked_thread_id or f"{returned_thread_id}_fork"
+        self.resume_error = resume_error
+        self.fork_error = fork_error
         self.started = threading.Event()
         self.calls: list[dict[str, object]] = []
+        self.resume_calls: list[dict[str, object]] = []
+        self.fork_calls: list[dict[str, object]] = []
         self.pending_requests: dict[str, dict[str, object]] = {}
         self.resolved_answers: dict[str, dict[str, object]] = {}
 
@@ -63,10 +73,11 @@ class FakeConversationClient:
         on_request_user_input=None,
         on_request_resolved=None,
     ) -> dict[str, object]:
+        resolved_thread_id = thread_id or self.returned_thread_id
         self.calls.append(
             {
                 "prompt": prompt,
-                "thread_id": thread_id,
+                "thread_id": resolved_thread_id,
                 "timeout_sec": timeout_sec,
                 "cwd": cwd,
                 "writable_roots": writable_roots,
@@ -92,7 +103,7 @@ class FakeConversationClient:
                     {
                         "id": str(plan_delta.get("id") or ""),
                         "turn_id": str(plan_delta.get("turn_id") or ""),
-                        "thread_id": str(plan_delta.get("thread_id") or self.returned_thread_id),
+                        "thread_id": str(plan_delta.get("thread_id") or resolved_thread_id),
                     },
                 )
         if callable(on_request_user_input):
@@ -102,7 +113,7 @@ class FakeConversationClient:
                 wait_event = threading.Event() if wait_for_resolution else None
                 normalized_request = {
                     "request_id": request_id,
-                    "thread_id": str(request.get("thread_id") or self.returned_thread_id),
+                    "thread_id": str(request.get("thread_id") or resolved_thread_id),
                     "turn_id": str(request.get("turn_id") or ""),
                     "item_id": str(request.get("item_id") or f"item_{request_id}"),
                     "status": str(request.get("status") or "pending"),
@@ -124,7 +135,7 @@ class FakeConversationClient:
                 on_request_resolved(
                     {
                         "request_id": str(resolution.get("request_id") or ""),
-                        "thread_id": str(resolution.get("thread_id") or self.returned_thread_id),
+                        "thread_id": str(resolution.get("thread_id") or resolved_thread_id),
                         "turn_id": str(resolution.get("turn_id") or ""),
                         "status": str(resolution.get("status") or "resolved"),
                         "resolved_at": str(resolution.get("resolved_at") or "2026-03-15T00:00:03Z"),
@@ -135,13 +146,43 @@ class FakeConversationClient:
                 on_delta(delta)
         return {
             "stdout": self.final_text if self.final_text is not None else "".join(self.deltas),
-            "thread_id": self.returned_thread_id,
+            "thread_id": resolved_thread_id,
             "tool_calls": list(self.tool_calls),
             "final_plan_item": dict(self.final_plan_item) if self.final_plan_item is not None else None,
         }
 
     def stop(self) -> None:
         return None
+
+    def resume_thread(
+        self,
+        thread_id: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        self.resume_calls.append(
+            {
+                "thread_id": thread_id,
+                **kwargs,
+            }
+        )
+        if self.resume_error is not None:
+            raise self.resume_error
+        return {"thread_id": self.resumed_thread_id}
+
+    def fork_thread(
+        self,
+        source_thread_id: str,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        self.fork_calls.append(
+            {
+                "source_thread_id": source_thread_id,
+                **kwargs,
+            }
+        )
+        if self.fork_error is not None:
+            raise self.fork_error
+        return {"thread_id": self.forked_thread_id}
 
     def resolve_runtime_request_user_input(
         self,
@@ -843,6 +884,11 @@ def test_send_execution_message_seeds_stable_messages_and_explicit_message_creat
         lambda item: item["record"]["status"] == "active" and item["record"]["active_stream_id"] == response["stream_id"],
     )
     assert len(snapshot["messages"]) == 2
+    assert snapshot["messages"][0]["lineage"]["parent_message_id"] is None
+    assert (
+        snapshot["messages"][1]["lineage"]["parent_message_id"]
+        == snapshot["messages"][0]["message_id"]
+    )
     assert snapshot["messages"][1]["message_id"] == response["assistant_message_id"]
     assert snapshot["messages"][1]["parts"][0]["part_id"] == response["assistant_text_part_id"]
 
@@ -853,6 +899,316 @@ def test_send_execution_message_seeds_stable_messages_and_explicit_message_creat
         conversation_id,
         lambda item: item["record"]["status"] == "completed" and item["record"]["active_stream_id"] is None,
     )
+    gateway.flush_and_stop()
+
+
+def test_get_execution_conversation_backfills_execution_lineage_deterministically(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    gateway, _, _ = build_gateway(storage, tree_service, FakeConversationClient())
+    snapshot = gateway.get_execution_conversation(project_id, node_id)
+    conversation_id = snapshot["record"]["conversation_id"]
+
+    user_1 = make_conversation_message(
+        conversation_id=conversation_id,
+        turn_id="turn_1",
+        role="user",
+        runtime_mode="execute",
+        message_id="msg_user_1",
+        status="completed",
+        lineage={},
+        parts=[make_conversation_part(part_type="user_text", order=0, payload={"text": "hello"})],
+    )
+    assistant_1 = make_conversation_message(
+        conversation_id=conversation_id,
+        turn_id="turn_1",
+        role="assistant",
+        runtime_mode="execute",
+        message_id="msg_assistant_1",
+        status="completed",
+        lineage={},
+        parts=[make_conversation_part(part_type="assistant_text", order=0, payload={"text": "world"})],
+    )
+    user_2 = make_conversation_message(
+        conversation_id=conversation_id,
+        turn_id="turn_2",
+        role="user",
+        runtime_mode="execute",
+        message_id="msg_user_2",
+        status="completed",
+        lineage={},
+        parts=[make_conversation_part(part_type="user_text", order=0, payload={"text": "again"})],
+    )
+    assistant_2 = make_conversation_message(
+        conversation_id=conversation_id,
+        turn_id="turn_2",
+        role="assistant",
+        runtime_mode="execute",
+        message_id="msg_assistant_2",
+        status="completed",
+        lineage={},
+        parts=[make_conversation_part(part_type="assistant_text", order=0, payload={"text": "done"})],
+    )
+    storage.conversation_store.upsert_message(project_id, conversation_id, user_1)
+    storage.conversation_store.upsert_message(project_id, conversation_id, assistant_1)
+    storage.conversation_store.upsert_message(project_id, conversation_id, user_2)
+    storage.conversation_store.upsert_message(project_id, conversation_id, assistant_2)
+
+    backfilled = gateway.get_execution_conversation(project_id, node_id)
+    backfilled_again = gateway.get_execution_conversation(project_id, node_id)
+
+    assert backfilled["messages"][0]["lineage"]["parent_message_id"] is None
+    assert backfilled["messages"][1]["lineage"]["parent_message_id"] == "msg_user_1"
+    assert backfilled["messages"][2]["lineage"]["parent_message_id"] == "msg_assistant_1"
+    assert backfilled["messages"][3]["lineage"]["parent_message_id"] == "msg_user_2"
+    assert backfilled_again == backfilled
+
+    gateway.flush_and_stop()
+
+
+def test_continue_execution_message_creates_assistant_to_assistant_branch(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    set_node_phase(storage, tree_service, project_id, node_id, "executing")
+    fake_client = FakeConversationClient(final_text="Initial answer")
+    gateway, _, _ = build_gateway(storage, tree_service, fake_client)
+
+    initial = gateway.send_execution_message(project_id, node_id, "hello")
+    conversation_id = str(initial["conversation_id"])
+    initial_snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        conversation_id,
+        lambda item: item["record"]["status"] == "completed" and item["record"]["app_server_thread_id"] == "thread_exec_1",
+    )
+    fake_client.final_text = "Continued answer"
+
+    response = gateway.continue_execution_message(
+        project_id,
+        node_id,
+        str(initial["assistant_message_id"]),
+    )
+    active_snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        conversation_id,
+        lambda item: item["record"]["active_stream_id"] == response["stream_id"],
+    )
+    continued_message = next(
+        message for message in active_snapshot["messages"] if message["message_id"] == response["new_message_id"]
+    )
+    final_snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        conversation_id,
+        lambda item: item["record"]["status"] == "completed" and item["record"]["active_stream_id"] is None,
+    )
+
+    assert response["action"] == "continue"
+    assert response["action_status"] == "accepted"
+    assert fake_client.resume_calls[-1]["thread_id"] == "thread_exec_1"
+    assert continued_message["lineage"]["parent_message_id"] == initial["assistant_message_id"]
+    assert continued_message["lineage"]["continue_of_message_id"] == initial["assistant_message_id"]
+    assert len([message for message in active_snapshot["messages"] if message["turn_id"] == response["turn_id"]]) == 1
+    assert final_snapshot["record"]["app_server_thread_id"] == fake_client.resumed_thread_id
+    assert initial_snapshot["messages"][1]["status"] == "completed"
+
+    gateway.flush_and_stop()
+
+
+def test_retry_and_regenerate_execution_message_create_branches_with_expected_lineage(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    set_node_phase(storage, tree_service, project_id, node_id, "executing")
+    fake_client = FakeConversationClient(final_text="Initial answer")
+    gateway, _, _ = build_gateway(storage, tree_service, fake_client)
+
+    initial = gateway.send_execution_message(project_id, node_id, "hello")
+    conversation_id = str(initial["conversation_id"])
+    completed_snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        conversation_id,
+        lambda item: item["record"]["status"] == "completed" and item["record"]["app_server_thread_id"] == "thread_exec_1",
+    )
+
+    storage.conversation_store.mutate_conversation(
+        project_id,
+        conversation_id,
+        lambda snapshot: snapshot["messages"][1].update(
+            {
+                "status": "error",
+                "error": "boom",
+                "updated_at": "2026-03-15T00:00:09Z",
+            }
+        ),
+    )
+    storage.conversation_store.mutate_conversation(
+        project_id,
+        conversation_id,
+        lambda snapshot: snapshot["messages"][1]["parts"][0].update(
+            {
+                "status": "error",
+                "updated_at": "2026-03-15T00:00:09Z",
+            }
+        ),
+    )
+    storage.conversation_store.mutate_conversation(
+        project_id,
+        conversation_id,
+        lambda snapshot: snapshot["record"].update({"status": "error"}),
+    )
+    fake_client.final_text = "Retried answer"
+
+    retry_response = gateway.retry_execution_message(
+        project_id,
+        node_id,
+        str(initial["assistant_message_id"]),
+    )
+    retry_snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        conversation_id,
+        lambda item: item["record"]["active_stream_id"] == retry_response["stream_id"],
+    )
+    retry_message = next(
+        message for message in retry_snapshot["messages"] if message["message_id"] == retry_response["new_message_id"]
+    )
+    wait_for_snapshot(
+        storage,
+        project_id,
+        conversation_id,
+        lambda item: item["record"]["status"] == "completed" and item["record"]["active_stream_id"] is None,
+    )
+
+    assert retry_response["action"] == "retry"
+    assert retry_response["action_status"] == "accepted"
+    assert fake_client.fork_calls[-1]["source_thread_id"] == "thread_exec_1"
+    assert retry_message["lineage"]["parent_message_id"] == completed_snapshot["messages"][0]["message_id"]
+    assert retry_message["lineage"]["retry_of_message_id"] == initial["assistant_message_id"]
+    assert retry_snapshot["messages"][1]["status"] == "error"
+
+    storage.conversation_store.mutate_conversation(
+        project_id,
+        conversation_id,
+        lambda snapshot: snapshot["messages"][1].update(
+            {
+                "status": "completed",
+                "error": None,
+                "updated_at": "2026-03-15T00:00:10Z",
+            }
+        ),
+    )
+    storage.conversation_store.mutate_conversation(
+        project_id,
+        conversation_id,
+        lambda snapshot: snapshot["messages"][1]["parts"][0].update(
+            {
+                "status": "completed",
+                "updated_at": "2026-03-15T00:00:10Z",
+            }
+        ),
+    )
+    fake_client.final_text = "Regenerated answer"
+
+    regenerate_response = gateway.regenerate_execution_message(
+        project_id,
+        node_id,
+        str(retry_response["new_message_id"]),
+    )
+    regenerate_snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        conversation_id,
+        lambda item: item["record"]["active_stream_id"] == regenerate_response["stream_id"],
+    )
+    regenerate_message = next(
+        message
+        for message in regenerate_snapshot["messages"]
+        if message["message_id"] == regenerate_response["new_message_id"]
+    )
+    superseded_target = next(
+        message
+        for message in regenerate_snapshot["messages"]
+        if message["message_id"] == retry_response["new_message_id"]
+    )
+
+    assert regenerate_response["action"] == "regenerate"
+    assert regenerate_response["action_status"] == "accepted"
+    assert regenerate_message["lineage"]["parent_message_id"] == completed_snapshot["messages"][0]["message_id"]
+    assert regenerate_message["lineage"]["regenerate_of_message_id"] == retry_response["new_message_id"]
+    assert superseded_target["lineage"]["superseded_by_message_id"] == regenerate_response["new_message_id"]
+    assert superseded_target["status"] == "superseded"
+
+    gateway.flush_and_stop()
+
+
+def test_cancel_execution_stream_marks_terminal_state_without_creating_branch(
+    storage: Storage,
+    tree_service: TreeService,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    project_id, node_id = create_project(project_service, str(workspace_root))
+    set_node_phase(storage, tree_service, project_id, node_id, "executing")
+    release = threading.Event()
+    fake_client = FakeConversationClient(block_event=release, final_text="late completion")
+    gateway, broker, _ = build_gateway(storage, tree_service, fake_client)
+
+    response = gateway.send_execution_message(project_id, node_id, "hello")
+    conversation_id = str(response["conversation_id"])
+
+    async def run() -> tuple[dict[str, object], list[dict[str, object]]]:
+        queue = broker.subscribe(project_id, conversation_id)
+        try:
+            cancel_response = gateway.cancel_execution_stream(
+                project_id,
+                node_id,
+                stream_id=str(response["stream_id"]),
+            )
+            events: list[dict[str, object]] = []
+            deadline = time.time() + 2
+            while time.time() < deadline:
+                event = await asyncio.wait_for(queue.get(), timeout=max(0.01, deadline - time.time()))
+                events.append(event)
+                if event["event_type"] == "completion_status":
+                    break
+            return cancel_response, events
+        finally:
+            broker.unsubscribe(project_id, conversation_id, queue)
+
+    cancel_response, events = asyncio.run(run())
+    cancelled_snapshot = wait_for_snapshot(
+        storage,
+        project_id,
+        conversation_id,
+        lambda item: item["record"]["status"] == "cancelled" and item["record"]["active_stream_id"] is None,
+    )
+    release.set()
+    gateway.flush_persistence()
+    final_snapshot = storage.conversation_store.get_conversation(project_id, conversation_id)
+
+    assert cancel_response["action"] == "cancel"
+    assert cancel_response["action_status"] == "accepted"
+    assert [event["event_type"] for event in events][-1] == "completion_status"
+    assert events[-1]["payload"]["status"] == "cancelled"
+    assert len(cancelled_snapshot["messages"]) == 2
+    assert cancelled_snapshot["messages"][1]["status"] == "cancelled"
+    assert final_snapshot is not None
+    assert final_snapshot["messages"][1]["status"] == "cancelled"
+
     gateway.flush_and_stop()
 
 

@@ -629,6 +629,10 @@ export function BreadcrumbWorkspace() {
         bootstrapStatus: executionConversation.bootstrapStatus,
         bootstrapError: executionConversation.bootstrapError,
         send: executionConversation.send,
+        continueFromMessage: executionConversation.continueFromMessage,
+        retryFromMessage: executionConversation.retryFromMessage,
+        regenerateFromMessage: executionConversation.regenerateFromMessage,
+        cancelStream: executionConversation.cancelStream,
       }
     : undefined;
   const visibleAskConversation = askConversationV2Enabled

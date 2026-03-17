@@ -4,6 +4,7 @@ import type {
   ConversationMessageStatus,
   ConversationSnapshot,
 } from '../types'
+import { deriveExecutionLineageView } from './deriveExecutionLineage'
 
 export type ConversationRenderRoleTone = 'user' | 'assistant' | 'neutral'
 
@@ -129,6 +130,13 @@ export interface ConversationFileChangeSummaryRenderItem extends ConversationRen
   summary: string | null
 }
 
+export interface ConversationStatusBlockRenderItem extends ConversationRenderItemBase {
+  kind: 'status_block'
+  title: string | null
+  summary: string | null
+  statusLabel: string | null
+}
+
 export interface ConversationUnsupportedRenderItem extends ConversationRenderItemBase {
   kind: 'unsupported'
   partType: string
@@ -147,6 +155,7 @@ export type ConversationRenderItem =
   | ConversationUserInputResponseRenderItem
   | ConversationDiffSummaryRenderItem
   | ConversationFileChangeSummaryRenderItem
+  | ConversationStatusBlockRenderItem
   | ConversationUnsupportedRenderItem
 
 export interface ConversationRenderMessage {
@@ -159,8 +168,27 @@ export interface ConversationRenderMessage {
   showTyping: boolean
 }
 
+export interface ConversationReplayGroupRenderEntry {
+  kind: 'replay_group'
+  key: string
+  anchorMessageId: string | null
+  label: string
+  messages: ConversationRenderMessage[]
+}
+
+export interface ConversationMessageRenderEntry {
+  kind: 'message'
+  key: string
+  message: ConversationRenderMessage
+}
+
+export type ConversationRenderEntry =
+  | ConversationMessageRenderEntry
+  | ConversationReplayGroupRenderEntry
+
 export interface ConversationRenderModel {
   messages: ConversationRenderMessage[]
+  entries: ConversationRenderEntry[]
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -600,6 +628,29 @@ function buildFileChangeSummaryItem(part: ConversationMessagePart): Conversation
   }
 }
 
+function buildStatusBlockItem(part: ConversationMessagePart): ConversationRenderItem {
+  const payload = asRecord(part.payload)
+  if (!payload) {
+    return makeUnsupportedItem(part, 'malformed_payload')
+  }
+  const title = asString(payload.title)
+  const summary =
+    asString(payload.summary) ?? asString(payload.text) ?? asString(payload.content)
+  const statusLabel = asString(payload.status) ?? asString(payload.state)
+  if (!title && !summary && !statusLabel) {
+    return makeUnsupportedItem(part, 'malformed_payload')
+  }
+  return {
+    kind: 'status_block',
+    key: part.part_id,
+    partId: part.part_id,
+    status: part.status,
+    title,
+    summary,
+    statusLabel,
+  }
+}
+
 function buildRenderItem(part: ConversationMessagePart): ConversationRenderItem {
   const payload = asRecord(part.payload)
   switch (part.part_type) {
@@ -641,9 +692,45 @@ function buildRenderItem(part: ConversationMessagePart): ConversationRenderItem 
     case 'file_change_summary':
       return buildFileChangeSummaryItem(part)
     case 'status_block':
-      return makeUnsupportedItem(part, 'unsupported_part_type')
+      return buildStatusBlockItem(part)
     default:
       return makeUnsupportedItem(part, 'unknown_part_type')
+  }
+}
+
+function buildSyntheticStatusBlock(
+  message: ConversationMessage,
+): ConversationStatusBlockRenderItem | null {
+  if (
+    message.status !== 'error' &&
+    message.status !== 'interrupted' &&
+    message.status !== 'cancelled' &&
+    message.status !== 'superseded'
+  ) {
+    return null
+  }
+
+  const title = {
+    error: 'Execution error',
+    interrupted: 'Execution interrupted',
+    cancelled: 'Execution cancelled',
+    superseded: 'Superseded result',
+  }[message.status]
+
+  const summary =
+    message.error ??
+    (message.status === 'superseded'
+      ? 'This assistant result was replaced by a newer visible branch.'
+      : null)
+
+  return {
+    kind: 'status_block',
+    key: `status:${message.message_id}`,
+    partId: `status:${message.message_id}`,
+    status: message.status,
+    title,
+    summary,
+    statusLabel: message.status,
   }
 }
 
@@ -652,6 +739,10 @@ function buildConversationRenderMessage(message: ConversationMessage): Conversat
     appendRenderItem(acc, buildRenderItem(part))
     return acc
   }, [])
+  const syntheticStatusBlock = buildSyntheticStatusBlock(message)
+  if (syntheticStatusBlock) {
+    items.push(syntheticStatusBlock)
+  }
   const roleTone = toRoleTone(message.role)
   const hasAssistantText = items.some(
     (item) => item.kind === 'assistant_text' && item.text.trim().length > 0,
@@ -678,8 +769,72 @@ export function buildConversationRenderModel(
   if (!snapshot) {
     return null
   }
+  const lineageView = deriveExecutionLineageView(snapshot)
+  const orderedMessages = lineageView?.visibleMessages ?? snapshot.messages
+  const messages = orderedMessages.map(buildConversationRenderMessage)
+
+  if (!lineageView) {
+    return {
+      messages,
+      entries: messages.map((message) => ({
+        kind: 'message',
+        key: message.messageId,
+        message,
+      })),
+    }
+  }
+
+  const renderedMessageById = new Map(messages.map((message) => [message.messageId, message]))
+  const replayEntriesByAnchor = new Map<string, ConversationReplayGroupRenderEntry[]>()
+  const replayEntriesByFirstMessage = new Map<string, ConversationReplayGroupRenderEntry>()
+
+  for (const group of lineageView.replayGroups) {
+    const entry: ConversationReplayGroupRenderEntry = {
+      kind: 'replay_group',
+      key: group.key,
+      anchorMessageId: group.anchorMessageId,
+      label: `Replay branch (${group.messages.length} message${group.messages.length === 1 ? '' : 's'})`,
+      messages: group.messages.map(buildConversationRenderMessage),
+    }
+    if (group.anchorMessageId && renderedMessageById.has(group.anchorMessageId)) {
+      const existing = replayEntriesByAnchor.get(group.anchorMessageId) ?? []
+      existing.push(entry)
+      replayEntriesByAnchor.set(group.anchorMessageId, existing)
+    } else {
+      replayEntriesByFirstMessage.set(group.firstMessageId, entry)
+    }
+  }
+
+  const entries: ConversationRenderEntry[] = []
+  const renderedReplayKeys = new Set<string>()
+  for (const message of snapshot.messages) {
+    const renderMessage = renderedMessageById.get(message.message_id) ?? null
+    if (renderMessage) {
+      entries.push({
+        kind: 'message',
+        key: renderMessage.messageId,
+        message: renderMessage,
+      })
+      const anchoredReplayEntries = replayEntriesByAnchor.get(message.message_id) ?? []
+      for (const anchoredReplay of anchoredReplayEntries) {
+        if (renderedReplayKeys.has(anchoredReplay.key)) {
+          continue
+        }
+        renderedReplayKeys.add(anchoredReplay.key)
+        entries.push(anchoredReplay)
+      }
+      continue
+    }
+
+    const detachedReplay = replayEntriesByFirstMessage.get(message.message_id)
+    if (detachedReplay && !renderedReplayKeys.has(detachedReplay.key)) {
+      renderedReplayKeys.add(detachedReplay.key)
+      entries.push(detachedReplay)
+    }
+  }
 
   return {
-    messages: snapshot.messages.map(buildConversationRenderMessage),
+    messages,
+    entries,
   }
 }

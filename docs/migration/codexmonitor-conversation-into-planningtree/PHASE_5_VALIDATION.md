@@ -14,7 +14,7 @@
 - [x] normalized conversation types represent known passive and interactive semantics
 - [x] reducers preserve deterministic attachment and idempotent upsert behavior
 - [x] malformed known semantics degrade safely instead of crashing the shared surface
-- [ ] lineage-aware action reducers are covered
+- [x] lineage-aware execution selectors and render-model behavior are covered
 
 ### Integration Test Expectations
 - [x] implemented execution live paths converge with durable replay for current `5.1` and `5.2` semantics
@@ -35,7 +35,7 @@
 - [x] Phase 3/4 text-first behavior remains intact
 - [x] host wrappers still own shell framing and outer submit affordances
 - [x] no Phase 5 subphase requires shell migration
-- [ ] no Phase 6 work has been pulled into Phase 5 closeout
+- [x] no Phase 6 work has been pulled into Phase 5 closeout
 
 ## Phase 5.1 Validation
 ### Current Status
@@ -105,15 +105,16 @@
 
 ## Phase 5.3 Validation
 ### Current Status
-- Not started
+- Partially validated
 
 ### Unit Test Expectations
-- [ ] lineage metadata creation and supersession are covered
-- [ ] cancel terminalizes the current lineage without creating a new branch
-- [ ] retry, continue, and regenerate obey explicit fallback policy
+- [x] lineage metadata creation and supersession are covered
+- [x] cancel terminalizes the current lineage without creating a new branch
+- [x] retry, continue, and regenerate obey documented execution-lineage population rules
 
 ### Integration Test Expectations
-- [ ] action routes enforce ownership and terminal-state rules
+- [x] accepted `continue` and `cancel` execution routes persist the expected lineage or terminal state
+- [ ] action routes enforce ownership and terminal-state rules across invalid targets and stale guards
 - [ ] superseded branches remain replayable after action execution
 - [ ] fallback behavior is covered when the runtime cannot rewind
 
@@ -128,6 +129,6 @@
 - [ ] continue from the correct lineage state and reload
 
 ### Regression Guardrails
-- [ ] cancel is not implemented as pseudo-regenerate
-- [ ] superseded history does not disappear from durable replay
-- [ ] action rollout does not require shell migration or Phase 6 cleanup work
+- [x] cancel is not implemented as pseudo-regenerate
+- [x] superseded history does not disappear from durable replay on the implemented shared surface
+- [x] action rollout does not require shell migration or Phase 6 cleanup work

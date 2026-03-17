@@ -6,10 +6,10 @@
 | `P5-OI-001` | Native transport coverage for remaining passive live semantics | `5.1` | Non-blocking for current replay-only boundary; blocking for wider backend live-parity claims | Open |
 | `P5-OI-002` | Approval live parity blocked by `approvalPolicy: never` | `5.2` | Runtime-blocked | Open |
 | `P5-OI-003` | Ask lacks a clean normalized interactive source on the v2 path | `5.2` | Non-blocking for current 5.2 closeout | Open |
-| `P5-OI-004` | Runtime rollback and rewind capability for `retry` and `regenerate` | `5.3` | Blocking | Open |
-| `P5-OI-005` | Cancel/completion race terminalization policy | `5.3` | Blocking | Open |
-| `P5-OI-006` | Superseded-branch replay presentation defaults | `5.3` | Non-blocking | Open |
-| `P5-OI-007` | Durable lineage metadata and action ownership model | `5.3` | Blocking | Open |
+| `P5-OI-004` | Runtime rollback and rewind capability for `retry` and `regenerate` | `5.3` | Resolved by explicit branch fallback | Closed |
+| `P5-OI-005` | Cancel/completion race terminalization policy | `5.3` | Resolved by gateway-owned terminalization policy | Closed |
+| `P5-OI-006` | Superseded-branch replay presentation defaults | `5.3` | Resolved by collapsed inline replay default | Closed |
+| `P5-OI-007` | Durable lineage metadata and action ownership model | `5.3` | Resolved by execution-first lineage model and route ownership rules | Closed |
 
 ## Open Issues By Subphase
 
@@ -58,81 +58,44 @@
   - Non-blocking for the current `5.2` closeout
 
 ### Phase 5.3
+- No open Phase 5.3 policy issues remain.
+- Remaining Phase 5.3 work is validation and manual QA, not unresolved lineage or fallback-policy decisions.
 
-#### `P5-OI-004` - Runtime rollback and rewind capability for `retry` and `regenerate`
-- Affected subphase: `5.3`
-- Description:
-  - exact rollback or rewind support from the target runtime has not been confirmed
-- Why it matters:
-  - `retry` and `regenerate` fallback policy depends on whether true rewind exists
-- Current default assumption:
-  - if true rewind is unavailable, `retry` and `regenerate` fall back to explicit superseding lineage rather than pretending the old branch disappeared
-- What decision or experiment is needed:
-  - confirm runtime capability and lock fallback policy before `5.3` closeout
-- Classification:
-  - Blocking
+#### Closed `P5-OI-004` - Runtime rollback and rewind capability for `retry` and `regenerate`
+- Resolution:
+  - `retry` and `regenerate` now use explicit new execution branches instead of claiming in-place rewind
+  - prior branch history remains durable and replayable
 
-#### `P5-OI-005` - Cancel/completion race terminalization policy
-- Affected subphase: `5.3`
-- Description:
-  - `cancel` belongs to active-operation control semantics, but the policy for races between cancel and natural completion is not locked yet
-- Why it matters:
-  - race ambiguity can create duplicate terminal states or synthetic branch behavior
-- Current default assumption:
-  - if completion is durably committed first, cancel becomes a no-op for visible lineage mutation and must not fabricate a second terminal branch
-- What decision or experiment is needed:
-  - define gateway/runtime precedence behavior and prove it with integration tests
-- Classification:
-  - Blocking
+#### Closed `P5-OI-005` - Cancel/completion race terminalization policy
+- Resolution:
+  - gateway-owned cancel clears active stream ownership before late callbacks can restamp terminal state
+  - accepted cancel terminalizes the current execution stream without fabricating a branch
+  - if completion wins first, cancel returns an idempotent no-op outcome
 
-#### `P5-OI-006` - Superseded-branch replay presentation defaults
-- Affected subphase: `5.3`
-- Description:
-  - superseded branches must remain replayable, but the minimum shared replay presentation is not yet pinned down
-- Why it matters:
-  - lineage may exist durably but still be difficult to inspect if the shared replay affordance is under-specified
-- Current default assumption:
-  - superseded branches remain replayable in the shared contract and host wrappers may differ in outer framing
-- What decision or experiment is needed:
-  - confirm the minimum shared replay affordance needed to inspect superseded lineage without forcing shell parity
-- Classification:
-  - Non-blocking
+#### Closed `P5-OI-006` - Superseded-branch replay presentation defaults
+- Resolution:
+  - the shared execution surface now uses collapsed inline replay as the default presentation for superseded or off-lineage history
+  - collapsed replay remains expandable and preserves branch-local passive semantics, request history, and terminal metadata
 
-#### `P5-OI-007` - Durable lineage metadata and action ownership model
-- Affected subphase: `5.3`
-- Description:
-  - the durable lineage metadata model and action ownership rules are not yet locked for retry, continue, regenerate, and cancel
-- Why it matters:
-  - action semantics cannot be implemented safely without an explicit model for branch identity, supersession, and ownership
-- Current default assumption:
-  - action availability will remain lineage-aware, durable, and terminal-state-aware rather than wrapper-local
-- What decision or experiment is needed:
-  - lock the lineage metadata model and action ownership rules before action routes or controls are introduced
-- Classification:
-  - Blocking
+#### Closed `P5-OI-007` - Durable lineage metadata and action ownership model
+- Resolution:
+  - execution sends now seed durable lineage and lazily backfill legacy execution transcripts with empty lineage
+  - execution action ownership is route-driven and lineage-aware for `continue`, `retry`, `regenerate`, and `cancel`
 
 ## Runtime Uncertainty
 - `P5-OI-001` - native transport coverage for replay-only passive semantics
 - `P5-OI-002` - approval live parity blocked by current runtime policy
-- `P5-OI-004` - rollback and rewind capability for lineage-aware actions
-- `P5-OI-005` - cancel/completion race behavior under runtime and gateway timing
 
 ## Replay Fidelity Risks
 - `P5-OI-001` - replay-only passive semantics being mistaken for live-complete semantics
 - `P5-OI-003` - ask interactive semantics being implied without a durable v2 source
-- `P5-OI-006` - superseded-branch replay presentation remaining under-specified
-- `P5-OI-007` - lineage metadata and ownership rules not being explicit enough for deterministic replay
 
 ## Fallback Policy Gaps
 - `P5-OI-001` - passive semantics without native live transport support
-- `P5-OI-004` - explicit fallback for `retry` and `regenerate` when rewind is unavailable
-- `P5-OI-005` - visible cancel behavior when completion wins the race
 
 ## Decisions That Must Be Made Before Completion
 ### Blocking Decisions
-- Resolve `P5-OI-004` before `5.3` action rollout.
-- Resolve `P5-OI-005` before `cancel` can close out.
-- Resolve `P5-OI-007` before lineage-aware actions are introduced.
+- no additional blocking policy decisions remain for the current execution-first 5.3 scope
 
 ### Boundary Decisions That Must Stay Explicit
 - Keep `P5-OI-001` explicit while replay-only passive semantics remain transport-gated.

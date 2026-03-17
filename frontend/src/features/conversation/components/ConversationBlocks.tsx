@@ -6,6 +6,7 @@ import type {
   ConversationPlanStepUpdateRenderItem,
   ConversationReasoningRenderItem,
   ConversationRenderItem,
+  ConversationStatusBlockRenderItem,
   ConversationUserInputRequestRenderItem,
   ConversationUserInputResponseRenderItem,
   ConversationToolCallRenderItem,
@@ -311,6 +312,19 @@ export function FileChangeSummaryBlock({ item }: { item: ConversationFileChangeS
   )
 }
 
+export function StatusBlock({ item }: { item: ConversationStatusBlockRenderItem }) {
+  return (
+    <section className={styles.richBlock}>
+      <p className={styles.blockKicker}>Status</p>
+      <div className={styles.blockHeaderRow}>
+        <h5 className={styles.blockTitle}>{item.title ?? 'Execution status'}</h5>
+        {item.statusLabel ? <span className={styles.blockTag}>{item.statusLabel}</span> : null}
+      </div>
+      {item.summary ? <p className={styles.blockText}>{item.summary}</p> : null}
+    </section>
+  )
+}
+
 export function renderConversationBlock(item: ConversationRenderItem) {
   switch (item.kind) {
     case 'reasoning':
@@ -333,6 +347,8 @@ export function renderConversationBlock(item: ConversationRenderItem) {
       return <DiffSummaryBlock item={item} />
     case 'file_change_summary':
       return <FileChangeSummaryBlock item={item} />
+    case 'status_block':
+      return <StatusBlock item={item} />
     case 'unsupported':
       return <UnsupportedBlock item={item} />
     default:

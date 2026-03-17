@@ -11,6 +11,10 @@ type ExecutionConversationHost = {
   bootstrapStatus: 'idle' | 'loading_snapshot' | 'error'
   bootstrapError: string | null
   send: (content: string) => Promise<unknown>
+  continueFromMessage: (messageId: string) => Promise<unknown>
+  retryFromMessage: (messageId: string) => Promise<unknown>
+  regenerateFromMessage: (messageId: string) => Promise<unknown>
+  cancelStream: (streamId: string | null) => Promise<unknown>
 }
 
 type Props = {
@@ -45,6 +49,10 @@ export function ChatPanel({
         bootstrapStatus={executionConversation.bootstrapStatus}
         bootstrapError={executionConversation.bootstrapError}
         send={executionConversation.send}
+        continueFromMessage={executionConversation.continueFromMessage}
+        retryFromMessage={executionConversation.retryFromMessage}
+        regenerateFromMessage={executionConversation.regenerateFromMessage}
+        cancelStream={executionConversation.cancelStream}
       />
     )
   }

@@ -9,7 +9,7 @@
 - Current repo status:
   - `5.1` is in progress with shared renderer and replay support in place and backend live completeness limited to transport-supported passive semantics
   - `5.2` is complete for execution duplicate-suppression hardening and planning-v2 runtime-input convergence, with approval live parity still runtime-blocked
-  - `5.3` has not started
+  - `5.3` is in progress with execution-first lineage-aware actions, collapsed replay rendering, and status-block support implemented, while replay/reconnect closeout validation is still in progress
 
 ## Positioning
 - Phase 5 targets semantic parity on the shared conversation-v2 contract.
@@ -35,7 +35,7 @@
 | --- | --- | --- | --- |
 | `5.1` | In progress | Passive rich semantics plus renderer/replay parity | Shared renderer and replay are in place; backend live completeness is currently limited to `tool_call` and `plan_block` |
 | `5.2` | Complete | Interactive request/response lifecycle semantics | Execution and planning runtime-input lifecycle semantics converge on the shared v2 contract; `approval_request` is contract-ready but runtime-blocked for live parity |
-| `5.3` | Not started | Lineage-aware actions and command semantics | Waiting on stable replay, terminal-state, and fallback-policy decisions |
+| `5.3` | In progress | Lineage-aware actions and command semantics | Execution-first lineage seeding, action routes, and collapsed replay are implemented; planning/ask action surfaces remain out of scope and replay/reconnect closeout validation is still in progress |
 
 ## Dependencies Between 5.1 / 5.2 / 5.3
 - `5.1` establishes passive-part normalization, deterministic attachment, and replay discipline.
@@ -208,7 +208,7 @@ Phase 5 is complete when:
 
 ## Phase 5.3 - Lineage-Aware Actions And Command Semantics
 ### Status
-- Not started
+- In progress
 
 ### Goal
 - Add lineage-aware mutation semantics for `retry`, `continue`, `regenerate`, and `cancel` on top of the stable conversation-v2 contract.
@@ -233,33 +233,54 @@ Phase 5 is complete when:
 - explicit runtime capability assessment for rollback and rewind support
 
 ### Current Repo Boundary
-- no lineage-aware actions are implemented yet on the shared conversation-v2 path
-- runtime rollback/rewind capability is not yet locked for `retry` and `regenerate`
-- cancel semantics are still pending explicit terminalization policy
+- ordinary execution sends now seed durable lineage:
+  - send-created user messages point to the previous visible execution assistant head when one exists
+  - send-created assistant placeholders point to the send-created user message
+- legacy execution transcripts with empty lineage are repaired lazily and idempotently before snapshot return or action validation
+- visible execution lineage is derived from the latest eligible unsuperseded assistant head by durable transcript order, including pending and streaming assistant placeholders
+- execution-only v2 action routes now exist for:
+  - `continue`
+  - `retry`
+  - `regenerate`
+  - `cancel`
+- `continue` uses assistant-to-assistant parenting and is runtime-gated at route acceptance; if the runtime cannot prepare a resumable thread, the route returns `action_status = unavailable`
+- `retry` and `regenerate` create explicit new branches rather than overwriting in place
+- `regenerate` supersedes the replaced completed assistant result durably through `superseded_by_message_id`, while `message.status = superseded` remains a derived classification that must converge with the supersession marker
+- `cancel` terminalizes the active execution stream without creating a branch and publishes only the existing terminal event family
+- the shared execution surface now renders:
+  - `status_block`
+  - collapsed inline replay groups for superseded or off-lineage execution history
+- planning and ask do not expose Phase 5.3 action surfaces in this phase
 
 ### Core Rules
 - action semantics must be lineage-aware and durable
 - superseded answers and branches must remain replayable
 - action availability must respect ownership, runtime capability, and terminal-state rules
+- visible lineage derives from durable transcript order plus `parent_message_id`, never raw event arrival order
+- `superseded_by_message_id` is the canonical durable supersession marker
 - `cancel` is an active-operation control semantic, not a branch-creation semantic
 - if true rewind is unavailable, fallback policy must be explicit rather than implied
+- `continue` must not fall back to retry/regenerate-style branch semantics when true resume capability is unavailable
+- collapsed replay is a presentation policy only and must not remove branch-local passive semantics, request history, or terminal metadata from durable replay
 
 ### Risks
-- hidden branch loss during replay
-- cancel being implemented as pseudo-regenerate
-- unclear fallback behavior when runtime rewind is unavailable
+- replay or reconnect drift attaching the shared surface to the wrong lineage head
+- over-claiming 5.3 as cross-host complete when the implemented scope is execution-first only
+- implying frontend pre-click capability discovery when true continue availability is still enforced at route acceptance time
 
 ### Acceptance Criteria
-- durable lineage metadata supports deterministic replay after lineage-changing actions
-- retry, continue, regenerate, and cancel obey explicit ownership and terminal-state rules
-- superseded branches remain replayable
-- fallback policy is explicit when runtime rewind is unavailable
+- execution conversation messages carry durable lineage sufficient for deterministic replay, and backfill is idempotent for legacy execution transcripts
+- execution host action routes for `continue`, `retry`, `regenerate`, and `cancel` obey explicit ownership, lineage, and terminal-state rules
+- `continue` is unavailable rather than remapped when true runtime resume capability cannot be prepared
+- `retry` and `regenerate` create explicit replayable branches and do not overwrite prior history in place
+- `regenerate` supersedes the replaced completed assistant result durably while preserving that result for collapsed replay
+- `cancel` terminalizes the active execution stream without creating a branch or a second terminal publish cycle
+- the shared execution surface renders `status_block` and collapsed inline replay for superseded or off-lineage history
+- planning and ask remain explicitly out of scope for visible Phase 5.3 action controls
 
 ### Rollback Note
 - lineage-aware actions may be disabled independently from passive and interactive semantics
 
 ### Open Issues
-- `P5-OI-004`
-- `P5-OI-005`
-- `P5-OI-006`
-- `P5-OI-007`
+- no open policy issues remain for the execution-first Phase 5.3 scope
+- remaining closeout work is validation, replay/reconnect coverage, and manual QA rather than unresolved lineage-policy decisions

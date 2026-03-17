@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { ApiError, api } from '../../../api/client'
 import type {
+  ExecutionConversationActionResponse,
   ExecutionConversationEvent,
   ExecutionConversationSendAcceptedResponse,
 } from '../../../api/types'
@@ -27,6 +28,10 @@ type UseExecutionConversationResult = {
   bootstrapStatus: BootstrapStatus
   bootstrapError: string | null
   send: (content: string) => Promise<ExecutionConversationSendAcceptedResponse | void>
+  continueFromMessage: (messageId: string) => Promise<ExecutionConversationActionResponse | void>
+  retryFromMessage: (messageId: string) => Promise<ExecutionConversationActionResponse | void>
+  regenerateFromMessage: (messageId: string) => Promise<ExecutionConversationActionResponse | void>
+  cancelStream: (streamId: string | null) => Promise<ExecutionConversationActionResponse | void>
   refresh: () => void
 }
 
@@ -391,12 +396,106 @@ export function useExecutionConversation({
     setRefreshToken((current) => current + 1)
   }
 
+  function applyAcceptedActionResponse(response: ExecutionConversationActionResponse) {
+    const store = useConversationStore.getState()
+    if (response.action_status === 'accepted' && response.stream_id) {
+      store.patchRecord(response.conversation_id, {
+        active_stream_id: response.stream_id,
+        status: 'active',
+      })
+    }
+    if (
+      response.action === 'regenerate' &&
+      response.action_status === 'accepted' &&
+      response.target_message_id &&
+      response.new_message_id
+    ) {
+      const current = useConversationStore.getState().conversationsById[response.conversation_id]
+      const targetMessage =
+        current?.snapshot.messages.find((message) => message.message_id === response.target_message_id) ?? null
+      if (targetMessage) {
+        store.upsertMessage(response.conversation_id, {
+          ...targetMessage,
+          status: 'superseded',
+          lineage: {
+            ...targetMessage.lineage,
+            superseded_by_message_id: response.new_message_id,
+          },
+          updated_at: new Date().toISOString(),
+        })
+      }
+    }
+  }
+
+  async function runMessageAction(
+    messageId: string,
+    request: () => Promise<ExecutionConversationActionResponse>,
+  ): Promise<ExecutionConversationActionResponse | void> {
+    if (!messageId || !projectId || !nodeId) {
+      return
+    }
+    const activeConversationId = conversationIdRef.current
+    if (!activeConversationId) {
+      throw new Error('Execution conversation is not ready yet.')
+    }
+    const store = useConversationStore.getState()
+    store.setError(activeConversationId, null)
+    const response = await request()
+    applyAcceptedActionResponse(response)
+    return response
+  }
+
+  async function continueFromMessage(
+    messageId: string,
+  ): Promise<ExecutionConversationActionResponse | void> {
+    return runMessageAction(messageId, () =>
+      api.continueExecutionConversationMessage(projectId as string, nodeId as string, messageId),
+    )
+  }
+
+  async function retryFromMessage(
+    messageId: string,
+  ): Promise<ExecutionConversationActionResponse | void> {
+    return runMessageAction(messageId, () =>
+      api.retryExecutionConversationMessage(projectId as string, nodeId as string, messageId),
+    )
+  }
+
+  async function regenerateFromMessage(
+    messageId: string,
+  ): Promise<ExecutionConversationActionResponse | void> {
+    return runMessageAction(messageId, () =>
+      api.regenerateExecutionConversationMessage(projectId as string, nodeId as string, messageId),
+    )
+  }
+
+  async function cancelStream(
+    streamId: string | null,
+  ): Promise<ExecutionConversationActionResponse | void> {
+    if (!projectId || !nodeId) {
+      return
+    }
+    const activeConversationId = conversationIdRef.current
+    if (!activeConversationId) {
+      throw new Error('Execution conversation is not ready yet.')
+    }
+    const store = useConversationStore.getState()
+    store.setError(activeConversationId, null)
+    return api.cancelExecutionConversation(projectId, nodeId, {
+      stream_id: streamId,
+    })
+  }
+
   return {
     conversationId,
     conversation,
     bootstrapStatus,
     bootstrapError,
     send,
+    continueFromMessage,
+    retryFromMessage,
+    regenerateFromMessage,
+    cancelStream,
     refresh,
   }
 }

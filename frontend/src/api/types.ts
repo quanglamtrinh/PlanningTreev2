@@ -575,6 +575,18 @@ export interface PlanningConversationRequestResolvedResponse {
   status: 'resolved' | 'already_resolved_or_stale'
 }
 
+export interface ExecutionConversationActionResponse {
+  conversation_id: string
+  action: 'continue' | 'retry' | 'regenerate' | 'cancel'
+  action_status: 'accepted' | 'unavailable' | 'noop'
+  target_message_id: string | null
+  new_message_id: string | null
+  stream_id: string | null
+  turn_id?: string
+  assistant_text_part_id?: string
+  idempotent_outcome?: string
+}
+
 export type ExecutionConversationEvent = ConversationEventEnvelope
 
 export interface AskConversationResponse {

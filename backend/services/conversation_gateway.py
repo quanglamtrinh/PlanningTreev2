@@ -94,6 +94,15 @@ _TERMINAL_INTERACTIVE_RESOLUTION_STATES = {
     "error",
 }
 
+_VISIBLE_EXECUTION_HEAD_STATUSES = {
+    "pending",
+    "streaming",
+    "completed",
+    "error",
+    "interrupted",
+    "cancelled",
+}
+
 
 @dataclass
 class _LiveConversationState:
@@ -150,6 +159,7 @@ class ConversationGateway:
             "execute",
         )
         snapshot = self._recover_orphaned_execution_if_needed(project_id, snapshot)
+        snapshot = self._ensure_execution_lineage(project_id, snapshot)
         return self._enrich_snapshot(project_id, snapshot)
 
     def prepare_execution_event_stream(
@@ -1431,9 +1441,12 @@ class ConversationGateway:
             "execution",
             "execute",
         )
+        conversation = self._recover_orphaned_execution_if_needed(project_id, conversation)
+        conversation = self._ensure_execution_lineage(project_id, conversation)
         record = conversation["record"]
         conversation_id = str(record["conversation_id"])
         app_server_thread_id = str(record.get("app_server_thread_id") or "").strip() or None
+        previous_visible_assistant_head_id = self._find_latest_visible_execution_head_id(conversation["messages"])
         session = self._session_manager.get_or_create_session(project_id, workspace_root)
         request_context = self._context_builder.build_execution_request(
             project_id=project_id,
@@ -1458,6 +1471,9 @@ class ConversationGateway:
             role="user",
             runtime_mode="execute",
             status="completed",
+            lineage={
+                "parent_message_id": previous_visible_assistant_head_id,
+            },
             parts=[user_part],
         )
         assistant_part = make_conversation_part(
@@ -1472,6 +1488,9 @@ class ConversationGateway:
             role="assistant",
             runtime_mode="execute",
             status="pending",
+            lineage={
+                "parent_message_id": user_message["message_id"],
+            },
             parts=[assistant_part],
         )
         created_at = iso_now()
@@ -2197,6 +2216,419 @@ class ConversationGateway:
         )
         return {"status": str(result.get("status") or "already_resolved_or_stale")}
 
+    def continue_execution_message(
+        self,
+        project_id: str,
+        node_id: str,
+        message_id: str,
+    ) -> dict[str, Any]:
+        return self._start_execution_message_action(
+            project_id=project_id,
+            node_id=node_id,
+            message_id=message_id,
+            action="continue",
+        )
+
+    def retry_execution_message(
+        self,
+        project_id: str,
+        node_id: str,
+        message_id: str,
+    ) -> dict[str, Any]:
+        return self._start_execution_message_action(
+            project_id=project_id,
+            node_id=node_id,
+            message_id=message_id,
+            action="retry",
+        )
+
+    def regenerate_execution_message(
+        self,
+        project_id: str,
+        node_id: str,
+        message_id: str,
+    ) -> dict[str, Any]:
+        return self._start_execution_message_action(
+            project_id=project_id,
+            node_id=node_id,
+            message_id=message_id,
+            action="regenerate",
+        )
+
+    def _start_execution_message_action(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        message_id: str,
+        action: str,
+    ) -> dict[str, Any]:
+        target_message_id = str(message_id or "").strip()
+        if not target_message_id:
+            raise ValueError("message_id is required")
+
+        project_snapshot, node, state, workspace_root = self._load_node_context(project_id, node_id)
+        current_phase = str(state.get("phase") or node.get("phase") or "")
+        if current_phase != "executing":
+            raise NodeUpdateNotAllowed(
+                f"Cannot run execution action '{action}' in phase '{current_phase}'. Start execution first."
+            )
+
+        conversation = self.get_execution_conversation(project_id, node_id)
+        record = conversation["record"]
+        conversation_id = str(record["conversation_id"])
+        if str(record.get("active_stream_id") or "").strip():
+            raise ValueError("Execution conversation already has an active stream.")
+
+        target_message = self._find_message(conversation["messages"], target_message_id)
+        if target_message is None or target_message["role"] != "assistant":
+            raise ValueError("message_id must target an assistant message.")
+        if not self._message_has_part_type(target_message, "assistant_text"):
+            raise ValueError("message_id must target an assistant text message.")
+
+        latest_target = self._find_latest_visible_execution_action_target(conversation["messages"], action)
+        if latest_target is None or str(latest_target["message_id"]) != target_message_id:
+            raise ValueError(f"message_id is not the latest eligible visible target for '{action}'.")
+
+        request_context = self._context_builder.build_execution_action_request(
+            project_id=project_id,
+            snapshot=project_snapshot,
+            node=node,
+            state=state,
+            action=action,
+            target_message={
+                "message_id": str(target_message["message_id"]),
+                "status": str(target_message.get("status") or ""),
+                "parent_message_id": str(
+                    (target_message.get("lineage") or {}).get("parent_message_id") or ""
+                )
+                or None,
+                "text": self._assistant_text_from_message(target_message),
+            },
+        )
+        session = self._session_manager.get_or_create_session(project_id, workspace_root)
+        prepared_thread_id = self._prepare_execution_action_thread(
+            session=session,
+            action=action,
+            current_thread_id=str(record.get("app_server_thread_id") or "").strip() or None,
+            cwd=str(request_context["cwd"]),
+            timeout_sec=int(request_context["timeout_sec"]),
+            writable_roots=list(request_context["writable_roots"]),
+        )
+        if not prepared_thread_id:
+            return {
+                "conversation_id": conversation_id,
+                "action": action,
+                "action_status": "unavailable",
+                "target_message_id": target_message_id,
+                "new_message_id": None,
+                "stream_id": None,
+                "idempotent_outcome": "runtime_unavailable",
+            }
+
+        target_lineage = target_message.get("lineage") or {}
+        if action == "continue":
+            parent_message_id = target_message_id
+            lineage = {
+                "parent_message_id": target_message_id,
+                "continue_of_message_id": target_message_id,
+            }
+        elif action == "retry":
+            parent_message_id = str(target_lineage.get("parent_message_id") or "").strip() or None
+            lineage = {
+                "parent_message_id": parent_message_id,
+                "retry_of_message_id": target_message_id,
+            }
+        else:
+            parent_message_id = str(target_lineage.get("parent_message_id") or "").strip() or None
+            lineage = {
+                "parent_message_id": parent_message_id,
+                "regenerate_of_message_id": target_message_id,
+            }
+
+        turn_id = new_id("turn")
+        stream_id = new_id("stream")
+        assistant_part = make_conversation_part(
+            part_type="assistant_text",
+            order=0,
+            payload={"text": ""},
+            status="pending",
+        )
+        assistant_message = make_conversation_message(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            role="assistant",
+            runtime_mode="execute",
+            status="pending",
+            lineage=lineage,
+            parts=[assistant_part],
+        )
+        created_at = iso_now()
+        self._stamp_message_timestamps(assistant_message, created_at)
+
+        with session.lock:
+            if session.active_streams.get(conversation_id):
+                raise ValueError("Execution conversation already has an active stream.")
+            self._claim_ownership_locked(
+                session,
+                conversation_id=conversation_id,
+                stream_id=stream_id,
+                turn_id=turn_id,
+                app_server_thread_id=prepared_thread_id,
+            )
+            self._ensure_live_state_locked(
+                project_id,
+                conversation_id,
+                durable_event_seq=int(record.get("event_seq", 0) or 0),
+                assistant_text="",
+            )
+            assistant_event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
+
+        send_start_task = self._build_action_send_start_persistence_task(
+            project_id=project_id,
+            conversation_id=conversation_id,
+            assistant_message=assistant_message,
+            stream_id=stream_id,
+            event_seq=assistant_event_seq,
+            app_server_thread_id=prepared_thread_id,
+            supersede_target_message_id=target_message_id if action == "regenerate" else None,
+        )
+
+        self._event_broker.publish(
+            project_id,
+            conversation_id,
+            self._build_message_created_event(
+                conversation_id=conversation_id,
+                stream_id=stream_id,
+                turn_id=turn_id,
+                event_seq=assistant_event_seq,
+                created_at=created_at,
+                message=assistant_message,
+            ),
+        )
+        try:
+            self._enqueue_persistence_task(send_start_task)
+        except BaseException as exc:  # noqa: BLE001
+            logger.exception("Execution action send-start persistence handoff failed", exc_info=exc)
+            with session.lock:
+                self._clear_ownership_locked(
+                    session,
+                    project_id=project_id,
+                    conversation_id=conversation_id,
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                    app_server_thread_id=prepared_thread_id,
+                )
+            try:
+                self._repair_interrupted_action_start_state(
+                    project_id=project_id,
+                    conversation_id=conversation_id,
+                    assistant_message=assistant_message,
+                    event_seq=assistant_event_seq,
+                    error_message=EXECUTION_INTERRUPTED_MESSAGE,
+                    app_server_thread_id=prepared_thread_id,
+                    supersede_target_message_id=target_message_id if action == "regenerate" else None,
+                )
+            except BaseException as repair_exc:  # noqa: BLE001
+                logger.exception("Execution action send-start failure repair did not complete", exc_info=repair_exc)
+                raise ConversationPersistenceUnavailable() from repair_exc
+            raise ConversationPersistenceUnavailable() from exc
+
+        threading.Thread(
+            target=self._run_execution_turn,
+            kwargs={
+                "project_id": project_id,
+                "conversation_id": conversation_id,
+                "stream_id": stream_id,
+                "turn_id": turn_id,
+                "assistant_message_id": assistant_message["message_id"],
+                "assistant_part_id": assistant_part["part_id"],
+                "prompt": str(request_context["prompt"]),
+                "thread_id": prepared_thread_id,
+                "timeout_sec": int(request_context["timeout_sec"]),
+                "cwd": str(request_context["cwd"]),
+                "writable_roots": list(request_context["writable_roots"]),
+            },
+            daemon=True,
+        ).start()
+
+        return {
+            "conversation_id": conversation_id,
+            "action": action,
+            "action_status": "accepted",
+            "target_message_id": target_message_id,
+            "new_message_id": assistant_message["message_id"],
+            "stream_id": stream_id,
+            "turn_id": turn_id,
+            "assistant_text_part_id": assistant_part["part_id"],
+        }
+
+    def _prepare_execution_action_thread(
+        self,
+        *,
+        session: ProjectCodexSession,
+        action: str,
+        current_thread_id: str | None,
+        cwd: str,
+        timeout_sec: int,
+        writable_roots: list[str],
+    ) -> str | None:
+        source_thread_id = str(current_thread_id or "").strip() or None
+        if not source_thread_id:
+            logger.debug(
+                "Execution action unavailable because no current runtime thread is recorded",
+                extra={"action": action},
+            )
+            return None
+        try:
+            if action == "continue":
+                response = session.client.resume_thread(
+                    source_thread_id,
+                    cwd=cwd,
+                    timeout_sec=timeout_sec,
+                    writable_roots=writable_roots,
+                )
+            else:
+                response = session.client.fork_thread(
+                    source_thread_id,
+                    cwd=cwd,
+                    timeout_sec=timeout_sec,
+                )
+        except Exception:
+            logger.warning(
+                "Execution action thread preparation failed",
+                exc_info=True,
+                extra={
+                    "action": action,
+                    "source_thread_id": source_thread_id,
+                },
+            )
+            return None
+        prepared_thread_id = str(response.get("thread_id") or source_thread_id).strip() or None
+        return prepared_thread_id
+
+    def cancel_execution_stream(
+        self,
+        project_id: str,
+        node_id: str,
+        *,
+        stream_id: str | None,
+    ) -> dict[str, Any]:
+        conversation = self.get_execution_conversation(project_id, node_id)
+        record = conversation["record"]
+        conversation_id = str(record["conversation_id"])
+        session = self._session_manager.get_session(project_id)
+        if session is None:
+            return {
+                "conversation_id": conversation_id,
+                "action": "cancel",
+                "action_status": "noop",
+                "target_message_id": None,
+                "new_message_id": None,
+                "stream_id": None,
+                "idempotent_outcome": "already_terminal",
+            }
+
+        requested_stream_id = str(stream_id or "").strip() or None
+        with session.lock:
+            current_stream_id = (
+                str(session.active_streams.get(conversation_id) or "").strip()
+                or str(record.get("active_stream_id") or "").strip()
+                or None
+            )
+            latest_message = self._find_latest_in_flight_assistant_message(conversation["messages"])
+            if current_stream_id is None or latest_message is None:
+                return {
+                    "conversation_id": conversation_id,
+                    "action": "cancel",
+                    "action_status": "noop",
+                    "target_message_id": None,
+                    "new_message_id": None,
+                    "stream_id": current_stream_id,
+                    "idempotent_outcome": "already_terminal",
+                }
+            if requested_stream_id and requested_stream_id != current_stream_id:
+                return {
+                    "conversation_id": conversation_id,
+                    "action": "cancel",
+                    "action_status": "noop",
+                    "target_message_id": None,
+                    "new_message_id": None,
+                    "stream_id": current_stream_id,
+                    "idempotent_outcome": "stale_stream",
+                }
+
+            current_turn_id = (
+                str(session.active_turns.get(conversation_id) or "").strip()
+                or str(latest_message.get("turn_id") or "").strip()
+            )
+            assistant_part = self._find_latest_assistant_text_part(latest_message)
+            assistant_part_id = str(assistant_part["part_id"]) if assistant_part is not None else ""
+            live_state = self._ensure_live_state_locked(project_id, conversation_id, durable_event_seq=0)
+            full_text = live_state.assistant_text or self._assistant_text_from_message(latest_message)
+            event_seq = self._allocate_event_seq_locked(project_id, conversation_id)
+            finished_at = iso_now()
+            app_server_thread_id = str(record.get("app_server_thread_id") or "").strip() or None
+
+            session.active_streams.pop(conversation_id, None)
+            session.active_turns.pop(conversation_id, None)
+            if app_server_thread_id:
+                existing = session.loaded_runtime_threads.get(app_server_thread_id)
+                if existing is None:
+                    session.loaded_runtime_threads[app_server_thread_id] = RuntimeThreadState(
+                        thread_id=app_server_thread_id,
+                        last_used_at=finished_at,
+                        active_turn_id=None,
+                        status="idle",
+                    )
+                else:
+                    existing.active_turn_id = None
+                    existing.status = "idle"
+                    existing.last_used_at = finished_at
+            with self._live_state_lock:
+                self._live_state.pop((project_id, conversation_id), None)
+
+        self._storage.conversation_store.mutate_conversation(
+            project_id,
+            conversation_id,
+            lambda snapshot: self._apply_assistant_text_mutation(
+                snapshot=snapshot,
+                assistant_message_id=str(latest_message["message_id"]),
+                assistant_part_id=assistant_part_id,
+                full_text=full_text,
+                updated_at=finished_at,
+                event_seq=event_seq,
+                message_status="cancelled",
+                part_status="cancelled",
+                error_message=None,
+                conversation_status="cancelled",
+                active_stream_id=None,
+                app_server_thread_id=app_server_thread_id,
+            ),
+        )
+        self._event_broker.publish(
+            project_id,
+            conversation_id,
+            self._build_completion_status_event(
+                conversation_id=conversation_id,
+                stream_id=current_stream_id,
+                turn_id=current_turn_id,
+                message_id=str(latest_message["message_id"]),
+                event_seq=event_seq,
+                created_at=finished_at,
+                status="cancelled",
+                error=None,
+            ),
+        )
+        return {
+            "conversation_id": conversation_id,
+            "action": "cancel",
+            "action_status": "accepted",
+            "target_message_id": str(latest_message["message_id"]),
+            "new_message_id": None,
+            "stream_id": current_stream_id,
+        }
+
     def _handle_completion_success(
         self,
         *,
@@ -2695,6 +3127,190 @@ class ConversationGateway:
             return "error"
         return "pending"
 
+    def _message_has_part_type(
+        self,
+        message: ConversationMessage,
+        part_type: str,
+    ) -> bool:
+        return any(part["part_type"] == part_type for part in message["parts"])
+
+    def _assistant_text_from_message(self, message: ConversationMessage) -> str:
+        part = self._find_latest_assistant_text_part(message)
+        if part is None:
+            return ""
+        payload = part.get("payload") or {}
+        if not isinstance(payload, dict):
+            return ""
+        text = payload.get("text")
+        if isinstance(text, str):
+            return text
+        content = payload.get("content")
+        return content if isinstance(content, str) else ""
+
+    def _is_execution_assistant_head_candidate(self, message: ConversationMessage) -> bool:
+        if message["role"] != "assistant":
+            return False
+        if str(message.get("runtime_mode") or "") != "execute":
+            return False
+        if not self._message_has_part_type(message, "assistant_text"):
+            return False
+        if str(message.get("status") or "") not in _VISIBLE_EXECUTION_HEAD_STATUSES:
+            return False
+        if str(message.get("status") or "") == "superseded":
+            return False
+        lineage = message.get("lineage") or {}
+        return not str(lineage.get("superseded_by_message_id") or "").strip()
+
+    def _find_visible_execution_head(
+        self,
+        messages: list[ConversationMessage],
+    ) -> ConversationMessage | None:
+        for message in reversed(messages):
+            if self._is_execution_assistant_head_candidate(message):
+                return message
+        return None
+
+    def _find_latest_visible_execution_head_id(
+        self,
+        messages: list[ConversationMessage],
+    ) -> str | None:
+        head = self._find_visible_execution_head(messages)
+        return str(head["message_id"]) if head is not None else None
+
+    def _collect_visible_execution_lineage_ids(
+        self,
+        messages: list[ConversationMessage],
+    ) -> set[str]:
+        head = self._find_visible_execution_head(messages)
+        if head is None:
+            return set()
+        message_by_id = {str(message["message_id"]): message for message in messages}
+        lineage_message_ids: set[str] = set()
+        cursor: ConversationMessage | None = head
+        while cursor is not None:
+            message_id = str(cursor["message_id"])
+            if message_id in lineage_message_ids:
+                break
+            lineage_message_ids.add(message_id)
+            parent_id = str((cursor.get("lineage") or {}).get("parent_message_id") or "").strip() or None
+            cursor = message_by_id.get(parent_id) if parent_id else None
+        visible_turn_ids = {
+            str(message["turn_id"])
+            for message in messages
+            if str(message["message_id"]) in lineage_message_ids
+        }
+        return {
+            str(message["message_id"])
+            for message in messages
+            if (
+                str(message["message_id"]) in lineage_message_ids
+                or (
+                    str(message["turn_id"]) in visible_turn_ids
+                    and not self._message_has_part_type(message, "assistant_text")
+                )
+            )
+        }
+
+    def _find_latest_visible_execution_action_target(
+        self,
+        messages: list[ConversationMessage],
+        action: str,
+    ) -> ConversationMessage | None:
+        visible_ids = self._collect_visible_execution_lineage_ids(messages)
+        if not visible_ids:
+            return None
+        for message in reversed(messages):
+            if str(message["message_id"]) not in visible_ids:
+                continue
+            if not self._is_execution_assistant_head_candidate(message):
+                continue
+            status = str(message.get("status") or "")
+            if action in {"continue", "regenerate"} and status == "completed":
+                return message
+            if action == "retry" and status in {"error", "interrupted", "cancelled"}:
+                return message
+        return None
+
+    def _sync_execution_supersession_status(
+        self,
+        message: ConversationMessage,
+    ) -> bool:
+        lineage = message.setdefault("lineage", {})
+        superseded_by = str(lineage.get("superseded_by_message_id") or "").strip() or None
+        if superseded_by and str(message.get("status") or "") != "superseded":
+            message["status"] = "superseded"
+            return True
+        return False
+
+    def _apply_execution_lineage_backfill_mutation(
+        self,
+        snapshot: ConversationSnapshot,
+    ) -> bool:
+        if str(snapshot["record"].get("thread_type") or "") != "execution":
+            return False
+        messages = snapshot["messages"]
+        message_by_id = {str(message["message_id"]): message for message in messages}
+        latest_visible_head_id: str | None = None
+        turn_user_message_ids: dict[str, str] = {}
+        changed = False
+
+        for message in messages:
+            changed = self._sync_execution_supersession_status(message) or changed
+            turn_id = str(message.get("turn_id") or "")
+            if turn_id and message["role"] == "user" and self._message_has_part_type(message, "user_text"):
+                turn_user_message_ids[turn_id] = str(message["message_id"])
+
+            if str(message.get("runtime_mode") or "") != "execute":
+                if self._is_execution_assistant_head_candidate(message):
+                    latest_visible_head_id = str(message["message_id"])
+                continue
+
+            lineage = message.setdefault("lineage", {})
+            current_parent = str(lineage.get("parent_message_id") or "").strip() or None
+            next_parent = current_parent
+
+            if message["role"] == "user" and self._message_has_part_type(message, "user_text"):
+                next_parent = latest_visible_head_id
+            elif message["role"] == "assistant" and self._message_has_part_type(message, "assistant_text"):
+                continue_of = str(lineage.get("continue_of_message_id") or "").strip() or None
+                retry_of = str(lineage.get("retry_of_message_id") or "").strip() or None
+                regenerate_of = str(lineage.get("regenerate_of_message_id") or "").strip() or None
+                if continue_of:
+                    next_parent = continue_of
+                elif retry_of or regenerate_of:
+                    target_id = retry_of or regenerate_of
+                    target_message = message_by_id.get(str(target_id))
+                    target_lineage = target_message.get("lineage") if isinstance(target_message, dict) else {}
+                    next_parent = str((target_lineage or {}).get("parent_message_id") or "").strip() or None
+                else:
+                    next_parent = turn_user_message_ids.get(turn_id)
+
+            if next_parent != current_parent or ("parent_message_id" not in lineage and next_parent is None):
+                lineage["parent_message_id"] = next_parent
+                changed = True
+
+            if self._is_execution_assistant_head_candidate(message):
+                latest_visible_head_id = str(message["message_id"])
+
+        return changed
+
+    def _ensure_execution_lineage(
+        self,
+        project_id: str,
+        snapshot: ConversationSnapshot,
+    ) -> ConversationSnapshot:
+        if str(snapshot["record"].get("thread_type") or "") != "execution":
+            return snapshot
+        working_snapshot = copy.deepcopy(snapshot)
+        if not self._apply_execution_lineage_backfill_mutation(working_snapshot):
+            return snapshot
+        conversation_id = str(snapshot["record"]["conversation_id"])
+        return self._storage.conversation_store.mutate_conversation(
+            project_id,
+            conversation_id,
+            self._apply_execution_lineage_backfill_mutation,
+        )
+
     def _build_execution_user_input_request_message(
         self,
         *,
@@ -2981,6 +3597,7 @@ class ConversationGateway:
         snapshot["record"]["current_runtime_mode"] = "execute"
         snapshot["record"]["active_stream_id"] = stream_id
         snapshot["record"]["event_seq"] = event_seq
+        snapshot["record"]["updated_at"] = assistant_message["updated_at"]
 
     def _build_send_start_persistence_task(
         self,
@@ -3007,6 +3624,59 @@ class ConversationGateway:
 
         return _PersistenceTask(run=run)
 
+    def _apply_action_send_start_mutation(
+        self,
+        *,
+        snapshot: ConversationSnapshot,
+        assistant_message: ConversationMessage,
+        stream_id: str,
+        event_seq: int,
+        app_server_thread_id: str | None,
+        supersede_target_message_id: str | None,
+    ) -> None:
+        if supersede_target_message_id:
+            target_message = self._find_message(snapshot["messages"], supersede_target_message_id)
+            if target_message is not None:
+                target_lineage = target_message.setdefault("lineage", {})
+                target_lineage["superseded_by_message_id"] = str(assistant_message["message_id"])
+                target_message["status"] = "superseded"
+                target_message["updated_at"] = assistant_message["created_at"]
+        snapshot["messages"].append(copy.deepcopy(assistant_message))
+        snapshot["record"]["status"] = "active"
+        snapshot["record"]["current_runtime_mode"] = "execute"
+        snapshot["record"]["active_stream_id"] = stream_id
+        snapshot["record"]["event_seq"] = event_seq
+        snapshot["record"]["updated_at"] = assistant_message["updated_at"]
+        if app_server_thread_id:
+            snapshot["record"]["app_server_thread_id"] = app_server_thread_id
+
+    def _build_action_send_start_persistence_task(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        assistant_message: ConversationMessage,
+        stream_id: str,
+        event_seq: int,
+        app_server_thread_id: str | None,
+        supersede_target_message_id: str | None,
+    ) -> _PersistenceTask:
+        def run() -> None:
+            self._storage.conversation_store.mutate_conversation(
+                project_id,
+                conversation_id,
+                lambda snapshot: self._apply_action_send_start_mutation(
+                    snapshot=snapshot,
+                    assistant_message=assistant_message,
+                    stream_id=stream_id,
+                    event_seq=event_seq,
+                    app_server_thread_id=app_server_thread_id,
+                    supersede_target_message_id=supersede_target_message_id,
+                ),
+            )
+
+        return _PersistenceTask(run=run)
+
     def _repair_interrupted_send_start_state(
         self,
         *,
@@ -3026,6 +3696,30 @@ class ConversationGateway:
                 assistant_message=assistant_message,
                 event_seq=event_seq,
                 error_message=error_message,
+            ),
+        )
+
+    def _repair_interrupted_action_start_state(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        assistant_message: ConversationMessage,
+        event_seq: int,
+        error_message: str,
+        app_server_thread_id: str | None,
+        supersede_target_message_id: str | None,
+    ) -> ConversationSnapshot:
+        return self._storage.conversation_store.mutate_conversation(
+            project_id,
+            conversation_id,
+            lambda snapshot: self._apply_interrupted_action_start_mutation(
+                snapshot=snapshot,
+                assistant_message=assistant_message,
+                event_seq=event_seq,
+                error_message=error_message,
+                app_server_thread_id=app_server_thread_id,
+                supersede_target_message_id=supersede_target_message_id,
             ),
         )
 
@@ -3054,6 +3748,42 @@ class ConversationGateway:
         snapshot["record"]["current_runtime_mode"] = "execute"
         snapshot["record"]["active_stream_id"] = None
         snapshot["record"]["event_seq"] = max(int(snapshot["record"].get("event_seq", 0) or 0), event_seq)
+        snapshot["record"]["updated_at"] = interrupted_at
+
+    def _apply_interrupted_action_start_mutation(
+        self,
+        *,
+        snapshot: ConversationSnapshot,
+        assistant_message: ConversationMessage,
+        event_seq: int,
+        error_message: str,
+        app_server_thread_id: str | None,
+        supersede_target_message_id: str | None,
+    ) -> None:
+        interrupted_at = iso_now()
+        repaired_assistant_message = copy.deepcopy(assistant_message)
+        repaired_assistant_message["status"] = "interrupted"
+        repaired_assistant_message["error"] = error_message
+        repaired_assistant_message["updated_at"] = interrupted_at
+        for part in repaired_assistant_message["parts"]:
+            if part["part_type"] == "assistant_text":
+                part["status"] = "interrupted"
+                part["updated_at"] = interrupted_at
+        if supersede_target_message_id:
+            target_message = self._find_message(snapshot["messages"], supersede_target_message_id)
+            if target_message is not None:
+                target_lineage = target_message.setdefault("lineage", {})
+                target_lineage["superseded_by_message_id"] = str(repaired_assistant_message["message_id"])
+                target_message["status"] = "superseded"
+                target_message["updated_at"] = interrupted_at
+        self._upsert_message_in_snapshot(snapshot["messages"], repaired_assistant_message)
+        snapshot["record"]["status"] = "interrupted"
+        snapshot["record"]["current_runtime_mode"] = "execute"
+        snapshot["record"]["active_stream_id"] = None
+        snapshot["record"]["event_seq"] = max(int(snapshot["record"].get("event_seq", 0) or 0), event_seq)
+        snapshot["record"]["updated_at"] = interrupted_at
+        if app_server_thread_id:
+            snapshot["record"]["app_server_thread_id"] = app_server_thread_id
 
     def _apply_orphaned_execution_recovery_mutation(
         self,
@@ -3301,6 +4031,8 @@ class ConversationGateway:
     ) -> ConversationMessage | None:
         for message in reversed(messages):
             if message["role"] != "assistant":
+                continue
+            if not self._message_has_part_type(message, "assistant_text"):
                 continue
             if message["status"] in {"pending", "streaming"}:
                 return message

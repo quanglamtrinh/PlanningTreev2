@@ -1,5 +1,46 @@
 # Progress Log
 
+## 2026-03-16T20:35:00-07:00
+- Phase: 5
+- Batch ID: P5.3-execution-first
+- Summary:
+  - implemented execution-first lineage-aware actions on the conversation-v2 path for `continue`, `retry`, `regenerate`, and `cancel`
+  - seeded durable execution lineage for ordinary sends, added lazy idempotent lineage backfill for legacy execution transcripts, and added collapsed inline replay plus `status_block` rendering on the shared execution surface
+  - updated the Phase 5 tracking docs so `5.3` is now tracked as in progress with execution-first implementation landed, no open lineage-policy blockers, and remaining closeout work limited to replay/reconnect validation and manual QA
+- Files Changed:
+  - `backend/routes/conversation.py`
+  - `backend/services/conversation_context_builder.py`
+  - `backend/services/conversation_gateway.py`
+  - `backend/tests/unit/test_conversation_gateway.py`
+  - `backend/tests/integration/test_conversation_gateway_api.py`
+  - `frontend/src/api/client.ts`
+  - `frontend/src/api/types.ts`
+  - `frontend/src/features/breadcrumb/BreadcrumbWorkspace.tsx`
+  - `frontend/src/features/breadcrumb/ChatPanel.tsx`
+  - `frontend/src/features/breadcrumb/ExecutionConversationPanel.tsx`
+  - `frontend/src/features/conversation/components/ConversationBlocks.tsx`
+  - `frontend/src/features/conversation/components/ConversationSurface.module.css`
+  - `frontend/src/features/conversation/components/ConversationSurface.tsx`
+  - `frontend/src/features/conversation/hooks/useExecutionConversation.ts`
+  - `frontend/src/features/conversation/model/buildConversationRenderModel.ts`
+  - `frontend/src/features/conversation/model/deriveExecutionLineage.ts`
+  - `frontend/tests/unit/ConversationSurface.test.tsx`
+  - `frontend/tests/unit/execution-conversation-stream.test.tsx`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_PLAN.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_PROGRESS.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_BATCHES.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_VALIDATION.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_OPEN_ISSUES.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_5_CHANGELOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PHASE_PLAN.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/PROGRESS_LOG.md`
+  - `docs/migration/codexmonitor-conversation-into-planningtree/CHANGELOG.md`
+- Blockers:
+  - no open lineage-policy blockers remain for the execution-first Phase 5.3 scope
+  - replay/reconnect closeout validation and manual QA are still outstanding
+- Next Step:
+  - finish replay/reconnect validation for lineage-changing actions and keep planning/ask Phase 5.3 action scopes explicitly out of phase
+
 ## 2026-03-16T18:55:00-07:00
 - Phase: 5
 - Batch ID: P5.2-closeout

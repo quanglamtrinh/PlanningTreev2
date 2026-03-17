@@ -4,7 +4,7 @@
 | Field | Value |
 | --- | --- |
 | Status | In progress |
-| Current focus | Keep `5.1` and runtime-blocked `5.2` boundaries explicit, validate planning-v2 interactive convergence, and prepare `5.3` planning |
+| Current focus | Keep `5.1` and runtime-blocked `5.2` boundaries explicit, validate execution-first `5.3` replay/reconnect behavior, and keep the dedicated Phase 5 package aligned with the actual repo state |
 | Last updated | `2026-03-16` |
 | Phase owner | `TBD` |
 
@@ -13,13 +13,13 @@
 | --- | --- | --- | --- | --- | --- |
 | `5.1` | In progress | `TBD` | Partially validated | `2026-03-16` passive hardening and backend live-path boundary update | `P5-OI-001` |
 | `5.2` | Complete | `TBD` | Partially validated | `2026-03-16` execution duplicate-suppression hardening and planning-v2 convergence | `P5-OI-002`, `P5-OI-003` |
-| `5.3` | Not started | `TBD` | Not started | Planning only | `P5-OI-004`, `P5-OI-005`, `P5-OI-006`, `P5-OI-007` |
+| `5.3` | In progress | `TBD` | Partially validated | `2026-03-16` execution-first lineage-aware actions and replay model landed | none blocking |
 
 ## Current Focus
 - keep the dedicated Phase 5 package aligned with the actual repo state
 - keep `5.1` replay-only backend semantics explicit until native transport support exists
 - keep `5.2` approval live parity explicitly runtime-blocked while `approvalPolicy: never` remains
-- use the package to prepare `5.3` lineage and fallback-policy decisions now that `5.2` runtime-input closeout has landed
+- finish `5.3` replay/reconnect validation and manual QA without overstating the execution-first scope
 
 ## Completed
 - `5.1` shared passive renderer and durable replay support are in place
@@ -29,24 +29,24 @@
 - `5.2` execution request resolution now suppresses duplicate terminal publish when local resolution and native callbacks overlap
 - `5.2` active visible request selection now uses the latest unresolved request on the currently visible lineage
 - `5.2` planning runtime-input lifecycle now converges on the same conversation-v2 contract through snapshot normalization, lifecycle event translation, and a planning v2 resolve route
+- `5.3` execution conversation sends now seed durable lineage and lazily backfill legacy execution transcripts before snapshot return or action validation
+- `5.3` execution-only action routes now exist for `continue`, `retry`, `regenerate`, and `cancel`
+- `5.3` shared execution rendering now supports `status_block` plus collapsed inline replay groups for superseded or off-lineage execution history
 - dedicated `PHASE_5_*` tracking files have been added to the migration docs
 
 ## In Progress
 - `5.1` remaining passive semantics stay replay-only on the backend live path until native transport support exists
 - `5.2` approval semantics are contract-ready and replay-safe, but live parity remains runtime-blocked
 - ask interactive convergence remains limited to paths with a clean normalized source
+- `5.3` replay/reconnect closeout coverage and manual QA are still being finished
 
 ## Not Started
-- `5.3` lineage metadata
-- `5.3` retry, continue, regenerate, and cancel semantics
-- `5.3` runtime fallback policy for rewind-unavailable targets
+- no additional Phase 5.3 host scopes are planned beyond the execution-first boundary in this phase
 
 ## Blocked / At Risk
 - `P5-OI-001`: missing native transport live signals for several passive semantics
 - `P5-OI-002`: approval live parity remains blocked by `approvalPolicy: never`
 - `P5-OI-003`: ask does not yet expose a clean normalized interactive source on the v2 path
-- `P5-OI-004`: runtime rollback and rewind capability for `retry` and `regenerate` is not locked
-- `P5-OI-005`: cancel/completion race semantics are not yet defined
 
 ## Phase 5.1 Status
 ### Status Table
@@ -127,33 +127,38 @@
 ### Status Table
 | Field | Value |
 | --- | --- |
-| Status | Not started |
+| Status | In progress |
 | Owner | `TBD` |
-| Latest update | Planning baseline only |
-| Validation status | Not started |
-| Blockers | Runtime fallback and cancel semantics are not locked |
-| Next recommended step | Lock lineage metadata, fallback policy, and cancel semantics before action wiring begins |
+| Latest update | `2026-03-16` execution-first lineage-aware actions and replay model landed |
+| Validation status | Partially validated |
+| Blockers | No open policy blockers; remaining closeout work is replay/reconnect coverage and manual QA |
+| Next recommended step | Finish replay/reconnect validation and keep the execution-first scope explicit in docs and host behavior |
 
 ### Completed Implementation Items
-- none
+- ordinary execution sends now seed durable lineage for send-created user and assistant messages
+- legacy execution transcripts with empty lineage are repaired lazily and idempotently before snapshot return or action validation
+- visible execution lineage is selected from the latest eligible unsuperseded assistant head by durable transcript order
+- execution-only v2 routes now exist for `continue`, `retry`, `regenerate`, and `cancel`
+- `continue` uses assistant-to-assistant parenting and returns `action_status = unavailable` when the runtime cannot prepare a resumable thread
+- `retry` and `regenerate` create explicit new branches, while `regenerate` durably marks the replaced completed assistant result with `superseded_by_message_id`
+- `cancel` terminalizes the active execution stream without creating a branch
+- the shared execution surface now renders `status_block` and collapsed inline replay groups for superseded or off-lineage history
 
 ### Remaining Implementation Items
-- define durable lineage metadata and supersession markers
-- lock fallback policy for rewind-unavailable runtimes
-- implement `cancel` as terminalization on the current lineage
-- implement `retry`, `continue`, and `regenerate`
-- add replay/reconnect coverage for lineage-changing actions
+- expand replay/reconnect coverage for `retry`, `regenerate`, and `cancel`
+- add closeout validation for unavailable action outcomes when the runtime cannot prepare continue or fork behavior
+- complete manual QA for collapsed replay presentation, visible action availability, and cancel/reload behavior
 
 ### Validation Status
-- no 5.3 validation has started
+- backend unit tests cover execution lineage seeding and backfill plus lineage population for `continue`, `retry`, `regenerate`, and `cancel`
+- backend integration tests cover accepted `continue` and `cancel` route behavior on the execution v2 path
+- frontend unit tests cover `status_block` rendering, collapsed replay grouping, and local supersession patching for regenerate
+- replay/reconnect validation remains incomplete for all lineage-changing actions
 
 ### Blockers
-- `P5-OI-004`
-- `P5-OI-005`
-- `P5-OI-006`
-- `P5-OI-007`
+- none
 
 ### Next Recommended Steps
-- lock the runtime capability and fallback policy before UI or route work starts
-- keep superseded-history replay explicit from the beginning
-- separate cancel semantics from branch-creation semantics
+- add replay/reconnect coverage for `retry`, `regenerate`, and `cancel`
+- keep planning and ask action scopes explicitly out of Phase 5.3
+- keep the docs aligned with the execution-first implementation boundary

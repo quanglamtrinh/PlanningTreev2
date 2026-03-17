@@ -32,6 +32,10 @@ class FakeConversationClient:
         block_event: threading.Event | None = None,
         raise_error: Exception | None = None,
         returned_thread_id: str = "thread_exec_1",
+        resumed_thread_id: str | None = None,
+        forked_thread_id: str | None = None,
+        resume_error: Exception | None = None,
+        fork_error: Exception | None = None,
     ) -> None:
         self.deltas = list(deltas or [])
         self.plan_deltas = list(plan_deltas or [])
@@ -43,8 +47,14 @@ class FakeConversationClient:
         self.block_event = block_event
         self.raise_error = raise_error
         self.returned_thread_id = returned_thread_id
+        self.resumed_thread_id = resumed_thread_id or returned_thread_id
+        self.forked_thread_id = forked_thread_id or f"{returned_thread_id}_fork"
+        self.resume_error = resume_error
+        self.fork_error = fork_error
         self.started = threading.Event()
         self.calls: list[dict[str, object]] = []
+        self.resume_calls: list[dict[str, object]] = []
+        self.fork_calls: list[dict[str, object]] = []
         self.pending_requests: dict[str, dict[str, object]] = {}
         self.resolved_answers: dict[str, dict[str, object]] = {}
 
@@ -61,10 +71,11 @@ class FakeConversationClient:
         on_request_user_input=None,
         on_request_resolved=None,
     ) -> dict[str, object]:
+        resolved_thread_id = thread_id or self.returned_thread_id
         self.calls.append(
             {
                 "prompt": prompt,
-                "thread_id": thread_id,
+                "thread_id": resolved_thread_id,
                 "timeout_sec": timeout_sec,
                 "cwd": cwd,
                 "writable_roots": writable_roots,
@@ -90,7 +101,7 @@ class FakeConversationClient:
                     {
                         "id": str(plan_delta.get("id") or ""),
                         "turn_id": str(plan_delta.get("turn_id") or ""),
-                        "thread_id": str(plan_delta.get("thread_id") or self.returned_thread_id),
+                        "thread_id": str(plan_delta.get("thread_id") or resolved_thread_id),
                     },
                 )
         if callable(on_request_user_input):
@@ -100,7 +111,7 @@ class FakeConversationClient:
                 wait_event = threading.Event() if wait_for_resolution else None
                 normalized_request = {
                     "request_id": request_id,
-                    "thread_id": str(request.get("thread_id") or self.returned_thread_id),
+                    "thread_id": str(request.get("thread_id") or resolved_thread_id),
                     "turn_id": str(request.get("turn_id") or ""),
                     "item_id": str(request.get("item_id") or f"item_{request_id}"),
                     "status": str(request.get("status") or "pending"),
@@ -122,7 +133,7 @@ class FakeConversationClient:
                 on_request_resolved(
                     {
                         "request_id": str(resolution.get("request_id") or ""),
-                        "thread_id": str(resolution.get("thread_id") or self.returned_thread_id),
+                        "thread_id": str(resolution.get("thread_id") or resolved_thread_id),
                         "turn_id": str(resolution.get("turn_id") or ""),
                         "status": str(resolution.get("status") or "resolved"),
                         "resolved_at": str(resolution.get("resolved_at") or "2026-03-15T00:00:03Z"),
@@ -133,13 +144,25 @@ class FakeConversationClient:
                 on_delta(delta)
         return {
             "stdout": self.final_text if self.final_text is not None else "".join(self.deltas),
-            "thread_id": self.returned_thread_id,
+            "thread_id": resolved_thread_id,
             "tool_calls": list(self.tool_calls),
             "final_plan_item": dict(self.final_plan_item) if self.final_plan_item is not None else None,
         }
 
     def stop(self) -> None:
         return None
+
+    def resume_thread(self, thread_id: str, **kwargs: object) -> dict[str, object]:
+        self.resume_calls.append({"thread_id": thread_id, **kwargs})
+        if self.resume_error is not None:
+            raise self.resume_error
+        return {"thread_id": self.resumed_thread_id}
+
+    def fork_thread(self, source_thread_id: str, **kwargs: object) -> dict[str, object]:
+        self.fork_calls.append({"source_thread_id": source_thread_id, **kwargs})
+        if self.fork_error is not None:
+            raise self.fork_error
+        return {"thread_id": self.forked_thread_id}
 
     def resolve_runtime_request_user_input(
         self,
@@ -856,6 +879,95 @@ def test_execution_conversation_success_streams_in_order_and_persists_normalized
     assert persisted["record"]["app_server_thread_id"] == "thread_exec_1"
     assert [message["role"] for message in persisted["messages"]] == ["user", "assistant"]
     assert persisted["messages"][1]["parts"][0]["payload"]["text"] == "hello world"
+    assert persisted["messages"][0]["lineage"]["parent_message_id"] is None
+    assert persisted["messages"][1]["lineage"]["parent_message_id"] == persisted["messages"][0]["message_id"]
+
+
+def test_execution_continue_route_creates_assistant_only_branch_with_lineage(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    fake_client = FakeConversationClient(final_text="hello world")
+    attach_session_client_factory(client, lambda _workspace_root: fake_client)
+    project_id, node_id = create_project(client, str(workspace_root))
+    set_node_phase(client, project_id, node_id, "executing")
+
+    accepted = client.post(
+        f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution/send",
+        json={"content": "hello"},
+    )
+    assert accepted.status_code == 202
+    wait_for_conversation(
+        client,
+        project_id,
+        node_id,
+        lambda item: item["record"]["status"] == "completed" and item["record"]["active_stream_id"] is None,
+    )
+
+    fake_client.final_text = "continued"
+    response = client.post(
+        f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution/messages/{accepted.json()['assistant_message_id']}/continue",
+    )
+    assert response.status_code == 200
+    assert response.json()["action_status"] == "accepted"
+
+    snapshot = wait_for_conversation(
+        client,
+        project_id,
+        node_id,
+        lambda item: item["record"]["status"] == "completed" and item["record"]["active_stream_id"] is None and any(
+            message["message_id"] == response.json()["new_message_id"] for message in item["messages"]
+        ),
+    )
+    continued_message = next(
+        message for message in snapshot["messages"] if message["message_id"] == response.json()["new_message_id"]
+    )
+
+    assert fake_client.resume_calls[-1]["thread_id"] == "thread_exec_1"
+    assert continued_message["lineage"]["parent_message_id"] == accepted.json()["assistant_message_id"]
+    assert continued_message["lineage"]["continue_of_message_id"] == accepted.json()["assistant_message_id"]
+    assert len([message for message in snapshot["messages"] if message["turn_id"] == response.json()["turn_id"]]) == 1
+
+
+def test_execution_cancel_route_terminalizes_active_stream_without_new_branch(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    release = threading.Event()
+    fake_client = FakeConversationClient(block_event=release, final_text="late completion")
+    attach_session_client_factory(client, lambda _workspace_root: fake_client)
+    project_id, node_id = create_project(client, str(workspace_root))
+    set_node_phase(client, project_id, node_id, "executing")
+
+    accepted = client.post(
+        f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution/send",
+        json={"content": "hello"},
+    )
+    assert accepted.status_code == 202
+    assert fake_client.started.wait(timeout=1)
+
+    cancelled = client.post(
+        f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution/cancel",
+        json={"stream_id": accepted.json()["stream_id"]},
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["action_status"] == "accepted"
+
+    snapshot = wait_for_conversation(
+        client,
+        project_id,
+        node_id,
+        lambda item: item["record"]["status"] == "cancelled" and item["record"]["active_stream_id"] is None,
+    )
+    release.set()
+    client.app.state.conversation_gateway.flush_persistence()
+    final_snapshot = client.get(
+        f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution"
+    ).json()["conversation"]
+
+    assert len(snapshot["messages"]) == 2
+    assert snapshot["messages"][1]["status"] == "cancelled"
+    assert final_snapshot["messages"][1]["status"] == "cancelled"
 
 
 def test_execution_conversation_persists_tool_call_parts_and_streams_passive_tool_events(

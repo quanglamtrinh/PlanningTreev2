@@ -7,6 +7,7 @@ import type {
   BootstrapStatus,
   ChatSession,
   DeltaContextPacket,
+  ExecutionConversationActionResponse,
   ExecutionConversationResponse,
   ExecutionConversationRequestResolvedResponse,
   ExecutionConversationSendAcceptedResponse,
@@ -419,6 +420,52 @@ export const api = {
   ): Promise<PlanningConversationRequestResolvedResponse> {
     return jsonFetch(
       `/v2/projects/${projectId}/nodes/${nodeId}/conversations/planning/requests/${requestId}/resolve`,
+      { method: 'POST' },
+      payload,
+    )
+  },
+  continueExecutionConversationMessage(
+    projectId: string,
+    nodeId: string,
+    messageId: string,
+  ): Promise<ExecutionConversationActionResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/messages/${messageId}/continue`,
+      { method: 'POST' },
+      {},
+    )
+  },
+  retryExecutionConversationMessage(
+    projectId: string,
+    nodeId: string,
+    messageId: string,
+  ): Promise<ExecutionConversationActionResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/messages/${messageId}/retry`,
+      { method: 'POST' },
+      {},
+    )
+  },
+  regenerateExecutionConversationMessage(
+    projectId: string,
+    nodeId: string,
+    messageId: string,
+  ): Promise<ExecutionConversationActionResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/messages/${messageId}/regenerate`,
+      { method: 'POST' },
+      {},
+    )
+  },
+  cancelExecutionConversation(
+    projectId: string,
+    nodeId: string,
+    payload: {
+      stream_id?: string | null
+    },
+  ): Promise<ExecutionConversationActionResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/cancel`,
       { method: 'POST' },
       payload,
     )

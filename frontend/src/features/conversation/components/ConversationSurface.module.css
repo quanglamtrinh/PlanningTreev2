@@ -26,6 +26,21 @@
   min-width: 0;
 }
 
+.headerActionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(220, 38, 38, 0.18);
+  background: rgba(220, 38, 38, 0.08);
+  color: #b91c1c;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+}
+
 .connectionDot {
   width: 6px;
   height: 6px;
@@ -398,6 +413,39 @@
   flex-wrap: wrap;
 }
 
+.messageActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.messageActionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  color: #374151;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+}
+
+.messageActionButton:hover:not(:disabled),
+.headerActionButton:hover:not(:disabled) {
+  filter: brightness(0.98);
+}
+
+.messageActionButton:disabled,
+.headerActionButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .streamingBadge,
 .errorBadge {
   display: inline-flex;
@@ -427,6 +475,34 @@
   line-height: 16px;
   color: #b91c1c;
   white-space: pre-wrap;
+}
+
+.replayGroup {
+  margin: 0 24px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #f9fafb;
+  overflow: hidden;
+}
+
+.replaySummary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: #374151;
+  list-style: none;
+}
+
+.replaySummary::-webkit-details-marker {
+  display: none;
+}
+
+.replayMessages {
+  padding-bottom: 8px;
+  border-top: 1px solid #e5e7eb;
+  background: #ffffff;
 }
 
 .composerWrap {

@@ -29,6 +29,10 @@ class ExecutionConversationResolveRequestRequest(BaseModel):
     turn_id: str | None = None
 
 
+class ExecutionConversationCancelRequest(BaseModel):
+    stream_id: str | None = None
+
+
 def _conversation_gateway(request: Request):
     return request.app.state.conversation_gateway
 
@@ -90,6 +94,62 @@ async def resolve_execution_conversation_request(
             answers=body.answers,
             thread_id=body.thread_id,
             turn_id=body.turn_id,
+        )
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/conversations/execution/messages/{message_id}/continue")
+async def continue_execution_conversation_message(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    message_id: str,
+) -> dict[str, Any]:
+    try:
+        return _conversation_gateway(request).continue_execution_message(project_id, node_id, message_id)
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/conversations/execution/messages/{message_id}/retry")
+async def retry_execution_conversation_message(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    message_id: str,
+) -> dict[str, Any]:
+    try:
+        return _conversation_gateway(request).retry_execution_message(project_id, node_id, message_id)
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/conversations/execution/messages/{message_id}/regenerate")
+async def regenerate_execution_conversation_message(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    message_id: str,
+) -> dict[str, Any]:
+    try:
+        return _conversation_gateway(request).regenerate_execution_message(project_id, node_id, message_id)
+    except ValueError as exc:
+        raise InvalidRequest(str(exc)) from exc
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/conversations/execution/cancel")
+async def cancel_execution_conversation(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: ExecutionConversationCancelRequest,
+) -> dict[str, Any]:
+    try:
+        return _conversation_gateway(request).cancel_execution_stream(
+            project_id,
+            node_id,
+            stream_id=body.stream_id,
         )
     except ValueError as exc:
         raise InvalidRequest(str(exc)) from exc

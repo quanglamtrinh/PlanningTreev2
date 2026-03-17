@@ -367,6 +367,24 @@
 - `approval_request` is contract-ready and replay-safe, but remains runtime-blocked for live parity while `approvalPolicy: never` remains
 - ask only participates where a clean normalized interactive source exists on the v2 path; current Phase 5.2 closeout in this repo covers execution and planning runtime-input semantics plus shared host request actions
 
+### Current Phase 5.3 Lineage Boundary
+- execution-only lineage-aware actions are now implemented on the shared conversation-v2 path
+- ordinary execution sends now seed durable lineage and legacy execution transcripts with empty lineage are repaired lazily and idempotently before snapshot return or action validation
+- visible execution lineage is derived from the latest eligible unsuperseded assistant head by durable transcript order, including pending and streaming assistant placeholders
+- execution-only routes now exist for:
+  - `continue`
+  - `retry`
+  - `regenerate`
+  - `cancel`
+- `continue` is runtime-gated at route acceptance and returns `action_status = unavailable` when a resumable runtime thread cannot be prepared
+- `retry` and `regenerate` create explicit replayable branches rather than overwriting prior history in place
+- `regenerate` durably marks the replaced completed assistant result with `superseded_by_message_id`
+- `cancel` terminalizes the active execution stream without creating a branch and uses only the existing terminal event family
+- the shared execution surface now supports:
+  - `status_block`
+  - collapsed inline replay for superseded or off-lineage execution history
+- planning and ask do not expose Phase 5.3 action controls in this phase
+
 ### Risks
 - replay mismatch between live and persisted states
 - over-claiming backend live parity when a semantic is replay-only
@@ -375,6 +393,8 @@
 - duplicated request ownership between host wrappers and the shared conversation contract
 - runtime approval parity being implied even while `approvalPolicy: never` still blocks live approval emission
 - ask interactive convergence being implied without a clean normalized v2 source
+- over-claiming Phase 5.3 as cross-host complete when the implemented scope is execution-first only
+- replay or reconnect drift attaching the shared surface to the wrong execution lineage head
 
 ### Acceptance Criteria
 - Phase 5.1 shared-surface rendering and replay remain stable for passive rich semantics
@@ -388,6 +408,11 @@
 - execution duplicate-suppression keeps local resolve plus native callback overlap single-publish for terminal lifecycle events
 - planning runtime-input requests and responses converge on the same shared contract and latest-unresolved visibility policy as execution
 - `approval_request` remains explicitly documented as runtime-blocked for live parity while `approvalPolicy: never` remains
+- execution conversation messages carry durable lineage sufficient for deterministic replay, and legacy execution transcripts backfill idempotently
+- execution host action routes for `continue`, `retry`, `regenerate`, and `cancel` obey explicit ownership, lineage, and terminal-state rules
+- `retry` and `regenerate` create explicit replayable branches, while `cancel` terminalizes the active execution stream without branch creation
+- the shared execution surface renders `status_block` and collapsed inline replay for superseded or off-lineage execution history
+- planning and ask remain explicitly out of scope for visible Phase 5.3 action controls
 
 ### Verification
 - reducer tests for deterministic passive targeting and duplicate-delivery idempotency
@@ -396,6 +421,8 @@
 - reducer and render-model tests for `request_user_input`, `request_resolved`, and `user_input_resolved`
 - host tests for latest-unresolved active request selection and host-owned submission through the execution and planning v2 request routes
 - backend tests for request creation, duplicate-suppression hardening, planning normalization, user-response persistence, and event ordering under request-resolution races
+- backend tests for execution lineage seeding/backfill plus `continue`, `retry`, `regenerate`, and `cancel`
+- frontend tests for `status_block`, collapsed replay groups, and local supersession patching on regenerate
 
 ## Phase 6 - Performance, Concurrency, Replay, And Cleanup
 ### Goal
