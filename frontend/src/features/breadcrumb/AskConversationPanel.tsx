@@ -53,6 +53,15 @@ function defaultComposerHint() {
   )
 }
 
+function appendQuoteToDraft(currentDraft: string, quote: string): string {
+  const trimmedCurrent = currentDraft.trim()
+  if (!trimmedCurrent) {
+    return `${quote}\n\n`
+  }
+  const separator = currentDraft.endsWith('\n') ? '\n' : '\n\n'
+  return `${currentDraft}${separator}${quote}\n\n`
+}
+
 function mapConnectionState(
   bootstrapStatus: BootstrapStatus,
   conversation: ConversationViewState | null,
@@ -238,6 +247,7 @@ export function AskConversationPanel({
       ) : null}
 
       <ConversationSurface
+        variant="codex_execution"
         model={model}
         connectionState={connectionState}
         isLoading={isLoading}
@@ -255,6 +265,12 @@ export function AskConversationPanel({
         composerDisabled={composerDisabled}
         composerPlaceholder={placeholder}
         composerHint={defaultComposerHint()}
+        onQuoteMessage={(quote) => {
+          if (!conversationId) {
+            return
+          }
+          setComposerDraft(conversationId, appendQuoteToDraft(composerDraft, quote))
+        }}
         onComposerValueChange={(draft) => {
           if (!conversationId) {
             return
