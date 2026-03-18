@@ -274,48 +274,15 @@ export const api = {
       method: 'POST',
     })
   },
-  getChatSession(projectId: string, nodeId: string): Promise<{ session: ChatSession }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/chat/session`)
-  },
-  sendChatMessage(
-    projectId: string,
-    nodeId: string,
-    content: string,
-  ): Promise<{ status: string; user_message_id: string; assistant_message_id: string }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/chat/messages`, {
-      method: 'POST',
-    }, {
-      content,
-    })
-  },
-  resetChatSession(projectId: string, nodeId: string): Promise<{ session: ChatSession }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/chat/reset`, {
-      method: 'POST',
-    })
-  },
-  chatEventsUrl(projectId: string, nodeId: string): string {
-    return `/v1/projects/${projectId}/nodes/${nodeId}/chat/events`
-  },
-  getAskSession(projectId: string, nodeId: string): Promise<{ session: AskSession }> {
+  getAskSidecar(projectId: string, nodeId: string): Promise<{ session: AskSession }> {
     return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/session`)
   },
-  sendAskMessage(
-    projectId: string,
-    nodeId: string,
-    content: string,
-  ): Promise<{ status: string; user_message_id: string; assistant_message_id: string }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/messages`, {
-      method: 'POST',
-    }, {
-      content,
-    })
-  },
-  resetAskSession(projectId: string, nodeId: string): Promise<{ session: AskSession }> {
+  resetAskSidecar(projectId: string, nodeId: string): Promise<{ session: AskSession }> {
     return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/reset`, {
       method: 'POST',
     })
   },
-  askEventsUrl(projectId: string, nodeId: string): string {
+  askSidecarEventsUrl(projectId: string, nodeId: string): string {
     return `/v1/projects/${projectId}/nodes/${nodeId}/ask/events`
   },
   getAskConversation(

@@ -119,7 +119,7 @@ export function PlanningConversationPanel({
   const errorMessage = !hasConversation ? bootstrapError : conversation.error
   const canSplit = !isBusy && !node.is_superseded && node.status !== 'done'
 
-  const splitFailure = documents?.state.last_agent_failure?.operation === 'split'
+  const splitFailure = documents?.state?.last_agent_failure?.operation === 'split'
     ? documents.state.last_agent_failure
     : null
   const splitActivityCard = splitFailure ? (

@@ -1,7 +1,6 @@
 import type { NodeRecord } from '../../api/types'
 import type { ConversationViewState } from '../../stores/conversation-store'
 import { AskConversationPanel } from './AskConversationPanel'
-import { LegacyAskPanel } from './LegacyAskPanel'
 
 type AskConversationHost = {
   conversationId: string | null
@@ -15,24 +14,20 @@ type AskConversationHost = {
 type Props = {
   node: NodeRecord
   projectId: string
-  askConversation?: AskConversationHost | null
+  askConversation: AskConversationHost | null
 }
 
 export function AskPanel({ node, projectId, askConversation }: Props) {
-  if (askConversation) {
-    return (
-      <AskConversationPanel
-        node={node}
-        projectId={projectId}
-        conversationId={askConversation.conversationId}
-        conversation={askConversation.conversation}
-        bootstrapStatus={askConversation.bootstrapStatus}
-        bootstrapError={askConversation.bootstrapError}
-        send={askConversation.send}
-        refresh={askConversation.refresh}
-      />
-    )
-  }
-
-  return <LegacyAskPanel node={node} projectId={projectId} />
+  return (
+    <AskConversationPanel
+      node={node}
+      projectId={projectId}
+      conversationId={askConversation?.conversationId ?? null}
+      conversation={askConversation?.conversation ?? null}
+      bootstrapStatus={askConversation?.bootstrapStatus ?? 'idle'}
+      bootstrapError={askConversation?.bootstrapError ?? null}
+      send={askConversation?.send ?? (async () => undefined)}
+      refresh={askConversation?.refresh ?? (() => undefined)}
+    />
+  )
 }

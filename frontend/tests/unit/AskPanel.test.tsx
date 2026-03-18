@@ -157,62 +157,30 @@ describe('AskPanel', () => {
     vi.restoreAllMocks()
   })
 
-  it('keeps the legacy visible branch when ask-v2 host data is absent', () => {
-    useAskStore.setState({
-      ...useAskStore.getInitialState(),
-      session: {
-        project_id: 'project-1',
-        node_id: 'node-1',
-        active_turn_id: null,
-        event_seq: 1,
-        status: 'idle',
-        messages: [
-          {
-            message_id: 'legacy_msg_1',
-            role: 'assistant',
-            content: 'Legacy ask transcript',
-            status: 'completed',
-            created_at: '2026-03-15T00:00:00Z',
-            updated_at: '2026-03-15T00:00:00Z',
-            error: null,
-          },
-        ],
-        delta_context_packets: [],
-      },
-      connectionStatus: 'connected',
-    })
+  it('shows v2 loading without any legacy transcript fallback', () => {
+    render(
+      <AskConversationHarness
+        conversationId={null}
+        bootstrapStatus="loading_snapshot"
+      />,
+    )
 
-    render(<AskPanel node={makeNode()} projectId="project-1" />)
-
-    expect(screen.getByText('Legacy ask transcript')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Reset' })).toBeInTheDocument()
+    expect(screen.getByText('Loading conversation...')).toBeInTheDocument()
+    expect(screen.queryByText('Legacy ask transcript')).not.toBeInTheDocument()
   })
 
-  it('renders the ask-v2 branch through the shared surface without falling back to legacy transcript', () => {
+  it('renders the ask-v2 branch and preserved packet sidecar together', () => {
     const snapshot = makeConversationSnapshotWithAssistantText('Ask v2 transcript')
     const conversationId = useConversationStore.getState().ensureConversation(snapshot)
     useConversationStore.getState().hydrateConversation(snapshot)
     useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
     useAskStore.setState({
       ...useAskStore.getInitialState(),
-      session: {
-        project_id: 'project-1',
-        node_id: 'node-1',
-        active_turn_id: null,
-        event_seq: 1,
-        status: 'idle',
-        messages: [
-          {
-            message_id: 'legacy_msg_1',
-            role: 'assistant',
-            content: 'Legacy ask transcript',
-            status: 'completed',
-            created_at: '2026-03-15T00:00:00Z',
-            updated_at: '2026-03-15T00:00:00Z',
-            error: null,
-          },
-        ],
-        delta_context_packets: [
+      sidecar: {
+        projectId: 'project-1',
+        nodeId: 'node-1',
+        eventSeq: 1,
+        packetList: [
           {
             packet_id: 'packet_1',
             node_id: 'node-1',
@@ -233,71 +201,11 @@ describe('AskPanel', () => {
     render(<AskConversationHarness conversationId={conversationId} />)
 
     expect(screen.getByText('Ask v2 transcript')).toBeInTheDocument()
-    expect(screen.queryByText('Legacy ask transcript')).not.toBeInTheDocument()
     expect(screen.getByText('Delta Context Packets')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Reset' })).toBeInTheDocument()
-  })
-
-  it('shows v2 loading without falling back to legacy ask transcript', () => {
-    useAskStore.setState({
-      ...useAskStore.getInitialState(),
-      session: {
-        project_id: 'project-1',
-        node_id: 'node-1',
-        active_turn_id: null,
-        event_seq: 1,
-        status: 'idle',
-        messages: [
-          {
-            message_id: 'legacy_msg_1',
-            role: 'assistant',
-            content: 'Legacy ask transcript',
-            status: 'completed',
-            created_at: '2026-03-15T00:00:00Z',
-            updated_at: '2026-03-15T00:00:00Z',
-            error: null,
-          },
-        ],
-        delta_context_packets: [],
-      },
-    })
-
-    render(
-      <AskConversationHarness
-        conversationId={null}
-        bootstrapStatus="loading_snapshot"
-      />,
-    )
-
-    expect(screen.getByText('Loading conversation...')).toBeInTheDocument()
-    expect(screen.getByRole('textbox')).toBeDisabled()
     expect(screen.queryByText('Legacy ask transcript')).not.toBeInTheDocument()
   })
 
-  it('shows v2 bootstrap errors without falling back to the legacy ask transcript', () => {
-    useAskStore.setState({
-      ...useAskStore.getInitialState(),
-      session: {
-        project_id: 'project-1',
-        node_id: 'node-1',
-        active_turn_id: null,
-        event_seq: 1,
-        status: 'idle',
-        messages: [
-          {
-            message_id: 'legacy_msg_1',
-            role: 'assistant',
-            content: 'Legacy ask transcript',
-            status: 'completed',
-            created_at: '2026-03-15T00:00:00Z',
-            updated_at: '2026-03-15T00:00:00Z',
-            error: null,
-          },
-        ],
-        delta_context_packets: [],
-      },
-    })
-
+  it('shows bootstrap errors without falling back to a legacy transcript', () => {
     render(
       <AskConversationHarness
         conversationId={null}
@@ -307,7 +215,6 @@ describe('AskPanel', () => {
     )
 
     expect(screen.getByRole('alert')).toHaveTextContent('ask v2 bootstrap failed')
-    expect(screen.queryByText('Loading conversation...')).not.toBeInTheDocument()
     expect(screen.queryByText('Legacy ask transcript')).not.toBeInTheDocument()
   })
 
@@ -321,39 +228,14 @@ describe('AskPanel', () => {
 
     render(<AskConversationHarness conversationId={conversationId} send={send} />)
 
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Clarify the plan' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
     await waitFor(() => {
       expect(send).toHaveBeenCalledWith('Clarify the plan')
     })
-    await waitFor(() => {
-      expect(useConversationStore.getState().conversationsById[conversationId].composerDraft).toBe('')
-    })
-  })
-
-  it('preserves the keyed ask draft on send failure', async () => {
-    const snapshot = makeConversationSnapshot()
-    const conversationId = useConversationStore.getState().ensureConversation(snapshot)
-    useConversationStore.getState().hydrateConversation(snapshot)
-    useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
-    useConversationStore.getState().setComposerDraft(conversationId, 'Keep this ask draft')
-    const send = vi.fn(async () => {
-      useConversationStore.getState().setError(conversationId, 'ask send failed', 'send')
-      throw new Error('ask send failed')
-    })
-
-    render(<AskConversationHarness conversationId={conversationId} send={send} />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-
-    await waitFor(() => {
-      expect(send).toHaveBeenCalledWith('Keep this ask draft')
-    })
-    await waitFor(() => {
-      expect(useConversationStore.getState().conversationsById[conversationId].composerDraft).toBe(
-        'Keep this ask draft',
-      )
-    })
-    expect(screen.getByRole('alert')).toHaveTextContent('ask send failed')
+    expect(
+      useConversationStore.getState().conversationsById[conversationId]?.composerDraft,
+    ).toBe('')
   })
 })

@@ -3,22 +3,13 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/client";
 import {
   useAgentEventStream,
-  useAskSessionStream,
-  useChatSessionStream,
-  usePlanningEventStream,
+  useAskSidecarStream,
 } from "../../api/hooks";
-import {
-  isAskConversationV2Enabled,
-  isExecutionConversationV2Enabled,
-  isPlanningConversationV2Enabled,
-} from "../../config/featureFlags";
 import { deriveConversationBusy } from "../conversation/model/deriveConversationBusy";
 import { useAskConversation } from "../conversation/hooks/useAskConversation";
 import { useConversationRequests } from "../conversation/hooks/useConversationRequests";
 import { useExecutionConversation } from "../conversation/hooks/useExecutionConversation";
 import { usePlanningConversation } from "../conversation/hooks/usePlanningConversation";
-import { useAskStore } from "../../stores/ask-store";
-import { useChatStore } from "../../stores/chat-store";
 import { useConversationStore } from "../../stores/conversation-store";
 import { useProjectStore } from "../../stores/project-store";
 import { useUIStore } from "../../stores/ui-store";
@@ -147,16 +138,10 @@ export function BreadcrumbWorkspace() {
   const setPlanningNodeBusyState = useProjectStore(
     (state) => state.setPlanningNodeBusyState,
   );
-  const chatSession = useChatStore((state) => state.session);
-  const setComposerDraft = useChatStore((state) => state.setComposerDraft);
-  const setAskComposerDraft = useAskStore((state) => state.setComposerDraft);
   const setConversationComposerDraft = useConversationStore(
     (state) => state.setComposerDraft,
   );
   const setActiveSurface = useUIStore((state) => state.setActiveSurface);
-  const executionConversationV2Enabled = isExecutionConversationV2Enabled();
-  const askConversationV2Enabled = isAskConversationV2Enabled();
-  const planningConversationV2Enabled = isPlanningConversationV2Enabled();
   const appliedComposerSeedTokenRef = useRef<string | null>(null);
   const managedPlanningBusyNodeIdRef = useRef<string | null>(null);
 
@@ -196,45 +181,28 @@ export function BreadcrumbWorkspace() {
     );
   }, [nodeId, snapshot]);
 
-  // Legacy planning transcript/history is non-authoritative on the planning v2 host path.
-  usePlanningEventStream(
-    planningConversationV2Enabled ? null : projectId && node ? projectId : null,
-    planningConversationV2Enabled ? null : node ? node.node_id : null,
-  );
   useAgentEventStream(
     projectId && node ? projectId : null,
     node ? node.node_id : null,
   );
-  useAskSessionStream(
+  useAskSidecarStream(
     projectId && node && activeTab === "ask" ? projectId : null,
     node && activeTab === "ask" ? node.node_id : null,
-  );
-  useChatSessionStream(
-    projectId && node && activeTab === "execution" ? projectId : null,
-    node && activeTab === "execution" ? node.node_id : null,
   );
   const askConversation = useAskConversation({
     projectId: projectId ?? null,
     nodeId: node?.node_id ?? null,
-    enabled:
-      askConversationV2Enabled &&
-      activeTab === "ask" &&
-      Boolean(projectId && node?.node_id),
+    enabled: activeTab === "ask" && Boolean(projectId && node?.node_id),
   });
   const executionConversation = useExecutionConversation({
     projectId: projectId ?? null,
     nodeId: node?.node_id ?? null,
-    enabled:
-      executionConversationV2Enabled &&
-      activeTab === "execution" &&
-      Boolean(projectId && node?.node_id),
+    enabled: activeTab === "execution" && Boolean(projectId && node?.node_id),
   });
   const executionConversationRequests = useConversationRequests({
-    projectId: executionConversationV2Enabled ? projectId ?? null : null,
-    nodeId: executionConversationV2Enabled ? node?.node_id ?? null : null,
-    conversation: executionConversationV2Enabled
-      ? executionConversation.conversation
-      : null,
+    projectId: projectId ?? null,
+    nodeId: node?.node_id ?? null,
+    conversation: executionConversation.conversation,
     refresh: executionConversation.refresh,
     resolveRequest: async ({
       requestId,
@@ -265,24 +233,12 @@ export function BreadcrumbWorkspace() {
   const planningConversation = usePlanningConversation({
     projectId: projectId ?? null,
     nodeId: node?.node_id ?? null,
-    enabled:
-      planningConversationV2Enabled &&
-      activeTab === "planning" &&
-      Boolean(projectId && node?.node_id),
+    enabled: activeTab === "planning" && Boolean(projectId && node?.node_id),
   });
   const planningConversationRequests = useConversationRequests({
-    projectId:
-      planningConversationV2Enabled && activeTab === "planning"
-        ? projectId ?? null
-        : null,
-    nodeId:
-      planningConversationV2Enabled && activeTab === "planning"
-        ? node?.node_id ?? null
-        : null,
-    conversation:
-      planningConversationV2Enabled && activeTab === "planning"
-        ? planningConversation.conversation
-        : null,
+    projectId: activeTab === "planning" ? projectId ?? null : null,
+    nodeId: activeTab === "planning" ? node?.node_id ?? null : null,
+    conversation: activeTab === "planning" ? planningConversation.conversation : null,
     refresh: planningConversation.refresh,
     resolveRequest: async ({
       requestId,
@@ -311,13 +267,11 @@ export function BreadcrumbWorkspace() {
     },
   });
   const activePlanningConversationRequests =
-    planningConversationV2Enabled && activeTab === "planning"
-      ? planningConversationRequests
-      : null;
+    activeTab === "planning" ? planningConversationRequests : null;
 
   useEffect(() => {
     const managedNodeId =
-      planningConversationV2Enabled && activeTab === "planning" && node?.node_id
+      activeTab === "planning" && node?.node_id
         ? node.node_id
         : null;
     const previousManagedNodeId = managedPlanningBusyNodeIdRef.current;
@@ -340,7 +294,6 @@ export function BreadcrumbWorkspace() {
     activeTab,
     node?.node_id,
     planningConversation.conversation?.snapshot,
-    planningConversationV2Enabled,
     setPlanningNodeBusyState,
   ]);
 
@@ -391,11 +344,7 @@ export function BreadcrumbWorkspace() {
       return;
     }
 
-    const shouldSeedExecutionV2 =
-      executionConversationV2Enabled && activeTab === "execution";
-    const shouldSeedAskV2 = askConversationV2Enabled && activeTab === "ask";
-
-    if (shouldSeedExecutionV2) {
+    if (activeTab === "execution") {
       if (!executionConversation.conversationId) {
         return;
       }
@@ -403,7 +352,7 @@ export function BreadcrumbWorkspace() {
         executionConversation.conversationId,
         composerSeed,
       );
-    } else if (shouldSeedAskV2) {
+    } else if (activeTab === "ask") {
       if (!askConversation.conversationId) {
         return;
       }
@@ -411,10 +360,8 @@ export function BreadcrumbWorkspace() {
         askConversation.conversationId,
         composerSeed,
       );
-    } else if (activeTab === "ask") {
-      setAskComposerDraft(composerSeed);
     } else {
-      setComposerDraft(composerSeed);
+      return;
     }
 
     appliedComposerSeedTokenRef.current = seedToken;
@@ -425,9 +372,7 @@ export function BreadcrumbWorkspace() {
   }, [
     activeTab,
     askConversation.conversationId,
-    askConversationV2Enabled,
     executionConversation.conversationId,
-    executionConversationV2Enabled,
     location.pathname,
     location.key,
     location.state,
@@ -435,9 +380,7 @@ export function BreadcrumbWorkspace() {
     node?.node_id,
     nodeId,
     projectId,
-    setAskComposerDraft,
     setConversationComposerDraft,
-    setComposerDraft,
   ]);
 
   useEffect(() => {
@@ -453,30 +396,16 @@ export function BreadcrumbWorkspace() {
     if (!nodeId || !node || node.status !== "ready") {
       return;
     }
-
-    if (executionConversationV2Enabled) {
-      if (activeTab !== "execution") {
-        return;
-      }
-      if (!hasLiveExecutionConversationActivity(executionConversation.conversation)) {
-        return;
-      }
-      patchNodeStatus(nodeId, "in_progress");
+    if (activeTab !== "execution") {
       return;
     }
-
-    if (!chatSession || chatSession.node_id !== nodeId) {
-      return;
-    }
-    if (chatSession.messages.length === 0 && !chatSession.active_turn_id) {
+    if (!hasLiveExecutionConversationActivity(executionConversation.conversation)) {
       return;
     }
     patchNodeStatus(nodeId, "in_progress");
   }, [
     activeTab,
-    chatSession,
     executionConversation.conversation,
-    executionConversationV2Enabled,
     node,
     nodeId,
     patchNodeStatus,
@@ -513,7 +442,7 @@ export function BreadcrumbWorkspace() {
             })),
           }
         : null
-      : chatSession?.pending_input_request;
+      : null;
     if (!pendingRequest) {
       setPlanInputDrafts({});
       setPlanInputError(null);
@@ -532,7 +461,6 @@ export function BreadcrumbWorkspace() {
     setPlanInputError(null);
   }, [
     activePlanningConversationRequests?.activeRequest,
-    chatSession?.pending_input_request,
   ]);
 
   if (
@@ -564,16 +492,19 @@ export function BreadcrumbWorkspace() {
             question: question.question,
             is_other: question.isOther,
             is_secret: question.isSecret,
-            options: question.options,
-          })),
+              options: question.options,
+            })),
         }
       : null
-    : chatSession?.pending_input_request ?? null;
+    : null;
   const executionPendingInputRequest =
     executionConversationRequests.activeRequest?.requestKind === "user_input"
       ? executionConversationRequests.activeRequest
       : null;
   const currentPlan = nodeDocuments?.plan?.content?.trim() ?? "";
+  const executionConversationBusy = deriveConversationBusy(
+    executionConversation.conversation?.snapshot,
+  );
   const canPlan =
     Boolean(
       executionState &&
@@ -581,7 +512,7 @@ export function BreadcrumbWorkspace() {
       executionState.spec_confirmed &&
       executionState.brief_generation_status === "ready" &&
       executionState.plan_status !== "waiting_on_input" &&
-      !chatSession?.active_turn_id,
+      !executionConversationBusy,
     ) && !isPlanningAction;
   const canExecute =
     Boolean(
@@ -594,75 +525,59 @@ export function BreadcrumbWorkspace() {
         executionState.brief_version &&
       executionState.bound_plan_input_version ===
         executionState.active_plan_input_version &&
-      !chatSession?.active_turn_id,
+      !executionConversationBusy,
     ) && !isExecutingAction;
   const canMessageExecution =
     node.phase === "executing" &&
     executionState?.run_status === "executing";
-  const legacyExecutionComposerPlaceholder =
-    "Planner input is handled through the native modal when needed.";
-  const executionComposerPlaceholder = executionConversationV2Enabled
-    ? executionPendingInputRequest
-      ? "Answer the inline runtime request to continue the current execution."
-      : canMessageExecution
-        ? `Message ${node.title}...`
-        : executionState?.plan_status === "ready"
-          ? "Click Execute to start the execution conversation."
-          : "Click Plan to prepare execution."
-    : legacyExecutionComposerPlaceholder;
-  const executionEmptyTitle = executionConversationV2Enabled
-    ? "Execution Conversation"
-    : "Plan Session";
-  const executionEmptyHint = executionConversationV2Enabled
-    ? executionPendingInputRequest
-      ? "Runtime input requests now appear inline in the execution transcript."
-      : executionState?.run_status === "executing"
-        ? "Execution messages will appear here as the current run progresses."
-        : executionState?.plan_status === "ready"
-          ? "The current plan is ready. Review it above, then click Execute."
-          : "Click Plan to start an execution planning turn for this node."
-    : executionState?.plan_status === "ready"
-      ? "The current plan is ready. Review it above, then click Execute."
-      : "Click Plan to start an execution planning turn for this node.";
-  const visibleExecutionConversation = executionConversationV2Enabled
-    ? {
-        conversationId: executionConversation.conversationId,
-        conversation: executionConversation.conversation,
-        bootstrapStatus: executionConversation.bootstrapStatus,
-        bootstrapError: executionConversation.bootstrapError,
-        send: executionConversation.send,
-        continueFromMessage: executionConversation.continueFromMessage,
-        retryFromMessage: executionConversation.retryFromMessage,
-        regenerateFromMessage: executionConversation.regenerateFromMessage,
-        cancelStream: executionConversation.cancelStream,
-        activeRequest: executionConversationRequests.activeRequest,
-        requestUi: {
-          isSubmitting: executionConversationRequests.isSubmitting,
-          error: executionConversationRequests.submitError,
-          submitUserInputResponse:
-            executionConversationRequests.submitUserInputResponse,
-          respondToApproval: executionConversationRequests.respondToApproval,
-        },
-      }
-    : undefined;
-  const visibleAskConversation = askConversationV2Enabled
-    ? {
-        conversationId: askConversation.conversationId,
-        conversation: askConversation.conversation,
-        bootstrapStatus: askConversation.bootstrapStatus,
-        bootstrapError: askConversation.bootstrapError,
-        send: askConversation.send,
-        refresh: askConversation.refresh,
-      }
-    : undefined;
-  const visiblePlanningConversation = planningConversationV2Enabled
-    ? {
-        conversationId: planningConversation.conversationId,
-        conversation: planningConversation.conversation,
-        bootstrapStatus: planningConversation.bootstrapStatus,
-        bootstrapError: planningConversation.bootstrapError,
-      }
-    : undefined;
+  const executionComposerPlaceholder = executionPendingInputRequest
+    ? "Answer the inline runtime request to continue the current execution."
+    : canMessageExecution
+      ? `Message ${node.title}...`
+      : executionState?.plan_status === "ready"
+        ? "Click Execute to start the execution conversation."
+        : "Click Plan to prepare execution.";
+  const executionEmptyTitle = "Execution Conversation";
+  const executionEmptyHint = executionPendingInputRequest
+    ? "Runtime input requests now appear inline in the execution transcript."
+    : executionState?.run_status === "executing"
+      ? "Execution messages will appear here as the current run progresses."
+      : executionState?.plan_status === "ready"
+        ? "The current plan is ready. Review it above, then click Execute."
+        : "Click Plan to start an execution planning turn for this node.";
+  const visibleExecutionConversation = {
+    conversationId: executionConversation.conversationId,
+    conversation: executionConversation.conversation,
+    bootstrapStatus: executionConversation.bootstrapStatus,
+    bootstrapError: executionConversation.bootstrapError,
+    send: executionConversation.send,
+    continueFromMessage: executionConversation.continueFromMessage,
+    retryFromMessage: executionConversation.retryFromMessage,
+    regenerateFromMessage: executionConversation.regenerateFromMessage,
+    cancelStream: executionConversation.cancelStream,
+    activeRequest: executionConversationRequests.activeRequest,
+    requestUi: {
+      isSubmitting: executionConversationRequests.isSubmitting,
+      error: executionConversationRequests.submitError,
+      submitUserInputResponse:
+        executionConversationRequests.submitUserInputResponse,
+      respondToApproval: executionConversationRequests.respondToApproval,
+    },
+  };
+  const visibleAskConversation = {
+    conversationId: askConversation.conversationId,
+    conversation: askConversation.conversation,
+    bootstrapStatus: askConversation.bootstrapStatus,
+    bootstrapError: askConversation.bootstrapError,
+    send: askConversation.send,
+    refresh: askConversation.refresh,
+  };
+  const visiblePlanningConversation = {
+    conversationId: planningConversation.conversationId,
+    conversation: planningConversation.conversation,
+    bootstrapStatus: planningConversation.bootstrapStatus,
+    bootstrapError: planningConversation.bootstrapError,
+  };
   let executionStatusText = "Confirm Spec before planning.";
   if (
     node.phase === "executing" &&
@@ -1029,12 +944,7 @@ export function BreadcrumbWorkspace() {
               ) : null}
               <ChatPanel
                 node={node}
-                projectId={projectId}
-                composerEnabled={
-                  executionConversationV2Enabled
-                    ? canMessageExecution
-                    : false
-                }
+                composerEnabled={canMessageExecution}
                 composerPlaceholder={executionComposerPlaceholder}
                 emptyTitle={executionEmptyTitle}
                 emptyHint={executionEmptyHint}

@@ -1,6 +1,5 @@
 import type { AgentActivity, NodeDocuments, NodeRecord } from '../../api/types'
 import type { ConversationViewState } from '../../stores/conversation-store'
-import { LegacyPlanningPanel } from './LegacyPlanningPanel'
 import { PlanningConversationPanel } from './PlanningConversationPanel'
 
 type PlanningConversationHost = {
@@ -14,7 +13,7 @@ type Props = {
   node: NodeRecord
   documents?: NodeDocuments
   activity?: AgentActivity
-  planningConversation?: PlanningConversationHost | null
+  planningConversation: PlanningConversationHost | null
 }
 
 export function PlanningPanel({
@@ -23,19 +22,15 @@ export function PlanningPanel({
   activity,
   planningConversation,
 }: Props) {
-  if (planningConversation) {
-    return (
-      <PlanningConversationPanel
-        node={node}
-        documents={documents}
-        activity={activity}
-        conversationId={planningConversation.conversationId}
-        conversation={planningConversation.conversation}
-        bootstrapStatus={planningConversation.bootstrapStatus}
-        bootstrapError={planningConversation.bootstrapError}
-      />
-    )
-  }
-
-  return <LegacyPlanningPanel node={node} documents={documents} activity={activity} />
+  return (
+    <PlanningConversationPanel
+      node={node}
+      documents={documents}
+      activity={activity}
+      conversationId={planningConversation?.conversationId ?? null}
+      conversation={planningConversation?.conversation ?? null}
+      bootstrapStatus={planningConversation?.bootstrapStatus ?? 'idle'}
+      bootstrapError={planningConversation?.bootstrapError ?? null}
+    />
+  )
 }

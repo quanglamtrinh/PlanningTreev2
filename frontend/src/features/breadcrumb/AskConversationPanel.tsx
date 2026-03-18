@@ -116,9 +116,9 @@ export function AskConversationPanel({
   refresh,
 }: Props) {
   const snapshot = useProjectStore((state) => state.snapshot)
-  const wrapperError = useAskStore((state) => state.error)
-  const resetSession = useAskStore((state) => state.resetSession)
-  const askSession = useAskStore((state) => state.session)
+  const sidecarError = useAskStore((state) => state.error)
+  const resetSidecar = useAskStore((state) => state.resetSidecar)
+  const askSidecar = useAskStore((state) => state.sidecar)
   const composerDraft = useConversationStore((state) =>
     conversationId ? state.conversationsById[conversationId]?.composerDraft ?? '' : '',
   )
@@ -157,7 +157,7 @@ export function AskConversationPanel({
     isBusy ||
     connectionState !== 'connected'
   const canReset = hasConversation && !conversation?.isSending && !isBusy && !isReadOnly
-  const packetList = askSession?.delta_context_packets ?? []
+  const packetList = askSidecar?.packetList ?? []
 
   async function handleSend() {
     const activeConversationId = conversationId
@@ -182,7 +182,7 @@ export function AskConversationPanel({
       return
     }
     try {
-      await resetSession(projectId, node.node_id)
+      await resetSidecar(projectId, node.node_id)
       if (conversationId) {
         setComposerDraft(conversationId, '')
       }
@@ -225,7 +225,7 @@ export function AskConversationPanel({
         </button>
       </div>
 
-      {wrapperError ? <div className={baseStyles.errorBanner}>{wrapperError}</div> : null}
+      {sidecarError ? <div className={baseStyles.errorBanner}>{sidecarError}</div> : null}
       {isReadOnly ? (
         <div className={`${askStyles.noticeBanner} ${askStyles.noticeBannerMuted}`}>
           This node is no longer mutable. The ask thread is read-only.
@@ -274,7 +274,7 @@ export function AskConversationPanel({
               packet={packet}
               projectId={projectId}
               nodeId={node.node_id}
-              askActive={Boolean(askSession?.active_turn_id) || isBusy}
+              askActive={isBusy}
               planningActive={node.planning_thread_status === 'active'}
               nodeReadOnly={isReadOnly}
               nodeHasActiveChildren={hasActiveChildren}

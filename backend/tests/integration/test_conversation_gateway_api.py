@@ -15,7 +15,7 @@ from backend.routes.conversation import (
     stream_planning_conversation_events,
 )
 from backend.services.conversation_gateway import _LiveConversationState
-from backend.tests.integration.test_chat_api import FakeCodexClient, attach_fake_client
+from backend.tests.integration.test_confirmation_endpoints import FakeCodexClient, attach_fake_client
 
 
 class FakeConversationClient:

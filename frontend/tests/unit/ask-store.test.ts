@@ -1,18 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    getAskSession: vi.fn(),
-    sendAskMessage: vi.fn(),
-    resetAskSession: vi.fn(),
-    approveAskPacket: vi.fn(),
-    rejectAskPacket: vi.fn(),
-    mergeAskPacket: vi.fn(),
-  },
+const apiMock = vi.hoisted(() => ({
+  getAskSidecar: vi.fn(),
+  resetAskSidecar: vi.fn(),
+  approveAskPacket: vi.fn(),
+  rejectAskPacket: vi.fn(),
+  mergeAskPacket: vi.fn(),
 }))
 
-vi.mock('../../src/api/client', () => {
-  class ApiError extends Error {
+vi.mock('../../src/api/client', () => ({
+  api: apiMock,
+  ApiError: class ApiError extends Error {
     status: number
     code: string | null
 
@@ -21,43 +19,37 @@ vi.mock('../../src/api/client', () => {
       this.status = status
       this.code = payload?.code ?? null
     }
-  }
+  },
+}))
 
-  return {
-    api: apiMock,
-    ApiError,
-  }
-})
-
-import type { AskSession, DeltaContextPacket } from '../../src/api/types'
 import { useAskStore } from '../../src/stores/ask-store'
 
-function makePacket(overrides: Partial<DeltaContextPacket> = {}): DeltaContextPacket {
+function makeSession(overrides: Record<string, unknown> = {}) {
+  return {
+    project_id: 'project-1',
+    node_id: 'node-1',
+    active_turn_id: null,
+    event_seq: 1,
+    status: 'idle',
+    messages: [],
+    delta_context_packets: [],
+    ...overrides,
+  }
+}
+
+function makePacket(overrides: Record<string, unknown> = {}) {
   return {
     packet_id: 'packet-1',
     node_id: 'node-1',
-    created_at: '2026-03-10T00:00:00Z',
-    source_message_ids: ['msg-user', 'msg-assistant'],
-    summary: 'Watch scope',
-    context_text: 'The scope is narrower than expected.',
+    created_at: '2026-03-16T00:00:00Z',
+    source_message_ids: [],
+    summary: 'Risk',
+    context_text: 'Key risk',
     status: 'pending',
     status_reason: null,
     merged_at: null,
     merged_planning_turn_id: null,
     suggested_by: 'agent',
-    ...overrides,
-  }
-}
-
-function makeSession(overrides: Partial<AskSession> = {}): AskSession {
-  return {
-    project_id: 'project-1',
-    node_id: 'node-1',
-    active_turn_id: null,
-    event_seq: 0,
-    status: null,
-    messages: [],
-    delta_context_packets: [],
     ...overrides,
   }
 }
@@ -68,20 +60,48 @@ describe('ask-store', () => {
     useAskStore.setState(useAskStore.getInitialState())
   })
 
-  it('applies ask_message_created, ask_assistant_delta, and ask_assistant_completed', () => {
-    useAskStore.setState({ session: makeSession() })
+  it('loads sidecar state without owning transcript rendering state', async () => {
+    apiMock.getAskSidecar.mockResolvedValue({
+      session: makeSession({
+        event_seq: 4,
+        messages: [{ message_id: 'legacy_msg', content: 'legacy' }],
+        delta_context_packets: [makePacket()],
+      }),
+    })
+
+    await useAskStore.getState().loadSidecar('project-1', 'node-1')
+
+    expect(apiMock.getAskSidecar).toHaveBeenCalledWith('project-1', 'node-1')
+    expect(useAskStore.getState().sidecar).toEqual({
+      projectId: 'project-1',
+      nodeId: 'node-1',
+      eventSeq: 4,
+      packetList: [makePacket()],
+    })
+  })
+
+  it('applies only packet/reset ask events and ignores transcript-only events', () => {
+    useAskStore.setState({
+      ...useAskStore.getInitialState(),
+      sidecar: {
+        projectId: 'project-1',
+        nodeId: 'node-1',
+        eventSeq: 1,
+        packetList: [],
+      },
+    })
 
     useAskStore.getState().applyAskEvent({
       type: 'ask_message_created',
-      event_seq: 1,
+      event_seq: 2,
       active_turn_id: 'turn_1',
       user_message: {
         message_id: 'msg_user',
         role: 'user',
-        content: 'What is the main risk?',
+        content: 'hello',
         status: 'completed',
-        created_at: '2026-03-10T00:00:00Z',
-        updated_at: '2026-03-10T00:00:00Z',
+        created_at: '2026-03-16T00:00:00Z',
+        updated_at: '2026-03-16T00:00:00Z',
         error: null,
       },
       assistant_message: {
@@ -89,181 +109,73 @@ describe('ask-store', () => {
         role: 'assistant',
         content: '',
         status: 'pending',
-        created_at: '2026-03-10T00:00:00Z',
-        updated_at: '2026-03-10T00:00:00Z',
+        created_at: '2026-03-16T00:00:00Z',
+        updated_at: '2026-03-16T00:00:00Z',
         error: null,
       },
     })
 
-    useAskStore.getState().applyAskEvent({
-      type: 'ask_assistant_delta',
-      event_seq: 2,
-      message_id: 'msg_assistant',
-      delta: 'The ',
-      content: 'The ',
-      updated_at: '2026-03-10T00:00:01Z',
-    })
+    expect(useAskStore.getState().sidecar?.eventSeq).toBe(1)
 
     useAskStore.getState().applyAskEvent({
-      type: 'ask_assistant_completed',
+      type: 'ask_delta_context_suggested',
       event_seq: 3,
-      message_id: 'msg_assistant',
-      content: 'The main risk is hidden dependency churn.',
-      updated_at: '2026-03-10T00:00:02Z',
+      packet: makePacket(),
     })
 
-    const session = useAskStore.getState().session
-    expect(session?.event_seq).toBe(3)
-    expect(session?.active_turn_id).toBeNull()
-    expect(session?.messages).toHaveLength(2)
-    expect(session?.messages[1].status).toBe('completed')
+    expect(useAskStore.getState().sidecar?.eventSeq).toBe(3)
+    expect(useAskStore.getState().sidecar?.packetList).toHaveLength(1)
   })
 
-  it('applies ask_assistant_error and ask_session_reset', () => {
+  it('upserts packet status changes and resets from the preserved sidecar stream', () => {
     useAskStore.setState({
-      session: makeSession({
-        active_turn_id: 'turn_1',
-        messages: [
-          {
-            message_id: 'msg_assistant',
-            role: 'assistant',
-            content: 'partial',
-            status: 'streaming',
-            created_at: '2026-03-10T00:00:00Z',
-            updated_at: '2026-03-10T00:00:01Z',
-            error: null,
-          },
-        ],
-      }),
+      ...useAskStore.getInitialState(),
+      sidecar: {
+        projectId: 'project-1',
+        nodeId: 'node-1',
+        eventSeq: 2,
+        packetList: [makePacket()],
+      },
     })
 
     useAskStore.getState().applyAskEvent({
-      type: 'ask_assistant_error',
+      type: 'ask_packet_status_changed',
       event_seq: 4,
-      message_id: 'msg_assistant',
-      content: 'partial',
-      updated_at: '2026-03-10T00:00:02Z',
-      error: 'boom',
+      packet: makePacket({ status: 'approved' }),
     })
 
-    expect(useAskStore.getState().session?.active_turn_id).toBeNull()
-    expect(useAskStore.getState().session?.messages[0].status).toBe('error')
+    expect(useAskStore.getState().sidecar?.packetList[0]?.status).toBe('approved')
 
     useAskStore.getState().applyAskEvent({
       type: 'ask_session_reset',
       event_seq: 5,
-      session: makeSession({ event_seq: 5 }),
+      session: makeSession({ event_seq: 5, delta_context_packets: [] }),
     })
 
-    expect(useAskStore.getState().session?.messages).toHaveLength(0)
-    expect(useAskStore.getState().session?.delta_context_packets).toHaveLength(0)
+    expect(useAskStore.getState().sidecar?.packetList).toEqual([])
+    expect(useAskStore.getState().sidecar?.eventSeq).toBe(5)
   })
 
-  it('ignores stale ask events by event_seq', () => {
+  it('local packet actions upsert returned packets without widening ownership again', async () => {
     useAskStore.setState({
-      session: makeSession({
-        event_seq: 5,
-        delta_context_packets: [makePacket({ status: 'approved' })],
-      }),
+      ...useAskStore.getInitialState(),
+      sidecar: {
+        projectId: 'project-1',
+        nodeId: 'node-1',
+        eventSeq: 7,
+        packetList: [makePacket()],
+      },
     })
-
-    useAskStore.getState().applyAskEvent({
-      type: 'ask_packet_status_changed',
-      event_seq: 4,
-      packet: makePacket({ status: 'merged' }),
-    })
-
-    expect(useAskStore.getState().session?.event_seq).toBe(5)
-    expect(useAskStore.getState().session?.delta_context_packets[0].status).toBe('approved')
-  })
-
-  it('applies ask_delta_context_suggested', () => {
-    useAskStore.setState({ session: makeSession() })
-
-    useAskStore.getState().applyAskEvent({
-      type: 'ask_delta_context_suggested',
-      event_seq: 1,
-      packet: makePacket(),
-    })
-
-    expect(useAskStore.getState().session?.delta_context_packets).toHaveLength(1)
-  })
-
-  it('applies ask_packet_status_changed', () => {
-    useAskStore.setState({
-      session: makeSession({
-        event_seq: 1,
-        delta_context_packets: [makePacket()],
-      }),
-    })
-
-    useAskStore.getState().applyAskEvent({
-      type: 'ask_packet_status_changed',
-      event_seq: 2,
-      packet: makePacket({ status: 'approved' }),
-    })
-
-    expect(useAskStore.getState().session?.delta_context_packets[0].status).toBe('approved')
-  })
-
-  it('upserts packets by packet_id', () => {
-    useAskStore.setState({
-      session: makeSession({
-        delta_context_packets: [makePacket({ packet_id: 'packet-1', status: 'pending' })],
-      }),
-    })
-
-    useAskStore.getState().applyAskEvent({
-      type: 'ask_packet_status_changed',
-      event_seq: 1,
-      packet: makePacket({ packet_id: 'packet-1', status: 'approved' }),
-    })
-    useAskStore.getState().applyAskEvent({
-      type: 'ask_delta_context_suggested',
-      event_seq: 2,
-      packet: makePacket({ packet_id: 'packet-2', summary: 'Second packet' }),
-    })
-
-    expect(useAskStore.getState().session?.delta_context_packets).toHaveLength(2)
-    expect(useAskStore.getState().session?.delta_context_packets[0].status).toBe('approved')
-  })
-
-  it('local approvePacket upserts returned packet without changing event_seq', async () => {
-    apiMock.approveAskPacket.mockResolvedValue({
-      packet: makePacket({ packet_id: 'packet-1', status: 'approved' }),
-    })
-    useAskStore.setState({
-      session: makeSession({
-        event_seq: 7,
-        delta_context_packets: [makePacket({ packet_id: 'packet-1', status: 'pending' })],
-      }),
+    apiMock.approveAskPacket.mockResolvedValue({ packet: makePacket({ status: 'approved' }) })
+    apiMock.mergeAskPacket.mockResolvedValue({
+      packet: makePacket({ status: 'merged', merged_at: '2026-03-16T00:05:00Z' }),
     })
 
     await useAskStore.getState().approvePacket('project-1', 'node-1', 'packet-1')
-
-    expect(useAskStore.getState().session?.event_seq).toBe(7)
-    expect(useAskStore.getState().session?.delta_context_packets[0].status).toBe('approved')
-  })
-
-  it('local mergePacket upserts returned packet without changing event_seq', async () => {
-    apiMock.mergeAskPacket.mockResolvedValue({
-      packet: makePacket({
-        packet_id: 'packet-1',
-        status: 'merged',
-        merged_at: '2026-03-10T00:00:03Z',
-        merged_planning_turn_id: 'mergeturn_1',
-      }),
-    })
-    useAskStore.setState({
-      session: makeSession({
-        event_seq: 9,
-        delta_context_packets: [makePacket({ packet_id: 'packet-1', status: 'approved' })],
-      }),
-    })
+    expect(useAskStore.getState().sidecar?.packetList[0]?.status).toBe('approved')
+    expect(useAskStore.getState().sidecar?.eventSeq).toBe(7)
 
     await useAskStore.getState().mergePacket('project-1', 'node-1', 'packet-1')
-
-    expect(useAskStore.getState().session?.event_seq).toBe(9)
-    expect(useAskStore.getState().session?.delta_context_packets[0].status).toBe('merged')
+    expect(useAskStore.getState().sidecar?.packetList[0]?.status).toBe('merged')
   })
 })

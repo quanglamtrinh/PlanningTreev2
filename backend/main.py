@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.ai.codex_client import CodexAppClient, CodexTransportError, CodexTransportNotFound, StdioTransport
 from backend.config.app_config import build_app_paths, get_codex_cmd, get_split_timeout
 from backend.errors.app_errors import AppError
-from backend.routes import agent, ask, bootstrap, chat, conversation, nodes, projects, settings, split
+from backend.routes import agent, ask, bootstrap, conversation, nodes, projects, settings, split
 from backend.services.agent_operation_service import AgentOperationService
 from backend.services.ask_service import AskService
 from backend.services.brief_generation_service import BriefGenerationService
@@ -213,7 +213,6 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.include_router(split.router, prefix="/v1")
     app.include_router(agent.router, prefix="/v1")
     app.include_router(ask.router, prefix="/v1")
-    app.include_router(chat.router, prefix="/v1")
     app.include_router(conversation.router, prefix="/v2")
 
     dist = Path(__file__).parent.parent / "frontend" / "dist"

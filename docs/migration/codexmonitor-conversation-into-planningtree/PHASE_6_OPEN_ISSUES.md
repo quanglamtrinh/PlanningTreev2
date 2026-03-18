@@ -1,27 +1,18 @@
 # Phase 6 Open Issues
 
-## Summary Table
-| Issue ID | Title | Affected Subphase | Classification | Status |
+## Blocking Issues
+None.
+
+## Carry-Forward Items
+| Issue | Phase Source | Classification | Summary | Owner Phase |
 | --- | --- | --- | --- | --- |
-| `P6-OI-005` | Compatibility inventory not yet classified for cleanup | `6.3` | Blocking | Open |
+| `P6.3-OI-001` | `6.3` | `preserved_out_of_scope_for_6_3` | Ask packet/reset sidecar boundary intentionally preserved during bounded cleanup | Post-6.3 ask-sidecar cleanup |
+| `P6.3-OI-002` | `6.3` | `transitional_but_blocked` | Ask reset ownership still needs explicit rehoming without semantic change | Post-6.3 ask-sidecar cleanup |
+| `P6.3-OI-003` | `6.3` | `preserved_out_of_scope_for_6_3` | Graph/split planning history path intentionally preserved outside breadcrumb cleanup | Post-6.3 graph-planning cleanup |
 
-## Resolved In 6.1
-| Issue ID | Title | Affected Subphase | Resolution status |
-| --- | --- | --- | --- |
-| `P6-OI-001` | Baseline performance evidence not yet recorded | `6.1` | Resolved on `2026-03-17` |
-| `P6-OI-002` | Dense-event corpus and thresholds not yet locked | `6.1` | Resolved on `2026-03-17` |
-
-## Resolved In 6.2
-| Issue ID | Title | Affected Subphase | Resolution status |
-| --- | --- | --- | --- |
-| `P6-OI-003` | Concurrency isolation matrix not yet proven | `6.2` | Resolved on `2026-03-17` by the PlanningTreeMain-native isolation proof slice |
-| `P6-OI-004` | Reconnect and replay stress proof not yet complete | `6.2` | Resolved on `2026-03-17` by the PlanningTreeMain-native reconnect, guarded refresh, and remount replay proof slice |
-
-## Phase 6.3
-### `P6-OI-005` - Compatibility inventory not yet classified for cleanup
-- Description:
-  - transitional compatibility behavior has not yet been fully inventoried and classified
-- Why it matters:
-  - cleanup cannot be gate-based if the target set is not known or not classified
-- Next action:
-  - populate `PHASE_6_CLEANUP_LOG.md` with initial targets and classifications before any removal is considered
+## Resolved During Phase 6
+- `6.1` dense-event performance hardening closeout
+- `6.2` concurrency/reconnect/replay hardening closeout
+- `6.3` execution legacy fallback removal
+- `6.3` ask visible fallback removal
+- `6.3` breadcrumb planning visible fallback removal
