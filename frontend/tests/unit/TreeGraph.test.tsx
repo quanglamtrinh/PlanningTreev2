@@ -287,14 +287,30 @@ describe('TreeGraph', () => {
       within(screen.getByTestId('rf-node-root')).getByRole('button', { name: 'Node actions' }),
     )
 
-    const walkingSkeleton = screen.getByRole('button', { name: /Walking Skeleton/i })
-    const slice = screen.getByRole('button', { name: /Slice/i })
-    expect(walkingSkeleton).toBeEnabled()
-    expect(slice).toBeEnabled()
+    const aiPlanningSection = screen.getByText('AI Planning').closest('div')
+    expect(aiPlanningSection).not.toBeNull()
+    const workflow = within(aiPlanningSection as HTMLElement).getByText('Workflow').closest('button')
+    const simplifyWorkflow = within(aiPlanningSection as HTMLElement)
+      .getByText('Simplify Workflow')
+      .closest('button')
+    const phaseBreakdown = within(aiPlanningSection as HTMLElement)
+      .getByText('Phase Breakdown')
+      .closest('button')
+    const agentBreakdown = within(aiPlanningSection as HTMLElement)
+      .getByText('Agent Breakdown')
+      .closest('button')
+    expect(workflow).not.toBeNull()
+    expect(simplifyWorkflow).not.toBeNull()
+    expect(phaseBreakdown).not.toBeNull()
+    expect(agentBreakdown).not.toBeNull()
+    expect(workflow).toBeEnabled()
+    expect(simplifyWorkflow).toBeEnabled()
+    expect(phaseBreakdown).toBeEnabled()
+    expect(agentBreakdown).toBeEnabled()
 
-    fireEvent.click(walkingSkeleton)
+    fireEvent.click(workflow as HTMLButtonElement)
 
-    expect(onSplitNode).toHaveBeenCalledWith('root', 'walking_skeleton')
+    expect(onSplitNode).toHaveBeenCalledWith('root', 'workflow')
   })
 
   it('allows locked nodes to split while keeping finish task disabled', () => {
@@ -312,8 +328,18 @@ describe('TreeGraph', () => {
       within(screen.getByTestId('rf-node-root')).getByRole('button', { name: 'Node actions' }),
     )
 
-    expect(screen.getByRole('button', { name: /Walking Skeleton/i })).toBeEnabled()
-    expect(screen.getByRole('button', { name: /Slice/i })).toBeEnabled()
+    const aiPlanningSection = screen.getByText('AI Planning').closest('div')
+    expect(aiPlanningSection).not.toBeNull()
+    expect(within(aiPlanningSection as HTMLElement).getByText('Workflow').closest('button')).toBeEnabled()
+    expect(
+      within(aiPlanningSection as HTMLElement).getByText('Simplify Workflow').closest('button'),
+    ).toBeEnabled()
+    expect(
+      within(aiPlanningSection as HTMLElement).getByText('Phase Breakdown').closest('button'),
+    ).toBeEnabled()
+    expect(
+      within(aiPlanningSection as HTMLElement).getByText('Agent Breakdown').closest('button'),
+    ).toBeEnabled()
     expect(screen.getByRole('button', { name: /Finish Task/i })).toBeDisabled()
   })
 
@@ -324,9 +350,11 @@ describe('TreeGraph', () => {
       within(screen.getByTestId('rf-node-root')).getByRole('button', { name: 'Node actions' }),
     )
 
-    expect(screen.getAllByRole('button', { name: /Splitting.../i })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /Splitting.../i })).toHaveLength(4)
     expect(screen.getAllByRole('button', { name: /Splitting.../i })[0]).toBeDisabled()
     expect(screen.getAllByRole('button', { name: /Splitting.../i })[1]).toBeDisabled()
+    expect(screen.getAllByRole('button', { name: /Splitting.../i })[2]).toBeDisabled()
+    expect(screen.getAllByRole('button', { name: /Splitting.../i })[3]).toBeDisabled()
     expect(screen.getByText('AI planning in progress...')).toBeInTheDocument()
   })
 

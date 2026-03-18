@@ -11,6 +11,7 @@ import type {
   ActiveConversationRequest,
   ConversationRequestQuestion,
 } from '../hooks/useConversationRequests'
+import { normalizeSplitPayload } from '../model/normalizeSplitPayload'
 import type {
   ConversationApprovalRequestRenderItem,
   ConversationDiffSummaryRenderItem,
@@ -97,10 +98,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 function copyToClipboard(value: string): Promise<void> {
@@ -250,80 +247,53 @@ function RowCard({
 }
 
 function SplitPayload({ payload }: { payload: Record<string, unknown> }) {
-  const epics = Array.isArray(payload.epics) ? payload.epics : null
-  const subtasks = Array.isArray(payload.subtasks) ? payload.subtasks : null
+  const normalized = normalizeSplitPayload(payload)
+  if (!normalized) {
+    return null
+  }
 
-  if (epics) {
+  if (normalized.kind === 'epics') {
     return (
       <div className={styles.splitGrid}>
-        {epics.map((epic, index) => {
-          const typedEpic = asRecord(epic)
-          if (!typedEpic) {
-            return null
-          }
-          const phases = Array.isArray(typedEpic.phases) ? typedEpic.phases : []
-          return (
-            <article key={`${typedEpic.title ?? 'epic'}-${index}`} className={styles.splitCard}>
-              <h6 className={styles.splitTitle}>{asString(typedEpic.title) ?? `Epic ${index + 1}`}</h6>
-              <MarkdownText value={asString(typedEpic.prompt)} className={styles.splitText} />
-              {phases.length > 0 ? (
-                <div className={styles.splitList}>
-                  {phases.map((phase, phaseIndex) => {
-                    const typedPhase = asRecord(phase)
-                    if (!typedPhase) {
-                      return null
-                    }
-                    return (
-                      <div
-                        key={`${typedEpic.title ?? 'phase'}-${phaseIndex}`}
-                        className={styles.splitListItem}
-                      >
-                        <strong>{asString(typedPhase.prompt) ?? `Phase ${phaseIndex + 1}`}</strong>
-                        <span>{asString(typedPhase.definition_of_done)}</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              ) : null}
-            </article>
-          )
-        })}
+        {normalized.cards.map((epic) => (
+          <article key={epic.key} className={styles.splitCard}>
+            <h6 className={styles.splitTitle}>{epic.title}</h6>
+            <MarkdownText value={epic.body} className={styles.splitText} />
+            {epic.items.length > 0 ? (
+              <div className={styles.splitList}>
+                {epic.items.map((phase) => (
+                  <div
+                    key={phase.key}
+                    className={styles.splitListItem}
+                  >
+                    <strong>{phase.title}</strong>
+                    <span>{phase.body}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </article>
+        ))}
       </div>
     )
   }
 
-  if (!subtasks) {
-    return null
-  }
-
   return (
     <div className={styles.splitGrid}>
-      {subtasks.map((subtask, index) => {
-        const typedSubtask = asRecord(subtask)
-        if (!typedSubtask) {
-          return null
-        }
-        const order = asNumber(typedSubtask.order) ?? index + 1
-        return (
-          <article
-            key={`${order}-${typedSubtask.prompt ?? 'subtask'}`}
-            className={styles.splitCard}
-          >
-            <h6 className={styles.splitTitle}>Slice {order}</h6>
-            <MarkdownText value={asString(typedSubtask.prompt)} className={styles.splitText} />
-            {typedSubtask.risk_reason ? (
-              <p className={styles.splitMeta}>
-                <strong>Risk:</strong> {String(typedSubtask.risk_reason)}
-              </p>
-            ) : null}
-            {typedSubtask.what_unblocks ? (
-              <p className={styles.splitMeta}>
-                <strong>Unblocks:</strong> {String(typedSubtask.what_unblocks)}
-              </p>
-            ) : null}
-          </article>
-        )
-      })}
+      {normalized.cards.map((subtask) => (
+        <article
+          key={subtask.key}
+          className={styles.splitCard}
+        >
+          <h6 className={styles.splitTitle}>{subtask.title}</h6>
+          <MarkdownText value={subtask.body} className={styles.splitText} />
+          {subtask.meta.map((meta) => (
+            <p key={`${subtask.key}-${meta.label}`} className={styles.splitMeta}>
+              <strong>{meta.label}:</strong> {meta.value}
+            </p>
+          ))}
+        </article>
+      ))}
     </div>
   )
 }

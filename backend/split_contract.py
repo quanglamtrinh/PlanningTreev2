@@ -26,8 +26,6 @@ RouteAcceptedSplitMode = Literal[
     "simplify_workflow",
     "phase_breakdown",
     "agent_breakdown",
-    "walking_skeleton",
-    "slice",
 ]
 
 
@@ -101,9 +99,7 @@ _LEGACY_OUTPUT_FAMILY_BY_MODE: Final[dict[TemporaryLegacyRouteModeId, ServiceSpl
     "walking_skeleton": "legacy_epic_phase",
     "slice": "legacy_flat_slice",
 }
-_ACCEPTED_ROUTE_SPLIT_MODES: Final[frozenset[str]] = frozenset(
-    {*CANONICAL_SPLIT_MODE_REGISTRY.keys(), *TEMPORARY_LEGACY_ROUTE_BRIDGE}
-)
+_ACCEPTED_ROUTE_SPLIT_MODES: Final[frozenset[str]] = frozenset(CANONICAL_SPLIT_MODE_REGISTRY.keys())
 
 
 def parse_route_split_mode_or_raise(raw: str) -> RouteAcceptedSplitMode:

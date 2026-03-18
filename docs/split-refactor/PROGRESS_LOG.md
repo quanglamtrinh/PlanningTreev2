@@ -10,7 +10,7 @@ Last updated: 2026-03-17
 | Phase 2 | completed | Canonical prompt builder landed with a strict flat-schema contract and a separate legacy bridge module |
 | Phase 3 | completed | SplitService now materializes canonical modes through one flat-family path while keeping route-level canonical guard intact |
 | Phase 4 | completed | Canonical deterministic fallback landed at the backend service layer while route behavior stayed unchanged |
-| Phase 5 | pending | Frontend registry and type migration not started |
+| Phase 5 | completed | Public `/split` now accepts canonical modes and the frontend create path is canonical-only through GraphNode |
 | Phase 6 | pending | Split surface cleanup not started |
 | Phase 7 | pending | Cutover cleanup not started |
 | Phase 8 | pending | Tests and docs stabilization not started |
@@ -36,3 +36,8 @@ Last updated: 2026-03-17
 - Started and completed Phase 4 by replacing the canonical fallback guard with deterministic canonical fallback for all 4 new modes.
 - Added a dedicated canonical fallback module, revalidated fallback payloads before materialization, and kept canonical execution on the same shared `flat_subtasks_v1` contract and apply path.
 - Preserved the public route guard and the legacy bridge while making canonical split execution backend-complete and adding targeted fallback coverage.
+- Started and completed Phase 5 by opening the public `/split` route for the 4 canonical modes and removing legacy modes from the public split contract.
+- Added frontend canonical split typing, a graph split registry, and generic canonical split wiring through GraphNode, TreeGraph, GraphWorkspace, the API client, and the project store.
+- Removed PlanningConversationPanel split buttons so GraphNode is now the only exposed split entrypoint in the primary UI path.
+- Added shared split-payload normalization so canonical flat subtasks render correctly while legacy split payloads remain readable during the transition window.
+- Added targeted backend route tests, frontend graph/store/render tests, and frontend typecheck coverage for the public cutover.

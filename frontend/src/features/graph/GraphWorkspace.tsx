@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAgentEventStream, usePlanningEventStream } from '../../api/hooks'
+import type { SplitMode } from '../../api/types'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import { WorkspaceSetup } from '../auth/WorkspaceSetup'
@@ -145,7 +146,7 @@ export function GraphWorkspace() {
     }
   }
 
-  async function handleSplitNode(nodeId: string, mode: 'walking_skeleton' | 'slice') {
+  async function handleSplitNode(nodeId: string, mode: SplitMode) {
     try {
       const latestSnapshot = useProjectStore.getState().snapshot
       if (!latestSnapshot) {

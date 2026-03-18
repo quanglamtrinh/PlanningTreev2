@@ -159,10 +159,11 @@ describe('PlanningPanel', () => {
     expect(screen.queryByText('Inherited from 1 Root')).not.toBeInTheDocument()
   })
 
-  it('keeps split actions visible on the v2 host path', () => {
+  it('uses the graph node menu as the only split entrypoint on the v2 host path', () => {
     render(<PlanningConversationHarness conversationId={null} />)
 
-    expect(screen.getByRole('button', { name: 'Walking Skeleton' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Slice' })).toBeInTheDocument()
+    expect(screen.getByText('Loading conversation...')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Walking Skeleton' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Slice' })).not.toBeInTheDocument()
   })
 })

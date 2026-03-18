@@ -21,6 +21,7 @@ import type {
   PlanningHistory,
   ProjectSummary,
   RuntimeInputAnswer,
+  SplitMode,
   SplitAcceptedResponse,
   Snapshot,
   WorkspaceSettings,
@@ -140,7 +141,7 @@ export const api = {
   splitNode(
     projectId: string,
     nodeId: string,
-    mode: 'walking_skeleton' | 'slice',
+    mode: SplitMode,
     confirmReplace = false,
   ): Promise<SplitAcceptedResponse> {
     return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/split`, { method: 'POST' }, {

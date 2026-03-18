@@ -330,6 +330,45 @@ describe('ConversationSurface', () => {
     expect(screen.queryByText(/Unsupported content:/)).not.toBeInTheDocument()
   })
 
+  it('renders canonical flat split_result payloads with objective and why_now details', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          parts: [
+            makePart({
+              part_id: 'part_tool',
+              part_type: 'tool_call',
+              payload: {
+                tool_call_id: 'call_split_canonical',
+                tool_name: 'emit_render_data',
+                arguments: {
+                  kind: 'split_result',
+                  payload: {
+                    subtasks: [
+                      {
+                        id: 'S1',
+                        title: 'Setup workspace',
+                        objective: 'Prepare the repo and environment for the split.',
+                        why_now: 'This unlocks the downstream implementation steps.',
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    renderSurface(model)
+
+    expect(screen.getByText('S1 / Setup workspace')).toBeInTheDocument()
+    expect(screen.getByText('Prepare the repo and environment for the split.')).toBeInTheDocument()
+    expect(screen.getByText(/Why now:/i)).toBeInTheDocument()
+    expect(screen.getByText('This unlocks the downstream implementation steps.')).toBeInTheDocument()
+  })
+
   it('renders reasoning, tool_result, plan, diff, and file-change passive blocks', () => {
     const model = buildConversationRenderModel(
       makeSnapshot([

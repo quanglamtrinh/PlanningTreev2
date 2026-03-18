@@ -45,15 +45,15 @@ Legend:
 
 ## Phase 5 - Frontend Registry And Type Migration
 
-- [ ] `P5.1` Add frontend split registry for the 4 canonical modes.
-- [ ] `P5.2` Replace hardcoded split menu items in `GraphNode`.
-- [ ] `P5.3` Replace hardcoded split mode wiring in `TreeGraph`.
-- [ ] `P5.4` Replace hardcoded split mode wiring in `GraphWorkspace`.
-- [ ] `P5.5` Replace store literals in `frontend/src/stores/project-store.ts`.
-- [ ] `P5.6` Replace API client literals in `frontend/src/api/client.ts`.
-- [ ] `P5.7` Migrate `NodeRecord.planning_mode` to the new canonical set.
-- [ ] `P5.8` Migrate `PlanningEvent.mode` to the new canonical set.
-- [ ] `P5.9` Migrate `SplitAcceptedResponse.mode` to the new canonical set.
+- [x] `P5.1` Add frontend split registry for the 4 canonical modes.
+- [x] `P5.2` Replace hardcoded split menu items in `GraphNode`.
+- [x] `P5.3` Replace hardcoded split mode wiring in `TreeGraph`.
+- [x] `P5.4` Replace hardcoded split mode wiring in `GraphWorkspace`.
+- [x] `P5.5` Replace store literals in `frontend/src/stores/project-store.ts`.
+- [x] `P5.6` Replace API client literals in `frontend/src/api/client.ts`.
+- [x] `P5.7` Migrate `NodeRecord.planning_mode` to the new canonical set.
+- [x] `P5.8` Migrate `PlanningEvent.mode` to the new canonical set.
+- [x] `P5.9` Migrate `SplitAcceptedResponse.mode` to the new canonical set.
 
 ## Phase 6 - Split Surface Cleanup
 
@@ -76,9 +76,9 @@ Legend:
 - [ ] `P8.3` Add service tests for `flat_subtasks_v1` materialization.
 - [ ] `P8.4` Add service tests for the Phase 3 invariant.
 - [x] `P8.5` Add deterministic fallback tests for each mode's semantics and count limits.
-- [ ] `P8.6` Add API tests for accepted modes and invalid mode returning `400 invalid_request`.
-- [ ] `P8.7` Add frontend tests for dynamic GraphNode split menu rendering.
-- [ ] `P8.8` Add frontend tests for removal or hiding of duplicate split affordances elsewhere.
+- [x] `P8.6` Add API tests for accepted modes and invalid mode returning `400 invalid_request`.
+- [x] `P8.7` Add frontend tests for dynamic GraphNode split menu rendering.
+- [x] `P8.8` Add frontend tests for removal or hiding of duplicate split affordances elsewhere.
 - [ ] `P8.9` Add replace and supersede lifecycle tests:
 - [ ] `P8.9.a` replace confirm flow
 - [ ] `P8.9.b` superseding prior children

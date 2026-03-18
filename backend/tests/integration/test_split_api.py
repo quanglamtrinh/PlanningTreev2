@@ -6,6 +6,7 @@ import time
 import pytest
 
 from backend.ai.codex_client import CodexTransportError
+from backend.split_contract import CANONICAL_SPLIT_MODE_REGISTRY
 
 
 def internal_nodes(snapshot: dict) -> dict[str, dict]:
@@ -247,6 +248,22 @@ def wait_for_node_state(client, project_id: str, node_id: str, predicate, *, tim
     raise AssertionError(f"node state did not reach the expected value for {node_id}: {last_state}")
 
 
+def canonical_payload(mode: str, *, title_prefix: str | None = None) -> dict[str, object]:
+    spec = CANONICAL_SPLIT_MODE_REGISTRY[mode]  # type: ignore[index]
+    prefix = title_prefix or mode
+    subtasks = []
+    for index in range(1, spec["min_items"] + 1):
+        subtasks.append(
+            {
+                "id": f"S{index}",
+                "title": f"{prefix} step {index}",
+                "objective": f"Objective {index} for {prefix}",
+                "why_now": f"Reason {index} for {prefix}",
+            }
+        )
+    return {"subtasks": subtasks}
+
+
 def advance_node_to_ready_for_execution(
     client,
     project_id: str,
@@ -279,25 +296,20 @@ def test_split_api_returns_snapshot_with_new_children(client, workspace_root) ->
     project_id, root_id = create_project(client, str(workspace_root))
     client.app.state.split_service._codex_client = FakeCodexClient(
         [
-            """
-            {"subtasks": [
-              {"order": 1, "prompt": "First slice", "risk_reason": "", "what_unblocks": ""},
-              {"order": 2, "prompt": "Second slice", "risk_reason": "", "what_unblocks": ""}
-            ]}
-            """
+            json.dumps(canonical_payload("workflow", title_prefix="workflow")),
         ]
     )
 
     response = client.post(
         f"/v1/projects/{project_id}/nodes/{root_id}/split",
-        json={"mode": "slice"},
+        json={"mode": "workflow"},
     )
 
     assert response.status_code == 202
     payload = wait_for_split_completion(client, project_id, root_id)
     root = next(node for node in payload["tree_state"]["node_registry"] if node["node_id"] == root_id)
     assert root["split_metadata"]["source"] == "ai"
-    assert len(root["split_metadata"]["created_child_ids"]) == 2
+    assert len(root["split_metadata"]["created_child_ids"]) == CANONICAL_SPLIT_MODE_REGISTRY["workflow"]["min_items"]
     assert payload["tree_state"]["active_node_id"] == root["split_metadata"]["created_child_ids"][0]
 
 
@@ -309,18 +321,13 @@ def test_split_api_allows_locked_node_and_keeps_new_children_locked(client, work
     storage.project_store.save_snapshot(project_id, snapshot)
     client.app.state.split_service._codex_client = FakeCodexClient(
         [
-            """
-            {"subtasks": [
-              {"order": 1, "prompt": "Locked slice one", "risk_reason": "", "what_unblocks": ""},
-              {"order": 2, "prompt": "Locked slice two", "risk_reason": "", "what_unblocks": ""}
-            ]}
-            """
+            json.dumps(canonical_payload("workflow", title_prefix="locked workflow")),
         ]
     )
 
     response = client.post(
         f"/v1/projects/{project_id}/nodes/{root_id}/split",
-        json={"mode": "slice"},
+        json={"mode": "workflow"},
     )
 
     assert response.status_code == 202
@@ -329,95 +336,21 @@ def test_split_api_allows_locked_node_and_keeps_new_children_locked(client, work
     root = nodes[root_id]
     children = [nodes[node_id] for node_id in root["split_metadata"]["created_child_ids"]]
     assert root["status"] == "locked"
-    assert [child["status"] for child in children] == ["locked", "locked"]
+    assert [child["status"] for child in children] == ["locked", "locked", "locked"]
     assert payload["tree_state"]["active_node_id"] == children[0]["node_id"]
 
 
-def test_split_api_unlocks_next_epic_and_first_phase_after_completion(client, workspace_root) -> None:
+@pytest.mark.parametrize("mode", ["walking_skeleton", "slice"])
+def test_split_api_returns_400_for_legacy_public_modes(client, workspace_root, mode: str) -> None:
     project_id, root_id = create_project(client, str(workspace_root))
-    client.app.state.split_service._codex_client = FakeCodexClient(
-        [
-            """
-            {
-              "epics": [
-                {
-                  "title": "Core Track",
-                  "prompt": "Build the core system",
-                  "phases": [
-                    {"prompt": "Scaffold backend", "definition_of_done": "API skeleton ready"},
-                    {"prompt": "Implement core logic", "definition_of_done": "Core path works"}
-                  ]
-                },
-                {
-                  "title": "Polish Track",
-                  "prompt": "Polish the product",
-                  "phases": [
-                    {"prompt": "Refine UX", "definition_of_done": "UX reviewed"},
-                    {"prompt": "Write docs", "definition_of_done": "Docs published"}
-                  ]
-                }
-              ]
-            }
-            """
-        ]
-    )
 
-    split_response = client.post(
+    response = client.post(
         f"/v1/projects/{project_id}/nodes/{root_id}/split",
-        json={"mode": "walking_skeleton"},
+        json={"mode": mode},
     )
 
-    assert split_response.status_code == 202
-    split_payload = wait_for_split_completion(client, project_id, root_id)
-    nodes = {node["node_id"]: node for node in split_payload["tree_state"]["node_registry"]}
-    root = nodes[root_id]
-    first_epic = nodes[root["child_ids"][0]]
-    second_epic = nodes[root["child_ids"][1]]
-    first_epic_phases = [nodes[node_id] for node_id in first_epic["child_ids"]]
-    second_epic_phases = [nodes[node_id] for node_id in second_epic["child_ids"]]
-
-    assert root["split_metadata"]["created_child_ids"] == [
-        first_epic["node_id"],
-        first_epic_phases[0]["node_id"],
-        first_epic_phases[1]["node_id"],
-        second_epic["node_id"],
-        second_epic_phases[0]["node_id"],
-        second_epic_phases[1]["node_id"],
-    ]
-    advance_node_to_ready_for_execution(
-        client,
-        project_id,
-        first_epic_phases[0]["node_id"],
-        title=first_epic_phases[0]["title"],
-        purpose=first_epic_phases[0]["description"] or "Scaffold backend",
-    )
-    advance_node_to_ready_for_execution(
-        client,
-        project_id,
-        first_epic_phases[1]["node_id"],
-        title=first_epic_phases[1]["title"],
-        purpose=first_epic_phases[1]["description"] or "Implement core logic",
-    )
-
-    first_complete = client.post(
-        f"/v1/projects/{project_id}/nodes/{first_epic_phases[0]['node_id']}/complete"
-    )
-    assert first_complete.status_code == 200
-    first_complete_nodes = {node["node_id"]: node for node in first_complete.json()["tree_state"]["node_registry"]}
-    assert first_complete_nodes[first_epic_phases[1]["node_id"]]["status"] == "ready"
-    assert first_complete_nodes[second_epic["node_id"]]["status"] == "locked"
-    assert first_complete_nodes[second_epic_phases[0]["node_id"]]["status"] == "locked"
-
-    second_complete = client.post(
-        f"/v1/projects/{project_id}/nodes/{first_epic_phases[1]['node_id']}/complete"
-    )
-    assert second_complete.status_code == 200
-    second_complete_nodes = {
-        node["node_id"]: node for node in second_complete.json()["tree_state"]["node_registry"]
-    }
-    assert second_complete_nodes[second_epic["node_id"]]["status"] == "ready"
-    assert second_complete_nodes[second_epic_phases[0]["node_id"]]["status"] == "ready"
-    assert second_complete_nodes[second_epic_phases[1]["node_id"]]["status"] == "locked"
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_request"
 
 
 def test_split_api_returns_400_for_invalid_mode(client, workspace_root) -> None:
@@ -432,33 +365,40 @@ def test_split_api_returns_400_for_invalid_mode(client, workspace_root) -> None:
     assert response.json()["code"] == "invalid_request"
 
 
-@pytest.mark.parametrize(
-    "mode",
-    ["workflow", "simplify_workflow", "phase_breakdown", "agent_breakdown"],
-)
-def test_split_api_guards_canonical_modes_before_service_call(
+@pytest.mark.parametrize("mode", list(CANONICAL_SPLIT_MODE_REGISTRY))
+def test_split_api_accepts_canonical_modes_at_route(
     client,
     workspace_root,
     monkeypatch: pytest.MonkeyPatch,
     mode: str,
 ) -> None:
     project_id, root_id = create_project(client, str(workspace_root))
+    calls: list[tuple[str, str, str, bool]] = []
 
-    def fail_if_called(*args, **kwargs):
-        raise AssertionError("route guard should reject canonical split modes before split_service is called")
+    def fake_split_node(project_id_arg: str, node_id_arg: str, mode_arg: str, confirm_replace_arg: bool):
+        calls.append((project_id_arg, node_id_arg, mode_arg, confirm_replace_arg))
+        return {
+            "status": "accepted",
+            "node_id": node_id_arg,
+            "mode": mode_arg,
+            "planning_status": "active",
+        }
 
-    monkeypatch.setattr(client.app.state.split_service, "split_node", fail_if_called)
+    monkeypatch.setattr(client.app.state.split_service, "split_node", fake_split_node)
 
     response = client.post(
         f"/v1/projects/{project_id}/nodes/{root_id}/split",
         json={"mode": mode},
     )
 
-    assert response.status_code == 409
-    assert response.json()["code"] == "split_not_allowed"
-    assert response.json()["message"] == (
-        f"Canonical split mode '{mode}' is not executable until the new split pipeline lands."
-    )
+    assert response.status_code == 202
+    assert response.json() == {
+        "status": "accepted",
+        "node_id": root_id,
+        "mode": mode,
+        "planning_status": "active",
+    }
+    assert calls == [(project_id, root_id, mode, False)]
 
 
 def test_split_api_returns_404_for_missing_node(client, workspace_root) -> None:
@@ -466,7 +406,7 @@ def test_split_api_returns_404_for_missing_node(client, workspace_root) -> None:
 
     response = client.post(
         f"/v1/projects/{project_id}/nodes/missing/split",
-        json={"mode": "slice"},
+        json={"mode": "workflow"},
     )
 
     assert response.status_code == 404
@@ -477,19 +417,14 @@ def test_split_api_requires_confirmation_for_resplit(client, workspace_root) -> 
     project_id, root_id = create_project(client, str(workspace_root))
     client.app.state.split_service._codex_client = FakeCodexClient(
         [
-            """
-            {"subtasks": [
-              {"order": 1, "prompt": "First split one", "risk_reason": "", "what_unblocks": ""},
-              {"order": 2, "prompt": "First split two", "risk_reason": "", "what_unblocks": ""}
-            ]}
-            """
+            json.dumps(canonical_payload("workflow", title_prefix="first workflow")),
         ]
     )
-    first = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/split", json={"mode": "slice"})
+    first = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/split", json={"mode": "workflow"})
     assert first.status_code == 202
     wait_for_split_completion(client, project_id, root_id)
 
-    second = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/split", json={"mode": "slice"})
+    second = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/split", json={"mode": "workflow"})
 
     assert second.status_code == 409
     assert second.json()["code"] == "split_not_allowed"
@@ -499,21 +434,11 @@ def test_split_api_confirmed_resplit_supersedes_old_children(client, workspace_r
     project_id, root_id = create_project(client, str(workspace_root))
     client.app.state.split_service._codex_client = FakeCodexClient(
         [
-            """
-            {"subtasks": [
-              {"order": 1, "prompt": "First split one", "risk_reason": "", "what_unblocks": ""},
-              {"order": 2, "prompt": "First split two", "risk_reason": "", "what_unblocks": ""}
-            ]}
-            """,
-            """
-            {"subtasks": [
-              {"order": 1, "prompt": "Second split one", "risk_reason": "", "what_unblocks": ""},
-              {"order": 2, "prompt": "Second split two", "risk_reason": "", "what_unblocks": ""}
-            ]}
-            """,
+            json.dumps(canonical_payload("workflow", title_prefix="first workflow")),
+            json.dumps(canonical_payload("workflow", title_prefix="second workflow")),
         ]
     )
-    first = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/split", json={"mode": "slice"})
+    first = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/split", json={"mode": "workflow"})
     assert first.status_code == 202
     first_payload = wait_for_split_completion(client, project_id, root_id)
     first_root = next(node for node in first_payload["tree_state"]["node_registry"] if node["node_id"] == root_id)
@@ -521,7 +446,7 @@ def test_split_api_confirmed_resplit_supersedes_old_children(client, workspace_r
 
     second = client.post(
         f"/v1/projects/{project_id}/nodes/{root_id}/split",
-        json={"mode": "slice", "confirm_replace": True},
+        json={"mode": "workflow", "confirm_replace": True},
     )
 
     assert second.status_code == 202
@@ -545,7 +470,7 @@ def test_split_api_marks_failure_when_codex_transport_fails(client, workspace_ro
 
     response = client.post(
         f"/v1/projects/{project_id}/nodes/{root_id}/split",
-        json={"mode": "slice"},
+        json={"mode": "workflow"},
     )
 
     assert response.status_code == 202

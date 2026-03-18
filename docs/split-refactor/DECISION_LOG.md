@@ -79,3 +79,15 @@ Last updated: 2026-03-17
 - Date: 2026-03-17
 - Decision: Canonical execution order is fixed to prompt build, model parse, canonical validation, retry, deterministic fallback, canonical validation again on fallback payload, then shared `flat_subtasks_v1` materialization.
 - Rationale: A fixed order prevents fallback from running too early or bypassing the canonical validator and makes service behavior easier to test and reason about.
+
+## D-014: Phase 5 is the public cutover point for canonical split creation
+
+- Date: 2026-03-17
+- Decision: Public `/split` execution is opened for the 4 canonical modes in Phase 5, while `walking_skeleton` and `slice` stop being valid public route inputs.
+- Rationale: Canonical backend execution is complete after Phase 4, so Phase 5 becomes the planned cutover point for frontend create-path migration and public route exposure.
+
+## D-015: Frontend create paths are canonical-only while read paths remain temporarily tolerant
+
+- Date: 2026-03-17
+- Decision: Frontend create paths use only canonical `SplitMode`, but persisted `planning_mode`, planning events, and conversation split payload renderers remain tolerant of legacy values during the transition window.
+- Rationale: Public creation must converge immediately on the new contract, while snapshot and history readers still need to tolerate old data until later cleanup phases land.

@@ -352,28 +352,58 @@ describe('project-store', () => {
     const splitSnapshot = makeSnapshot({
       tree_state: {
         root_node_id: 'root',
-        active_node_id: 'slice-1',
+        active_node_id: 'workflow-1',
         node_registry: [
           {
             ...initialSnapshot.tree_state.node_registry[0],
-            child_ids: ['slice-1', 'slice-2'],
-            planning_mode: 'slice',
+            child_ids: ['workflow-1', 'workflow-2', 'workflow-3'],
+            planning_mode: 'workflow',
             split_metadata: {
-              mode: 'slice',
-              source: 'ai',
+              mode: 'workflow',
+              output_family: 'flat_subtasks_v1',
+              source: 'model',
               warnings: [],
-              created_child_ids: ['slice-1', 'slice-2'],
+              created_child_ids: ['workflow-1', 'workflow-2', 'workflow-3'],
               replaced_child_ids: [],
               created_at: '2026-03-07T10:05:00Z',
               revision: 1,
+              materialized: {
+                family: 'flat_subtasks_v1',
+                subtasks: [
+                  {
+                    subtask_id: 'S1',
+                    title: 'Setup',
+                    objective: 'Prepare the workspace and plan execution order.',
+                    why_now: 'This unlocks the implementation steps.',
+                    child_node_id: 'workflow-1',
+                    display_order: 0,
+                  },
+                  {
+                    subtask_id: 'S2',
+                    title: 'Implement',
+                    objective: 'Ship the main implementation slice.',
+                    why_now: 'This is the core delivery path.',
+                    child_node_id: 'workflow-2',
+                    display_order: 1,
+                  },
+                  {
+                    subtask_id: 'S3',
+                    title: 'Verify',
+                    objective: 'Validate behavior and finish the handoff.',
+                    why_now: 'This closes the loop before execution continues.',
+                    child_node_id: 'workflow-3',
+                    display_order: 2,
+                  },
+                ],
+              },
             },
           },
           {
-            node_id: 'slice-1',
+            node_id: 'workflow-1',
             parent_id: 'root',
             child_ids: [],
             title: 'Setup',
-            description: 'Setup',
+            description: 'Prepare the workspace and plan execution order.\n\nWhy now: This unlocks the implementation steps.',
             status: 'ready',
             planning_mode: null,
             depth: 1,
@@ -387,16 +417,34 @@ describe('project-store', () => {
             created_at: '2026-03-07T10:05:00Z',
           },
           {
-            node_id: 'slice-2',
+            node_id: 'workflow-2',
             parent_id: 'root',
             child_ids: [],
-            title: 'Ship',
-            description: 'Ship',
+            title: 'Implement',
+            description: 'Ship the main implementation slice.\n\nWhy now: This is the core delivery path.',
             status: 'locked',
             planning_mode: null,
             depth: 1,
             display_order: 1,
             hierarchical_number: '1.2',
+            split_metadata: null,
+            chat_session_id: null,
+            has_ask_thread: false,
+            ask_thread_status: null,
+            is_superseded: false,
+            created_at: '2026-03-07T10:05:00Z',
+          },
+          {
+            node_id: 'workflow-3',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Verify',
+            description: 'Validate behavior and finish the handoff.\n\nWhy now: This closes the loop before execution continues.',
+            status: 'locked',
+            planning_mode: null,
+            depth: 1,
+            display_order: 2,
+            hierarchical_number: '1.3',
             split_metadata: null,
             chat_session_id: null,
             has_ask_thread: false,
@@ -412,7 +460,7 @@ describe('project-store', () => {
     apiMock.splitNode.mockResolvedValue({
       status: 'accepted',
       node_id: 'root',
-      mode: 'slice',
+      mode: 'workflow',
       planning_status: 'active',
     })
     apiMock.getPlanningHistory.mockResolvedValue({
@@ -427,7 +475,14 @@ describe('project-store', () => {
           arguments: {
             kind: 'split_result',
             payload: {
-              subtasks: [{ order: 1, prompt: 'Setup', risk_reason: 'Risk', what_unblocks: 'Ship' }],
+              subtasks: [
+                {
+                  id: 'S1',
+                  title: 'Setup',
+                  objective: 'Prepare the workspace and plan execution order.',
+                  why_now: 'This unlocks the implementation steps.',
+                },
+              ],
             },
           },
           timestamp: '2026-03-07T10:05:00Z',
@@ -445,7 +500,7 @@ describe('project-store', () => {
     })
 
     await act(async () => {
-      await useProjectStore.getState().splitNode('root', 'slice', true)
+      await useProjectStore.getState().splitNode('root', 'workflow', true)
     })
 
     expect(useProjectStore.getState().isSplittingNode).toBe(true)
@@ -458,7 +513,7 @@ describe('project-store', () => {
         type: 'planning_turn_completed',
         node_id: 'root',
         turn_id: 'turn-1',
-        created_child_ids: ['slice-1', 'slice-2'],
+        created_child_ids: ['workflow-1', 'workflow-2', 'workflow-3'],
         fallback_used: false,
         timestamp: '2026-03-07T10:05:00Z',
       })
@@ -467,7 +522,7 @@ describe('project-store', () => {
     })
 
     const state = useProjectStore.getState()
-    expect(apiMock.splitNode).toHaveBeenCalledWith('project-1', 'root', 'slice', true)
+    expect(apiMock.splitNode).toHaveBeenCalledWith('project-1', 'root', 'workflow', true)
     expect(apiMock.getPlanningHistory).toHaveBeenCalledWith('project-1', 'root')
     expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-1')
     expect(state.isSplittingNode).toBe(false)
@@ -483,7 +538,14 @@ describe('project-store', () => {
         arguments: {
           kind: 'split_result',
           payload: {
-            subtasks: [{ order: 1, prompt: 'Setup', risk_reason: 'Risk', what_unblocks: 'Ship' }],
+            subtasks: [
+              {
+                id: 'S1',
+                title: 'Setup',
+                objective: 'Prepare the workspace and plan execution order.',
+                why_now: 'This unlocks the implementation steps.',
+              },
+            ],
           },
         },
         timestamp: '2026-03-07T10:05:00Z',

@@ -5,7 +5,6 @@ import pytest
 from backend.errors.app_errors import InvalidRequest
 from backend.split_contract import (
     CANONICAL_SPLIT_MODE_REGISTRY,
-    TEMPORARY_LEGACY_ROUTE_BRIDGE,
     parse_route_split_mode_or_raise,
     split_output_family_for_mode,
 )
@@ -49,9 +48,10 @@ def test_parse_route_split_mode_accepts_canonical_modes(mode: str) -> None:
     assert parse_route_split_mode_or_raise(mode) == mode
 
 
-@pytest.mark.parametrize("mode", sorted(TEMPORARY_LEGACY_ROUTE_BRIDGE))
-def test_parse_route_split_mode_accepts_temporary_legacy_bridge_modes(mode: str) -> None:
-    assert parse_route_split_mode_or_raise(mode) == mode
+@pytest.mark.parametrize("mode", ["walking_skeleton", "slice"])
+def test_parse_route_split_mode_rejects_legacy_public_modes(mode: str) -> None:
+    with pytest.raises(InvalidRequest, match="Unsupported split mode."):
+        parse_route_split_mode_or_raise(mode)
 
 
 def test_parse_route_split_mode_rejects_unknown_mode() -> None:
