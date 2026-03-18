@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "python scripts/dev.py",
     "build": "npm run build --prefix frontend",
+    "check:phase6_3_cleanup": "python scripts/check_phase6_3_cleanup.py",
+    "typecheck": "npm run typecheck --prefix frontend",
     "test": "npm run test:unit --prefix frontend && python -m pytest backend/tests/unit"
   },
   "keywords": [],

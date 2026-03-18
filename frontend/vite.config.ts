@@ -13,6 +13,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/v1': backendTarget,
+      '/v2': backendTarget,
       '/health': backendTarget,
     },
   },

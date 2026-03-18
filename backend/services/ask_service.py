@@ -30,6 +30,14 @@ STALE_ASK_TURN_ERROR = "Ask session interrupted - the server restarted before th
 logger = logging.getLogger(__name__)
 
 
+def make_ask_stream_id(turn_id: str) -> str:
+    return f"ask_stream:{turn_id}"
+
+
+def make_ask_assistant_text_part_id(message_id: str) -> str:
+    return f"ask_part:{message_id}:assistant_text"
+
+
 class AskService:
     def __init__(
         self,
@@ -46,6 +54,10 @@ class AskService:
         self._live_turns: set[tuple[str, str, str]] = set()
 
     def get_session(self, project_id: str, node_id: str) -> dict[str, Any]:
+        session = self.get_session_state(project_id, node_id)
+        return {"session": self._public_session(session)}
+
+    def get_session_state(self, project_id: str, node_id: str) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             self._load_node_context(project_id, node_id)
             raw_session = self._storage.thread_store.get_ask_state(project_id, node_id)
@@ -53,7 +65,7 @@ class AskService:
             session, recovered = self._recover_stale_turn(session)
             if recovered or raw_session != self._storage_session_payload(session):
                 self._write_ask_session_state(project_id, node_id, session)
-            return {"session": self._public_session(session)}
+            return copy.deepcopy(session)
 
     def create_message(self, project_id: str, node_id: str, content: Any) -> dict[str, Any]:
         text = str(content or "").strip()
@@ -78,6 +90,7 @@ class AskService:
             user_message = {
                 "message_id": new_id("msg"),
                 "role": "user",
+                "turn_id": turn_id,
                 "content": text,
                 "status": "completed",
                 "created_at": created_at,
@@ -87,6 +100,7 @@ class AskService:
             assistant_message = {
                 "message_id": new_id("msg"),
                 "role": "assistant",
+                "turn_id": turn_id,
                 "content": "",
                 "status": "pending",
                 "created_at": created_at,
@@ -112,6 +126,9 @@ class AskService:
                 session,
                 {
                     "type": "ask_message_created",
+                    "conversation_id": str(session["conversation_id"]),
+                    "turn_id": turn_id,
+                    "stream_id": make_ask_stream_id(turn_id),
                     "active_turn_id": turn_id,
                     "user_message": copy.deepcopy(user_message),
                     "assistant_message": copy.deepcopy(assistant_message),
@@ -132,8 +149,12 @@ class AskService:
         )
         return {
             "status": "accepted",
+            "conversation_id": str(session["conversation_id"]),
+            "turn_id": turn_id,
+            "stream_id": make_ask_stream_id(turn_id),
             "user_message_id": user_message["message_id"],
             "assistant_message_id": assistant_message["message_id"],
+            "assistant_text_part_id": make_ask_assistant_text_part_id(assistant_message["message_id"]),
         }
 
     def reset_session(self, project_id: str, node_id: str) -> dict[str, Any]:
@@ -146,10 +167,10 @@ class AskService:
                 raise AskTurnAlreadyActive()
             session["thread_id"] = None
             session["forked_from_planning_thread_id"] = None
-            session["created_at"] = None
             session["messages"] = []
             session["active_turn_id"] = None
             session["status"] = None
+            session["delta_context_packets"] = []
             event = self._persist_session_event(
                 project_id,
                 node_id,
@@ -546,6 +567,7 @@ class AskService:
             for item in payload.get("delta_context_packets", [])
             if isinstance(item, dict)
         ]
+        conversation_id = payload.get("conversation_id")
         thread_id = payload.get("thread_id")
         forked_from_planning_thread_id = payload.get("forked_from_planning_thread_id")
         active_turn_id = payload.get("active_turn_id")
@@ -565,13 +587,16 @@ class AskService:
         return {
             "project_id": project_id,
             "node_id": node_id,
+            "conversation_id": (
+                conversation_id if isinstance(conversation_id, str) and conversation_id.strip() else new_id("convask")
+            ),
             "thread_id": thread_id if isinstance(thread_id, str) and thread_id.strip() else None,
             "forked_from_planning_thread_id": (
                 forked_from_planning_thread_id
                 if isinstance(forked_from_planning_thread_id, str) and forked_from_planning_thread_id.strip()
                 else None
             ),
-            "created_at": str(created_at) if isinstance(created_at, str) and created_at.strip() else None,
+            "created_at": str(created_at) if isinstance(created_at, str) and created_at.strip() else iso_now(),
             "active_turn_id": (
                 active_turn_id if isinstance(active_turn_id, str) and active_turn_id.strip() else None
             ),
@@ -583,6 +608,7 @@ class AskService:
 
     def _public_session(self, session: dict[str, Any]) -> dict[str, Any]:
         public_session = copy.deepcopy(session)
+        public_session.pop("conversation_id", None)
         public_session.pop("thread_id", None)
         public_session.pop("forked_from_planning_thread_id", None)
         public_session.pop("created_at", None)
@@ -742,6 +768,9 @@ class AskService:
                 session,
                 {
                     "type": "ask_assistant_delta",
+                    "conversation_id": str(session["conversation_id"]),
+                    "turn_id": turn_id,
+                    "stream_id": make_ask_stream_id(turn_id),
                     "message_id": assistant_message_id,
                     "delta": delta,
                     "content": str(message["content"]),
@@ -784,6 +813,9 @@ class AskService:
                 session,
                 {
                     "type": "ask_assistant_completed",
+                    "conversation_id": str(session["conversation_id"]),
+                    "turn_id": turn_id,
+                    "stream_id": make_ask_stream_id(turn_id),
                     "message_id": assistant_message_id,
                     "content": final_content,
                     "updated_at": str(message["updated_at"]),
@@ -820,6 +852,9 @@ class AskService:
                 session,
                 {
                     "type": "ask_assistant_error",
+                    "conversation_id": str(session["conversation_id"]),
+                    "turn_id": turn_id,
+                    "stream_id": make_ask_stream_id(turn_id),
                     "message_id": assistant_message_id,
                     "content": str(message.get("content", "")),
                     "updated_at": str(message["updated_at"]),
@@ -1033,6 +1068,7 @@ class AskService:
 
     def _storage_session_payload(self, session: dict[str, Any]) -> dict[str, Any]:
         return {
+            "conversation_id": session.get("conversation_id"),
             "thread_id": session.get("thread_id"),
             "forked_from_planning_thread_id": session.get("forked_from_planning_thread_id"),
             "status": session.get("status"),
@@ -1094,7 +1130,7 @@ class AskService:
         created_at = str(message.get("created_at") or iso_now())
         updated_at = str(message.get("updated_at") or created_at)
         error = message.get("error")
-        return {
+        normalized = {
             "message_id": str(message.get("message_id") or new_id("msg")),
             "role": "assistant" if str(message.get("role")) == "assistant" else "user",
             "content": str(message.get("content") or ""),
@@ -1103,6 +1139,10 @@ class AskService:
             "updated_at": updated_at,
             "error": str(error) if error is not None and str(error).strip() else None,
         }
+        turn_id = message.get("turn_id")
+        if isinstance(turn_id, str) and turn_id.strip():
+            normalized["turn_id"] = turn_id.strip()
+        return normalized
 
     def _normalize_message_status(self, raw_status: Any) -> str:
         status = str(raw_status or "").strip().lower()

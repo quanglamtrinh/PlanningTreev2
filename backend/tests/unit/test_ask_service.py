@@ -347,6 +347,11 @@ def test_create_message_creates_user_and_assistant_messages(project_service, sto
     assert len(state["messages"]) == 2
     assert state["messages"][0]["role"] == "user"
     assert state["messages"][1]["role"] == "assistant"
+    assert response["conversation_id"] == state["conversation_id"]
+    assert response["stream_id"] == f"ask_stream:{response['turn_id']}"
+    assert response["assistant_text_part_id"] == f"ask_part:{response['assistant_message_id']}:assistant_text"
+    assert state["messages"][0]["turn_id"] == response["turn_id"]
+    assert state["messages"][1]["turn_id"] == response["turn_id"]
 
     release.set()
     wait_for_idle(storage, project_id, root_id)
@@ -539,12 +544,18 @@ def test_reset_session_clears_messages_and_thread_identity(project_service, stor
     assert broker.events[-1]["type"] == "ask_session_reset"
 
 
-def test_reset_session_preserves_delta_context_packets(project_service, storage: Storage, workspace_root) -> None:
+def test_reset_session_clears_delta_context_packets_and_preserves_conversation_identity(
+    project_service,
+    storage: Storage,
+    workspace_root,
+) -> None:
     project_id, root_id = create_project(project_service, str(workspace_root))
+    conversation_id = "convask_1"
     storage.thread_store.write_ask_session(
         project_id,
         root_id,
         {
+            "conversation_id": conversation_id,
             "thread_id": "ask_1",
             "forked_from_planning_thread_id": "planning_1",
             "status": "idle",
@@ -582,9 +593,12 @@ def test_reset_session_preserves_delta_context_packets(project_service, storage:
     service, _, _ = make_service(storage, FakeCodexClient())
 
     reset = service.reset_session(project_id, root_id)["session"]
+    stored = storage.thread_store.get_ask_state(project_id, root_id)
 
-    assert len(reset["delta_context_packets"]) == 1
-    assert storage.thread_store.get_ask_state(project_id, root_id)["delta_context_packets"][0]["packet_id"] == "dctx_1"
+    assert reset["delta_context_packets"] == []
+    assert stored["delta_context_packets"] == []
+    assert stored["conversation_id"] == conversation_id
+    assert stored["event_seq"] == 5
 
 
 def test_runtime_config_is_read_only_for_codex_calls(project_service, storage: Storage, workspace_root) -> None:

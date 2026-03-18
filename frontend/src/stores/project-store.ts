@@ -174,6 +174,7 @@ type ProjectStoreState = {
   loadPlanningHistory: (projectId: string, nodeId: string) => Promise<void>
   applyPlanningEvent: (projectId: string, nodeId: string, event: PlanningEvent) => void
   setPlanningConnectionStatus: (status: PlanningConnectionStatus) => void
+  setPlanningNodeBusyState: (nodeId: string, isBusy: boolean) => void
   clearPlanningState: () => void
   applyAgentEvent: (projectId: string, nodeId: string, event: AgentEvent) => void
   setAgentConnectionStatus: (status: AgentConnectionStatus) => void
@@ -829,6 +830,29 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
   },
   setPlanningConnectionStatus(status: PlanningConnectionStatus) {
     set({ planningConnectionStatus: status })
+  },
+  setPlanningNodeBusyState(nodeId: string, isBusy: boolean) {
+    set((state) => {
+      if (isBusy) {
+        if (state.isSplittingNode && state.splittingNodeId === nodeId) {
+          return {}
+        }
+        return {
+          isSplittingNode: true,
+          splittingNodeId: nodeId,
+        }
+      }
+
+      if (state.splittingNodeId !== nodeId) {
+        return {}
+      }
+
+      return {
+        isSplittingNode: false,
+        splittingNodeId: null,
+        activePlanningMode: null,
+      }
+    })
   },
   clearPlanningState() {
     set({

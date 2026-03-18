@@ -1,15 +1,23 @@
 import type {
   AcceptedAgentOperation,
+  AskConversationResponse,
+  AskConversationSendAcceptedResponse,
+  PlanningConversationResponse,
   AskSession,
   BootstrapStatus,
   ChatSession,
   DeltaContextPacket,
+  ExecutionConversationActionResponse,
+  ExecutionConversationResponse,
+  ExecutionConversationRequestResolvedResponse,
+  ExecutionConversationSendAcceptedResponse,
   NodeBrief,
   NodeBriefing,
   NodeDocuments,
   NodeState,
   NodeSpec,
   NodeTask,
+  PlanningConversationRequestResolvedResponse,
   PlanningHistory,
   ProjectSummary,
   RuntimeInputAnswer,
@@ -266,49 +274,183 @@ export const api = {
       method: 'POST',
     })
   },
-  getChatSession(projectId: string, nodeId: string): Promise<{ session: ChatSession }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/chat/session`)
-  },
-  sendChatMessage(
-    projectId: string,
-    nodeId: string,
-    content: string,
-  ): Promise<{ status: string; user_message_id: string; assistant_message_id: string }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/chat/messages`, {
-      method: 'POST',
-    }, {
-      content,
-    })
-  },
-  resetChatSession(projectId: string, nodeId: string): Promise<{ session: ChatSession }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/chat/reset`, {
-      method: 'POST',
-    })
-  },
-  chatEventsUrl(projectId: string, nodeId: string): string {
-    return `/v1/projects/${projectId}/nodes/${nodeId}/chat/events`
-  },
-  getAskSession(projectId: string, nodeId: string): Promise<{ session: AskSession }> {
+  getAskSidecar(projectId: string, nodeId: string): Promise<{ session: AskSession }> {
     return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/session`)
   },
-  sendAskMessage(
-    projectId: string,
-    nodeId: string,
-    content: string,
-  ): Promise<{ status: string; user_message_id: string; assistant_message_id: string }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/messages`, {
-      method: 'POST',
-    }, {
-      content,
-    })
-  },
-  resetAskSession(projectId: string, nodeId: string): Promise<{ session: AskSession }> {
+  resetAskSidecar(projectId: string, nodeId: string): Promise<{ session: AskSession }> {
     return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/reset`, {
       method: 'POST',
     })
   },
-  askEventsUrl(projectId: string, nodeId: string): string {
+  askSidecarEventsUrl(projectId: string, nodeId: string): string {
     return `/v1/projects/${projectId}/nodes/${nodeId}/ask/events`
+  },
+  getAskConversation(
+    projectId: string,
+    nodeId: string,
+  ): Promise<AskConversationResponse> {
+    return jsonFetch(`/v2/projects/${projectId}/nodes/${nodeId}/conversations/ask`)
+  },
+  getPlanningConversation(
+    projectId: string,
+    nodeId: string,
+  ): Promise<PlanningConversationResponse> {
+    return jsonFetch(`/v2/projects/${projectId}/nodes/${nodeId}/conversations/planning`)
+  },
+  sendAskConversationMessage(
+    projectId: string,
+    nodeId: string,
+    content: string,
+  ): Promise<AskConversationSendAcceptedResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/ask/send`,
+      { method: 'POST' },
+      { content },
+    )
+  },
+  askConversationEventsUrl(
+    projectId: string,
+    nodeId: string,
+    options: {
+      afterEventSeq: number
+      expectedStreamId?: string | null
+    },
+  ): string {
+    const search = new URLSearchParams()
+    search.set('after_event_seq', String(options.afterEventSeq))
+    if (options.expectedStreamId) {
+      search.set('expected_stream_id', options.expectedStreamId)
+    }
+    return `/v2/projects/${projectId}/nodes/${nodeId}/conversations/ask/events?${search.toString()}`
+  },
+  planningConversationEventsUrl(
+    projectId: string,
+    nodeId: string,
+    options: {
+      afterEventSeq: number
+      expectedStreamId?: string | null
+    },
+  ): string {
+    const search = new URLSearchParams()
+    search.set('after_event_seq', String(options.afterEventSeq))
+    if (options.expectedStreamId) {
+      search.set('expected_stream_id', options.expectedStreamId)
+    }
+    return `/v2/projects/${projectId}/nodes/${nodeId}/conversations/planning/events?${search.toString()}`
+  },
+  getExecutionConversation(
+    projectId: string,
+    nodeId: string,
+  ): Promise<ExecutionConversationResponse> {
+    return jsonFetch(`/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution`)
+  },
+  sendExecutionConversationMessage(
+    projectId: string,
+    nodeId: string,
+    content: string,
+  ): Promise<ExecutionConversationSendAcceptedResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/send`,
+      { method: 'POST' },
+      { content },
+    )
+  },
+  resolveExecutionConversationRequest(
+    projectId: string,
+    nodeId: string,
+    requestId: string,
+    payload: {
+      request_kind: 'approval' | 'user_input'
+      decision?: 'approved' | 'declined'
+      answers?: Record<string, RuntimeInputAnswer>
+      thread_id?: string | null
+      turn_id?: string | null
+    },
+  ): Promise<ExecutionConversationRequestResolvedResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/requests/${requestId}/resolve`,
+      { method: 'POST' },
+      payload,
+    )
+  },
+  resolvePlanningConversationRequest(
+    projectId: string,
+    nodeId: string,
+    requestId: string,
+    payload: {
+      request_kind: 'approval' | 'user_input'
+      decision?: 'approved' | 'declined'
+      answers?: Record<string, RuntimeInputAnswer>
+      thread_id?: string | null
+      turn_id?: string | null
+    },
+  ): Promise<PlanningConversationRequestResolvedResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/planning/requests/${requestId}/resolve`,
+      { method: 'POST' },
+      payload,
+    )
+  },
+  continueExecutionConversationMessage(
+    projectId: string,
+    nodeId: string,
+    messageId: string,
+  ): Promise<ExecutionConversationActionResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/messages/${messageId}/continue`,
+      { method: 'POST' },
+      {},
+    )
+  },
+  retryExecutionConversationMessage(
+    projectId: string,
+    nodeId: string,
+    messageId: string,
+  ): Promise<ExecutionConversationActionResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/messages/${messageId}/retry`,
+      { method: 'POST' },
+      {},
+    )
+  },
+  regenerateExecutionConversationMessage(
+    projectId: string,
+    nodeId: string,
+    messageId: string,
+  ): Promise<ExecutionConversationActionResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/messages/${messageId}/regenerate`,
+      { method: 'POST' },
+      {},
+    )
+  },
+  cancelExecutionConversation(
+    projectId: string,
+    nodeId: string,
+    payload: {
+      stream_id?: string | null
+    },
+  ): Promise<ExecutionConversationActionResponse> {
+    return jsonFetch(
+      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/cancel`,
+      { method: 'POST' },
+      payload,
+    )
+  },
+  executionConversationEventsUrl(
+    projectId: string,
+    nodeId: string,
+    options: {
+      afterEventSeq: number
+      expectedStreamId?: string | null
+    },
+  ): string {
+    const search = new URLSearchParams()
+    search.set('after_event_seq', String(options.afterEventSeq))
+    if (options.expectedStreamId) {
+      search.set('expected_stream_id', options.expectedStreamId)
+    }
+    return `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/events?${search.toString()}`
   },
   listAskPackets(projectId: string, nodeId: string): Promise<{ packets: DeltaContextPacket[] }> {
     return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/packets`)

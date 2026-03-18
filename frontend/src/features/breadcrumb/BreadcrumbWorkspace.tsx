@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/client";
 import {
   useAgentEventStream,
-  useAskSessionStream,
-  useChatSessionStream,
-  usePlanningEventStream,
+  useAskSidecarStream,
 } from "../../api/hooks";
-import { useChatStore } from "../../stores/chat-store";
+import { deriveConversationBusy } from "../conversation/model/deriveConversationBusy";
+import { useAskConversation } from "../conversation/hooks/useAskConversation";
+import { useConversationRequests } from "../conversation/hooks/useConversationRequests";
+import { useExecutionConversation } from "../conversation/hooks/useExecutionConversation";
+import { usePlanningConversation } from "../conversation/hooks/usePlanningConversation";
+import { useConversationStore } from "../../stores/conversation-store";
 import { useProjectStore } from "../../stores/project-store";
 import { useUIStore } from "../../stores/ui-store";
 import { AgentActivityCard } from "./AgentActivityCard";
@@ -47,6 +50,39 @@ function resolveRequestedTab(value: RequestedTabId | undefined): TabId {
     return value;
   }
   return "planning";
+}
+
+function readComposerSeed(state: unknown): string {
+  if (!state || typeof state !== "object") {
+    return "";
+  }
+  const composerSeed = (state as { composerSeed?: unknown }).composerSeed;
+  return typeof composerSeed === "string" ? composerSeed : "";
+}
+
+function clearComposerSeedFromLocationState(state: unknown): Record<string, unknown> | null {
+  if (!state || typeof state !== "object") {
+    return null;
+  }
+  const nextState = { ...(state as Record<string, unknown>) };
+  delete nextState.composerSeed;
+  return Object.keys(nextState).length > 0 ? nextState : null;
+}
+
+function hasLiveExecutionConversationActivity(
+  conversation: ReturnType<typeof useExecutionConversation>["conversation"],
+): boolean {
+  if (!conversation) {
+    return false;
+  }
+  const latestMessage =
+    conversation.snapshot.messages[conversation.snapshot.messages.length - 1] ?? null;
+  return (
+    conversation.snapshot.record.active_stream_id !== null ||
+    conversation.snapshot.record.status === "active" ||
+    latestMessage?.status === "pending" ||
+    latestMessage?.status === "streaming"
+  );
 }
 
 export function BreadcrumbWorkspace() {
@@ -99,9 +135,15 @@ export function BreadcrumbWorkspace() {
   const isGeneratingSpec = useProjectStore((state) => state.isGeneratingSpec);
   const isConfirmingNode = useProjectStore((state) => state.isConfirmingNode);
   const bootstrap = useProjectStore((state) => state.bootstrap);
-  const chatSession = useChatStore((state) => state.session);
-  const setComposerDraft = useChatStore((state) => state.setComposerDraft);
+  const setPlanningNodeBusyState = useProjectStore(
+    (state) => state.setPlanningNodeBusyState,
+  );
+  const setConversationComposerDraft = useConversationStore(
+    (state) => state.setComposerDraft,
+  );
   const setActiveSurface = useUIStore((state) => state.setActiveSurface);
+  const appliedComposerSeedTokenRef = useRef<string | null>(null);
+  const managedPlanningBusyNodeIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setActiveSurface("breadcrumb");
@@ -139,22 +181,132 @@ export function BreadcrumbWorkspace() {
     );
   }, [nodeId, snapshot]);
 
-  usePlanningEventStream(
-    projectId && node ? projectId : null,
-    node ? node.node_id : null,
-  );
   useAgentEventStream(
     projectId && node ? projectId : null,
     node ? node.node_id : null,
   );
-  useAskSessionStream(
+  useAskSidecarStream(
     projectId && node && activeTab === "ask" ? projectId : null,
     node && activeTab === "ask" ? node.node_id : null,
   );
-  useChatSessionStream(
-    projectId && node && activeTab === "execution" ? projectId : null,
-    node && activeTab === "execution" ? node.node_id : null,
-  );
+  const askConversation = useAskConversation({
+    projectId: projectId ?? null,
+    nodeId: node?.node_id ?? null,
+    enabled: activeTab === "ask" && Boolean(projectId && node?.node_id),
+  });
+  const executionConversation = useExecutionConversation({
+    projectId: projectId ?? null,
+    nodeId: node?.node_id ?? null,
+    enabled: activeTab === "execution" && Boolean(projectId && node?.node_id),
+  });
+  const executionConversationRequests = useConversationRequests({
+    projectId: projectId ?? null,
+    nodeId: node?.node_id ?? null,
+    conversation: executionConversation.conversation,
+    refresh: executionConversation.refresh,
+    resolveRequest: async ({
+      requestId,
+      requestKind,
+      decision,
+      answers,
+      threadId,
+      turnId,
+    }) => {
+      if (!projectId || !node?.node_id) {
+        throw new Error("Conversation request resolution is not ready yet.");
+      }
+      const response = await api.resolveExecutionConversationRequest(
+        projectId,
+        node.node_id,
+        requestId,
+        {
+          request_kind: requestKind,
+          decision,
+          answers,
+          thread_id: threadId ?? null,
+          turn_id: turnId ?? null,
+        },
+      );
+      return response.status;
+    },
+  });
+  const planningConversation = usePlanningConversation({
+    projectId: projectId ?? null,
+    nodeId: node?.node_id ?? null,
+    enabled: activeTab === "planning" && Boolean(projectId && node?.node_id),
+  });
+  const planningConversationRequests = useConversationRequests({
+    projectId: activeTab === "planning" ? projectId ?? null : null,
+    nodeId: activeTab === "planning" ? node?.node_id ?? null : null,
+    conversation: activeTab === "planning" ? planningConversation.conversation : null,
+    refresh: planningConversation.refresh,
+    resolveRequest: async ({
+      requestId,
+      requestKind,
+      decision,
+      answers,
+      threadId,
+      turnId,
+    }) => {
+      if (!projectId || !node?.node_id) {
+        throw new Error("Conversation request resolution is not ready yet.");
+      }
+      const response = await api.resolvePlanningConversationRequest(
+        projectId,
+        node.node_id,
+        requestId,
+        {
+          request_kind: requestKind,
+          decision,
+          answers,
+          thread_id: threadId ?? null,
+          turn_id: turnId ?? null,
+        },
+      );
+      return response.status;
+    },
+  });
+  const activePlanningConversationRequests =
+    activeTab === "planning" ? planningConversationRequests : null;
+
+  useEffect(() => {
+    const managedNodeId =
+      activeTab === "planning" && node?.node_id
+        ? node.node_id
+        : null;
+    const previousManagedNodeId = managedPlanningBusyNodeIdRef.current;
+
+    if (previousManagedNodeId && previousManagedNodeId !== managedNodeId) {
+      setPlanningNodeBusyState(previousManagedNodeId, false);
+    }
+
+    managedPlanningBusyNodeIdRef.current = managedNodeId;
+
+    if (!managedNodeId) {
+      return;
+    }
+
+    setPlanningNodeBusyState(
+      managedNodeId,
+      deriveConversationBusy(planningConversation.conversation?.snapshot),
+    );
+  }, [
+    activeTab,
+    node?.node_id,
+    planningConversation.conversation?.snapshot,
+    setPlanningNodeBusyState,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      const managedNodeId = managedPlanningBusyNodeIdRef.current;
+      if (!managedNodeId) {
+        return;
+      }
+      setPlanningNodeBusyState(managedNodeId, false);
+      managedPlanningBusyNodeIdRef.current = null;
+    };
+  }, [setPlanningNodeBusyState]);
 
   useEffect(() => {
     if (
@@ -182,24 +334,53 @@ export function BreadcrumbWorkspace() {
     if (!projectId || !nodeId || !node) {
       return;
     }
-    const composerSeed =
-      typeof (location.state as { composerSeed?: string } | null)
-        ?.composerSeed === "string"
-        ? ((location.state as { composerSeed?: string }).composerSeed ?? "")
-        : "";
+    const composerSeed = readComposerSeed(location.state);
     if (!composerSeed.trim()) {
       return;
     }
-    setComposerDraft(composerSeed);
-    navigate(location.pathname, { replace: true, state: null });
+
+    const seedToken = `${location.key}:${composerSeed}`;
+    if (appliedComposerSeedTokenRef.current === seedToken) {
+      return;
+    }
+
+    if (activeTab === "execution") {
+      if (!executionConversation.conversationId) {
+        return;
+      }
+      setConversationComposerDraft(
+        executionConversation.conversationId,
+        composerSeed,
+      );
+    } else if (activeTab === "ask") {
+      if (!askConversation.conversationId) {
+        return;
+      }
+      setConversationComposerDraft(
+        askConversation.conversationId,
+        composerSeed,
+      );
+    } else {
+      return;
+    }
+
+    appliedComposerSeedTokenRef.current = seedToken;
+    navigate(location.pathname, {
+      replace: true,
+      state: clearComposerSeedFromLocationState(location.state),
+    });
   }, [
+    activeTab,
+    askConversation.conversationId,
+    executionConversation.conversationId,
     location.pathname,
+    location.key,
     location.state,
     navigate,
     node?.node_id,
     nodeId,
     projectId,
-    setComposerDraft,
+    setConversationComposerDraft,
   ]);
 
   useEffect(() => {
@@ -212,20 +393,23 @@ export function BreadcrumbWorkspace() {
   }, [location.state]);
 
   useEffect(() => {
-    if (
-      !nodeId ||
-      !node ||
-      node.status !== "ready" ||
-      !chatSession ||
-      chatSession.node_id !== nodeId
-    ) {
+    if (!nodeId || !node || node.status !== "ready") {
       return;
     }
-    if (chatSession.messages.length === 0 && !chatSession.active_turn_id) {
+    if (activeTab !== "execution") {
+      return;
+    }
+    if (!hasLiveExecutionConversationActivity(executionConversation.conversation)) {
       return;
     }
     patchNodeStatus(nodeId, "in_progress");
-  }, [chatSession, node, nodeId, patchNodeStatus]);
+  }, [
+    activeTab,
+    executionConversation.conversation,
+    node,
+    nodeId,
+    patchNodeStatus,
+  ]);
 
   useEffect(() => {
     if (
@@ -242,7 +426,23 @@ export function BreadcrumbWorkspace() {
   }, [activeTab, loadNodeDocuments, node]);
 
   useEffect(() => {
-    const pendingRequest = chatSession?.pending_input_request;
+    const pendingRequest = activePlanningConversationRequests
+      ? activePlanningConversationRequests.activeRequest?.requestKind === "user_input"
+        ? {
+            request_id: activePlanningConversationRequests.activeRequest.requestId,
+            thread_id: activePlanningConversationRequests.activeRequest.threadId,
+            turn_id: activePlanningConversationRequests.activeRequest.turnId,
+            questions: activePlanningConversationRequests.activeRequest.questions.map((question) => ({
+              id: question.id,
+              header: question.header,
+              question: question.question,
+              is_other: question.isOther,
+              is_secret: question.isSecret,
+              options: question.options,
+            })),
+          }
+        : null
+      : null;
     if (!pendingRequest) {
       setPlanInputDrafts({});
       setPlanInputError(null);
@@ -259,7 +459,9 @@ export function BreadcrumbWorkspace() {
       return next;
     });
     setPlanInputError(null);
-  }, [chatSession?.pending_input_request]);
+  }, [
+    activePlanningConversationRequests?.activeRequest,
+  ]);
 
   if (
     isInitializing ||
@@ -278,8 +480,31 @@ export function BreadcrumbWorkspace() {
   const nodeDocuments = documentsByNode[node.node_id];
   const nodeActivity = agentActivityByNode[node.node_id];
   const executionState = nodeDocuments?.state;
-  const pendingInputRequest = chatSession?.pending_input_request ?? null;
+  const plannerPendingInputRequest = activePlanningConversationRequests
+    ? activePlanningConversationRequests.activeRequest?.requestKind === "user_input"
+      ? {
+          request_id: activePlanningConversationRequests.activeRequest.requestId,
+          thread_id: activePlanningConversationRequests.activeRequest.threadId,
+          turn_id: activePlanningConversationRequests.activeRequest.turnId,
+          questions: activePlanningConversationRequests.activeRequest.questions.map((question) => ({
+            id: question.id,
+            header: question.header,
+            question: question.question,
+            is_other: question.isOther,
+            is_secret: question.isSecret,
+              options: question.options,
+            })),
+        }
+      : null
+    : null;
+  const executionPendingInputRequest =
+    executionConversationRequests.activeRequest?.requestKind === "user_input"
+      ? executionConversationRequests.activeRequest
+      : null;
   const currentPlan = nodeDocuments?.plan?.content?.trim() ?? "";
+  const executionConversationBusy = deriveConversationBusy(
+    executionConversation.conversation?.snapshot,
+  );
   const canPlan =
     Boolean(
       executionState &&
@@ -287,7 +512,7 @@ export function BreadcrumbWorkspace() {
       executionState.spec_confirmed &&
       executionState.brief_generation_status === "ready" &&
       executionState.plan_status !== "waiting_on_input" &&
-      !chatSession?.active_turn_id,
+      !executionConversationBusy,
     ) && !isPlanningAction;
   const canExecute =
     Boolean(
@@ -300,9 +525,59 @@ export function BreadcrumbWorkspace() {
         executionState.brief_version &&
       executionState.bound_plan_input_version ===
         executionState.active_plan_input_version &&
-      !chatSession?.active_turn_id,
+      !executionConversationBusy,
     ) && !isExecutingAction;
-  const canReplyToPlanner = false;
+  const canMessageExecution =
+    node.phase === "executing" &&
+    executionState?.run_status === "executing";
+  const executionComposerPlaceholder = executionPendingInputRequest
+    ? "Answer the inline runtime request to continue the current execution."
+    : canMessageExecution
+      ? `Message ${node.title}...`
+      : executionState?.plan_status === "ready"
+        ? "Click Execute to start the execution conversation."
+        : "Click Plan to prepare execution.";
+  const executionEmptyTitle = "Execution Conversation";
+  const executionEmptyHint = executionPendingInputRequest
+    ? "Runtime input requests now appear inline in the execution transcript."
+    : executionState?.run_status === "executing"
+      ? "Execution messages will appear here as the current run progresses."
+      : executionState?.plan_status === "ready"
+        ? "The current plan is ready. Review it above, then click Execute."
+        : "Click Plan to start an execution planning turn for this node.";
+  const visibleExecutionConversation = {
+    conversationId: executionConversation.conversationId,
+    conversation: executionConversation.conversation,
+    bootstrapStatus: executionConversation.bootstrapStatus,
+    bootstrapError: executionConversation.bootstrapError,
+    send: executionConversation.send,
+    continueFromMessage: executionConversation.continueFromMessage,
+    retryFromMessage: executionConversation.retryFromMessage,
+    regenerateFromMessage: executionConversation.regenerateFromMessage,
+    cancelStream: executionConversation.cancelStream,
+    activeRequest: executionConversationRequests.activeRequest,
+    requestUi: {
+      isSubmitting: executionConversationRequests.isSubmitting,
+      error: executionConversationRequests.submitError,
+      submitUserInputResponse:
+        executionConversationRequests.submitUserInputResponse,
+      respondToApproval: executionConversationRequests.respondToApproval,
+    },
+  };
+  const visibleAskConversation = {
+    conversationId: askConversation.conversationId,
+    conversation: askConversation.conversation,
+    bootstrapStatus: askConversation.bootstrapStatus,
+    bootstrapError: askConversation.bootstrapError,
+    send: askConversation.send,
+    refresh: askConversation.refresh,
+  };
+  const visiblePlanningConversation = {
+    conversationId: planningConversation.conversationId,
+    conversation: planningConversation.conversation,
+    bootstrapStatus: planningConversation.bootstrapStatus,
+    bootstrapError: planningConversation.bootstrapError,
+  };
   let executionStatusText = "Confirm Spec before planning.";
   if (
     node.phase === "executing" &&
@@ -375,25 +650,48 @@ export function BreadcrumbWorkspace() {
   ) : null;
 
   const canSubmitPlanInput = Boolean(
-    pendingInputRequest &&
-      pendingInputRequest.questions.every(
+    plannerPendingInputRequest &&
+      plannerPendingInputRequest.questions.every(
         (question) => (planInputDrafts[question.id] ?? "").trim().length > 0,
       ) &&
-      !isResolvingPlanInput,
+      !(activePlanningConversationRequests
+        ? activePlanningConversationRequests.isSubmitting
+        : isResolvingPlanInput),
   );
 
   async function handleResolvePlanInput() {
-    if (!projectId || !node || !pendingInputRequest || !canSubmitPlanInput) {
+    if (!projectId || !node || !plannerPendingInputRequest || !canSubmitPlanInput) {
+      return;
+    }
+    if (activePlanningConversationRequests) {
+      setPlanInputError(null);
+      try {
+        await activePlanningConversationRequests.submitUserInputResponse({
+          requestId: plannerPendingInputRequest.request_id,
+          threadId: plannerPendingInputRequest.thread_id,
+          turnId: plannerPendingInputRequest.turn_id,
+          answers: Object.fromEntries(
+            plannerPendingInputRequest.questions.map((question) => [
+              question.id,
+              { answers: [(planInputDrafts[question.id] ?? "").trim()] },
+            ]),
+          ),
+        });
+      } catch (error) {
+        setPlanInputError(
+          error instanceof Error ? error.message : "Could not resolve planner input.",
+        );
+      }
       return;
     }
     setIsResolvingPlanInput(true);
     setPlanInputError(null);
     try {
-      await api.resolvePlanInput(projectId, node.node_id, pendingInputRequest.request_id, {
-        thread_id: pendingInputRequest.thread_id,
-        turn_id: pendingInputRequest.turn_id,
+      await api.resolvePlanInput(projectId, node.node_id, plannerPendingInputRequest.request_id, {
+        thread_id: plannerPendingInputRequest.thread_id,
+        turn_id: plannerPendingInputRequest.turn_id,
         answers: Object.fromEntries(
-          pendingInputRequest.questions.map((question) => [
+          plannerPendingInputRequest.questions.map((question) => [
             question.id,
             { answers: [(planInputDrafts[question.id] ?? "").trim()] },
           ]),
@@ -408,7 +706,14 @@ export function BreadcrumbWorkspace() {
     }
   }
 
-  const plannerInputModal = pendingInputRequest ? (
+  const visiblePlanInputError = activePlanningConversationRequests
+    ? activePlanningConversationRequests.submitError ?? planInputError
+    : planInputError;
+  const isPlanInputSubmitting = activePlanningConversationRequests
+    ? activePlanningConversationRequests.isSubmitting
+    : isResolvingPlanInput;
+
+  const plannerInputModal = plannerPendingInputRequest ? (
     <div className={styles.modalBackdrop} role="presentation">
       <section
         className={styles.modalCard}
@@ -425,7 +730,7 @@ export function BreadcrumbWorkspace() {
           </p>
         </div>
         <div className={styles.modalBody}>
-          {pendingInputRequest.questions.map((question) => {
+          {plannerPendingInputRequest.questions.map((question) => {
             const answer = planInputDrafts[question.id] ?? "";
             const options = question.options ?? [];
             return (
@@ -477,7 +782,7 @@ export function BreadcrumbWorkspace() {
             );
           })}
         </div>
-        {planInputError ? <p className={styles.modalError}>{planInputError}</p> : null}
+        {visiblePlanInputError ? <p className={styles.modalError}>{visiblePlanInputError}</p> : null}
         <div className={styles.modalActions}>
           <button
             type="button"
@@ -485,7 +790,7 @@ export function BreadcrumbWorkspace() {
             disabled={!canSubmitPlanInput}
             onClick={() => void handleResolvePlanInput()}
           >
-            {isResolvingPlanInput ? "Submitting..." : "Continue planning"}
+            {isPlanInputSubmitting ? "Submitting..." : "Continue planning"}
           </button>
         </div>
       </section>
@@ -518,6 +823,7 @@ export function BreadcrumbWorkspace() {
               node={node}
               documents={nodeDocuments}
               activity={nodeActivity}
+              planningConversation={visiblePlanningConversation}
             />
           ) : null}
           {activeTab === "task" ? (
@@ -539,7 +845,11 @@ export function BreadcrumbWorkspace() {
             />
           ) : null}
           {activeTab === "ask" ? (
-            <AskPanel node={node} projectId={projectId} />
+            <AskPanel
+              node={node}
+              projectId={projectId}
+              askConversation={visibleAskConversation}
+            />
           ) : null}
           {activeTab === "briefing" ? (
             <BriefingPanel
@@ -634,23 +944,15 @@ export function BreadcrumbWorkspace() {
               ) : null}
               <ChatPanel
                 node={node}
-                projectId={projectId}
-                composerEnabled={canReplyToPlanner}
-                composerPlaceholder={
-                  canReplyToPlanner
-                    ? `Reply to the planner for ${node.title}...`
-                    : "Planner input is handled through the native modal when needed."
-                }
-                emptyTitle="Plan Session"
-                emptyHint={
-                  executionState?.plan_status === "ready"
-                    ? "The current plan is ready. Review it above, then click Execute."
-                    : "Click Plan to start an execution planning turn for this node."
-                }
+                composerEnabled={canMessageExecution}
+                composerPlaceholder={executionComposerPlaceholder}
+                emptyTitle={executionEmptyTitle}
+                emptyHint={executionEmptyHint}
+                executionConversation={visibleExecutionConversation}
               />
-              {plannerInputModal}
             </div>
           ) : null}
+          {plannerInputModal}
           <div className={styles.footer}>
             <MarkDoneButton projectId={projectId} nodeId={nodeId} node={node} />
           </div>

@@ -43,7 +43,7 @@ from backend.services.node_task_fields import load_task_prompt_fields
 from backend.services.thread_service import ThreadService
 from backend.storage.file_utils import iso_now, new_id
 from backend.storage.storage import Storage
-from backend.streaming.sse_broker import ChatEventBroker
+from backend.streaming.sse_broker import ChatEventBroker, PlanningEventBroker
 
 STALE_TURN_ERROR = "Session interrupted - the server restarted before this response completed."
 
@@ -59,15 +59,22 @@ class ChatService:
         thread_service: ThreadService | None = None,
         node_service: NodeService | None = None,
         agent_operation_service: AgentOperationService | None = None,
+        planning_event_broker: PlanningEventBroker | None = None,
     ) -> None:
         self._storage = storage
         self._client = codex_client
         self._event_broker = event_broker
+        self._planning_event_broker = planning_event_broker
         self._thread_service = thread_service
         self._node_service = node_service
         self._agent_operation_service = agent_operation_service
         self._live_turns_lock = threading.Lock()
         self._live_turns: set[tuple[str, str, str]] = set()
+
+    def _publish_plan_lifecycle_event(self, project_id: str, node_id: str, event: dict[str, Any]) -> None:
+        self._event_broker.publish(project_id, node_id, event)
+        if self._planning_event_broker is not None:
+            self._planning_event_broker.publish(project_id, node_id, event)
 
     def reconcile_interrupted_turns(self) -> None:
         for project_id in self._storage.project_store.list_project_ids():
@@ -325,7 +332,7 @@ class ChatService:
                         "user_message": None,
                     },
                 )
-            self._event_broker.publish(project_id, node_id, event)
+            self._publish_plan_lifecycle_event(project_id, node_id, event)
             return {
                 "status": "already_resolved_or_stale",
                 "session": self.get_session(project_id, node_id)["session"],
@@ -395,7 +402,7 @@ class ChatService:
                     "user_message": copy.deepcopy(user_message),
                 },
             )
-        self._event_broker.publish(project_id, node_id, event)
+        self._publish_plan_lifecycle_event(project_id, node_id, event)
         return {
             "status": "resolved",
             "session": self.get_session(project_id, node_id)["session"],
@@ -985,17 +992,58 @@ class ChatService:
             payload = parse_plan_turn_response(raw_output)
             issues = plan_turn_issues(payload)
             if not issues and payload is not None:
+                structured_result = normalize_plan_turn_payload(payload)
+                bound_turn_id = str(response.get("turn_id") or turn_id)
                 return {
-                    "structured_result": normalize_plan_turn_payload(payload),
-                    "bound_turn_id": str(response.get("turn_id") or turn_id),
+                    "structured_result": structured_result,
+                    "bound_turn_id": bound_turn_id,
                     "turn_status": str(response.get("turn_status") or ""),
-                    "final_plan_item": copy.deepcopy(response.get("final_plan_item")),
+                    "final_plan_item": self._resolve_plan_turn_final_plan_item(
+                        response=response,
+                        structured_result=structured_result,
+                        bound_turn_id=bound_turn_id,
+                        fallback_thread_id=str(thread_id or ""),
+                    ),
                     "runtime_request_ids": list(response.get("runtime_request_ids") or []),
                 }
             last_issues = issues
             retry_feedback = build_plan_turn_retry_feedback(issues)
 
         raise PlanExecuteInvalidResponse(last_issues)
+
+    def _resolve_plan_turn_final_plan_item(
+        self,
+        *,
+        response: dict[str, Any],
+        structured_result: dict[str, Any],
+        bound_turn_id: str,
+        fallback_thread_id: str,
+    ) -> dict[str, Any] | None:
+        final_plan_item = copy.deepcopy(response.get("final_plan_item"))
+        if isinstance(final_plan_item, dict):
+            item_id = str(final_plan_item.get("id") or "").strip()
+            item_text = str(final_plan_item.get("text") or "").strip()
+            item_turn_id = str(final_plan_item.get("turn_id") or "").strip()
+            if item_id and item_text and item_turn_id == bound_turn_id:
+                if not str(final_plan_item.get("thread_id") or "").strip():
+                    final_plan_item["thread_id"] = (
+                        str(response.get("thread_id") or "").strip() or fallback_thread_id
+                    )
+                return final_plan_item
+
+        if str(structured_result.get("kind") or "").strip() != "plan_ready":
+            return final_plan_item if isinstance(final_plan_item, dict) else None
+
+        plan_markdown = str(structured_result.get("plan_markdown") or "").strip()
+        if not plan_markdown:
+            return final_plan_item if isinstance(final_plan_item, dict) else None
+
+        return {
+            "id": f"synthetic_plan_item_{bound_turn_id}",
+            "text": plan_markdown,
+            "turn_id": bound_turn_id,
+            "thread_id": str(response.get("thread_id") or "").strip() or fallback_thread_id,
+        }
 
     def _handle_plan_input_requested(
         self,

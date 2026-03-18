@@ -64,17 +64,35 @@ class FakeCodexClient:
         writable_roots: list[str] | None = None,
         on_delta=None,
         on_tool_call=None,
+        on_plan_delta=None,
+        on_request_user_input=None,
+        on_request_resolved=None,
+        on_thread_status=None,
+        output_schema=None,
     ) -> dict[str, object]:
         if thread_id not in self.available_threads:
             raise CodexTransportError(f"no rollout found for thread id {thread_id}", "rpc_error")
-        if "status, assistant_markdown, questions, plan_markdown" in prompt:
+        if "You are the PlanningTree planner for a single node." in prompt:
+            turn_id = f"turn_plan_{self._planning_counter + 1}"
             payload = {
-                "status": "plan_ready",
-                "assistant_markdown": "The plan is ready.",
-                "questions": [],
+                "kind": "plan_ready",
                 "plan_markdown": "1. Execute the approved work.\n2. Verify the outcome.",
+                "assistant_summary": "The plan is ready.",
             }
-            return {"stdout": __import__("json").dumps(payload), "thread_id": thread_id, "tool_calls": []}
+            return {
+                "stdout": __import__("json").dumps(payload),
+                "thread_id": thread_id,
+                "tool_calls": [],
+                "turn_id": turn_id,
+                "turn_status": "completed",
+                "final_plan_item": {
+                    "id": f"plan_item_{turn_id}",
+                    "text": "1. Execute the approved work.\n2. Verify the outcome.",
+                    "turn_id": turn_id,
+                    "thread_id": thread_id,
+                },
+                "runtime_request_ids": [],
+            }
         if "status, assistant_summary" in prompt:
             payload = {
                 "status": "completed",
@@ -333,11 +351,14 @@ def test_plan_then_execute_succeeds_from_ready_for_execution(client: TestClient,
     assert root["phase"] == "executing"
 
 
-def test_chat_messages_cannot_bypass_execution_guard(client: TestClient, workspace_root) -> None:
+def test_execution_conversation_messages_cannot_bypass_execution_guard(
+    client: TestClient,
+    workspace_root,
+) -> None:
     project_id, node_id = create_project(client, str(workspace_root))
 
     response = client.post(
-        f"/v1/projects/{project_id}/nodes/{node_id}/chat/messages",
+        f"/v2/projects/{project_id}/nodes/{node_id}/conversations/execution/send",
         json={"content": "hello"},
     )
 

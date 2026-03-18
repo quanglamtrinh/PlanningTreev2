@@ -406,6 +406,61 @@ def test_reset_ask_session_clears_messages_and_hides_thread_id(client: TestClien
     assert "thread_id" not in session
 
 
+def test_get_ask_conversation_v2_normalizes_visible_transcript(client: TestClient, workspace_root) -> None:
+    fake_client = FakeCodexClient()
+    project_id, node_id = create_project(client, str(workspace_root), fake_client)
+
+    send = client.post(
+        f"/v1/projects/{project_id}/nodes/{node_id}/ask/messages",
+        json={"content": "hello"},
+    )
+    assert send.status_code == 200
+    wait_for_idle(client, project_id, node_id)
+
+    response = client.get(f"/v2/projects/{project_id}/nodes/{node_id}/conversations/ask")
+
+    assert response.status_code == 200
+    conversation = response.json()["conversation"]
+    assert conversation["record"]["thread_type"] == "ask"
+    assert conversation["record"]["current_runtime_mode"] == "ask"
+    assert conversation["record"]["status"] == "completed"
+    assert conversation["record"]["event_seq"] == 12
+    assert [message["role"] for message in conversation["messages"]] == ["user", "assistant"]
+    assert conversation["messages"][0]["parts"][0]["part_type"] == "user_text"
+    assert conversation["messages"][1]["parts"][0]["part_type"] == "assistant_text"
+    assert conversation["messages"][1]["parts"][0]["payload"]["text"] == "hello world"
+
+
+def test_ask_v2_send_and_reset_preserve_conversation_identity(client: TestClient, workspace_root) -> None:
+    fake_client = FakeCodexClient()
+    project_id, node_id = create_project(client, str(workspace_root), fake_client)
+
+    first = client.get(f"/v2/projects/{project_id}/nodes/{node_id}/conversations/ask")
+    assert first.status_code == 200
+    first_conversation = first.json()["conversation"]
+
+    send = client.post(
+        f"/v2/projects/{project_id}/nodes/{node_id}/conversations/ask/send",
+        json={"content": "hello"},
+    )
+    assert send.status_code == 202
+    accepted = send.json()
+    wait_for_idle(client, project_id, node_id)
+
+    reset = client.post(f"/v1/projects/{project_id}/nodes/{node_id}/ask/reset")
+    assert reset.status_code == 200
+
+    after_reset = client.get(f"/v2/projects/{project_id}/nodes/{node_id}/conversations/ask")
+    assert after_reset.status_code == 200
+    reset_conversation = after_reset.json()["conversation"]
+
+    assert accepted["conversation_id"] == first_conversation["record"]["conversation_id"]
+    assert reset_conversation["record"]["conversation_id"] == first_conversation["record"]["conversation_id"]
+    assert reset_conversation["record"]["event_seq"] > first_conversation["record"]["event_seq"]
+    assert reset_conversation["messages"] == []
+    assert reset_conversation["record"]["status"] == "idle"
+
+
 def test_list_packets_returns_empty_for_new_node(client: TestClient, workspace_root) -> None:
     project_id, node_id = create_project(client, str(workspace_root))
 
