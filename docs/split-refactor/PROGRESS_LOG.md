@@ -8,7 +8,7 @@ Last updated: 2026-03-17
 | --- | --- | --- |
 | Phase 1 | completed | Registry and route guard landed with a temporary legacy route bridge |
 | Phase 2 | completed | Canonical prompt builder landed with a strict flat-schema contract and a separate legacy bridge module |
-| Phase 3 | pending | Service output-family refactor not started |
+| Phase 3 | completed | SplitService now materializes canonical modes through one flat-family path while keeping route-level canonical guard intact |
 | Phase 4 | pending | Fallback migration not started |
 | Phase 5 | pending | Frontend registry and type migration not started |
 | Phase 6 | pending | Split surface cleanup not started |
@@ -29,3 +29,7 @@ Last updated: 2026-03-17
 - Added `backend/ai/legacy_split_prompt_builder.py` for the temporary old-mode bridge and made `backend/ai/split_prompt_builder.py` canonical-only for the 4 new modes.
 - Rewired `ThreadService` and `SplitService` imports so the existing old-mode runtime stays on the legacy bridge.
 - Added canonical prompt-builder coverage, legacy bridge regression tests, and targeted validation showing the bridge remains intact while the new flat contract is enforced in the canonical module.
+- Started and completed Phase 3 by making `SplitService` output-family-driven for canonical payload materialization.
+- Added service-facing split contract helpers, a mode-to-runtime bundle dispatch helper, and a shared canonical flat-subtask materializer.
+- Preserved the Phase 1 route guard and the legacy bridge while making canonical service execution fail closed and explicit if it reaches fallback before Phase 4.
+- Added canonical service tests for flat-family materialization, revision handling, and failure behavior while keeping legacy bridge and API guard coverage green.

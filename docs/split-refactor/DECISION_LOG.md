@@ -49,3 +49,21 @@ Last updated: 2026-03-17
 - Date: 2026-03-17
 - Decision: Canonical parsing accepts only `subtasks[{id,title,objective,why_now}]`, preserves list order, and does not remap legacy keys such as `prompt`, `risk_reason`, or `what_unblocks`.
 - Rationale: Later service materialization must depend only on the shared flat contract rather than permissive key aliasing that would effectively preserve multiple payload contracts.
+
+## D-009: SplitService uses a mode-to-runtime bundle in Phase 3
+
+- Date: 2026-03-17
+- Decision: `SplitService` selects prompt-building, payload validation, payload issue reporting, and hidden retry feedback through a single runtime bundle helper per mode.
+- Rationale: Grouping the helpers behind one dispatch point reduces the risk of mixing canonical and legacy code paths during the bridge period.
+
+## D-010: Canonical service execution remains route-guarded until Phase 4
+
+- Date: 2026-03-17
+- Decision: Canonical modes are service-capable in Phase 3 but remain blocked at the public `/split` route until canonical fallback lands in Phase 4.
+- Rationale: This keeps Phase 3 focused on service output-family refactoring without exposing a canonical path that still lacks deterministic fallback.
+
+## D-011: Canonical split paths fail closed in Phase 3
+
+- Date: 2026-03-17
+- Decision: Canonical split execution must never fall into legacy validator, retry, or fallback helpers; if canonical fallback is reached in Phase 3, the service raises an explicit guard instead.
+- Rationale: Fail-closed behavior protects the new flat-subtask contract from silently degrading back to legacy payload semantics.

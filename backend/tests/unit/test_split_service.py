@@ -8,9 +8,11 @@ import pytest
 
 from backend.ai.codex_client import CodexTransportError
 from backend.errors.app_errors import SplitNotAllowed
+from backend.services import split_service as split_service_module
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
-from backend.services.split_service import SplitService
+from backend.services.split_service import SplitService, split_runtime_bundle_for_mode
+from backend.split_contract import CANONICAL_SPLIT_MODE_REGISTRY
 from backend.storage.storage import Storage
 from backend.streaming.sse_broker import PlanningEventBroker
 
@@ -242,6 +244,21 @@ def make_service(storage: Storage, tree_service, fake_client: FakeCodexClient) -
     return SplitServiceAdapter(service, storage)
 
 
+def _canonical_payload_for_mode(mode: str) -> dict[str, object]:
+    spec = CANONICAL_SPLIT_MODE_REGISTRY[mode]  # type: ignore[index]
+    subtasks = []
+    for index in range(1, spec["min_items"] + 1):
+        subtasks.append(
+            {
+                "id": f"S{index}",
+                "title": f"{mode} step {index}",
+                "objective": f"Objective {index} for {mode}",
+                "why_now": f"Reason {index} for {mode}",
+            }
+        )
+    return {"subtasks": subtasks}
+
+
 def seed_ask_packets(storage: Storage, project_id: str, node_id: str, *statuses: str) -> None:
     ask_state = storage.thread_store.get_ask_state(project_id, node_id)
     packets = []
@@ -310,6 +327,160 @@ def test_apply_split_payload_cleans_up_node_files_when_snapshot_save_fails(
     assert sorted(path.name for path in nodes_dir.iterdir() if path.is_dir()) == [root_id]
     persisted = load_snapshot(storage, project_id)
     assert node_by_id(persisted)[root_id]["child_ids"] == []
+
+
+def test_split_runtime_bundle_for_mode_selects_canonical_helpers() -> None:
+    bundle = split_runtime_bundle_for_mode("workflow")
+
+    assert bundle.output_family == "flat_subtasks_v1"
+    assert bundle.is_canonical is True
+    assert bundle.validate_payload(_canonical_payload_for_mode("workflow")) is True
+    assert bundle.validate_payload({"subtasks": [{"order": 1, "prompt": "legacy"}]}) is False
+    assert "workflow-first sequential split" in bundle.build_user_message(
+        {"current_node_prompt": "Ship workflow", "root_prompt": "Alpha"}
+    )
+
+
+def test_split_runtime_bundle_for_mode_selects_legacy_helpers() -> None:
+    bundle = split_runtime_bundle_for_mode("slice")
+
+    assert bundle.output_family == "legacy_flat_slice"
+    assert bundle.is_canonical is False
+    assert (
+        bundle.validate_payload(
+            {
+                "subtasks": [
+                    {"order": 1, "prompt": "First", "risk_reason": "", "what_unblocks": ""},
+                    {"order": 2, "prompt": "Second", "risk_reason": "", "what_unblocks": ""},
+                ]
+            }
+        )
+        is True
+    )
+    assert "vertical slice mode" in bundle.build_user_message({"current_node_prompt": "Split this node"})
+
+
+@pytest.mark.parametrize("mode", list(CANONICAL_SPLIT_MODE_REGISTRY))
+def test_apply_split_payload_materializes_all_canonical_modes_through_flat_family(
+    project_service: ProjectService,
+    storage: Storage,
+    tree_service,
+    workspace_root,
+    mode: str,
+) -> None:
+    project_id, root_id = create_project(project_service, str(workspace_root))
+    service = make_service(storage, tree_service, FakeCodexClient([]))
+
+    service._apply_split_payload(
+        project_id=project_id,
+        node_id=root_id,
+        mode=mode,  # type: ignore[arg-type]
+        confirm_replace=False,
+        payload=_canonical_payload_for_mode(mode),
+        source="ai",
+        task_context={"parent_chain_truncated": False},
+    )
+
+    persisted = load_snapshot(storage, project_id)
+    nodes = node_by_id(persisted)
+    root = nodes[root_id]
+    children = [nodes[child_id] for child_id in root["split_metadata"]["created_child_ids"]]
+    first_child_task = storage.node_store.load_task(project_id, children[0]["node_id"])
+    materialized = root["split_metadata"]["materialized"]
+
+    assert root["planning_mode"] == mode
+    assert root["split_metadata"]["output_family"] == "flat_subtasks_v1"
+    assert root["split_metadata"]["revision"] == 1
+    assert [child["status"] for child in children] == ["ready", *["locked"] * (len(children) - 1)]
+    assert all(child["planning_thread_forked_from_node"] == root_id for child in children)
+    assert first_child_task["title"] == f"{mode} step 1"
+    assert first_child_task["purpose"] == f"Objective 1 for {mode}\n\nWhy now: Reason 1 for {mode}"
+    assert persisted["tree_state"]["active_node_id"] == children[0]["node_id"]
+    assert materialized["family"] == "flat_subtasks_v1"
+    assert [item["subtask_id"] for item in materialized["subtasks"]] == [
+        f"S{index}" for index in range(1, len(children) + 1)
+    ]
+    assert [item["child_node_id"] for item in materialized["subtasks"]] == root["split_metadata"]["created_child_ids"]
+    assert root["split_metadata"]["debug_payload"] == _canonical_payload_for_mode(mode)
+
+
+def test_split_service_executes_canonical_mode_without_legacy_runtime_helpers(
+    project_service: ProjectService,
+    storage: Storage,
+    tree_service,
+    workspace_root,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id, root_id = create_project(project_service, str(workspace_root))
+
+    def fail_legacy(*args, **kwargs):
+        raise AssertionError("canonical split should not call legacy runtime helpers")
+
+    monkeypatch.setattr(split_service_module, "build_legacy_split_user_message", fail_legacy)
+    monkeypatch.setattr(split_service_module, "validate_legacy_split_payload", fail_legacy)
+    monkeypatch.setattr(split_service_module, "legacy_split_payload_issues", fail_legacy)
+    monkeypatch.setattr(split_service_module, "build_legacy_hidden_retry_feedback", fail_legacy)
+
+    service = make_service(
+        storage,
+        tree_service,
+        FakeCodexClient([json.dumps(_canonical_payload_for_mode("workflow"))]),
+    )
+
+    snapshot = service.split_node(project_id, root_id, "workflow")  # type: ignore[arg-type]
+    root = node_by_id(snapshot)[root_id]
+
+    assert root["planning_mode"] == "workflow"
+    assert root["split_metadata"]["output_family"] == "flat_subtasks_v1"
+
+
+def test_canonical_split_service_resplit_increments_revision(
+    project_service: ProjectService,
+    storage: Storage,
+    tree_service,
+    workspace_root,
+) -> None:
+    project_id, root_id = create_project(project_service, str(workspace_root))
+    fake_client = FakeCodexClient(
+        [
+            json.dumps(_canonical_payload_for_mode("workflow")),
+            json.dumps(
+                {
+                    "subtasks": [
+                        {
+                            "id": "S1",
+                            "title": "workflow replacement 1",
+                            "objective": "Replacement objective 1",
+                            "why_now": "Replacement reason 1",
+                        },
+                        {
+                            "id": "S2",
+                            "title": "workflow replacement 2",
+                            "objective": "Replacement objective 2",
+                            "why_now": "Replacement reason 2",
+                        },
+                        {
+                            "id": "S3",
+                            "title": "workflow replacement 3",
+                            "objective": "Replacement objective 3",
+                            "why_now": "Replacement reason 3",
+                        },
+                    ]
+                }
+            ),
+        ]
+    )
+    service = make_service(storage, tree_service, fake_client)
+
+    first = service.split_node(project_id, root_id, "workflow")  # type: ignore[arg-type]
+    first_child_ids = node_by_id(first)[root_id]["split_metadata"]["created_child_ids"]
+    second = service.split_node(project_id, root_id, "workflow", confirm_replace=True)  # type: ignore[arg-type]
+    second_nodes = node_by_id(second)
+    root = second_nodes[root_id]
+
+    assert root["split_metadata"]["revision"] == 2
+    assert root["split_metadata"]["replaced_child_ids"] == first_child_ids
+    assert all(second_nodes[child_id]["node_kind"] == "superseded" for child_id in first_child_ids)
 
 
 def test_split_service_creates_walking_skeleton_tree(
@@ -575,6 +746,79 @@ def test_split_service_falls_back_after_retries_and_restarts_transport(
     assert root["split_metadata"]["source"] == "fallback"
     assert "fallback_used" in root["split_metadata"]["warnings"]
     assert len(root["split_metadata"]["created_child_ids"]) == 3
+
+
+def test_canonical_split_service_blocks_fallback_and_leaves_parent_metadata_untouched(
+    project_service: ProjectService,
+    storage: Storage,
+    tree_service,
+    workspace_root,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id, root_id = create_project(project_service, str(workspace_root))
+
+    def fail_legacy(*args, **kwargs):
+        raise AssertionError("canonical split should not fall into legacy retry helpers")
+
+    monkeypatch.setattr(split_service_module, "legacy_split_payload_issues", fail_legacy)
+    monkeypatch.setattr(split_service_module, "build_legacy_hidden_retry_feedback", fail_legacy)
+
+    service = make_service(
+        storage,
+        tree_service,
+        FakeCodexClient(
+            [
+                "not json",
+                "still not json",
+                "still not json",
+            ]
+        ),
+    )
+
+    with pytest.raises(SplitNotAllowed, match="Canonical split fallback is not available until Phase 4."):
+        service._execute_split_turn(
+            project_id=project_id,
+            node_id=root_id,
+            mode="workflow",  # type: ignore[arg-type]
+            confirm_replace=False,
+            turn_id="turn_canonical_fail",
+        )
+
+    persisted_root = node_by_id(load_snapshot(storage, project_id))[root_id]
+    assert persisted_root["planning_mode"] is None
+    assert persisted_root["split_metadata"] is None
+
+
+def test_canonical_apply_split_payload_keeps_parent_metadata_empty_when_snapshot_save_fails(
+    project_service: ProjectService,
+    storage: Storage,
+    tree_service,
+    workspace_root,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id, root_id = create_project(project_service, str(workspace_root))
+    service = make_service(storage, tree_service, FakeCodexClient([]))
+
+    def fail_save_snapshot(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(storage.project_store, "save_snapshot", fail_save_snapshot)
+
+    with pytest.raises(OSError, match="disk full"):
+        service._apply_split_payload(
+            project_id=project_id,
+            node_id=root_id,
+            mode="workflow",  # type: ignore[arg-type]
+            confirm_replace=False,
+            payload=_canonical_payload_for_mode("workflow"),
+            source="ai",
+            task_context={"parent_chain_truncated": False},
+        )
+
+    persisted_root = node_by_id(load_snapshot(storage, project_id))[root_id]
+    assert persisted_root["child_ids"] == []
+    assert persisted_root["planning_mode"] is None
+    assert persisted_root["split_metadata"] is None
 
 
 def test_split_service_resplit_supersedes_old_children_and_increments_revision(

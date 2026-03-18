@@ -27,13 +27,13 @@ Legend:
 
 ## Phase 3 - Service Output-Family Refactor
 
-- [ ] `P3.1` Refactor `SplitService` to branch by `output_family`, not by mode string.
-- [ ] `P3.2` Enforce the Phase 3 invariant that new-mode materialization depends only on `output_family` and the shared flat contract.
-- [ ] `P3.3` Add flat-family child creation path with one child per subtask.
-- [ ] `P3.4` Build child title from `title`.
-- [ ] `P3.5` Build child description from `objective + why_now`.
-- [ ] `P3.6` Persist stable materialization metadata in `split_metadata`.
-- [ ] `P3.7` Store raw item payload only under a debug-scoped metadata key if needed.
+- [x] `P3.1` Refactor `SplitService` to branch by `output_family`, not by mode string.
+- [x] `P3.2` Enforce the Phase 3 invariant that new-mode materialization depends only on `output_family` and the shared flat contract.
+- [x] `P3.3` Add flat-family child creation path with one child per subtask.
+- [x] `P3.4` Build child title from `title`.
+- [x] `P3.5` Build child description from `objective + why_now`.
+- [x] `P3.6` Persist stable materialization metadata in `split_metadata`.
+- [x] `P3.7` Store raw item payload only under a debug-scoped metadata key if needed.
 
 ## Phase 4 - Deterministic Fallback Migration
 
