@@ -368,6 +368,81 @@ def test_apply_split_payload_materializes_all_canonical_modes_through_flat_famil
     assert root["split_metadata"]["debug_payload"] == _canonical_payload_for_mode(mode)
 
 
+def test_apply_split_payload_materialization_is_shared_across_canonical_modes_with_same_output_family(
+    project_service: ProjectService,
+    storage: Storage,
+    tree_service,
+    workspace_root,
+) -> None:
+    shared_payload = {
+        "subtasks": [
+            {
+                "id": "S1",
+                "title": "Shared setup",
+                "objective": "Prepare the workspace for the split.",
+                "why_now": "This unlocks the remaining work.",
+            },
+            {
+                "id": "S2",
+                "title": "Shared implementation",
+                "objective": "Deliver the main implementation branch.",
+                "why_now": "This is the core delivery path.",
+            },
+            {
+                "id": "S3",
+                "title": "Shared verification",
+                "objective": "Validate behavior and handoff.",
+                "why_now": "This closes the loop cleanly.",
+            },
+        ]
+    }
+    materialized_by_mode: dict[str, dict[str, object]] = {}
+
+    for mode in ("workflow", "phase_breakdown"):
+        project_id, root_id = create_project(project_service, str(workspace_root))
+        service = make_service(storage, tree_service, FakeCodexClient([]))
+
+        service._apply_split_payload(
+            project_id=project_id,
+            node_id=root_id,
+            mode=mode,
+            confirm_replace=False,
+            payload=shared_payload,
+            source="ai",
+            task_context={"parent_chain_truncated": False},
+        )
+
+        persisted = load_snapshot(storage, project_id)
+        root = node_by_id(persisted)[root_id]
+        created_child_ids = root["split_metadata"]["created_child_ids"]
+        materialized = root["split_metadata"]["materialized"]
+        created_tasks = [
+            storage.node_store.load_task(project_id, child_node_id)
+            for child_node_id in created_child_ids
+        ]
+
+        materialized_by_mode[mode] = {
+            "tasks": [
+                {
+                    "title": task["title"],
+                    "purpose": task["purpose"],
+                }
+                for task in created_tasks
+            ],
+            "materialized": [
+                {
+                    key: value
+                    for key, value in subtask.items()
+                    if key != "child_node_id"
+                }
+                for subtask in materialized["subtasks"]
+            ],
+            "debug_payload": root["split_metadata"]["debug_payload"],
+        }
+
+    assert materialized_by_mode["workflow"] == materialized_by_mode["phase_breakdown"]
+
+
 def test_split_service_executes_canonical_mode(
     project_service: ProjectService,
     storage: Storage,
@@ -436,6 +511,7 @@ def test_canonical_split_service_resplit_increments_revision(
     assert root["split_metadata"]["revision"] == 2
     assert root["split_metadata"]["replaced_child_ids"] == first_child_ids
     assert all(second_nodes[child_id]["node_kind"] == "superseded" for child_id in first_child_ids)
+
 
 def test_split_service_creates_canonical_children_and_downgrades_parent(
     project_service: ProjectService,
@@ -714,6 +790,99 @@ def test_split_service_resplit_supersedes_old_children_and_increments_revision(
     assert all(second_nodes[child_id]["node_kind"] == "superseded" for child_id in first_child_ids)
     assert all(second_nodes[child_id]["node_kind"] != "superseded" for child_id in second_child_ids)
     assert second["tree_state"]["active_node_id"] == second_child_ids[0]
+
+
+def test_split_service_replace_lifecycle_preserves_canonical_metadata_and_planning_history(
+    project_service: ProjectService,
+    storage: Storage,
+    tree_service,
+    workspace_root,
+) -> None:
+    project_id, root_id = create_project(project_service, str(workspace_root))
+    replacement_payload = {
+        "subtasks": [
+            {
+                "id": "S1",
+                "title": "workflow replacement 1",
+                "objective": "Replacement objective 1",
+                "why_now": "Replacement reason 1",
+            },
+            {
+                "id": "S2",
+                "title": "workflow replacement 2",
+                "objective": "Replacement objective 2",
+                "why_now": "Replacement reason 2",
+            },
+            {
+                "id": "S3",
+                "title": "workflow replacement 3",
+                "objective": "Replacement objective 3",
+                "why_now": "Replacement reason 3",
+            },
+        ]
+    }
+    service = make_service(
+        storage,
+        tree_service,
+        FakeCodexClient(
+            [
+                json.dumps(_canonical_payload_for_mode("workflow")),
+                json.dumps(replacement_payload),
+            ]
+        ),
+    )
+
+    first = service.split_node(project_id, root_id, "workflow")
+    first_root = node_by_id(first)[root_id]
+    first_child_ids = first_root["split_metadata"]["created_child_ids"]
+
+    with pytest.raises(SplitNotAllowed, match="Re-split requires confirmation"):
+        service.split_node(project_id, root_id, "workflow")
+
+    second = service.split_node(project_id, root_id, "workflow", confirm_replace=True)
+    second_nodes = node_by_id(second)
+    root = second_nodes[root_id]
+    second_child_ids = root["split_metadata"]["created_child_ids"]
+    metadata = root["split_metadata"]
+    materialized = metadata["materialized"]
+
+    assert root["planning_mode"] == "workflow"
+    assert metadata["mode"] == "workflow"
+    assert metadata["output_family"] == "flat_subtasks_v1"
+    assert metadata["source"] == "ai"
+    assert metadata["warnings"] == []
+    assert metadata["revision"] == 2
+    assert metadata["created_child_ids"] == second_child_ids
+    assert metadata["replaced_child_ids"] == first_child_ids
+    assert isinstance(metadata["created_at"], str)
+    assert second_child_ids != first_child_ids
+    assert materialized["family"] == "flat_subtasks_v1"
+    assert [item["title"] for item in materialized["subtasks"]] == [
+        "workflow replacement 1",
+        "workflow replacement 2",
+        "workflow replacement 3",
+    ]
+    assert [item["child_node_id"] for item in materialized["subtasks"]] == second_child_ids
+    assert second["tree_state"]["active_node_id"] == second_child_ids[0]
+    assert all(second_nodes[child_id]["node_kind"] == "superseded" for child_id in first_child_ids)
+    assert all(second_nodes[child_id]["node_kind"] != "superseded" for child_id in second_child_ids)
+
+    turns = storage.thread_store.get_planning_turns(project_id, root_id)
+    tool_call_turns = [turn for turn in turns if turn["role"] == "tool_call"]
+
+    assert [turn["role"] for turn in turns] == [
+        "user",
+        "tool_call",
+        "assistant",
+        "user",
+        "tool_call",
+        "assistant",
+    ]
+    assert len(tool_call_turns) == 2
+    assert [turn["origin_node_id"] for turn in tool_call_turns] == [root_id, root_id]
+    assert all(turn["is_inherited"] is False for turn in tool_call_turns)
+    assert tool_call_turns[0]["arguments"]["payload"]["subtasks"][0]["title"] == "workflow step 1"
+    assert tool_call_turns[1]["arguments"]["payload"]["subtasks"][0]["title"] == "workflow replacement 1"
 
 
 def test_split_service_inherited_locked_ancestor_locks_new_children(

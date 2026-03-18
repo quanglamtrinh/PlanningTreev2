@@ -1,6 +1,6 @@
 # Split Refactor Progress Log
 
-Last updated: 2026-03-17
+Last updated: 2026-03-18
 
 ## Phase Status
 
@@ -13,7 +13,7 @@ Last updated: 2026-03-17
 | Phase 5 | completed | Public `/split` now accepts canonical modes and the frontend create path is canonical-only through GraphNode |
 | Phase 6 | completed | Legacy graph-side split placeholders removed and current docs aligned with GraphNode as the only live split surface |
 | Phase 7 | completed | Legacy runtime bridge removed, runtime readers tightened, and history/replay switched to canonical-only rendering with unsupported fallback |
-| Phase 8 | pending | Tests and docs stabilization not started |
+| Phase 8 | completed | Remaining checklist items closed with explicit evidence mapping, one service invariant test, and split-specific replace lifecycle proof across backend and frontend |
 
 ## Entries
 
@@ -49,3 +49,11 @@ Last updated: 2026-03-17
 - Normalized legacy `planning_mode` and legacy split-metadata markers away at runtime read boundaries instead of surfacing them into live store or UI state.
 - Switched split history and replay rendering to canonical-only structured payloads plus a stable unsupported historical-format notice.
 - Added Phase 7 tracking docs and targeted validation covering canonical-only split/runtime tests, history/replay render tests, frontend typecheck, and runtime repo-search acceptance.
+
+### 2026-03-18
+
+- Started and completed Phase 8 by auditing the remaining checklist items against the existing prompt-builder, split-contract, split-service, split API, and conversation-surface suites.
+- Closed `P8.1`-`P8.3` through explicit evidence mapping to existing canonical-mode prompt, validation, contract, and materialization tests rather than duplicating already-covered behavior.
+- Added a service-level invariant test proving shared flat-family materialization is identical across canonical modes that use the same output family.
+- Added split-specific replace lifecycle proof across backend and frontend coverage, including stable canonical metadata after replace and replay rendering for superseded vs current split branches.
+- Added Phase 8 tracking docs with an Evidence Matrix and exact validation commands, then marked the remaining checklist items complete.

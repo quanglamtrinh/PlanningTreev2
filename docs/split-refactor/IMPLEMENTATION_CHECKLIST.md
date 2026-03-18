@@ -1,6 +1,6 @@
 # Split Refactor Implementation Checklist
 
-Last updated: 2026-03-17
+Last updated: 2026-03-18
 
 Legend:
 
@@ -71,17 +71,17 @@ Legend:
 
 ## Phase 8 - Tests And Docs
 
-- [ ] `P8.1` Add prompt builder tests for all 4 canonical modes.
-- [ ] `P8.2` Add parser and validator tests for strict flat-schema acceptance.
-- [ ] `P8.3` Add service tests for `flat_subtasks_v1` materialization.
-- [ ] `P8.4` Add service tests for the Phase 3 invariant.
+- [x] `P8.1` Add prompt builder tests for all 4 canonical modes.
+- [x] `P8.2` Add parser and validator tests for strict flat-schema acceptance.
+- [x] `P8.3` Add service tests for `flat_subtasks_v1` materialization.
+- [x] `P8.4` Add service tests for the Phase 3 invariant.
 - [x] `P8.5` Add deterministic fallback tests for each mode's semantics and count limits.
 - [x] `P8.6` Add API tests for accepted modes and invalid mode returning `400 invalid_request`.
 - [x] `P8.7` Add frontend tests for dynamic GraphNode split menu rendering.
 - [x] `P8.8` Add frontend tests for removal or hiding of duplicate split affordances elsewhere.
-- [ ] `P8.9` Add replace and supersede lifecycle tests:
-- [ ] `P8.9.a` replace confirm flow
-- [ ] `P8.9.b` superseding prior children
-- [ ] `P8.9.c` parent `planning_mode`
-- [ ] `P8.9.d` stable `split_metadata`
-- [ ] `P8.9.e` replay or history after replace
+- [x] `P8.9` Add replace and supersede lifecycle tests:
+- [x] `P8.9.a` replace confirm flow
+- [x] `P8.9.b` superseding prior children
+- [x] `P8.9.c` parent `planning_mode`
+- [x] `P8.9.d` stable `split_metadata`
+- [x] `P8.9.e` replay or history after replace

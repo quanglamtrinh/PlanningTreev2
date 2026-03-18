@@ -536,6 +536,107 @@ describe('ConversationSurface', () => {
     expect(screen.getAllByText('Superseded result').length).toBeGreaterThan(0)
   })
 
+  it('renders split replace history with current canonical cards and a superseded replay branch', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          message_id: 'msg_user_split',
+          role: 'user',
+          parts: [makePart({ part_id: 'part_user_split', part_type: 'user_text', payload: { text: 'Replace split' } })],
+        }),
+        makeMessage({
+          message_id: 'msg_assistant_split_old',
+          turn_id: 'turn_split_old',
+          status: 'superseded',
+          lineage: {
+            parent_message_id: 'msg_user_split',
+            superseded_by_message_id: 'msg_assistant_split_new',
+          },
+          parts: [
+            makePart({ part_id: 'part_old_text', payload: { text: 'Split completed. Created 3 child tasks.' } }),
+            makePart({
+              part_id: 'part_old_tool',
+              part_type: 'tool_call',
+              order: 1,
+              payload: {
+                tool_call_id: 'call_split_old',
+                tool_name: 'emit_render_data',
+                arguments: {
+                  kind: 'split_result',
+                  payload: {
+                    subtasks: [
+                      {
+                        id: 'S1',
+                        title: 'Old setup',
+                        objective: 'Prepare the first split branch.',
+                        why_now: 'This was the initial attempt.',
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+            makePart({
+              part_id: 'part_old_status',
+              part_type: 'status_block',
+              order: 2,
+              payload: {
+                title: 'Superseded split result',
+                summary: 'Replaced by a confirmed resplit.',
+                status: 'superseded',
+              },
+            }),
+          ],
+        }),
+        makeMessage({
+          message_id: 'msg_assistant_split_new',
+          turn_id: 'turn_split_new',
+          lineage: {
+            parent_message_id: 'msg_user_split',
+            regenerate_of_message_id: 'msg_assistant_split_old',
+          },
+          parts: [
+            makePart({ part_id: 'part_new_text', payload: { text: 'Split completed. Created 3 child tasks.' } }),
+            makePart({
+              part_id: 'part_new_tool',
+              part_type: 'tool_call',
+              order: 1,
+              payload: {
+                tool_call_id: 'call_split_new',
+                tool_name: 'emit_render_data',
+                arguments: {
+                  kind: 'split_result',
+                  payload: {
+                    subtasks: [
+                      {
+                        id: 'S1',
+                        title: 'Current setup',
+                        objective: 'Prepare the replacement split branch.',
+                        why_now: 'This is the active replacement path.',
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    renderSurface(model)
+
+    expect(screen.getByText('S1 / Current setup')).toBeInTheDocument()
+    expect(screen.getByText('Prepare the replacement split branch.')).toBeInTheDocument()
+    expect(screen.getByText('Replay branch (1 message)')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Replay branch (1 message)'))
+    expect(screen.getByText('S1 / Old setup')).toBeInTheDocument()
+    expect(screen.getAllByText('Superseded split result').length).toBeGreaterThan(0)
+    expect(
+      screen.queryByText("This historical split result uses a legacy format and can't be rendered in the current UI."),
+    ).not.toBeInTheDocument()
+  })
+
   it('renders approval, runtime input request, and runtime input response blocks', () => {
     const model = buildConversationRenderModel(
       makeSnapshot([
