@@ -9,12 +9,6 @@ from typing import Any, cast
 from uuid import uuid4
 
 from backend.ai.codex_client import CodexAppClient
-from backend.ai.legacy_split_prompt_builder import (
-    build_legacy_hidden_retry_feedback,
-    build_legacy_split_user_message,
-    legacy_split_payload_issues,
-    validate_legacy_split_payload,
-)
 from backend.ai.split_context_builder import build_split_context
 from backend.ai.split_prompt_builder import (
     build_hidden_retry_feedback,
@@ -30,7 +24,6 @@ from backend.split_contract import (
     FlatSubtaskPayload,
     ServiceSplitMode,
     ServiceSplitOutputFamily,
-    TemporaryLegacyRouteModeId,
     split_output_family_for_mode,
 )
 from backend.services.agent_operation_service import (
@@ -52,7 +45,6 @@ from backend.storage.file_utils import iso_now, load_json, new_id
 from backend.storage.storage import Storage
 from backend.streaming.sse_broker import PlanningEventBroker
 
-_PHASE_KEYS = ["A", "B", "C", "D", "E"]
 _RETRY_LIMIT = 2
 
 logger = logging.getLogger(__name__)
@@ -65,30 +57,17 @@ class SplitRuntimeBundle:
     validate_payload: Callable[[dict[str, Any]], bool]
     payload_issues: Callable[[dict[str, Any]], list[str]]
     build_hidden_retry_feedback: Callable[[list[str]], str]
-    is_canonical: bool
 
 
 def split_runtime_bundle_for_mode(mode: ServiceSplitMode) -> SplitRuntimeBundle:
     output_family = split_output_family_for_mode(mode)
-    if mode in CANONICAL_SPLIT_MODE_REGISTRY:
-        canonical_mode = cast(CanonicalSplitModeId, mode)
-        return SplitRuntimeBundle(
-            output_family=output_family,
-            build_user_message=lambda task_context, mode=canonical_mode: build_split_user_message(mode, task_context),
-            validate_payload=lambda payload, mode=canonical_mode: validate_split_payload(mode, payload),
-            payload_issues=lambda payload, mode=canonical_mode: split_payload_issues(mode, payload),
-            build_hidden_retry_feedback=lambda issues, mode=canonical_mode: build_hidden_retry_feedback(mode, issues),
-            is_canonical=True,
-        )
-
-    legacy_mode = cast(TemporaryLegacyRouteModeId, mode)
+    canonical_mode = cast(CanonicalSplitModeId, mode)
     return SplitRuntimeBundle(
         output_family=output_family,
-        build_user_message=lambda task_context, mode=legacy_mode: build_legacy_split_user_message(mode, task_context),
-        validate_payload=lambda payload, mode=legacy_mode: validate_legacy_split_payload(mode, payload),
-        payload_issues=lambda payload, mode=legacy_mode: legacy_split_payload_issues(mode, payload),
-        build_hidden_retry_feedback=lambda issues, mode=legacy_mode: build_legacy_hidden_retry_feedback(mode, issues),
-        is_canonical=False,
+        build_user_message=lambda task_context, mode=canonical_mode: build_split_user_message(mode, task_context),
+        validate_payload=lambda payload, mode=canonical_mode: validate_split_payload(mode, payload),
+        payload_issues=lambda payload, mode=canonical_mode: split_payload_issues(mode, payload),
+        build_hidden_retry_feedback=lambda issues, mode=canonical_mode: build_hidden_retry_feedback(mode, issues),
     )
 
 
@@ -651,36 +630,15 @@ class SplitService:
             materialized: dict[str, Any] | None = None
 
             try:
-                if output_family == "flat_subtasks_v1":
-                    first_leaf_id, materialized = self._create_flat_subtask_children(
-                        snapshot,
-                        parent,
-                        node_by_id,
-                        cast(FlatSubtaskPayload, payload),
-                        inherited_locked,
-                        now,
-                        created_child_ids,
-                    )
-                elif output_family == "legacy_epic_phase":
-                    first_leaf_id = self._create_walking_skeleton_children(
-                        snapshot,
-                        parent,
-                        node_by_id,
-                        payload,
-                        inherited_locked,
-                        now,
-                        created_child_ids,
-                    )
-                else:
-                    first_leaf_id = self._create_slice_children(
-                        snapshot,
-                        parent,
-                        node_by_id,
-                        payload,
-                        inherited_locked,
-                        now,
-                        created_child_ids,
-                    )
+                first_leaf_id, materialized = self._create_flat_subtask_children(
+                    snapshot,
+                    parent,
+                    node_by_id,
+                    cast(FlatSubtaskPayload, payload),
+                    inherited_locked,
+                    now,
+                    created_child_ids,
+                )
 
                 if parent.get("status") in {"ready", "in_progress"}:
                     parent["status"] = "draft"
@@ -774,86 +732,6 @@ class SplitService:
             replaced_child_ids.append(child_id)
         return replaced_child_ids
 
-    def _create_walking_skeleton_children(
-        self,
-        snapshot: dict[str, Any],
-        parent: dict[str, Any],
-        node_by_id: dict[str, dict[str, Any]],
-        generation: dict[str, Any],
-        inherited_locked: bool,
-        now: str,
-        created_child_ids: list[str],
-    ) -> str:
-        first_leaf_id: str | None = None
-        parent_hnum = str(parent.get("hierarchical_number") or "1")
-        for epic_index, epic in enumerate(generation.get("epics", []), start=1):
-            epic_id = uuid4().hex
-            epic_hnum = f"{parent_hnum}.{epic_index}"
-            epic_title = str(epic.get("title") or f"Epic {epic_index}")
-            epic_description = str(epic.get("prompt") or "")
-            epic_node = self._make_node(
-                node_id=epic_id,
-                parent_id=parent["node_id"],
-                status="locked" if inherited_locked or epic_index != 1 else "draft",
-                depth=int(parent.get("depth", 0) or 0) + 1,
-                display_order=epic_index - 1,
-                hierarchical_number=epic_hnum,
-                planning_thread_forked_from_node=str(parent["node_id"]),
-                now=now,
-            )
-            parent.setdefault("child_ids", []).append(epic_id)
-            self._store_new_node(
-                project_id=str(snapshot.get("project", {}).get("id") or ""),
-                snapshot=snapshot,
-                node_by_id=node_by_id,
-                node=epic_node,
-                task_title=epic_title,
-                task_purpose=epic_description,
-                state={
-                    "planning_thread_forked_from_node": str(parent["node_id"]),
-                },
-            )
-            created_child_ids.append(epic_id)
-
-            for phase_index, phase in enumerate(epic.get("phases", [])):
-                phase_key = _PHASE_KEYS[phase_index]
-                phase_id = uuid4().hex
-                epic_node.setdefault("child_ids", []).append(phase_id)
-                phase_title = f"{phase_key}: {_truncate_for_title(str(phase.get('prompt') or ''))}"
-                phase_description = str(phase.get("definition_of_done") or "")
-                phase_node = self._make_node(
-                    node_id=phase_id,
-                    parent_id=epic_id,
-                    status=(
-                        "locked"
-                        if inherited_locked or not (epic_index == 1 and phase_index == 0)
-                        else "ready"
-                    ),
-                    depth=int(epic_node.get("depth", 0) or 0) + 1,
-                    display_order=phase_index,
-                    hierarchical_number=f"{epic_hnum}.{phase_key}",
-                    planning_thread_forked_from_node=str(parent["node_id"]),
-                    now=now,
-                )
-                self._store_new_node(
-                    project_id=str(snapshot.get("project", {}).get("id") or ""),
-                    snapshot=snapshot,
-                    node_by_id=node_by_id,
-                    node=phase_node,
-                    task_title=phase_title,
-                    task_purpose=phase_description,
-                    state={
-                        "planning_thread_forked_from_node": str(parent["node_id"]),
-                    },
-                )
-                created_child_ids.append(phase_id)
-                if first_leaf_id is None:
-                    first_leaf_id = phase_id
-
-        if first_leaf_id is None:
-            raise SplitNotAllowed("Walking skeleton split did not produce any phases.")
-        return first_leaf_id
-
     def _create_flat_subtask_children(
         self,
         snapshot: dict[str, Any],
@@ -910,53 +788,6 @@ class SplitService:
         if first_leaf_id is None:
             raise SplitNotAllowed("Canonical split did not produce any subtasks.")
         return first_leaf_id, {"family": "flat_subtasks_v1", "subtasks": materialized_subtasks}
-
-    def _create_slice_children(
-        self,
-        snapshot: dict[str, Any],
-        parent: dict[str, Any],
-        node_by_id: dict[str, dict[str, Any]],
-        generation: dict[str, Any],
-        inherited_locked: bool,
-        now: str,
-        created_child_ids: list[str],
-    ) -> str:
-        first_leaf_id: str | None = None
-        parent_hnum = str(parent.get("hierarchical_number") or "1")
-        for index, subtask in enumerate(generation.get("subtasks", []), start=1):
-            child_id = uuid4().hex
-            prompt = str(subtask.get("prompt") or "")
-            child_title = _truncate_for_title(prompt)
-            child_description = _build_slice_description(subtask)
-            child_node = self._make_node(
-                node_id=child_id,
-                parent_id=parent["node_id"],
-                status="locked" if inherited_locked or index != 1 else "ready",
-                depth=int(parent.get("depth", 0) or 0) + 1,
-                display_order=index - 1,
-                hierarchical_number=f"{parent_hnum}.{index}",
-                planning_thread_forked_from_node=str(parent["node_id"]),
-                now=now,
-            )
-            parent.setdefault("child_ids", []).append(child_id)
-            self._store_new_node(
-                project_id=str(snapshot.get("project", {}).get("id") or ""),
-                snapshot=snapshot,
-                node_by_id=node_by_id,
-                node=child_node,
-                task_title=child_title,
-                task_purpose=child_description,
-                state={
-                    "planning_thread_forked_from_node": str(parent["node_id"]),
-                },
-            )
-            created_child_ids.append(child_id)
-            if first_leaf_id is None:
-                first_leaf_id = child_id
-
-        if first_leaf_id is None:
-            raise SplitNotAllowed("Slice split did not produce any subtasks.")
-        return first_leaf_id
 
     def _make_node(
         self,
@@ -1083,41 +914,7 @@ class SplitService:
         mode: ServiceSplitMode,
         task_context: dict[str, Any],
     ) -> dict[str, Any]:
-        output_family = split_output_family_for_mode(mode)
-        if output_family == "flat_subtasks_v1":
-            return build_canonical_split_fallback(cast(CanonicalSplitModeId, mode), task_context)
-        current_prompt = str(task_context.get("current_node_prompt", "")).strip()
-        title = current_prompt.split(":", 1)[0].strip() or "Task"
-        if output_family == "legacy_epic_phase":
-            return {
-                "epics": [
-                    {
-                        "title": "Core Implementation",
-                        "prompt": f"Core implementation of {title}",
-                        "phases": [
-                            {"prompt": "Scaffold and setup", "definition_of_done": "Project structure ready"},
-                            {"prompt": "Core logic implementation", "definition_of_done": "Main functionality working"},
-                            {"prompt": "Integration and testing", "definition_of_done": "Components integrated and tested"},
-                        ],
-                    },
-                    {
-                        "title": "Polish and Documentation",
-                        "prompt": f"Polish and documentation for {title}",
-                        "phases": [
-                            {"prompt": "Refinement and edge cases", "definition_of_done": "Edge cases handled"},
-                            {"prompt": "Documentation", "definition_of_done": "Documentation complete"},
-                            {"prompt": "Final review", "definition_of_done": "Ready for release"},
-                        ],
-                    },
-                ]
-            }
-        return {
-            "subtasks": [
-                {"order": 1, "prompt": f"Setup and foundation for {title}", "risk_reason": "", "what_unblocks": ""},
-                {"order": 2, "prompt": f"Core implementation of {title}", "risk_reason": "", "what_unblocks": ""},
-                {"order": 3, "prompt": f"Testing and integration for {title}", "risk_reason": "", "what_unblocks": ""},
-            ]
-        }
+        return build_canonical_split_fallback(cast(CanonicalSplitModeId, mode), task_context)
 
     def _mark_live_turn(self, project_id: str, node_id: str) -> None:
         with self._live_turns_lock:
@@ -1130,27 +927,6 @@ class SplitService:
     def _is_live_turn(self, project_id: str, node_id: str) -> bool:
         with self._live_turns_lock:
             return (project_id, node_id) in self._live_turns
-
-
-def _truncate_for_title(value: str, limit: int = 80) -> str:
-    normalized = " ".join(value.split()).strip()
-    if not normalized:
-        return "Untitled"
-    if len(normalized) <= limit:
-        return normalized
-    return normalized[: limit - 3].rstrip() + "..."
-
-
-def _build_slice_description(subtask: dict[str, Any]) -> str:
-    parts = [str(subtask.get("prompt") or "").strip()]
-    risk_reason = str(subtask.get("risk_reason") or "").strip()
-    what_unblocks = str(subtask.get("what_unblocks") or "").strip()
-    if risk_reason:
-        parts.append(f"Risk: {risk_reason}")
-    if what_unblocks:
-        parts.append(f"Unblocks: {what_unblocks}")
-    return "\n\n".join(part for part in parts if part)
-
 
 def _build_flat_subtask_description(subtask: FlatSubtaskItem) -> str:
     return "\n\n".join(

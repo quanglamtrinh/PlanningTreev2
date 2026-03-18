@@ -311,7 +311,12 @@ describe('ConversationSurface', () => {
                   kind: 'split_result',
                   payload: {
                     subtasks: [
-                      { order: 1, prompt: 'Setup repo', risk_reason: 'env', what_unblocks: 'coding' },
+                      {
+                        id: 'S1',
+                        title: 'Setup repo',
+                        objective: 'Prepare the repository and workspace.',
+                        why_now: 'This unlocks the remaining delivery work.',
+                      },
                     ],
                   },
                 },
@@ -325,12 +330,12 @@ describe('ConversationSurface', () => {
     renderSurface(model)
 
     expect(screen.getByText('Split completed. Created 2 child tasks.')).toBeInTheDocument()
-    expect(screen.getByText('Slice 1')).toBeInTheDocument()
-    expect(screen.getByText('Setup repo')).toBeInTheDocument()
+    expect(screen.getByText('S1 / Setup repo')).toBeInTheDocument()
+    expect(screen.getByText('Prepare the repository and workspace.')).toBeInTheDocument()
     expect(screen.queryByText(/Unsupported content:/)).not.toBeInTheDocument()
   })
 
-  it('renders legacy epic split_result payloads without degrading them to unsupported fallback', () => {
+  it('renders an unsupported notice for legacy epic split_result payloads after cutover', () => {
     const model = buildConversationRenderModel(
       makeSnapshot([
         makeMessage({
@@ -371,13 +376,9 @@ describe('ConversationSurface', () => {
 
     renderSurface(model)
 
-    expect(screen.getByText('Foundation')).toBeInTheDocument()
-    expect(screen.getByText('Stand up the initial skeleton for the project.')).toBeInTheDocument()
-    expect(screen.getByText('Wire storage')).toBeInTheDocument()
-    expect(screen.getByText('Project state persists successfully.')).toBeInTheDocument()
-    expect(screen.getByText('Render graph')).toBeInTheDocument()
-    expect(screen.getByText('The graph renders the root node and first edge.')).toBeInTheDocument()
-    expect(screen.queryByText(/Unsupported content:/)).not.toBeInTheDocument()
+    expect(
+      screen.getByText("This historical split result uses a legacy format and can't be rendered in the current UI."),
+    ).toBeInTheDocument()
   })
 
   it('renders canonical flat split_result payloads with objective and why_now details', () => {

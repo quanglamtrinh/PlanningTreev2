@@ -7,6 +7,29 @@ from backend.services.thread_service import ThreadService
 from backend.storage.storage import Storage
 from backend.streaming.sse_broker import PlanningEventBroker
 
+CANONICAL_PAYLOAD = {
+    "subtasks": [
+        {
+            "id": "S1",
+            "title": "Setup foundation",
+            "objective": "Prepare the repo and workspace.",
+            "why_now": "This unlocks implementation.",
+        },
+        {
+            "id": "S2",
+            "title": "Ship feature",
+            "objective": "Land the main feature work.",
+            "why_now": "This is the core delivery path.",
+        },
+        {
+            "id": "S3",
+            "title": "Validate rollout",
+            "objective": "Verify the change end to end.",
+            "why_now": "This closes the split safely.",
+        },
+    ]
+}
+
 
 class FakeSplitCodexClient:
     def __init__(self) -> None:
@@ -70,16 +93,11 @@ class FakeSplitCodexClient:
                 "tool_calls": [],
             }
 
-        payload = {
-            "subtasks": [
-                {"order": 1, "prompt": "Setup repo", "risk_reason": "env", "what_unblocks": "coding"},
-                {"order": 2, "prompt": "Ship feature", "risk_reason": "", "what_unblocks": ""},
-            ]
-        }
+        payload = CANONICAL_PAYLOAD
         if callable(on_tool_call):
             on_tool_call("emit_render_data", {"kind": "split_result", "payload": payload})
         return {
-            "stdout": "Created a valid slice split.",
+            "stdout": "Created a valid canonical split.",
             "thread_id": thread_id,
             "turn_id": "turn_visible",
             "tool_calls": [
@@ -101,7 +119,7 @@ def internal_nodes(snapshot: dict) -> dict[str, dict]:
     return snapshot["tree_state"]["node_index"]
 
 
-def test_execute_split_turn_materializes_first_leaf_history_and_sets_slice_lineage(
+def test_execute_split_turn_materializes_first_leaf_history_and_sets_canonical_lineage(
     storage: Storage,
     tree_service,
     workspace_root,
@@ -122,7 +140,7 @@ def test_execute_split_turn_materializes_first_leaf_history_and_sets_slice_linea
     result = service._execute_split_turn(
         project_id=project_id,
         node_id=root_id,
-        mode="slice",
+        mode="workflow",
         confirm_replace=False,
         turn_id="turn_1",
     )
@@ -144,7 +162,7 @@ def test_execute_split_turn_materializes_first_leaf_history_and_sets_slice_linea
     assert second_leaf_turns == []
 
 
-def test_apply_split_payload_sets_walking_skeleton_lineage_on_epics_and_phases(
+def test_apply_split_payload_sets_canonical_lineage_on_created_children(
     storage: Storage,
     tree_service,
     workspace_root,
@@ -165,20 +183,9 @@ def test_apply_split_payload_sets_walking_skeleton_lineage_on_epics_and_phases(
     creation = service._apply_split_payload(
         project_id=project_id,
         node_id=root_id,
-        mode="walking_skeleton",
+        mode="workflow",
         confirm_replace=False,
-        payload={
-            "epics": [
-                {
-                    "title": "Core Track",
-                    "prompt": "Build core",
-                    "phases": [
-                        {"prompt": "Scaffold", "definition_of_done": "ready"},
-                        {"prompt": "Implement", "definition_of_done": "done"},
-                    ],
-                }
-            ]
-        },
+        payload=CANONICAL_PAYLOAD,
         source="ai",
         task_context={},
     )

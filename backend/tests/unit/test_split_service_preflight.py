@@ -53,6 +53,6 @@ def test_split_preflight_uses_peek_node_state_not_write_through_accessor(
     )
     monkeypatch.setattr(service, "_start_background_split", lambda **kwargs: None)
 
-    response = service.split_node(project_id, root_id, "slice")
+    response = service.split_node(project_id, root_id, "workflow")
 
     assert response["status"] == "accepted"

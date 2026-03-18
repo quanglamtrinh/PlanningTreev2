@@ -12,7 +12,7 @@ Last updated: 2026-03-17
 | Phase 4 | completed | Canonical deterministic fallback landed at the backend service layer while route behavior stayed unchanged |
 | Phase 5 | completed | Public `/split` now accepts canonical modes and the frontend create path is canonical-only through GraphNode |
 | Phase 6 | completed | Legacy graph-side split placeholders removed and current docs aligned with GraphNode as the only live split surface |
-| Phase 7 | pending | Cutover cleanup not started |
+| Phase 7 | completed | Legacy runtime bridge removed, runtime readers tightened, and history/replay switched to canonical-only rendering with unsupported fallback |
 | Phase 8 | pending | Tests and docs stabilization not started |
 
 ## Entries
@@ -44,3 +44,8 @@ Last updated: 2026-03-17
 - Started and completed Phase 6 by deleting the unused legacy graph action panel component and leaving GraphNode as the only live split surface.
 - Updated current docs so split creation is described through GraphNode, GraphWorkspace, `routes/split.py`, and the asynchronous planning-completion flow.
 - Added Phase 6 tracking docs plus targeted validation covering graph-menu tests, planning-host split-entrypoint proof, frontend typecheck, and repo-search acceptance for stale current-doc references.
+- Started and completed Phase 7 by removing the temporary legacy split runtime bridge from the primary backend path.
+- Canonicalized planning-thread bootstrap and planning-thread fork instructions so they teach only the 4 canonical modes and the shared flat-subtask contract.
+- Normalized legacy `planning_mode` and legacy split-metadata markers away at runtime read boundaries instead of surfacing them into live store or UI state.
+- Switched split history and replay rendering to canonical-only structured payloads plus a stable unsupported historical-format notice.
+- Added Phase 7 tracking docs and targeted validation covering canonical-only split/runtime tests, history/replay render tests, frontend typecheck, and runtime repo-search acceptance.

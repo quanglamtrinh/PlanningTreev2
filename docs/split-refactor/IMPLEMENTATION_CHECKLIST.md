@@ -64,10 +64,10 @@ Legend:
 
 ## Phase 7 - Cutover Cleanup And Convergence
 
-- [ ] `P7.1` Remove old split mode assumptions from persisted primary-path types and readers.
-- [ ] `P7.2` Remove old split mode assumptions from planning history surfaces.
-- [ ] `P7.3` Remove old split mode assumptions from replay surfaces.
-- [ ] `P7.4` Record any unavoidable migration risk in `OPEN_ISSUES.md` instead of reintroducing ad hoc legacy behavior.
+- [x] `P7.1` Remove old split mode assumptions from persisted primary-path types and readers.
+- [x] `P7.2` Remove old split mode assumptions from planning history surfaces.
+- [x] `P7.3` Remove old split mode assumptions from replay surfaces.
+- [x] `P7.4` Record any unavoidable migration risk in `OPEN_ISSUES.md` instead of reintroducing ad hoc legacy behavior.
 
 ## Phase 8 - Tests And Docs
 

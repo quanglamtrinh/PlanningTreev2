@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { normalizeSplitPayload } from '../../src/features/conversation/model/normalizeSplitPayload'
+import {
+  normalizeSplitPayload,
+  UNSUPPORTED_SPLIT_PAYLOAD_MESSAGE,
+} from '../../src/features/conversation/model/normalizeSplitPayload'
 
 describe('normalizeSplitPayload', () => {
-  it('keeps legacy walking-skeleton epic payloads readable on transition read paths', () => {
+  it('marks legacy walking-skeleton epic payloads as unsupported after cutover', () => {
     const normalized = normalizeSplitPayload({
       epics: [
         {
@@ -24,26 +27,8 @@ describe('normalizeSplitPayload', () => {
     })
 
     expect(normalized).toEqual({
-      kind: 'epics',
-      cards: [
-        {
-          key: 'Foundation-0',
-          title: 'Foundation',
-          body: 'Stand up the initial skeleton for the project.',
-          items: [
-            {
-              key: 'Foundation-0',
-              title: 'Wire storage',
-              body: 'Project state persists successfully.',
-            },
-            {
-              key: 'Foundation-1',
-              title: 'Render graph',
-              body: 'The graph renders the root node and first edge.',
-            },
-          ],
-        },
-      ],
+      kind: 'unsupported',
+      message: UNSUPPORTED_SPLIT_PAYLOAD_MESSAGE,
     })
   })
 
@@ -84,7 +69,7 @@ describe('normalizeSplitPayload', () => {
     })
   })
 
-  it('keeps legacy slice payloads readable on transition read paths', () => {
+  it('marks legacy slice payloads as unsupported after cutover', () => {
     const normalized = normalizeSplitPayload({
       subtasks: [
         {
@@ -97,18 +82,8 @@ describe('normalizeSplitPayload', () => {
     })
 
     expect(normalized).toEqual({
-      kind: 'subtasks',
-      cards: [
-        {
-          key: '1-Setup repo',
-          title: 'Slice 1',
-          body: 'Setup repo',
-          meta: [
-            { label: 'Risk', value: 'Environment setup is a dependency.' },
-            { label: 'Unblocks', value: 'Main implementation can start afterwards.' },
-          ],
-        },
-      ],
+      kind: 'unsupported',
+      message: UNSUPPORTED_SPLIT_PAYLOAD_MESSAGE,
     })
   })
 })

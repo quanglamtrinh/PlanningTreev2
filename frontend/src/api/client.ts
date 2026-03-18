@@ -14,6 +14,7 @@ import type {
   NodeBrief,
   NodeBriefing,
   NodeDocuments,
+  NodeRecord,
   NodeState,
   NodeSpec,
   NodeTask,
@@ -35,6 +36,13 @@ interface ErrorPayload {
 }
 
 const DEFAULT_TIMEOUT_MS = 300_000
+const CANONICAL_SPLIT_MODES = new Set<SplitMode>([
+  'workflow',
+  'simplify_workflow',
+  'phase_breakdown',
+  'agent_breakdown',
+])
+const CANONICAL_SPLIT_OUTPUT_FAMILIES = new Set(['flat_subtasks_v1'])
 
 function requestTimeoutMs() {
   const raw = Number(import.meta.env.VITE_API_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS)
@@ -101,6 +109,47 @@ async function jsonFetch<T>(path: string, init?: RequestInit, body?: JsonBody): 
   return (await response.json()) as T
 }
 
+function isCanonicalSplitMode(value: unknown): value is SplitMode {
+  return typeof value === 'string' && CANONICAL_SPLIT_MODES.has(value as SplitMode)
+}
+
+function normalizeSplitMetadata(
+  metadata: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return null
+  }
+  const normalized = { ...metadata }
+  if (!isCanonicalSplitMode(normalized.mode)) {
+    delete normalized.mode
+  }
+  if (
+    typeof normalized.output_family !== 'string' ||
+    !CANONICAL_SPLIT_OUTPUT_FAMILIES.has(normalized.output_family)
+  ) {
+    delete normalized.output_family
+  }
+  return normalized
+}
+
+function normalizeNodeRecord(node: NodeRecord): NodeRecord {
+  return {
+    ...node,
+    planning_mode: isCanonicalSplitMode(node.planning_mode) ? node.planning_mode : null,
+    split_metadata: normalizeSplitMetadata(node.split_metadata),
+  }
+}
+
+function normalizeSnapshot(snapshot: Snapshot): Snapshot {
+  return {
+    ...snapshot,
+    tree_state: {
+      ...snapshot.tree_state,
+      node_registry: snapshot.tree_state.node_registry.map((node) => normalizeNodeRecord(node)),
+    },
+  }
+}
+
 export const api = {
   getBootstrapStatus(): Promise<BootstrapStatus> {
     return jsonFetch('/v1/bootstrap/status')
@@ -117,26 +166,26 @@ export const api = {
     return jsonFetch('/v1/projects')
   },
   createProject(name: string, rootGoal: string): Promise<Snapshot> {
-    return jsonFetch('/v1/projects', { method: 'POST' }, {
+    return jsonFetch<Snapshot>('/v1/projects', { method: 'POST' }, {
       name,
       root_goal: rootGoal,
-    })
+    }).then(normalizeSnapshot)
   },
   getSnapshot(projectId: string): Promise<Snapshot> {
-    return jsonFetch(`/v1/projects/${projectId}/snapshot`)
+    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/snapshot`).then(normalizeSnapshot)
   },
   resetProjectToRoot(projectId: string): Promise<Snapshot> {
-    return jsonFetch(`/v1/projects/${projectId}/reset-to-root`, { method: 'POST' })
+    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/reset-to-root`, { method: 'POST' }).then(normalizeSnapshot)
   },
   setActiveNode(projectId: string, activeNodeId: string | null): Promise<Snapshot> {
-    return jsonFetch(`/v1/projects/${projectId}/active-node`, { method: 'PATCH' }, {
+    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/active-node`, { method: 'PATCH' }, {
       active_node_id: activeNodeId,
-    })
+    }).then(normalizeSnapshot)
   },
   createChild(projectId: string, parentId: string): Promise<Snapshot> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes`, { method: 'POST' }, {
+    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes`, { method: 'POST' }, {
       parent_id: parentId,
-    })
+    }).then(normalizeSnapshot)
   },
   splitNode(
     projectId: string,
@@ -163,7 +212,7 @@ export const api = {
     nodeId: string,
     payload: { title?: string; description?: string },
   ): Promise<Snapshot> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}`, { method: 'PATCH' }, payload)
+    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes/${nodeId}`, { method: 'PATCH' }, payload).then(normalizeSnapshot)
   },
   getNodeDocuments(projectId: string, nodeId: string): Promise<NodeDocuments> {
     return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/documents`)
@@ -261,9 +310,9 @@ export const api = {
     })
   },
   completeNode(projectId: string, nodeId: string): Promise<Snapshot> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/complete`, {
+    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes/${nodeId}/complete`, {
       method: 'POST',
-    })
+    }).then(normalizeSnapshot)
   },
   planAndExecute(projectId: string, nodeId: string): Promise<{ status: string; session: ChatSession; state: NodeState }> {
     return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/plan-and-execute`, {

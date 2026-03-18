@@ -755,12 +755,12 @@ describe('project-store', () => {
         type: 'planning_turn_started',
         node_id: 'root',
         turn_id: 'turn-1',
-        mode: 'walking_skeleton',
+        mode: 'workflow',
         timestamp: '2026-03-07T10:05:00Z',
       })
     })
 
-    expect(useProjectStore.getState().activePlanningMode).toBe('walking_skeleton')
+    expect(useProjectStore.getState().activePlanningMode).toBe('workflow')
 
     await act(async () => {
       useProjectStore.getState().applyPlanningEvent('project-1', 'root', {
@@ -796,7 +796,7 @@ describe('project-store', () => {
       planningConnectionStatus: 'connected',
       isSplittingNode: true,
       splittingNodeId: 'root',
-      activePlanningMode: 'slice',
+      activePlanningMode: 'workflow',
     })
 
     act(() => {

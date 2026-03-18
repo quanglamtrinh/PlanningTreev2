@@ -14,7 +14,6 @@ import type {
   PlanningEvent,
   PlanningTurn,
   ProjectSummary,
-  ReadableSplitMode,
   Snapshot,
   SplitMode,
 } from '../api/types'
@@ -94,7 +93,7 @@ function preserveSelectedNodeId(snapshot: Snapshot, currentSelectedNodeId: strin
 }
 
 export type PlanningConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
-export type PlanningSplitMode = ReadableSplitMode | null
+export type PlanningSplitMode = SplitMode | null
 export type AgentConnectionStatus = PlanningConnectionStatus
 
 function markPerformance(name: string) {

@@ -59,19 +59,6 @@ def test_parse_route_split_mode_rejects_unknown_mode() -> None:
         parse_route_split_mode_or_raise("bad-mode")
 
 
-@pytest.mark.parametrize(
-    ("mode", "expected_family"),
-    [
-        ("workflow", "flat_subtasks_v1"),
-        ("simplify_workflow", "flat_subtasks_v1"),
-        ("phase_breakdown", "flat_subtasks_v1"),
-        ("agent_breakdown", "flat_subtasks_v1"),
-        ("walking_skeleton", "legacy_epic_phase"),
-        ("slice", "legacy_flat_slice"),
-    ],
-)
-def test_split_output_family_for_mode_covers_canonical_and_legacy_modes(
-    mode: str,
-    expected_family: str,
-) -> None:
-    assert split_output_family_for_mode(mode) == expected_family
+@pytest.mark.parametrize("mode", list(CANONICAL_SPLIT_MODE_REGISTRY))
+def test_split_output_family_for_mode_covers_canonical_modes(mode: str) -> None:
+    assert split_output_family_for_mode(mode) == "flat_subtasks_v1"

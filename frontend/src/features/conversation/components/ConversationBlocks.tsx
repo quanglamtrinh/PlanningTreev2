@@ -34,26 +34,9 @@ function renderSplitPayload(payload: Record<string, unknown> | null) {
     return null
   }
 
-  if (normalized.kind === 'epics') {
+  if (normalized.kind === 'unsupported') {
     return (
-      <div className={styles.blockGrid}>
-        {normalized.cards.map((epic) => (
-          <article key={epic.key} className={styles.blockCard}>
-            <div className={styles.blockCardSection}>
-              <h5 className={styles.blockCardTitle}>{epic.title}</h5>
-              {epic.body ? <p className={styles.blockCardText}>{epic.body}</p> : null}
-            </div>
-            <div className={styles.blockList}>
-              {epic.items.map((phase) => (
-                <div key={phase.key} className={styles.blockListItem}>
-                  <strong>{phase.title}</strong>
-                  {phase.body ? <span>{phase.body}</span> : null}
-                </div>
-              ))}
-            </div>
-          </article>
-        ))}
-      </div>
+      <p className={styles.unsupportedFallback}>{normalized.message}</p>
     )
   }
 

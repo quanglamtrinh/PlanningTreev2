@@ -3,17 +3,6 @@ export type SplitPayloadMeta = {
   value: string
 }
 
-export type NormalizedSplitEpicCard = {
-  key: string
-  title: string
-  body: string | null
-  items: Array<{
-    key: string
-    title: string
-    body: string | null
-  }>
-}
-
 export type NormalizedSplitSubtaskCard = {
   key: string
   title: string
@@ -21,14 +10,17 @@ export type NormalizedSplitSubtaskCard = {
   meta: SplitPayloadMeta[]
 }
 
+export const UNSUPPORTED_SPLIT_PAYLOAD_MESSAGE =
+  "This historical split result uses a legacy format and can't be rendered in the current UI."
+
 export type NormalizedSplitPayload =
-  | {
-      kind: 'epics'
-      cards: NormalizedSplitEpicCard[]
-    }
   | {
       kind: 'subtasks'
       cards: NormalizedSplitSubtaskCard[]
+    }
+  | {
+      kind: 'unsupported'
+      message: string
     }
 
 export function normalizeSplitPayload(payload: Record<string, unknown> | null): NormalizedSplitPayload | null {
@@ -36,54 +28,49 @@ export function normalizeSplitPayload(payload: Record<string, unknown> | null): 
     return null
   }
 
-  const epics = Array.isArray(payload.epics) ? payload.epics : null
-  if (epics) {
+  const materializedFamily = asString(payload.family)
+  const materializedSubtasks = Array.isArray(payload.subtasks) ? payload.subtasks : null
+  if (materializedFamily === 'flat_subtasks_v1' && materializedSubtasks) {
+    const cards = materializedSubtasks
+      .map((subtask, index) => normalizeMaterializedSubtaskCard(subtask, index))
+      .filter((card): card is NormalizedSplitSubtaskCard => card !== null)
+    if (cards.length === materializedSubtasks.length && cards.length > 0) {
+      return {
+        kind: 'subtasks',
+        cards,
+      }
+    }
     return {
-      kind: 'epics',
-      cards: epics
-        .map((epic, index) => {
-          const typedEpic = asRecord(epic)
-          if (!typedEpic) {
-            return null
-          }
-          const phases = Array.isArray(typedEpic.phases) ? typedEpic.phases : []
-          return {
-            key: `${asString(typedEpic.title) ?? 'epic'}-${index}`,
-            title: asString(typedEpic.title) ?? `Epic ${index + 1}`,
-            body: asString(typedEpic.prompt),
-            items: phases
-              .map((phase, phaseIndex) => {
-                const typedPhase = asRecord(phase)
-                if (!typedPhase) {
-                  return null
-                }
-                return {
-                  key: `${asString(typedEpic.title) ?? 'phase'}-${phaseIndex}`,
-                  title: asString(typedPhase.prompt) ?? `Phase ${phaseIndex + 1}`,
-                  body: asString(typedPhase.definition_of_done),
-                }
-              })
-              .filter((item): item is NonNullable<typeof item> => item !== null),
-          }
-        })
-        .filter((card): card is NonNullable<typeof card> => card !== null),
+      kind: 'unsupported',
+      message: UNSUPPORTED_SPLIT_PAYLOAD_MESSAGE,
     }
   }
 
   const subtasks = Array.isArray(payload.subtasks) ? payload.subtasks : null
   if (!subtasks) {
-    return null
+    return {
+      kind: 'unsupported',
+      message: UNSUPPORTED_SPLIT_PAYLOAD_MESSAGE,
+    }
+  }
+
+  const cards = subtasks
+    .map((subtask, index) => normalizeCanonicalSubtaskCard(subtask, index))
+    .filter((card): card is NormalizedSplitSubtaskCard => card !== null)
+  if (cards.length !== subtasks.length || cards.length === 0) {
+    return {
+      kind: 'unsupported',
+      message: UNSUPPORTED_SPLIT_PAYLOAD_MESSAGE,
+    }
   }
 
   return {
     kind: 'subtasks',
-    cards: subtasks
-      .map((subtask, index) => normalizeSubtaskCard(subtask, index))
-      .filter((card): card is NormalizedSplitSubtaskCard => card !== null),
+    cards,
   }
 }
 
-function normalizeSubtaskCard(subtask: unknown, index: number): NormalizedSplitSubtaskCard | null {
+function normalizeCanonicalSubtaskCard(subtask: unknown, index: number): NormalizedSplitSubtaskCard | null {
   const typedSubtask = asRecord(subtask)
   if (!typedSubtask) {
     return null
@@ -102,22 +89,26 @@ function normalizeSubtaskCard(subtask: unknown, index: number): NormalizedSplitS
     }
   }
 
-  const order = asNumber(typedSubtask.order) ?? index + 1
-  const prompt = asString(typedSubtask.prompt)
-  const riskReason = asString(typedSubtask.risk_reason)
-  const whatUnblocks = asString(typedSubtask.what_unblocks)
-  if (!prompt && !riskReason && !whatUnblocks) {
+  return null
+}
+
+function normalizeMaterializedSubtaskCard(subtask: unknown, index: number): NormalizedSplitSubtaskCard | null {
+  const typedSubtask = asRecord(subtask)
+  if (!typedSubtask) {
     return null
   }
-
+  const id = asString(typedSubtask.subtask_id)
+  const title = asString(typedSubtask.title)
+  const objective = asString(typedSubtask.objective)
+  const whyNow = asString(typedSubtask.why_now)
+  if (!id || !title || !objective || !whyNow) {
+    return null
+  }
   return {
-    key: `${order}-${prompt ?? 'subtask'}`,
-    title: `Slice ${order}`,
-    body: prompt,
-    meta: [
-      ...(riskReason ? [{ label: 'Risk', value: riskReason }] : []),
-      ...(whatUnblocks ? [{ label: 'Unblocks', value: whatUnblocks }] : []),
-    ],
+    key: `${id}-${title}`,
+    title: [id, title].join(' / ') || `Subtask ${index + 1}`,
+    body: objective,
+    meta: [{ label: 'Why now', value: whyNow }],
   }
 }
 
@@ -130,8 +121,4 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }

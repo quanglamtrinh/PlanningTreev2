@@ -3,8 +3,12 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from backend.split_contract import CANONICAL_SPLIT_MODE_REGISTRY
 from backend.services.node_task_fields import enrich_nodes_with_task_fields
 from backend.storage.node_store import NodeStore
+
+_CANONICAL_SPLIT_MODES = frozenset(CANONICAL_SPLIT_MODE_REGISTRY.keys())
+_CANONICAL_OUTPUT_FAMILIES = frozenset({"flat_subtasks_v1"})
 
 
 class SnapshotViewService:
@@ -66,6 +70,14 @@ class SnapshotViewService:
 
             raw_node["node_kind"] = self._node_kind(raw_node, root_node_id)
             raw_node["phase"] = str(raw_node.get("phase") or "planning")
+            if raw_node.get("planning_mode") not in _CANONICAL_SPLIT_MODES:
+                raw_node["planning_mode"] = None
+            split_metadata = raw_node.get("split_metadata")
+            if isinstance(split_metadata, dict):
+                if split_metadata.get("mode") not in _CANONICAL_SPLIT_MODES:
+                    split_metadata.pop("mode", None)
+                if split_metadata.get("output_family") not in _CANONICAL_OUTPUT_FAMILIES:
+                    split_metadata.pop("output_family", None)
             planning_thread_id = raw_node.pop("planning_thread_id", None)
             execution_thread_id = raw_node.pop("execution_thread_id", None)
             raw_node.pop("planning_thread_forked_from_node", None)

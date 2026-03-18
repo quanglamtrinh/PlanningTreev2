@@ -11,22 +11,9 @@ CanonicalSplitModeId = Literal[
     "agent_breakdown",
 ]
 SplitOutputFamily = Literal["flat_subtasks_v1"]
-TemporaryLegacyRouteModeId = Literal["walking_skeleton", "slice"]
-ServiceSplitMode = Literal[
-    "workflow",
-    "simplify_workflow",
-    "phase_breakdown",
-    "agent_breakdown",
-    "walking_skeleton",
-    "slice",
-]
-ServiceSplitOutputFamily = Literal["flat_subtasks_v1", "legacy_epic_phase", "legacy_flat_slice"]
-RouteAcceptedSplitMode = Literal[
-    "workflow",
-    "simplify_workflow",
-    "phase_breakdown",
-    "agent_breakdown",
-]
+ServiceSplitMode = CanonicalSplitModeId
+ServiceSplitOutputFamily = SplitOutputFamily
+RouteAcceptedSplitMode = CanonicalSplitModeId
 
 
 class SplitModeSpec(TypedDict):
@@ -94,11 +81,6 @@ CANONICAL_SPLIT_MODE_REGISTRY: dict[CanonicalSplitModeId, SplitModeSpec] = {
     },
 }
 
-TEMPORARY_LEGACY_ROUTE_BRIDGE: Final[frozenset[str]] = frozenset({"walking_skeleton", "slice"})
-_LEGACY_OUTPUT_FAMILY_BY_MODE: Final[dict[TemporaryLegacyRouteModeId, ServiceSplitOutputFamily]] = {
-    "walking_skeleton": "legacy_epic_phase",
-    "slice": "legacy_flat_slice",
-}
 _ACCEPTED_ROUTE_SPLIT_MODES: Final[frozenset[str]] = frozenset(CANONICAL_SPLIT_MODE_REGISTRY.keys())
 
 
@@ -113,7 +95,4 @@ def split_output_family_for_mode(mode: ServiceSplitMode | str) -> ServiceSplitOu
     normalized = mode.strip() if isinstance(mode, str) else mode
     if normalized in CANONICAL_SPLIT_MODE_REGISTRY:
         return cast(ServiceSplitOutputFamily, CANONICAL_SPLIT_MODE_REGISTRY[cast(CanonicalSplitModeId, normalized)]["output_family"])
-    legacy_family = _LEGACY_OUTPUT_FAMILY_BY_MODE.get(cast(TemporaryLegacyRouteModeId, normalized))
-    if legacy_family is not None:
-        return legacy_family
     raise InvalidRequest("Unsupported split mode.")
