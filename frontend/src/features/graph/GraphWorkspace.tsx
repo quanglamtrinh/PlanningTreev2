@@ -5,8 +5,7 @@ import type { SplitMode } from '../../api/types'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import { WorkspaceSetup } from '../auth/WorkspaceSetup'
-import { CreateProjectDialog } from '../project/CreateProjectDialog'
-import { ProjectList } from '../project/ProjectList'
+import { Sidebar } from './Sidebar'
 import { TreeGraph } from './TreeGraph'
 import styles from './GraphWorkspace.module.css'
 
@@ -48,11 +47,7 @@ export function GraphWorkspace() {
   const [showWorkspaceEditor, setShowWorkspaceEditor] = useState(false)
 
   const initialize = useProjectStore((state) => state.initialize)
-  const refreshProjects = useProjectStore((state) => state.refreshProjects)
   const setWorkspaceRoot = useProjectStore((state) => state.setWorkspaceRoot)
-  const loadProject = useProjectStore((state) => state.loadProject)
-  const clearActiveProject = useProjectStore((state) => state.clearActiveProject)
-  const createProject = useProjectStore((state) => state.createProject)
   const resetProjectToRoot = useProjectStore((state) => state.resetProjectToRoot)
   const selectNode = useProjectStore((state) => state.selectNode)
   const createChild = useProjectStore((state) => state.createChild)
@@ -67,9 +62,7 @@ export function GraphWorkspace() {
   const selectedNodeId = useProjectStore((state) => state.selectedNodeId)
   const error = useProjectStore((state) => state.error)
   const isWorkspaceSaving = useProjectStore((state) => state.isWorkspaceSaving)
-  const isLoadingProjects = useProjectStore((state) => state.isLoadingProjects)
   const isLoadingSnapshot = useProjectStore((state) => state.isLoadingSnapshot)
-  const isCreatingProject = useProjectStore((state) => state.isCreatingProject)
   const isCreatingNode = useProjectStore((state) => state.isCreatingNode)
   const isSplittingNode = useProjectStore((state) => state.isSplittingNode)
   const isResettingProject = useProjectStore((state) => state.isResettingProject)
@@ -113,18 +106,6 @@ export function GraphWorkspace() {
     try {
       await setWorkspaceRoot(path)
       setShowWorkspaceEditor(false)
-    } catch {
-      return
-    }
-  }
-
-  async function handleProjectSelect(projectId: string | null) {
-    try {
-      if (!projectId) {
-        clearActiveProject()
-        return
-      }
-      await loadProject(projectId)
     } catch {
       return
     }
@@ -268,123 +249,119 @@ export function GraphWorkspace() {
 
   return (
     <section className={styles.view}>
-      {/* ── Top control rack ── */}
-      <div className={styles.controlRack}>
+      {/* ── Sidebar — left panel ── */}
+      <Sidebar />
 
-        {/* Section 1: Workspace */}
-        <div className={styles.rackSection}>
-          <span className={styles.sectionLabel}>WS</span>
-          <button
-            type="button"
-            className={styles.rackBtn}
-            onClick={() => setShowWorkspaceEditor((v) => !v)}
-          >
-            {showWorkspaceEditor ? 'Close' : 'Change Workspace'}
-          </button>
-          <span className={styles.workspacePath} title={baseWorkspaceRoot ?? ''}>
-            {baseWorkspaceRoot}
-          </span>
-        </div>
+      {/* ── Main column: control rack + graph ── */}
+      <div className={styles.mainColumn}>
 
-        {/* Section 2: Project selector */}
-        <div className={styles.rackSection}>
-          <ProjectList
-            projects={projects}
-            activeProjectId={activeProjectId}
-            isLoading={isLoadingProjects}
-            onSelect={(projectId) => void handleProjectSelect(projectId)}
-            onRefresh={() => void refreshProjects()}
-          />
-        </div>
+        {/* ── Top control rack ── */}
+        <div className={styles.controlRack}>
 
-        {/* Section 3: Actions — pushed to the right */}
-        <div className={`${styles.rackSection} ${styles.rackSectionEnd}`}>
-          <CreateProjectDialog compact isSubmitting={isCreatingProject} onCreate={createProject} />
-          <button
-            type="button"
-            className={`${styles.rackBtn} ${styles.rackBtnDanger}`}
-            disabled={!activeProjectId || !snapshot || isLoadingSnapshot || isSplittingNode || isResettingProject}
-            onClick={() => void handleResetProject()}
-          >
-            {isResettingProject ? 'Resetting…' : 'Reset to Root'}
-          </button>
-        </div>
-
-      </div>
-
-      {/* ── Inline workspace editor ── */}
-      {showWorkspaceEditor ? (
-        <div className={styles.workspaceEditor}>
-          <WorkspaceSetup
-            compact
-            initialValue={baseWorkspaceRoot}
-            isSaving={isWorkspaceSaving}
-            error={error}
-            onSubmit={handleWorkspaceSubmit}
-            onCancel={() => setShowWorkspaceEditor(false)}
-          />
-        </div>
-      ) : null}
-
-      {/* ── Error banner ── */}
-      {error ? <p className={styles.errorBanner}>{error}</p> : null}
-
-      {/* ── Graph area: fills all remaining space ── */}
-      <div className={styles.graphShell}>
-        {/* Floating header overlay on top of graph */}
-        <div className={styles.graphHeader}>
-          <div className={styles.graphHeaderLeft}>
-            <p className={styles.graphHeaderTitle}>
-              {snapshot ? snapshot.project.name : 'No project loaded'}
-            </p>
-            {snapshot ? (
-              <p className={styles.graphHeaderSub}>{snapshot.project.root_goal}</p>
-            ) : null}
+          {/* Section 1: Workspace */}
+          <div className={styles.rackSection}>
+            <span className={styles.sectionLabel}>WS</span>
+            <button
+              type="button"
+              className={styles.rackBtn}
+              onClick={() => setShowWorkspaceEditor((v) => !v)}
+            >
+              {showWorkspaceEditor ? 'Close' : 'Change Workspace'}
+            </button>
+            <span className={styles.workspacePath} title={baseWorkspaceRoot ?? ''}>
+              {baseWorkspaceRoot}
+            </span>
           </div>
-          <div className={styles.graphHeaderChips}>
-            {snapshot ? (
-              <>
-                <span className={styles.chip}>
-                  {snapshot.tree_state.node_registry.length} nodes
-                </span>
-                <span className={styles.chip}>{statusCounts.ready ?? 0} ready</span>
-                <span className={styles.chip}>{statusCounts.done ?? 0} done</span>
-                {selectedNode ? (
-                  <span className={styles.chipAccent}>
-                    {selectedNode.hierarchical_number} / {selectedNode.title}
+
+          {/* Section 2: Actions — pushed to the right */}
+          <div className={`${styles.rackSection} ${styles.rackSectionEnd}`}>
+            <button
+              type="button"
+              className={`${styles.rackBtn} ${styles.rackBtnDanger}`}
+              disabled={!activeProjectId || !snapshot || isLoadingSnapshot || isSplittingNode || isResettingProject}
+              onClick={() => void handleResetProject()}
+            >
+              {isResettingProject ? 'Resetting…' : 'Reset to Root'}
+            </button>
+          </div>
+
+        </div>
+
+        {/* ── Inline workspace editor ── */}
+        {showWorkspaceEditor ? (
+          <div className={styles.workspaceEditor}>
+            <WorkspaceSetup
+              compact
+              initialValue={baseWorkspaceRoot}
+              isSaving={isWorkspaceSaving}
+              error={error}
+              onSubmit={handleWorkspaceSubmit}
+              onCancel={() => setShowWorkspaceEditor(false)}
+            />
+          </div>
+        ) : null}
+
+        {/* ── Error banner ── */}
+        {error ? <p className={styles.errorBanner}>{error}</p> : null}
+
+        {/* ── Graph area: fills all remaining space ── */}
+        <div className={styles.graphShell}>
+          {/* Floating header overlay on top of graph */}
+          <div className={styles.graphHeader}>
+            <div className={styles.graphHeaderLeft}>
+              <p className={styles.graphHeaderTitle}>
+                {snapshot ? snapshot.project.name : 'No project loaded'}
+              </p>
+              {snapshot ? (
+                <p className={styles.graphHeaderSub}>{snapshot.project.root_goal}</p>
+              ) : null}
+            </div>
+            <div className={styles.graphHeaderChips}>
+              {snapshot ? (
+                <>
+                  <span className={styles.chip}>
+                    {snapshot.tree_state.node_registry.length} nodes
                   </span>
-                ) : null}
-              </>
-            ) : null}
+                  <span className={styles.chip}>{statusCounts.ready ?? 0} ready</span>
+                  <span className={styles.chip}>{statusCounts.done ?? 0} done</span>
+                  {selectedNode ? (
+                    <span className={styles.chipAccent}>
+                      {selectedNode.hierarchical_number} / {selectedNode.title}
+                    </span>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
           </div>
+
+          {/* Graph or empty state */}
+          {snapshot ? (
+            <TreeGraph
+              snapshot={snapshot}
+              selectedNodeId={selectedNodeId}
+              isCreatingNode={isCreatingNode}
+              isSplittingNode={isSplittingNode}
+              splittingNodeId={splittingNodeId}
+              onSelectNode={handleSelectNode}
+              onCreateChild={handleCreateChild}
+              onSplitNode={handleSplitNode}
+              onOpenBreadcrumb={handleOpenBreadcrumb}
+              onFinishTask={handleFinishTask}
+            />
+          ) : (
+            <div className={styles.emptyState}>
+              <h3>No project loaded</h3>
+              <p>
+                {isLoadingSnapshot
+                  ? 'Loading snapshot…'
+                  : projects.length > 0
+                    ? 'Select a project from the sidebar to render its graph.'
+                    : 'Create a project in the sidebar to get started.'}
+              </p>
+            </div>
+          )}
         </div>
 
-        {/* Graph or empty state */}
-        {snapshot ? (
-          <TreeGraph
-            snapshot={snapshot}
-            selectedNodeId={selectedNodeId}
-            isCreatingNode={isCreatingNode}
-            isSplittingNode={isSplittingNode}
-            splittingNodeId={splittingNodeId}
-            onSelectNode={handleSelectNode}
-            onCreateChild={handleCreateChild}
-            onSplitNode={handleSplitNode}
-            onOpenBreadcrumb={handleOpenBreadcrumb}
-            onFinishTask={handleFinishTask}
-          />
-        ) : (
-          <div className={styles.emptyState}>
-            <h3>No project loaded</h3>
-            <p>
-              {isLoadingSnapshot
-                ? 'Loading snapshot…'
-                : projects.length > 0
-                  ? 'Choose a project from the selector above to render its graph.'
-                  : 'Create a project above to render the first root node.'}
-            </p>
-          </div>
-        )}
       </div>
     </section>
   )
