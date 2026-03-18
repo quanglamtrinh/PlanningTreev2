@@ -10,11 +10,11 @@ Legend:
 
 ## Phase 1 - Registry And Route Contract
 
-- [ ] `P1.1` Add canonical split registry for the 4 supported modes.
-- [ ] `P1.2` Encode `output_family`, `min_items`, `max_items`, UI visibility, and creation policy in the registry.
-- [ ] `P1.3` Add route-facing supported-mode adapter or parser for `backend/routes/split.py`.
-- [ ] `P1.4` Preserve `400 invalid_request` semantics for bad modes after closing the route contract.
-- [ ] `P1.5` Remove old `walking_skeleton` and `slice` from the supported route contract.
+- [x] `P1.1` Add canonical split registry for the 4 supported modes.
+- [x] `P1.2` Encode `output_family`, `min_items`, `max_items`, UI visibility, and creation policy in the registry.
+- [x] `P1.3` Add route-facing supported-mode adapter or parser for `backend/routes/split.py`.
+- [x] `P1.4` Preserve `400 invalid_request` semantics for bad modes after closing the route contract.
+- [x] `P1.5` Remove old `walking_skeleton` and `slice` from the supported route contract.
 
 ## Phase 2 - Prompt And Schema Refactor
 

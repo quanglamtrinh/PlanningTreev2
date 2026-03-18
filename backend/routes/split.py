@@ -8,6 +8,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from backend.errors.app_errors import SplitNotAllowed
+from backend.split_contract import CANONICAL_SPLIT_MODE_REGISTRY, parse_route_split_mode_or_raise
+
 router = APIRouter(tags=["split"])
 
 
@@ -30,10 +33,15 @@ def _format_sse(payload: dict[str, Any]) -> str:
 
 @router.post("/projects/{project_id}/nodes/{node_id}/split")
 async def split_node(request: Request, project_id: str, node_id: str, body: SplitNodeRequest) -> JSONResponse:
+    mode = parse_route_split_mode_or_raise(body.mode)
+    if mode in CANONICAL_SPLIT_MODE_REGISTRY:
+        raise SplitNotAllowed(
+            f"Canonical split mode '{mode}' is not executable until the new split pipeline lands."
+        )
     payload = _split_service(request).split_node(
         project_id,
         node_id,
-        body.mode,
+        mode,
         body.confirm_replace,
     )
     return JSONResponse(status_code=202, content=payload)

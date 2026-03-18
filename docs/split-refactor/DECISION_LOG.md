@@ -31,3 +31,9 @@ Last updated: 2026-03-17
 - Date: 2026-03-17
 - Decision: `split_metadata` must distinguish stable compatibility fields from debug-scoped raw payload.
 - Rationale: Replay and UI need a normalized materialization record, while debug payload shape must remain non-authoritative.
+
+## D-006: Temporary legacy route bridge for Phase 1
+
+- Date: 2026-03-17
+- Decision: `walking_skeleton` and `slice` remain temporarily accepted at the `/split` route during Phase 1 through the pre-cutover phases.
+- Rationale: The current runtime still depends on those modes, so the route boundary must be closed without breaking the existing split path before later phases land.

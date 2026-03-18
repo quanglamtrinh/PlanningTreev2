@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import time
 
+import pytest
+
 from backend.ai.codex_client import CodexTransportError
 
 
@@ -428,6 +430,35 @@ def test_split_api_returns_400_for_invalid_mode(client, workspace_root) -> None:
 
     assert response.status_code == 400
     assert response.json()["code"] == "invalid_request"
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["workflow", "simplify_workflow", "phase_breakdown", "agent_breakdown"],
+)
+def test_split_api_guards_canonical_modes_before_service_call(
+    client,
+    workspace_root,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    project_id, root_id = create_project(client, str(workspace_root))
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("route guard should reject canonical split modes before split_service is called")
+
+    monkeypatch.setattr(client.app.state.split_service, "split_node", fail_if_called)
+
+    response = client.post(
+        f"/v1/projects/{project_id}/nodes/{root_id}/split",
+        json={"mode": mode},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "split_not_allowed"
+    assert response.json()["message"] == (
+        f"Canonical split mode '{mode}' is not executable until the new split pipeline lands."
+    )
 
 
 def test_split_api_returns_404_for_missing_node(client, workspace_root) -> None:
