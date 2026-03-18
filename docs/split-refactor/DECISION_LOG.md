@@ -37,3 +37,15 @@ Last updated: 2026-03-17
 - Date: 2026-03-17
 - Decision: `walking_skeleton` and `slice` remain temporarily accepted at the `/split` route during Phase 1 through the pre-cutover phases.
 - Rationale: The current runtime still depends on those modes, so the route boundary must be closed without breaking the existing split path before later phases land.
+
+## D-007: Split prompt builders are separated by contract generation
+
+- Date: 2026-03-17
+- Decision: `backend/ai/split_prompt_builder.py` is canonical-only for the 4 new modes, while old `walking_skeleton` and `slice` behavior lives in `backend/ai/legacy_split_prompt_builder.py` during the bridge period.
+- Rationale: The canonical flat contract must be isolated from legacy payload shapes so prompt/schema evolution does not keep reintroducing old-mode assumptions into the new split pipeline.
+
+## D-008: Canonical payload parsing is strict and non-aliasing
+
+- Date: 2026-03-17
+- Decision: Canonical parsing accepts only `subtasks[{id,title,objective,why_now}]`, preserves list order, and does not remap legacy keys such as `prompt`, `risk_reason`, or `what_unblocks`.
+- Rationale: Later service materialization must depend only on the shared flat contract rather than permissive key aliasing that would effectively preserve multiple payload contracts.

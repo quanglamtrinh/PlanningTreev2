@@ -4,9 +4,17 @@ import json
 from typing import Any
 
 from backend.ai.json_extract import extract_first_json_object
+from backend.split_contract import CANONICAL_SPLIT_MODE_REGISTRY, CanonicalSplitModeId
 
 STRICTNESS_LEVELS = ["standard", "guided", "strict"]
-_PHASE_KEYS = ["A", "B", "C", "D", "E"]
+_REQUIRED_TOP_LEVEL_KEYS = {"subtasks"}
+_REQUIRED_SUBTASK_KEYS = {"id", "title", "objective", "why_now"}
+_CANONICAL_MODE_INTENTS: dict[CanonicalSplitModeId, str] = {
+    "workflow": "workflow-first sequential split",
+    "simplify_workflow": "minimum valid core workflow first, then additive reintroduction",
+    "phase_breakdown": "phase-based sequential delivery split",
+    "agent_breakdown": "conservative non-workflow split when the other shapes are a weak fit",
+}
 
 
 def planning_render_tool() -> dict[str, Any]:
@@ -33,29 +41,27 @@ def planning_render_tool() -> dict[str, Any]:
     }
 
 
-def build_planning_base_instructions(mode: str | None = None) -> str:
-    if mode is not None and mode not in {"walking_skeleton", "slice"}:
-        raise ValueError(f"Unsupported split mode: {mode}")
-
-    if mode == "walking_skeleton":
+def build_planning_base_instructions(mode: CanonicalSplitModeId | None = None) -> str:
+    if mode is None:
         mode_section = [
-            "Planning mode: walking_skeleton.",
-            "Generate 1 to 3 epics. Each epic must contain 2 to 5 lifecycle phases.",
-            json.dumps(_ws_generation_schema(), indent=2, ensure_ascii=True),
+            "Support only these canonical split modes: workflow, simplify_workflow, phase_breakdown, agent_breakdown.",
+            "All canonical split modes must emit the same flat_subtasks_v1 payload shape.",
+            "Respect the selected mode's configured subtask count limits.",
+            "Canonical payload shape example:",
+            json.dumps(_shared_schema_example(), indent=2, ensure_ascii=True),
         ]
-    elif mode == "slice":
-        mode_section = [
-            "Planning mode: slice.",
-            "Generate 2 to 10 sequential vertical slices.",
-            json.dumps(_slice_generation_schema(), indent=2, ensure_ascii=True),
-        ]
+        mode_section.extend(
+            [f"- {mode_id}: {_CANONICAL_MODE_INTENTS[mode_id]}" for mode_id in CANONICAL_SPLIT_MODE_REGISTRY]
+        )
     else:
+        spec = _canonical_mode_spec_or_raise(mode)
         mode_section = [
-            "Support both split modes: walking_skeleton and slice.",
-            "For walking_skeleton, emit payloads shaped like:",
-            json.dumps(_ws_generation_schema(), indent=2, ensure_ascii=True),
-            "For slice, emit payloads shaped like:",
-            json.dumps(_slice_generation_schema(), indent=2, ensure_ascii=True),
+            f"Planning mode: {mode}.",
+            f"Mode label: {spec['label']}.",
+            f"Mode intent: {_CANONICAL_MODE_INTENTS[mode]}.",
+            _mode_count_instruction(mode),
+            "Emit only the flat_subtasks_v1 payload shape:",
+            json.dumps(split_payload_schema_example(mode), indent=2, ensure_ascii=True),
         ]
 
     return "\n\n".join(
@@ -69,17 +75,18 @@ def build_planning_base_instructions(mode: str | None = None) -> str:
     )
 
 
-def build_split_user_message(mode: str, task_context: dict[str, Any]) -> str:
-    if mode not in {"walking_skeleton", "slice"}:
-        raise ValueError(f"Unsupported split mode: {mode}")
-
-    mode_label = "walking skeleton" if mode == "walking_skeleton" else "vertical slice"
+def build_split_user_message(mode: CanonicalSplitModeId, task_context: dict[str, Any]) -> str:
+    spec = _canonical_mode_spec_or_raise(mode)
     root_goal = str(task_context.get("root_prompt", "")).strip()
     current_prompt = str(task_context.get("current_node_prompt", "")).strip()
     parent_chain = task_context.get("parent_chain_prompts", [])
     prior_summaries = task_context.get("prior_node_summaries_compact", [])
 
-    lines = [f"Decompose this node using {mode_label} mode."]
+    lines = [
+        f"Decompose this node using {spec['label'].lower()} mode.",
+        f"Mode intent: {_CANONICAL_MODE_INTENTS[mode]}.",
+        _mode_count_instruction(mode),
+    ]
     if current_prompt:
         lines.extend(["", f'Node: "{current_prompt}"'])
     if root_goal:
@@ -104,33 +111,29 @@ def build_split_user_message(mode: str, task_context: dict[str, Any]) -> str:
 
 
 def build_generation_prompt(
-    mode: str,
+    mode: CanonicalSplitModeId,
     task_context: dict[str, Any],
     strictness: str,
     retry_feedback: dict[str, Any] | None,
 ) -> str:
-    if mode not in {"walking_skeleton", "slice"}:
-        raise ValueError(f"Unsupported split mode: {mode}")
+    _canonical_mode_spec_or_raise(mode)
     if strictness not in STRICTNESS_LEVELS:
         raise ValueError(f"Unsupported strictness level: {strictness}")
-
-    schema = _ws_generation_schema() if mode == "walking_skeleton" else _slice_generation_schema()
-    mode_instructions = (
-        "Generate 1 to 3 epics. Each epic must contain 2 to 5 lifecycle phases that move from setup through delivery."
-        if mode == "walking_skeleton"
-        else "Generate 2 to 10 sequential vertical slices. Each subtask should unlock the next step."
-    )
 
     prompt_parts = [
         "You are decomposing a planning-tree node into implementation-ready child tasks.",
         f"Planning mode: {mode}.",
-        mode_instructions,
-        _strictness_instructions(strictness),
+        f"Mode intent: {_CANONICAL_MODE_INTENTS[mode]}.",
+        _mode_count_instruction(mode),
         "Return exactly one JSON object. Do not use markdown fences. Do not add any explanation before or after the JSON.",
+        "The JSON must have exactly one top-level key: subtasks.",
+        "Each subtask must contain exactly: id, title, objective, why_now.",
+        "Preserve the intended execution order in the list. Do not sort by id.",
+        _strictness_instructions(strictness),
         "Task context:",
         json.dumps(task_context, indent=2, ensure_ascii=True),
         "Required JSON shape example:",
-        json.dumps(schema, indent=2, ensure_ascii=True),
+        json.dumps(split_payload_schema_example(mode), indent=2, ensure_ascii=True),
     ]
 
     if retry_feedback:
@@ -145,89 +148,95 @@ def build_generation_prompt(
     return "\n\n".join(prompt_parts)
 
 
-def parse_generation_response(mode: str, raw_text: str) -> dict[str, Any] | None:
+def parse_generation_response(mode: CanonicalSplitModeId, raw_text: str) -> dict[str, Any] | None:
+    _canonical_mode_spec_or_raise(mode)
     payload = extract_first_json_object(raw_text)
-    if payload is None:
+    if payload is None or not isinstance(payload, dict):
         return None
-    if mode == "walking_skeleton":
-        return _parse_ws_generation_payload(payload)
-    if mode == "slice":
-        return _parse_slice_generation_payload(payload)
-    return None
+    return _parse_canonical_generation_payload(mode, payload)
 
 
-def validate_split_payload(mode: str, payload: dict[str, Any]) -> bool:
+def validate_split_payload(mode: CanonicalSplitModeId, payload: dict[str, Any]) -> bool:
     return not split_payload_issues(mode, payload)
 
 
-def split_payload_schema_example(mode: str) -> dict[str, Any]:
-    if mode == "walking_skeleton":
-        return _ws_generation_schema()
-    if mode == "slice":
-        return _slice_generation_schema()
-    raise ValueError(f"Unsupported split mode: {mode}")
+def split_payload_schema_example(mode: CanonicalSplitModeId) -> dict[str, Any]:
+    spec = _canonical_mode_spec_or_raise(mode)
+    subtasks = []
+    for index in range(1, spec["min_items"] + 1):
+        subtasks.append(
+            {
+                "id": f"S{index}",
+                "title": f"Subtask {index}",
+                "objective": f"What step {index} achieves",
+                "why_now": f"Why step {index} happens now",
+            }
+        )
+    return {"subtasks": subtasks}
 
 
-def split_payload_issues(mode: str, payload: dict[str, Any]) -> list[str]:
-    if mode == "walking_skeleton":
-        epics = payload.get("epics")
-        if not isinstance(epics, list):
-            return ["payload.epics must be a list"]
-        if not 1 <= len(epics) <= 3:
-            return ["payload.epics must contain 1 to 3 items"]
-        issues: list[str] = []
-        for epic_index, epic in enumerate(epics, start=1):
-            if not isinstance(epic, dict):
-                issues.append(f"payload.epics[{epic_index - 1}] must be an object")
-                continue
-            if not _normalize_text(epic.get("title")):
-                issues.append(f"payload.epics[{epic_index - 1}].title is required")
-            if not _normalize_text(epic.get("prompt")):
-                issues.append(f"payload.epics[{epic_index - 1}].prompt is required")
-            phases = epic.get("phases")
-            if not isinstance(phases, list):
-                issues.append(f"payload.epics[{epic_index - 1}].phases must be a list")
-                continue
-            if not 2 <= len(phases) <= 5:
-                issues.append(f"payload.epics[{epic_index - 1}].phases must contain 2 to 5 items")
-                continue
-            for phase_index, phase in enumerate(phases, start=1):
-                if not isinstance(phase, dict):
-                    issues.append(
-                        f"payload.epics[{epic_index - 1}].phases[{phase_index - 1}] must be an object"
-                    )
-                    continue
-                if not _normalize_text(phase.get("prompt")):
-                    issues.append(
-                        f"payload.epics[{epic_index - 1}].phases[{phase_index - 1}].prompt is required"
-                    )
+def split_payload_issues(mode: CanonicalSplitModeId, payload: dict[str, Any]) -> list[str]:
+    spec = _canonical_mode_spec_or_raise(mode)
+    if not isinstance(payload, dict):
+        return ["payload must be an object"]
+
+    issues: list[str] = []
+    payload_keys = set(payload.keys())
+    for missing_key in sorted(_REQUIRED_TOP_LEVEL_KEYS - payload_keys):
+        issues.append(f"payload.{missing_key} is required")
+    for extra_key in sorted(payload_keys - _REQUIRED_TOP_LEVEL_KEYS):
+        issues.append(f"payload.{extra_key} is not allowed")
+
+    raw_subtasks = payload.get("subtasks")
+    if not isinstance(raw_subtasks, list):
+        if "subtasks" in payload:
+            issues.append("payload.subtasks must be a list")
         return issues
 
-    if mode == "slice":
-        subtasks = payload.get("subtasks")
-        if not isinstance(subtasks, list):
-            return ["payload.subtasks must be a list"]
-        if not 2 <= len(subtasks) <= 10:
-            return ["payload.subtasks must contain 2 to 10 items"]
-        issues = []
-        for index, subtask in enumerate(subtasks, start=1):
-            if not isinstance(subtask, dict):
-                issues.append(f"payload.subtasks[{index - 1}] must be an object")
+    if not spec["min_items"] <= len(raw_subtasks) <= spec["max_items"]:
+        issues.append(f"payload.subtasks must contain {spec['min_items']} to {spec['max_items']} items")
+
+    seen_ids: set[str] = set()
+    for index, subtask in enumerate(raw_subtasks):
+        if not isinstance(subtask, dict):
+            issues.append(f"payload.subtasks[{index}] must be an object")
+            continue
+
+        subtask_keys = set(subtask.keys())
+        for missing_key in sorted(_REQUIRED_SUBTASK_KEYS - subtask_keys):
+            issues.append(f"payload.subtasks[{index}].{missing_key} is required")
+        for extra_key in sorted(subtask_keys - _REQUIRED_SUBTASK_KEYS):
+            issues.append(f"payload.subtasks[{index}].{extra_key} is not allowed")
+
+        normalized_id = ""
+        for field in sorted(_REQUIRED_SUBTASK_KEYS):
+            if field not in subtask:
                 continue
-            if not _normalize_text(subtask.get("prompt")):
-                issues.append(f"payload.subtasks[{index - 1}].prompt is required")
-        return issues
+            value = subtask.get(field)
+            normalized_value = _normalize_text(value)
+            if not normalized_value:
+                issues.append(f"payload.subtasks[{index}].{field} must be a non-empty string")
+                continue
+            if field == "id":
+                normalized_id = normalized_value
 
-    return [f"Unsupported split mode: {mode}"]
+        if normalized_id:
+            if normalized_id in seen_ids:
+                issues.append(f"payload.subtasks[{index}].id must be unique")
+            else:
+                seen_ids.add(normalized_id)
+
+    return issues
 
 
-def build_hidden_retry_feedback(mode: str, issues: list[str]) -> str:
+def build_hidden_retry_feedback(mode: CanonicalSplitModeId, issues: list[str]) -> str:
     issue_lines = issues or ["No valid emit_render_data(kind='split_result', payload=...) tool call was captured."]
-    schema = json.dumps(split_payload_schema_example(mode), indent=2, ensure_ascii=True)
     issue_block = "\n".join(f"- {issue}" for issue in issue_lines)
+    schema = json.dumps(split_payload_schema_example(mode), indent=2, ensure_ascii=True)
     return "\n".join(
         [
             f"The previous {mode} split attempt did not produce a valid split_result payload.",
+            f"Mode count rule: {_mode_count_instruction(mode)}",
             "Fix the structured payload and call emit_render_data before writing your summary.",
             "Validation issues:",
             issue_block,
@@ -237,31 +246,26 @@ def build_hidden_retry_feedback(mode: str, issues: list[str]) -> str:
     )
 
 
-def _ws_generation_schema() -> dict[str, Any]:
-    return {
-        "epics": [
-            {
-                "title": "Epic title",
-                "prompt": "What this epic achieves",
-                "phases": [
-                    {
-                        "prompt": "Phase task",
-                        "definition_of_done": "Done condition",
-                    }
-                ],
-            }
-        ]
-    }
+def _canonical_mode_spec_or_raise(mode: CanonicalSplitModeId | str) -> dict[str, Any]:
+    spec = CANONICAL_SPLIT_MODE_REGISTRY.get(mode)  # type: ignore[arg-type]
+    if spec is None:
+        raise ValueError(f"Unsupported split mode: {mode}")
+    return spec
 
 
-def _slice_generation_schema() -> dict[str, Any]:
+def _mode_count_instruction(mode: CanonicalSplitModeId) -> str:
+    spec = _canonical_mode_spec_or_raise(mode)
+    return f"Generate {spec['min_items']} to {spec['max_items']} ordered subtasks."
+
+
+def _shared_schema_example() -> dict[str, Any]:
     return {
         "subtasks": [
             {
-                "order": 1,
-                "prompt": "Subtask prompt",
-                "risk_reason": "Optional risk",
-                "what_unblocks": "Optional dependency or unblocker",
+                "id": "S1",
+                "title": "Subtask title",
+                "objective": "What this step achieves",
+                "why_now": "Why this should happen now",
             }
         ]
     }
@@ -269,124 +273,42 @@ def _slice_generation_schema() -> dict[str, Any]:
 
 def _strictness_instructions(strictness: str) -> str:
     if strictness == "standard":
-        return (
-            "Keep the decomposition concrete and concise. Respect the item-count limits and return JSON only."
-        )
+        return "Keep the decomposition concrete and concise. Respect the mode's item-count limits and return JSON only."
     if strictness == "guided":
-        return (
-            "Use the exact required keys, stay within the allowed counts, and make every prompt actionable. Return JSON only."
-        )
+        return "Use the exact required keys, stay within the configured count range, and make every subtask actionable. Return JSON only."
     return (
-        "Output ONLY a valid JSON object with the exact top-level keys shown in the schema. No prose, no code fences, no extra keys."
+        "Output ONLY a valid JSON object with exactly one top-level key: subtasks. "
+        "Each subtask must contain exactly id, title, objective, why_now."
     )
 
 
-def _parse_ws_generation_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    raw_epics = payload.get("epics")
-    if not isinstance(raw_epics, list):
+def _parse_canonical_generation_payload(mode: CanonicalSplitModeId, payload: dict[str, Any]) -> dict[str, Any] | None:
+    if set(payload.keys()) != _REQUIRED_TOP_LEVEL_KEYS:
         return None
 
-    epics: list[dict[str, Any]] = []
-    for raw_epic in raw_epics:
-        if not isinstance(raw_epic, dict):
-            return None
-        epics.append(
-            {
-                "title": _normalize_text(raw_epic.get("title")),
-                "prompt": _normalize_text(
-                    raw_epic.get("prompt")
-                    or raw_epic.get("description")
-                    or raw_epic.get("summary")
-                ),
-                "phases": _normalize_ws_phase_collection(raw_epic.get("phases")),
-            }
-        )
-
-    return {"epics": epics}
-
-
-def _normalize_ws_phase_collection(raw_phases: Any) -> list[dict[str, str]]:
-    if isinstance(raw_phases, list):
-        phase_items = raw_phases
-    elif isinstance(raw_phases, dict):
-        ordered_keys = list(raw_phases.keys())
-        if all(isinstance(key, str) and key.upper() in _PHASE_KEYS for key in ordered_keys):
-            ordered_keys = sorted(ordered_keys, key=lambda key: _PHASE_KEYS.index(str(key).upper()))
-        phase_items = [raw_phases[key] for key in ordered_keys]
-    else:
-        return []
-
-    phases: list[dict[str, str]] = []
-    for index, phase_item in enumerate(phase_items[: len(_PHASE_KEYS)]):
-        prompt = ""
-        definition_of_done = ""
-        if isinstance(phase_item, str):
-            prompt = _normalize_text(phase_item)
-        elif isinstance(phase_item, dict):
-            prompt = _normalize_text(
-                phase_item.get("prompt")
-                or phase_item.get("task")
-                or phase_item.get("title")
-            )
-            definition_of_done = _normalize_text(
-                phase_item.get("definition_of_done")
-                or phase_item.get("done")
-                or phase_item.get("definition")
-            )
-        phases.append(
-            {
-                "phase_key": _PHASE_KEYS[index],
-                "prompt": prompt,
-                "definition_of_done": definition_of_done,
-            }
-        )
-
-    return phases
-
-
-def _parse_slice_generation_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     raw_subtasks = payload.get("subtasks")
     if not isinstance(raw_subtasks, list):
         return None
 
-    subtasks = [item for item in raw_subtasks if isinstance(item, (dict, str))]
-    provided_orders = [
-        item.get("order")
-        for item in subtasks
-        if isinstance(item, dict)
-    ]
-    valid_ordering = (
-        len(provided_orders) == len(subtasks)
-        and len(set(provided_orders)) == len(subtasks)
-        and all(isinstance(order, int) and 1 <= order <= len(subtasks) for order in provided_orders)
-    )
-    if valid_ordering:
-        subtasks = sorted(subtasks, key=lambda item: int(item["order"]))  # type: ignore[index]
+    normalized_subtasks: list[dict[str, str]] = []
+    for raw_subtask in raw_subtasks:
+        if not isinstance(raw_subtask, dict):
+            return None
+        if set(raw_subtask.keys()) != _REQUIRED_SUBTASK_KEYS:
+            return None
 
-    normalized: list[dict[str, Any]] = []
-    for index, raw_subtask in enumerate(subtasks, start=1):
-        if isinstance(raw_subtask, str):
-            prompt = _normalize_text(raw_subtask)
-            risk_reason = ""
-            what_unblocks = ""
-        else:
-            prompt = _normalize_text(
-                raw_subtask.get("prompt")
-                or raw_subtask.get("title")
-                or raw_subtask.get("task")
-            )
-            risk_reason = _normalize_text(raw_subtask.get("risk_reason"))
-            what_unblocks = _normalize_text(raw_subtask.get("what_unblocks"))
-        normalized.append(
-            {
-                "order": index,
-                "prompt": prompt,
-                "risk_reason": risk_reason,
-                "what_unblocks": what_unblocks,
-            }
-        )
+        normalized_subtask: dict[str, str] = {}
+        for field in ("id", "title", "objective", "why_now"):
+            value = raw_subtask.get(field)
+            if not isinstance(value, str):
+                return None
+            normalized_subtask[field] = _normalize_text(value)
+        normalized_subtasks.append(normalized_subtask)
 
-    return {"subtasks": normalized}
+    normalized_payload = {"subtasks": normalized_subtasks}
+    if not validate_split_payload(mode, normalized_payload):
+        return None
+    return normalized_payload
 
 
 def _normalize_text(value: Any) -> str:

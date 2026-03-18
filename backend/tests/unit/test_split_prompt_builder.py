@@ -4,20 +4,22 @@ import pytest
 
 from backend.ai.split_prompt_builder import (
     STRICTNESS_LEVELS,
-    build_hidden_retry_feedback,
     build_generation_prompt,
+    build_hidden_retry_feedback,
+    build_planning_base_instructions,
     parse_generation_response,
     split_payload_issues,
     split_payload_schema_example,
     validate_split_payload,
 )
+from backend.split_contract import CANONICAL_SPLIT_MODE_REGISTRY
 
 
-@pytest.mark.parametrize("mode", ["walking_skeleton", "slice"])
+@pytest.mark.parametrize("mode", list(CANONICAL_SPLIT_MODE_REGISTRY))
 @pytest.mark.parametrize("strictness", STRICTNESS_LEVELS)
-def test_build_generation_prompt_includes_context_and_schema(mode: str, strictness: str) -> None:
+def test_build_generation_prompt_includes_context_count_and_shared_schema(mode: str, strictness: str) -> None:
     prompt = build_generation_prompt(
-        mode,
+        mode,  # type: ignore[arg-type]
         {
             "root_prompt": "Ship phase 5",
             "current_node_prompt": "Split the node",
@@ -27,61 +29,128 @@ def test_build_generation_prompt_includes_context_and_schema(mode: str, strictne
         {"failed_criteria": ["parse"], "reasons": ["bad shape"]} if strictness != "standard" else None,
     )
 
+    spec = CANONICAL_SPLIT_MODE_REGISTRY[mode]  # type: ignore[index]
+
     assert f"Planning mode: {mode}." in prompt
     assert "Return exactly one JSON object." in prompt
     assert '"current_node_prompt": "Split the node"' in prompt
+    assert f"{spec['min_items']} to {spec['max_items']}" in prompt
+    assert '"id": "S1"' in prompt
+    assert '"objective"' in prompt
+    assert '"why_now"' in prompt
 
 
-def test_parse_walking_skeleton_response_normalizes_phase_dicts() -> None:
-    payload = parse_generation_response(
-        "walking_skeleton",
-        """```json
+def test_build_planning_base_instructions_mentions_only_canonical_modes() -> None:
+    instructions = build_planning_base_instructions()
+
+    for mode in CANONICAL_SPLIT_MODE_REGISTRY:
+        assert mode in instructions
+    assert "walking_skeleton" not in instructions
+    assert '"id": "S1"' in instructions
+    assert '"why_now"' in instructions
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_intent"),
+    [
+        ("workflow", "workflow-first sequential split"),
+        ("simplify_workflow", "minimum valid core workflow first, then additive reintroduction"),
+        ("phase_breakdown", "phase-based sequential delivery split"),
+        ("agent_breakdown", "conservative non-workflow split when the other shapes are a weak fit"),
+    ],
+)
+def test_build_planning_base_instructions_includes_mode_specific_semantics(
+    mode: str,
+    expected_intent: str,
+) -> None:
+    instructions = build_planning_base_instructions(mode)  # type: ignore[arg-type]
+
+    assert f"Planning mode: {mode}." in instructions
+    assert expected_intent in instructions
+
+
+@pytest.mark.parametrize("mode", list(CANONICAL_SPLIT_MODE_REGISTRY))
+def test_validate_split_payload_accepts_valid_canonical_payload(mode: str) -> None:
+    payload = split_payload_schema_example(mode)  # type: ignore[arg-type]
+
+    assert validate_split_payload(mode, payload) is True  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("mode", "payload"),
+    [
+        ("workflow", {"subtasks": [{"id": "S1", "title": "A", "objective": "B", "why_now": "C"}]}),
+        ("simplify_workflow", {"subtasks": [{"id": f"S{index}", "title": "A", "objective": "B", "why_now": "C"} for index in range(1, 7)]}),
+        ("phase_breakdown", {"subtasks": [{"id": "S1", "title": "A", "objective": "B", "why_now": "C"}]}),
+        ("agent_breakdown", {"subtasks": [{"id": "S1", "title": "A", "objective": "B", "why_now": "C"}]}),
+    ],
+)
+def test_validate_split_payload_enforces_mode_specific_counts(mode: str, payload: dict[str, object]) -> None:
+    assert validate_split_payload(mode, payload) is False  # type: ignore[arg-type]
+
+
+def test_split_payload_issues_rejects_extra_top_level_and_item_keys() -> None:
+    issues = split_payload_issues(
+        "workflow",
         {
-          "epics": [
-            {
-              "title": " Core ",
-              "prompt": " Build backend ",
-              "phases": {
-                "B": {"prompt": " Hook integration ", "definition_of_done": " Connected "},
-                "A": {"prompt": " Scaffold api ", "definition_of_done": " Ready "}
-              }
-            }
-          ]
-        }
-        ```""",
+            "subtasks": [
+                {
+                    "id": "S1",
+                    "title": "Setup",
+                    "objective": "Build setup",
+                    "why_now": "Needed first",
+                    "prompt": "legacy key",
+                }
+            ],
+            "epics": [],
+        },
     )
 
-    assert payload == {
-        "epics": [
-            {
-                "title": "Core",
-                "prompt": "Build backend",
-                "phases": [
-                    {
-                        "phase_key": "A",
-                        "prompt": "Scaffold api",
-                        "definition_of_done": "Ready",
-                    },
-                    {
-                        "phase_key": "B",
-                        "prompt": "Hook integration",
-                        "definition_of_done": "Connected",
-                    },
-                ],
-            }
-        ]
-    }
-    assert validate_split_payload("walking_skeleton", payload) is True
+    assert "payload.epics is not allowed" in issues
+    assert "payload.subtasks[0].prompt is not allowed" in issues
 
 
-def test_parse_slice_response_reorders_valid_orders() -> None:
+def test_split_payload_issues_rejects_missing_blank_and_duplicate_fields() -> None:
+    issues = split_payload_issues(
+        "workflow",
+        {
+            "subtasks": [
+                {
+                    "id": "S1",
+                    "title": "  ",
+                    "objective": "Build setup",
+                    "why_now": "Needed first",
+                },
+                {
+                    "id": "S1",
+                    "title": "Ship",
+                    "objective": "",
+                    "why_now": "Now",
+                },
+                {
+                    "id": "S3",
+                    "title": "Final",
+                    "why_now": "Last",
+                },
+            ]
+        },
+    )
+
+    assert "payload.subtasks[0].title must be a non-empty string" in issues
+    assert "payload.subtasks[1].objective must be a non-empty string" in issues
+    assert "payload.subtasks[1].id must be unique" in issues
+    assert "payload.subtasks[2].objective is required" in issues
+
+
+def test_parse_generation_response_normalizes_exact_canonical_payload() -> None:
     payload = parse_generation_response(
-        "slice",
+        "workflow",
         """
         {
           "subtasks": [
-            {"order": 2, "prompt": "Second", "risk_reason": "r2", "what_unblocks": "u2"},
-            {"order": 1, "prompt": "First", "risk_reason": "r1", "what_unblocks": "u1"}
+            {"id": " S1 ", "title": " Setup ", "objective": " Create workspace ", "why_now": " First step "},
+            {"id": " S2 ", "title": " Build ", "objective": " Implement flow ", "why_now": " Depends on setup "},
+            {"id": " S3 ", "title": " Verify ", "objective": " Confirm output ", "why_now": " Closes the loop "}
           ]
         }
         """,
@@ -89,67 +158,55 @@ def test_parse_slice_response_reorders_valid_orders() -> None:
 
     assert payload == {
         "subtasks": [
-            {"order": 1, "prompt": "First", "risk_reason": "r1", "what_unblocks": "u1"},
-            {"order": 2, "prompt": "Second", "risk_reason": "r2", "what_unblocks": "u2"},
+            {"id": "S1", "title": "Setup", "objective": "Create workspace", "why_now": "First step"},
+            {"id": "S2", "title": "Build", "objective": "Implement flow", "why_now": "Depends on setup"},
+            {"id": "S3", "title": "Verify", "objective": "Confirm output", "why_now": "Closes the loop"},
         ]
     }
-    assert validate_split_payload("slice", payload) is True
 
 
-def test_parse_generation_response_returns_none_for_invalid_text() -> None:
-    assert parse_generation_response("slice", "not json") is None
-
-
-def test_validate_split_payload_enforces_counts() -> None:
+def test_parse_generation_response_rejects_legacy_slice_shape() -> None:
     assert (
-        validate_split_payload(
-            "walking_skeleton",
+        parse_generation_response(
+            "workflow",
+            """
             {
-                "epics": [
-                    {
-                        "title": "Epic",
-                        "prompt": "Build it",
-                        "phases": [{"phase_key": "A", "prompt": "Only one", "definition_of_done": ""}],
-                    }
-                ]
-            },
+              "subtasks": [
+                {"order": 1, "prompt": "First", "risk_reason": "", "what_unblocks": ""}
+              ]
+            }
+            """,
         )
-        is False
+        is None
     )
+
+
+def test_parse_generation_response_rejects_extra_keys_and_invalid_text() -> None:
     assert (
-        validate_split_payload(
-            "slice",
-            {"subtasks": [{"order": 1, "prompt": "Only one", "risk_reason": "", "what_unblocks": ""}]},
+        parse_generation_response(
+            "workflow",
+            """
+            {
+              "subtasks": [
+                {"id": "S1", "title": "A", "objective": "B", "why_now": "C", "extra": "nope"},
+                {"id": "S2", "title": "A", "objective": "B", "why_now": "C"},
+                {"id": "S3", "title": "A", "objective": "B", "why_now": "C"}
+              ]
+            }
+            """,
         )
-        is False
+        is None
     )
+    assert parse_generation_response("workflow", "not json") is None
 
 
-def test_split_payload_issues_describes_missing_fields() -> None:
-    issues = split_payload_issues(
-        "walking_skeleton",
-        {
-            "epics": [
-                {
-                    "title": "",
-                    "prompt": "Build it",
-                    "phases": [{"prompt": ""}, {"prompt": "Phase two"}],
-                }
-            ]
-        },
-    )
-
-    assert "payload.epics[0].title is required" in issues
-    assert "payload.epics[0].phases[0].prompt is required" in issues
-
-
-def test_build_hidden_retry_feedback_includes_schema_and_issues() -> None:
+def test_build_hidden_retry_feedback_includes_schema_issues_and_mode_count() -> None:
     feedback = build_hidden_retry_feedback(
-        "slice",
-        ["payload.subtasks must contain 2 to 10 items"],
+        "workflow",
+        ["payload.subtasks must contain 3 to 7 items"],
     )
 
     assert "Validation issues:" in feedback
-    assert "- payload.subtasks must contain 2 to 10 items" in feedback
-    assert '"subtasks"' in feedback
-    assert split_payload_schema_example("slice")["subtasks"][0]["prompt"] == "Subtask prompt"
+    assert "- payload.subtasks must contain 3 to 7 items" in feedback
+    assert "Generate 3 to 7 ordered subtasks." in feedback
+    assert '"id": "S1"' in feedback

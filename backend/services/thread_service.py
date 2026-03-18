@@ -6,7 +6,8 @@ import time
 from typing import Any
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
-from backend.ai.split_prompt_builder import build_planning_base_instructions, planning_render_tool
+from backend.ai.legacy_split_prompt_builder import build_legacy_planning_base_instructions
+from backend.ai.split_prompt_builder import planning_render_tool
 from backend.errors.app_errors import NodeNotFound, NodeUpdateNotAllowed
 from backend.services.node_task_fields import enrich_nodes_with_task_fields
 from backend.services.tree_service import TreeService
@@ -48,7 +49,7 @@ class ThreadService:
             workspace_root = self._workspace_root_from_snapshot(snapshot)
 
         response = self._codex_client.start_planning_thread(
-            base_instructions=build_planning_base_instructions(),
+            base_instructions=build_legacy_planning_base_instructions(),
             dynamic_tools=[planning_render_tool()],
             cwd=workspace_root,
         )
@@ -480,7 +481,7 @@ class ThreadService:
                 response = self._codex_client.fork_thread(
                     source_thread_id,
                     cwd=workspace_root,
-                    base_instructions=build_planning_base_instructions(),
+                    base_instructions=build_legacy_planning_base_instructions(),
                     dynamic_tools=[planning_render_tool()],
                     timeout_sec=30,
                 )
@@ -600,7 +601,7 @@ class ThreadService:
 
     def _start_planning_thread(self, workspace_root: str | None) -> str:
         response = self._codex_client.start_planning_thread(
-            base_instructions=build_planning_base_instructions(),
+            base_instructions=build_legacy_planning_base_instructions(),
             dynamic_tools=[planning_render_tool()],
             cwd=workspace_root,
         )

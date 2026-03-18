@@ -7,11 +7,11 @@ from uuid import uuid4
 
 from backend.ai.codex_client import CodexAppClient
 from backend.ai.split_context_builder import build_split_context
-from backend.ai.split_prompt_builder import (
-    build_hidden_retry_feedback,
-    build_split_user_message,
-    split_payload_issues,
-    validate_split_payload,
+from backend.ai.legacy_split_prompt_builder import (
+    build_legacy_hidden_retry_feedback,
+    build_legacy_split_user_message,
+    legacy_split_payload_issues,
+    validate_legacy_split_payload,
 )
 from backend.errors.app_errors import InvalidRequest, NodeNotFound, SplitNotAllowed
 from backend.services.agent_operation_service import (
@@ -338,7 +338,7 @@ class SplitService:
             if node is None:
                 raise NodeNotFound(node_id)
             task_context = build_split_context(snapshot, node, node_by_id)
-        return build_split_user_message(mode, task_context)
+        return build_legacy_split_user_message(mode, task_context)
 
     def _execute_split_turn(
         self,
@@ -365,7 +365,7 @@ class SplitService:
         if not planning_thread_id:
             planning_thread_id = self._thread_service.ensure_planning_thread(project_id, node_id)
 
-        user_message = user_message_override or build_split_user_message(mode, task_context)
+        user_message = user_message_override or build_legacy_split_user_message(mode, task_context)
         tool_event_published = False
 
         def on_visible_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
@@ -377,7 +377,7 @@ class SplitService:
             if str(arguments.get("kind") or "") != "split_result":
                 return
             payload = arguments.get("payload")
-            if not isinstance(payload, dict) or not validate_split_payload(mode, payload):
+            if not isinstance(payload, dict) or not validate_legacy_split_payload(mode, payload):
                 return
             tool_call = {
                 "tool_name": tool_name,
@@ -506,7 +506,7 @@ class SplitService:
             if str(arguments.get("kind") or "") != "split_result":
                 continue
             payload = arguments.get("payload")
-            if not isinstance(payload, dict) or not validate_split_payload(mode, payload):
+            if not isinstance(payload, dict) or not validate_legacy_split_payload(mode, payload):
                 continue
             return {
                 "payload": payload,
@@ -544,7 +544,7 @@ class SplitService:
             if not isinstance(payload, dict):
                 issues.append(f"emit_render_data call {index} payload must be an object")
                 continue
-            payload_issues = split_payload_issues(mode, payload)
+            payload_issues = legacy_split_payload_issues(mode, payload)
             if payload_issues:
                 issues.extend(payload_issues)
 
@@ -903,7 +903,7 @@ class SplitService:
 
     def _hidden_retry_prompt(self, mode: str, attempt: int, issues: list[str]) -> str:
         return (
-            f"{build_hidden_retry_feedback(mode, issues)}\n\n"
+            f"{build_legacy_hidden_retry_feedback(mode, issues)}\n\n"
             f"This is hidden retry attempt {attempt}. "
             "Call emit_render_data(kind='split_result', payload=...) with a corrected payload before writing your summary."
         )

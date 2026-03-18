@@ -18,12 +18,12 @@ Legend:
 
 ## Phase 2 - Prompt And Schema Refactor
 
-- [ ] `P2.1` Refactor `backend/ai/split_prompt_builder.py` to registry-driven prompt builders.
-- [ ] `P2.2` Add shared flat-schema example for `flat_subtasks_v1`.
-- [ ] `P2.3` Add shared parser for `subtasks[{id,title,objective,why_now}]`.
-- [ ] `P2.4` Add shared validator that rejects extra keys and old legacy keys.
-- [ ] `P2.5` Move hidden retry feedback to the shared flat-schema contract.
-- [ ] `P2.6` Remove legacy-mode parsing paths from the main split contract.
+- [x] `P2.1` Refactor `backend/ai/split_prompt_builder.py` to registry-driven prompt builders.
+- [x] `P2.2` Add shared flat-schema example for `flat_subtasks_v1`.
+- [x] `P2.3` Add shared parser for `subtasks[{id,title,objective,why_now}]`.
+- [x] `P2.4` Add shared validator that rejects extra keys and old legacy keys.
+- [x] `P2.5` Move hidden retry feedback to the shared flat-schema contract.
+- [x] `P2.6` Remove legacy-mode parsing paths from the main split contract.
 
 ## Phase 3 - Service Output-Family Refactor
 
