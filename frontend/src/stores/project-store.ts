@@ -811,7 +811,12 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
       return
     }
     if (event.type === 'planning_turn_completed' || event.type === 'planning_turn_failed') {
-      set({ isSplittingNode: false, splittingNodeId: null, activePlanningMode: null })
+      set({
+        isSplittingNode: false,
+        splittingNodeId: null,
+        activePlanningMode: null,
+        error: event.type === 'planning_turn_failed' ? event.message : null,
+      })
       void get().loadPlanningHistory(projectId, nodeId)
       void get().resyncNodeArtifacts(nodeId)
       void api

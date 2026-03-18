@@ -320,7 +320,8 @@ def test_split_api_returns_snapshot_with_new_children_for_each_canonical_mode(
     created_children = [nodes[node_id] for node_id in created_child_ids]
 
     assert fake_client.calls
-    assert f"Decompose this node using {spec['label'].lower()} mode." in str(fake_client.calls[0]["prompt"])
+    assert "Runtime context:" in str(fake_client.calls[0]["prompt"])
+    assert "First call emit_render_data(kind='split_result', payload=...)." in str(fake_client.calls[0]["prompt"])
     assert root["planning_mode"] == mode
     assert root["split_metadata"]["mode"] == mode
     assert root["split_metadata"]["output_family"] == "flat_subtasks_v1"
@@ -331,6 +332,35 @@ def test_split_api_returns_snapshot_with_new_children_for_each_canonical_mode(
     assert f"Objective 1 for {mode}" in created_children[0]["description"]
     assert f"Why now: Reason 1 for {mode}" in created_children[0]["description"]
     assert payload["tree_state"]["active_node_id"] == created_child_ids[0]
+
+
+def test_split_api_surfaces_failure_and_does_not_mutate_tree_on_empty_sentinel(client, workspace_root) -> None:
+    project_id, root_id = create_project(client, str(workspace_root))
+    client.app.state.split_service._codex_client = FakeCodexClient(
+        [
+            json.dumps({"subtasks": []}),
+        ]
+    )
+
+    response = client.post(
+        f"/v1/projects/{project_id}/nodes/{root_id}/split",
+        json={"mode": "workflow"},
+    )
+
+    assert response.status_code == 202
+    payload = wait_for_split_completion(client, project_id, root_id)
+    nodes = {node["node_id"]: node for node in payload["tree_state"]["node_registry"]}
+    root = nodes[root_id]
+
+    assert root["planning_mode"] is None
+    assert root["split_metadata"] is None
+    assert root["child_ids"] == []
+
+    history = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/planning/history")
+    assert history.status_code == 200
+    turns = history.json()["turns"]
+    assert turns[-1]["role"] == "assistant"
+    assert "Could not produce a valid split from the parent task and current repo context." in turns[-1]["content"]
 
 
 def test_split_api_allows_locked_node_and_keeps_new_children_locked(client, workspace_root) -> None:

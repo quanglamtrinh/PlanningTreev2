@@ -7,8 +7,6 @@ from uuid import uuid4
 import pytest
 
 from backend.errors.app_errors import SplitNotAllowed
-from backend.services import split_service as split_service_module
-from backend.services.canonical_split_fallback import build_canonical_split_fallback
 from backend.services.project_service import ProjectService
 from backend.services.split_service import SplitService, split_runtime_bundle_for_mode
 from backend.split_contract import CANONICAL_SPLIT_MODE_REGISTRY
@@ -319,8 +317,9 @@ def test_split_runtime_bundle_for_mode_selects_canonical_helpers() -> None:
     assert bundle.output_family == "flat_subtasks_v1"
     assert bundle.validate_payload(_canonical_payload_for_mode("workflow")) is True
     assert bundle.validate_payload({"subtasks": [{"order": 1, "prompt": "legacy"}]}) is False
-    assert "workflow-first sequential split" in bundle.build_user_message(
-        {"current_node_prompt": "Ship workflow", "root_prompt": "Alpha"}
+    assert "Split a parent task into a small set of sequential workflow-based subtasks." in bundle.build_attempt_prompt(
+        {"current_node_prompt": "Ship workflow", "root_prompt": "Alpha"},
+        None,
     )
 
 
@@ -464,6 +463,42 @@ def test_split_service_executes_canonical_mode(
     assert root["split_metadata"]["output_family"] == "flat_subtasks_v1"
 
 
+def test_split_service_accepts_valid_payload_outside_soft_count_range(
+    project_service: ProjectService,
+    storage: Storage,
+    tree_service,
+    workspace_root,
+) -> None:
+    project_id, root_id = create_project(project_service, str(workspace_root))
+
+    service = make_service(
+        storage,
+        tree_service,
+        FakeCodexClient(
+            [
+                json.dumps(
+                    {
+                        "subtasks": [
+                            {
+                                "id": "S1",
+                                "title": "Single workflow proof",
+                                "objective": "Validate the core workflow in one reversible step.",
+                                "why_now": "This is the smallest grounded split the task currently supports.",
+                            }
+                        ]
+                    }
+                )
+            ]
+        ),
+    )
+
+    snapshot = service.split_node(project_id, root_id, "workflow")
+    root = node_by_id(snapshot)[root_id]
+
+    assert root["split_metadata"]["source"] == "ai"
+    assert len(root["split_metadata"]["created_child_ids"]) == 1
+
+
 def test_canonical_split_service_resplit_increments_revision(
     project_service: ProjectService,
     storage: Storage,
@@ -596,7 +631,7 @@ def test_split_service_rejects_resplit_when_descendant_is_done(
         service.split_node(project_id, root_id, "workflow", confirm_replace=True)
 
 
-def test_split_service_falls_back_after_retries_and_restarts_transport(
+def test_split_service_retries_invalid_payload_then_succeeds_without_fallback(
     project_service: ProjectService,
     storage: Storage,
     tree_service,
@@ -605,9 +640,8 @@ def test_split_service_falls_back_after_retries_and_restarts_transport(
     project_id, root_id = create_project(project_service, str(workspace_root))
     fake_client = FakeCodexClient(
         [
-            '{"subtasks": [{"id": "S1", "title": "Only one", "objective": "Only objective", "why_now": "Only why now"}]}',
-            "not json",
-            "still not json",
+            '{"subtasks": [{"id": "S1", "title": "Only one", "objective": "Only objective"}]}',
+            json.dumps(_canonical_payload_for_mode("workflow")),
         ]
     )
     service = make_service(storage, tree_service, fake_client)
@@ -616,13 +650,14 @@ def test_split_service_falls_back_after_retries_and_restarts_transport(
     nodes = node_by_id(snapshot)
     root = nodes[root_id]
 
-    assert len(fake_client.calls) == 3
-    assert root["split_metadata"]["source"] == "fallback"
-    assert "fallback_used" in root["split_metadata"]["warnings"]
+    assert len(fake_client.calls) == 2
+    assert root["split_metadata"]["source"] == "ai"
+    assert root["split_metadata"]["warnings"] == []
     assert len(root["split_metadata"]["created_child_ids"]) == 3
+    assert fake_client.calls[0]["prompt"] == fake_client.calls[1]["prompt"].split("\n\n", 1)[1]
 
 
-def test_canonical_split_service_falls_back_after_retries_without_legacy_helpers(
+def test_split_service_fails_after_retry_exhaustion_without_mutating_snapshot(
     project_service: ProjectService,
     storage: Storage,
     tree_service,
@@ -642,69 +677,46 @@ def test_canonical_split_service_falls_back_after_retries_without_legacy_helpers
         ),
     )
 
-    snapshot = service.split_node(project_id, root_id, "workflow")  # type: ignore[arg-type]
-    nodes = node_by_id(snapshot)
-    root = nodes[root_id]
-    children = [nodes[child_id] for child_id in root["split_metadata"]["created_child_ids"]]
-    first_child_task = storage.node_store.load_task(project_id, children[0]["node_id"])
+    service.split_node(project_id, root_id, "workflow")
+    wait_for_split_completion(storage, project_id, root_id)
 
     assert len(service._service._codex_client.calls) == 3  # type: ignore[attr-defined]
-    assert root["planning_mode"] == "workflow"
-    assert root["split_metadata"]["source"] == "fallback"
-    assert root["split_metadata"]["output_family"] == "flat_subtasks_v1"
-    assert root["split_metadata"]["warnings"] == ["fallback_used"]
-    assert [child["status"] for child in children] == ["ready", "locked", "locked"]
-    assert first_child_task["title"] == "Define the working flow"
-    assert "Why now:" in first_child_task["purpose"]
-
-
-def test_canonical_fallback_payload_is_revalidated_before_apply(
-    project_service: ProjectService,
-    storage: Storage,
-    tree_service,
-    workspace_root,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_id, root_id = create_project(project_service, str(workspace_root))
-
-    monkeypatch.setattr(
-        split_service_module,
-        "build_canonical_split_fallback",
-        lambda mode, task_context: {  # type: ignore[return-value]
-            "subtasks": [
-                {
-                    "id": "S1",
-                    "title": "Invalid canonical fallback",
-                    "objective": "Missing why_now should fail validation",
-                }
-            ]
-        },
-    )
-
-    service = make_service(
-        storage,
-        tree_service,
-        FakeCodexClient(
-            [
-                "not json",
-                "still not json",
-                "still not json",
-            ]
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="Deterministic split fallback produced an invalid payload:"):
-        service._execute_split_turn(
-            project_id=project_id,
-            node_id=root_id,
-            mode="workflow",  # type: ignore[arg-type]
-            confirm_replace=False,
-            turn_id="turn_invalid_canonical_fallback",
-        )
-
     persisted_root = node_by_id(load_snapshot(storage, project_id))[root_id]
     assert persisted_root["planning_mode"] is None
     assert persisted_root["split_metadata"] is None
+    assert persisted_root["child_ids"] == []
+    turns = storage.thread_store.get_planning_turns(project_id, root_id)
+    assert turns[-1]["role"] == "assistant"
+    assert "Split failed because the model did not produce a valid structured split result." in turns[-1]["content"]
+
+
+def test_split_service_treats_empty_subtasks_as_failure_sentinel_without_retry(
+    project_service: ProjectService,
+    storage: Storage,
+    tree_service,
+    workspace_root,
+) -> None:
+    project_id, root_id = create_project(project_service, str(workspace_root))
+    service = make_service(
+        storage,
+        tree_service,
+        FakeCodexClient(
+            [
+                json.dumps({"subtasks": []}),
+            ]
+        ),
+    )
+
+    service.split_node(project_id, root_id, "workflow")
+    wait_for_split_completion(storage, project_id, root_id)
+
+    assert len(service._service._codex_client.calls) == 1  # type: ignore[attr-defined]
+    persisted_root = node_by_id(load_snapshot(storage, project_id))[root_id]
+    assert persisted_root["planning_mode"] is None
+    assert persisted_root["split_metadata"] is None
+    turns = storage.thread_store.get_planning_turns(project_id, root_id)
+    assert turns[-1]["role"] == "assistant"
+    assert "Could not produce a valid split from the parent task and current repo context." in turns[-1]["content"]
 
 
 def test_canonical_apply_split_payload_keeps_parent_metadata_empty_when_snapshot_save_fails(

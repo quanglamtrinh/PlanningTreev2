@@ -778,6 +778,40 @@ describe('project-store', () => {
     expect(useProjectStore.getState().activePlanningMode).toBeNull()
   })
 
+  it('surfaces planning_turn_failed in the error banner state and clears split busy markers', async () => {
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      activeProjectId: 'project-1',
+      snapshot: makeSnapshot(),
+      selectedNodeId: 'root',
+      isSplittingNode: true,
+      splittingNodeId: 'root',
+      activePlanningMode: 'workflow',
+    })
+    apiMock.getPlanningHistory.mockResolvedValue({ node_id: 'root', turns: [] })
+    apiMock.getSnapshot.mockResolvedValue(makeSnapshot())
+
+    await act(async () => {
+      useProjectStore.getState().applyPlanningEvent('project-1', 'root', {
+        type: 'planning_turn_failed',
+        node_id: 'root',
+        turn_id: 'turn-1',
+        message: 'Split failed because the model did not produce a valid structured split result.',
+        timestamp: '2026-03-07T10:06:00Z',
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const state = useProjectStore.getState()
+    expect(state.isSplittingNode).toBe(false)
+    expect(state.splittingNodeId).toBeNull()
+    expect(state.activePlanningMode).toBeNull()
+    expect(state.error).toBe('Split failed because the model did not produce a valid structured split result.')
+    expect(apiMock.getPlanningHistory).toHaveBeenCalledWith('project-1', 'root')
+    expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-1')
+  })
+
   it('clearPlanningState clears planning cache and in-progress markers', () => {
     useProjectStore.setState({
       ...useProjectStore.getInitialState(),

@@ -11,8 +11,9 @@ from uuid import uuid4
 from backend.ai.codex_client import CodexAppClient
 from backend.ai.split_context_builder import build_split_context
 from backend.ai.split_prompt_builder import (
+    build_split_attempt_prompt,
     build_hidden_retry_feedback,
-    build_split_user_message,
+    is_failure_sentinel_payload,
     split_payload_issues,
     validate_split_payload,
 )
@@ -32,7 +33,6 @@ from backend.services.agent_operation_service import (
     clear_last_agent_failure,
     set_last_agent_failure,
 )
-from backend.services.canonical_split_fallback import build_canonical_split_fallback
 from backend.services.node_task_fields import enrich_nodes_with_task_fields
 from backend.services.planning_conversation_adapter import (
     build_planning_split_summary,
@@ -46,6 +46,8 @@ from backend.storage.storage import Storage
 from backend.streaming.sse_broker import PlanningEventBroker
 
 _RETRY_LIMIT = 2
+_INVALID_SPLIT_RESULT_MESSAGE = "Split failed because the model did not produce a valid structured split result."
+_INSUFFICIENT_SPLIT_CONTEXT_MESSAGE = "Could not produce a valid split from the parent task and current repo context."
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +55,18 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class SplitRuntimeBundle:
     output_family: ServiceSplitOutputFamily
-    build_user_message: Callable[[dict[str, Any]], str]
+    build_attempt_prompt: Callable[[dict[str, Any], str | None], str]
     validate_payload: Callable[[dict[str, Any]], bool]
     payload_issues: Callable[[dict[str, Any]], list[str]]
     build_hidden_retry_feedback: Callable[[list[str]], str]
+    is_failure_sentinel: Callable[[dict[str, Any]], bool]
+
+
+@dataclass(frozen=True)
+class ResolvedSplitPayload:
+    payload: dict[str, Any]
+    tool_calls: list[dict[str, Any]]
+    is_failure_sentinel: bool
 
 
 def split_runtime_bundle_for_mode(mode: ServiceSplitMode) -> SplitRuntimeBundle:
@@ -64,10 +74,15 @@ def split_runtime_bundle_for_mode(mode: ServiceSplitMode) -> SplitRuntimeBundle:
     canonical_mode = cast(CanonicalSplitModeId, mode)
     return SplitRuntimeBundle(
         output_family=output_family,
-        build_user_message=lambda task_context, mode=canonical_mode: build_split_user_message(mode, task_context),
+        build_attempt_prompt=lambda task_context, retry_feedback=None, mode=canonical_mode: build_split_attempt_prompt(
+            mode,
+            task_context,
+            retry_feedback,
+        ),
         validate_payload=lambda payload, mode=canonical_mode: validate_split_payload(mode, payload),
         payload_issues=lambda payload, mode=canonical_mode: split_payload_issues(mode, payload),
         build_hidden_retry_feedback=lambda issues, mode=canonical_mode: build_hidden_retry_feedback(mode, issues),
+        is_failure_sentinel=lambda payload, mode=canonical_mode: is_failure_sentinel_payload(mode, payload),
     )
 
 
@@ -373,7 +388,7 @@ class SplitService:
             if node is None:
                 raise NodeNotFound(node_id)
             task_context = build_split_context(snapshot, node, node_by_id)
-        return self._runtime_bundle(mode).build_user_message(task_context)
+        return self._visible_split_request(mode, task_context)
 
     def _execute_split_turn(
         self,
@@ -401,7 +416,8 @@ class SplitService:
             planning_thread_id = self._thread_service.ensure_planning_thread(project_id, node_id)
 
         bundle = self._runtime_bundle(mode)
-        user_message = user_message_override or bundle.build_user_message(task_context)
+        visible_user_message = user_message_override or self._visible_split_request(mode, task_context)
+        hidden_prompt = bundle.build_attempt_prompt(task_context, None)
         tool_event_published = False
 
         def on_visible_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
@@ -413,7 +429,11 @@ class SplitService:
             if str(arguments.get("kind") or "") != "split_result":
                 return
             payload = arguments.get("payload")
-            if not isinstance(payload, dict) or not bundle.validate_payload(payload):
+            if (
+                not isinstance(payload, dict)
+                or not bundle.validate_payload(payload)
+                or bundle.is_failure_sentinel(payload)
+            ):
                 return
             tool_call = {
                 "tool_name": tool_name,
@@ -427,7 +447,7 @@ class SplitService:
             tool_event_published = True
 
         response = self._codex_client.run_turn_streaming(
-            user_message,
+            hidden_prompt,
             thread_id=planning_thread_id,
             timeout_sec=self._split_timeout,
             cwd=workspace_root,
@@ -435,33 +455,45 @@ class SplitService:
         )
         resolved = self._resolve_tool_payload(mode, response.get("tool_calls", []))
         assistant_content = str(response.get("stdout", ""))
-        issues = self._tool_payload_issues(mode, response.get("tool_calls", []))
+        issues = self._tool_payload_issues(mode, response.get("tool_calls", [])) if resolved is None else []
 
+        if resolved is not None and resolved.is_failure_sentinel:
+            raise RuntimeError(_INSUFFICIENT_SPLIT_CONTEXT_MESSAGE)
+
+        resolved_result: dict[str, Any] | None = None
         if resolved is None:
-            resolved = self._retry_hidden_split_turns(
+            resolved_result = self._retry_hidden_split_turns(
                 project_id=project_id,
                 node_id=node_id,
                 mode=mode,
                 planning_thread_id=planning_thread_id,
                 workspace_root=workspace_root,
+                task_context=task_context,
                 issues=issues,
             )
-            if resolved is not None:
-                assistant_content = str(resolved.get("assistant_content") or assistant_content)
+            if resolved_result is not None:
+                assistant_content = str(resolved_result.get("assistant_content") or assistant_content)
 
-        fallback_used = False
-        if resolved is None:
-            resolved = self._validated_fallback_resolution(mode, bundle, task_context)
-            assistant_content = "I could not produce a valid structured split, so I applied the deterministic fallback split."
-            fallback_used = True
+        if resolved is None and resolved_result is None:
+            raise RuntimeError(_INVALID_SPLIT_RESULT_MESSAGE)
+
+        if resolved_result is None:
+            resolved_result = {
+                "payload": resolved.payload,
+                "tool_calls": resolved.tool_calls,
+                "is_failure_sentinel": resolved.is_failure_sentinel,
+            }
+
+        if resolved_result["is_failure_sentinel"]:
+            raise RuntimeError(_INSUFFICIENT_SPLIT_CONTEXT_MESSAGE)
 
         creation = self._apply_split_payload(
             project_id=project_id,
             node_id=node_id,
             mode=mode,
             confirm_replace=confirm_replace,
-            payload=resolved["payload"],
-            source="fallback" if fallback_used else "ai",
+            payload=resolved_result["payload"],
+            source="ai",
             task_context=task_context,
         )
 
@@ -469,8 +501,8 @@ class SplitService:
             project_id,
             node_id,
             turn_id=turn_id,
-            user_content=user_message,
-            tool_calls=resolved["tool_calls"],
+            user_content=visible_user_message,
+            tool_calls=resolved_result["tool_calls"],
             assistant_content=assistant_content,
             timestamp=creation["timestamp"],
         )
@@ -480,11 +512,11 @@ class SplitService:
             self._thread_service.fork_planning_thread(project_id, node_id, first_leaf_id)
 
         return {
-            "user_message": user_message,
-            "tool_calls": resolved["tool_calls"],
+            "user_message": visible_user_message,
+            "tool_calls": resolved_result["tool_calls"],
             "assistant_content": assistant_content,
             "timestamp": creation["timestamp"],
-            "fallback_used": fallback_used,
+            "fallback_used": False,
             "created_child_ids": creation["created_child_ids"],
             "tool_event_published": tool_event_published,
         }
@@ -497,19 +529,28 @@ class SplitService:
         mode: ServiceSplitMode,
         planning_thread_id: str,
         workspace_root: str | None,
+        task_context: dict[str, Any],
         issues: list[str],
     ) -> dict[str, Any] | None:
+        bundle = self._runtime_bundle(mode)
         for attempt in range(_RETRY_LIMIT):
             response = self._codex_client.run_turn_streaming(
-                self._hidden_retry_prompt(mode, attempt + 1, issues),
+                bundle.build_attempt_prompt(
+                    task_context,
+                    bundle.build_hidden_retry_feedback(issues),
+                ),
                 thread_id=planning_thread_id,
                 timeout_sec=self._split_timeout,
                 cwd=workspace_root,
             )
             resolved = self._resolve_tool_payload(mode, response.get("tool_calls", []))
             if resolved is not None:
-                resolved["assistant_content"] = str(response.get("stdout", ""))
-                return resolved
+                return {
+                    "payload": resolved.payload,
+                    "tool_calls": resolved.tool_calls,
+                    "assistant_content": str(response.get("stdout", "")),
+                    "is_failure_sentinel": resolved.is_failure_sentinel,
+                }
             issues = self._tool_payload_issues(mode, response.get("tool_calls", []))
             logger.warning(
                 "emit_render_data validation failed, retrying project=%s node=%s attempt=%s issues=%s",
@@ -524,7 +565,7 @@ class SplitService:
         self,
         mode: ServiceSplitMode,
         tool_calls: Any,
-    ) -> dict[str, Any] | None:
+    ) -> ResolvedSplitPayload | None:
         bundle = self._runtime_bundle(mode)
         if not isinstance(tool_calls, list):
             return None
@@ -541,10 +582,11 @@ class SplitService:
             payload = arguments.get("payload")
             if not isinstance(payload, dict) or not bundle.validate_payload(payload):
                 continue
-            return {
-                "payload": payload,
-                "tool_calls": [self._render_tool_call(payload)],
-            }
+            return ResolvedSplitPayload(
+                payload=payload,
+                tool_calls=[self._render_tool_call(payload)],
+                is_failure_sentinel=bundle.is_failure_sentinel(payload),
+            )
         return None
 
     def _tool_payload_issues(
@@ -583,23 +625,6 @@ class SplitService:
                 issues.extend(payload_issues)
 
         return issues or ["emit_render_data was captured but the payload was still invalid."]
-
-    def _validated_fallback_resolution(
-        self,
-        mode: ServiceSplitMode,
-        bundle: SplitRuntimeBundle,
-        task_context: dict[str, Any],
-    ) -> dict[str, Any]:
-        payload = self._deterministic_fallback(mode, task_context)
-        issues = bundle.payload_issues(payload)
-        if issues:
-            raise RuntimeError(
-                "Deterministic split fallback produced an invalid payload: " + "; ".join(issues)
-            )
-        return {
-            "payload": payload,
-            "tool_calls": [self._render_tool_call(payload)],
-        }
 
     def _apply_split_payload(
         self,
@@ -650,7 +675,6 @@ class SplitService:
                     "warnings": _dedupe_warnings(
                         [
                             "parent_chain_truncated" if task_context.get("parent_chain_truncated") else None,
-                            "fallback_used" if source == "fallback" else None,
                         ]
                     ),
                     "created_child_ids": created_child_ids,
@@ -878,13 +902,12 @@ class SplitService:
             "payload": arguments.get("payload") if isinstance(arguments, dict) else None,
         }
 
-    def _hidden_retry_prompt(self, mode: ServiceSplitMode, attempt: int, issues: list[str]) -> str:
-        bundle = self._runtime_bundle(mode)
-        return (
-            f"{bundle.build_hidden_retry_feedback(issues)}\n\n"
-            f"This is hidden retry attempt {attempt}. "
-            "Call emit_render_data(kind='split_result', payload=...) with a corrected payload before writing your summary."
-        )
+    def _visible_split_request(self, mode: ServiceSplitMode, task_context: dict[str, Any]) -> str:
+        mode_label = CANONICAL_SPLIT_MODE_REGISTRY[cast(CanonicalSplitModeId, mode)]["label"]
+        parent_task = str(task_context.get("current_node_prompt") or "").strip()
+        if parent_task:
+            return f'Split "{parent_task}" using {mode_label} mode.'
+        return f"Split this node using {mode_label} mode."
 
     def _workspace_root_from_snapshot(self, snapshot: dict[str, Any]) -> str | None:
         project = snapshot.get("project", {})
@@ -908,13 +931,6 @@ class SplitService:
         if not isinstance(tree, dict):
             return False
         return node_id in self._tree_service.node_index(tree)
-
-    def _deterministic_fallback(
-        self,
-        mode: ServiceSplitMode,
-        task_context: dict[str, Any],
-    ) -> dict[str, Any]:
-        return build_canonical_split_fallback(cast(CanonicalSplitModeId, mode), task_context)
 
     def _mark_live_turn(self, project_id: str, node_id: str) -> None:
         with self._live_turns_lock:

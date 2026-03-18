@@ -23,9 +23,9 @@ def test_canonical_split_mode_registry_contains_all_supported_modes() -> None:
     ("mode", "min_items", "max_items"),
     [
         ("workflow", 3, 7),
-        ("simplify_workflow", 2, 5),
-        ("phase_breakdown", 3, 6),
-        ("agent_breakdown", 4, 7),
+        ("simplify_workflow", 2, 6),
+        ("phase_breakdown", 2, 5),
+        ("agent_breakdown", 2, 6),
     ],
 )
 def test_canonical_split_mode_registry_preserves_metadata(
