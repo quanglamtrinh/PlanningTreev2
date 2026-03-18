@@ -15,6 +15,21 @@ from backend.ai.split_prompt_builder import (
 from backend.split_contract import CANONICAL_SPLIT_MODE_REGISTRY
 
 
+def _valid_payload_for_mode(mode: str) -> dict[str, object]:
+    spec = CANONICAL_SPLIT_MODE_REGISTRY[mode]  # type: ignore[index]
+    subtasks = []
+    for index in range(1, spec["min_items"] + 1):
+        subtasks.append(
+            {
+                "id": f"S{index}",
+                "title": f"Subtask {index}",
+                "objective": f"What step {index} achieves",
+                "why_now": f"Why step {index} happens now",
+            }
+        )
+    return {"subtasks": subtasks}
+
+
 @pytest.mark.parametrize("mode", list(CANONICAL_SPLIT_MODE_REGISTRY))
 @pytest.mark.parametrize("strictness", STRICTNESS_LEVELS)
 def test_build_generation_prompt_includes_context_count_and_shared_schema(mode: str, strictness: str) -> None:
@@ -26,7 +41,7 @@ def test_build_generation_prompt_includes_context_count_and_shared_schema(mode: 
             "parent_chain_prompts": ["Root goal"],
         },
         strictness,
-        {"failed_criteria": ["parse"], "reasons": ["bad shape"]} if strictness != "standard" else None,
+        "Validation issues:\n- bad shape" if strictness != "standard" else None,
     )
 
     spec = CANONICAL_SPLIT_MODE_REGISTRY[mode]  # type: ignore[index]
@@ -38,6 +53,7 @@ def test_build_generation_prompt_includes_context_count_and_shared_schema(mode: 
     assert '"id": "S1"' in prompt
     assert '"objective"' in prompt
     assert '"why_now"' in prompt
+    assert '"id": "S2"' not in prompt
 
 
 def test_build_planning_base_instructions_mentions_only_canonical_modes() -> None:
@@ -71,9 +87,23 @@ def test_build_planning_base_instructions_includes_mode_specific_semantics(
 
 @pytest.mark.parametrize("mode", list(CANONICAL_SPLIT_MODE_REGISTRY))
 def test_validate_split_payload_accepts_valid_canonical_payload(mode: str) -> None:
-    payload = split_payload_schema_example(mode)  # type: ignore[arg-type]
+    payload = _valid_payload_for_mode(mode)
 
     assert validate_split_payload(mode, payload) is True  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("mode", list(CANONICAL_SPLIT_MODE_REGISTRY))
+def test_split_payload_schema_example_is_shared_one_item_shape(mode: str) -> None:
+    assert split_payload_schema_example(mode) == {
+        "subtasks": [
+            {
+                "id": "S1",
+                "title": "Subtask title",
+                "objective": "What this step achieves",
+                "why_now": "Why this should happen now",
+            }
+        ]
+    }
 
 
 @pytest.mark.parametrize(

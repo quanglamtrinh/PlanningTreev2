@@ -25,7 +25,7 @@ def test_legacy_build_generation_prompt_includes_context_and_schema(mode: str, s
             "parent_chain_prompts": ["Root goal"],
         },
         strictness,
-        {"failed_criteria": ["parse"], "reasons": ["bad shape"]} if strictness != "standard" else None,
+        "Validation issues:\n- bad shape" if strictness != "standard" else None,
     )
 
     assert f"Planning mode: {mode}." in prompt

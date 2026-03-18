@@ -114,7 +114,7 @@ def build_generation_prompt(
     mode: CanonicalSplitModeId,
     task_context: dict[str, Any],
     strictness: str,
-    retry_feedback: dict[str, Any] | None,
+    retry_feedback: str | None,
 ) -> str:
     _canonical_mode_spec_or_raise(mode)
     if strictness not in STRICTNESS_LEVELS:
@@ -140,7 +140,7 @@ def build_generation_prompt(
         prompt_parts.extend(
             [
                 "The previous attempt failed validation.",
-                json.dumps(retry_feedback, indent=2, ensure_ascii=True),
+                retry_feedback,
                 "Fix the issues and return a JSON object that matches the required structure exactly.",
             ]
         )
@@ -161,18 +161,8 @@ def validate_split_payload(mode: CanonicalSplitModeId, payload: dict[str, Any]) 
 
 
 def split_payload_schema_example(mode: CanonicalSplitModeId) -> dict[str, Any]:
-    spec = _canonical_mode_spec_or_raise(mode)
-    subtasks = []
-    for index in range(1, spec["min_items"] + 1):
-        subtasks.append(
-            {
-                "id": f"S{index}",
-                "title": f"Subtask {index}",
-                "objective": f"What step {index} achieves",
-                "why_now": f"Why step {index} happens now",
-            }
-        )
-    return {"subtasks": subtasks}
+    _canonical_mode_spec_or_raise(mode)
+    return _shared_schema_example()
 
 
 def split_payload_issues(mode: CanonicalSplitModeId, payload: dict[str, Any]) -> list[str]:

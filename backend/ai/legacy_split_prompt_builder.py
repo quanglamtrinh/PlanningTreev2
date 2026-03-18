@@ -84,7 +84,7 @@ def build_legacy_generation_prompt(
     mode: TemporaryLegacyRouteModeId,
     task_context: dict[str, Any],
     strictness: str,
-    retry_feedback: dict[str, Any] | None,
+    retry_feedback: str | None,
 ) -> str:
     if mode not in {"walking_skeleton", "slice"}:
         raise ValueError(f"Unsupported split mode: {mode}")
@@ -118,7 +118,7 @@ def build_legacy_generation_prompt(
         prompt_parts.extend(
             [
                 "The previous attempt failed validation.",
-                json.dumps(retry_feedback, indent=2, ensure_ascii=True),
+                retry_feedback,
                 "Fix the issues and return a JSON object that matches the required structure exactly.",
             ]
         )
