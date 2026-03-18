@@ -87,23 +87,12 @@ export function PlanningConversationPanel({
   bootstrapStatus,
   bootstrapError,
 }: Props) {
-  const splitNode = useProjectStore((state) => state.splitNode)
-  const snapshot = useProjectStore((state) => state.snapshot)
   const isSplittingNode = useProjectStore((state) => state.isSplittingNode)
   const splittingNodeId = useProjectStore((state) => state.splittingNodeId)
   const model = useMemo(
     () => buildConversationRenderModel(conversation?.snapshot ?? null),
     [conversation?.snapshot],
   )
-
-  const activeChildren = useMemo(() => {
-    if (!snapshot) {
-      return []
-    }
-    return node.child_ids
-      .map((childId) => snapshot.tree_state.node_registry.find((item) => item.node_id === childId) ?? null)
-      .filter((child) => Boolean(child && !child.is_superseded))
-  }, [node.child_ids, snapshot])
 
   const hasLivePlanningConversationActivity = deriveConversationBusy(conversation?.snapshot)
   const optimisticBusy = isSplittingNode && splittingNodeId === node.node_id
@@ -117,7 +106,6 @@ export function PlanningConversationPanel({
       conversation.connectionStatus === 'connecting'
     : bootstrapStatus !== 'error'
   const errorMessage = !hasConversation ? bootstrapError : conversation.error
-  const canSplit = !isBusy && !node.is_superseded && node.status !== 'done'
 
   const splitFailure = documents?.state?.last_agent_failure?.operation === 'split'
     ? documents.state.last_agent_failure
@@ -161,21 +149,6 @@ export function PlanningConversationPanel({
     />
   ) : null
 
-  async function handleSplit(mode: 'walking_skeleton' | 'slice') {
-    let confirmReplace = false
-    if (activeChildren.length > 0) {
-      confirmReplace = window.confirm("This will replace the node's current active children. Continue?")
-      if (!confirmReplace) {
-        return
-      }
-    }
-    try {
-      await splitNode(node.node_id, mode, confirmReplace)
-    } catch {
-      return
-    }
-  }
-
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
@@ -201,17 +174,8 @@ export function PlanningConversationPanel({
         errorMessage={errorMessage}
         showHeader={false}
         emptyTitle="Planning conversation"
-        emptyHint="Use a split action below to start a planning turn for this node."
+        emptyHint="Use the graph node menu to start a planning turn for this node."
       />
-
-      <div className={styles.actions}>
-        <button type="button" disabled={!canSplit} onClick={() => void handleSplit('walking_skeleton')}>
-          Walking Skeleton
-        </button>
-        <button type="button" disabled={!canSplit} onClick={() => void handleSplit('slice')}>
-          Slice
-        </button>
-      </div>
     </div>
   )
 }

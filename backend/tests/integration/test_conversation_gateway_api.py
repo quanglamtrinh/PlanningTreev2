@@ -433,7 +433,7 @@ def test_get_planning_conversation_route_normalizes_visible_planning_transcript(
             {
                 "turn_id": "turn_split_1",
                 "role": "user",
-                "content": "Split this node into slices.",
+                "content": "Split this node into workflow steps.",
                 "is_inherited": False,
                 "origin_node_id": node_id,
                 "timestamp": "2026-03-15T00:00:01Z",
@@ -446,8 +446,18 @@ def test_get_planning_conversation_route_normalizes_visible_planning_transcript(
                     "kind": "split_result",
                     "payload": {
                         "subtasks": [
-                            {"order": 1, "prompt": "Setup repo"},
-                            {"order": 2, "prompt": "Wire planning host"},
+                            {
+                                "id": "S1",
+                                "title": "Setup repo",
+                                "objective": "Prepare the repo and toolchain.",
+                                "why_now": "This unlocks the rest of the workflow.",
+                            },
+                            {
+                                "id": "S2",
+                                "title": "Wire planning host",
+                                "objective": "Connect the host to the planning flow.",
+                                "why_now": "This follows once the repo foundation is ready.",
+                            },
                         ]
                     },
                 },
@@ -497,7 +507,7 @@ def test_get_planning_conversation_route_includes_normalized_runtime_input_reque
             {
                 "turn_id": "turn_plan_1",
                 "role": "user",
-                "content": "Split this node into slices.",
+                "content": "Split this node into workflow steps.",
                 "is_inherited": False,
                 "origin_node_id": node_id,
                 "timestamp": "2026-03-15T00:00:01Z",
@@ -614,11 +624,11 @@ def test_planning_events_route_translates_planning_broker_events_to_normalized_s
                 "type": "planning_turn_started",
                 "node_id": node_id,
                 "turn_id": "turn_1",
-                "mode": "slice",
+                "mode": "workflow",
                 "timestamp": "2026-03-15T00:00:01Z",
                 "conversation_id": conversation_id,
                 "stream_id": "planning_stream:turn_1",
-                "user_content": "Split this node into slices.",
+                "user_content": "Split this node into workflow steps.",
                 "user_event_seq": 1,
                 "assistant_event_seq": 2,
             },
@@ -982,7 +992,12 @@ def test_execution_conversation_persists_tool_call_parts_and_streams_passive_too
                     "kind": "split_result",
                     "payload": {
                         "subtasks": [
-                            {"order": 1, "prompt": "Setup repo"},
+                            {
+                                "id": "S1",
+                                "title": "Setup repo",
+                                "objective": "Prepare the repo for execution work.",
+                                "why_now": "This is the first step in the execution flow.",
+                            },
                         ]
                     },
                 },

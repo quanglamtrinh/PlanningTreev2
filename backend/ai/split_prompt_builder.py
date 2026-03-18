@@ -3,10 +3,252 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from backend.ai.json_extract import extract_first_json_object
+from backend.split_contract import CANONICAL_SPLIT_MODE_REGISTRY, CanonicalSplitModeId
 
-STRICTNESS_LEVELS = ["standard", "guided", "strict"]
-_PHASE_KEYS = ["A", "B", "C", "D", "E"]
+_REQUIRED_TOP_LEVEL_KEYS = {"subtasks"}
+_REQUIRED_SUBTASK_KEYS = {"id", "title", "objective", "why_now"}
+
+_MODE_PROMPT_BODIES: dict[CanonicalSplitModeId, str] = {
+    "workflow": """
+You are a decomposition agent working inside an existing repository.
+
+Task:
+Split a parent task into a small set of sequential workflow-based subtasks.
+
+Goal:
+Produce a workflow-first split that is easy for the user to review and easy for the next step to turn into a child spec.
+
+Important:
+- The source input is a parent task, not a parent spec.
+- Do not ask clarification questions.
+- Do not implement anything.
+- Do not redesign the project.
+- Do not invent requirements that are not grounded in the parent task, repository context, or locked constraints.
+- Do not output internal reasoning.
+- Return only the information the user needs to see.
+
+Context:
+- The parent task, repository context, and locked constraints are the source of truth.
+- Follow the repository's existing conventions and structure.
+- Respect constraints already present in AGENTS.md and local repo guidance.
+- Because there is no parent spec yet, prefer conservative boundaries and low-blast-radius sequencing.
+
+Rules:
+1. Split by workflow or outcome first, not by technical layers.
+2. Keep subtasks sequential and dependency-aware.
+3. Prefer the golden path first.
+4. Keep the number of subtasks small but sufficient.
+5. Each subtask must have one clear outcome and one clear boundary.
+6. Do not split into tiny implementation chores.
+7. Do not merge unrelated workflows into one subtask.
+8. Defer local implementation details to the future child spec.
+9. Preserve all locked requirements.
+10. Each subtask must be specific enough for a child spec to be created next.
+11. Do not restate the parent task as a single broad subtask.
+12. If workflow split is a weak fit, still produce the best possible workflow-first split without asking questions.
+13. If the parent task is underspecified, prefer reversible and low-risk workflow boundaries rather than guessing hidden product decisions.
+
+Good subtask:
+- a meaningful user-visible, operator-visible, or system-validating outcome
+- narrow enough to stand on its own
+- clearly placed in sequence
+- ready for child-spec creation
+
+Avoid:
+- frontend/backend/database split unless workflow split is clearly impossible
+- vague buckets like "core system", "polish", or "misc"
+- tiny tasks like "create button", "add API route", or "write schema"
+- implementation plans, code suggestions, or architecture rewrites
+""".strip(),
+    "simplify_workflow": """
+You are a decomposition agent working inside an existing repository.
+
+Task:
+Simplify a parent task into a sequential set of child subtasks.
+
+Goal:
+Identify the smallest core workflow that still proves the task is real, then add the remaining parts back step by step in the best order for downstream child-spec creation.
+
+Important:
+- The source input is a parent task, not a parent spec.
+- Do not ask clarification questions.
+- Do not implement anything.
+- Do not redesign the project.
+- Do not invent requirements that are not grounded in the parent task, repository context, or locked constraints.
+- Do not output internal reasoning.
+- Return only the information the user needs to see.
+
+Context:
+- The parent task, repository context, and locked constraints are the source of truth.
+- Follow the repository's existing conventions and structure.
+- Respect constraints already present in AGENTS.md and local repo guidance.
+- Because there is no parent spec yet, prefer conservative boundaries and low-blast-radius sequencing.
+
+Rules:
+1. Preserve the parent task's real product meaning.
+2. Find the smallest version of the task that still validates the core outcome.
+3. Remove supporting parts that are not required to prove the core workflow.
+4. Add deferred parts back in a dependency-aware sequence.
+5. Prefer earlier steps that unlock learning, validation, and future child specs.
+6. Keep the number of subtasks small but sufficient.
+7. Each subtask must have one clear outcome and one clear boundary.
+8. Do not split into tiny implementation chores.
+9. Do not split by technical layers unless simplification clearly cannot be expressed as workflow steps.
+10. Defer local implementation details to the future child spec.
+11. Preserve all locked requirements.
+12. Do not restate the parent task as a single broad subtask.
+13. If the parent task is underspecified, prefer reversible and low-risk simplifications rather than guessing hidden product decisions.
+
+Definition of core workflow:
+A core workflow is the smallest end-to-end version that still proves the essential user-visible or system-validating outcome of the parent task.
+It must not remove something that changes the nature of the task.
+It may temporarily omit supporting concerns such as auth, analytics, logging, admin controls, polish, resilience, or hardening if the task remains meaningfully valid without them.
+
+Good subtask:
+- a meaningful outcome, not a component
+- specific enough for a child spec to be written next
+- clearly placed in the additive sequence
+- adds one coherent omitted part back into the workflow
+
+Avoid:
+- vague buckets like "core", "extras", or "polish"
+- frontend/backend/database split unless necessary
+- tiny chores like "add button", "create table", or "make endpoint"
+- speculative future-proofing
+- implementation plans or architecture rewrites
+""".strip(),
+    "phase_breakdown": """
+You are a decomposition agent working inside an existing repository.
+
+Task:
+Break a parent task into a small set of sequential implementation phases.
+
+Goal:
+Produce a phase-based split that is easy for the user to review and easy for the next step to turn into a child spec.
+
+Important:
+- The source input is a parent task, not a parent spec.
+- Do not ask clarification questions.
+- Do not implement anything.
+- Do not redesign the project.
+- Do not invent requirements that are not grounded in the parent task, repository context, or locked constraints.
+- Do not output internal reasoning.
+- Return only the information the user needs to see.
+
+Context:
+- The parent task, repository context, and locked constraints are the source of truth.
+- Follow the repository's existing conventions and structure.
+- Respect constraints already present in AGENTS.md and local repo guidance.
+- Because there is no parent spec yet, prefer conservative boundaries and low-blast-radius sequencing.
+
+Rules:
+1. Split by delivery phase, not by technical layer.
+2. Use the fewest phases that still meaningfully reduce risk and improve execution clarity.
+3. Phase 1 must prove the shape of the target workflow with the lowest reasonable blast radius.
+4. Later phases must add realism, replace temporary paths, and harden behavior in dependency order.
+5. Do not force a fixed template; use only the phases this parent task actually needs.
+6. Prefer end-to-end validation earlier and deeper completeness later.
+7. Keep phases sequential and dependency-aware.
+8. Each phase must have one clear purpose and one clear boundary.
+9. Do not split into tiny implementation chores.
+10. Preserve all locked requirements.
+11. Defer local implementation details to the future child spec.
+12. Do not restate the parent task as a single broad phase.
+13. If the parent task is underspecified, prefer reversible and low-risk early phases rather than guessing hidden product decisions.
+
+Definition of a good phase:
+A good phase is a coherent delivery checkpoint that changes the system's level of proof or realism.
+Examples:
+- establish a walking skeleton or controlled fake path
+- replace fake or temporary paths with real integration
+- harden correctness, resilience, validation, replay, recovery, or edge cases
+A phase is not just a component bucket or a list of unrelated chores.
+
+Avoid:
+- frontend/backend/database split
+- vague buckets like "core", "main work", or "cleanup"
+- ultra-small tasks like "create API route", "add table", or "make button"
+- forcing fake -> real -> harden if the parent task does not actually need all three
+- architecture rewrites or speculative future-proofing
+- implementation details that belong in the child spec
+""".strip(),
+    "agent_breakdown": """
+You are a decomposition agent working inside an existing repository.
+
+Task:
+Break a parent task into the best sequential child subtasks when workflow split, simplify workflow split, or phase breakdown split are not the right fit.
+
+Goal:
+Produce the best agent-driven breakdown for downstream child-spec creation.
+
+Important:
+- The source input is a parent task.
+- Do not ask clarification questions.
+- Do not implement anything.
+- Do not redesign the project.
+- Do not invent requirements that are not grounded in the parent task, repository context, or locked constraints.
+- Do not output internal reasoning.
+- Return only the information the user needs to see.
+
+Context:
+- The parent task, repository context, and locked constraints are the source of truth.
+- Follow the repository's existing conventions and structure.
+- Respect constraints already present in AGENTS.md and local repo guidance.
+- Prefer conservative boundaries and low-blast-radius sequencing.
+
+Rules:
+1. Use agent judgment to choose the most natural decomposition shape for this task.
+2. Prefer decomposition by stable boundary, dependency unlock, risk reduction, invariant preservation, migration cutline, or cleanup isolation.
+3. Do not force workflow phases or user-story framing when the task is fundamentally technical or cross-cutting.
+4. Do not default to frontend/backend/database split unless that is the only clean ownership boundary.
+5. Keep subtasks sequential and dependency-aware.
+6. Keep the number of subtasks small but sufficient.
+7. Each subtask must have one clear objective and one clear boundary.
+8. Each subtask must reduce uncertainty, unlock later work, or isolate blast radius.
+9. Preserve all locked requirements.
+10. Defer local implementation details to the future child spec.
+11. Explicitly prevent overlap between siblings.
+12. If the parent task is underspecified, prefer reversible and low-risk child boundaries rather than guessing hidden product decisions.
+13. Do not restate the parent task as a single broad subtask.
+
+Allowed decomposition modes:
+- boundary_first: split by stable module, interface, or ownership boundary
+- dependency_unlock: split by prerequisite work that unlocks later work
+- risk_first: split by highest-risk unknowns or failure points first
+- invariant_first: split by contracts, correctness rules, or behavior invariants
+- migration_cutline: split by compatibility boundary or cutover seam
+- cleanup_isolation: split by safe removal, convergence, or closeout boundary
+- custom: use only if none of the above fit cleanly
+
+Mode selection rules:
+- Choose exactly one primary mode internally.
+- Choose the mode that creates the clearest child-spec boundaries with the lowest blast radius.
+- Do not mix multiple primary modes unless absolutely necessary.
+- If multiple modes seem possible, choose the one that best preserves clean sequencing and minimal overlap.
+
+Good subtask:
+- one clear technical or system-level purpose
+- a stable ownership boundary
+- specific enough for a child spec to be written next
+- clearly placed in sequence
+- grounded in the parent task and known repository context
+
+Avoid:
+- vague buckets like "main work", "infrastructure", "cleanup", or "misc"
+- child tasks that are just implementation chores
+- splitting one coherent change across many tiny tasks
+- combining unrelated risks into one child
+- architecture rewrites or speculative future-proofing
+- pretending missing product decisions are already settled
+""".strip(),
+}
+
+_MODE_SENTINEL_RULES: dict[CanonicalSplitModeId, str] = {
+    "workflow": 'If the parent task is not sufficient for a valid workflow split, return the sentinel payload {"subtasks":[]}.',
+    "simplify_workflow": 'If the task cannot be meaningfully simplified without breaking its nature, return the sentinel payload {"subtasks":[]}.',
+    "phase_breakdown": 'If the parent task does not benefit from phase breakdown, return the sentinel payload {"subtasks":[]}.',
+    "agent_breakdown": 'If a valid split cannot be made from the parent task, return the sentinel payload {"subtasks":[]}.',
+}
 
 
 def planning_render_tool() -> dict[str, Any]:
@@ -14,7 +256,7 @@ def planning_render_tool() -> dict[str, Any]:
         "name": "emit_render_data",
         "description": (
             "Send structured payload for the app UI to render. "
-            "Call this before writing your summary message. "
+            "For split turns, call this before writing your summary message. "
             "Do not duplicate the structured payload in plain text."
         ),
         "inputSchema": {
@@ -33,360 +275,215 @@ def planning_render_tool() -> dict[str, Any]:
     }
 
 
-def build_planning_base_instructions(mode: str | None = None) -> str:
-    if mode is not None and mode not in {"walking_skeleton", "slice"}:
-        raise ValueError(f"Unsupported split mode: {mode}")
-
-    if mode == "walking_skeleton":
-        mode_section = [
-            "Planning mode: walking_skeleton.",
-            "Generate 1 to 3 epics. Each epic must contain 2 to 5 lifecycle phases.",
-            json.dumps(_ws_generation_schema(), indent=2, ensure_ascii=True),
-        ]
-    elif mode == "slice":
-        mode_section = [
-            "Planning mode: slice.",
-            "Generate 2 to 10 sequential vertical slices.",
-            json.dumps(_slice_generation_schema(), indent=2, ensure_ascii=True),
-        ]
-    else:
-        mode_section = [
-            "Support both split modes: walking_skeleton and slice.",
-            "For walking_skeleton, emit payloads shaped like:",
-            json.dumps(_ws_generation_schema(), indent=2, ensure_ascii=True),
-            "For slice, emit payloads shaped like:",
-            json.dumps(_slice_generation_schema(), indent=2, ensure_ascii=True),
-        ]
-
-    return "\n\n".join(
-        [
-            "You are the PlanningTree planning assistant.",
-            *mode_section,
-            "When splitting a node, first call emit_render_data(kind='split_result', payload=...).",
-            "After the tool call, write a brief human-readable summary for the user.",
-            "Do not duplicate the structured payload in the summary text.",
-        ]
-    )
-
-
-def build_split_user_message(mode: str, task_context: dict[str, Any]) -> str:
-    if mode not in {"walking_skeleton", "slice"}:
-        raise ValueError(f"Unsupported split mode: {mode}")
-
-    mode_label = "walking skeleton" if mode == "walking_skeleton" else "vertical slice"
-    root_goal = str(task_context.get("root_prompt", "")).strip()
-    current_prompt = str(task_context.get("current_node_prompt", "")).strip()
-    parent_chain = task_context.get("parent_chain_prompts", [])
-    prior_summaries = task_context.get("prior_node_summaries_compact", [])
-
-    lines = [f"Decompose this node using {mode_label} mode."]
-    if current_prompt:
-        lines.extend(["", f'Node: "{current_prompt}"'])
-    if root_goal:
-        lines.extend(["", f"Project goal: {root_goal}"])
-    if isinstance(parent_chain, list) and parent_chain:
-        lines.append("")
-        lines.append("Parent chain:")
-        lines.extend(f"- {item}" for item in parent_chain if isinstance(item, str) and item.strip())
-    if isinstance(prior_summaries, list) and prior_summaries:
-        lines.append("")
-        lines.append("Completed sibling context:")
-        for item in prior_summaries:
-            if not isinstance(item, dict):
-                continue
-            title = str(item.get("title", "")).strip()
-            description = str(item.get("description", "")).strip()
-            if title and description:
-                lines.append(f"- {title}: {description}")
-            elif title or description:
-                lines.append(f"- {title or description}")
-    return "\n".join(lines).strip()
-
-
-def build_generation_prompt(
-    mode: str,
-    task_context: dict[str, Any],
-    strictness: str,
-    retry_feedback: dict[str, Any] | None,
-) -> str:
-    if mode not in {"walking_skeleton", "slice"}:
-        raise ValueError(f"Unsupported split mode: {mode}")
-    if strictness not in STRICTNESS_LEVELS:
-        raise ValueError(f"Unsupported strictness level: {strictness}")
-
-    schema = _ws_generation_schema() if mode == "walking_skeleton" else _slice_generation_schema()
-    mode_instructions = (
-        "Generate 1 to 3 epics. Each epic must contain 2 to 5 lifecycle phases that move from setup through delivery."
-        if mode == "walking_skeleton"
-        else "Generate 2 to 10 sequential vertical slices. Each subtask should unlock the next step."
-    )
-
-    prompt_parts = [
-        "You are decomposing a planning-tree node into implementation-ready child tasks.",
-        f"Planning mode: {mode}.",
-        mode_instructions,
-        _strictness_instructions(strictness),
-        "Return exactly one JSON object. Do not use markdown fences. Do not add any explanation before or after the JSON.",
-        "Task context:",
-        json.dumps(task_context, indent=2, ensure_ascii=True),
-        "Required JSON shape example:",
-        json.dumps(schema, indent=2, ensure_ascii=True),
+def build_planning_base_instructions(mode: CanonicalSplitModeId | None = None) -> str:
+    lines = [
+        "You are the PlanningTree planning assistant.",
+        "For split turns, produce structured UI data with emit_render_data(kind='split_result', payload=...).",
+        "The split payload must use exactly one top-level key: subtasks.",
+        "Each subtask item must use exactly: id, title, objective, why_now.",
+        "If you can produce a valid split, call emit_render_data before writing a short summary for the user.",
+        "Do not duplicate the structured payload in the summary text.",
+        "If the split cannot be made from the provided task and repository context, do not invent a generic fallback split.",
     ]
+    if mode is not None:
+        lines.append(f"The active split mode for this turn is {mode}.")
+    return "\n".join(lines)
 
+
+def build_split_attempt_prompt(
+    mode: CanonicalSplitModeId,
+    task_context: dict[str, Any],
+    retry_feedback: str | None = None,
+) -> str:
+    _canonical_mode_spec_or_raise(mode)
+    prompt_sections: list[str] = []
     if retry_feedback:
-        prompt_parts.extend(
-            [
-                "The previous attempt failed validation.",
-                json.dumps(retry_feedback, indent=2, ensure_ascii=True),
-                "Fix the issues and return a JSON object that matches the required structure exactly.",
-            ]
-        )
-
-    return "\n\n".join(prompt_parts)
-
-
-def parse_generation_response(mode: str, raw_text: str) -> dict[str, Any] | None:
-    payload = extract_first_json_object(raw_text)
-    if payload is None:
-        return None
-    if mode == "walking_skeleton":
-        return _parse_ws_generation_payload(payload)
-    if mode == "slice":
-        return _parse_slice_generation_payload(payload)
-    return None
+        prompt_sections.append(retry_feedback.strip())
+    prompt_sections.extend(
+        [
+            _MODE_PROMPT_BODIES[mode],
+            _format_runtime_context_block(task_context),
+            _structured_output_contract(mode),
+        ]
+    )
+    return "\n\n".join(section for section in prompt_sections if section.strip())
 
 
-def validate_split_payload(mode: str, payload: dict[str, Any]) -> bool:
-    return not split_payload_issues(mode, payload)
-
-
-def split_payload_schema_example(mode: str) -> dict[str, Any]:
-    if mode == "walking_skeleton":
-        return _ws_generation_schema()
-    if mode == "slice":
-        return _slice_generation_schema()
-    raise ValueError(f"Unsupported split mode: {mode}")
-
-
-def split_payload_issues(mode: str, payload: dict[str, Any]) -> list[str]:
-    if mode == "walking_skeleton":
-        epics = payload.get("epics")
-        if not isinstance(epics, list):
-            return ["payload.epics must be a list"]
-        if not 1 <= len(epics) <= 3:
-            return ["payload.epics must contain 1 to 3 items"]
-        issues: list[str] = []
-        for epic_index, epic in enumerate(epics, start=1):
-            if not isinstance(epic, dict):
-                issues.append(f"payload.epics[{epic_index - 1}] must be an object")
-                continue
-            if not _normalize_text(epic.get("title")):
-                issues.append(f"payload.epics[{epic_index - 1}].title is required")
-            if not _normalize_text(epic.get("prompt")):
-                issues.append(f"payload.epics[{epic_index - 1}].prompt is required")
-            phases = epic.get("phases")
-            if not isinstance(phases, list):
-                issues.append(f"payload.epics[{epic_index - 1}].phases must be a list")
-                continue
-            if not 2 <= len(phases) <= 5:
-                issues.append(f"payload.epics[{epic_index - 1}].phases must contain 2 to 5 items")
-                continue
-            for phase_index, phase in enumerate(phases, start=1):
-                if not isinstance(phase, dict):
-                    issues.append(
-                        f"payload.epics[{epic_index - 1}].phases[{phase_index - 1}] must be an object"
-                    )
-                    continue
-                if not _normalize_text(phase.get("prompt")):
-                    issues.append(
-                        f"payload.epics[{epic_index - 1}].phases[{phase_index - 1}].prompt is required"
-                    )
-        return issues
-
-    if mode == "slice":
-        subtasks = payload.get("subtasks")
-        if not isinstance(subtasks, list):
-            return ["payload.subtasks must be a list"]
-        if not 2 <= len(subtasks) <= 10:
-            return ["payload.subtasks must contain 2 to 10 items"]
-        issues = []
-        for index, subtask in enumerate(subtasks, start=1):
-            if not isinstance(subtask, dict):
-                issues.append(f"payload.subtasks[{index - 1}] must be an object")
-                continue
-            if not _normalize_text(subtask.get("prompt")):
-                issues.append(f"payload.subtasks[{index - 1}].prompt is required")
-        return issues
-
-    return [f"Unsupported split mode: {mode}"]
-
-
-def build_hidden_retry_feedback(mode: str, issues: list[str]) -> str:
+def build_hidden_retry_feedback(mode: CanonicalSplitModeId, issues: list[str]) -> str:
+    _canonical_mode_spec_or_raise(mode)
     issue_lines = issues or ["No valid emit_render_data(kind='split_result', payload=...) tool call was captured."]
-    schema = json.dumps(split_payload_schema_example(mode), indent=2, ensure_ascii=True)
     issue_block = "\n".join(f"- {issue}" for issue in issue_lines)
     return "\n".join(
         [
-            f"The previous {mode} split attempt did not produce a valid split_result payload.",
-            "Fix the structured payload and call emit_render_data before writing your summary.",
+            f"Retry: your previous {mode} split output was invalid.",
             "Validation issues:",
             issue_block,
-            "Required payload example:",
-            schema,
+            "Produce a corrected split using the same task, repository context, and output contract below.",
         ]
     )
 
 
-def _ws_generation_schema() -> dict[str, Any]:
-    return {
-        "epics": [
-            {
-                "title": "Epic title",
-                "prompt": "What this epic achieves",
-                "phases": [
-                    {
-                        "prompt": "Phase task",
-                        "definition_of_done": "Done condition",
-                    }
-                ],
-            }
+def validate_split_payload(mode: CanonicalSplitModeId, payload: dict[str, Any]) -> bool:
+    return not split_payload_issues(mode, payload)
+
+
+def split_payload_schema_example(mode: CanonicalSplitModeId) -> dict[str, Any]:
+    _canonical_mode_spec_or_raise(mode)
+    return _shared_schema_example()
+
+
+def split_payload_issues(mode: CanonicalSplitModeId, payload: dict[str, Any]) -> list[str]:
+    _canonical_mode_spec_or_raise(mode)
+    if not isinstance(payload, dict):
+        return ["payload must be an object"]
+
+    issues: list[str] = []
+    payload_keys = set(payload.keys())
+    for missing_key in sorted(_REQUIRED_TOP_LEVEL_KEYS - payload_keys):
+        issues.append(f"payload.{missing_key} is required")
+    for extra_key in sorted(payload_keys - _REQUIRED_TOP_LEVEL_KEYS):
+        issues.append(f"payload.{extra_key} is not allowed")
+
+    raw_subtasks = payload.get("subtasks")
+    if not isinstance(raw_subtasks, list):
+        if "subtasks" in payload:
+            issues.append("payload.subtasks must be a list")
+        return issues
+
+    if not raw_subtasks:
+        return issues
+
+    for index, subtask in enumerate(raw_subtasks):
+        if not isinstance(subtask, dict):
+            issues.append(f"payload.subtasks[{index}] must be an object")
+            continue
+
+        subtask_keys = set(subtask.keys())
+        for missing_key in sorted(_REQUIRED_SUBTASK_KEYS - subtask_keys):
+            issues.append(f"payload.subtasks[{index}].{missing_key} is required")
+        for extra_key in sorted(subtask_keys - _REQUIRED_SUBTASK_KEYS):
+            issues.append(f"payload.subtasks[{index}].{extra_key} is not allowed")
+
+        normalized_id = ""
+        for field in ("id", "title", "objective", "why_now"):
+            if field not in subtask:
+                continue
+            normalized_value = _normalize_text(subtask.get(field))
+            if not normalized_value:
+                issues.append(f"payload.subtasks[{index}].{field} must be a non-empty string")
+                continue
+            if field == "id":
+                normalized_id = normalized_value
+
+        if normalized_id and normalized_id != f"S{index + 1}":
+            issues.append(f"payload.subtasks[{index}].id must be 'S{index + 1}'")
+
+    return issues
+
+
+def is_failure_sentinel_payload(mode: CanonicalSplitModeId, payload: dict[str, Any]) -> bool:
+    _canonical_mode_spec_or_raise(mode)
+    if not validate_split_payload(mode, payload):
+        return False
+    subtasks = payload.get("subtasks")
+    return isinstance(subtasks, list) and len(subtasks) == 0
+
+
+def _canonical_mode_spec_or_raise(mode: CanonicalSplitModeId | str) -> dict[str, Any]:
+    spec = CANONICAL_SPLIT_MODE_REGISTRY.get(mode)  # type: ignore[arg-type]
+    if spec is None:
+        raise ValueError(f"Unsupported split mode: {mode}")
+    return spec
+
+
+def _format_runtime_context_block(task_context: dict[str, Any]) -> str:
+    lines = [
+        "Runtime context:",
+        f"- Parent task: {_context_value(task_context.get('current_node_prompt'))}",
+        f"- Root goal: {_context_value(task_context.get('root_prompt'))}",
+    ]
+
+    parent_chain = task_context.get("parent_chain_prompts")
+    if isinstance(parent_chain, list) and parent_chain:
+        lines.append("- Parent chain:")
+        for item in parent_chain:
+            normalized = _normalize_text(item)
+            if normalized:
+                lines.append(f"  - {normalized}")
+    else:
+        lines.append("- Parent chain: none")
+
+    sibling_context = task_context.get("prior_node_summaries_compact")
+    if isinstance(sibling_context, list) and sibling_context:
+        lines.append("- Completed sibling context:")
+        for item in sibling_context:
+            if not isinstance(item, dict):
+                continue
+            title = _normalize_text(item.get("title"))
+            description = _normalize_text(item.get("description"))
+            summary = f"{title}: {description}" if title and description else title or description
+            if summary:
+                lines.append(f"  - {summary}")
+    else:
+        lines.append("- Completed sibling context: none")
+
+    lines.extend(
+        [
+            "- Locked constraints and repo guidance:",
+            "  - Respect AGENTS.md and local repo guidance.",
+            "  - Follow existing repository conventions and structure.",
+            "  - Preserve locked requirements already present in the parent task and inherited context.",
         ]
-    }
+    )
+
+    if task_context.get("parent_chain_truncated"):
+        lines.append("- Parent chain note: lineage was truncated for prompt compactness.")
+
+    return "\n".join(lines)
 
 
-def _slice_generation_schema() -> dict[str, Any]:
+def _structured_output_contract(mode: CanonicalSplitModeId) -> str:
+    spec = _canonical_mode_spec_or_raise(mode)
+    schema = json.dumps(_shared_schema_example(), indent=2, ensure_ascii=True)
+    return "\n".join(
+        [
+            "Output contract:",
+            "- First call emit_render_data(kind='split_result', payload=...).",
+            "- The payload must be valid JSON in this exact shape:",
+            schema,
+            "Hard output rules:",
+            "- The payload must contain exactly one top-level key: \"subtasks\".",
+            f"- \"subtasks\" should usually contain {spec['min_items']} to {spec['max_items']} items unless the parent task clearly requires fewer or more.",
+            "- Each subtask object must contain exactly these 4 keys and no others: id, title, objective, why_now.",
+            "- \"id\" must use sequential values: \"S1\", \"S2\", \"S3\", ...",
+            "- \"title\" must be short, concrete, and user-readable.",
+            "- \"objective\" must be exactly 1 sentence focused on the outcome of that subtask.",
+            "- \"why_now\" must explain why this subtask belongs at this point in the sequence.",
+            "- \"why_now\" must not simply restate the objective.",
+            "- Subtasks must be sequential, non-overlapping, and suitable for downstream child-spec creation.",
+            "- Do not include implementation details, architecture plans, code suggestions, clarification questions, assumptions lists, done criteria, scope breakdown, rationale bullets, or internal notes.",
+            f"- {_MODE_SENTINEL_RULES[mode]}",
+            "- After the tool call, write a brief user-facing summary without repeating the payload.",
+        ]
+    )
+
+
+def _shared_schema_example() -> dict[str, Any]:
     return {
         "subtasks": [
             {
-                "order": 1,
-                "prompt": "Subtask prompt",
-                "risk_reason": "Optional risk",
-                "what_unblocks": "Optional dependency or unblocker",
+                "id": "S1",
+                "title": "Subtask title",
+                "objective": "What this step achieves.",
+                "why_now": "Why this should happen now.",
             }
         ]
     }
 
 
-def _strictness_instructions(strictness: str) -> str:
-    if strictness == "standard":
-        return (
-            "Keep the decomposition concrete and concise. Respect the item-count limits and return JSON only."
-        )
-    if strictness == "guided":
-        return (
-            "Use the exact required keys, stay within the allowed counts, and make every prompt actionable. Return JSON only."
-        )
-    return (
-        "Output ONLY a valid JSON object with the exact top-level keys shown in the schema. No prose, no code fences, no extra keys."
-    )
-
-
-def _parse_ws_generation_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    raw_epics = payload.get("epics")
-    if not isinstance(raw_epics, list):
-        return None
-
-    epics: list[dict[str, Any]] = []
-    for raw_epic in raw_epics:
-        if not isinstance(raw_epic, dict):
-            return None
-        epics.append(
-            {
-                "title": _normalize_text(raw_epic.get("title")),
-                "prompt": _normalize_text(
-                    raw_epic.get("prompt")
-                    or raw_epic.get("description")
-                    or raw_epic.get("summary")
-                ),
-                "phases": _normalize_ws_phase_collection(raw_epic.get("phases")),
-            }
-        )
-
-    return {"epics": epics}
-
-
-def _normalize_ws_phase_collection(raw_phases: Any) -> list[dict[str, str]]:
-    if isinstance(raw_phases, list):
-        phase_items = raw_phases
-    elif isinstance(raw_phases, dict):
-        ordered_keys = list(raw_phases.keys())
-        if all(isinstance(key, str) and key.upper() in _PHASE_KEYS for key in ordered_keys):
-            ordered_keys = sorted(ordered_keys, key=lambda key: _PHASE_KEYS.index(str(key).upper()))
-        phase_items = [raw_phases[key] for key in ordered_keys]
-    else:
-        return []
-
-    phases: list[dict[str, str]] = []
-    for index, phase_item in enumerate(phase_items[: len(_PHASE_KEYS)]):
-        prompt = ""
-        definition_of_done = ""
-        if isinstance(phase_item, str):
-            prompt = _normalize_text(phase_item)
-        elif isinstance(phase_item, dict):
-            prompt = _normalize_text(
-                phase_item.get("prompt")
-                or phase_item.get("task")
-                or phase_item.get("title")
-            )
-            definition_of_done = _normalize_text(
-                phase_item.get("definition_of_done")
-                or phase_item.get("done")
-                or phase_item.get("definition")
-            )
-        phases.append(
-            {
-                "phase_key": _PHASE_KEYS[index],
-                "prompt": prompt,
-                "definition_of_done": definition_of_done,
-            }
-        )
-
-    return phases
-
-
-def _parse_slice_generation_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    raw_subtasks = payload.get("subtasks")
-    if not isinstance(raw_subtasks, list):
-        return None
-
-    subtasks = [item for item in raw_subtasks if isinstance(item, (dict, str))]
-    provided_orders = [
-        item.get("order")
-        for item in subtasks
-        if isinstance(item, dict)
-    ]
-    valid_ordering = (
-        len(provided_orders) == len(subtasks)
-        and len(set(provided_orders)) == len(subtasks)
-        and all(isinstance(order, int) and 1 <= order <= len(subtasks) for order in provided_orders)
-    )
-    if valid_ordering:
-        subtasks = sorted(subtasks, key=lambda item: int(item["order"]))  # type: ignore[index]
-
-    normalized: list[dict[str, Any]] = []
-    for index, raw_subtask in enumerate(subtasks, start=1):
-        if isinstance(raw_subtask, str):
-            prompt = _normalize_text(raw_subtask)
-            risk_reason = ""
-            what_unblocks = ""
-        else:
-            prompt = _normalize_text(
-                raw_subtask.get("prompt")
-                or raw_subtask.get("title")
-                or raw_subtask.get("task")
-            )
-            risk_reason = _normalize_text(raw_subtask.get("risk_reason"))
-            what_unblocks = _normalize_text(raw_subtask.get("what_unblocks"))
-        normalized.append(
-            {
-                "order": index,
-                "prompt": prompt,
-                "risk_reason": risk_reason,
-                "what_unblocks": what_unblocks,
-            }
-        )
-
-    return {"subtasks": normalized}
+def _context_value(value: Any) -> str:
+    normalized = _normalize_text(value)
+    return normalized or "none"
 
 
 def _normalize_text(value: Any) -> str:

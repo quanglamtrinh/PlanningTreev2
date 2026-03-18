@@ -503,7 +503,7 @@ def test_get_planning_conversation_normalizes_planning_history_into_v2_snapshot(
             {
                 "turn_id": "turn_split_1",
                 "role": "user",
-                "content": "Split this node into slices.",
+                "content": "Split this node into workflow steps.",
                 "is_inherited": False,
                 "origin_node_id": node_id,
                 "timestamp": "2026-03-15T00:00:01Z",
@@ -516,8 +516,18 @@ def test_get_planning_conversation_normalizes_planning_history_into_v2_snapshot(
                     "kind": "split_result",
                     "payload": {
                         "subtasks": [
-                            {"order": 1, "prompt": "Setup repo"},
-                            {"order": 2, "prompt": "Wire planning host"},
+                            {
+                                "id": "S1",
+                                "title": "Setup repo",
+                                "objective": "Prepare the repo and environment.",
+                                "why_now": "This unlocks the implementation path.",
+                            },
+                            {
+                                "id": "S2",
+                                "title": "Wire planning host",
+                                "objective": "Connect the planning host to the graph flow.",
+                                "why_now": "This finishes the split path.",
+                            },
                         ]
                     },
                 },
@@ -636,7 +646,7 @@ def test_translate_planning_event_expands_legacy_planning_events_into_normalized
             "conversation_id": "convplan_1",
             "turn_id": "turn_1",
             "stream_id": "planning_stream:turn_1",
-            "user_content": "Split this node into slices.",
+            "user_content": "Split this node into workflow steps.",
             "user_event_seq": 1,
             "assistant_event_seq": 2,
             "timestamp": "2026-03-15T00:00:01Z",
@@ -708,7 +718,7 @@ def test_translate_planning_request_events_and_snapshot_converge_on_normalized_i
             {
                 "turn_id": "turn_plan_1",
                 "role": "user",
-                "content": "Split this node into slices.",
+                "content": "Split this node into workflow steps.",
                 "is_inherited": False,
                 "origin_node_id": node_id,
                 "timestamp": "2026-03-15T00:00:01Z",
@@ -1380,7 +1390,12 @@ def test_success_path_emits_and_persists_execution_tool_calls(
                     "kind": "split_result",
                     "payload": {
                         "subtasks": [
-                            {"order": 1, "prompt": "Setup repo"},
+                            {
+                                "id": "S1",
+                                "title": "Setup repo",
+                                "objective": "Prepare the repo for execution work.",
+                                "why_now": "The execution flow depends on the environment first.",
+                            },
                         ]
                     },
                 },

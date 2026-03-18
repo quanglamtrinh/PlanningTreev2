@@ -5,12 +5,16 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List
 
+from backend.split_contract import CANONICAL_SPLIT_MODE_REGISTRY
 from backend.config.app_config import AppPaths
 from backend.errors.app_errors import ProjectNotFound
 from backend.storage.file_utils import atomic_write_json, ensure_dir, load_json
 from backend.storage.node_store import NodeStore
 from backend.storage.project_ids import normalize_project_id
 from backend.storage.project_locks import ProjectLockRegistry
+
+_CANONICAL_SPLIT_MODES = frozenset(CANONICAL_SPLIT_MODE_REGISTRY.keys())
+_CANONICAL_OUTPUT_FAMILIES = frozenset({"flat_subtasks_v1"})
 
 
 class ProjectStore:
@@ -70,6 +74,7 @@ class ProjectStore:
                 schema_version = self._schema_version(tree)
                 if schema_version == 4:
                     return self._migrate_v4_to_v5(project_id, tree)
+                self._normalize_snapshot_runtime_fields(tree)
                 self._validate_tree_node_files(project_id, tree)
                 return tree
             if self.state_path(project_id).exists():
@@ -237,6 +242,7 @@ class ProjectStore:
             },
             "updated_at": old_snapshot.get("updated_at"),
         }
+        self._normalize_snapshot_runtime_fields(new_snapshot)
         atomic_write_json(self.tree_path(project_id), new_snapshot)
         self.state_path(project_id).rename(self.project_dir(project_id) / "state.json.bak")
         self._validate_tree_node_files(project_id, new_snapshot)
@@ -257,6 +263,7 @@ class ProjectStore:
     def _normalize_snapshot_for_persistence(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         normalized = copy.deepcopy(snapshot)
         normalized["schema_version"] = 5
+        self._normalize_snapshot_runtime_fields(normalized)
         tree_state = normalized.get("tree_state", {})
         if not isinstance(tree_state, dict):
             return normalized
@@ -273,5 +280,32 @@ class ProjectStore:
     def _normalize_node_for_persistence(self, node: Any) -> None:
         if not isinstance(node, dict):
             return
+        self._normalize_node_contract_fields(node)
         node.pop("title", None)
         node.pop("description", None)
+
+    def _normalize_snapshot_runtime_fields(self, snapshot: Dict[str, Any]) -> None:
+        tree_state = snapshot.get("tree_state", {})
+        if not isinstance(tree_state, dict):
+            return
+        node_index = tree_state.get("node_index")
+        if isinstance(node_index, dict):
+            for node in node_index.values():
+                self._normalize_node_contract_fields(node)
+        registry = tree_state.get("node_registry")
+        if isinstance(registry, list):
+            for node in registry:
+                self._normalize_node_contract_fields(node)
+
+    def _normalize_node_contract_fields(self, node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("planning_mode") not in _CANONICAL_SPLIT_MODES:
+            node["planning_mode"] = None
+        split_metadata = node.get("split_metadata")
+        if not isinstance(split_metadata, dict):
+            return
+        if split_metadata.get("mode") not in _CANONICAL_SPLIT_MODES:
+            split_metadata.pop("mode", None)
+        if split_metadata.get("output_family") not in _CANONICAL_OUTPUT_FAMILIES:
+            split_metadata.pop("output_family", None)

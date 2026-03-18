@@ -1,9 +1,20 @@
 import { useEffect } from 'react'
 
 import { api } from './client'
-import type { AgentEvent, AskEvent, PlanningEvent } from './types'
+import type { AgentEvent, AskEvent, PlanningEvent, SplitMode } from './types'
 import { useAskStore } from '../stores/ask-store'
 import { useProjectStore } from '../stores/project-store'
+
+const CANONICAL_SPLIT_MODES = new Set<SplitMode>([
+  'workflow',
+  'simplify_workflow',
+  'phase_breakdown',
+  'agent_breakdown',
+])
+
+function isCanonicalSplitMode(value: unknown): value is SplitMode {
+  return typeof value === 'string' && CANONICAL_SPLIT_MODES.has(value as SplitMode)
+}
 
 export function useEffectOnce(effect: () => void | (() => void)) {
   useEffect(effect, [])
@@ -160,6 +171,9 @@ export function usePlanningEventStream(projectId: string | null, nodeId: string 
       }
       try {
         const event = JSON.parse(message.data) as PlanningEvent
+        if (event.type === 'planning_turn_started' && !isCanonicalSplitMode(event.mode)) {
+          return
+        }
         useProjectStore.getState().applyPlanningEvent(resolvedProjectId, resolvedNodeId, event)
       } catch {
         return

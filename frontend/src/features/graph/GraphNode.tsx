@@ -1,6 +1,8 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
+import type { SplitMode } from '../../api/types'
 import { NodeStatusBadge } from '../node/NodeStatusBadge'
+import { GRAPH_SPLIT_OPTIONS } from './splitModes'
 import styles from './GraphNode.module.css'
 
 const CONTROL_CLASS_NAME = 'nodrag nopan'
@@ -28,8 +30,7 @@ export type GraphNodeData = {
   onSelect: (nodeId: string) => void
   onToggleCollapse: (nodeId: string) => void
   onCreateChild: (nodeId: string) => void
-  onSplitWS: (nodeId: string) => void
-  onSplitSlice: (nodeId: string) => void
+  onSplit: (nodeId: string, mode: SplitMode) => void
   onOpenBreadcrumb: (nodeId: string) => void
   onFinishTask: (nodeId: string) => void
   onInfoClick: (nodeId: string) => void
@@ -197,36 +198,23 @@ function GraphNodeComponent({ data }: NodeProps) {
 
             <div className={styles.dropdownSection}>
               <p className={styles.dropdownLabel}>AI Planning</p>
-              <button
-                type="button"
-                className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-                disabled={!nodeData.canSplit || nodeData.isSplitDisabled}
-                onClick={() => {
-                  setMenuOpen(false)
-                  nodeData.onSplitWS(nodeData.node.node_id)
-                }}
-              >
-                <span className={styles.menuTitle}>
-                  {nodeData.isSplitting ? 'Splitting...' : 'Walking Skeleton'}
-                </span>
-                <span className={styles.menuDesc}>
-                  1-3 epics with lifecycle phases from setup through delivery.
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-                disabled={!nodeData.canSplit || nodeData.isSplitDisabled}
-                onClick={() => {
-                  setMenuOpen(false)
-                  nodeData.onSplitSlice(nodeData.node.node_id)
-                }}
-              >
-                <span className={styles.menuTitle}>
-                  {nodeData.isSplitting ? 'Splitting...' : 'Slice'}
-                </span>
-                <span className={styles.menuDesc}>2-10 sequential vertical slices of functionality.</span>
-              </button>
+              {GRAPH_SPLIT_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+                  disabled={!nodeData.canSplit || nodeData.isSplitDisabled}
+                  onClick={() => {
+                    setMenuOpen(false)
+                    nodeData.onSplit(nodeData.node.node_id, option.id)
+                  }}
+                >
+                  <span className={styles.menuTitle}>
+                    {nodeData.isSplitting ? 'Splitting...' : option.label}
+                  </span>
+                  <span className={styles.menuDesc}>{option.description}</span>
+                </button>
+              ))}
             </div>
           </div>
         ) : null}

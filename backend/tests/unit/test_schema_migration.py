@@ -149,6 +149,7 @@ def test_v3_to_v5_migration_creates_tree_json_and_node_files(storage: Storage) -
     assert "child_001" in tree["tree_state"]["node_index"]
     assert tree["tree_state"]["node_index"]["root_001"]["node_kind"] == "root"
     assert tree["tree_state"]["node_index"]["child_001"]["node_kind"] == "original"
+    assert tree["tree_state"]["node_index"]["root_001"]["planning_mode"] is None
     assert "title" not in tree["tree_state"]["node_index"]["root_001"]
     assert "description" not in tree["tree_state"]["node_index"]["root_001"]
     assert tree["tree_state"]["node_index"]["root_001"]["planning_thread_id"] == "thread_abc"

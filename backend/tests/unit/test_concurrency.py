@@ -33,8 +33,9 @@ class BlockingSplitClient:
             "stdout": """
             {
               "subtasks": [
-                {"order": 1, "prompt": "First slice", "risk_reason": "", "what_unblocks": ""},
-                {"order": 2, "prompt": "Second slice", "risk_reason": "", "what_unblocks": ""}
+                {"id": "S1", "title": "First step", "objective": "Prepare the first step", "why_now": "This starts the flow."},
+                {"id": "S2", "title": "Second step", "objective": "Deliver the second step", "why_now": "This follows the foundation."},
+                {"id": "S3", "title": "Third step", "objective": "Finish the flow", "why_now": "This completes the canonical workflow."}
               ]
             }
             """,
@@ -46,8 +47,9 @@ class BlockingSplitClient:
                         "kind": "split_result",
                         "payload": {
                             "subtasks": [
-                                {"order": 1, "prompt": "First slice", "risk_reason": "", "what_unblocks": ""},
-                                {"order": 2, "prompt": "Second slice", "risk_reason": "", "what_unblocks": ""},
+                                {"id": "S1", "title": "First step", "objective": "Prepare the first step", "why_now": "This starts the flow."},
+                                {"id": "S2", "title": "Second step", "objective": "Deliver the second step", "why_now": "This follows the foundation."},
+                                {"id": "S3", "title": "Third step", "objective": "Finish the flow", "why_now": "This completes the canonical workflow."},
                             ]
                         },
                     },
@@ -200,7 +202,7 @@ def test_split_preserves_concurrent_snapshot_and_chat_updates(
 
     def run_split() -> None:
         try:
-            split_service.split_node(project_id, root_id, "slice")
+            split_service.split_node(project_id, root_id, "workflow")
         except Exception as exc:  # pragma: no cover - test should fail below if this happens
             split_errors.append(exc)
 
@@ -225,7 +227,7 @@ def test_split_preserves_concurrent_snapshot_and_chat_updates(
 
     assert "title" not in root
     assert storage.node_store.load_task(project_id, root_id)["title"] == "Renamed Root"
-    assert root["planning_mode"] == "slice"
+    assert root["planning_mode"] == "workflow"
     assert root["split_metadata"]["created_child_ids"]
     assert chat_session["messages"][-1]["status"] == "completed"
     assert chat_session["thread_id"] == "thread_chat"

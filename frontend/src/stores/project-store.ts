@@ -15,6 +15,7 @@ import type {
   PlanningTurn,
   ProjectSummary,
   Snapshot,
+  SplitMode,
 } from '../api/types'
 
 const ACTIVE_PROJECT_KEY = 'planningtree.active-project-id'
@@ -92,7 +93,7 @@ function preserveSelectedNodeId(snapshot: Snapshot, currentSelectedNodeId: strin
 }
 
 export type PlanningConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
-export type PlanningSplitMode = 'walking_skeleton' | 'slice' | null
+export type PlanningSplitMode = SplitMode | null
 export type AgentConnectionStatus = PlanningConnectionStatus
 
 function markPerformance(name: string) {
@@ -157,7 +158,7 @@ type ProjectStoreState = {
   createChild: (parentId: string) => Promise<void>
   splitNode: (
     nodeId: string,
-    mode: 'walking_skeleton' | 'slice',
+    mode: SplitMode,
     confirmReplace?: boolean,
   ) => Promise<void>
   startPlan: (nodeId: string) => Promise<void>
@@ -589,7 +590,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
       throw error
     }
   },
-  async splitNode(nodeId: string, mode: 'walking_skeleton' | 'slice', confirmReplace = false) {
+  async splitNode(nodeId: string, mode: SplitMode, confirmReplace = false) {
     const activeProjectId = get().activeProjectId
     if (!activeProjectId) {
       return
@@ -810,7 +811,12 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
       return
     }
     if (event.type === 'planning_turn_completed' || event.type === 'planning_turn_failed') {
-      set({ isSplittingNode: false, splittingNodeId: null, activePlanningMode: null })
+      set({
+        isSplittingNode: false,
+        splittingNodeId: null,
+        activePlanningMode: null,
+        error: event.type === 'planning_turn_failed' ? event.message : null,
+      })
       void get().loadPlanningHistory(projectId, nodeId)
       void get().resyncNodeArtifacts(nodeId)
       void api

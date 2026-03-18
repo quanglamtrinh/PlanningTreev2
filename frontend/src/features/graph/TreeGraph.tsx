@@ -10,7 +10,7 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { NodeRecord, Snapshot } from "../../api/types";
+import type { NodeRecord, Snapshot, SplitMode } from "../../api/types";
 import { useProjectStore } from "../../stores/project-store";
 import { TaskPanel } from "../breadcrumb/TaskPanel";
 import { GraphNode, type GraphNodeData } from "./GraphNode";
@@ -31,7 +31,7 @@ type Props = {
   onCreateChild: (parentId: string) => Promise<void>;
   onSplitNode: (
     nodeId: string,
-    mode: "walking_skeleton" | "slice",
+    mode: SplitMode,
   ) => Promise<void>;
   onOpenBreadcrumb: (nodeId: string) => Promise<void>;
   onFinishTask: (nodeId: string) => Promise<void>;
@@ -422,11 +422,8 @@ export function TreeGraph({
           onCreateChild: (nodeId) => {
             void handlerRef.current.onCreateChild(nodeId);
           },
-          onSplitWS: (nodeId) => {
-            void handlerRef.current.onSplitNode(nodeId, "walking_skeleton");
-          },
-          onSplitSlice: (nodeId) => {
-            void handlerRef.current.onSplitNode(nodeId, "slice");
+          onSplit: (nodeId, mode) => {
+            void handlerRef.current.onSplitNode(nodeId, mode);
           },
           onOpenBreadcrumb: (nodeId) => {
             void handlerRef.current.onOpenBreadcrumb(nodeId);

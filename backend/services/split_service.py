@@ -1,19 +1,32 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import dataclass
 import logging
 import threading
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from backend.ai.codex_client import CodexAppClient
 from backend.ai.split_context_builder import build_split_context
 from backend.ai.split_prompt_builder import (
+    build_split_attempt_prompt,
     build_hidden_retry_feedback,
-    build_split_user_message,
+    is_failure_sentinel_payload,
     split_payload_issues,
     validate_split_payload,
 )
-from backend.errors.app_errors import InvalidRequest, NodeNotFound, SplitNotAllowed
+from backend.errors.app_errors import NodeNotFound, SplitNotAllowed
+from backend.split_contract import (
+    CANONICAL_SPLIT_MODE_REGISTRY,
+    CanonicalSplitModeId,
+    FlatSubtaskItem,
+    FlatSubtaskPayload,
+    ServiceSplitMode,
+    ServiceSplitOutputFamily,
+    split_output_family_for_mode,
+)
 from backend.services.agent_operation_service import (
     AgentOperationHandle,
     AgentOperationService,
@@ -32,10 +45,45 @@ from backend.storage.file_utils import iso_now, load_json, new_id
 from backend.storage.storage import Storage
 from backend.streaming.sse_broker import PlanningEventBroker
 
-_PHASE_KEYS = ["A", "B", "C", "D", "E"]
 _RETRY_LIMIT = 2
+_INVALID_SPLIT_RESULT_MESSAGE = "Split failed because the model did not produce a valid structured split result."
+_INSUFFICIENT_SPLIT_CONTEXT_MESSAGE = "Could not produce a valid split from the parent task and current repo context."
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SplitRuntimeBundle:
+    output_family: ServiceSplitOutputFamily
+    build_attempt_prompt: Callable[[dict[str, Any], str | None], str]
+    validate_payload: Callable[[dict[str, Any]], bool]
+    payload_issues: Callable[[dict[str, Any]], list[str]]
+    build_hidden_retry_feedback: Callable[[list[str]], str]
+    is_failure_sentinel: Callable[[dict[str, Any]], bool]
+
+
+@dataclass(frozen=True)
+class ResolvedSplitPayload:
+    payload: dict[str, Any]
+    tool_calls: list[dict[str, Any]]
+    is_failure_sentinel: bool
+
+
+def split_runtime_bundle_for_mode(mode: ServiceSplitMode) -> SplitRuntimeBundle:
+    output_family = split_output_family_for_mode(mode)
+    canonical_mode = cast(CanonicalSplitModeId, mode)
+    return SplitRuntimeBundle(
+        output_family=output_family,
+        build_attempt_prompt=lambda task_context, retry_feedback=None, mode=canonical_mode: build_split_attempt_prompt(
+            mode,
+            task_context,
+            retry_feedback,
+        ),
+        validate_payload=lambda payload, mode=canonical_mode: validate_split_payload(mode, payload),
+        payload_issues=lambda payload, mode=canonical_mode: split_payload_issues(mode, payload),
+        build_hidden_retry_feedback=lambda issues, mode=canonical_mode: build_hidden_retry_feedback(mode, issues),
+        is_failure_sentinel=lambda payload, mode=canonical_mode: is_failure_sentinel_payload(mode, payload),
+    )
 
 
 class SplitService:
@@ -59,15 +107,17 @@ class SplitService:
         self._live_turns_lock = threading.Lock()
         self._live_turns: set[tuple[str, str]] = set()
 
+    def _runtime_bundle(self, mode: ServiceSplitMode | str) -> SplitRuntimeBundle:
+        return split_runtime_bundle_for_mode(cast(ServiceSplitMode, mode))
+
     def split_node(
         self,
         project_id: str,
         node_id: str,
-        mode: str,
+        mode: ServiceSplitMode,
         confirm_replace: bool = False,
     ) -> dict[str, Any]:
-        if mode not in {"walking_skeleton", "slice"}:
-            raise InvalidRequest("Unsupported split mode.")
+        self._runtime_bundle(mode)
 
         handle: AgentOperationHandle | None = None
 
@@ -192,7 +242,7 @@ class SplitService:
         *,
         project_id: str,
         node_id: str,
-        mode: str,
+        mode: ServiceSplitMode,
         confirm_replace: bool,
         turn_id: str,
         visible_user_message: str,
@@ -217,7 +267,7 @@ class SplitService:
         *,
         project_id: str,
         node_id: str,
-        mode: str,
+        mode: ServiceSplitMode,
         confirm_replace: bool,
         turn_id: str,
         visible_user_message: str,
@@ -329,7 +379,7 @@ class SplitService:
             if handle is not None and self._agent_operation_service is not None:
                 self._agent_operation_service.finish_operation(handle)
 
-    def _build_visible_user_message(self, project_id: str, node_id: str, mode: str) -> str:
+    def _build_visible_user_message(self, project_id: str, node_id: str, mode: ServiceSplitMode) -> str:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_by_id = self._tree_service.node_index(snapshot)
@@ -338,14 +388,14 @@ class SplitService:
             if node is None:
                 raise NodeNotFound(node_id)
             task_context = build_split_context(snapshot, node, node_by_id)
-        return build_split_user_message(mode, task_context)
+        return self._visible_split_request(mode, task_context)
 
     def _execute_split_turn(
         self,
         *,
         project_id: str,
         node_id: str,
-        mode: str,
+        mode: ServiceSplitMode,
         confirm_replace: bool,
         turn_id: str,
         user_message_override: str | None = None,
@@ -365,7 +415,9 @@ class SplitService:
         if not planning_thread_id:
             planning_thread_id = self._thread_service.ensure_planning_thread(project_id, node_id)
 
-        user_message = user_message_override or build_split_user_message(mode, task_context)
+        bundle = self._runtime_bundle(mode)
+        visible_user_message = user_message_override or self._visible_split_request(mode, task_context)
+        hidden_prompt = bundle.build_attempt_prompt(task_context, None)
         tool_event_published = False
 
         def on_visible_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
@@ -377,7 +429,11 @@ class SplitService:
             if str(arguments.get("kind") or "") != "split_result":
                 return
             payload = arguments.get("payload")
-            if not isinstance(payload, dict) or not validate_split_payload(mode, payload):
+            if (
+                not isinstance(payload, dict)
+                or not bundle.validate_payload(payload)
+                or bundle.is_failure_sentinel(payload)
+            ):
                 return
             tool_call = {
                 "tool_name": tool_name,
@@ -391,7 +447,7 @@ class SplitService:
             tool_event_published = True
 
         response = self._codex_client.run_turn_streaming(
-            user_message,
+            hidden_prompt,
             thread_id=planning_thread_id,
             timeout_sec=self._split_timeout,
             cwd=workspace_root,
@@ -399,37 +455,45 @@ class SplitService:
         )
         resolved = self._resolve_tool_payload(mode, response.get("tool_calls", []))
         assistant_content = str(response.get("stdout", ""))
-        issues = self._tool_payload_issues(mode, response.get("tool_calls", []))
+        issues = self._tool_payload_issues(mode, response.get("tool_calls", [])) if resolved is None else []
 
+        if resolved is not None and resolved.is_failure_sentinel:
+            raise RuntimeError(_INSUFFICIENT_SPLIT_CONTEXT_MESSAGE)
+
+        resolved_result: dict[str, Any] | None = None
         if resolved is None:
-            resolved = self._retry_hidden_split_turns(
+            resolved_result = self._retry_hidden_split_turns(
                 project_id=project_id,
                 node_id=node_id,
                 mode=mode,
                 planning_thread_id=planning_thread_id,
                 workspace_root=workspace_root,
+                task_context=task_context,
                 issues=issues,
             )
-            if resolved is not None:
-                assistant_content = str(resolved.get("assistant_content") or assistant_content)
+            if resolved_result is not None:
+                assistant_content = str(resolved_result.get("assistant_content") or assistant_content)
 
-        fallback_used = False
-        if resolved is None:
-            payload = self._deterministic_fallback(mode, task_context)
-            resolved = {
-                "payload": payload,
-                "tool_calls": [self._render_tool_call(payload)],
+        if resolved is None and resolved_result is None:
+            raise RuntimeError(_INVALID_SPLIT_RESULT_MESSAGE)
+
+        if resolved_result is None:
+            resolved_result = {
+                "payload": resolved.payload,
+                "tool_calls": resolved.tool_calls,
+                "is_failure_sentinel": resolved.is_failure_sentinel,
             }
-            assistant_content = "I could not produce a valid structured split, so I applied the deterministic fallback split."
-            fallback_used = True
+
+        if resolved_result["is_failure_sentinel"]:
+            raise RuntimeError(_INSUFFICIENT_SPLIT_CONTEXT_MESSAGE)
 
         creation = self._apply_split_payload(
             project_id=project_id,
             node_id=node_id,
             mode=mode,
             confirm_replace=confirm_replace,
-            payload=resolved["payload"],
-            source="fallback" if fallback_used else "ai",
+            payload=resolved_result["payload"],
+            source="ai",
             task_context=task_context,
         )
 
@@ -437,8 +501,8 @@ class SplitService:
             project_id,
             node_id,
             turn_id=turn_id,
-            user_content=user_message,
-            tool_calls=resolved["tool_calls"],
+            user_content=visible_user_message,
+            tool_calls=resolved_result["tool_calls"],
             assistant_content=assistant_content,
             timestamp=creation["timestamp"],
         )
@@ -448,11 +512,11 @@ class SplitService:
             self._thread_service.fork_planning_thread(project_id, node_id, first_leaf_id)
 
         return {
-            "user_message": user_message,
-            "tool_calls": resolved["tool_calls"],
+            "user_message": visible_user_message,
+            "tool_calls": resolved_result["tool_calls"],
             "assistant_content": assistant_content,
             "timestamp": creation["timestamp"],
-            "fallback_used": fallback_used,
+            "fallback_used": False,
             "created_child_ids": creation["created_child_ids"],
             "tool_event_published": tool_event_published,
         }
@@ -462,22 +526,31 @@ class SplitService:
         *,
         project_id: str,
         node_id: str,
-        mode: str,
+        mode: ServiceSplitMode,
         planning_thread_id: str,
         workspace_root: str | None,
+        task_context: dict[str, Any],
         issues: list[str],
     ) -> dict[str, Any] | None:
+        bundle = self._runtime_bundle(mode)
         for attempt in range(_RETRY_LIMIT):
             response = self._codex_client.run_turn_streaming(
-                self._hidden_retry_prompt(mode, attempt + 1, issues),
+                bundle.build_attempt_prompt(
+                    task_context,
+                    bundle.build_hidden_retry_feedback(issues),
+                ),
                 thread_id=planning_thread_id,
                 timeout_sec=self._split_timeout,
                 cwd=workspace_root,
             )
             resolved = self._resolve_tool_payload(mode, response.get("tool_calls", []))
             if resolved is not None:
-                resolved["assistant_content"] = str(response.get("stdout", ""))
-                return resolved
+                return {
+                    "payload": resolved.payload,
+                    "tool_calls": resolved.tool_calls,
+                    "assistant_content": str(response.get("stdout", "")),
+                    "is_failure_sentinel": resolved.is_failure_sentinel,
+                }
             issues = self._tool_payload_issues(mode, response.get("tool_calls", []))
             logger.warning(
                 "emit_render_data validation failed, retrying project=%s node=%s attempt=%s issues=%s",
@@ -490,9 +563,10 @@ class SplitService:
 
     def _resolve_tool_payload(
         self,
-        mode: str,
+        mode: ServiceSplitMode,
         tool_calls: Any,
-    ) -> dict[str, Any] | None:
+    ) -> ResolvedSplitPayload | None:
+        bundle = self._runtime_bundle(mode)
         if not isinstance(tool_calls, list):
             return None
         for raw_tool_call in tool_calls:
@@ -506,19 +580,21 @@ class SplitService:
             if str(arguments.get("kind") or "") != "split_result":
                 continue
             payload = arguments.get("payload")
-            if not isinstance(payload, dict) or not validate_split_payload(mode, payload):
+            if not isinstance(payload, dict) or not bundle.validate_payload(payload):
                 continue
-            return {
-                "payload": payload,
-                "tool_calls": [self._render_tool_call(payload)],
-            }
+            return ResolvedSplitPayload(
+                payload=payload,
+                tool_calls=[self._render_tool_call(payload)],
+                is_failure_sentinel=bundle.is_failure_sentinel(payload),
+            )
         return None
 
     def _tool_payload_issues(
         self,
-        mode: str,
+        mode: ServiceSplitMode,
         tool_calls: Any,
     ) -> list[str]:
+        bundle = self._runtime_bundle(mode)
         if not isinstance(tool_calls, list) or not tool_calls:
             return ["No tool calls were captured for this turn."]
 
@@ -544,7 +620,7 @@ class SplitService:
             if not isinstance(payload, dict):
                 issues.append(f"emit_render_data call {index} payload must be an object")
                 continue
-            payload_issues = split_payload_issues(mode, payload)
+            payload_issues = bundle.payload_issues(payload)
             if payload_issues:
                 issues.extend(payload_issues)
 
@@ -555,7 +631,7 @@ class SplitService:
         *,
         project_id: str,
         node_id: str,
-        mode: str,
+        mode: ServiceSplitMode,
         confirm_replace: bool,
         payload: dict[str, Any],
         source: str,
@@ -575,39 +651,30 @@ class SplitService:
             )
             now = iso_now()
             created_child_ids: list[str] = []
+            output_family = split_output_family_for_mode(mode)
+            materialized: dict[str, Any] | None = None
 
             try:
-                if mode == "walking_skeleton":
-                    first_leaf_id = self._create_walking_skeleton_children(
-                        snapshot,
-                        parent,
-                        node_by_id,
-                        payload,
-                        inherited_locked,
-                        now,
-                        created_child_ids,
-                    )
-                else:
-                    first_leaf_id = self._create_slice_children(
-                        snapshot,
-                        parent,
-                        node_by_id,
-                        payload,
-                        inherited_locked,
-                        now,
-                        created_child_ids,
-                    )
+                first_leaf_id, materialized = self._create_flat_subtask_children(
+                    snapshot,
+                    parent,
+                    node_by_id,
+                    cast(FlatSubtaskPayload, payload),
+                    inherited_locked,
+                    now,
+                    created_child_ids,
+                )
 
                 if parent.get("status") in {"ready", "in_progress"}:
                     parent["status"] = "draft"
                 parent["planning_mode"] = mode
-                parent["split_metadata"] = {
+                split_metadata = {
                     "mode": mode,
+                    "output_family": output_family,
                     "source": source,
                     "warnings": _dedupe_warnings(
                         [
                             "parent_chain_truncated" if task_context.get("parent_chain_truncated") else None,
-                            "fallback_used" if source == "fallback" else None,
                         ]
                     ),
                     "created_child_ids": created_child_ids,
@@ -615,6 +682,10 @@ class SplitService:
                     "created_at": now,
                     "revision": _next_revision(parent.get("split_metadata")),
                 }
+                if materialized is not None:
+                    split_metadata["materialized"] = materialized
+                    split_metadata["debug_payload"] = deepcopy(payload)
+                parent["split_metadata"] = split_metadata
                 snapshot["tree_state"]["active_node_id"] = first_leaf_id
                 self._persist_snapshot(project_id, snapshot)
                 return {
@@ -685,103 +756,23 @@ class SplitService:
             replaced_child_ids.append(child_id)
         return replaced_child_ids
 
-    def _create_walking_skeleton_children(
+    def _create_flat_subtask_children(
         self,
         snapshot: dict[str, Any],
         parent: dict[str, Any],
         node_by_id: dict[str, dict[str, Any]],
-        generation: dict[str, Any],
+        generation: FlatSubtaskPayload,
         inherited_locked: bool,
         now: str,
         created_child_ids: list[str],
-    ) -> str:
+    ) -> tuple[str, dict[str, Any]]:
         first_leaf_id: str | None = None
         parent_hnum = str(parent.get("hierarchical_number") or "1")
-        for epic_index, epic in enumerate(generation.get("epics", []), start=1):
-            epic_id = uuid4().hex
-            epic_hnum = f"{parent_hnum}.{epic_index}"
-            epic_title = str(epic.get("title") or f"Epic {epic_index}")
-            epic_description = str(epic.get("prompt") or "")
-            epic_node = self._make_node(
-                node_id=epic_id,
-                parent_id=parent["node_id"],
-                status="locked" if inherited_locked or epic_index != 1 else "draft",
-                depth=int(parent.get("depth", 0) or 0) + 1,
-                display_order=epic_index - 1,
-                hierarchical_number=epic_hnum,
-                planning_thread_forked_from_node=str(parent["node_id"]),
-                now=now,
-            )
-            parent.setdefault("child_ids", []).append(epic_id)
-            self._store_new_node(
-                project_id=str(snapshot.get("project", {}).get("id") or ""),
-                snapshot=snapshot,
-                node_by_id=node_by_id,
-                node=epic_node,
-                task_title=epic_title,
-                task_purpose=epic_description,
-                state={
-                    "planning_thread_forked_from_node": str(parent["node_id"]),
-                },
-            )
-            created_child_ids.append(epic_id)
-
-            for phase_index, phase in enumerate(epic.get("phases", [])):
-                phase_key = _PHASE_KEYS[phase_index]
-                phase_id = uuid4().hex
-                epic_node.setdefault("child_ids", []).append(phase_id)
-                phase_title = f"{phase_key}: {_truncate_for_title(str(phase.get('prompt') or ''))}"
-                phase_description = str(phase.get("definition_of_done") or "")
-                phase_node = self._make_node(
-                    node_id=phase_id,
-                    parent_id=epic_id,
-                    status=(
-                        "locked"
-                        if inherited_locked or not (epic_index == 1 and phase_index == 0)
-                        else "ready"
-                    ),
-                    depth=int(epic_node.get("depth", 0) or 0) + 1,
-                    display_order=phase_index,
-                    hierarchical_number=f"{epic_hnum}.{phase_key}",
-                    planning_thread_forked_from_node=str(parent["node_id"]),
-                    now=now,
-                )
-                self._store_new_node(
-                    project_id=str(snapshot.get("project", {}).get("id") or ""),
-                    snapshot=snapshot,
-                    node_by_id=node_by_id,
-                    node=phase_node,
-                    task_title=phase_title,
-                    task_purpose=phase_description,
-                    state={
-                        "planning_thread_forked_from_node": str(parent["node_id"]),
-                    },
-                )
-                created_child_ids.append(phase_id)
-                if first_leaf_id is None:
-                    first_leaf_id = phase_id
-
-        if first_leaf_id is None:
-            raise SplitNotAllowed("Walking skeleton split did not produce any phases.")
-        return first_leaf_id
-
-    def _create_slice_children(
-        self,
-        snapshot: dict[str, Any],
-        parent: dict[str, Any],
-        node_by_id: dict[str, dict[str, Any]],
-        generation: dict[str, Any],
-        inherited_locked: bool,
-        now: str,
-        created_child_ids: list[str],
-    ) -> str:
-        first_leaf_id: str | None = None
-        parent_hnum = str(parent.get("hierarchical_number") or "1")
-        for index, subtask in enumerate(generation.get("subtasks", []), start=1):
+        materialized_subtasks: list[dict[str, Any]] = []
+        for index, subtask in enumerate(generation["subtasks"], start=1):
             child_id = uuid4().hex
-            prompt = str(subtask.get("prompt") or "")
-            child_title = _truncate_for_title(prompt)
-            child_description = _build_slice_description(subtask)
+            child_title = subtask["title"]
+            child_description = _build_flat_subtask_description(subtask)
             child_node = self._make_node(
                 node_id=child_id,
                 parent_id=parent["node_id"],
@@ -805,12 +796,22 @@ class SplitService:
                 },
             )
             created_child_ids.append(child_id)
+            materialized_subtasks.append(
+                {
+                    "subtask_id": subtask["id"],
+                    "title": subtask["title"],
+                    "objective": subtask["objective"],
+                    "why_now": subtask["why_now"],
+                    "child_node_id": child_id,
+                    "display_order": index - 1,
+                }
+            )
             if first_leaf_id is None:
                 first_leaf_id = child_id
 
         if first_leaf_id is None:
-            raise SplitNotAllowed("Slice split did not produce any subtasks.")
-        return first_leaf_id
+            raise SplitNotAllowed("Canonical split did not produce any subtasks.")
+        return first_leaf_id, {"family": "flat_subtasks_v1", "subtasks": materialized_subtasks}
 
     def _make_node(
         self,
@@ -901,12 +902,12 @@ class SplitService:
             "payload": arguments.get("payload") if isinstance(arguments, dict) else None,
         }
 
-    def _hidden_retry_prompt(self, mode: str, attempt: int, issues: list[str]) -> str:
-        return (
-            f"{build_hidden_retry_feedback(mode, issues)}\n\n"
-            f"This is hidden retry attempt {attempt}. "
-            "Call emit_render_data(kind='split_result', payload=...) with a corrected payload before writing your summary."
-        )
+    def _visible_split_request(self, mode: ServiceSplitMode, task_context: dict[str, Any]) -> str:
+        mode_label = CANONICAL_SPLIT_MODE_REGISTRY[cast(CanonicalSplitModeId, mode)]["label"]
+        parent_task = str(task_context.get("current_node_prompt") or "").strip()
+        if parent_task:
+            return f'Split "{parent_task}" using {mode_label} mode.'
+        return f"Split this node using {mode_label} mode."
 
     def _workspace_root_from_snapshot(self, snapshot: dict[str, Any]) -> str | None:
         project = snapshot.get("project", {})
@@ -931,44 +932,6 @@ class SplitService:
             return False
         return node_id in self._tree_service.node_index(tree)
 
-    def _deterministic_fallback(
-        self,
-        mode: str,
-        task_context: dict[str, Any],
-    ) -> dict[str, Any]:
-        current_prompt = str(task_context.get("current_node_prompt", "")).strip()
-        title = current_prompt.split(":", 1)[0].strip() or "Task"
-        if mode == "walking_skeleton":
-            return {
-                "epics": [
-                    {
-                        "title": "Core Implementation",
-                        "prompt": f"Core implementation of {title}",
-                        "phases": [
-                            {"prompt": "Scaffold and setup", "definition_of_done": "Project structure ready"},
-                            {"prompt": "Core logic implementation", "definition_of_done": "Main functionality working"},
-                            {"prompt": "Integration and testing", "definition_of_done": "Components integrated and tested"},
-                        ],
-                    },
-                    {
-                        "title": "Polish and Documentation",
-                        "prompt": f"Polish and documentation for {title}",
-                        "phases": [
-                            {"prompt": "Refinement and edge cases", "definition_of_done": "Edge cases handled"},
-                            {"prompt": "Documentation", "definition_of_done": "Documentation complete"},
-                            {"prompt": "Final review", "definition_of_done": "Ready for release"},
-                        ],
-                    },
-                ]
-            }
-        return {
-            "subtasks": [
-                {"order": 1, "prompt": f"Setup and foundation for {title}", "risk_reason": "", "what_unblocks": ""},
-                {"order": 2, "prompt": f"Core implementation of {title}", "risk_reason": "", "what_unblocks": ""},
-                {"order": 3, "prompt": f"Testing and integration for {title}", "risk_reason": "", "what_unblocks": ""},
-            ]
-        }
-
     def _mark_live_turn(self, project_id: str, node_id: str) -> None:
         with self._live_turns_lock:
             self._live_turns.add((project_id, node_id))
@@ -981,25 +944,13 @@ class SplitService:
         with self._live_turns_lock:
             return (project_id, node_id) in self._live_turns
 
-
-def _truncate_for_title(value: str, limit: int = 80) -> str:
-    normalized = " ".join(value.split()).strip()
-    if not normalized:
-        return "Untitled"
-    if len(normalized) <= limit:
-        return normalized
-    return normalized[: limit - 3].rstrip() + "..."
-
-
-def _build_slice_description(subtask: dict[str, Any]) -> str:
-    parts = [str(subtask.get("prompt") or "").strip()]
-    risk_reason = str(subtask.get("risk_reason") or "").strip()
-    what_unblocks = str(subtask.get("what_unblocks") or "").strip()
-    if risk_reason:
-        parts.append(f"Risk: {risk_reason}")
-    if what_unblocks:
-        parts.append(f"Unblocks: {what_unblocks}")
-    return "\n\n".join(part for part in parts if part)
+def _build_flat_subtask_description(subtask: FlatSubtaskItem) -> str:
+    return "\n\n".join(
+        [
+            subtask["objective"].strip(),
+            f"Why now: {subtask['why_now'].strip()}",
+        ]
+    )
 
 
 def _next_revision(split_metadata: Any) -> int:

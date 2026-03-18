@@ -48,7 +48,10 @@ vi.mock('../../src/features/graph/TreeGraph', () => ({
     onFinishTask,
   }: {
     snapshot: { tree_state: { root_node_id: string } }
-    onSplitNode: (nodeId: string, mode: 'walking_skeleton' | 'slice') => Promise<void>
+    onSplitNode: (
+      nodeId: string,
+      mode: 'workflow' | 'simplify_workflow' | 'phase_breakdown' | 'agent_breakdown',
+    ) => Promise<void>
     onOpenBreadcrumb: (nodeId: string) => Promise<void>
     onFinishTask: (nodeId: string) => Promise<void>
   }) => (
@@ -56,7 +59,7 @@ vi.mock('../../src/features/graph/TreeGraph', () => ({
       <div data-testid={`root-node-${snapshot.tree_state.root_node_id}`}>
         {snapshot.tree_state.root_node_id}
       </div>
-      <button onClick={() => void onSplitNode(snapshot.tree_state.root_node_id, 'slice')}>
+      <button onClick={() => void onSplitNode(snapshot.tree_state.root_node_id, 'workflow')}>
         Split Root
       </button>
       <button onClick={() => void onOpenBreadcrumb(snapshot.tree_state.root_node_id)}>
@@ -244,7 +247,7 @@ describe('GraphWorkspace', () => {
     apiMock.splitNode.mockResolvedValue({
       status: 'accepted',
       node_id: 'root',
-      mode: 'slice',
+      mode: 'workflow',
       planning_status: 'active',
     })
 
@@ -269,7 +272,7 @@ describe('GraphWorkspace', () => {
 
     expect(window.confirm).toHaveBeenCalled()
     await waitFor(() => {
-      expect(apiMock.splitNode).toHaveBeenCalledWith('project-1', 'root', 'slice', true)
+      expect(apiMock.splitNode).toHaveBeenCalledWith('project-1', 'root', 'workflow', true)
     })
     expect(apiMock.updateNode).not.toHaveBeenCalled()
   })
@@ -417,7 +420,7 @@ describe('GraphWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Split Root' }))
 
     await waitFor(() => {
-      expect(apiMock.splitNode).toHaveBeenCalledWith('project-1', 'root', 'slice', false)
+      expect(apiMock.splitNode).toHaveBeenCalledWith('project-1', 'root', 'workflow', false)
     })
     expect(await screen.findByText('split failed')).toBeInTheDocument()
   })

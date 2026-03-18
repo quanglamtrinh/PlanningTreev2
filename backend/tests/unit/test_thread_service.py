@@ -4,6 +4,7 @@ import copy
 
 from backend.services.node_service import NodeService
 from backend.ai.codex_client import CodexTransportError
+from backend.split_contract import CANONICAL_SPLIT_MODE_REGISTRY
 from backend.services.project_service import ProjectService
 from backend.services.thread_service import PLANNING_STALE_TURN_ERROR, ThreadService
 from backend.storage.storage import Storage
@@ -17,6 +18,7 @@ class FakeCodexClient:
         self.start_calls: list[dict[str, object]] = []
         self.bootstrap_calls: list[str] = []
         self.fork_calls: list[str] = []
+        self.fork_requests: list[dict[str, object]] = []
         self._planning_counter = 0
         self._execution_counter = 0
 
@@ -80,6 +82,14 @@ class FakeCodexClient:
         dynamic_tools: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         self.fork_calls.append(source_thread_id)
+        self.fork_requests.append(
+            {
+                "source_thread_id": source_thread_id,
+                "cwd": cwd,
+                "base_instructions": base_instructions,
+                "dynamic_tools": copy.deepcopy(dynamic_tools),
+            }
+        )
         if source_thread_id not in self.available_threads or source_thread_id in self.fail_once_on_fork:
             self.fail_once_on_fork.discard(source_thread_id)
             raise CodexTransportError(
@@ -100,6 +110,16 @@ def create_project(project_service: ProjectService, workspace_root: str) -> tupl
 
 def internal_nodes(snapshot: dict) -> dict[str, dict]:
     return snapshot["tree_state"]["node_index"]
+
+
+def assert_canonical_planning_instructions(instructions: object) -> None:
+    assert isinstance(instructions, str)
+    for mode in CANONICAL_SPLIT_MODE_REGISTRY:
+        assert mode in instructions
+    assert "walking_skeleton" not in instructions
+    assert "slice" not in instructions
+    assert '"id": "S1"' in instructions
+    assert '"why_now"' in instructions
 
 
 def set_node_phase(storage: Storage, project_id: str, node_id: str, phase: str) -> None:
@@ -225,6 +245,8 @@ def test_create_execution_thread_recreates_stale_planning_thread(
     assert client.start_calls[0]["thread_id"] == "planning_1"
     assert client.start_calls[1]["thread_id"] == "planning_2"
     assert client.bootstrap_calls == ["planning_2"]
+    for start_call in client.start_calls:
+        assert_canonical_planning_instructions(start_call["base_instructions"])
 
     updated_snapshot = storage.project_store.load_snapshot(project_id)
     root = internal_nodes(updated_snapshot)[node_id]
@@ -269,7 +291,19 @@ def test_fork_planning_thread_materializes_inherited_history_once(
         tool_calls=[
             {
                 "tool_name": "emit_render_data",
-                "arguments": {"kind": "split_result", "payload": {"subtasks": [{"order": 1, "prompt": "One"}]}},
+                "arguments": {
+                    "kind": "split_result",
+                    "payload": {
+                        "subtasks": [
+                            {
+                                "id": "S1",
+                                "title": "One",
+                                "objective": "Set up the first inherited step.",
+                                "why_now": "It anchors the child planning flow.",
+                            }
+                        ]
+                    },
+                },
             }
         ],
         assistant_content="Here is the split.",
@@ -288,6 +322,8 @@ def test_fork_planning_thread_materializes_inherited_history_once(
     assert first_turns == second_turns
     assert all(turn["is_inherited"] is True for turn in first_turns)
     assert all(turn["origin_node_id"] == root_id for turn in first_turns)
+    assert client.fork_requests
+    assert_canonical_planning_instructions(client.fork_requests[0]["base_instructions"])
 
 
 def test_grandchild_inherits_full_lineage_without_rewriting_origin_node_id(

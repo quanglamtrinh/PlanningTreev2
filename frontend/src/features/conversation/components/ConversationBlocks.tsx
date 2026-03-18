@@ -13,6 +13,7 @@ import type {
   ConversationToolResultRenderItem,
   ConversationUnsupportedRenderItem,
 } from '../model/buildConversationRenderModel'
+import { normalizeSplitPayload } from '../model/normalizeSplitPayload'
 import styles from './ConversationSurface.module.css'
 
 function renderMetaLine(label: string, value: string | null) {
@@ -28,77 +29,30 @@ function renderMetaLine(label: string, value: string | null) {
 }
 
 function renderSplitPayload(payload: Record<string, unknown> | null) {
-  if (!payload) {
+  const normalized = normalizeSplitPayload(payload)
+  if (!normalized) {
     return null
   }
-  const epics = Array.isArray(payload.epics) ? payload.epics : null
-  const subtasks = Array.isArray(payload.subtasks) ? payload.subtasks : null
 
-  if (epics) {
+  if (normalized.kind === 'unsupported') {
     return (
-      <div className={styles.blockGrid}>
-        {epics.map((epic, index) => {
-          if (!epic || typeof epic !== 'object') {
-            return null
-          }
-          const typedEpic = epic as {
-            title?: string
-            prompt?: string
-            phases?: Array<{ prompt?: string; definition_of_done?: string }>
-          }
-          return (
-            <article key={`${typedEpic.title ?? 'epic'}-${index}`} className={styles.blockCard}>
-              <div className={styles.blockCardSection}>
-                <h5 className={styles.blockCardTitle}>{typedEpic.title ?? `Epic ${index + 1}`}</h5>
-                {typedEpic.prompt ? <p className={styles.blockCardText}>{typedEpic.prompt}</p> : null}
-              </div>
-              <div className={styles.blockList}>
-                {(typedEpic.phases ?? []).map((phase, phaseIndex) => (
-                  <div key={`${typedEpic.title ?? 'phase'}-${phaseIndex}`} className={styles.blockListItem}>
-                    <strong>{phase.prompt ?? `Phase ${phaseIndex + 1}`}</strong>
-                    {phase.definition_of_done ? <span>{phase.definition_of_done}</span> : null}
-                  </div>
-                ))}
-              </div>
-            </article>
-          )
-        })}
-      </div>
+      <p className={styles.unsupportedFallback}>{normalized.message}</p>
     )
   }
 
-  if (subtasks) {
-    return (
-      <div className={styles.blockGrid}>
-        {subtasks.map((subtask, index) => {
-          if (!subtask || typeof subtask !== 'object') {
-            return null
-          }
-          const typedSubtask = subtask as {
-            order?: number
-            prompt?: string
-            risk_reason?: string
-            what_unblocks?: string
-          }
-          return (
-            <article
-              key={`${typedSubtask.order ?? index}-${typedSubtask.prompt ?? 'subtask'}`}
-              className={styles.blockCard}
-            >
-              <div className={styles.blockCardSection}>
-                <h5 className={styles.blockCardTitle}>Slice {typedSubtask.order ?? index + 1}</h5>
-                {typedSubtask.prompt ? <p className={styles.blockCardText}>{typedSubtask.prompt}</p> : null}
-                {renderMetaLine('Risk:', typedSubtask.risk_reason ?? null)}
-                {renderMetaLine('Unblocks:', typedSubtask.what_unblocks ?? null)}
-              </div>
-            </article>
-          )
-        })}
-      </div>
-    )
-  }
-
-  return null
+  return (
+    <div className={styles.blockGrid}>
+      {normalized.cards.map((subtask) => (
+        <article key={subtask.key} className={styles.blockCard}>
+          <div className={styles.blockCardSection}>
+            <h5 className={styles.blockCardTitle}>{subtask.title}</h5>
+            {subtask.body ? <p className={styles.blockCardText}>{subtask.body}</p> : null}
+            {subtask.meta.map((meta) => renderMetaLine(`${meta.label}:`, meta.value))}
+          </div>
+        </article>
+      ))}
+    </div>
+  )
 }
 
 function formatJson(value: unknown): string {

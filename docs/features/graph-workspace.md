@@ -22,12 +22,15 @@ Use these legacy files as the design source:
 - Route `/projects/:projectId/nodes/:nodeId/chat` renders the breadcrumb execution workspace.
 - The project root node must always be present in the ReactFlow node set when the snapshot is
   valid.
-- The graph action affordance exposes:
+- The graph node action menu exposes:
   enabled `Create Child`
   enabled `Open Breadcrumb`
-  disabled `Walking Skeleton`
-  disabled `Slice`
+  enabled split actions `Workflow`, `Simplify Workflow`, `Phase Breakdown`, and `Agent Breakdown`
+    when the node can split
+  split actions become unavailable while another split is already in progress
   enabled `Finish Task` only for leaf nodes in `ready` or `in_progress`
+- Locked nodes may still split; done nodes may not.
+- No separate graph-side split panel exists. The `GraphNode` menu is the sole split entrypoint.
 - The right-side floating detail panel is the main editing surface in Phase 3.
 - Inline edits persist on blur and when selection changes.
 - `Open Breadcrumb` performs unseeded navigation into the breadcrumb workspace.

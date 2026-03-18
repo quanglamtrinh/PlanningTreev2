@@ -45,15 +45,19 @@ def build_planning_split_summary(
 ) -> str:
     created_count = len(created_child_ids or [])
     if isinstance(payload, dict):
-        epics = payload.get("epics")
-        if isinstance(epics, list):
-            epic_count = len([epic for epic in epics if isinstance(epic, dict)])
-            if epic_count > 0:
-                return f"Split completed. Created {epic_count} epic tasks."
         subtasks = payload.get("subtasks")
         if isinstance(subtasks, list):
-            subtask_count = len([subtask for subtask in subtasks if isinstance(subtask, dict)])
-            if subtask_count > 0:
+            valid_subtasks = [
+                subtask
+                for subtask in subtasks
+                if isinstance(subtask, dict)
+                and all(
+                    isinstance(subtask.get(field), str) and str(subtask.get(field) or "").strip()
+                    for field in ("id", "title", "objective", "why_now")
+                )
+            ]
+            if valid_subtasks:
+                subtask_count = len(valid_subtasks)
                 return f"Split completed. Created {subtask_count} child tasks."
     if created_count > 0:
         return f"Split completed. Created {created_count} child tasks."

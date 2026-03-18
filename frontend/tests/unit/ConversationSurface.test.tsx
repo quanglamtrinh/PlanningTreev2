@@ -311,7 +311,12 @@ describe('ConversationSurface', () => {
                   kind: 'split_result',
                   payload: {
                     subtasks: [
-                      { order: 1, prompt: 'Setup repo', risk_reason: 'env', what_unblocks: 'coding' },
+                      {
+                        id: 'S1',
+                        title: 'Setup repo',
+                        objective: 'Prepare the repository and workspace.',
+                        why_now: 'This unlocks the remaining delivery work.',
+                      },
                     ],
                   },
                 },
@@ -325,9 +330,94 @@ describe('ConversationSurface', () => {
     renderSurface(model)
 
     expect(screen.getByText('Split completed. Created 2 child tasks.')).toBeInTheDocument()
-    expect(screen.getByText('Slice 1')).toBeInTheDocument()
-    expect(screen.getByText('Setup repo')).toBeInTheDocument()
+    expect(screen.getByText('S1 / Setup repo')).toBeInTheDocument()
+    expect(screen.getByText('Prepare the repository and workspace.')).toBeInTheDocument()
     expect(screen.queryByText(/Unsupported content:/)).not.toBeInTheDocument()
+  })
+
+  it('renders an unsupported notice for legacy epic split_result payloads after cutover', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          parts: [
+            makePart({
+              part_id: 'part_tool_legacy_epic',
+              part_type: 'tool_call',
+              payload: {
+                tool_call_id: 'call_split_legacy_epic',
+                tool_name: 'emit_render_data',
+                arguments: {
+                  kind: 'split_result',
+                  payload: {
+                    epics: [
+                      {
+                        title: 'Foundation',
+                        prompt: 'Stand up the initial skeleton for the project.',
+                        phases: [
+                          {
+                            prompt: 'Wire storage',
+                            definition_of_done: 'Project state persists successfully.',
+                          },
+                          {
+                            prompt: 'Render graph',
+                            definition_of_done: 'The graph renders the root node and first edge.',
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    renderSurface(model)
+
+    expect(
+      screen.getByText("This historical split result uses a legacy format and can't be rendered in the current UI."),
+    ).toBeInTheDocument()
+  })
+
+  it('renders canonical flat split_result payloads with objective and why_now details', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          parts: [
+            makePart({
+              part_id: 'part_tool',
+              part_type: 'tool_call',
+              payload: {
+                tool_call_id: 'call_split_canonical',
+                tool_name: 'emit_render_data',
+                arguments: {
+                  kind: 'split_result',
+                  payload: {
+                    subtasks: [
+                      {
+                        id: 'S1',
+                        title: 'Setup workspace',
+                        objective: 'Prepare the repo and environment for the split.',
+                        why_now: 'This unlocks the downstream implementation steps.',
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    renderSurface(model)
+
+    expect(screen.getByText('S1 / Setup workspace')).toBeInTheDocument()
+    expect(screen.getByText('Prepare the repo and environment for the split.')).toBeInTheDocument()
+    expect(screen.getByText(/Why now:/i)).toBeInTheDocument()
+    expect(screen.getByText('This unlocks the downstream implementation steps.')).toBeInTheDocument()
   })
 
   it('renders reasoning, tool_result, plan, diff, and file-change passive blocks', () => {
@@ -444,6 +534,107 @@ describe('ConversationSurface', () => {
     fireEvent.click(screen.getByText('Replay branch (1 message)'))
     expect(screen.getByText('Old answer')).toBeInTheDocument()
     expect(screen.getAllByText('Superseded result').length).toBeGreaterThan(0)
+  })
+
+  it('renders split replace history with current canonical cards and a superseded replay branch', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          message_id: 'msg_user_split',
+          role: 'user',
+          parts: [makePart({ part_id: 'part_user_split', part_type: 'user_text', payload: { text: 'Replace split' } })],
+        }),
+        makeMessage({
+          message_id: 'msg_assistant_split_old',
+          turn_id: 'turn_split_old',
+          status: 'superseded',
+          lineage: {
+            parent_message_id: 'msg_user_split',
+            superseded_by_message_id: 'msg_assistant_split_new',
+          },
+          parts: [
+            makePart({ part_id: 'part_old_text', payload: { text: 'Split completed. Created 3 child tasks.' } }),
+            makePart({
+              part_id: 'part_old_tool',
+              part_type: 'tool_call',
+              order: 1,
+              payload: {
+                tool_call_id: 'call_split_old',
+                tool_name: 'emit_render_data',
+                arguments: {
+                  kind: 'split_result',
+                  payload: {
+                    subtasks: [
+                      {
+                        id: 'S1',
+                        title: 'Old setup',
+                        objective: 'Prepare the first split branch.',
+                        why_now: 'This was the initial attempt.',
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+            makePart({
+              part_id: 'part_old_status',
+              part_type: 'status_block',
+              order: 2,
+              payload: {
+                title: 'Superseded split result',
+                summary: 'Replaced by a confirmed resplit.',
+                status: 'superseded',
+              },
+            }),
+          ],
+        }),
+        makeMessage({
+          message_id: 'msg_assistant_split_new',
+          turn_id: 'turn_split_new',
+          lineage: {
+            parent_message_id: 'msg_user_split',
+            regenerate_of_message_id: 'msg_assistant_split_old',
+          },
+          parts: [
+            makePart({ part_id: 'part_new_text', payload: { text: 'Split completed. Created 3 child tasks.' } }),
+            makePart({
+              part_id: 'part_new_tool',
+              part_type: 'tool_call',
+              order: 1,
+              payload: {
+                tool_call_id: 'call_split_new',
+                tool_name: 'emit_render_data',
+                arguments: {
+                  kind: 'split_result',
+                  payload: {
+                    subtasks: [
+                      {
+                        id: 'S1',
+                        title: 'Current setup',
+                        objective: 'Prepare the replacement split branch.',
+                        why_now: 'This is the active replacement path.',
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    renderSurface(model)
+
+    expect(screen.getByText('S1 / Current setup')).toBeInTheDocument()
+    expect(screen.getByText('Prepare the replacement split branch.')).toBeInTheDocument()
+    expect(screen.getByText('Replay branch (1 message)')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Replay branch (1 message)'))
+    expect(screen.getByText('S1 / Old setup')).toBeInTheDocument()
+    expect(screen.getAllByText('Superseded split result').length).toBeGreaterThan(0)
+    expect(
+      screen.queryByText("This historical split result uses a legacy format and can't be rendered in the current UI."),
+    ).not.toBeInTheDocument()
   })
 
   it('renders approval, runtime input request, and runtime input response blocks', () => {

@@ -15,6 +15,7 @@ export type NodePhase =
 export type NodeKind = 'root' | 'original' | 'superseded'
 export type ChatMessageStatus = 'pending' | 'streaming' | 'completed' | 'error'
 export type SpecGenerationStatus = 'idle' | 'generating' | 'failed'
+export type SplitMode = 'workflow' | 'simplify_workflow' | 'phase_breakdown' | 'agent_breakdown'
 
 export interface BootstrapStatus {
   ready: boolean
@@ -44,7 +45,7 @@ export interface NodeRecord {
   status: NodeStatus
   phase: NodePhase
   node_kind: NodeKind
-  planning_mode: 'walking_skeleton' | 'slice' | null
+  planning_mode: SplitMode | null
   depth: number
   display_order: number
   hierarchical_number: string
@@ -484,7 +485,7 @@ type PlanningEventBase = {
 export type PlanningEvent =
   | (PlanningEventBase & {
       type: 'planning_turn_started'
-      mode: 'walking_skeleton' | 'slice'
+      mode: SplitMode
       timestamp: string
     })
   | (PlanningEventBase & {
@@ -549,7 +550,7 @@ export interface AcceptedAgentOperation {
 export interface SplitAcceptedResponse {
   status: 'accepted'
   node_id: string
-  mode: 'walking_skeleton' | 'slice'
+  mode: SplitMode
   planning_status: 'active'
 }
 

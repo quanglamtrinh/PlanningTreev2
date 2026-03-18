@@ -205,6 +205,20 @@ describe('AskPanel', () => {
     expect(screen.queryByText('Legacy ask transcript')).not.toBeInTheDocument()
   })
 
+  it('renders ask assistant output with the codex-style message actions and quote flow', () => {
+    const snapshot = makeConversationSnapshotWithAssistantText('Ask v2 transcript')
+    const conversationId = useConversationStore.getState().ensureConversation(snapshot)
+    useConversationStore.getState().hydrateConversation(snapshot)
+    useConversationStore.getState().setConnectionStatus(conversationId, 'connected')
+
+    render(<AskConversationHarness conversationId={conversationId} />)
+
+    expect(screen.getByRole('button', { name: 'Copy message' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Quote message' }))
+
+    expect(screen.getByRole('textbox')).toHaveValue('> Ask v2 transcript\n\n')
+  })
+
   it('shows bootstrap errors without falling back to a legacy transcript', () => {
     render(
       <AskConversationHarness
