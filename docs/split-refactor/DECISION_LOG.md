@@ -67,3 +67,15 @@ Last updated: 2026-03-17
 - Date: 2026-03-17
 - Decision: Canonical split execution must never fall into legacy validator, retry, or fallback helpers; if canonical fallback is reached in Phase 3, the service raises an explicit guard instead.
 - Rationale: Fail-closed behavior protects the new flat-subtask contract from silently degrading back to legacy payload semantics.
+
+## D-012: Phase 4 completes canonical execution only inside the backend service layer
+
+- Date: 2026-03-17
+- Decision: Phase 4 replaces the canonical fallback guard with deterministic canonical fallback, but public route behavior remains unchanged and canonical modes stay blocked at `/split`.
+- Rationale: Backend execution can be completed and tested before frontend, transport, and public API contracts migrate to the new mode set.
+
+## D-013: Canonical fallback follows one fixed execution order
+
+- Date: 2026-03-17
+- Decision: Canonical execution order is fixed to prompt build, model parse, canonical validation, retry, deterministic fallback, canonical validation again on fallback payload, then shared `flat_subtasks_v1` materialization.
+- Rationale: A fixed order prevents fallback from running too early or bypassing the canonical validator and makes service behavior easier to test and reason about.

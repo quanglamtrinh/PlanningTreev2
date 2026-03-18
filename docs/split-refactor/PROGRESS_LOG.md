@@ -9,7 +9,7 @@ Last updated: 2026-03-17
 | Phase 1 | completed | Registry and route guard landed with a temporary legacy route bridge |
 | Phase 2 | completed | Canonical prompt builder landed with a strict flat-schema contract and a separate legacy bridge module |
 | Phase 3 | completed | SplitService now materializes canonical modes through one flat-family path while keeping route-level canonical guard intact |
-| Phase 4 | pending | Fallback migration not started |
+| Phase 4 | completed | Canonical deterministic fallback landed at the backend service layer while route behavior stayed unchanged |
 | Phase 5 | pending | Frontend registry and type migration not started |
 | Phase 6 | pending | Split surface cleanup not started |
 | Phase 7 | pending | Cutover cleanup not started |
@@ -33,3 +33,6 @@ Last updated: 2026-03-17
 - Added service-facing split contract helpers, a mode-to-runtime bundle dispatch helper, and a shared canonical flat-subtask materializer.
 - Preserved the Phase 1 route guard and the legacy bridge while making canonical service execution fail closed and explicit if it reaches fallback before Phase 4.
 - Added canonical service tests for flat-family materialization, revision handling, and failure behavior while keeping legacy bridge and API guard coverage green.
+- Started and completed Phase 4 by replacing the canonical fallback guard with deterministic canonical fallback for all 4 new modes.
+- Added a dedicated canonical fallback module, revalidated fallback payloads before materialization, and kept canonical execution on the same shared `flat_subtasks_v1` contract and apply path.
+- Preserved the public route guard and the legacy bridge while making canonical split execution backend-complete and adding targeted fallback coverage.

@@ -39,6 +39,7 @@ from backend.services.agent_operation_service import (
     clear_last_agent_failure,
     set_last_agent_failure,
 )
+from backend.services.canonical_split_fallback import build_canonical_split_fallback
 from backend.services.node_task_fields import enrich_nodes_with_task_fields
 from backend.services.planning_conversation_adapter import (
     build_planning_split_summary,
@@ -471,11 +472,7 @@ class SplitService:
 
         fallback_used = False
         if resolved is None:
-            payload = self._deterministic_fallback(mode, task_context)
-            resolved = {
-                "payload": payload,
-                "tool_calls": [self._render_tool_call(payload)],
-            }
+            resolved = self._validated_fallback_resolution(mode, bundle, task_context)
             assistant_content = "I could not produce a valid structured split, so I applied the deterministic fallback split."
             fallback_used = True
 
@@ -607,6 +604,23 @@ class SplitService:
                 issues.extend(payload_issues)
 
         return issues or ["emit_render_data was captured but the payload was still invalid."]
+
+    def _validated_fallback_resolution(
+        self,
+        mode: ServiceSplitMode,
+        bundle: SplitRuntimeBundle,
+        task_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = self._deterministic_fallback(mode, task_context)
+        issues = bundle.payload_issues(payload)
+        if issues:
+            raise RuntimeError(
+                "Deterministic split fallback produced an invalid payload: " + "; ".join(issues)
+            )
+        return {
+            "payload": payload,
+            "tool_calls": [self._render_tool_call(payload)],
+        }
 
     def _apply_split_payload(
         self,
@@ -1071,7 +1085,7 @@ class SplitService:
     ) -> dict[str, Any]:
         output_family = split_output_family_for_mode(mode)
         if output_family == "flat_subtasks_v1":
-            raise SplitNotAllowed("Canonical split fallback is not available until Phase 4.")
+            return build_canonical_split_fallback(cast(CanonicalSplitModeId, mode), task_context)
         current_prompt = str(task_context.get("current_node_prompt", "")).strip()
         title = current_prompt.split(":", 1)[0].strip() or "Task"
         if output_family == "legacy_epic_phase":

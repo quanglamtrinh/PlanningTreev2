@@ -37,11 +37,11 @@ Legend:
 
 ## Phase 4 - Deterministic Fallback Migration
 
-- [ ] `P4.1` Replace deterministic fallback for `workflow`.
-- [ ] `P4.2` Replace deterministic fallback for `simplify_workflow`.
-- [ ] `P4.3` Replace deterministic fallback for `phase_breakdown`.
-- [ ] `P4.4` Replace deterministic fallback for `agent_breakdown`.
-- [ ] `P4.5` Ensure fallback always emits the same `flat_subtasks_v1` contract as model output.
+- [x] `P4.1` Replace deterministic fallback for `workflow`.
+- [x] `P4.2` Replace deterministic fallback for `simplify_workflow`.
+- [x] `P4.3` Replace deterministic fallback for `phase_breakdown`.
+- [x] `P4.4` Replace deterministic fallback for `agent_breakdown`.
+- [x] `P4.5` Ensure fallback always emits the same `flat_subtasks_v1` contract as model output.
 
 ## Phase 5 - Frontend Registry And Type Migration
 
@@ -75,7 +75,7 @@ Legend:
 - [ ] `P8.2` Add parser and validator tests for strict flat-schema acceptance.
 - [ ] `P8.3` Add service tests for `flat_subtasks_v1` materialization.
 - [ ] `P8.4` Add service tests for the Phase 3 invariant.
-- [ ] `P8.5` Add deterministic fallback tests for each mode's semantics and count limits.
+- [x] `P8.5` Add deterministic fallback tests for each mode's semantics and count limits.
 - [ ] `P8.6` Add API tests for accepted modes and invalid mode returning `400 invalid_request`.
 - [ ] `P8.7` Add frontend tests for dynamic GraphNode split menu rendering.
 - [ ] `P8.8` Add frontend tests for removal or hiding of duplicate split affordances elsewhere.

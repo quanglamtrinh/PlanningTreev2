@@ -9,6 +9,7 @@ import pytest
 from backend.ai.codex_client import CodexTransportError
 from backend.errors.app_errors import SplitNotAllowed
 from backend.services import split_service as split_service_module
+from backend.services.canonical_split_fallback import build_canonical_split_fallback
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
 from backend.services.split_service import SplitService, split_runtime_bundle_for_mode
@@ -748,7 +749,7 @@ def test_split_service_falls_back_after_retries_and_restarts_transport(
     assert len(root["split_metadata"]["created_child_ids"]) == 3
 
 
-def test_canonical_split_service_blocks_fallback_and_leaves_parent_metadata_untouched(
+def test_canonical_split_service_falls_back_after_retries_without_legacy_helpers(
     project_service: ProjectService,
     storage: Storage,
     tree_service,
@@ -760,6 +761,8 @@ def test_canonical_split_service_blocks_fallback_and_leaves_parent_metadata_unto
     def fail_legacy(*args, **kwargs):
         raise AssertionError("canonical split should not fall into legacy retry helpers")
 
+    monkeypatch.setattr(split_service_module, "build_legacy_split_user_message", fail_legacy)
+    monkeypatch.setattr(split_service_module, "validate_legacy_split_payload", fail_legacy)
     monkeypatch.setattr(split_service_module, "legacy_split_payload_issues", fail_legacy)
     monkeypatch.setattr(split_service_module, "build_legacy_hidden_retry_feedback", fail_legacy)
 
@@ -775,13 +778,64 @@ def test_canonical_split_service_blocks_fallback_and_leaves_parent_metadata_unto
         ),
     )
 
-    with pytest.raises(SplitNotAllowed, match="Canonical split fallback is not available until Phase 4."):
+    snapshot = service.split_node(project_id, root_id, "workflow")  # type: ignore[arg-type]
+    nodes = node_by_id(snapshot)
+    root = nodes[root_id]
+    children = [nodes[child_id] for child_id in root["split_metadata"]["created_child_ids"]]
+    first_child_task = storage.node_store.load_task(project_id, children[0]["node_id"])
+
+    assert len(service._service._codex_client.calls) == 3  # type: ignore[attr-defined]
+    assert root["planning_mode"] == "workflow"
+    assert root["split_metadata"]["source"] == "fallback"
+    assert root["split_metadata"]["output_family"] == "flat_subtasks_v1"
+    assert root["split_metadata"]["warnings"] == ["fallback_used"]
+    assert [child["status"] for child in children] == ["ready", "locked", "locked"]
+    assert first_child_task["title"] == "Define the working flow"
+    assert "Why now:" in first_child_task["purpose"]
+
+
+def test_canonical_fallback_payload_is_revalidated_before_apply(
+    project_service: ProjectService,
+    storage: Storage,
+    tree_service,
+    workspace_root,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id, root_id = create_project(project_service, str(workspace_root))
+
+    monkeypatch.setattr(
+        split_service_module,
+        "build_canonical_split_fallback",
+        lambda mode, task_context: {  # type: ignore[return-value]
+            "subtasks": [
+                {
+                    "id": "S1",
+                    "title": "Invalid canonical fallback",
+                    "objective": "Missing why_now should fail validation",
+                }
+            ]
+        },
+    )
+
+    service = make_service(
+        storage,
+        tree_service,
+        FakeCodexClient(
+            [
+                "not json",
+                "still not json",
+                "still not json",
+            ]
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Deterministic split fallback produced an invalid payload:"):
         service._execute_split_turn(
             project_id=project_id,
             node_id=root_id,
             mode="workflow",  # type: ignore[arg-type]
             confirm_replace=False,
-            turn_id="turn_canonical_fail",
+            turn_id="turn_invalid_canonical_fallback",
         )
 
     persisted_root = node_by_id(load_snapshot(storage, project_id))[root_id]
