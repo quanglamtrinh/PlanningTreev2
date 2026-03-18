@@ -11,7 +11,7 @@ Last updated: 2026-03-17
 | Phase 3 | completed | SplitService now materializes canonical modes through one flat-family path while keeping route-level canonical guard intact |
 | Phase 4 | completed | Canonical deterministic fallback landed at the backend service layer while route behavior stayed unchanged |
 | Phase 5 | completed | Public `/split` now accepts canonical modes and the frontend create path is canonical-only through GraphNode |
-| Phase 6 | pending | Split surface cleanup not started |
+| Phase 6 | completed | Legacy graph-side split placeholders removed and current docs aligned with GraphNode as the only live split surface |
 | Phase 7 | pending | Cutover cleanup not started |
 | Phase 8 | pending | Tests and docs stabilization not started |
 
@@ -38,6 +38,9 @@ Last updated: 2026-03-17
 - Preserved the public route guard and the legacy bridge while making canonical split execution backend-complete and adding targeted fallback coverage.
 - Started and completed Phase 5 by opening the public `/split` route for the 4 canonical modes and removing legacy modes from the public split contract.
 - Added frontend canonical split typing, a graph split registry, and generic canonical split wiring through GraphNode, TreeGraph, GraphWorkspace, the API client, and the project store.
-- Removed PlanningConversationPanel split buttons so GraphNode is now the only exposed split entrypoint in the primary UI path.
+- Removed PlanningConversationPanel split affordances so GraphNode is now the only exposed split entrypoint in the primary UI path.
 - Added shared split-payload normalization so canonical flat subtasks render correctly while legacy split payloads remain readable during the transition window.
 - Added targeted backend route tests, frontend graph/store/render tests, and frontend typecheck coverage for the public cutover.
+- Started and completed Phase 6 by deleting the unused legacy graph action panel component and leaving GraphNode as the only live split surface.
+- Updated current docs so split creation is described through GraphNode, GraphWorkspace, `routes/split.py`, and the asynchronous planning-completion flow.
+- Added Phase 6 tracking docs plus targeted validation covering graph-menu tests, planning-host split-entrypoint proof, frontend typecheck, and repo-search acceptance for stale current-doc references.

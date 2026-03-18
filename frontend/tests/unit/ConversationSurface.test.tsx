@@ -330,6 +330,56 @@ describe('ConversationSurface', () => {
     expect(screen.queryByText(/Unsupported content:/)).not.toBeInTheDocument()
   })
 
+  it('renders legacy epic split_result payloads without degrading them to unsupported fallback', () => {
+    const model = buildConversationRenderModel(
+      makeSnapshot([
+        makeMessage({
+          parts: [
+            makePart({
+              part_id: 'part_tool_legacy_epic',
+              part_type: 'tool_call',
+              payload: {
+                tool_call_id: 'call_split_legacy_epic',
+                tool_name: 'emit_render_data',
+                arguments: {
+                  kind: 'split_result',
+                  payload: {
+                    epics: [
+                      {
+                        title: 'Foundation',
+                        prompt: 'Stand up the initial skeleton for the project.',
+                        phases: [
+                          {
+                            prompt: 'Wire storage',
+                            definition_of_done: 'Project state persists successfully.',
+                          },
+                          {
+                            prompt: 'Render graph',
+                            definition_of_done: 'The graph renders the root node and first edge.',
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+          ],
+        }),
+      ]),
+    )
+
+    renderSurface(model)
+
+    expect(screen.getByText('Foundation')).toBeInTheDocument()
+    expect(screen.getByText('Stand up the initial skeleton for the project.')).toBeInTheDocument()
+    expect(screen.getByText('Wire storage')).toBeInTheDocument()
+    expect(screen.getByText('Project state persists successfully.')).toBeInTheDocument()
+    expect(screen.getByText('Render graph')).toBeInTheDocument()
+    expect(screen.getByText('The graph renders the root node and first edge.')).toBeInTheDocument()
+    expect(screen.queryByText(/Unsupported content:/)).not.toBeInTheDocument()
+  })
+
   it('renders canonical flat split_result payloads with objective and why_now details', () => {
     const model = buildConversationRenderModel(
       makeSnapshot([

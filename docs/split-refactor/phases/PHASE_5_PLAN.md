@@ -20,7 +20,7 @@ Last updated: 2026-03-17
 ## Out-Of-Scope Boundaries
 
 - Removing the internal backend legacy bridge.
-- GraphControls placeholder cleanup.
+- Legacy graph-side placeholder panel cleanup.
 - Persisted-record migration or replay cleanup.
 - Full legacy assumption cleanup across every secondary UI or history surface.
 
@@ -32,7 +32,7 @@ Last updated: 2026-03-17
 - Replace hardcoded `walking_skeleton` and `slice` wiring in `GraphNode`, `TreeGraph`, and `GraphWorkspace`.
 - Update `api.splitNode` and `project-store.splitNode` to accept only canonical `SplitMode`.
 - Preserve legacy read tolerance in `planning_mode`, planning events, and split payload rendering.
-- Remove PlanningConversationPanel split buttons and point users to the graph node menu.
+- Remove planning-panel split affordances and point users to the graph node menu.
 - Add frontend and backend coverage for canonical route acceptance, canonical create paths, and legacy read compatibility.
 
 ## Acceptance Checks
@@ -46,4 +46,4 @@ Last updated: 2026-03-17
 ## Open Phase-Local Risks
 
 - Legacy read compatibility still exists after public cutover, so later cleanup phases must avoid accidentally expanding that tolerance back into creation paths.
-- GraphControls placeholder cleanup is intentionally deferred and still needs an explicit follow-up phase.
+- Legacy graph-side placeholder panel cleanup is intentionally deferred and still needs an explicit follow-up phase.

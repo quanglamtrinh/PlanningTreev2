@@ -3,6 +3,50 @@ import { describe, expect, it } from 'vitest'
 import { normalizeSplitPayload } from '../../src/features/conversation/model/normalizeSplitPayload'
 
 describe('normalizeSplitPayload', () => {
+  it('keeps legacy walking-skeleton epic payloads readable on transition read paths', () => {
+    const normalized = normalizeSplitPayload({
+      epics: [
+        {
+          title: 'Foundation',
+          prompt: 'Stand up the initial skeleton for the project.',
+          phases: [
+            {
+              prompt: 'Wire storage',
+              definition_of_done: 'Project state persists successfully.',
+            },
+            {
+              prompt: 'Render graph',
+              definition_of_done: 'The graph renders the root node and first edge.',
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(normalized).toEqual({
+      kind: 'epics',
+      cards: [
+        {
+          key: 'Foundation-0',
+          title: 'Foundation',
+          body: 'Stand up the initial skeleton for the project.',
+          items: [
+            {
+              key: 'Foundation-0',
+              title: 'Wire storage',
+              body: 'Project state persists successfully.',
+            },
+            {
+              key: 'Foundation-1',
+              title: 'Render graph',
+              body: 'The graph renders the root node and first edge.',
+            },
+          ],
+        },
+      ],
+    })
+  })
+
   it('normalizes canonical flat subtasks for shared split rendering', () => {
     const normalized = normalizeSplitPayload({
       subtasks: [

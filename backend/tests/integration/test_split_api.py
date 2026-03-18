@@ -292,25 +292,45 @@ def advance_node_to_ready_for_execution(
     assert confirm_spec.status_code == 200
 
 
-def test_split_api_returns_snapshot_with_new_children(client, workspace_root) -> None:
+@pytest.mark.parametrize("mode", list(CANONICAL_SPLIT_MODE_REGISTRY))
+def test_split_api_returns_snapshot_with_new_children_for_each_canonical_mode(
+    client,
+    workspace_root,
+    mode: str,
+) -> None:
     project_id, root_id = create_project(client, str(workspace_root))
-    client.app.state.split_service._codex_client = FakeCodexClient(
+    fake_client = FakeCodexClient(
         [
-            json.dumps(canonical_payload("workflow", title_prefix="workflow")),
+            json.dumps(canonical_payload(mode, title_prefix=mode)),
         ]
     )
+    client.app.state.split_service._codex_client = fake_client
 
     response = client.post(
         f"/v1/projects/{project_id}/nodes/{root_id}/split",
-        json={"mode": "workflow"},
+        json={"mode": mode},
     )
 
     assert response.status_code == 202
     payload = wait_for_split_completion(client, project_id, root_id)
-    root = next(node for node in payload["tree_state"]["node_registry"] if node["node_id"] == root_id)
+    nodes = {node["node_id"]: node for node in payload["tree_state"]["node_registry"]}
+    root = nodes[root_id]
+    spec = CANONICAL_SPLIT_MODE_REGISTRY[mode]
+    created_child_ids = root["split_metadata"]["created_child_ids"]
+    created_children = [nodes[node_id] for node_id in created_child_ids]
+
+    assert fake_client.calls
+    assert f"Decompose this node using {spec['label'].lower()} mode." in str(fake_client.calls[0]["prompt"])
+    assert root["planning_mode"] == mode
+    assert root["split_metadata"]["mode"] == mode
+    assert root["split_metadata"]["output_family"] == "flat_subtasks_v1"
     assert root["split_metadata"]["source"] == "ai"
-    assert len(root["split_metadata"]["created_child_ids"]) == CANONICAL_SPLIT_MODE_REGISTRY["workflow"]["min_items"]
-    assert payload["tree_state"]["active_node_id"] == root["split_metadata"]["created_child_ids"][0]
+    assert len(created_child_ids) == spec["min_items"]
+    assert len(root["split_metadata"]["materialized"]["subtasks"]) == spec["min_items"]
+    assert created_children[0]["title"] == f"{mode} step 1"
+    assert f"Objective 1 for {mode}" in created_children[0]["description"]
+    assert f"Why now: Reason 1 for {mode}" in created_children[0]["description"]
+    assert payload["tree_state"]["active_node_id"] == created_child_ids[0]
 
 
 def test_split_api_allows_locked_node_and_keeps_new_children_locked(client, workspace_root) -> None:

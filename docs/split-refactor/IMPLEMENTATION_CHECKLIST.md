@@ -57,10 +57,10 @@ Legend:
 
 ## Phase 6 - Split Surface Cleanup
 
-- [ ] `P6.1` Assert GraphNode as the sole split entrypoint.
-- [ ] `P6.2` Remove or hide stale, duplicated, or placeholder split affordances outside GraphNode.
-- [ ] `P6.3` Confirm no non-GraphNode UI path can initiate a canonical-mode split.
-- [ ] `P6.4` Update stale docs that still point to `GraphControls` or `routes/nodes.py`.
+- [x] `P6.1` Assert GraphNode as the sole split entrypoint.
+- [x] `P6.2` Remove or hide stale, duplicated, or placeholder split affordances outside GraphNode.
+- [x] `P6.3` Confirm no non-GraphNode UI path can initiate a canonical-mode split.
+- [x] `P6.4` Update stale current docs that still point to the old graph-side split surface or outdated split route ownership.
 
 ## Phase 7 - Cutover Cleanup And Convergence
 

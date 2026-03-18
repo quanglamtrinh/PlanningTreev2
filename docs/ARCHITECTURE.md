@@ -1,7 +1,7 @@
-# Architecture — PlanningTree Rebuild
+# Architecture - PlanningTree Rebuild
 
 Version: 0.2.0-phase-c
-Last updated: 2026-03-12
+Last updated: 2026-03-17
 
 ---
 
@@ -25,10 +25,10 @@ PlanningTree is a local-first single-user desktop application distributed as an 
 | Frontend | React 18 + TypeScript | Strict mode |
 | Graph | @xyflow/react | Interactive task tree visualization |
 | State management | Zustand | Replaces monolithic component state |
-| Routing | React Router 6 | Graph Workspace ↔ Breadcrumb Workspace |
-| Build tool | Vite 5 | Dev proxy → backend; prod static |
+| Routing | React Router 6 | Graph Workspace <-> Breadcrumb Workspace |
+| Build tool | Vite 5 | Dev proxy -> backend; prod static |
 | CSS | CSS Modules + design tokens | Scoped per component; tokens.css for palette |
-| Unit tests | Vitest (frontend), pytest (backend) | — |
+| Unit tests | Vitest (frontend), pytest (backend) | - |
 | E2E tests | Playwright | Full app browser testing |
 | Distribution | PyInstaller binary via npm | npx downloads platform binary |
 
@@ -36,54 +36,54 @@ PlanningTree is a local-first single-user desktop application distributed as an 
 
 ## Top-Level Structure
 
-```
+```text
 PlanningTreeMain/
-├── backend/          Python FastAPI app
-├── frontend/         React SPA
-├── launcher/         Node.js npx entry point (thin wrapper only)
-├── scripts/          Dev, test, build scripts
-└── docs/             Canonical rebuild specs and audit outputs
+|- backend/          Python FastAPI app
+|- frontend/         React SPA
+|- launcher/         Node.js npx entry point (thin wrapper only)
+|- scripts/          Dev, test, build scripts
+`- docs/             Canonical rebuild specs and audit outputs
 ```
 
 ---
 
 ## Dependency Flow
 
-```
+```text
 [Browser]
-    │ HTTP/SSE
-    ▼
-[frontend/] ──(dev: Vite proxy)──► [backend/]
-                                        │
-                          ┌─────────────┼──────────────┐
-                          ▼             ▼               ▼
-                    [filesystem]   [OpenAI API]   [Codex subprocess]
-                    tree.json      (splits)        (chat)
-                    nodes/*/*.md
-                    nodes/*/state.yaml
-                    thread_state.json
-                    chat_state.json
+    | HTTP/SSE
+    v
+[frontend/] --(dev: Vite proxy)--> [backend/]
+                                     |
+                   +-----------------+------------------+
+                   v                 v                  v
+             [filesystem]      [OpenAI API]     [Codex subprocess]
+             tree.json         (splits)         (chat)
+             nodes/*/*.md
+             nodes/*/state.yaml
+             thread_state.json
+             chat_state.json
 ```
 
 **Rules:**
 - Frontend never touches the filesystem directly
-- Backend services never call the OpenAI API directly — only through `ai/openai_client.py`
-- Backend services never spawn subprocesses directly — only through `ai/codex_client.py`
-- Routes never contain business logic — delegate to services
+- Backend services never call the OpenAI API directly - only through `ai/openai_client.py`
+- Backend services never spawn subprocesses directly - only through `ai/codex_client.py`
+- Routes never contain business logic - delegate to services
 
 ---
 
 ## Backend Layer Model
 
-```
-routes/         ← HTTP layer: parse request, call service, return response
-  │
-services/       ← Business logic: node CRUD, tree rules, split orchestration, chat
-  │
-storage/        ← Persistence: read/write JSON, Markdown, and YAML files atomically
-ai/             ← AI integration: OpenAI API wrapper, Codex subprocess client
-errors/         ← Typed error classes
-config/         ← App config, env var resolution, platform-aware paths
+```text
+routes/         <- HTTP layer: parse request, call service, return response
+  |
+services/       <- Business logic: node CRUD, tree rules, split orchestration, chat
+  |
+storage/        <- Persistence: read/write JSON, Markdown, and YAML files atomically
+ai/             <- AI integration: OpenAI API wrapper, Codex subprocess client
+errors/         <- Typed error classes
+config/         <- App config, env var resolution, platform-aware paths
 ```
 
 ### Layer Rules
@@ -100,17 +100,17 @@ config/         ← App config, env var resolution, platform-aware paths
 
 ## Frontend Layer Model
 
-```
-App.tsx          ← Router + layout only
-  │
-features/        ← Feature-scoped components (graph, breadcrumb, project, auth, node)
-  │
-stores/          ← Zustand state (project-store, ui-store, chat-store)
-  │
-api/             ← Typed HTTP client + React hooks
-  │
-components/      ← Shared stateless components (Layout, ErrorBoundary)
-styles/          ← Design tokens and base styles only
+```text
+App.tsx          <- Router + layout only
+  |
+features/        <- Feature-scoped components (graph, breadcrumb, project, auth, node)
+  |
+stores/          <- Zustand state (project-store, ui-store, chat-store)
+  |
+api/             <- Typed HTTP client + React hooks
+  |
+components/      <- Shared stateless components (Layout, ErrorBoundary)
+styles/          <- Design tokens and base styles only
 ```
 
 ### Frontend Rules
@@ -124,44 +124,43 @@ styles/          ← Design tokens and base styles only
 
 ---
 
-## Data Flow — User Actions
+## Data Flow - User Actions
 
 ### Create + Split a Node
 
-```
-User clicks "Slice" button
-  → GraphControls.tsx dispatches split action
-  → project-store.splitNode(nodeId, "slice")
-  → api/client.ts POST /v1/projects/{id}/nodes/{id}/split
-  → routes/nodes.py validates request
-  → services/split_service.py builds context + prompt
-  → ai/openai_client.py calls OpenAI Responses API
-  → split_service creates child nodes via node_service
-  → storage/project_store.py writes updated tree.json
-  → storage/node_store.py writes task.md / briefing.md / spec.md / state.yaml
-  → route returns updated snapshot
-  → project-store updates local state
-  → TreeGraph re-renders with new children
+```text
+User opens the GraphNode action menu and chooses a split mode
+  -> TreeGraph forwards onSplitNode(nodeId, mode)
+  -> GraphWorkspace prompts for replace confirmation when active children already exist
+  -> project-store.splitNode(nodeId, mode, confirmReplace)
+  -> api/client.ts POST /v1/projects/{id}/nodes/{id}/split
+  -> routes/split.py validates the canonical mode and confirm_replace flag
+  -> services/split_service.py starts the planning turn and returns 202 accepted
+  -> split_service builds context, runs the planning turn, and materializes child nodes on completion
+  -> storage/project_store.py writes updated tree.json
+  -> storage/node_store.py writes task.md / briefing.md / spec.md / state.yaml
+  -> planning events plus snapshot/history refresh update client state
+  -> TreeGraph re-renders with the new children
 ```
 
-### Finish Task → Mark Done
+### Finish Task -> Mark Done
 
-```
+```text
 User clicks "Finish Task" on leaf node
-  → client-side only (no API call)
-  → React Router navigates to /projects/:projectId/nodes/:nodeId/chat
-  → BreadcrumbWorkspace loads chat session
-  → chat-store.loadSession(projectId, nodeId)
-  → GraphWorkspace passes a transient router-state seed built from node title + description
-  → BreadcrumbWorkspace applies that seed into the local composer once
-  → User edits draft and sends → POST /chat/messages
-  → First accepted message promotes ready → in_progress
-  → SSE streams assistant response
-  → User clicks "Mark Done"
-  → api POST /nodes/{id}/complete
-  → services/node_service.complete_node → sets status=done, unlocks next sibling
-  → project-store refreshes snapshot
-  → Graph updates to show done status
+  -> client-side only (no API call)
+  -> React Router navigates to /projects/:projectId/nodes/:nodeId/chat
+  -> BreadcrumbWorkspace loads chat session
+  -> chat-store.loadSession(projectId, nodeId)
+  -> GraphWorkspace passes a transient router-state seed built from node title + description
+  -> BreadcrumbWorkspace applies that seed into the local composer once
+  -> User edits draft and sends -> POST /chat/messages
+  -> First accepted message promotes ready -> in_progress
+  -> SSE streams assistant response
+  -> User clicks "Mark Done"
+  -> api POST /nodes/{id}/complete
+  -> services/node_service.complete_node -> sets status=done, unlocks next sibling
+  -> project-store refreshes snapshot
+  -> Graph updates to show done status
 ```
 
 ---
@@ -172,7 +171,7 @@ All configuration is via environment variables. No `.env` file is read at runtim
 
 | Env Var | Default | Description |
 |---|---|---|
-| `OPENAI_API_KEY` | — | Required for split operations |
+| `OPENAI_API_KEY` | - | Required for split operations |
 | `PLANNINGTREE_DATA_ROOT` | Platform default | Override app data directory |
 | `PLANNINGTREE_PORT` | `8000` | Backend port (launcher finds free port) |
 | `PLANNINGTREE_SPLIT_MODEL` | `gpt-4o` | OpenAI model for split generation |
@@ -183,23 +182,23 @@ All configuration is via environment variables. No `.env` file is read at runtim
 
 ## Persistence
 
-```
+```text
 <app-data-root>/
-├── config/
-│   ├── app.json          # workspace root, preferences
-│   └── auth.json         # session state, entitlement
-└── projects/
-    └── <project-id>/
-        ├── meta.json         # project metadata
-        ├── tree.json         # live tree index (schema_version: 5)
-        ├── chat_state.json   # per-node chat sessions
-        ├── thread_state.json # planning / execution / ask thread state
-        └── nodes/
-            └── <node-id>/
-                ├── task.md
-                ├── briefing.md
-                ├── spec.md
-                └── state.yaml
+|- config/
+|  |- app.json          # workspace root, preferences
+|  `- auth.json         # session state, entitlement
+`- projects/
+   `- <project-id>/
+      |- meta.json         # project metadata
+      |- tree.json         # live tree index (schema_version: 5)
+      |- chat_state.json   # per-node chat sessions
+      |- thread_state.json # planning / execution / ask thread state
+      `- nodes/
+         `- <node-id>/
+            |- task.md
+            |- briefing.md
+            |- spec.md
+            `- state.yaml
 ```
 
 Platform defaults:
@@ -221,11 +220,11 @@ In Phase 6: OAuth2 browser redirect flow integrated.
 
 ## Distribution (Phase 6 Target)
 
-```
+```text
 npm publish planningtree
-  → package.json bin → launcher/cli.js
-  → cli.js detects platform
-  → postinstall downloads platform binary from GitHub Releases
-  → binary = PyInstaller-bundled Python backend + static frontend dist
-  → cli.js spawns binary, finds free port, opens browser
+  -> package.json bin -> launcher/cli.js
+  -> cli.js detects platform
+  -> postinstall downloads platform binary from GitHub Releases
+  -> binary = PyInstaller-bundled Python backend + static frontend dist
+  -> cli.js spawns binary, finds free port, opens browser
 ```

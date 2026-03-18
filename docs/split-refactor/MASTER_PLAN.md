@@ -21,11 +21,11 @@ Last updated: 2026-03-17
 The following facts were re-checked while creating this scaffold on 2026-03-17:
 
 - `frontend/src/features/graph/GraphNode.tsx` is a live split surface.
-- `frontend/src/features/graph/GraphControls.tsx` only contains disabled split placeholders.
+- A legacy graph-side action panel still existed only as placeholder split affordances before Phase 6 cleanup.
 - `backend/routes/split.py` still accepts `mode` at the split route boundary as an open string contract and must be converted to a closed supported-mode contract without drifting to framework-default invalid-mode behavior.
 - `backend/services/split_service.py` currently branches directly on mode strings and must be refactored away from mode-specific branching.
 - `frontend/src/api/types.ts`, `frontend/src/api/client.ts`, and `frontend/src/stores/project-store.ts` still encode old planning mode literals and must be replaced with the new canonical set.
-- `docs/ARCHITECTURE.md` and other docs still contain stale references to `GraphControls` and `routes/nodes.py`.
+- Some current docs still described outdated split UI ownership and route ownership before the cleanup phases landed.
 - No additional live split surface is asserted in this plan unless it is re-verified when implementation starts.
 
 ## Canonical Mode Matrix

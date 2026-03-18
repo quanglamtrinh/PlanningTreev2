@@ -9,7 +9,7 @@ Last updated: 2026-03-17
 - Started and completed Phase 5 by opening the public `/split` route for the 4 canonical modes and removing legacy modes from the public split contract.
 - Added frontend canonical split typing and a graph split registry so GraphNode now renders canonical split actions dynamically.
 - Rewired `TreeGraph`, `GraphWorkspace`, `project-store`, and the API client to use canonical `SplitMode` create paths only.
-- Removed split buttons from `PlanningConversationPanel`, leaving GraphNode as the only exposed split entrypoint.
+- Removed planning-panel split affordances, leaving GraphNode as the only exposed split entrypoint.
 - Added shared split-payload normalization so canonical flat subtasks render correctly while legacy split payloads remain readable on transition read paths.
 - Extended backend and frontend test coverage for canonical route acceptance, canonical graph/store wiring, duplicate split affordance removal, and canonical split-result rendering.
 
@@ -27,6 +27,6 @@ Last updated: 2026-03-17
 
 ## Remaining Work
 
-- Phase 6 split-surface cleanup for stale placeholders such as GraphControls.
+- Phase 6 split-surface cleanup for the stale placeholder graph action surface.
 - Phase 7 cutover cleanup for remaining legacy assumptions in primary-path readers.
 - Phase 8 final test and docs stabilization.
