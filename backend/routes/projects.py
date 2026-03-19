@@ -37,6 +37,11 @@ async def reset_project_to_root(request: Request, project_id: str) -> dict:
     return request.app.state.project_service.reset_to_root(project_id)
 
 
+@router.delete("/projects/{project_id}", status_code=204)
+async def delete_project(request: Request, project_id: str) -> None:
+    request.app.state.project_service.delete_project(project_id)
+
+
 @router.patch("/projects/{project_id}/active-node")
 async def set_active_node(request: Request, project_id: str, body: ActiveNodeRequest) -> dict:
     return request.app.state.node_service.set_active_node(project_id, body.active_node_id)

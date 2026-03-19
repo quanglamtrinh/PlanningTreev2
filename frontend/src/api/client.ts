@@ -171,6 +171,9 @@ export const api = {
       root_goal: rootGoal,
     }).then(normalizeSnapshot)
   },
+  deleteProject(projectId: string): Promise<void> {
+    return jsonFetch<void>(`/v1/projects/${projectId}`, { method: 'DELETE' })
+  },
   getSnapshot(projectId: string): Promise<Snapshot> {
     return jsonFetch<Snapshot>(`/v1/projects/${projectId}/snapshot`).then(normalizeSnapshot)
   },

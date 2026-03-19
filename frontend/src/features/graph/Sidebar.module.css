@@ -111,9 +111,21 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
-.projectHeader {
-  display: block;
+/* ─── Project header row ─────────────────────────────────────────────────────── */
+.projectHeaderRow {
+  display: flex;
+  align-items: center;
   width: 100%;
+  position: relative;
+}
+
+.projectHeaderRow:hover .removeBtn {
+  opacity: 1;
+}
+
+.projectHeader {
+  flex: 1;
+  min-width: 0;
   padding: 10px 12px 8px;
   border: none;
   background: transparent;
@@ -125,6 +137,9 @@
   cursor: pointer;
   border-radius: 10px;
   transition: background 0.12s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .projectGroup:not(.projectGroupActive) .projectHeader:hover {
@@ -136,7 +151,31 @@
   cursor: default;
 }
 
-/* ─── Node list ──────────────────────────────────────────────────────────────── */
+/* ─── Remove button ──────────────────────────────────────────────────────────── */
+.removeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  margin-right: 6px;
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.removeBtn:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  opacity: 1;
+}
+
+
 .nodeList {
   display: flex;
   flex-direction: column;

@@ -50,6 +50,7 @@ export function Sidebar() {
   const refreshProjects = useProjectStore((s) => s.refreshProjects)
   const selectNode = useProjectStore((s) => s.selectNode)
   const createProject = useProjectStore((s) => s.createProject)
+  const deleteProject = useProjectStore((s) => s.deleteProject)
   const setWorkspaceRoot = useProjectStore((s) => s.setWorkspaceRoot)
 
   const handleProjectClick = useCallback(
@@ -102,6 +103,18 @@ export function Sidebar() {
       setIsPickerLoading(false)
     }
   }, [createProject, setWorkspaceRoot])
+
+  const handleRemoveProject = useCallback(
+    async (projectId: string, projectName: string) => {
+      if (!window.confirm(`Remove "${projectName}" from workspace?\nThis cannot be undone.`)) return
+      try {
+        await deleteProject(projectId)
+      } catch (e) {
+        if (e instanceof Error) setPickerError(e.message)
+      }
+    },
+    [deleteProject],
+  )
 
   const toggleExpand = useCallback((projectId: string) => {
     setExpandedProjects((prev) => {
@@ -210,6 +223,7 @@ export function Sidebar() {
                 onClickNode={handleNodeClick}
                 onDoubleClickNode={handleOpenBreadcrumb}
                 onClickMore={() => toggleExpand(project.id)}
+                onRemoveProject={handleRemoveProject}
               />
             )
           })
@@ -267,21 +281,38 @@ type ProjectGroupProps = {
   onClickNode: (id: string) => void
   onDoubleClickNode: (id: string) => Promise<void>
   onClickMore: () => void
+  onRemoveProject: (id: string, name: string) => Promise<void>
 }
 
 function ProjectGroup({
   project, isActive, nodes, selectedNodeId, hasMore,
-  onClickProject, onClickNode, onDoubleClickNode, onClickMore,
+  onClickProject, onClickNode, onDoubleClickNode, onClickMore, onRemoveProject,
 }: ProjectGroupProps) {
   return (
     <div className={`${styles.projectGroup} ${isActive ? styles.projectGroupActive : ''}`}>
-      <button
-        type="button"
-        className={styles.projectHeader}
-        onClick={() => onClickProject(project.id)}
-      >
-        {project.name}
-      </button>
+      <div className={styles.projectHeaderRow}>
+        <button
+          type="button"
+          className={styles.projectHeader}
+          onClick={() => onClickProject(project.id)}
+        >
+          {project.name}
+        </button>
+        <button
+          type="button"
+          className={styles.removeBtn}
+          title="Remove from workspace"
+          aria-label={`Remove ${project.name} from workspace`}
+          onClick={() => void onRemoveProject(project.id, project.name)}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <path d="M10 11v6M14 11v6" />
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+          </svg>
+        </button>
+      </div>
 
       {isActive && nodes.length > 0 && (
         <div className={styles.nodeList}>

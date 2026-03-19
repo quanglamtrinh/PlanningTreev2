@@ -104,6 +104,11 @@ class ProjectStore:
             self.save_meta(project_id, meta)
             return meta
 
+    def delete_project(self, project_id: str) -> None:
+        project_dir = self.project_dir(project_id)
+        if project_dir.exists():
+            shutil.rmtree(project_dir)
+
     def list_projects(self) -> List[Dict[str, Any]]:
         ensure_dir(self._paths.projects_root)
         projects: List[Dict[str, Any]] = []
