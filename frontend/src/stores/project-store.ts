@@ -151,6 +151,7 @@ type ProjectStoreState = {
   loadProject: (projectId: string) => Promise<void>
   clearActiveProject: () => void
   createProject: (name: string, rootGoal: string) => Promise<void>
+  deleteProject: (projectId: string) => Promise<void>
   resetProjectToRoot: () => Promise<void>
   selectNode: (nodeId: string | null, persist?: boolean) => Promise<void>
   stageNodeEdit: (nodeId: string, draft: NodeDraft) => void
@@ -441,6 +442,39 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
       agentConnectionStatus: 'disconnected',
       activePlanningMode: null,
     })
+  },
+  async deleteProject(projectId: string) {
+    set({ error: null })
+    try {
+      await api.deleteProject(projectId)
+      const wasActive = get().activeProjectId === projectId
+      const projects = await api.listProjects()
+      if (wasActive) {
+        const nextId = projects[0]?.id ?? null
+        writeStoredActiveProjectId(nextId)
+        set({
+          projects,
+          activeProjectId: nextId,
+          snapshot: null,
+          selectedNodeId: null,
+          nodeDrafts: {},
+          documentsByNode: {},
+          planningHistoryByNode: {},
+          agentActivityByNode: {},
+          planningConnectionStatus: 'disconnected',
+          agentConnectionStatus: 'disconnected',
+          activePlanningMode: null,
+        })
+        if (nextId) {
+          await get().loadProject(nextId)
+        }
+      } else {
+        set({ projects })
+      }
+    } catch (error) {
+      set({ error: toErrorMessage(error) })
+      throw error
+    }
   },
   async createProject(name: string, rootGoal: string) {
     set({ isCreatingProject: true, error: null })

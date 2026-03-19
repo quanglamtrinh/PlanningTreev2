@@ -115,6 +115,23 @@ class ProjectService:
 
         return self._public_snapshot(project_id, snapshot)
 
+    def delete_project(self, project_id: str) -> None:
+        """Delete a project and its on-disk workspace directory."""
+        projects = self.storage.project_store.list_projects()
+        project = next((p for p in projects if p.get("id") == project_id), None)
+        if project is None:
+            raise InvalidRequest(f"Project {project_id!r} not found.")
+
+        workspace_root: str | None = project.get("project_workspace_root")
+        self.storage.project_store.delete_project(project_id)
+        if workspace_root:
+            workspace_path = Path(workspace_root)
+            if workspace_path.exists() and workspace_path.is_dir():
+                try:
+                    shutil.rmtree(workspace_path)
+                except OSError:
+                    logger.warning("Could not delete workspace directory %s", workspace_path)
+
     def create_project(self, name: str, root_goal: str) -> Dict[str, Any]:
         cleaned_name = name.strip()
         cleaned_goal = root_goal.strip()
