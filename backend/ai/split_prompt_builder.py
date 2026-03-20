@@ -462,7 +462,7 @@ def _structured_output_contract(mode: CanonicalSplitModeId) -> str:
             "- \"why_now\" must not simply restate the objective.",
             "- Subtasks must be sequential, non-overlapping, and suitable for downstream child-spec creation.",
             "- Do not include implementation details, architecture plans, code suggestions, clarification questions, assumptions lists, done criteria, scope breakdown, rationale bullets, or internal notes.",
-            f"- {_MODE_SENTINEL_RULES[mode]}",
+            # f"- {_MODE_SENTINEL_RULES[mode]}",
             "- After the tool call, write a brief user-facing summary without repeating the payload.",
         ]
     )

@@ -135,25 +135,33 @@ function buildSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
 
 function renderTreeGraph(
   snapshot: Snapshot,
-  options: { isSplittingNode?: boolean } = {},
+  options: {
+    isSplittingNode?: boolean
+    isResetDisabled?: boolean
+    isResettingProject?: boolean
+  } = {},
 ) {
   const onSplitNode = vi.fn(async () => undefined)
   const onFinishTask = vi.fn(async () => undefined)
+  const onResetProject = vi.fn(async () => undefined)
   const view = render(
     <TreeGraph
       snapshot={snapshot}
       selectedNodeId={snapshot.tree_state.active_node_id}
       isCreatingNode={false}
       isSplittingNode={options.isSplittingNode ?? false}
+      isResettingProject={options.isResettingProject ?? false}
+      isResetDisabled={options.isResetDisabled ?? false}
       splittingNodeId={options.isSplittingNode ? snapshot.tree_state.root_node_id : null}
       onSelectNode={vi.fn(async () => undefined)}
       onCreateChild={vi.fn(async () => undefined)}
       onSplitNode={onSplitNode}
       onOpenBreadcrumb={vi.fn(async () => undefined)}
       onFinishTask={onFinishTask}
+      onResetProject={onResetProject}
     />,
   )
-  return { ...view, onSplitNode, onFinishTask }
+  return { ...view, onSplitNode, onFinishTask, onResetProject }
 }
 
 describe('TreeGraph', () => {
@@ -280,6 +288,30 @@ describe('TreeGraph', () => {
     expect(screen.queryByTestId('mock-reactflow')).not.toBeInTheDocument()
   })
 
+  it('renders reset below fullscreen and wires it to the project reset handler', () => {
+    const { onResetProject } = renderTreeGraph(buildSnapshot())
+
+    const fullscreenButton = screen.getByRole('button', { name: 'Fullscreen' })
+    const resetButton = screen.getByRole('button', { name: 'Reset to Root' })
+    const controlStack = fullscreenButton.parentElement
+
+    expect(controlStack).not.toBeNull()
+    expect(within(controlStack as HTMLElement).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'Fullscreen',
+      'Reset to Root',
+    ])
+
+    fireEvent.click(resetButton)
+
+    expect(onResetProject).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the reset control while a split is running', () => {
+    renderTreeGraph(buildSnapshot(), { isResetDisabled: true, isSplittingNode: true })
+
+    expect(screen.getByRole('button', { name: 'Reset to Root' })).toBeDisabled()
+  })
+
   it('wires split actions through the node menu when the node can split', () => {
     const { onSplitNode } = renderTreeGraph(buildSnapshot())
 
@@ -365,12 +397,15 @@ describe('TreeGraph', () => {
       selectedNodeId: snapshot.tree_state.active_node_id,
       isCreatingNode: false,
       isSplittingNode: false,
+      isResettingProject: false,
+      isResetDisabled: false,
       splittingNodeId: null,
       onSelectNode: vi.fn(async () => undefined),
       onCreateChild: vi.fn(async () => undefined),
       onSplitNode: vi.fn(async () => undefined),
       onOpenBreadcrumb: vi.fn(async () => undefined),
       onFinishTask: vi.fn(async () => undefined),
+      onResetProject: vi.fn(async () => undefined),
     }
 
     const { rerender } = render(<TreeGraph {...initialProps} />)
@@ -459,12 +494,15 @@ describe('TreeGraph', () => {
         selectedNodeId={snapshot.tree_state.active_node_id}
         isCreatingNode={false}
         isSplittingNode={false}
+        isResettingProject={false}
+        isResetDisabled={false}
         splittingNodeId={null}
         onSelectNode={vi.fn(async () => undefined)}
         onCreateChild={vi.fn(async () => undefined)}
         onSplitNode={vi.fn(async () => undefined)}
         onOpenBreadcrumb={vi.fn(async () => undefined)}
         onFinishTask={vi.fn(async () => undefined)}
+        onResetProject={vi.fn(async () => undefined)}
       />,
     )
 
@@ -477,12 +515,15 @@ describe('TreeGraph', () => {
         selectedNodeId="root"
         isCreatingNode={false}
         isSplittingNode={false}
+        isResettingProject={false}
+        isResetDisabled={false}
         splittingNodeId={null}
         onSelectNode={vi.fn(async () => undefined)}
         onCreateChild={vi.fn(async () => undefined)}
         onSplitNode={vi.fn(async () => undefined)}
         onOpenBreadcrumb={vi.fn(async () => undefined)}
         onFinishTask={vi.fn(async () => undefined)}
+        onResetProject={vi.fn(async () => undefined)}
       />,
     )
 

@@ -43,30 +43,53 @@ vi.mock('../../src/api/client', () => {
 vi.mock('../../src/features/graph/TreeGraph', () => ({
   TreeGraph: ({
     snapshot,
+    selectedNodeId,
+    isResetDisabled,
+    isResettingProject,
     onSplitNode,
     onOpenBreadcrumb,
     onFinishTask,
+    onResetProject,
   }: {
     snapshot: { tree_state: { root_node_id: string } }
+    selectedNodeId: string | null
+    isResetDisabled: boolean
+    isResettingProject: boolean
     onSplitNode: (
       nodeId: string,
       mode: 'workflow' | 'simplify_workflow' | 'phase_breakdown' | 'agent_breakdown',
     ) => Promise<void>
     onOpenBreadcrumb: (nodeId: string) => Promise<void>
     onFinishTask: (nodeId: string) => Promise<void>
+    onResetProject: () => Promise<void>
   }) => (
     <div data-testid="tree-graph">
       <div data-testid={`root-node-${snapshot.tree_state.root_node_id}`}>
         {snapshot.tree_state.root_node_id}
       </div>
+      <div data-testid="selected-node-id">{selectedNodeId}</div>
       <button onClick={() => void onSplitNode(snapshot.tree_state.root_node_id, 'workflow')}>
         Split Root
       </button>
       <button onClick={() => void onOpenBreadcrumb(snapshot.tree_state.root_node_id)}>
         Open Root Breadcrumb
       </button>
+      <button
+        disabled={!selectedNodeId}
+        onClick={() => {
+          if (!selectedNodeId) {
+            return
+          }
+          void onOpenBreadcrumb(selectedNodeId)
+        }}
+      >
+        Open Selected Breadcrumb
+      </button>
       <button onClick={() => void onFinishTask(snapshot.tree_state.root_node_id)}>
         Finish Root Task
+      </button>
+      <button disabled={isResetDisabled} onClick={() => void onResetProject()}>
+        {isResettingProject ? 'Resetting...' : 'Reset to Root'}
       </button>
     </div>
   ),
@@ -86,9 +109,49 @@ function LocationProbe() {
   )
 }
 
+function makeProjectSummary(
+  id: string,
+  name: string,
+  projectWorkspaceRoot: string,
+  updatedAt: string,
+) {
+  return {
+    id,
+    name,
+    root_goal: `Goal for ${name}`,
+    base_workspace_root: 'C:/workspace',
+    project_workspace_root: projectWorkspaceRoot,
+    created_at: updatedAt,
+    updated_at: updatedAt,
+  }
+}
+
+function makeGraphSnapshot(
+  project: ReturnType<typeof makeProjectSummary>,
+  rootNodeId: string,
+  activeNodeId: string,
+  nodeRegistry: Array<Record<string, unknown>>,
+) {
+  return {
+    schema_version: 2,
+    project: {
+      ...project,
+    },
+    tree_state: {
+      root_node_id: rootNodeId,
+      active_node_id: activeNodeId,
+      node_registry: nodeRegistry,
+    },
+    updated_at: project.updated_at,
+  }
+}
+
 describe('GraphWorkspace', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    for (const mockFn of Object.values(apiMock)) {
+      mockFn.mockReset()
+    }
     useProjectStore.setState(useProjectStore.getInitialState())
     useUIStore.setState(useUIStore.getInitialState())
     apiMock.getPlanningHistory.mockResolvedValue({ node_id: 'root', turns: [] })
@@ -186,6 +249,308 @@ describe('GraphWorkspace', () => {
     expect(screen.getByTestId('root-node-root-2')).toBeInTheDocument()
     expect(screen.queryByText('No project loaded')).not.toBeInTheDocument()
     expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-2')
+  })
+
+  it('switches the rendered graph when the active project changes from the sidebar', async () => {
+    const alphaProject = makeProjectSummary(
+      'project-1',
+      'Alpha',
+      'C:/workspace/alpha-app',
+      '2026-03-07T10:00:00Z',
+    )
+    const betaProject = makeProjectSummary(
+      'project-2',
+      'Beta',
+      'C:/workspace/beta-service',
+      '2026-03-07T11:00:00Z',
+    )
+    const alphaSnapshot = makeGraphSnapshot(alphaProject, 'root-1', 'root-1', [
+      {
+        node_id: 'root-1',
+        parent_id: null,
+        child_ids: [],
+        title: 'Alpha',
+        description: alphaProject.root_goal,
+        status: 'draft',
+        phase: 'planning',
+        node_kind: 'root',
+        planning_mode: null,
+        depth: 0,
+        display_order: 0,
+        hierarchical_number: '1',
+        split_metadata: null,
+        chat_session_id: null,
+        has_planning_thread: false,
+        has_execution_thread: false,
+        planning_thread_status: null,
+        execution_thread_status: null,
+        has_ask_thread: false,
+        ask_thread_status: null,
+        is_superseded: false,
+        created_at: alphaProject.created_at,
+      },
+    ])
+    const betaSnapshot = makeGraphSnapshot(betaProject, 'root-2', 'root-2', [
+      {
+        node_id: 'root-2',
+        parent_id: null,
+        child_ids: [],
+        title: 'Beta',
+        description: betaProject.root_goal,
+        status: 'draft',
+        phase: 'planning',
+        node_kind: 'root',
+        planning_mode: null,
+        depth: 0,
+        display_order: 0,
+        hierarchical_number: '1',
+        split_metadata: null,
+        chat_session_id: null,
+        has_planning_thread: false,
+        has_execution_thread: false,
+        planning_thread_status: null,
+        execution_thread_status: null,
+        has_ask_thread: false,
+        ask_thread_status: null,
+        is_superseded: false,
+        created_at: betaProject.created_at,
+      },
+    ])
+
+    apiMock.getSnapshot.mockImplementation(async (projectId: string) =>
+      projectId === 'project-2' ? betaSnapshot : alphaSnapshot,
+    )
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      isInitializing: false,
+      bootstrap: { ready: true, workspace_configured: true },
+      baseWorkspaceRoot: 'C:/workspace',
+      projects: [alphaProject, betaProject],
+      activeProjectId: 'project-1',
+      snapshot: alphaSnapshot,
+      selectedNodeId: 'root-1',
+    })
+
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <GraphWorkspace />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('root-node-root-1')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Beta' }))
+
+    await waitFor(() => {
+      expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-2')
+      expect(screen.getByTestId('root-node-root-2')).toBeInTheDocument()
+    })
+  })
+
+  it('collapses the sidebar into a compact Projects rail and expands it again', () => {
+    const project = makeProjectSummary(
+      'project-1',
+      'Alpha',
+      'C:/workspace/alpha-app',
+      '2026-03-07T10:00:00Z',
+    )
+    const snapshot = makeGraphSnapshot(project, 'root-1', 'root-1', [
+      {
+        node_id: 'root-1',
+        parent_id: null,
+        child_ids: [],
+        title: 'Alpha',
+        description: project.root_goal,
+        status: 'draft',
+        phase: 'planning',
+        node_kind: 'root',
+        planning_mode: null,
+        depth: 0,
+        display_order: 0,
+        hierarchical_number: '1',
+        split_metadata: null,
+        chat_session_id: null,
+        has_planning_thread: false,
+        has_execution_thread: false,
+        planning_thread_status: null,
+        execution_thread_status: null,
+        has_ask_thread: false,
+        ask_thread_status: null,
+        is_superseded: false,
+        created_at: project.created_at,
+      },
+    ])
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      isInitializing: false,
+      bootstrap: { ready: true, workspace_configured: true },
+      baseWorkspaceRoot: 'C:/workspace',
+      projects: [project],
+      activeProjectId: 'project-1',
+      snapshot,
+      selectedNodeId: 'root-1',
+    })
+
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <GraphWorkspace />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('button', { name: 'Alpha' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse projects sidebar' }))
+
+    expect(screen.queryByRole('button', { name: 'Alpha' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Expand projects sidebar' })).toBeInTheDocument()
+    expect(screen.getByText('Projects')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand projects sidebar' }))
+
+    expect(screen.getByRole('button', { name: 'Alpha' })).toBeInTheDocument()
+  })
+
+  it('opens breadcrumb on the newly selected project using that project active-node fallback', async () => {
+    const alphaProject = makeProjectSummary(
+      'project-1',
+      'Alpha',
+      'C:/workspace/alpha-app',
+      '2026-03-07T10:00:00Z',
+    )
+    const betaProject = makeProjectSummary(
+      'project-2',
+      'Beta',
+      'C:/workspace/beta-service',
+      '2026-03-07T11:00:00Z',
+    )
+    const alphaSnapshot = makeGraphSnapshot(alphaProject, 'root-1', 'root-1', [
+      {
+        node_id: 'root-1',
+        parent_id: null,
+        child_ids: [],
+        title: 'Alpha',
+        description: alphaProject.root_goal,
+        status: 'draft',
+        phase: 'planning',
+        node_kind: 'root',
+        planning_mode: null,
+        depth: 0,
+        display_order: 0,
+        hierarchical_number: '1',
+        split_metadata: null,
+        chat_session_id: null,
+        has_planning_thread: false,
+        has_execution_thread: false,
+        planning_thread_status: null,
+        execution_thread_status: null,
+        has_ask_thread: false,
+        ask_thread_status: null,
+        is_superseded: false,
+        created_at: alphaProject.created_at,
+      },
+    ])
+    const betaSnapshot = makeGraphSnapshot(betaProject, 'root-2', 'child-2', [
+      {
+        node_id: 'root-2',
+        parent_id: null,
+        child_ids: ['child-2'],
+        title: 'Beta',
+        description: betaProject.root_goal,
+        status: 'draft',
+        phase: 'planning',
+        node_kind: 'root',
+        planning_mode: null,
+        depth: 0,
+        display_order: 0,
+        hierarchical_number: '1',
+        split_metadata: null,
+        chat_session_id: null,
+        has_planning_thread: false,
+        has_execution_thread: false,
+        planning_thread_status: null,
+        execution_thread_status: null,
+        has_ask_thread: false,
+        ask_thread_status: null,
+        is_superseded: false,
+        created_at: betaProject.created_at,
+      },
+      {
+        node_id: 'child-2',
+        parent_id: 'root-2',
+        child_ids: [],
+        title: 'Beta Task',
+        description: 'Continue the selected task',
+        status: 'ready',
+        phase: 'planning',
+        node_kind: 'original',
+        planning_mode: null,
+        depth: 1,
+        display_order: 0,
+        hierarchical_number: '1.1',
+        split_metadata: null,
+        chat_session_id: null,
+        has_planning_thread: true,
+        has_execution_thread: true,
+        planning_thread_status: 'idle',
+        execution_thread_status: 'idle',
+        has_ask_thread: true,
+        ask_thread_status: 'idle',
+        is_superseded: false,
+        created_at: betaProject.updated_at,
+      },
+    ])
+
+    apiMock.getSnapshot.mockImplementation(async (projectId: string) =>
+      projectId === 'project-2' ? betaSnapshot : alphaSnapshot,
+    )
+    apiMock.setActiveNode.mockImplementation(async (projectId: string, nodeId: string) => {
+      if (projectId === 'project-2') {
+        return {
+          ...betaSnapshot,
+          tree_state: {
+            ...betaSnapshot.tree_state,
+            active_node_id: nodeId,
+          },
+        }
+      }
+      return alphaSnapshot
+    })
+
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      isInitializing: false,
+      bootstrap: { ready: true, workspace_configured: true },
+      baseWorkspaceRoot: 'C:/workspace',
+      projects: [alphaProject, betaProject],
+      activeProjectId: 'project-1',
+      snapshot: alphaSnapshot,
+      selectedNodeId: 'root-1',
+    })
+
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <LocationProbe />
+        <GraphWorkspace />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Beta' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('selected-node-id')).toHaveTextContent('child-2')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Selected Breadcrumb' }))
+
+    await waitFor(() => {
+      expect(apiMock.setActiveNode).toHaveBeenCalledWith('project-2', 'child-2')
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-2/nodes/child-2/chat')
+    })
   })
 
   it('splits without touching the legacy node update route', async () => {
@@ -587,7 +952,7 @@ describe('GraphWorkspace', () => {
     expect(apiMock.resetProjectToRoot).not.toHaveBeenCalled()
   })
 
-  it('disables reset while splitting or when no project is loaded', () => {
+  it('renders reset only when a project snapshot is loaded and disables it while splitting', () => {
     act(() => {
       useProjectStore.setState({
         ...useProjectStore.getInitialState(),
@@ -606,7 +971,7 @@ describe('GraphWorkspace', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByRole('button', { name: 'Reset to Root' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Reset to Root' })).not.toBeInTheDocument()
 
     act(() => {
       useProjectStore.setState({
@@ -669,58 +1034,62 @@ describe('GraphWorkspace', () => {
   })
 
   it('routes planning nodes to the task tab without seeding a composer draft', async () => {
+    const project = {
+      id: 'project-1',
+      name: 'Alpha',
+      root_goal: 'Ship graph routing',
+      base_workspace_root: 'C:/workspace',
+      project_workspace_root: 'C:/workspace/alpha',
+      created_at: '2026-03-07T10:00:00Z',
+      updated_at: '2026-03-07T10:00:00Z',
+    }
+    const snapshot = {
+      schema_version: 2,
+      project,
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          {
+            node_id: 'root',
+            parent_id: null,
+            child_ids: [],
+            title: 'Alpha',
+            description: 'Ship graph routing',
+            status: 'ready',
+            phase: 'planning',
+            node_kind: 'root',
+            planning_mode: null,
+            depth: 0,
+            display_order: 0,
+            hierarchical_number: '1',
+            split_metadata: null,
+            chat_session_id: null,
+            has_planning_thread: false,
+            has_execution_thread: false,
+            planning_thread_status: null,
+            execution_thread_status: null,
+            has_ask_thread: false,
+            ask_thread_status: null,
+            is_superseded: false,
+            created_at: '2026-03-07T10:00:00Z',
+          },
+        ],
+      },
+      updated_at: '2026-03-07T10:00:00Z',
+    }
+    apiMock.setActiveNode.mockResolvedValue(snapshot)
+
     useProjectStore.setState({
       ...useProjectStore.getInitialState(),
       hasInitialized: true,
       isInitializing: false,
       bootstrap: { ready: true, workspace_configured: true },
       baseWorkspaceRoot: 'C:/workspace',
+      projects: [project],
       activeProjectId: 'project-1',
-      snapshot: {
-        schema_version: 2,
-        project: {
-          id: 'project-1',
-          name: 'Alpha',
-          root_goal: 'Ship graph routing',
-          base_workspace_root: 'C:/workspace',
-          project_workspace_root: 'C:/workspace/alpha',
-          created_at: '2026-03-07T10:00:00Z',
-          updated_at: '2026-03-07T10:00:00Z',
-        },
-        tree_state: {
-          root_node_id: 'root',
-          active_node_id: 'root',
-          node_registry: [
-            {
-              node_id: 'root',
-              parent_id: null,
-              child_ids: [],
-              title: 'Alpha',
-              description: 'Ship graph routing',
-              status: 'ready',
-              phase: 'planning',
-              node_kind: 'root',
-              planning_mode: null,
-              depth: 0,
-              display_order: 0,
-              hierarchical_number: '1',
-              split_metadata: null,
-              chat_session_id: null,
-              has_planning_thread: false,
-              has_execution_thread: false,
-              planning_thread_status: null,
-              execution_thread_status: null,
-              has_ask_thread: false,
-              ask_thread_status: null,
-              is_superseded: false,
-              created_at: '2026-03-07T10:00:00Z',
-            },
-          ],
-        },
-        updated_at: '2026-03-07T10:00:00Z',
-      },
+      snapshot,
       selectedNodeId: 'root',
-      selectNode: vi.fn(async () => {}),
     })
 
     render(
@@ -740,58 +1109,62 @@ describe('GraphWorkspace', () => {
   })
 
   it('routes execution-ready nodes to the execution tab and seeds the composer draft', async () => {
+    const project = {
+      id: 'project-1',
+      name: 'Alpha',
+      root_goal: 'Ship graph routing',
+      base_workspace_root: 'C:/workspace',
+      project_workspace_root: 'C:/workspace/alpha',
+      created_at: '2026-03-07T10:00:00Z',
+      updated_at: '2026-03-07T10:00:00Z',
+    }
+    const snapshot = {
+      schema_version: 2,
+      project,
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          {
+            node_id: 'root',
+            parent_id: null,
+            child_ids: [],
+            title: 'Alpha',
+            description: 'Ship graph routing',
+            status: 'ready',
+            phase: 'ready_for_execution',
+            node_kind: 'root',
+            planning_mode: null,
+            depth: 0,
+            display_order: 0,
+            hierarchical_number: '1',
+            split_metadata: null,
+            chat_session_id: null,
+            has_planning_thread: false,
+            has_execution_thread: false,
+            planning_thread_status: null,
+            execution_thread_status: null,
+            has_ask_thread: false,
+            ask_thread_status: null,
+            is_superseded: false,
+            created_at: '2026-03-07T10:00:00Z',
+          },
+        ],
+      },
+      updated_at: '2026-03-07T10:00:00Z',
+    }
+    apiMock.setActiveNode.mockResolvedValue(snapshot)
+
     useProjectStore.setState({
       ...useProjectStore.getInitialState(),
       hasInitialized: true,
       isInitializing: false,
       bootstrap: { ready: true, workspace_configured: true },
       baseWorkspaceRoot: 'C:/workspace',
+      projects: [project],
       activeProjectId: 'project-1',
-      snapshot: {
-        schema_version: 2,
-        project: {
-          id: 'project-1',
-          name: 'Alpha',
-          root_goal: 'Ship graph routing',
-          base_workspace_root: 'C:/workspace',
-          project_workspace_root: 'C:/workspace/alpha',
-          created_at: '2026-03-07T10:00:00Z',
-          updated_at: '2026-03-07T10:00:00Z',
-        },
-        tree_state: {
-          root_node_id: 'root',
-          active_node_id: 'root',
-          node_registry: [
-            {
-              node_id: 'root',
-              parent_id: null,
-              child_ids: [],
-              title: 'Alpha',
-              description: 'Ship graph routing',
-              status: 'ready',
-              phase: 'ready_for_execution',
-              node_kind: 'root',
-              planning_mode: null,
-              depth: 0,
-              display_order: 0,
-              hierarchical_number: '1',
-              split_metadata: null,
-              chat_session_id: null,
-              has_planning_thread: false,
-              has_execution_thread: false,
-              planning_thread_status: null,
-              execution_thread_status: null,
-              has_ask_thread: false,
-              ask_thread_status: null,
-              is_superseded: false,
-              created_at: '2026-03-07T10:00:00Z',
-            },
-          ],
-        },
-        updated_at: '2026-03-07T10:00:00Z',
-      },
+      snapshot,
       selectedNodeId: 'root',
-      selectNode: vi.fn(async () => {}),
     })
 
     render(

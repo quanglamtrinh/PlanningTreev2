@@ -1,8 +1,6 @@
 /* ─── Sidebar shell ─────────────────────────────────────────────────────────── */
 .sidebar {
-  width: 400px;
-  min-width: 400px;
-  max-width: 400px;
+  width: 270px;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -11,6 +9,43 @@
   overflow: hidden;
   flex-shrink: 0;
   font-family: var(--font-sans);
+  transition: width 0.18s ease, min-width 0.18s ease, max-width 0.18s ease;
+}
+
+.sidebarCollapsed {
+  width: 64px;
+  min-width: 64px;
+  max-width: 64px;
+}
+
+.collapsedToggle {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #111827;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 20px 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.collapsedToggle:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: #111827;
+}
+
+.collapsedLabel {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  transform: rotate(-90deg);
+  transform-origin: center;
 }
 
 /* ─── Header ────────────────────────────────────────────────────────────────── */

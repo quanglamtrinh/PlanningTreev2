@@ -391,11 +391,31 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
     }
   },
   async loadProject(projectId: string) {
-    set({ isLoadingSnapshot: true, error: null })
+    const currentState = get()
+    const isSameProjectLoaded = currentState.snapshot?.project.id === projectId
+
+    writeStoredActiveProjectId(projectId)
+    set({
+      isLoadingSnapshot: true,
+      error: null,
+      activeProjectId: projectId,
+      ...(isSameProjectLoaded
+        ? {}
+        : {
+            snapshot: null,
+            selectedNodeId: null,
+            nodeDrafts: {},
+            documentsByNode: {},
+            planningHistoryByNode: {},
+            agentActivityByNode: {},
+            planningConnectionStatus: 'disconnected' as const,
+            agentConnectionStatus: 'disconnected' as const,
+            activePlanningMode: null,
+          }),
+    })
     try {
       const snapshot = await api.getSnapshot(projectId)
       const nextSelected = rootFallback(snapshot)
-      writeStoredActiveProjectId(projectId)
       set({
         activeProjectId: projectId,
         snapshot,

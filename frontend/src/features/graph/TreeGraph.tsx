@@ -13,6 +13,7 @@ import "@xyflow/react/dist/style.css";
 import type { NodeRecord, Snapshot, SplitMode } from "../../api/types";
 import { useProjectStore } from "../../stores/project-store";
 import { TaskPanel } from "../breadcrumb/TaskPanel";
+import { SpecPanel } from "../breadcrumb/SpecPanel";
 import { GraphNode, type GraphNodeData } from "./GraphNode";
 import { buildTreeLayoutPositions } from "./treeGraphLayout";
 import styles from "./TreeGraph.module.css";
@@ -26,6 +27,8 @@ type Props = {
   selectedNodeId: string | null;
   isCreatingNode: boolean;
   isSplittingNode: boolean;
+  isResettingProject: boolean;
+  isResetDisabled: boolean;
   splittingNodeId: string | null;
   onSelectNode: (nodeId: string, persist?: boolean) => Promise<void>;
   onCreateChild: (parentId: string) => Promise<void>;
@@ -35,6 +38,7 @@ type Props = {
   ) => Promise<void>;
   onOpenBreadcrumb: (nodeId: string) => Promise<void>;
   onFinishTask: (nodeId: string) => Promise<void>;
+  onResetProject: () => Promise<void>;
 };
 
 function defaultCollapsedForStatus(status: NodeRecord["status"]): boolean {
@@ -74,12 +78,15 @@ export function TreeGraph({
   selectedNodeId,
   isCreatingNode: _isCreatingNode,
   isSplittingNode,
+  isResettingProject,
+  isResetDisabled,
   splittingNodeId,
   onSelectNode,
   onCreateChild,
   onSplitNode,
   onOpenBreadcrumb,
   onFinishTask,
+  onResetProject,
 }: Props) {
   const [collapseOverrides, setCollapseOverrides] = useState<
     Record<string, boolean>
@@ -89,6 +96,7 @@ export function TreeGraph({
     null,
   );
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<"frame" | "clarify" | "spec">("frame");
   const documentsByNode = useProjectStore((state) => state.documentsByNode);
   const agentActivityByNode = useProjectStore(
     (state) => state.agentActivityByNode,
@@ -100,9 +108,13 @@ export function TreeGraph({
     (state) => state.isUpdatingDocument,
   );
   const isConfirmingNode = useProjectStore((state) => state.isConfirmingNode);
+  const isGeneratingSpec = useProjectStore((state) => state.isGeneratingSpec);
   const loadNodeDocuments = useProjectStore((state) => state.loadNodeDocuments);
   const updateNodeTask = useProjectStore((state) => state.updateNodeTask);
+  const updateNodeSpec = useProjectStore((state) => state.updateNodeSpec);
   const confirmTask = useProjectStore((state) => state.confirmTask);
+  const confirmSpec = useProjectStore((state) => state.confirmSpec);
+  const generateNodeSpec = useProjectStore((state) => state.generateNodeSpec);
   const handlerRef = useRef({
     onSelectNode,
     onCreateChild,
@@ -346,6 +358,17 @@ export function TreeGraph({
     }
   }, [focusedNodeId, nodeById]);
 
+  // Reset to Frame tab whenever the focused node changes
+  const prevFocusedNodeIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (focusedNodeId !== prevFocusedNodeIdRef.current) {
+      prevFocusedNodeIdRef.current = focusedNodeId;
+      if (focusedNodeId) {
+        setDetailTab("frame");
+      }
+    }
+  }, [focusedNodeId]);
+
   useEffect(() => {
     if (!focusedNodeId || documentsByNode[focusedNodeId]) {
       return;
@@ -533,23 +556,58 @@ export function TreeGraph({
           onNodeClick={handleFlowNodePointerEvents}
         >
           <Background color="var(--color-border-strong)" gap={24} size={1} />
-          <Controls showInteractive={false} />
+          <Controls showInteractive={false} position="bottom-right" />
 
           <Panel position="bottom-left">
-            <button
-              type="button"
-              className={styles.fullscreenButton}
-              onClick={() => setIsFullscreen((current) => !current)}
-            >
-              {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
-            </button>
+            <div className={styles.controlStack}>
+              <button
+                type="button"
+                className={styles.fullscreenButton}
+                onClick={() => setIsFullscreen((current) => !current)}
+              >
+                {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+              </button>
+              <button
+                type="button"
+                className={styles.resetButton}
+                disabled={isResetDisabled}
+                onClick={() => void onResetProject()}
+              >
+                {isResettingProject ? "Resetting..." : "Reset to Root"}
+              </button>
+            </div>
           </Panel>
 
           {focusedNodeId ? (
             <Panel position="top-right" className={styles.detailPanel}>
               <div className={styles.detailCard}>
+                {/* ── Stepper header ── */}
                 <div className={styles.detailCardHeader}>
-                  <span className={styles.detailCardTitle}>Node Detail</span>
+                  <nav className={styles.detailStepper} aria-label="Detail sections">
+                    <button
+                      type="button"
+                      className={`${styles.detailStep} ${detailTab === "frame" ? styles.detailStepActive : ""}`}
+                      onClick={() => setDetailTab("frame")}
+                    >
+                      Frame
+                    </button>
+                    <span className={styles.detailStepArrow} aria-hidden>›</span>
+                    <button
+                      type="button"
+                      className={`${styles.detailStep} ${detailTab === "clarify" ? styles.detailStepActive : ""}`}
+                      onClick={() => setDetailTab("clarify")}
+                    >
+                      Clarify
+                    </button>
+                    <span className={styles.detailStepArrow} aria-hidden>›</span>
+                    <button
+                      type="button"
+                      className={`${styles.detailStep} ${detailTab === "spec" ? styles.detailStepActive : ""}`}
+                      onClick={() => setDetailTab("spec")}
+                    >
+                      Spec
+                    </button>
+                  </nav>
                   <button
                     type="button"
                     className={styles.detailCardClose}
@@ -560,30 +618,75 @@ export function TreeGraph({
                     ×
                   </button>
                 </div>
+
+                {/* ── Tab content ── */}
                 {(() => {
                   const focusedNode = nodeById.get(focusedNodeId) ?? null;
                   if (!focusedNode) return null;
-                  return (
-                    <TaskPanel
-                      node={focusedNode}
-                      documents={documentsByNode[focusedNode.node_id]}
-                      isLoading={isLoadingDocuments}
-                      isUpdating={isUpdatingDocument}
-                      isConfirming={isConfirmingNode}
-                      compact
-                      activity={agentActivityByNode[focusedNode.node_id]}
-                      onReload={() =>
-                        loadNodeDocuments(focusedNode.node_id).then(
-                          () => undefined,
-                        )
-                      }
-                      onSave={(payload) =>
-                        updateNodeTask(focusedNode.node_id, payload)
-                      }
-                      onConfirm={() => confirmTask(focusedNode.node_id)}
-                      onRetryBrief={() => confirmTask(focusedNode.node_id)}
-                    />
-                  );
+                  if (detailTab === "frame") {
+                    return (
+                      <TaskPanel
+                        node={focusedNode}
+                        documents={documentsByNode[focusedNode.node_id]}
+                        isLoading={isLoadingDocuments}
+                        isUpdating={isUpdatingDocument}
+                        isConfirming={isConfirmingNode}
+                        compact
+                        activity={agentActivityByNode[focusedNode.node_id]}
+                        onReload={() =>
+                          loadNodeDocuments(focusedNode.node_id).then(
+                            () => undefined,
+                          )
+                        }
+                        onSave={(payload) =>
+                          updateNodeTask(focusedNode.node_id, payload)
+                        }
+                        onConfirm={() => confirmTask(focusedNode.node_id)}
+                        onRetryBrief={() => confirmTask(focusedNode.node_id)}
+                      />
+                    );
+                  }
+                  if (detailTab === "clarify") {
+                    return (
+                      <div className={styles.detailClarifyHint}>
+                        <p className={styles.detailClarifyTitle}>Ask Questions</p>
+                        <p className={styles.detailClarifyBody}>
+                          Open the full breadcrumb workspace to ask clarifying questions and review the planning conversation for this node.
+                        </p>
+                        <button
+                          type="button"
+                          className={styles.detailClarifyBtn}
+                          onClick={() => void onOpenBreadcrumb(focusedNode.node_id)}
+                        >
+                          Open Breadcrumb →
+                        </button>
+                      </div>
+                    );
+                  }
+                  if (detailTab === "spec") {
+                    return (
+                      <SpecPanel
+                        node={focusedNode}
+                        documents={documentsByNode[focusedNode.node_id]}
+                        isLoading={isLoadingDocuments}
+                        isUpdating={isUpdatingDocument}
+                        isGenerating={isGeneratingSpec}
+                        isConfirming={isConfirmingNode}
+                        activity={agentActivityByNode[focusedNode.node_id]}
+                        onReload={() =>
+                          loadNodeDocuments(focusedNode.node_id).then(
+                            () => undefined,
+                          )
+                        }
+                        onSave={(payload) =>
+                          updateNodeSpec(focusedNode.node_id, payload)
+                        }
+                        onGenerate={() => generateNodeSpec(focusedNode.node_id)}
+                        onConfirm={() => confirmSpec(focusedNode.node_id)}
+                      />
+                    );
+                  }
+                  return null;
                 })()}
               </div>
             </Panel>

@@ -35,6 +35,7 @@ const NODES_PER_PROJECT = 4
 
 export function Sidebar() {
   const navigate = useNavigate()
+  const [isCollapsed, setIsCollapsed] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [isPickerLoading, setIsPickerLoading] = useState(false)
@@ -65,11 +66,19 @@ export function Sidebar() {
 
   const handleOpenBreadcrumb = useCallback(
     async (nodeId: string) => {
-      const latest = useProjectStore.getState().snapshot
-      if (!latest) return
       try {
         await selectNode(nodeId, true)
-        navigate(`/projects/${latest.project.id}/nodes/${nodeId}/chat`)
+        const latestState = useProjectStore.getState()
+        const latestSnapshot = latestState.snapshot
+        if (!latestSnapshot || latestState.activeProjectId !== latestSnapshot.project.id) {
+          return
+        }
+        const targetNode =
+          latestSnapshot.tree_state.node_registry.find((node) => node.node_id === nodeId) ?? null
+        if (!targetNode) {
+          return
+        }
+        navigate(`/projects/${latestSnapshot.project.id}/nodes/${targetNode.node_id}/chat`)
       } catch { /* ignore */ }
     },
     [navigate, selectNode],
@@ -124,12 +133,43 @@ export function Sidebar() {
     })
   }, [])
 
+  const toggleSidebar = useCallback(() => {
+    setIsCollapsed((prev) => !prev)
+  }, [])
+
   const visibleNodes = useMemo(() => getVisibleNodes(snapshot), [snapshot])
+
+  if (isCollapsed) {
+    return (
+      <aside className={`${styles.sidebar} ${styles.sidebarCollapsed}`}>
+        <button
+          type="button"
+          className={styles.collapsedToggle}
+          onClick={toggleSidebar}
+          aria-label="Expand projects sidebar"
+          title="Expand projects sidebar"
+        >
+          <span className={styles.collapsedLabel}>Projects</span>
+        </button>
+      </aside>
+    )
+  }
 
   return (
     <aside className={styles.sidebar}>
       {/* ── Header ── */}
       <div className={styles.header}>
+        <button
+          type="button"
+          className={styles.headerBtn}
+          title="Collapse projects sidebar"
+          aria-label="Collapse projects sidebar"
+          onClick={toggleSidebar}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
         <span className={styles.headerTitle}>Projects</span>
         <div className={styles.headerActions}>
           {/* New project — opens native OS folder picker */}

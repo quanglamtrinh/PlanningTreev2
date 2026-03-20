@@ -47,8 +47,15 @@
   z-index: 240;
 }
 
-/* ─── Fullscreen toggle button ─── */
-.fullscreenButton {
+.controlStack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: all;
+}
+
+.fullscreenButton,
+.resetButton {
   height: 26px;
   padding: 0 10px;
   border-radius: var(--radius-pill);
@@ -61,9 +68,27 @@
   box-shadow: var(--shadow-xs);
 }
 
-.fullscreenButton:hover:not(:disabled) {
+.fullscreenButton:hover:not(:disabled),
+.resetButton:hover:not(:disabled) {
   background: var(--color-bg-panel);
   color: var(--color-text-primary);
+}
+
+.fullscreenButton:disabled,
+.resetButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.resetButton {
+  border-color: color-mix(in srgb, #b33a2c 35%, var(--color-border-subtle));
+  color: #8f2c21;
+}
+
+.resetButton:hover:not(:disabled) {
+  background: #fff1ee;
+  border-color: #c04030;
+  color: #7c241c;
 }
 
 /* ─── Detail panel (right side) ─── */
@@ -88,23 +113,76 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   margin-bottom: 12px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
-.detailCardTitle {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+/* ─── Stepper nav ─── */
+.detailStepper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.detailStep {
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
   color: var(--color-text-tertiary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+  position: relative;
+}
+
+.detailStep::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.14s ease;
+}
+
+.detailStep:hover:not(.detailStepActive) {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-hover);
+}
+
+.detailStepActive {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.detailStepActive::after {
+  background: var(--color-accent);
+}
+
+.detailStepArrow {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--color-border);
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
 }
 
 .detailCardClose {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 22px;
   height: 22px;
   border-radius: var(--radius-sm);
@@ -120,6 +198,49 @@
   background: var(--color-bg-hover);
   border-color: var(--color-border);
   color: var(--color-text-primary);
+}
+
+/* ─── Clarify placeholder ─── */
+.detailClarifyHint {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-hover);
+}
+
+.detailClarifyTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.detailClarifyBody {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.detailClarifyBtn {
+  align-self: flex-start;
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-panel);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-accent);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.detailClarifyBtn:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-accent);
 }
 
 /* ─── Invalid snapshot state ─── */

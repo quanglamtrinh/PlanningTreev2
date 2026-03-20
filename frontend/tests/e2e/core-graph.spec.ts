@@ -18,9 +18,11 @@ test('creates a project, renders the graph shell, and opens the breadcrumb stub'
     await page.getByLabel('Base workspace root').fill(workspaceRoot)
     await page.getByRole('button', { name: 'Save Workspace' }).click()
   } else {
-    await page.getByRole('button', { name: 'Change Workspace' }).click()
-    await page.getByLabel('Base workspace root').fill(workspaceRoot)
-    await page.getByRole('button', { name: 'Save Workspace' }).click()
+    const workspaceResponse = await request.patch('/v1/settings/workspace', {
+      data: { base_workspace_root: workspaceRoot },
+    })
+    expect(workspaceResponse.ok()).toBeTruthy()
+    await page.reload()
   }
 
   await page.getByLabel('Name').fill(projectName)

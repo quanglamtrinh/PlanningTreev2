@@ -189,6 +189,9 @@ function makeSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
 describe('project-store', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    for (const mockFn of Object.values(apiMock)) {
+      mockFn.mockReset()
+    }
     useProjectStore.setState(useProjectStore.getInitialState())
   })
 
@@ -291,6 +294,69 @@ describe('project-store', () => {
 
     expect(useProjectStore.getState().activeProjectId).toBe('project-2')
     expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-2')
+    expect(window.localStorage.getItem('planningtree.active-project-id')).toBe('project-2')
+  })
+
+  it('loadProject selects the persisted active node for the target project', async () => {
+    const snapshot = makeSnapshot({
+      project: {
+        ...makeSnapshot().project,
+        id: 'project-2',
+        name: 'Beta',
+        root_goal: 'Goal for Beta',
+        project_workspace_root: 'C:/workspace/beta',
+        updated_at: '2026-03-07T11:00:00Z',
+      },
+      tree_state: {
+        root_node_id: 'root-2',
+        active_node_id: 'child-2',
+        node_registry: [
+          {
+            ...makeSnapshot().tree_state.node_registry[0],
+            node_id: 'root-2',
+            title: 'Beta',
+            description: 'Goal for Beta',
+            child_ids: ['child-2'],
+          },
+          {
+            node_id: 'child-2',
+            parent_id: 'root-2',
+            child_ids: [],
+            title: 'Active Child',
+            description: 'Continue here',
+            status: 'ready',
+            phase: 'planning',
+            node_kind: 'original',
+            planning_mode: null,
+            depth: 1,
+            display_order: 0,
+            hierarchical_number: '1.1',
+            split_metadata: null,
+            chat_session_id: null,
+            has_planning_thread: false,
+            has_execution_thread: false,
+            planning_thread_status: null,
+            execution_thread_status: null,
+            has_ask_thread: false,
+            ask_thread_status: null,
+            is_superseded: false,
+            created_at: '2026-03-07T11:00:00Z',
+          },
+        ],
+      },
+    })
+
+    apiMock.getSnapshot.mockResolvedValue(snapshot)
+
+    await act(async () => {
+      await useProjectStore.getState().loadProject('project-2')
+    })
+
+    const state = useProjectStore.getState()
+    expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-2')
+    expect(state.activeProjectId).toBe('project-2')
+    expect(state.snapshot?.project.id).toBe('project-2')
+    expect(state.selectedNodeId).toBe('child-2')
     expect(window.localStorage.getItem('planningtree.active-project-id')).toBe('project-2')
   })
 
