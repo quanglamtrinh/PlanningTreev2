@@ -35,6 +35,18 @@ class ProjectNotFound(AppError):
         super().__init__("project_not_found", f"Project {project_id!r} not found.", 404)
 
 
+class LegacyProjectUnsupported(AppError):
+    def __init__(self, project_id: str) -> None:
+        super().__init__(
+            "legacy_project_unsupported",
+            (
+                f"Project {project_id!r} uses removed legacy planning/thread content storage. "
+                "Delete or recreate the project before using this build."
+            ),
+            409,
+        )
+
+
 class InvalidProjectId(AppError):
     def __init__(self, project_id: str) -> None:
         super().__init__(
@@ -121,6 +133,20 @@ class SplitNotAllowed(AppError):
         super().__init__("split_not_allowed", reason, 409)
 
 
+class SplitBackendUnavailable(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("split_backend_unavailable", reason, 503)
+
+
+class SplitInvalidResponse(AppError):
+    def __init__(self, issues: list[str] | None = None) -> None:
+        details = "; ".join(issue for issue in (issues or []) if str(issue).strip())
+        message = "AI split returned invalid structured output after retry."
+        if details:
+            message = f"{message} {details}"
+        super().__init__("split_invalid_response", message, 502)
+
+
 class ProjectResetNotAllowed(AppError):
     def __init__(self, reason: str) -> None:
         super().__init__("project_reset_not_allowed", reason, 409)
@@ -133,6 +159,16 @@ class ChatTurnAlreadyActive(AppError):
             "A chat turn is already in progress for this node.",
             409,
         )
+
+
+class ChatBackendUnavailable(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("chat_backend_unavailable", reason, 503)
+
+
+class ChatNotAllowed(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("chat_not_allowed", reason, 409)
 
 
 class ConversationStreamMismatch(AppError):

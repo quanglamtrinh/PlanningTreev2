@@ -1,16 +1,27 @@
-import { render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BreadcrumbPlaceholder } from '../../src/features/breadcrumb/BreadcrumbPlaceholder'
+import { useChatStore } from '../../src/stores/chat-store'
 import { useUIStore } from '../../src/stores/ui-store'
+
+vi.mock('../../src/features/breadcrumb/BreadcrumbChatView', () => ({
+  BreadcrumbChatView: () => <div>Breadcrumb chat stub</div>,
+}))
+
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location-path">{location.pathname}</div>
+}
 
 describe('BreadcrumbPlaceholder', () => {
   beforeEach(() => {
     useUIStore.setState({ ...useUIStore.getInitialState(), activeSurface: 'graph' })
+    useChatStore.setState(useChatStore.getInitialState())
   })
 
-  it('renders the rework placeholder and marks breadcrumb as the active surface', () => {
+  it('renders the breadcrumb toolbar and marks breadcrumb as the active surface', () => {
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat']}>
         <Routes>
@@ -19,10 +30,28 @@ describe('BreadcrumbPlaceholder', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('Breadcrumb view is being reworked.')).toBeInTheDocument()
-    expect(
-      screen.getByText(/temporary placeholder while the old breadcrumb workspace is retired/i),
-    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back to graph' })).toBeInTheDocument()
+    expect(screen.getByText('Breadcrumb view')).toBeInTheDocument()
+    expect(screen.getByText('Project project-1 / Node root')).toBeInTheDocument()
+    expect(screen.getByText('Breadcrumb chat stub')).toBeInTheDocument()
     expect(useUIStore.getState().activeSurface).toBe('breadcrumb')
+  })
+
+  it('navigates back to the graph route from the breadcrumb toolbar', () => {
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat']}>
+        <Routes>
+          <Route path="/" element={<div>Graph workspace stub</div>} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbPlaceholder />} />
+        </Routes>
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to graph' }))
+
+    expect(screen.getByText('Graph workspace stub')).toBeInTheDocument()
+    expect(screen.getByTestId('location-path').textContent).toBe('/')
+    expect(useUIStore.getState().activeSurface).toBe('graph')
   })
 })

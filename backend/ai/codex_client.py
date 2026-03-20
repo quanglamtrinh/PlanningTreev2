@@ -1246,6 +1246,22 @@ class CodexAppClient:
         cwd: str | None = None,
         timeout_sec: int = 30,
     ) -> dict[str, Any]:
+        return self.start_thread(
+            base_instructions=base_instructions,
+            dynamic_tools=dynamic_tools,
+            cwd=cwd,
+            timeout_sec=timeout_sec,
+        )
+
+    def start_thread(
+        self,
+        *,
+        base_instructions: str,
+        dynamic_tools: list[dict[str, Any]],
+        cwd: str | None = None,
+        timeout_sec: int = 30,
+        writable_roots: list[str] | None = None,
+    ) -> dict[str, Any]:
         if not self.is_alive():
             self.start()
         transport = self._require_stdio_transport()
@@ -1254,6 +1270,7 @@ class CodexAppClient:
             timeout_sec=timeout_sec,
             base_instructions=base_instructions,
             dynamic_tools=dynamic_tools,
+            writable_roots=writable_roots,
         )
         return {"thread_id": transport._extract_thread_id(response)}
 

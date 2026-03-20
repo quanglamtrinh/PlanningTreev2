@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { usePlanningEventStream } from '../../api/hooks'
 import type { SplitMode } from '../../api/types'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
@@ -26,16 +25,14 @@ export function GraphWorkspace() {
   const activeProjectId = useProjectStore((state) => state.activeProjectId)
   const snapshot = useProjectStore((state) => state.snapshot)
   const selectedNodeId = useProjectStore((state) => state.selectedNodeId)
+  const splitStatus = useProjectStore((state) => state.splitStatus)
+  const splitNodeId = useProjectStore((state) => state.splitNodeId)
   const error = useProjectStore((state) => state.error)
   const isWorkspaceSaving = useProjectStore((state) => state.isWorkspaceSaving)
   const isLoadingSnapshot = useProjectStore((state) => state.isLoadingSnapshot)
   const isCreatingNode = useProjectStore((state) => state.isCreatingNode)
-  const isSplittingNode = useProjectStore((state) => state.isSplittingNode)
   const isResettingProject = useProjectStore((state) => state.isResettingProject)
-  const splittingNodeId = useProjectStore((state) => state.splittingNodeId)
   const setActiveSurface = useUIStore((state) => state.setActiveSurface)
-
-  usePlanningEventStream(activeProjectId, splittingNodeId ?? selectedNodeId)
 
   useEffect(() => {
     setActiveSurface('graph')
@@ -66,41 +63,6 @@ export function GraphWorkspace() {
     }
   }
 
-  async function handleSplitNode(nodeId: string, mode: SplitMode) {
-    try {
-      const latestSnapshot = useProjectStore.getState().snapshot
-      if (!latestSnapshot) {
-        return
-      }
-
-      const targetNode =
-        latestSnapshot.tree_state.node_registry.find((node) => node.node_id === nodeId) ?? null
-      if (!targetNode) {
-        return
-      }
-
-      const activeChildren = targetNode.child_ids
-        .map((childId) =>
-          latestSnapshot.tree_state.node_registry.find((node) => node.node_id === childId) ?? null,
-        )
-        .filter((child) => Boolean(child && !child.is_superseded))
-
-      let confirmReplace = false
-      if (activeChildren.length > 0) {
-        confirmReplace = window.confirm(
-          "This will replace the node's current active children. Continue?",
-        )
-        if (!confirmReplace) {
-          return
-        }
-      }
-
-      await splitNode(nodeId, mode, confirmReplace)
-    } catch {
-      return
-    }
-  }
-
   async function handleOpenBreadcrumb(nodeId: string) {
     try {
       await selectNode(nodeId, true)
@@ -121,19 +83,12 @@ export function GraphWorkspace() {
   }
 
   async function handleFinishTask(nodeId: string) {
+    await handleOpenBreadcrumb(nodeId)
+  }
+
+  async function handleSplitNode(nodeId: string, mode: SplitMode) {
     try {
-      await selectNode(nodeId, true)
-      const latestState = useProjectStore.getState()
-      const latestSnapshot = latestState.snapshot
-      if (!latestSnapshot || latestState.activeProjectId !== latestSnapshot.project.id) {
-        return
-      }
-      const targetNode =
-        latestSnapshot.tree_state.node_registry.find((node) => node.node_id === nodeId) ?? null
-      if (!targetNode) {
-        return
-      }
-      navigate(`/projects/${latestSnapshot.project.id}/nodes/${nodeId}/chat`)
+      await splitNode(nodeId, mode)
     } catch {
       return
     }
@@ -146,9 +101,7 @@ export function GraphWorkspace() {
       return
     }
 
-    const confirmed = window.confirm(
-      'Reset this project to its root node? This will delete all child nodes and clear planning/chat history.',
-    )
+    const confirmed = window.confirm('Reset this project to its root node? This will delete all child nodes.')
     if (!confirmed) {
       return
     }
@@ -161,7 +114,7 @@ export function GraphWorkspace() {
   }
 
   if (!hasInitialized || isInitializing) {
-    return <section className={styles.loading}>Loading…</section>
+    return <section className={styles.loading}>Loading...</section>
   }
 
   if (!bootstrap?.workspace_configured) {
@@ -187,13 +140,13 @@ export function GraphWorkspace() {
             <TreeGraph
               snapshot={snapshot}
               selectedNodeId={selectedNodeId}
+              splitStatus={splitStatus}
+              splittingNodeId={splitNodeId}
               isCreatingNode={isCreatingNode}
-              isSplittingNode={isSplittingNode}
               isResettingProject={isResettingProject}
               isResetDisabled={
-                !activeProjectId || isLoadingSnapshot || isSplittingNode || isResettingProject
+                !activeProjectId || isLoadingSnapshot || isResettingProject || splitStatus === 'active'
               }
-              splittingNodeId={splittingNodeId}
               onSelectNode={handleSelectNode}
               onCreateChild={handleCreateChild}
               onSplitNode={handleSplitNode}
@@ -206,7 +159,7 @@ export function GraphWorkspace() {
               <h3>No project loaded</h3>
               <p>
                 {isLoadingSnapshot
-                  ? 'Loading snapshot…'
+                  ? 'Loading snapshot...'
                   : projects.length > 0
                     ? 'Select a project from the sidebar to render its graph.'
                     : 'Create a project in the sidebar to get started.'}

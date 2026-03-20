@@ -1,89 +1,34 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from copy import deepcopy
-from dataclasses import dataclass
-import logging
 import threading
-from typing import Any, cast
+from copy import deepcopy
+from typing import Any
 from uuid import uuid4
 
-from backend.ai.codex_client import CodexAppClient
+from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.ai.split_context_builder import build_split_context
 from backend.ai.split_prompt_builder import (
-    build_split_attempt_prompt,
     build_hidden_retry_feedback,
-    is_failure_sentinel_payload,
+    build_split_attempt_prompt,
+    build_split_base_instructions,
+    split_render_tool,
     split_payload_issues,
     validate_split_payload,
 )
-from backend.errors.app_errors import NodeNotFound, SplitNotAllowed
-from backend.split_contract import (
-    CANONICAL_SPLIT_MODE_REGISTRY,
-    CanonicalSplitModeId,
-    FlatSubtaskItem,
-    FlatSubtaskPayload,
-    ServiceSplitMode,
-    ServiceSplitOutputFamily,
-    split_output_family_for_mode,
+from backend.errors.app_errors import (
+    NodeNotFound,
+    ProjectNotFound,
+    SplitBackendUnavailable,
+    SplitInvalidResponse,
+    SplitNotAllowed,
 )
-from backend.services.agent_operation_service import (
-    AgentOperationHandle,
-    AgentOperationService,
-    clear_last_agent_failure,
-    set_last_agent_failure,
-)
-from backend.services.node_task_fields import enrich_nodes_with_task_fields
-from backend.services.planning_conversation_adapter import (
-    build_planning_split_summary,
-    extract_split_payload,
-    make_planning_stream_id,
-)
-from backend.services.thread_service import ThreadService
 from backend.services.tree_service import TreeService
-from backend.storage.file_utils import iso_now, load_json, new_id
+from backend.split_contract import FlatSubtaskPayload, ServiceSplitMode
+from backend.storage.file_utils import iso_now, new_id
 from backend.storage.storage import Storage
-from backend.streaming.sse_broker import PlanningEventBroker
 
 _RETRY_LIMIT = 2
-_INVALID_SPLIT_RESULT_MESSAGE = "Split failed because the model did not produce a valid structured split result."
-_INSUFFICIENT_SPLIT_CONTEXT_MESSAGE = "Could not produce a valid split from the parent task and current repo context."
-
-logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class SplitRuntimeBundle:
-    output_family: ServiceSplitOutputFamily
-    build_attempt_prompt: Callable[[dict[str, Any], str | None], str]
-    validate_payload: Callable[[dict[str, Any]], bool]
-    payload_issues: Callable[[dict[str, Any]], list[str]]
-    build_hidden_retry_feedback: Callable[[list[str]], str]
-    is_failure_sentinel: Callable[[dict[str, Any]], bool]
-
-
-@dataclass(frozen=True)
-class ResolvedSplitPayload:
-    payload: dict[str, Any]
-    tool_calls: list[dict[str, Any]]
-    is_failure_sentinel: bool
-
-
-def split_runtime_bundle_for_mode(mode: ServiceSplitMode) -> SplitRuntimeBundle:
-    output_family = split_output_family_for_mode(mode)
-    canonical_mode = cast(CanonicalSplitModeId, mode)
-    return SplitRuntimeBundle(
-        output_family=output_family,
-        build_attempt_prompt=lambda task_context, retry_feedback=None, mode=canonical_mode: build_split_attempt_prompt(
-            mode,
-            task_context,
-            retry_feedback,
-        ),
-        validate_payload=lambda payload, mode=canonical_mode: validate_split_payload(mode, payload),
-        payload_issues=lambda payload, mode=canonical_mode: split_payload_issues(mode, payload),
-        build_hidden_retry_feedback=lambda issues, mode=canonical_mode: build_hidden_retry_feedback(mode, issues),
-        is_failure_sentinel=lambda payload, mode=canonical_mode: is_failure_sentinel_payload(mode, payload),
-    )
+_STALE_JOB_MESSAGE = "This split was interrupted because the server restarted before it completed."
 
 
 class SplitService:
@@ -92,175 +37,78 @@ class SplitService:
         storage: Storage,
         tree_service: TreeService,
         codex_client: CodexAppClient,
-        thread_service: ThreadService,
-        planning_event_broker: PlanningEventBroker,
         split_timeout: int,
-        agent_operation_service: AgentOperationService | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
         self._codex_client = codex_client
-        self._thread_service = thread_service
-        self._planning_event_broker = planning_event_broker
-        self._agent_operation_service = agent_operation_service
         self._split_timeout = int(split_timeout)
-        self._live_turns_lock = threading.Lock()
-        self._live_turns: set[tuple[str, str]] = set()
+        self._live_jobs_lock = threading.Lock()
+        self._live_jobs: dict[str, str] = {}
 
-    def _runtime_bundle(self, mode: ServiceSplitMode | str) -> SplitRuntimeBundle:
-        return split_runtime_bundle_for_mode(cast(ServiceSplitMode, mode))
-
-    def split_node(
-        self,
-        project_id: str,
-        node_id: str,
-        mode: ServiceSplitMode,
-        confirm_replace: bool = False,
-    ) -> dict[str, Any]:
-        self._runtime_bundle(mode)
-
-        handle: AgentOperationHandle | None = None
-
+    def split_node(self, project_id: str, node_id: str, mode: ServiceSplitMode) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_by_id = self._tree_service.node_index(snapshot)
-            parent = node_by_id.get(node_id)
-            if parent is None:
+            node = node_by_id.get(node_id)
+            if node is None:
                 raise NodeNotFound(node_id)
-            self._validate_split_eligibility(parent, node_by_id, confirm_replace)
-            planning_state = self._storage.thread_store.peek_node_state(project_id, node_id).get("planning", {})
-            if planning_state.get("status") == "active" or self._is_live_turn(project_id, node_id):
-                raise SplitNotAllowed("A planning turn is already active for this node.")
-            if self._agent_operation_service is not None and self._agent_operation_service.is_active(project_id, node_id):
-                raise SplitNotAllowed("Another agent operation is already active for this node.")
+            self._validate_split_eligibility(node, node_by_id)
+            split_state = self._reconcile_stale_job_locked(project_id, self._storage.split_state_store.read_state(project_id))
+            if split_state.get("active_job"):
+                raise SplitNotAllowed("A split is already active for this project.")
+            workspace_root = self._workspace_root_from_snapshot(snapshot)
+            existing_thread_id = split_state.get("thread_id")
 
-        if self._agent_operation_service is not None:
-            try:
-                handle = self._agent_operation_service.start_operation(project_id, node_id, "split")
-            except RuntimeError as exc:
-                raise SplitNotAllowed(str(exc)) from exc
-
-        try:
-            self._thread_service.ensure_planning_thread(project_id, node_id)
-            turn_id = new_id("planturn")
-            visible_user_message = self._build_visible_user_message(project_id, node_id, mode)
-            with self._storage.project_lock(project_id):
-                snapshot = self._storage.project_store.load_snapshot(project_id)
-                node_by_id = self._tree_service.node_index(snapshot)
-                parent = node_by_id.get(node_id)
-                if parent is None:
-                    raise NodeNotFound(node_id)
-                self._validate_split_eligibility(parent, node_by_id, confirm_replace)
-                planning_state = self._storage.thread_store.peek_node_state(project_id, node_id).get("planning", {})
-                if planning_state.get("status") == "active" or self._is_live_turn(project_id, node_id):
-                    raise SplitNotAllowed("A planning turn is already active for this node.")
-                self._assert_no_unresolved_ask_packets(project_id, node_id)
-                state = self._storage.node_store.load_state(project_id, node_id)
-                clear_last_agent_failure(state)
-                self._storage.node_store.save_state(project_id, node_id, state)
-                planning_start = self._storage.thread_store.start_planning_conversation_turn(
-                    project_id,
-                    node_id,
-                    thread_id=str(parent.get("planning_thread_id") or "").strip() or None,
-                    forked_from_node=str(parent.get("planning_thread_forked_from_node") or "").strip() or None,
-                    active_turn_id=turn_id,
-                    pending_user_content=visible_user_message,
-                    pending_started_at=iso_now(),
-                )
-                self._thread_service.set_planning_status(
-                    project_id,
-                    node_id,
-                    status="active",
-                    active_turn_id=turn_id,
-                )
-                self._mark_live_turn(project_id, node_id)
-        except Exception:
-            if handle is not None and self._agent_operation_service is not None:
-                self._agent_operation_service.finish_operation(handle)
-            raise
-
+        thread_id = self._ensure_project_thread(existing_thread_id, workspace_root)
+        job_id = new_id("split")
         started_at = iso_now()
-        if handle is not None and self._agent_operation_service is not None:
-            self._agent_operation_service.publish_started(
-                handle,
-                stage="preparing",
-                message="Preparing split.",
-            )
-        self._planning_event_broker.publish(
-            project_id,
-            node_id,
-            {
-                "type": "planning_turn_started",
-                "node_id": node_id,
-                "turn_id": turn_id,
-                "mode": mode,
-                "timestamp": started_at,
-                "conversation_id": planning_start["planning"]["conversation_id"],
-                "stream_id": make_planning_stream_id(turn_id),
-                "user_content": visible_user_message,
-                "user_event_seq": planning_start["user_event_seq"],
-                "assistant_event_seq": planning_start["assistant_event_seq"],
-            },
-        )
-        self._start_background_split(
-            project_id=project_id,
-            node_id=node_id,
-            mode=mode,
-            confirm_replace=confirm_replace,
-            turn_id=turn_id,
-            visible_user_message=visible_user_message,
-            handle=handle,
-        )
-        return {
-            "status": "accepted",
-            "node_id": node_id,
-            "mode": mode,
-            "planning_status": "active",
-        }
 
-    def _assert_no_unresolved_ask_packets(self, project_id: str, node_id: str) -> None:
-        ask_state = self._storage.thread_store.get_ask_state(project_id, node_id)
-        unresolved_packets = [
-            packet
-            for packet in ask_state.get("delta_context_packets", [])
-            if isinstance(packet, dict) and packet.get("status") in {"pending", "approved"}
-        ]
-        if unresolved_packets:
-            raise SplitNotAllowed("Resolve ask-thread delta context packets before splitting this node.")
-
-    def get_planning_history(self, project_id: str, node_id: str) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_by_id = self._tree_service.node_index(snapshot)
-            if node_id not in node_by_id:
+            node = node_by_id.get(node_id)
+            if node is None:
                 raise NodeNotFound(node_id)
-        turns = self._thread_service.materialize_inherited_planning_history(project_id, node_id)
-        return {"node_id": node_id, "turns": turns}
+            self._validate_split_eligibility(node, node_by_id)
+            split_state = self._reconcile_stale_job_locked(project_id, self._storage.split_state_store.read_state(project_id))
+            if split_state.get("active_job"):
+                raise SplitNotAllowed("A split is already active for this project.")
+            split_state["thread_id"] = thread_id
+            split_state["active_job"] = {
+                "job_id": job_id,
+                "node_id": node_id,
+                "mode": mode,
+                "started_at": started_at,
+            }
+            split_state["last_error"] = None
+            self._storage.split_state_store.write_state(project_id, split_state)
+            self._mark_live_job(project_id, job_id)
 
-    def _start_background_split(
-        self,
-        *,
-        project_id: str,
-        node_id: str,
-        mode: ServiceSplitMode,
-        confirm_replace: bool,
-        turn_id: str,
-        visible_user_message: str,
-        handle: AgentOperationHandle | None,
-    ) -> None:
         threading.Thread(
             target=self._run_background_split,
             kwargs={
                 "project_id": project_id,
                 "node_id": node_id,
                 "mode": mode,
-                "confirm_replace": confirm_replace,
-                "turn_id": turn_id,
-                "visible_user_message": visible_user_message,
-                "handle": handle,
+                "job_id": job_id,
+                "started_at": started_at,
             },
             daemon=True,
         ).start()
+
+        return {
+            "status": "accepted",
+            "job_id": job_id,
+            "node_id": node_id,
+            "mode": mode,
+        }
+
+    def get_split_status(self, project_id: str) -> dict[str, Any]:
+        with self._storage.project_lock(project_id):
+            self._storage.project_store.load_snapshot(project_id)
+            split_state = self._reconcile_stale_job_locked(project_id, self._storage.split_state_store.read_state(project_id))
+            return self._status_payload(split_state)
 
     def _run_background_split(
         self,
@@ -268,646 +116,262 @@ class SplitService:
         project_id: str,
         node_id: str,
         mode: ServiceSplitMode,
-        confirm_replace: bool,
-        turn_id: str,
-        visible_user_message: str,
-        handle: AgentOperationHandle | None,
+        job_id: str,
+        started_at: str,
     ) -> None:
         try:
-            result = self._execute_split_turn(
-                project_id=project_id,
-                node_id=node_id,
-                mode=mode,
-                confirm_replace=confirm_replace,
-                turn_id=turn_id,
-                user_message_override=visible_user_message,
-            )
-            visible_user_message = result["user_message"]
-            tool_calls = result["tool_calls"]
-            assistant_content = result["assistant_content"]
-            timestamp = result["timestamp"]
-            fallback_used = bool(result["fallback_used"])
-            created_child_ids = list(result["created_child_ids"])
-            tool_event_published = bool(result["tool_event_published"])
-            readable_summary = build_planning_split_summary(
-                payload=extract_split_payload(tool_calls),
-                created_child_ids=created_child_ids,
-            )
-            if not tool_event_published:
-                for tool_call in tool_calls:
-                    self._planning_event_broker.publish(
-                        project_id,
-                        node_id,
-                        self._planning_tool_call_event(node_id, turn_id, tool_call),
-                    )
-
-            planning_finish = self._storage.thread_store.finish_planning_conversation_turn(project_id, node_id)
-            self._planning_event_broker.publish(
-                project_id,
-                node_id,
-                {
-                    "type": "planning_turn_completed",
-                    "node_id": node_id,
-                    "turn_id": turn_id,
-                    "created_child_ids": created_child_ids,
-                    "fallback_used": fallback_used,
-                    "timestamp": timestamp,
-                    "conversation_id": planning_finish["planning"]["conversation_id"],
-                    "stream_id": make_planning_stream_id(turn_id),
-                    "assistant_text": readable_summary,
-                    "assistant_text_event_seq": planning_finish["assistant_text_event_seq"],
-                    "completion_event_seq": planning_finish["completion_event_seq"],
-                },
-            )
-            if handle is not None and self._agent_operation_service is not None:
-                self._agent_operation_service.publish_completed(
-                    handle,
-                    stage="completed",
-                    message="Split completed.",
-                )
+            payload = self._generate_split_payload(project_id, node_id, mode)
+            self._materialize_split_payload(project_id, node_id, payload)
+            self._mark_job_completed(project_id, job_id)
+        except ProjectNotFound:
+            self._clear_live_job(project_id, job_id)
         except Exception as exc:
-            logger.exception("Split planning turn failed for node %s", node_id)
-            timestamp = iso_now()
-            existing_turns = self._storage.thread_store.get_planning_turns(project_id, node_id)
-            turn_already_persisted = any(
-                isinstance(entry, dict) and str(entry.get("turn_id") or "") == turn_id
-                for entry in existing_turns
-            )
-            if visible_user_message and not turn_already_persisted:
-                self._thread_service.append_visible_planning_turn(
-                    project_id,
-                    node_id,
-                    turn_id=turn_id,
-                    user_content=visible_user_message,
-                    tool_calls=[],
-                    assistant_content=f"Split failed: {exc}",
-                    timestamp=timestamp,
-                )
-            planning_finish = self._storage.thread_store.finish_planning_conversation_turn(project_id, node_id)
-            self._planning_event_broker.publish(
-                project_id,
-                node_id,
-                {
-                    "type": "planning_turn_failed",
-                    "node_id": node_id,
-                    "turn_id": turn_id,
-                    "message": str(exc),
-                    "timestamp": timestamp,
-                    "conversation_id": planning_finish["planning"]["conversation_id"],
-                    "stream_id": make_planning_stream_id(turn_id),
-                    "assistant_text": f"Split failed: {exc}",
-                    "assistant_text_event_seq": planning_finish["assistant_text_event_seq"],
-                    "completion_event_seq": planning_finish["completion_event_seq"],
-                },
-            )
-            if handle is not None and self._agent_operation_service is not None:
-                with self._storage.project_lock(project_id):
-                    failed_state = self._storage.node_store.load_state(project_id, node_id)
-                    set_last_agent_failure(
-                        failed_state,
-                        operation="split",
-                        message=str(exc),
-                    )
-                    self._storage.node_store.save_state(project_id, node_id, failed_state)
-                self._agent_operation_service.publish_failed(
-                    handle,
-                    stage="failed",
-                    message=str(exc),
-                )
-        finally:
-            self._clear_live_turn(project_id, node_id)
-            if handle is not None and self._agent_operation_service is not None:
-                self._agent_operation_service.finish_operation(handle)
+            self._mark_job_failed(project_id, job_id, node_id, mode, started_at, str(exc))
 
-    def _build_visible_user_message(self, project_id: str, node_id: str, mode: ServiceSplitMode) -> str:
+    def _generate_split_payload(
+        self,
+        project_id: str,
+        node_id: str,
+        mode: ServiceSplitMode,
+    ) -> FlatSubtaskPayload:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_by_id = self._tree_service.node_index(snapshot)
-            enrich_nodes_with_task_fields(self._storage.node_store, project_id, node_by_id)
             node = node_by_id.get(node_id)
             if node is None:
                 raise NodeNotFound(node_id)
-            task_context = build_split_context(snapshot, node, node_by_id)
-        return self._visible_split_request(mode, task_context)
-
-    def _execute_split_turn(
-        self,
-        *,
-        project_id: str,
-        node_id: str,
-        mode: ServiceSplitMode,
-        confirm_replace: bool,
-        turn_id: str,
-        user_message_override: str | None = None,
-    ) -> dict[str, Any]:
-        with self._storage.project_lock(project_id):
-            snapshot = self._storage.project_store.load_snapshot(project_id)
-            node_by_id = self._tree_service.node_index(snapshot)
-            enrich_nodes_with_task_fields(self._storage.node_store, project_id, node_by_id)
-            parent = node_by_id.get(node_id)
-            if parent is None:
-                raise NodeNotFound(node_id)
-            self._validate_split_eligibility(parent, node_by_id, confirm_replace)
-            task_context = build_split_context(snapshot, parent, node_by_id)
-            planning_thread_id = str(parent.get("planning_thread_id") or "").strip()
+            split_state = self._storage.split_state_store.read_state(project_id)
+            thread_id = str(split_state.get("thread_id") or "").strip()
+            if not thread_id:
+                raise SplitBackendUnavailable("Split thread is unavailable. Retry the split.")
             workspace_root = self._workspace_root_from_snapshot(snapshot)
+            task_context = build_split_context(snapshot, node, node_by_id)
 
-        if not planning_thread_id:
-            planning_thread_id = self._thread_service.ensure_planning_thread(project_id, node_id)
-
-        bundle = self._runtime_bundle(mode)
-        visible_user_message = user_message_override or self._visible_split_request(mode, task_context)
-        hidden_prompt = bundle.build_attempt_prompt(task_context, None)
-        tool_event_published = False
-
-        def on_visible_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
-            nonlocal tool_event_published
-            if tool_name != "emit_render_data":
-                return
-            if not isinstance(arguments, dict):
-                return
-            if str(arguments.get("kind") or "") != "split_result":
-                return
-            payload = arguments.get("payload")
-            if (
-                not isinstance(payload, dict)
-                or not bundle.validate_payload(payload)
-                or bundle.is_failure_sentinel(payload)
-            ):
-                return
-            tool_call = {
-                "tool_name": tool_name,
-                "arguments": arguments,
-            }
-            self._planning_event_broker.publish(
-                project_id,
-                node_id,
-                self._planning_tool_call_event(node_id, turn_id, tool_call),
-            )
-            tool_event_published = True
-
-        response = self._codex_client.run_turn_streaming(
-            hidden_prompt,
-            thread_id=planning_thread_id,
-            timeout_sec=self._split_timeout,
-            cwd=workspace_root,
-            on_tool_call=on_visible_tool_call,
-        )
-        resolved = self._resolve_tool_payload(mode, response.get("tool_calls", []))
-        assistant_content = str(response.get("stdout", ""))
-        issues = self._tool_payload_issues(mode, response.get("tool_calls", [])) if resolved is None else []
-
-        if resolved is not None and resolved.is_failure_sentinel:
-            raise RuntimeError(_INSUFFICIENT_SPLIT_CONTEXT_MESSAGE)
-
-        resolved_result: dict[str, Any] | None = None
-        if resolved is None:
-            resolved_result = self._retry_hidden_split_turns(
-                project_id=project_id,
-                node_id=node_id,
-                mode=mode,
-                planning_thread_id=planning_thread_id,
-                workspace_root=workspace_root,
-                task_context=task_context,
-                issues=issues,
-            )
-            if resolved_result is not None:
-                assistant_content = str(resolved_result.get("assistant_content") or assistant_content)
-
-        if resolved is None and resolved_result is None:
-            raise RuntimeError(_INVALID_SPLIT_RESULT_MESSAGE)
-
-        if resolved_result is None:
-            resolved_result = {
-                "payload": resolved.payload,
-                "tool_calls": resolved.tool_calls,
-                "is_failure_sentinel": resolved.is_failure_sentinel,
-            }
-
-        if resolved_result["is_failure_sentinel"]:
-            raise RuntimeError(_INSUFFICIENT_SPLIT_CONTEXT_MESSAGE)
-
-        creation = self._apply_split_payload(
-            project_id=project_id,
-            node_id=node_id,
-            mode=mode,
-            confirm_replace=confirm_replace,
-            payload=resolved_result["payload"],
-            source="ai",
-            task_context=task_context,
-        )
-
-        self._thread_service.append_visible_planning_turn(
-            project_id,
-            node_id,
-            turn_id=turn_id,
-            user_content=visible_user_message,
-            tool_calls=resolved_result["tool_calls"],
-            assistant_content=assistant_content,
-            timestamp=creation["timestamp"],
-        )
-
-        first_leaf_id = creation["first_leaf_id"]
-        if isinstance(first_leaf_id, str) and first_leaf_id and first_leaf_id != node_id:
-            self._thread_service.fork_planning_thread(project_id, node_id, first_leaf_id)
-
-        return {
-            "user_message": visible_user_message,
-            "tool_calls": resolved_result["tool_calls"],
-            "assistant_content": assistant_content,
-            "timestamp": creation["timestamp"],
-            "fallback_used": False,
-            "created_child_ids": creation["created_child_ids"],
-            "tool_event_published": tool_event_published,
-        }
-
-    def _retry_hidden_split_turns(
-        self,
-        *,
-        project_id: str,
-        node_id: str,
-        mode: ServiceSplitMode,
-        planning_thread_id: str,
-        workspace_root: str | None,
-        task_context: dict[str, Any],
-        issues: list[str],
-    ) -> dict[str, Any] | None:
-        bundle = self._runtime_bundle(mode)
-        for attempt in range(_RETRY_LIMIT):
-            response = self._codex_client.run_turn_streaming(
-                bundle.build_attempt_prompt(
-                    task_context,
-                    bundle.build_hidden_retry_feedback(issues),
-                ),
-                thread_id=planning_thread_id,
+        retry_feedback: str | None = None
+        last_issues = ["No valid split_result payload was captured."]
+        for attempt in range(_RETRY_LIMIT + 1):
+            result = self._codex_client.run_turn_streaming(
+                build_split_attempt_prompt(mode, task_context, retry_feedback),
+                thread_id=thread_id,
                 timeout_sec=self._split_timeout,
                 cwd=workspace_root,
             )
-            resolved = self._resolve_tool_payload(mode, response.get("tool_calls", []))
-            if resolved is not None:
-                return {
-                    "payload": resolved.payload,
-                    "tool_calls": resolved.tool_calls,
-                    "assistant_content": str(response.get("stdout", "")),
-                    "is_failure_sentinel": resolved.is_failure_sentinel,
-                }
-            issues = self._tool_payload_issues(mode, response.get("tool_calls", []))
-            logger.warning(
-                "emit_render_data validation failed, retrying project=%s node=%s attempt=%s issues=%s",
-                project_id,
-                node_id,
-                attempt + 1,
-                "; ".join(issues) if issues else "unknown",
-            )
-        return None
+            tool_calls = result.get("tool_calls", [])
+            payload = self._extract_split_payload(tool_calls)
+            if payload and validate_split_payload(mode, payload):
+                return payload  # type: ignore[return-value]
 
-    def _resolve_tool_payload(
+            last_issues = split_payload_issues(mode, payload or {})
+            if attempt >= _RETRY_LIMIT:
+                raise SplitInvalidResponse(last_issues)
+            retry_feedback = build_hidden_retry_feedback(mode, last_issues)
+
+        raise SplitInvalidResponse(last_issues)
+
+    def _materialize_split_payload(
         self,
-        mode: ServiceSplitMode,
-        tool_calls: Any,
-    ) -> ResolvedSplitPayload | None:
-        bundle = self._runtime_bundle(mode)
-        if not isinstance(tool_calls, list):
-            return None
-        for raw_tool_call in tool_calls:
-            if not isinstance(raw_tool_call, dict):
-                continue
-            if str(raw_tool_call.get("tool_name") or "") != "emit_render_data":
-                continue
-            arguments = raw_tool_call.get("arguments")
-            if not isinstance(arguments, dict):
-                continue
-            if str(arguments.get("kind") or "") != "split_result":
-                continue
-            payload = arguments.get("payload")
-            if not isinstance(payload, dict) or not bundle.validate_payload(payload):
-                continue
-            return ResolvedSplitPayload(
-                payload=payload,
-                tool_calls=[self._render_tool_call(payload)],
-                is_failure_sentinel=bundle.is_failure_sentinel(payload),
-            )
-        return None
-
-    def _tool_payload_issues(
-        self,
-        mode: ServiceSplitMode,
-        tool_calls: Any,
-    ) -> list[str]:
-        bundle = self._runtime_bundle(mode)
-        if not isinstance(tool_calls, list) or not tool_calls:
-            return ["No tool calls were captured for this turn."]
-
-        emit_render_calls = [
-            item
-            for item in tool_calls
-            if isinstance(item, dict) and str(item.get("tool_name") or "") == "emit_render_data"
-        ]
-        if not emit_render_calls:
-            return ["No emit_render_data tool call was captured."]
-
-        issues: list[str] = []
-        for index, raw_tool_call in enumerate(emit_render_calls, start=1):
-            arguments = raw_tool_call.get("arguments")
-            if not isinstance(arguments, dict):
-                issues.append(f"emit_render_data call {index} arguments must be an object")
-                continue
-            kind = str(arguments.get("kind") or "")
-            if kind != "split_result":
-                issues.append(f"emit_render_data call {index} kind must be 'split_result'")
-                continue
-            payload = arguments.get("payload")
-            if not isinstance(payload, dict):
-                issues.append(f"emit_render_data call {index} payload must be an object")
-                continue
-            payload_issues = bundle.payload_issues(payload)
-            if payload_issues:
-                issues.extend(payload_issues)
-
-        return issues or ["emit_render_data was captured but the payload was still invalid."]
-
-    def _apply_split_payload(
-        self,
-        *,
         project_id: str,
         node_id: str,
-        mode: ServiceSplitMode,
-        confirm_replace: bool,
-        payload: dict[str, Any],
-        source: str,
-        task_context: dict[str, Any],
-    ) -> dict[str, Any]:
+        payload: FlatSubtaskPayload,
+    ) -> None:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_by_id = self._tree_service.node_index(snapshot)
             parent = node_by_id.get(node_id)
             if parent is None:
                 raise NodeNotFound(node_id)
+            self._validate_split_eligibility(parent, node_by_id)
 
-            active_children = self._validate_split_eligibility(parent, node_by_id, confirm_replace)
-            replaced_child_ids = self._supersede_active_children(active_children, node_by_id)
-            inherited_locked = parent.get("status") == "locked" or self._tree_service.has_locked_ancestor(
-                parent, node_by_id
-            )
             now = iso_now()
+            inherited_locked = parent.get("status") == "locked" or self._tree_service.has_locked_ancestor(parent, node_by_id)
+            parent_hnum = str(parent.get("hierarchical_number") or "1")
             created_child_ids: list[str] = []
-            output_family = split_output_family_for_mode(mode)
-            materialized: dict[str, Any] | None = None
-
-            try:
-                first_leaf_id, materialized = self._create_flat_subtask_children(
-                    snapshot,
-                    parent,
-                    node_by_id,
-                    cast(FlatSubtaskPayload, payload),
-                    inherited_locked,
-                    now,
-                    created_child_ids,
-                )
-
-                if parent.get("status") in {"ready", "in_progress"}:
-                    parent["status"] = "draft"
-                parent["planning_mode"] = mode
-                split_metadata = {
-                    "mode": mode,
-                    "output_family": output_family,
-                    "source": source,
-                    "warnings": _dedupe_warnings(
-                        [
-                            "parent_chain_truncated" if task_context.get("parent_chain_truncated") else None,
-                        ]
-                    ),
-                    "created_child_ids": created_child_ids,
-                    "replaced_child_ids": replaced_child_ids,
+            for index, subtask in enumerate(payload["subtasks"], start=1):
+                child_id = uuid4().hex
+                child_node = {
+                    "node_id": child_id,
+                    "parent_id": node_id,
+                    "child_ids": [],
+                    "title": subtask["title"],
+                    "description": _build_flat_subtask_description(subtask),
+                    "status": "locked" if inherited_locked or index != 1 else "ready",
+                    "node_kind": "original",
+                    "depth": int(parent.get("depth", 0) or 0) + 1,
+                    "display_order": index - 1,
+                    "hierarchical_number": f"{parent_hnum}.{index}",
                     "created_at": now,
-                    "revision": _next_revision(parent.get("split_metadata")),
                 }
-                if materialized is not None:
-                    split_metadata["materialized"] = materialized
-                    split_metadata["debug_payload"] = deepcopy(payload)
-                parent["split_metadata"] = split_metadata
-                snapshot["tree_state"]["active_node_id"] = first_leaf_id
-                self._persist_snapshot(project_id, snapshot)
-                return {
-                    "created_child_ids": created_child_ids,
-                    "first_leaf_id": first_leaf_id,
-                    "timestamp": now,
+                parent.setdefault("child_ids", []).append(child_id)
+                snapshot["tree_state"]["node_index"][child_id] = child_node
+                node_by_id[child_id] = child_node
+                created_child_ids.append(child_id)
+
+            if not created_child_ids:
+                raise SplitInvalidResponse(["payload.subtasks must contain at least one item"])
+
+            if parent.get("status") in {"ready", "in_progress"}:
+                parent["status"] = "draft"
+
+            snapshot["tree_state"]["active_node_id"] = created_child_ids[0]
+            snapshot["updated_at"] = now
+            self._storage.project_store.save_snapshot(project_id, snapshot)
+            self._storage.project_store.touch_meta(project_id, now)
+
+    def _ensure_project_thread(self, existing_thread_id: Any, workspace_root: str | None) -> str:
+        if isinstance(existing_thread_id, str) and existing_thread_id.strip():
+            try:
+                self._codex_client.resume_thread(
+                    existing_thread_id,
+                    cwd=workspace_root,
+                    timeout_sec=15,
+                )
+                return existing_thread_id.strip()
+            except CodexTransportError as exc:
+                if not self._is_missing_thread_error(exc):
+                    raise SplitBackendUnavailable(str(exc)) from exc
+
+        try:
+            response = self._codex_client.start_thread(
+                base_instructions=build_split_base_instructions(),
+                dynamic_tools=[split_render_tool()],
+                cwd=workspace_root,
+                timeout_sec=30,
+            )
+        except CodexTransportError as exc:
+            raise SplitBackendUnavailable(str(exc)) from exc
+
+        thread_id = str(response.get("thread_id") or "").strip()
+        if not thread_id:
+            raise SplitBackendUnavailable("Split thread start did not return a thread id.")
+        return thread_id
+
+    def _status_payload(self, split_state: dict[str, Any]) -> dict[str, Any]:
+        active_job = split_state.get("active_job")
+        if isinstance(active_job, dict):
+            return {
+                "status": "active",
+                "job_id": active_job.get("job_id"),
+                "node_id": active_job.get("node_id"),
+                "mode": active_job.get("mode"),
+                "started_at": active_job.get("started_at"),
+                "completed_at": None,
+                "error": None,
+            }
+
+        last_error = split_state.get("last_error")
+        if isinstance(last_error, dict):
+            return {
+                "status": "failed",
+                "job_id": last_error.get("job_id"),
+                "node_id": last_error.get("node_id"),
+                "mode": last_error.get("mode"),
+                "started_at": last_error.get("started_at"),
+                "completed_at": last_error.get("completed_at"),
+                "error": last_error.get("error"),
+            }
+
+        return {
+            "status": "idle",
+            "job_id": None,
+            "node_id": None,
+            "mode": None,
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        }
+
+    def _reconcile_stale_job_locked(self, project_id: str, split_state: dict[str, Any]) -> dict[str, Any]:
+        active_job = split_state.get("active_job")
+        if not isinstance(active_job, dict):
+            return split_state
+        job_id = active_job.get("job_id")
+        if not isinstance(job_id, str) or not job_id.strip():
+            split_state["active_job"] = None
+            self._storage.split_state_store.write_state(project_id, split_state)
+            return split_state
+        if self._is_live_job(project_id, job_id):
+            return split_state
+        split_state["active_job"] = None
+        split_state["last_error"] = {
+            "job_id": job_id,
+            "node_id": active_job.get("node_id"),
+            "mode": active_job.get("mode"),
+            "started_at": active_job.get("started_at"),
+            "completed_at": iso_now(),
+            "error": _STALE_JOB_MESSAGE,
+        }
+        return self._storage.split_state_store.write_state(project_id, split_state)
+
+    def _mark_job_completed(self, project_id: str, job_id: str) -> None:
+        try:
+            with self._storage.project_lock(project_id):
+                split_state = self._storage.split_state_store.read_state(project_id)
+                active_job = split_state.get("active_job")
+                if isinstance(active_job, dict) and active_job.get("job_id") == job_id:
+                    split_state["active_job"] = None
+                    split_state["last_error"] = None
+                    self._storage.split_state_store.write_state(project_id, split_state)
+        finally:
+            self._clear_live_job(project_id, job_id)
+
+    def _mark_job_failed(
+        self,
+        project_id: str,
+        job_id: str,
+        node_id: str,
+        mode: str,
+        started_at: str,
+        message: str,
+    ) -> None:
+        try:
+            with self._storage.project_lock(project_id):
+                split_state = self._storage.split_state_store.read_state(project_id)
+                active_job = split_state.get("active_job")
+                if isinstance(active_job, dict) and active_job.get("job_id") == job_id:
+                    split_state["active_job"] = None
+                split_state["last_error"] = {
+                    "job_id": job_id,
+                    "node_id": node_id,
+                    "mode": mode,
+                    "started_at": started_at,
+                    "completed_at": iso_now(),
+                    "error": message,
                 }
-            except Exception:
-                for child_id in reversed(created_child_ids):
-                    if not self._snapshot_references_node(project_id, child_id):
-                        self._storage.node_store.delete_node_files(project_id, child_id)
-                raise
+                self._storage.split_state_store.write_state(project_id, split_state)
+        except ProjectNotFound:
+            pass
+        finally:
+            self._clear_live_job(project_id, job_id)
 
     def _validate_split_eligibility(
         self,
         node: dict[str, Any],
         node_by_id: dict[str, dict[str, Any]],
-        confirm_replace: bool,
-    ) -> list[str]:
+    ) -> None:
         if self._is_superseded(node):
             raise SplitNotAllowed("Cannot split a superseded node.")
         if node.get("status") == "done":
             raise SplitNotAllowed("Cannot split a done node.")
+        if self._tree_service.active_child_ids(node, node_by_id):
+            raise SplitNotAllowed("Cannot split a node that already has child nodes.")
 
-        active_children = self._tree_service.active_child_ids(node, node_by_id)
-        if not active_children:
-            return []
-
-        if not confirm_replace:
-            raise SplitNotAllowed("Re-split requires confirmation because existing children will be replaced.")
-
-        subtree_statuses = self._collect_active_subtree_statuses(active_children, node_by_id)
-        if any(status in {"in_progress", "done"} for status in subtree_statuses):
-            raise SplitNotAllowed("Cannot re-split: descendants are already in progress or done.")
-        return active_children
-
-    def _collect_active_subtree_statuses(
-        self,
-        root_ids: list[str],
-        node_by_id: dict[str, dict[str, Any]],
-    ) -> list[str]:
-        statuses: list[str] = []
-        stack = list(reversed(root_ids))
-        visited: set[str] = set()
-        while stack:
-            current_id = stack.pop()
-            if current_id in visited:
+    def _extract_split_payload(self, tool_calls: Any) -> dict[str, Any] | None:
+        if not isinstance(tool_calls, list):
+            return None
+        for raw_call in tool_calls:
+            if not isinstance(raw_call, dict):
                 continue
-            visited.add(current_id)
-            node = node_by_id.get(current_id)
-            if node is None or self._is_superseded(node):
+            if str(raw_call.get("tool_name") or "") != "emit_render_data":
                 continue
-            statuses.append(str(node.get("status", "")))
-            stack.extend(reversed(self._tree_service.active_child_ids(node, node_by_id)))
-        return statuses
-
-    def _supersede_active_children(
-        self,
-        active_child_ids: list[str],
-        node_by_id: dict[str, dict[str, Any]],
-    ) -> list[str]:
-        replaced_child_ids: list[str] = []
-        for child_id in active_child_ids:
-            child = node_by_id.get(child_id)
-            if child is None or self._is_superseded(child):
+            arguments = raw_call.get("arguments")
+            if not isinstance(arguments, dict):
                 continue
-            child["node_kind"] = "superseded"
-            replaced_child_ids.append(child_id)
-        return replaced_child_ids
-
-    def _create_flat_subtask_children(
-        self,
-        snapshot: dict[str, Any],
-        parent: dict[str, Any],
-        node_by_id: dict[str, dict[str, Any]],
-        generation: FlatSubtaskPayload,
-        inherited_locked: bool,
-        now: str,
-        created_child_ids: list[str],
-    ) -> tuple[str, dict[str, Any]]:
-        first_leaf_id: str | None = None
-        parent_hnum = str(parent.get("hierarchical_number") or "1")
-        materialized_subtasks: list[dict[str, Any]] = []
-        for index, subtask in enumerate(generation["subtasks"], start=1):
-            child_id = uuid4().hex
-            child_title = subtask["title"]
-            child_description = _build_flat_subtask_description(subtask)
-            child_node = self._make_node(
-                node_id=child_id,
-                parent_id=parent["node_id"],
-                status="locked" if inherited_locked or index != 1 else "ready",
-                depth=int(parent.get("depth", 0) or 0) + 1,
-                display_order=index - 1,
-                hierarchical_number=f"{parent_hnum}.{index}",
-                planning_thread_forked_from_node=str(parent["node_id"]),
-                now=now,
-            )
-            parent.setdefault("child_ids", []).append(child_id)
-            self._store_new_node(
-                project_id=str(snapshot.get("project", {}).get("id") or ""),
-                snapshot=snapshot,
-                node_by_id=node_by_id,
-                node=child_node,
-                task_title=child_title,
-                task_purpose=child_description,
-                state={
-                    "planning_thread_forked_from_node": str(parent["node_id"]),
-                },
-            )
-            created_child_ids.append(child_id)
-            materialized_subtasks.append(
-                {
-                    "subtask_id": subtask["id"],
-                    "title": subtask["title"],
-                    "objective": subtask["objective"],
-                    "why_now": subtask["why_now"],
-                    "child_node_id": child_id,
-                    "display_order": index - 1,
-                }
-            )
-            if first_leaf_id is None:
-                first_leaf_id = child_id
-
-        if first_leaf_id is None:
-            raise SplitNotAllowed("Canonical split did not produce any subtasks.")
-        return first_leaf_id, {"family": "flat_subtasks_v1", "subtasks": materialized_subtasks}
-
-    def _make_node(
-        self,
-        *,
-        node_id: str,
-        parent_id: str,
-        status: str,
-        depth: int,
-        display_order: int,
-        hierarchical_number: str,
-        planning_thread_forked_from_node: str | None,
-        now: str,
-    ) -> dict[str, Any]:
-        return {
-            "node_id": node_id,
-            "parent_id": parent_id,
-            "child_ids": [],
-            "status": status,
-            "phase": "planning",
-            "node_kind": "original",
-            "planning_mode": None,
-            "depth": depth,
-            "display_order": display_order,
-            "hierarchical_number": hierarchical_number,
-            "split_metadata": None,
-            "chat_session_id": None,
-            "planning_thread_id": None,
-            "execution_thread_id": None,
-            "planning_thread_forked_from_node": planning_thread_forked_from_node or None,
-            "planning_thread_bootstrapped_at": None,
-            "created_at": now,
-        }
-
-    def _store_new_node(
-        self,
-        *,
-        project_id: str,
-        snapshot: dict[str, Any],
-        node_by_id: dict[str, dict[str, Any]],
-        node: dict[str, Any],
-        task_title: str,
-        task_purpose: str,
-        state: dict[str, Any] | None = None,
-    ) -> None:
-        node_id = str(node.get("node_id") or "")
-        snapshot["tree_state"]["node_index"][node_id] = node
-        node_by_id[node_id] = node
-        try:
-            self._storage.node_store.create_node_files(
-                project_id,
-                node_id,
-                task={
-                    "title": task_title,
-                    "purpose": task_purpose,
-                    "responsibility": "",
-                },
-                state=state,
-            )
-        except Exception:
-            self._storage.node_store.delete_node_files(project_id, node_id)
-            raise
-
-    def _is_superseded(self, node: dict[str, Any]) -> bool:
-        return str(node.get("node_kind") or "") == "superseded" or bool(node.get("is_superseded"))
-
-    def _render_tool_call(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "tool_name": "emit_render_data",
-            "arguments": {
-                "kind": "split_result",
-                "payload": payload,
-            },
-        }
-
-    def _planning_tool_call_event(
-        self,
-        node_id: str,
-        turn_id: str,
-        tool_call: dict[str, Any],
-    ) -> dict[str, Any]:
-        arguments = tool_call.get("arguments", {})
-        return {
-            "type": "planning_tool_call",
-            "node_id": node_id,
-            "turn_id": turn_id,
-            "tool_name": tool_call.get("tool_name"),
-            "kind": arguments.get("kind") if isinstance(arguments, dict) else None,
-            "payload": arguments.get("payload") if isinstance(arguments, dict) else None,
-        }
-
-    def _visible_split_request(self, mode: ServiceSplitMode, task_context: dict[str, Any]) -> str:
-        mode_label = CANONICAL_SPLIT_MODE_REGISTRY[cast(CanonicalSplitModeId, mode)]["label"]
-        parent_task = str(task_context.get("current_node_prompt") or "").strip()
-        if parent_task:
-            return f'Split "{parent_task}" using {mode_label} mode.'
-        return f"Split this node using {mode_label} mode."
+            if str(arguments.get("kind") or "") != "split_result":
+                continue
+            payload = arguments.get("payload")
+            if isinstance(payload, dict):
+                return deepcopy(payload)
+        return None
 
     def _workspace_root_from_snapshot(self, snapshot: dict[str, Any]) -> str | None:
         project = snapshot.get("project", {})
@@ -918,55 +382,31 @@ class SplitService:
             return workspace_root
         return None
 
-    def _persist_snapshot(self, project_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
-        now = iso_now()
-        snapshot["updated_at"] = now
-        snapshot.setdefault("project", {})["updated_at"] = now
-        self._storage.project_store.save_snapshot(project_id, snapshot)
-        self._storage.project_store.touch_meta(project_id, now)
-        return snapshot
+    def _is_missing_thread_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "no rollout found for thread id" in message or "thread not found" in message
 
-    def _snapshot_references_node(self, project_id: str, node_id: str) -> bool:
-        tree = load_json(self._storage.project_store.tree_path(project_id))
-        if not isinstance(tree, dict):
-            return False
-        return node_id in self._tree_service.node_index(tree)
+    def _mark_live_job(self, project_id: str, job_id: str) -> None:
+        with self._live_jobs_lock:
+            self._live_jobs[project_id] = job_id
 
-    def _mark_live_turn(self, project_id: str, node_id: str) -> None:
-        with self._live_turns_lock:
-            self._live_turns.add((project_id, node_id))
+    def _clear_live_job(self, project_id: str, job_id: str) -> None:
+        with self._live_jobs_lock:
+            if self._live_jobs.get(project_id) == job_id:
+                self._live_jobs.pop(project_id, None)
 
-    def _clear_live_turn(self, project_id: str, node_id: str) -> None:
-        with self._live_turns_lock:
-            self._live_turns.discard((project_id, node_id))
+    def _is_live_job(self, project_id: str, job_id: str) -> bool:
+        with self._live_jobs_lock:
+            return self._live_jobs.get(project_id) == job_id
 
-    def _is_live_turn(self, project_id: str, node_id: str) -> bool:
-        with self._live_turns_lock:
-            return (project_id, node_id) in self._live_turns
+    def _is_superseded(self, node: dict[str, Any]) -> bool:
+        return str(node.get("node_kind") or "") == "superseded" or bool(node.get("is_superseded"))
 
-def _build_flat_subtask_description(subtask: FlatSubtaskItem) -> str:
+
+def _build_flat_subtask_description(subtask: dict[str, str]) -> str:
     return "\n\n".join(
         [
             subtask["objective"].strip(),
             f"Why now: {subtask['why_now'].strip()}",
         ]
     )
-
-
-def _next_revision(split_metadata: Any) -> int:
-    if isinstance(split_metadata, dict):
-        revision = split_metadata.get("revision")
-        if isinstance(revision, int) and revision >= 1:
-            return revision + 1
-    return 1
-
-
-def _dedupe_warnings(warnings: list[str | None]) -> list[str]:
-    seen: set[str] = set()
-    results: list[str] = []
-    for warning in warnings:
-        if not warning or warning in seen:
-            continue
-        seen.add(warning)
-        results.append(warning)
-    return results

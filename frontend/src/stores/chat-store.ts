@@ -1,0 +1,474 @@
+import { create } from 'zustand'
+import { api } from '../api/client'
+import type { ChatMessage, ChatSession, MessagePart } from '../api/types'
+
+const SSE_RECONNECT_RETRY_MS = 1000
+
+export type ChatStoreState = {
+  session: ChatSession | null
+  activeProjectId: string | null
+  activeNodeId: string | null
+  isLoading: boolean
+  isSending: boolean
+  error: string | null
+
+  loadSession(projectId: string, nodeId: string): Promise<void>
+  sendMessage(content: string): Promise<void>
+  resetSession(): Promise<void>
+  disconnect(): void
+}
+
+let eventSource: EventSource | null = null
+let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+let sessionGeneration = 0
+
+function closeEventSource() {
+  if (eventSource) {
+    eventSource.close()
+    eventSource = null
+  }
+}
+
+function clearReconnectTimer() {
+  if (reconnectTimer !== null) {
+    globalThis.clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+}
+
+function isActiveTarget(
+  state: Pick<ChatStoreState, 'activeProjectId' | 'activeNodeId'>,
+  projectId: string,
+  nodeId: string,
+) {
+  return state.activeProjectId === projectId && state.activeNodeId === nodeId
+}
+
+function isCurrentGeneration(generation: number) {
+  return generation === sessionGeneration
+}
+
+function mergeMessagePair(
+  messages: ChatMessage[],
+  incoming: [ChatMessage, ChatMessage],
+): ChatMessage[] {
+  const merged = [...messages]
+
+  for (const candidate of incoming) {
+    const existingIndex = merged.findIndex((message) => message.message_id === candidate.message_id)
+    if (existingIndex >= 0) {
+      merged[existingIndex] = {
+        ...merged[existingIndex],
+        ...candidate,
+      }
+      continue
+    }
+    merged.push(candidate)
+  }
+
+  return merged
+}
+
+function scheduleStreamReopen(
+  get: () => ChatStoreState,
+  set: (
+    partial:
+      | Partial<ChatStoreState>
+      | ((state: ChatStoreState) => Partial<ChatStoreState>),
+  ) => void,
+  projectId: string,
+  nodeId: string,
+  generation: number,
+) {
+  clearReconnectTimer()
+  reconnectTimer = globalThis.setTimeout(() => {
+    reconnectTimer = null
+    const state = get()
+    if (!isCurrentGeneration(generation) || !isActiveTarget(state, projectId, nodeId)) {
+      return
+    }
+    openEventStream(get, set, projectId, nodeId, generation)
+  }, SSE_RECONNECT_RETRY_MS)
+}
+
+function scheduleRecoverAndReconnect(
+  get: () => ChatStoreState,
+  set: (
+    partial:
+      | Partial<ChatStoreState>
+      | ((state: ChatStoreState) => Partial<ChatStoreState>),
+  ) => void,
+  projectId: string,
+  nodeId: string,
+  generation: number,
+) {
+  clearReconnectTimer()
+  reconnectTimer = globalThis.setTimeout(() => {
+    reconnectTimer = null
+    const state = get()
+    if (!isCurrentGeneration(generation) || !isActiveTarget(state, projectId, nodeId)) {
+      return
+    }
+
+    void api.getChatSession(projectId, nodeId)
+      .then((session) => {
+        const latestState = get()
+        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+          return
+        }
+        set({ session, error: null })
+        openEventStream(get, set, projectId, nodeId, generation)
+      })
+      .catch((err) => {
+        const latestState = get()
+        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+          return
+        }
+        set({ error: err instanceof Error ? err.message : String(err) })
+        scheduleRecoverAndReconnect(get, set, projectId, nodeId, generation)
+      })
+  }, SSE_RECONNECT_RETRY_MS)
+}
+
+function openEventStream(
+  get: () => ChatStoreState,
+  set: (
+    partial:
+      | Partial<ChatStoreState>
+      | ((state: ChatStoreState) => Partial<ChatStoreState>),
+  ) => void,
+  projectId: string,
+  nodeId: string,
+  generation: number,
+) {
+  closeEventSource()
+
+  const es = new EventSource(`/v1/projects/${projectId}/nodes/${nodeId}/chat/events`)
+  eventSource = es
+
+  es.addEventListener('message', (e) => {
+    try {
+      if (eventSource !== es || !isCurrentGeneration(generation)) {
+        return
+      }
+      const event = JSON.parse(e.data) as Record<string, unknown>
+      const state = get()
+      if (state.session && isActiveTarget(state, projectId, nodeId)) {
+        set({ session: applyChatEvent(state.session, event) })
+      }
+    } catch {
+      // Ignore parse errors.
+    }
+  })
+
+  es.onerror = () => {
+    if (eventSource !== es || !isCurrentGeneration(generation)) {
+      return
+    }
+
+    closeEventSource()
+    clearReconnectTimer()
+
+    const state = get()
+    if (!isActiveTarget(state, projectId, nodeId)) {
+      return
+    }
+
+    void api.getChatSession(projectId, nodeId)
+      .then((session) => {
+        const latestState = get()
+        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+          return
+        }
+        set({ session, error: null })
+        scheduleStreamReopen(get, set, projectId, nodeId, generation)
+      })
+      .catch((err) => {
+        const latestState = get()
+        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+          return
+        }
+        set({ error: err instanceof Error ? err.message : String(err) })
+        scheduleRecoverAndReconnect(get, set, projectId, nodeId, generation)
+      })
+  }
+}
+
+function applyChatEvent(session: ChatSession, event: Record<string, unknown>): ChatSession {
+  const type = event.type as string
+
+  switch (type) {
+    case 'message_created': {
+      const userMsg = event.user_message as ChatMessage
+      const assistantMsg = event.assistant_message as ChatMessage
+      return {
+        ...session,
+        active_turn_id: event.active_turn_id as string,
+        messages: mergeMessagePair(session.messages, [userMsg, assistantMsg]),
+      }
+    }
+
+    case 'assistant_delta': {
+      const messageId = event.message_id as string
+      const delta = event.delta as string
+      return {
+        ...session,
+        messages: session.messages.map((message) => {
+          if (message.message_id !== messageId) {
+            return message
+          }
+          const parts = [...(message.parts ?? [])]
+          const lastPart = parts.length > 0 ? parts[parts.length - 1] : null
+          if (lastPart && lastPart.type === 'assistant_text') {
+            parts[parts.length - 1] = {
+              ...lastPart,
+              content: lastPart.content + delta,
+              is_streaming: true,
+            }
+          } else {
+            parts.push({ type: 'assistant_text', content: delta, is_streaming: true })
+          }
+          return {
+            ...message,
+            content: message.content + delta,
+            parts,
+            status: 'streaming' as const,
+          }
+        }),
+      }
+    }
+
+    case 'assistant_tool_call': {
+      const messageId = event.message_id as string
+      const toolName = event.tool_name as string
+      const args = (event.arguments ?? {}) as Record<string, unknown>
+      return {
+        ...session,
+        messages: session.messages.map((message) => {
+          if (message.message_id !== messageId) {
+            return message
+          }
+          const parts: MessagePart[] = [...(message.parts ?? [])]
+          // Close current streaming text part
+          const lastPart = parts.length > 0 ? parts[parts.length - 1] : null
+          if (lastPart && lastPart.type === 'assistant_text') {
+            parts[parts.length - 1] = { ...lastPart, is_streaming: false }
+          }
+          parts.push({
+            type: 'tool_call',
+            tool_name: toolName,
+            arguments: args,
+            call_id: null,
+            status: 'running',
+          })
+          return { ...message, parts }
+        }),
+      }
+    }
+
+    case 'assistant_status': {
+      const messageId = event.message_id as string
+      const statusType = event.status_type as string
+      const label = event.label as string
+      return {
+        ...session,
+        messages: session.messages.map((message) => {
+          if (message.message_id !== messageId) {
+            return message
+          }
+          const parts: MessagePart[] = [...(message.parts ?? [])]
+          const statusPart: MessagePart = {
+            type: 'status_block',
+            status_type: statusType,
+            label,
+            timestamp: new Date().toISOString(),
+          }
+          const lastPart = parts.length > 0 ? parts[parts.length - 1] : null
+          if (lastPart && lastPart.type === 'status_block') {
+            parts[parts.length - 1] = statusPart
+          } else {
+            parts.push(statusPart)
+          }
+          return { ...message, parts }
+        }),
+      }
+    }
+
+    case 'assistant_completed': {
+      const messageId = event.message_id as string
+      const content = event.content as string
+      const threadId = event.thread_id as string
+      return {
+        ...session,
+        active_turn_id: null,
+        thread_id: threadId,
+        messages: session.messages.map((message) => {
+          if (message.message_id !== messageId) {
+            return message
+          }
+          const parts: MessagePart[] = (message.parts ?? [])
+            .filter((p) => p.type !== 'status_block')
+            .map((p) => {
+              if (p.type === 'assistant_text') return { ...p, is_streaming: false }
+              if (p.type === 'tool_call' && p.status === 'running') return { ...p, status: 'completed' }
+              return p
+            })
+          return { ...message, content, parts, status: 'completed' as const }
+        }),
+      }
+    }
+
+    case 'assistant_error': {
+      const messageId = event.message_id as string
+      const error = event.error as string
+      return {
+        ...session,
+        active_turn_id: null,
+        messages: session.messages.map((message) => {
+          if (message.message_id !== messageId) {
+            return message
+          }
+          return { ...message, status: 'error' as const, error }
+        }),
+      }
+    }
+
+    default:
+      return session
+  }
+}
+
+export const useChatStore = create<ChatStoreState>((set, get) => ({
+  session: null,
+  activeProjectId: null,
+  activeNodeId: null,
+  isLoading: false,
+  isSending: false,
+  error: null,
+
+  async loadSession(projectId: string, nodeId: string) {
+    const current = get()
+    if (
+      current.activeProjectId === projectId &&
+      current.activeNodeId === nodeId &&
+      current.session &&
+      (eventSource !== null || reconnectTimer !== null)
+    ) {
+      return
+    }
+
+    clearReconnectTimer()
+    closeEventSource()
+    const generation = ++sessionGeneration
+    set({
+      isLoading: true,
+      isSending: false,
+      error: null,
+      activeProjectId: projectId,
+      activeNodeId: nodeId,
+      session: null,
+    })
+
+    try {
+      const session = await api.getChatSession(projectId, nodeId)
+      const latestState = get()
+      if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+        return
+      }
+      set({ session, isLoading: false, error: null })
+      openEventStream(get, set, projectId, nodeId, generation)
+    } catch (err) {
+      const latestState = get()
+      if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+        return
+      }
+      set({
+        error: err instanceof Error ? err.message : String(err),
+        isLoading: false,
+      })
+    }
+  },
+
+  async sendMessage(content: string) {
+    const { activeProjectId, activeNodeId, session } = get()
+    if (!activeProjectId || !activeNodeId || !session) {
+      return
+    }
+
+    const generation = sessionGeneration
+    set({ isSending: true, error: null })
+    try {
+      const result = await api.sendChatMessage(activeProjectId, activeNodeId, content)
+      set((state) => {
+        if (
+          !isCurrentGeneration(generation) ||
+          !state.session ||
+          !isActiveTarget(state, activeProjectId, activeNodeId)
+        ) {
+          return {}
+        }
+        return {
+          isSending: false,
+          session: {
+            ...state.session,
+            active_turn_id: result.active_turn_id,
+            messages: mergeMessagePair(
+              state.session.messages,
+              [result.user_message, result.assistant_message],
+            ),
+          },
+        }
+      })
+    } catch (err) {
+      const state = get()
+      if (!isCurrentGeneration(generation) || !isActiveTarget(state, activeProjectId, activeNodeId)) {
+        return
+      }
+      set({
+        error: err instanceof Error ? err.message : String(err),
+        isSending: false,
+      })
+    }
+  },
+
+  async resetSession() {
+    const { activeProjectId, activeNodeId } = get()
+    if (!activeProjectId || !activeNodeId) {
+      return
+    }
+
+    const generation = sessionGeneration
+    set({ error: null })
+    try {
+      const session = await api.resetChatSession(activeProjectId, activeNodeId)
+      set((state) => {
+        if (!isCurrentGeneration(generation) || !isActiveTarget(state, activeProjectId, activeNodeId)) {
+          return {}
+        }
+        return { session }
+      })
+    } catch (err) {
+      const state = get()
+      if (!isCurrentGeneration(generation) || !isActiveTarget(state, activeProjectId, activeNodeId)) {
+        return
+      }
+      set({ error: err instanceof Error ? err.message : String(err) })
+    }
+  },
+
+  disconnect() {
+    sessionGeneration += 1
+    clearReconnectTimer()
+    closeEventSource()
+    set({
+      session: null,
+      activeProjectId: null,
+      activeNodeId: null,
+      error: null,
+      isLoading: false,
+      isSending: false,
+    })
+  },
+}))
+
+export { applyChatEvent }

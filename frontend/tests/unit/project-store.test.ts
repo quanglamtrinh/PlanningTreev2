@@ -13,8 +13,8 @@ const { apiMock } = vi.hoisted(() => ({
     setActiveNode: vi.fn(),
     createChild: vi.fn(),
     splitNode: vi.fn(),
+    getSplitStatus: vi.fn(),
     updateNode: vi.fn(),
-    getPlanningHistory: vi.fn(),
   },
 }))
 
@@ -45,14 +45,14 @@ function makeProjectSummary(id: string) {
     root_goal: `Goal ${id}`,
     base_workspace_root: 'C:/workspace',
     project_workspace_root: `C:/workspace/${id}`,
-    created_at: '2026-03-07T10:00:00Z',
-    updated_at: '2026-03-07T10:00:00Z',
+    created_at: '2026-03-20T00:00:00Z',
+    updated_at: '2026-03-20T00:00:00Z',
   }
 }
 
 function makeSnapshot(projectId = 'project-1') {
   return {
-    schema_version: 2,
+    schema_version: 6,
     project: makeProjectSummary(projectId),
     tree_state: {
       root_node_id: 'root',
@@ -65,26 +65,28 @@ function makeSnapshot(projectId = 'project-1') {
           title: 'Root',
           description: 'Ship it',
           status: 'draft',
-          phase: 'planning',
           node_kind: 'root',
-          planning_mode: null,
           depth: 0,
           display_order: 0,
           hierarchical_number: '1',
-          split_metadata: null,
-          chat_session_id: null,
-          has_planning_thread: false,
-          has_execution_thread: false,
-          planning_thread_status: null,
-          execution_thread_status: null,
-          has_ask_thread: false,
-          ask_thread_status: null,
           is_superseded: false,
-          created_at: '2026-03-07T10:00:00Z',
+          created_at: '2026-03-20T00:00:00Z',
         },
       ],
     },
-    updated_at: '2026-03-07T10:00:00Z',
+    updated_at: '2026-03-20T00:00:00Z',
+  }
+}
+
+function makeIdleSplitStatus() {
+  return {
+    status: 'idle' as const,
+    job_id: null,
+    node_id: null,
+    mode: null,
+    started_at: null,
+    completed_at: null,
+    error: null,
   }
 }
 
@@ -96,6 +98,7 @@ describe('project-store', () => {
     }
     useProjectStore.setState(useProjectStore.getInitialState())
     window.localStorage.clear()
+    vi.useRealTimers()
   })
 
   it('initializes with the preferred stored project and loads its snapshot', async () => {
@@ -106,6 +109,7 @@ describe('project-store', () => {
     apiMock.getWorkspaceSettings.mockResolvedValue({ base_workspace_root: 'C:/workspace' })
     apiMock.listProjects.mockResolvedValue([projectOne, projectTwo])
     apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-2'))
+    apiMock.getSplitStatus.mockResolvedValue(makeIdleSplitStatus())
 
     await act(async () => {
       await useProjectStore.getState().initialize()
@@ -127,7 +131,7 @@ describe('project-store', () => {
       nodeDrafts: {
         root: {
           title: 'Updated Root',
-          description: 'Updated purpose',
+          description: 'Updated description',
         },
       },
     })
@@ -139,7 +143,7 @@ describe('project-store', () => {
           {
             ...snapshot.tree_state.node_registry[0],
             title: 'Updated Root',
-            description: 'Updated purpose',
+            description: 'Updated description',
           },
         ],
       },
@@ -151,67 +155,59 @@ describe('project-store', () => {
 
     expect(apiMock.updateNode).toHaveBeenCalledWith('project-1', 'root', {
       title: 'Updated Root',
-      description: 'Updated purpose',
+      description: 'Updated description',
     })
     expect(useProjectStore.getState().nodeDrafts).toEqual({})
-    expect(useProjectStore.getState().snapshot?.tree_state.node_registry[0]?.title).toBe(
-      'Updated Root',
-    )
   })
 
-  it('marks split state while requesting a split', async () => {
+  it('maps legacy project errors to the graph-only message', async () => {
+    const ApiError = (await import('../../src/api/client')).ApiError
+    apiMock.getSnapshot.mockRejectedValue(
+      new ApiError(409, { code: 'legacy_project_unsupported', message: 'legacy project' }),
+    )
+
+    await expect(useProjectStore.getState().loadProject('project-legacy')).rejects.toThrow()
+
+    expect(useProjectStore.getState().error).toBe('Project này thuộc schema legacy đã bị loại bỏ; hãy xóa hoặc tạo lại.')
+  })
+
+  it('starts split polling after accepting a split request', async () => {
+    vi.useFakeTimers()
     useProjectStore.setState({
       ...useProjectStore.getInitialState(),
       activeProjectId: 'project-1',
+      snapshot: makeSnapshot(),
+      selectedNodeId: 'root',
     })
     apiMock.splitNode.mockResolvedValue({
       status: 'accepted',
+      job_id: 'split_123',
       node_id: 'root',
       mode: 'workflow',
-      planning_status: 'active',
+    })
+    apiMock.getSplitStatus.mockResolvedValue({
+      status: 'active',
+      job_id: 'split_123',
+      node_id: 'root',
+      mode: 'workflow',
+      started_at: '2026-03-20T00:00:00Z',
+      completed_at: null,
+      error: null,
     })
 
     await act(async () => {
-      await useProjectStore.getState().splitNode('root', 'workflow', true)
+      await useProjectStore.getState().splitNode('root', 'workflow')
     })
 
-    expect(apiMock.splitNode).toHaveBeenCalledWith('project-1', 'root', 'workflow', true)
-    const state = useProjectStore.getState()
-    expect(state.isSplittingNode).toBe(true)
-    expect(state.splittingNodeId).toBe('root')
-    expect(state.activePlanningMode).toBe('workflow')
-  })
+    expect(apiMock.splitNode).toHaveBeenCalledWith('project-1', 'root', 'workflow')
+    expect(useProjectStore.getState().splitStatus).toBe('active')
+    expect(useProjectStore.getState().splitNodeId).toBe('root')
 
-  it('clears planning cache and in-progress markers', () => {
-    useProjectStore.setState({
-      ...useProjectStore.getInitialState(),
-      planningHistoryByNode: {
-        root: [
-          {
-            turn_id: 'turn-1',
-            role: 'assistant',
-            content: 'hello',
-            is_inherited: false,
-            origin_node_id: 'root',
-            timestamp: '2026-03-07T10:05:00Z',
-          },
-        ],
-      },
-      planningConnectionStatus: 'connected',
-      isSplittingNode: true,
-      splittingNodeId: 'root',
-      activePlanningMode: 'workflow',
+    await act(async () => {
+      vi.advanceTimersByTime(1600)
+      await Promise.resolve()
     })
 
-    act(() => {
-      useProjectStore.getState().clearPlanningState()
-    })
-
-    const state = useProjectStore.getState()
-    expect(state.planningConnectionStatus).toBe('disconnected')
-    expect(state.planningHistoryByNode).toEqual({})
-    expect(state.isSplittingNode).toBe(false)
-    expect(state.splittingNodeId).toBeNull()
-    expect(state.activePlanningMode).toBeNull()
+    expect(apiMock.getSplitStatus).toHaveBeenCalledWith('project-1')
   })
 })

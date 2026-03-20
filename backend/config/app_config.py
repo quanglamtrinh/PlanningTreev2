@@ -55,6 +55,24 @@ def get_split_timeout() -> int:
     return max(10, min(600, timeout))
 
 
+def get_chat_timeout() -> int:
+    raw = os.environ.get("PLANNINGTREE_CHAT_TIMEOUT_SEC", "120")
+    try:
+        timeout = int(raw)
+    except (TypeError, ValueError):
+        timeout = 120
+    return max(10, min(600, timeout))
+
+
+def get_max_chat_message_chars() -> int:
+    raw = os.environ.get("PLANNINGTREE_MAX_CHAT_MESSAGE_CHARS", "10000")
+    try:
+        limit = int(raw)
+    except (TypeError, ValueError):
+        limit = 10000
+    return max(1, limit)
+
+
 def get_split_model() -> str:
     return os.environ.get("PLANNINGTREE_SPLIT_MODEL", "gpt-4o")
 

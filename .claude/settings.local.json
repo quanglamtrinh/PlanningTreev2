@@ -12,7 +12,10 @@
       "Bash(find /c/Users/Thong/PlanningTreeMain/backend -name \"*.py\" -path \"*/models*\" -o -name \"*model*\" -path \"*/backend*\" 2>/dev/null | head -20)",
       "Bash(cd frontend:*)",
       "Bash(cd C:/Users/Thong/PlanningTreeMain/frontend && npx vitest run --reporter=verbose 2>&1 | tail -40)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git log:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(npx vitest:*)"
     ]
   }
 }

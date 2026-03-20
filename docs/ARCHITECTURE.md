@@ -1,230 +1,91 @@
-# Architecture - PlanningTree Rebuild
+# Architecture - PlanningTree
 
-Version: 0.2.0-phase-c
-Last updated: 2026-03-17
-
----
+Last updated: 2026-03-20
 
 ## Overview
 
-PlanningTree is a local-first single-user desktop application distributed as an npm package. Users install and run it with `npx planningtree`. A single local process serves both the REST API and the React frontend from a dynamically chosen localhost port.
+PlanningTree is a local-first single-user app that serves a React frontend and a FastAPI backend from one local process.
 
----
+## Current User-Facing Surfaces
+
+- Graph workspace at `/`
+- Breadcrumb chat at `/projects/:projectId/nodes/:nodeId/chat`
+- AI split actions inside the graph node menu
 
 ## Tech Stack
 
 | Layer | Technology | Notes |
 |---|---|---|
-| Backend language | Python 3.9+ | FastAPI + Uvicorn |
-| HTTP framework | FastAPI | Schema validation via Pydantic |
-| ASGI server | Uvicorn | Dev: `--reload`; prod: bundled via PyInstaller |
-| AI (splits) | OpenAI Responses API | Direct API call; configurable model |
-| AI (chat) | Codex app server subprocess | stdio JSON-RPC; per-node threads |
-| Persistence | File-based JSON + Markdown + YAML | `tree.json` plus per-node document files |
-| Real-time | Server-Sent Events (SSE) | Chat streaming only |
-| Frontend | React 18 + TypeScript | Strict mode |
-| Graph | @xyflow/react | Interactive task tree visualization |
-| State management | Zustand | Replaces monolithic component state |
-| Routing | React Router 6 | Graph Workspace <-> Breadcrumb Workspace |
-| Build tool | Vite 5 | Dev proxy -> backend; prod static |
-| CSS | CSS Modules + design tokens | Scoped per component; tokens.css for palette |
-| Unit tests | Vitest (frontend), pytest (backend) | - |
-| E2E tests | Playwright | Full app browser testing |
-| Distribution | PyInstaller binary via npm | npx downloads platform binary |
+| Backend | FastAPI + Pydantic | REST API only |
+| Frontend | React 18 + TypeScript | Vite build, CSS Modules |
+| State | Zustand | Project, graph, and UI state |
+| Graph | `@xyflow/react` | Tree rendering |
+| Persistence | File-based project data | `meta.json`, `tree.json`, lazy `split_state.json`, and `chat/{node_id}.json` |
 
----
+## Public Backend Route Surface
 
-## Top-Level Structure
-
-```text
-PlanningTreeMain/
-|- backend/          Python FastAPI app
-|- frontend/         React SPA
-|- launcher/         Node.js npx entry point (thin wrapper only)
-|- scripts/          Dev, test, build scripts
-`- docs/             Canonical rebuild specs and audit outputs
-```
-
----
-
-## Dependency Flow
-
-```text
-[Browser]
-    | HTTP/SSE
-    v
-[frontend/] --(dev: Vite proxy)--> [backend/]
-                                     |
-                   +-----------------+------------------+
-                   v                 v                  v
-             [filesystem]      [OpenAI API]     [Codex subprocess]
-             tree.json         (splits)         (chat)
-             nodes/*/*.md
-             nodes/*/state.yaml
-             thread_state.json
-             chat_state.json
-```
-
-**Rules:**
-- Frontend never touches the filesystem directly
-- Backend services never call the OpenAI API directly - only through `ai/openai_client.py`
-- Backend services never spawn subprocesses directly - only through `ai/codex_client.py`
-- Routes never contain business logic - delegate to services
-
----
-
-## Backend Layer Model
-
-```text
-routes/         <- HTTP layer: parse request, call service, return response
-  |
-services/       <- Business logic: node CRUD, tree rules, split orchestration, chat
-  |
-storage/        <- Persistence: read/write JSON, Markdown, and YAML files atomically
-ai/             <- AI integration: OpenAI API wrapper, Codex subprocess client
-errors/         <- Typed error classes
-config/         <- App config, env var resolution, platform-aware paths
-```
-
-### Layer Rules
-
-| Layer | Owns | Must NOT |
-|---|---|---|
-| `routes/` | HTTP parsing, response shaping, error mapping to HTTP status | Contain business logic |
-| `services/` | Business rules, domain invariants, orchestration | Touch filesystem directly, call external services directly |
-| `storage/` | File I/O, atomic writes, schema reading/writing | Contain business logic |
-| `ai/` | Subprocess management, API calls, prompt building | Contain business logic or HTTP concerns |
-| `errors/` | Error type definitions | Contain logic |
-
----
-
-## Frontend Layer Model
-
-```text
-App.tsx          <- Router + layout only
-  |
-features/        <- Feature-scoped components (graph, breadcrumb, project, auth, node)
-  |
-stores/          <- Zustand state (project-store, ui-store, chat-store)
-  |
-api/             <- Typed HTTP client + React hooks
-  |
-components/      <- Shared stateless components (Layout, ErrorBoundary)
-styles/          <- Design tokens and base styles only
-```
-
-### Frontend Rules
-
-| Layer | Owns | Must NOT |
-|---|---|---|
-| `features/` | UI for a specific workspace or surface | Import from other feature directories |
-| `stores/` | Client state, API call coordination | Contain rendering logic |
-| `api/` | fetch wrapper, endpoint definitions | Contain business logic |
-| `components/` | Shared stateless UI primitives | Contain state or API calls |
-
----
-
-## Data Flow - User Actions
-
-### Create + Split a Node
-
-```text
-User opens the GraphNode action menu and chooses a split mode
-  -> TreeGraph forwards onSplitNode(nodeId, mode)
-  -> GraphWorkspace prompts for replace confirmation when active children already exist
-  -> project-store.splitNode(nodeId, mode, confirmReplace)
-  -> api/client.ts POST /v1/projects/{id}/nodes/{id}/split
-  -> routes/split.py validates the canonical mode and confirm_replace flag
-  -> services/split_service.py starts the planning turn and returns 202 accepted
-  -> split_service builds context, runs the planning turn, and materializes child nodes on completion
-  -> storage/project_store.py writes updated tree.json
-  -> storage/node_store.py writes task.md / briefing.md / spec.md / state.yaml
-  -> planning events plus snapshot/history refresh update client state
-  -> TreeGraph re-renders with the new children
-```
-
-### Finish Task -> Mark Done
-
-```text
-User clicks "Finish Task" on leaf node
-  -> client-side only (no API call)
-  -> React Router navigates to /projects/:projectId/nodes/:nodeId/chat
-  -> BreadcrumbWorkspace loads chat session
-  -> chat-store.loadSession(projectId, nodeId)
-  -> GraphWorkspace passes a transient router-state seed built from node title + description
-  -> BreadcrumbWorkspace applies that seed into the local composer once
-  -> User edits draft and sends -> POST /chat/messages
-  -> First accepted message promotes ready -> in_progress
-  -> SSE streams assistant response
-  -> User clicks "Mark Done"
-  -> api POST /nodes/{id}/complete
-  -> services/node_service.complete_node -> sets status=done, unlocks next sibling
-  -> project-store refreshes snapshot
-  -> Graph updates to show done status
-```
-
----
-
-## Configuration
-
-All configuration is via environment variables. No `.env` file is read at runtime (security boundary for `OPENAI_API_KEY`). Local preferences are stored in `config/app.json`.
-
-| Env Var | Default | Description |
-|---|---|---|
-| `OPENAI_API_KEY` | - | Required for split operations |
-| `PLANNINGTREE_DATA_ROOT` | Platform default | Override app data directory |
-| `PLANNINGTREE_PORT` | `8000` | Backend port (launcher finds free port) |
-| `PLANNINGTREE_SPLIT_MODEL` | `gpt-4o` | OpenAI model for split generation |
-| `PLANNINGTREE_SPLIT_TIMEOUT_SEC` | `120` | Timeout for split API call |
-| `PLANNINGTREE_CODEX_CMD` | auto-discovered | Path to Codex binary for chat |
-
----
+- `GET /health`
+- `GET /v1/bootstrap/status`
+- `GET|PATCH /v1/settings/workspace`
+- `GET|POST /v1/projects`
+- `GET /v1/projects/{project_id}/snapshot`
+- `POST /v1/projects/{project_id}/reset-to-root`
+- `DELETE /v1/projects/{project_id}`
+- `PATCH /v1/projects/{project_id}/active-node`
+- `POST /v1/projects/{project_id}/nodes`
+- `PATCH /v1/projects/{project_id}/nodes/{node_id}`
+- `POST /v1/projects/{project_id}/nodes/{node_id}/split`
+- `GET /v1/projects/{project_id}/split-status`
+- `GET /v1/projects/{project_id}/nodes/{node_id}/chat/session`
+- `POST /v1/projects/{project_id}/nodes/{node_id}/chat/message`
+- `POST /v1/projects/{project_id}/nodes/{node_id}/chat/reset`
+- `GET /v1/projects/{project_id}/nodes/{node_id}/chat/events` (SSE)
 
 ## Persistence
 
-```text
-<app-data-root>/
-|- config/
-|  |- app.json          # workspace root, preferences
-|  `- auth.json         # session state, entitlement
-`- projects/
-   `- <project-id>/
-      |- meta.json         # project metadata
-      |- tree.json         # live tree index (schema_version: 5)
-      |- chat_state.json   # per-node chat sessions
-      |- thread_state.json # planning / execution / ask thread state
-      `- nodes/
-         `- <node-id>/
-            |- task.md
-            |- briefing.md
-            |- spec.md
-            `- state.yaml
-```
+Project data remains file-based under the app data root:
 
-Platform defaults:
-- Windows: `%APPDATA%\PlanningTree`
-- macOS: `~/Library/Application Support/PlanningTree`
-- Linux: `~/.local/share/PlanningTree`
+- `meta.json`
+- `tree.json`
+- `split_state.json` after the first split run
+- `chat/{node_id}.json` per-node chat sessions (lazy, created on first message)
 
----
+Older project layouts are rejected with `legacy_project_unsupported`.
 
-## Auth Model
+## Primary Flows
 
-Cloud layer (thin): identity verification, entitlement check, token issuance.
-Local layer: session persistence in `config/auth.json`, app shell auth check on boot.
+### Create And Manage Graph
 
-In Phase 2-5 scaffold: always-authenticated stub (no real cloud auth).
-In Phase 6: OAuth2 browser redirect flow integrated.
+1. User configures a base workspace root.
+2. User creates or selects a project.
+3. Backend returns a `tree.json` snapshot with inline node title/description.
+4. User creates child nodes, edits node metadata, changes active selection, or resets to root.
+5. Frontend re-renders the graph from the latest snapshot.
 
----
+### Run AI Split
 
-## Distribution (Phase 6 Target)
+1. User picks one of the split modes from a graph node action menu.
+2. Backend accepts the request and starts an async split job on the project-shared Codex thread.
+3. Frontend polls `GET /split-status` until the job becomes `idle` or `failed`.
+4. On success, frontend reloads the snapshot and shows the new child nodes.
 
-```text
-npm publish planningtree
-  -> package.json bin -> launcher/cli.js
-  -> cli.js detects platform
-  -> postinstall downloads platform binary from GitHub Releases
-  -> binary = PyInstaller-bundled Python backend + static frontend dist
-  -> cli.js spawns binary, finds free port, opens browser
-```
+### Breadcrumb Chat
+
+1. User clicks `Open Breadcrumb` or `Finish Task` in the graph.
+2. Frontend navigates to `/projects/:projectId/nodes/:nodeId/chat`.
+3. Chat view loads session from backend, opens SSE event stream.
+4. User sends a message; backend creates a Codex turn in a background thread.
+5. Streaming deltas arrive via SSE; completed text is persisted to `chat/{node_id}.json`.
+
+## Frontend Structure
+
+- `frontend/src/features/graph/` owns the primary product surface.
+- `frontend/src/features/breadcrumb/` contains the breadcrumb chat UI.
+- `frontend/src/stores/project-store.ts` owns project, snapshot, selection, and split polling state.
+- `frontend/src/api/` owns route clients and shared types.
+
+## Backend Structure
+
+- `backend/routes/` defines the thin HTTP layer.
+- `backend/services/` owns graph CRUD and split business rules.
+- `backend/storage/` owns atomic file persistence.

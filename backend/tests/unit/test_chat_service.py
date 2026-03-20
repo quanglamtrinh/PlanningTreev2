@@ -1,0 +1,442 @@
+from __future__ import annotations
+
+import time
+
+import pytest
+from fastapi.testclient import TestClient
+
+from backend.ai.codex_client import CodexTransportError
+from backend.errors.app_errors import (
+    ChatNotAllowed,
+    ChatTurnAlreadyActive,
+    InvalidRequest,
+    NodeNotFound,
+)
+from backend.main import create_app
+from backend.services import chat_service as chat_service_module
+from backend.services.chat_service import ChatService
+from backend.services.project_service import ProjectService
+from backend.services.tree_service import TreeService
+from backend.streaming.sse_broker import ChatEventBroker
+
+
+class FakeChatCodexClient:
+    def __init__(self, response_text: str = "Hello from AI", fail: bool = False) -> None:
+        self.response_text = response_text
+        self.fail = fail
+        self.started_threads: list[str] = []
+        self.resumed_threads: list[str] = []
+        self.fail_resume = False
+        self.turns_run: list[str] = []
+
+    def start_thread(self, **_: object) -> dict[str, str]:
+        thread_id = f"chat-thread-{len(self.started_threads) + 1}"
+        self.started_threads.append(thread_id)
+        return {"thread_id": thread_id}
+
+    def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        self.resumed_threads.append(thread_id)
+        if self.fail_resume:
+            raise CodexTransportError("thread not found", "not_found")
+        return {"thread_id": thread_id}
+
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict:
+        thread_id = kwargs.get("thread_id", "")
+        self.turns_run.append(prompt)
+        on_delta = kwargs.get("on_delta")
+        on_tool_call = kwargs.get("on_tool_call")
+        on_thread_status = kwargs.get("on_thread_status")
+        if self.fail:
+            raise CodexTransportError("AI failed", "rpc_error")
+        if on_delta:
+            on_delta("Hello ")
+            on_delta("from AI")
+        if on_tool_call:
+            on_tool_call("read_file", {"path": "/test.py"})
+        if on_thread_status:
+            on_thread_status({"status": {"type": "running"}})
+        return {"stdout": self.response_text, "thread_id": thread_id}
+
+
+class SlowCheckpointCodexClient(FakeChatCodexClient):
+    def __init__(
+        self,
+        *,
+        response_text: str = "Hello from AI",
+        fail_after_deltas: bool = False,
+    ) -> None:
+        super().__init__(response_text=response_text, fail=False)
+        self.fail_after_deltas = fail_after_deltas
+
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict:
+        thread_id = kwargs.get("thread_id", "")
+        self.turns_run.append(prompt)
+        on_delta = kwargs.get("on_delta")
+        if on_delta:
+            on_delta("Hello ")
+            time.sleep(0.03)
+            on_delta("from AI")
+            time.sleep(0.1)
+        if self.fail_after_deltas:
+            raise CodexTransportError("AI failed after streaming", "rpc_error")
+        return {"stdout": self.response_text, "thread_id": thread_id}
+
+
+def _create_project(storage, workspace_root):
+    svc = ProjectService(storage)
+    svc.set_workspace_root(str(workspace_root))
+    snap = svc.create_project("TestChat", "Test chat goal")
+    project_id = snap["project"]["id"]
+    root_id = snap["tree_state"]["root_node_id"]
+    return project_id, root_id
+
+
+def _make_service(storage, codex_client=None):
+    return ChatService(
+        storage=storage,
+        tree_service=TreeService(),
+        codex_client=codex_client or FakeChatCodexClient(),
+        chat_event_broker=ChatEventBroker(),
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+
+
+def _wait_for_turn(service, project_id, node_id, timeout=2.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        session = service.get_session(project_id, node_id)
+        if not session.get("active_turn_id"):
+            return session
+        time.sleep(0.02)
+    raise AssertionError("Turn did not complete in time")
+
+
+def _wait_for_condition(predicate, timeout=2.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        value = predicate()
+        if value:
+            return value
+        time.sleep(0.02)
+    raise AssertionError("Condition was not met in time")
+
+
+def test_get_session_returns_empty_for_new_node(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+    session = service.get_session(project_id, root_id)
+    assert session["thread_id"] is None
+    assert session["active_turn_id"] is None
+    assert session["messages"] == []
+
+
+def test_get_session_raises_for_nonexistent_node(storage, workspace_root):
+    project_id, _ = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+    with pytest.raises(NodeNotFound):
+        service.get_session(project_id, "nonexistent")
+
+
+def test_create_message_creates_user_and_assistant(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+    result = service.create_message(project_id, root_id, "Hello")
+    assert result["user_message"]["role"] == "user"
+    assert result["user_message"]["content"] == "Hello"
+    assert result["user_message"]["status"] == "completed"
+    assert result["assistant_message"]["role"] == "assistant"
+    assert result["assistant_message"]["status"] == "pending"
+    assert result["active_turn_id"] is not None
+
+
+def test_create_message_rejects_empty_content(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+    with pytest.raises(InvalidRequest, match="content is required"):
+        service.create_message(project_id, root_id, "   ")
+
+
+def test_create_message_rejects_over_limit_content(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    service = ChatService(
+        storage=storage,
+        tree_service=TreeService(),
+        codex_client=FakeChatCodexClient(),
+        chat_event_broker=ChatEventBroker(),
+        chat_timeout=5,
+        max_message_chars=10,
+    )
+    with pytest.raises(InvalidRequest, match="exceeds"):
+        service.create_message(project_id, root_id, "x" * 20)
+
+
+def test_create_message_rejects_nonexistent_node(storage, workspace_root):
+    project_id, _ = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+    with pytest.raises(NodeNotFound):
+        service.create_message(project_id, "nonexistent", "Hello")
+
+
+def test_background_turn_completes(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient(response_text="AI response text")
+    service = _make_service(storage, client)
+    service.create_message(project_id, root_id, "Hello")
+    session = _wait_for_turn(service, project_id, root_id)
+
+    assert session["active_turn_id"] is None
+    assert len(session["messages"]) == 2
+    assert session["messages"][1]["status"] == "completed"
+    assert session["messages"][1]["content"] == "AI response text"
+    assert session["thread_id"] is not None
+
+
+def test_background_turn_persists_parts(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient(response_text="AI response text")
+    service = _make_service(storage, client)
+    service.create_message(project_id, root_id, "Hello")
+    session = _wait_for_turn(service, project_id, root_id)
+
+    parts = session["messages"][1].get("parts", [])
+    # FakeChatCodexClient emits: delta("Hello "), delta("from AI"),
+    # tool_call("read_file"), thread_status("running")
+    # After finalize: text part closed, tool completed, trailing status removed
+    part_types = [p["type"] for p in parts]
+    assert "assistant_text" in part_types
+    assert "tool_call" in part_types
+    # Status blocks are removed by finalize (trailing)
+    assert "status_block" not in part_types
+
+    text_part = next(p for p in parts if p["type"] == "assistant_text")
+    assert text_part["is_streaming"] is False
+    assert text_part["content"] == "Hello from AI"
+
+    tool_part = next(p for p in parts if p["type"] == "tool_call")
+    assert tool_part["tool_name"] == "read_file"
+    assert tool_part["status"] == "completed"
+
+
+def test_background_turn_fails_marks_error(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient(fail=True)
+    service = _make_service(storage, client)
+    service.create_message(project_id, root_id, "Hello")
+    session = _wait_for_turn(service, project_id, root_id)
+
+    assert session["active_turn_id"] is None
+    assert session["messages"][1]["status"] == "error"
+    assert session["messages"][1]["error"] is not None
+
+
+def test_background_turn_checkpoints_partial_content(storage, workspace_root, monkeypatch):
+    monkeypatch.setattr(chat_service_module, "_DRAFT_FLUSH_INTERVAL_SEC", 0.01)
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = SlowCheckpointCodexClient()
+    service = _make_service(storage, client)
+    service.create_message(project_id, root_id, "Hello")
+
+    streaming_session = _wait_for_condition(
+        lambda: (
+            current
+            if (current := service.get_session(project_id, root_id))["messages"]
+            and current["messages"][1]["status"] == "streaming"
+            else None
+        ),
+        timeout=2.0,
+    )
+
+    assert streaming_session["messages"][1]["content"].startswith("Hello")
+    assert streaming_session["active_turn_id"] is not None
+
+    completed_session = _wait_for_turn(service, project_id, root_id)
+    assert completed_session["messages"][1]["status"] == "completed"
+
+
+def test_background_turn_failure_preserves_partial_content(storage, workspace_root, monkeypatch):
+    monkeypatch.setattr(chat_service_module, "_DRAFT_FLUSH_INTERVAL_SEC", 0.01)
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = SlowCheckpointCodexClient(fail_after_deltas=True)
+    service = _make_service(storage, client)
+    service.create_message(project_id, root_id, "Hello")
+    session = _wait_for_turn(service, project_id, root_id)
+
+    assert session["messages"][1]["status"] == "error"
+    assert session["messages"][1]["content"] == "Hello from AI"
+
+
+def test_create_message_rejects_when_active_turn(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+
+    class SlowCodexClient(FakeChatCodexClient):
+        def run_turn_streaming(self, prompt, **kwargs):
+            import time
+            time.sleep(1)
+            return super().run_turn_streaming(prompt, **kwargs)
+
+    service = _make_service(storage, SlowCodexClient())
+    service.create_message(project_id, root_id, "First")
+    with pytest.raises(ChatTurnAlreadyActive):
+        service.create_message(project_id, root_id, "Second")
+
+
+def test_reset_session_clears_messages(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+    service.create_message(project_id, root_id, "Hello")
+    _wait_for_turn(service, project_id, root_id)
+
+    session = service.reset_session(project_id, root_id)
+    assert session["messages"] == []
+    assert session["thread_id"] is None
+
+
+def test_reset_session_rejects_when_active_turn(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+
+    class SlowCodexClient(FakeChatCodexClient):
+        def run_turn_streaming(self, prompt, **kwargs):
+            import time
+            time.sleep(1)
+            return super().run_turn_streaming(prompt, **kwargs)
+
+    service = _make_service(storage, SlowCodexClient())
+    service.create_message(project_id, root_id, "First")
+    with pytest.raises(ChatTurnAlreadyActive):
+        service.reset_session(project_id, root_id)
+
+
+def test_stale_turn_recovery(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+
+    # Simulate a stale turn in persisted state
+    session = storage.chat_state_store.read_session(project_id, root_id)
+    session["active_turn_id"] = "stale-turn"
+    session["messages"].append({
+        "message_id": "msg-stale",
+        "role": "assistant",
+        "content": "",
+        "status": "pending",
+        "error": None,
+        "turn_id": "stale-turn",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    })
+    storage.chat_state_store.write_session(project_id, root_id, session)
+
+    # get_session should recover
+    recovered = service.get_session(project_id, root_id)
+    assert recovered["active_turn_id"] is None
+    assert recovered["messages"][0]["status"] == "error"
+    assert "interrupted" in recovered["messages"][0]["error"].lower()
+
+
+def test_has_live_turns_for_project(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+
+    class SlowCodexClient(FakeChatCodexClient):
+        def run_turn_streaming(self, prompt, **kwargs):
+            import time
+            time.sleep(1)
+            return super().run_turn_streaming(prompt, **kwargs)
+
+    service = _make_service(storage, SlowCodexClient())
+    assert not service.has_live_turns_for_project(project_id)
+    service.create_message(project_id, root_id, "Hello")
+    assert service.has_live_turns_for_project(project_id)
+
+
+def test_thread_id_created_and_preserved_on_failure(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient(fail=True)
+    service = _make_service(storage, client)
+    service.create_message(project_id, root_id, "Hello")
+    session = _wait_for_turn(service, project_id, root_id)
+    # thread_id should be set (was persisted before turn ran)
+    assert session["thread_id"] is not None
+
+
+def test_thread_recreated_when_resume_fails(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient()
+    service = _make_service(storage, client)
+
+    # First message creates a thread
+    service.create_message(project_id, root_id, "First")
+    session = _wait_for_turn(service, project_id, root_id)
+    first_thread = session["thread_id"]
+    assert first_thread is not None
+
+    # Now make resume fail
+    client.fail_resume = True
+    service.create_message(project_id, root_id, "Second")
+    session = _wait_for_turn(service, project_id, root_id)
+    second_thread = session["thread_id"]
+    # Should have started a new thread
+    assert second_thread != first_thread
+    assert len(client.started_threads) == 2
+
+
+def test_project_reset_rejected_when_live_turn(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+
+    class SlowCodexClient(FakeChatCodexClient):
+        def run_turn_streaming(self, prompt, **kwargs):
+            import time
+            time.sleep(1)
+            return super().run_turn_streaming(prompt, **kwargs)
+
+    chat_service = ChatService(
+        storage=storage,
+        tree_service=TreeService(),
+        codex_client=SlowCodexClient(),
+        chat_event_broker=ChatEventBroker(),
+        chat_timeout=5,
+    )
+    project_service = ProjectService(storage, chat_service=chat_service)
+
+    chat_service.create_message(project_id, root_id, "Hello")
+
+    with pytest.raises(ChatNotAllowed, match="reset"):
+        project_service.reset_to_root(project_id)
+
+
+def test_project_delete_rejected_when_live_turn(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+
+    class SlowCodexClient(FakeChatCodexClient):
+        def run_turn_streaming(self, prompt, **kwargs):
+            import time
+            time.sleep(1)
+            return super().run_turn_streaming(prompt, **kwargs)
+
+    chat_service = ChatService(
+        storage=storage,
+        tree_service=TreeService(),
+        codex_client=SlowCodexClient(),
+        chat_event_broker=ChatEventBroker(),
+        chat_timeout=5,
+    )
+    project_service = ProjectService(storage, chat_service=chat_service)
+
+    chat_service.create_message(project_id, root_id, "Hello")
+
+    with pytest.raises(ChatNotAllowed, match="delete"):
+        project_service.delete_project(project_id)
+
+
+def test_app_shutdown_stops_codex_client(data_root):
+    app = create_app(data_root=data_root)
+    stop_calls: list[bool] = []
+
+    def fake_stop() -> None:
+        stop_calls.append(True)
+
+    app.state.codex_client.stop = fake_stop
+
+    with TestClient(app):
+        pass
+
+    assert stop_calls == [True]

@@ -94,11 +94,15 @@
 /* ─── Detail panel (right side) ─── */
 .detailPanel {
   pointer-events: all;
+  height: calc(100% - 24px);
+  display: flex;
+  width: min(340px, calc(100vw - 40px));
 }
 
 .detailCard {
   width: min(340px, calc(100vw - 40px));
-  max-height: calc(100vh - 100px);
+  height: 100%;
+  max-height: none;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 14px;
@@ -308,7 +312,7 @@
 
 /* ─── Responsive ─── */
 @media (max-width: 920px) {
-  .detailCard {
+  .detailPanel {
     width: min(300px, calc(100vw - 32px));
   }
 }

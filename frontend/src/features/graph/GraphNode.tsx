@@ -110,7 +110,7 @@ function GraphNodeComponent({ data }: NodeProps) {
                 aria-label={nodeData.isCollapsed ? 'Expand node' : 'Collapse node'}
                 title={nodeData.isCollapsed ? 'Expand node' : 'Collapse node'}
               >
-                {nodeData.isCollapsed ? '+' : '−'}
+                {nodeData.isCollapsed ? '+' : '-'}
                 {nodeData.isCollapsed && nodeData.directHiddenChildrenCount > 0 ? (
                   <span className={styles.hiddenCount}>{nodeData.directHiddenChildrenCount}</span>
                 ) : null}
@@ -126,7 +126,7 @@ function GraphNodeComponent({ data }: NodeProps) {
               aria-label="Node details"
               title="View node details"
             >
-              ℹ
+              i
             </button>
           </div>
         </div>
@@ -136,7 +136,7 @@ function GraphNodeComponent({ data }: NodeProps) {
           Depth {nodeData.node.depth} / {nodeData.node.child_ids.length} child
           {nodeData.node.child_ids.length === 1 ? '' : 'ren'}
         </p>
-        {nodeData.isSplitting ? <p className={styles.activity}>AI planning in progress...</p> : null}
+        {nodeData.isSplitting ? <p className={styles.activity}>AI split in progress...</p> : null}
       </div>
 
       <div className={`${styles.menuAnchor} ${CONTROL_CLASS_NAME}`} ref={menuRef}>
@@ -158,7 +158,7 @@ function GraphNodeComponent({ data }: NodeProps) {
         {menuOpen ? (
           <div className={`${styles.dropdown} ${CONTROL_CLASS_NAME}`}>
             <div className={styles.dropdownSection}>
-              <p className={styles.dropdownLabel}>Execution</p>
+              <p className={styles.dropdownLabel}>Actions</p>
               <button
                 type="button"
                 className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
@@ -180,7 +180,7 @@ function GraphNodeComponent({ data }: NodeProps) {
                 }}
               >
                 <span className={styles.menuTitle}>Open Breadcrumb</span>
-                <span className={styles.menuDesc}>Open breadcrumb without seeding the execution draft.</span>
+                <span className={styles.menuDesc}>Open the placeholder breadcrumb route for this node.</span>
               </button>
               <button
                 type="button"
@@ -192,12 +192,12 @@ function GraphNodeComponent({ data }: NodeProps) {
                 }}
               >
                 <span className={styles.menuTitle}>Finish Task</span>
-                <span className={styles.menuDesc}>Open the breadcrumb workflow and continue this leaf node.</span>
+                <span className={styles.menuDesc}>Jump to the breadcrumb placeholder for this leaf node.</span>
               </button>
             </div>
 
             <div className={styles.dropdownSection}>
-              <p className={styles.dropdownLabel}>AI Planning</p>
+              <p className={styles.dropdownLabel}>AI Split</p>
               {GRAPH_SPLIT_OPTIONS.map((option) => (
                 <button
                   key={option.id}

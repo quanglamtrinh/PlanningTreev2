@@ -3,16 +3,18 @@ import { api, ApiError } from '../api/client'
 import type {
   BootstrapStatus,
   NodeDraft,
-  NodeRecord,
-  NodeStatus,
-  PlanningEvent,
-  PlanningTurn,
   ProjectSummary,
   Snapshot,
+  SplitJobStatus,
   SplitMode,
 } from '../api/types'
 
 const ACTIVE_PROJECT_KEY = 'planningtree.active-project-id'
+const LEGACY_PROJECT_MESSAGE = 'Project này thuộc schema legacy đã bị loại bỏ; hãy xóa hoặc tạo lại.'
+const SPLIT_POLL_INTERVAL_MS = 1500
+
+let splitPollTimer: ReturnType<typeof globalThis.setInterval> | null = null
+let splitPollProjectId: string | null = null
 
 function readStoredActiveProjectId(): string | null {
   if (typeof window === 'undefined') {
@@ -34,6 +36,9 @@ function writeStoredActiveProjectId(projectId: string | null) {
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.code === 'legacy_project_unsupported') {
+      return LEGACY_PROJECT_MESSAGE
+    }
     return error.message
   }
   if (error instanceof Error) {
@@ -69,34 +74,7 @@ function rootFallback(snapshot: Snapshot | null): string | null {
   return snapshot.tree_state.active_node_id ?? snapshot.tree_state.root_node_id
 }
 
-function nodeById(snapshot: Snapshot | null, nodeId: string | null): NodeRecord | null {
-  if (!snapshot || !nodeId) {
-    return null
-  }
-  return snapshot.tree_state.node_registry.find((node) => node.node_id === nodeId) ?? null
-}
-
-function preserveSelectedNodeId(
-  snapshot: Snapshot,
-  currentSelectedNodeId: string | null,
-): string | null {
-  if (
-    currentSelectedNodeId &&
-    snapshot.tree_state.node_registry.some((node) => node.node_id === currentSelectedNodeId)
-  ) {
-    return currentSelectedNodeId
-  }
-  return rootFallback(snapshot)
-}
-
-export type PlanningConnectionStatus =
-  | 'disconnected'
-  | 'connecting'
-  | 'connected'
-  | 'reconnecting'
-export type PlanningSplitMode = SplitMode | null
-
-type ProjectStoreState = {
+export type ProjectStoreState = {
   hasInitialized: boolean
   isInitializing: boolean
   bootstrap: BootstrapStatus | null
@@ -106,18 +84,17 @@ type ProjectStoreState = {
   snapshot: Snapshot | null
   selectedNodeId: string | null
   nodeDrafts: Record<string, NodeDraft>
-  planningHistoryByNode: Record<string, PlanningTurn[]>
-  planningConnectionStatus: PlanningConnectionStatus
-  activePlanningMode: PlanningSplitMode
+  splitStatus: SplitJobStatus
+  splitJobId: string | null
+  splitNodeId: string | null
+  splitMode: SplitMode | null
   error: string | null
   isWorkspaceSaving: boolean
   isLoadingProjects: boolean
   isLoadingSnapshot: boolean
   isCreatingProject: boolean
   isCreatingNode: boolean
-  isSplittingNode: boolean
   isResettingProject: boolean
-  splittingNodeId: string | null
   isUpdatingNode: boolean
   isPersistingSelection: boolean
   initialize: () => Promise<void>
@@ -132,13 +109,8 @@ type ProjectStoreState = {
   stageNodeEdit: (nodeId: string, draft: NodeDraft) => void
   flushNodeDraft: (nodeId: string) => Promise<void>
   createChild: (parentId: string) => Promise<void>
-  splitNode: (nodeId: string, mode: SplitMode, confirmReplace?: boolean) => Promise<void>
-  loadPlanningHistory: (projectId: string, nodeId: string) => Promise<void>
-  applyPlanningEvent: (projectId: string, nodeId: string, event: PlanningEvent) => void
-  setPlanningConnectionStatus: (status: PlanningConnectionStatus) => void
-  setPlanningNodeBusyState: (nodeId: string, isBusy: boolean) => void
-  clearPlanningState: () => void
-  patchNodeStatus: (nodeId: string, status: NodeStatus) => void
+  splitNode: (nodeId: string, mode: SplitMode) => Promise<void>
+  refreshSplitStatus: (projectId?: string) => Promise<void>
   clearError: () => void
 }
 
@@ -147,7 +119,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
     const snapshot = await api.getSnapshot(projectId)
     set((state) => ({
       snapshot,
-      selectedNodeId: preserveSelectedNodeId(snapshot, state.selectedNodeId),
+      selectedNodeId: rootFallback(snapshot) ?? state.selectedNodeId,
     }))
     return snapshot
   }
@@ -162,18 +134,17 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
     snapshot: null,
     selectedNodeId: null,
     nodeDrafts: {},
-    planningHistoryByNode: {},
-    planningConnectionStatus: 'disconnected',
-    activePlanningMode: null,
+    splitStatus: 'idle',
+    splitJobId: null,
+    splitNodeId: null,
+    splitMode: null,
     error: null,
     isWorkspaceSaving: false,
     isLoadingProjects: false,
     isLoadingSnapshot: false,
     isCreatingProject: false,
     isCreatingNode: false,
-    isSplittingNode: false,
     isResettingProject: false,
-    splittingNodeId: null,
     isUpdatingNode: false,
     isPersistingSelection: false,
     async initialize() {
@@ -195,11 +166,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
           storedProjectId: readStoredActiveProjectId(),
         })
 
-        if (nextProjectId) {
-          writeStoredActiveProjectId(nextProjectId)
-        } else {
-          writeStoredActiveProjectId(null)
-        }
+        writeStoredActiveProjectId(nextProjectId)
 
         set({
           bootstrap,
@@ -223,15 +190,18 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
     },
     async refreshProjects() {
       if (!get().bootstrap?.workspace_configured) {
+        stopSplitPolling()
         writeStoredActiveProjectId(null)
         set({
           projects: [],
           activeProjectId: null,
           snapshot: null,
           selectedNodeId: null,
-          planningHistoryByNode: {},
-          planningConnectionStatus: 'disconnected',
-          activePlanningMode: null,
+          nodeDrafts: {},
+          splitStatus: 'idle',
+          splitJobId: null,
+          splitNodeId: null,
+          splitMode: null,
         })
         return
       }
@@ -246,28 +216,25 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
         const keepLoadedSnapshot =
           Boolean(nextProjectId) && currentState.snapshot?.project.id === nextProjectId
 
+        if (!keepLoadedSnapshot) {
+          stopSplitPolling()
+        }
+
+        writeStoredActiveProjectId(nextProjectId)
         set({
           projects,
           activeProjectId: nextProjectId,
           snapshot: keepLoadedSnapshot ? currentState.snapshot : null,
           selectedNodeId: keepLoadedSnapshot ? currentState.selectedNodeId : null,
           nodeDrafts: keepLoadedSnapshot ? currentState.nodeDrafts : {},
-          planningHistoryByNode: keepLoadedSnapshot ? currentState.planningHistoryByNode : {},
-          planningConnectionStatus: keepLoadedSnapshot
-            ? currentState.planningConnectionStatus
-            : 'disconnected',
-          activePlanningMode: keepLoadedSnapshot ? currentState.activePlanningMode : null,
+          splitStatus: keepLoadedSnapshot ? currentState.splitStatus : 'idle',
+          splitJobId: keepLoadedSnapshot ? currentState.splitJobId : null,
+          splitNodeId: keepLoadedSnapshot ? currentState.splitNodeId : null,
+          splitMode: keepLoadedSnapshot ? currentState.splitMode : null,
           isLoadingProjects: false,
         })
 
-        if (!nextProjectId) {
-          writeStoredActiveProjectId(null)
-          return
-        }
-
-        writeStoredActiveProjectId(nextProjectId)
-
-        if (!keepLoadedSnapshot) {
+        if (nextProjectId && !keepLoadedSnapshot) {
           await get().loadProject(nextProjectId)
         }
       } catch (error) {
@@ -288,12 +255,11 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
         const keepLoadedSnapshot =
           Boolean(nextProjectId) && currentState.snapshot?.project.id === nextProjectId
 
-        if (nextProjectId) {
-          writeStoredActiveProjectId(nextProjectId)
-        } else {
-          writeStoredActiveProjectId(null)
+        if (!keepLoadedSnapshot) {
+          stopSplitPolling()
         }
 
+        writeStoredActiveProjectId(nextProjectId)
         set({
           baseWorkspaceRoot: settings.base_workspace_root,
           bootstrap,
@@ -303,11 +269,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
           snapshot: keepLoadedSnapshot ? currentState.snapshot : null,
           selectedNodeId: keepLoadedSnapshot ? currentState.selectedNodeId : null,
           nodeDrafts: keepLoadedSnapshot ? currentState.nodeDrafts : {},
-          planningHistoryByNode: keepLoadedSnapshot ? currentState.planningHistoryByNode : {},
-          planningConnectionStatus: keepLoadedSnapshot
-            ? currentState.planningConnectionStatus
-            : 'disconnected',
-          activePlanningMode: keepLoadedSnapshot ? currentState.activePlanningMode : null,
+          splitStatus: keepLoadedSnapshot ? currentState.splitStatus : 'idle',
+          splitJobId: keepLoadedSnapshot ? currentState.splitJobId : null,
+          splitNodeId: keepLoadedSnapshot ? currentState.splitNodeId : null,
+          splitMode: keepLoadedSnapshot ? currentState.splitMode : null,
         })
 
         if (nextProjectId && !keepLoadedSnapshot) {
@@ -319,24 +284,19 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
       }
     },
     async loadProject(projectId: string) {
-      const currentState = get()
-      const isSameProjectLoaded = currentState.snapshot?.project.id === projectId
-
+      stopSplitPolling()
       writeStoredActiveProjectId(projectId)
       set({
         isLoadingSnapshot: true,
         error: null,
         activeProjectId: projectId,
-        ...(isSameProjectLoaded
-          ? {}
-          : {
-              snapshot: null,
-              selectedNodeId: null,
-              nodeDrafts: {},
-              planningHistoryByNode: {},
-              planningConnectionStatus: 'disconnected' as const,
-              activePlanningMode: null,
-            }),
+        snapshot: null,
+        selectedNodeId: null,
+        nodeDrafts: {},
+        splitStatus: 'idle',
+        splitJobId: null,
+        splitNodeId: null,
+        splitMode: null,
       })
       try {
         const snapshot = await api.getSnapshot(projectId)
@@ -345,37 +305,37 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
           snapshot,
           selectedNodeId: rootFallback(snapshot),
           nodeDrafts: {},
-          planningHistoryByNode: {},
-          planningConnectionStatus: 'disconnected',
-          activePlanningMode: null,
           isLoadingSnapshot: false,
         })
+        await get().refreshSplitStatus(projectId)
       } catch (error) {
-        writeStoredActiveProjectId(null)
         set({
           error: toErrorMessage(error),
-          activeProjectId: null,
+          activeProjectId: projectId,
           snapshot: null,
           selectedNodeId: null,
           nodeDrafts: {},
-          planningHistoryByNode: {},
-          planningConnectionStatus: 'disconnected',
-          activePlanningMode: null,
+          splitStatus: 'idle',
+          splitJobId: null,
+          splitNodeId: null,
+          splitMode: null,
           isLoadingSnapshot: false,
         })
         throw error
       }
     },
     clearActiveProject() {
+      stopSplitPolling()
       writeStoredActiveProjectId(null)
       set({
         activeProjectId: null,
         snapshot: null,
         selectedNodeId: null,
         nodeDrafts: {},
-        planningHistoryByNode: {},
-        planningConnectionStatus: 'disconnected',
-        activePlanningMode: null,
+        splitStatus: 'idle',
+        splitJobId: null,
+        splitNodeId: null,
+        splitMode: null,
       })
     },
     async deleteProject(projectId: string) {
@@ -385,6 +345,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
         const wasActive = get().activeProjectId === projectId
         const projects = await api.listProjects()
         if (wasActive) {
+          stopSplitPolling()
           const nextId = projects[0]?.id ?? null
           writeStoredActiveProjectId(nextId)
           set({
@@ -393,9 +354,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
             snapshot: null,
             selectedNodeId: null,
             nodeDrafts: {},
-            planningHistoryByNode: {},
-            planningConnectionStatus: 'disconnected',
-            activePlanningMode: null,
+            splitStatus: 'idle',
+            splitJobId: null,
+            splitNodeId: null,
+            splitMode: null,
           })
           if (nextId) {
             await get().loadProject(nextId)
@@ -414,6 +376,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
         const snapshot = await api.createProject(name, rootGoal)
         const projects = await api.listProjects()
         const projectId = snapshot.project.id
+        stopSplitPolling()
         writeStoredActiveProjectId(projectId)
         set({
           projects,
@@ -421,9 +384,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
           snapshot,
           selectedNodeId: rootFallback(snapshot),
           nodeDrafts: {},
-          planningHistoryByNode: {},
-          planningConnectionStatus: 'disconnected',
-          activePlanningMode: null,
+          splitStatus: 'idle',
+          splitJobId: null,
+          splitNodeId: null,
+          splitMode: null,
           isCreatingProject: false,
         })
       } catch (error) {
@@ -443,11 +407,6 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
           snapshot,
           selectedNodeId: snapshot.tree_state.root_node_id,
           nodeDrafts: {},
-          planningHistoryByNode: {},
-          planningConnectionStatus: 'disconnected',
-          activePlanningMode: null,
-          isSplittingNode: false,
-          splittingNodeId: null,
           isResettingProject: false,
         })
       } catch (error) {
@@ -489,7 +448,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
       const activeProjectId = state.activeProjectId
       const snapshot = state.snapshot
       const draft = state.nodeDrafts[nodeId]
-      const currentNode = nodeById(snapshot, nodeId)
+      const currentNode = snapshot?.tree_state.node_registry.find((node) => node.node_id === nodeId) ?? null
 
       if (!activeProjectId || !snapshot || !draft || !currentNode) {
         return
@@ -549,152 +508,126 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
         throw error
       }
     },
-    async splitNode(nodeId: string, mode: SplitMode, confirmReplace = false) {
+    async splitNode(nodeId: string, mode: SplitMode) {
       const activeProjectId = get().activeProjectId
       if (!activeProjectId) {
         return
       }
-      set({ isSplittingNode: true, splittingNodeId: nodeId, activePlanningMode: mode, error: null })
+      set({
+        error: null,
+        splitStatus: 'active',
+        splitJobId: null,
+        splitNodeId: nodeId,
+        splitMode: mode,
+      })
       try {
-        await api.splitNode(activeProjectId, nodeId, mode, confirmReplace)
+        const accepted = await api.splitNode(activeProjectId, nodeId, mode)
+        if (get().activeProjectId !== activeProjectId) {
+          return
+        }
+        set({
+          splitStatus: 'active',
+          splitJobId: accepted.job_id,
+          splitNodeId: accepted.node_id,
+          splitMode: accepted.mode,
+        })
+        ensureSplitPolling(activeProjectId)
+        void get().refreshSplitStatus(activeProjectId)
       } catch (error) {
+        stopSplitPolling()
         set({
           error: toErrorMessage(error),
-          isSplittingNode: false,
-          splittingNodeId: null,
-          activePlanningMode: null,
+          splitStatus: 'idle',
+          splitJobId: null,
+          splitNodeId: null,
+          splitMode: null,
         })
         throw error
       }
     },
-    async loadPlanningHistory(projectId: string, nodeId: string) {
+    async refreshSplitStatus(projectId?: string) {
+      const targetProjectId = projectId ?? get().activeProjectId
+      if (!targetProjectId) {
+        return
+      }
+
       try {
-        const response = await api.getPlanningHistory(projectId, nodeId)
-        set((state) => ({
-          planningHistoryByNode: {
-            ...state.planningHistoryByNode,
-            [nodeId]: response.turns,
-          },
-        }))
-      } catch (error) {
-        set({ error: toErrorMessage(error) })
-        throw error
-      }
-    },
-    applyPlanningEvent(projectId: string, nodeId: string, event: PlanningEvent) {
-      if (event.node_id !== nodeId) {
-        return
-      }
-      if (event.type === 'planning_turn_started') {
-        set({ isSplittingNode: true, splittingNodeId: nodeId, activePlanningMode: event.mode })
-        return
-      }
-      if (event.type === 'planning_tool_call') {
-        set((state) => {
-          const currentTurns = state.planningHistoryByNode[nodeId] ?? []
-          const nextTurns = [
-            ...currentTurns.filter(
-              (turn) => !(turn.role === 'tool_call' && turn.turn_id === event.turn_id),
-            ),
-            {
-              turn_id: event.turn_id,
-              role: 'tool_call' as const,
-              is_inherited: false,
-              origin_node_id: nodeId,
-              tool_name: event.tool_name,
-              arguments: {
-                kind: event.kind ?? undefined,
-                payload: event.payload ?? undefined,
-              },
-              timestamp: new Date().toISOString(),
-            },
-          ]
-          return {
-            planningHistoryByNode: {
-              ...state.planningHistoryByNode,
-              [nodeId]: nextTurns,
-            },
-          }
-        })
-        return
-      }
-      if (event.type === 'planning_turn_completed' || event.type === 'planning_turn_failed') {
+        const response = await api.getSplitStatus(targetProjectId)
+        if (get().activeProjectId !== targetProjectId) {
+          return
+        }
+
+        const previousStatus = get().splitStatus
+        if (response.status === 'active') {
+          ensureSplitPolling(targetProjectId)
+          set({
+            splitStatus: 'active',
+            splitJobId: response.job_id,
+            splitNodeId: response.node_id,
+            splitMode: response.mode,
+          })
+          return
+        }
+
+        stopSplitPolling()
+        if (response.status === 'failed') {
+          set({
+            splitStatus: 'failed',
+            splitJobId: response.job_id,
+            splitNodeId: null,
+            splitMode: null,
+            error: response.error ?? 'Split failed.',
+          })
+          return
+        }
+
         set({
-          isSplittingNode: false,
-          splittingNodeId: null,
-          activePlanningMode: null,
-          error: event.type === 'planning_turn_failed' ? event.message : null,
+          splitStatus: 'idle',
+          splitJobId: null,
+          splitNodeId: null,
+          splitMode: null,
         })
-        void get().loadPlanningHistory(projectId, nodeId)
-        void refreshSnapshot(projectId).catch((error) => {
-          set({ error: toErrorMessage(error) })
+        if (previousStatus === 'active') {
+          await refreshSnapshot(targetProjectId)
+        }
+      } catch (error) {
+        if (get().activeProjectId !== targetProjectId) {
+          return
+        }
+        stopSplitPolling()
+        set({
+          error: toErrorMessage(error),
+          splitStatus: 'idle',
+          splitJobId: null,
+          splitNodeId: null,
+          splitMode: null,
         })
       }
-    },
-    setPlanningConnectionStatus(status: PlanningConnectionStatus) {
-      set({ planningConnectionStatus: status })
-    },
-    setPlanningNodeBusyState(nodeId: string, isBusy: boolean) {
-      set((state) => {
-        if (isBusy) {
-          if (state.isSplittingNode && state.splittingNodeId === nodeId) {
-            return {}
-          }
-          return {
-            isSplittingNode: true,
-            splittingNodeId: nodeId,
-          }
-        }
-
-        if (state.splittingNodeId !== nodeId) {
-          return {}
-        }
-
-        return {
-          isSplittingNode: false,
-          splittingNodeId: null,
-          activePlanningMode: null,
-        }
-      })
-    },
-    clearPlanningState() {
-      set({
-        planningConnectionStatus: 'disconnected',
-        planningHistoryByNode: {},
-        isSplittingNode: false,
-        splittingNodeId: null,
-        activePlanningMode: null,
-      })
-    },
-    patchNodeStatus(nodeId: string, status: NodeStatus) {
-      set((state) => {
-        if (!state.snapshot) {
-          return {}
-        }
-        let didChange = false
-        const nodeRegistry = state.snapshot.tree_state.node_registry.map((node) => {
-          if (node.node_id !== nodeId || node.status === status) {
-            return node
-          }
-          didChange = true
-          return { ...node, status }
-        })
-        if (!didChange) {
-          return {}
-        }
-        return {
-          snapshot: {
-            ...state.snapshot,
-            tree_state: {
-              ...state.snapshot.tree_state,
-              node_registry: nodeRegistry,
-            },
-          },
-        }
-      })
     },
     clearError() {
       set({ error: null })
     },
   }
 })
+
+function stopSplitPolling() {
+  if (splitPollTimer !== null) {
+    globalThis.clearInterval(splitPollTimer)
+    splitPollTimer = null
+  }
+  splitPollProjectId = null
+}
+
+function ensureSplitPolling(projectId: string) {
+  if (typeof window === 'undefined') {
+    return
+  }
+  if (splitPollTimer !== null && splitPollProjectId === projectId) {
+    return
+  }
+  stopSplitPolling()
+  splitPollProjectId = projectId
+  splitPollTimer = globalThis.setInterval(() => {
+    void useProjectStore.getState().refreshSplitStatus(projectId)
+  }, SPLIT_POLL_INTERVAL_MS)
+}
