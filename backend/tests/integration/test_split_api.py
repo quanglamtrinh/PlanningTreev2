@@ -235,19 +235,6 @@ def wait_for_split_completion(client, project_id: str, node_id: str, timeout: fl
     raise AssertionError(f"split did not complete for {node_id}")
 
 
-def wait_for_node_state(client, project_id: str, node_id: str, predicate, *, timeout: float = 3.0) -> dict:
-    deadline = time.time() + timeout
-    last_state: dict | None = None
-    while time.time() < deadline:
-        response = client.get(f"/v1/projects/{project_id}/nodes/{node_id}/documents/state")
-        assert response.status_code == 200
-        last_state = response.json()["state"]
-        if predicate(last_state):
-            return last_state
-        time.sleep(0.02)
-    raise AssertionError(f"node state did not reach the expected value for {node_id}: {last_state}")
-
-
 def canonical_payload(mode: str, *, title_prefix: str | None = None) -> dict[str, object]:
     spec = CANONICAL_SPLIT_MODE_REGISTRY[mode]  # type: ignore[index]
     prefix = title_prefix or mode
@@ -262,34 +249,6 @@ def canonical_payload(mode: str, *, title_prefix: str | None = None) -> dict[str
             }
         )
     return {"subtasks": subtasks}
-
-
-def advance_node_to_ready_for_execution(
-    client,
-    project_id: str,
-    node_id: str,
-    *,
-    title: str,
-    purpose: str,
-) -> None:
-    update = client.patch(
-        f"/v1/projects/{project_id}/nodes/{node_id}",
-        json={"title": title, "description": purpose},
-    )
-    assert update.status_code == 200
-    confirm_task = client.post(f"/v1/projects/{project_id}/nodes/{node_id}/confirm-task")
-    assert confirm_task.status_code == 202
-    wait_for_node_state(
-        client,
-        project_id,
-        node_id,
-        lambda state: state["phase"] == "spec_review"
-        and state["brief_generation_status"] == "ready"
-        and state["spec_generation_status"] == "idle"
-        and (state["spec_initialized"] or state["spec_generated"]),
-    )
-    confirm_spec = client.post(f"/v1/projects/{project_id}/nodes/{node_id}/confirm-spec")
-    assert confirm_spec.status_code == 200
 
 
 @pytest.mark.parametrize("mode", list(CANONICAL_SPLIT_MODE_REGISTRY))

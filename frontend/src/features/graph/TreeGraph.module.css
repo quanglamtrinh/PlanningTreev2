@@ -243,6 +243,42 @@
   border-color: var(--color-accent);
 }
 
+.detailPlaceholder {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-hover);
+}
+
+.detailPlaceholderLabel,
+.detailPlaceholderTitle,
+.detailPlaceholderBody {
+  margin: 0;
+}
+
+.detailPlaceholderLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.detailPlaceholderTitle {
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--color-text-primary);
+}
+
+.detailPlaceholderBody {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--color-text-secondary);
+}
+
 /* ─── Invalid snapshot state ─── */
 .invalidState {
   position: absolute;

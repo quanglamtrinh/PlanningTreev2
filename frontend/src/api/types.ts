@@ -1,8 +1,3 @@
-import type {
-  ConversationEventEnvelope,
-  ConversationSnapshot,
-} from '../features/conversation/types'
-
 export type NodeStatus = 'locked' | 'draft' | 'ready' | 'in_progress' | 'done'
 export type NodePhase =
   | 'planning'
@@ -553,60 +548,3 @@ export interface SplitAcceptedResponse {
   mode: SplitMode
   planning_status: 'active'
 }
-
-export interface ExecutionConversationResponse {
-  conversation: ConversationSnapshot
-}
-
-export interface ExecutionConversationSendAcceptedResponse {
-  status: 'accepted'
-  conversation_id: string
-  turn_id: string
-  stream_id: string
-  user_message_id: string
-  assistant_message_id: string
-  assistant_text_part_id: string
-}
-
-export interface ExecutionConversationRequestResolvedResponse {
-  status: 'resolved' | 'already_resolved_or_stale'
-}
-
-export interface PlanningConversationRequestResolvedResponse {
-  status: 'resolved' | 'already_resolved_or_stale'
-}
-
-export interface ExecutionConversationActionResponse {
-  conversation_id: string
-  action: 'continue' | 'retry' | 'regenerate' | 'cancel'
-  action_status: 'accepted' | 'unavailable' | 'noop'
-  target_message_id: string | null
-  new_message_id: string | null
-  stream_id: string | null
-  turn_id?: string
-  assistant_text_part_id?: string
-  idempotent_outcome?: string
-}
-
-export type ExecutionConversationEvent = ConversationEventEnvelope
-
-export interface AskConversationResponse {
-  conversation: ConversationSnapshot
-}
-
-export interface PlanningConversationResponse {
-  conversation: ConversationSnapshot
-}
-
-export interface AskConversationSendAcceptedResponse {
-  status: 'accepted'
-  conversation_id: string
-  turn_id: string
-  stream_id: string
-  user_message_id: string
-  assistant_message_id: string
-  assistant_text_part_id: string
-}
-
-export type AskConversationEvent = ConversationEventEnvelope
-export type PlanningConversationEvent = ConversationEventEnvelope

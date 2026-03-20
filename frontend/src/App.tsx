@@ -1,6 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
-import { BreadcrumbWorkspace } from './features/breadcrumb/BreadcrumbWorkspace'
+import { BreadcrumbPlaceholder } from './features/breadcrumb/BreadcrumbPlaceholder'
 import { GraphWorkspace } from './features/graph/GraphWorkspace'
 
 export default function App() {
@@ -11,7 +11,7 @@ export default function App() {
           <Route path="/" element={<GraphWorkspace />} />
           <Route
             path="/projects/:projectId/nodes/:nodeId/chat"
-            element={<BreadcrumbWorkspace />}
+            element={<BreadcrumbPlaceholder />}
           />
           <Route path="*" element={<Navigate replace to="/" />} />
         </Route>

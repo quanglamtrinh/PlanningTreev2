@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from backend.config.app_config import AppPaths
-from backend.storage.conversation_store import ConversationStore
 from backend.storage.chat_store import ChatStore
 from backend.storage.config_store import ConfigStore
 from backend.storage.node_store import NodeStore
@@ -19,7 +18,6 @@ class Storage:
         self.project_store = ProjectStore(paths, self._project_locks, self.node_store)
         self.chat_store = ChatStore(paths, self._project_locks)
         self.thread_store = ThreadStore(paths, self._project_locks)
-        self.conversation_store = ConversationStore(paths, self._project_locks)
 
     def project_lock(self, project_id: str):
         return self._project_locks.for_project(project_id)

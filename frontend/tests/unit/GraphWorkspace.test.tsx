@@ -13,12 +13,10 @@ const { apiMock } = vi.hoisted(() => ({
     resetProjectToRoot: vi.fn(),
     getPlanningHistory: vi.fn(),
     planningEventsUrl: vi.fn(),
-    agentEventsUrl: vi.fn(),
     setActiveNode: vi.fn(),
     createChild: vi.fn(),
     splitNode: vi.fn(),
     updateNode: vi.fn(),
-    completeNode: vi.fn(),
   },
 }))
 
@@ -156,7 +154,6 @@ describe('GraphWorkspace', () => {
     useUIStore.setState(useUIStore.getInitialState())
     apiMock.getPlanningHistory.mockResolvedValue({ node_id: 'root', turns: [] })
     apiMock.planningEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/planning/events')
-    apiMock.agentEventsUrl.mockReturnValue('/v1/projects/project-1/nodes/root/agent/events')
     vi.spyOn(window, 'confirm').mockReturnValue(true)
   })
 
@@ -1033,7 +1030,7 @@ describe('GraphWorkspace', () => {
     expect(screen.getByRole('button', { name: 'Reset to Root' })).toBeDisabled()
   })
 
-  it('routes planning nodes to the task tab without seeding a composer draft', async () => {
+  it('routes planning nodes to the breadcrumb placeholder without route state', async () => {
     const project = {
       id: 'project-1',
       name: 'Alpha',
@@ -1104,11 +1101,10 @@ describe('GraphWorkspace', () => {
     await waitFor(() => {
       expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat')
     })
-    expect(screen.getByTestId('location-state')).toHaveTextContent('"activeTab":"task"')
-    expect(screen.getByTestId('location-state')).not.toHaveTextContent('composerSeed')
+    expect(screen.getByTestId('location-state')).toHaveTextContent('null')
   })
 
-  it('routes execution-ready nodes to the execution tab and seeds the composer draft', async () => {
+  it('routes execution-ready nodes to the breadcrumb placeholder without composer state', async () => {
     const project = {
       id: 'project-1',
       name: 'Alpha',
@@ -1179,7 +1175,6 @@ describe('GraphWorkspace', () => {
     await waitFor(() => {
       expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat')
     })
-    expect(screen.getByTestId('location-state')).toHaveTextContent('"activeTab":"execution"')
-    expect(screen.getByTestId('location-state')).toHaveTextContent('Task: Alpha')
+    expect(screen.getByTestId('location-state')).toHaveTextContent('null')
   })
 })

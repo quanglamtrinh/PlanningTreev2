@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAgentEventStream, usePlanningEventStream } from '../../api/hooks'
+import { usePlanningEventStream } from '../../api/hooks'
 import type { SplitMode } from '../../api/types'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
@@ -8,32 +8,6 @@ import { WorkspaceSetup } from '../auth/WorkspaceSetup'
 import { Sidebar } from './Sidebar'
 import { TreeGraph } from './TreeGraph'
 import styles from './GraphWorkspace.module.css'
-
-function buildComposerSeed(title: string, description: string) {
-  return `Task: ${title}\nDescription: ${description}\n\nPlease help me complete this task.`
-}
-
-function resolveBreadcrumbTab(
-  phase:
-    | 'planning'
-    | 'awaiting_brief'
-    | 'spec_review'
-    | 'ready_for_execution'
-    | 'executing'
-    | 'blocked_on_spec_question'
-    | 'closed',
-) {
-  if (phase === 'awaiting_brief') {
-    return 'briefing' as const
-  }
-  if (phase === 'spec_review' || phase === 'blocked_on_spec_question') {
-    return 'spec' as const
-  }
-  if (phase === 'ready_for_execution' || phase === 'executing') {
-    return 'execution' as const
-  }
-  return 'task' as const
-}
 
 export function GraphWorkspace() {
   const navigate = useNavigate()
@@ -62,7 +36,6 @@ export function GraphWorkspace() {
   const setActiveSurface = useUIStore((state) => state.setActiveSurface)
 
   usePlanningEventStream(activeProjectId, splittingNodeId ?? selectedNodeId)
-  useAgentEventStream(activeProjectId, selectedNodeId)
 
   useEffect(() => {
     setActiveSurface('graph')
@@ -141,9 +114,7 @@ export function GraphWorkspace() {
       if (!targetNode) {
         return
       }
-      navigate(`/projects/${latestSnapshot.project.id}/nodes/${nodeId}/chat`, {
-        state: targetNode ? { activeTab: resolveBreadcrumbTab(targetNode.phase) } : undefined,
-      })
+      navigate(`/projects/${latestSnapshot.project.id}/nodes/${nodeId}/chat`)
     } catch {
       return
     }
@@ -162,17 +133,7 @@ export function GraphWorkspace() {
       if (!targetNode) {
         return
       }
-
-      const activeTab = resolveBreadcrumbTab(targetNode.phase)
-      navigate(`/projects/${latestSnapshot.project.id}/nodes/${nodeId}/chat`, {
-        state:
-          activeTab === 'execution'
-            ? {
-                activeTab,
-                composerSeed: buildComposerSeed(targetNode.title, targetNode.description),
-              }
-            : { activeTab },
-      })
+      navigate(`/projects/${latestSnapshot.project.id}/nodes/${nodeId}/chat`)
     } catch {
       return
     }

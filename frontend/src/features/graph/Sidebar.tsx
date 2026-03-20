@@ -27,10 +27,6 @@ function StatusDot({ status }: { status: string }) {
   return <span className={`${styles.dot} ${styles[`dot_${cls}` as keyof typeof styles]}`} />
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const NODES_PER_PROJECT = 4
-
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
 export function Sidebar() {
@@ -94,20 +90,16 @@ export function Sidebar() {
       const handle = await window.showDirectoryPicker({ mode: 'readwrite' }) as { name: string }
       const folderName = handle.name
 
-      // Ensure workspace root is configured; if not, set it to the picked folder name.
-      // (Browser security prevents exposing full path; backend may need adjustment.)
       const state = useProjectStore.getState()
       if (!state.baseWorkspaceRoot) {
         try { await setWorkspaceRoot(folderName) } catch { /* will show error from createProject */ }
       }
 
-      // Auto-create project using folder name — no form needed
       await createProject(folderName, folderName)
     } catch (e) {
       if (e instanceof Error && e.name !== 'AbortError') {
         setPickerError(e.message)
       }
-      // AbortError = user cancelled picker — silently ignore
     } finally {
       setIsPickerLoading(false)
     }
@@ -137,7 +129,9 @@ export function Sidebar() {
     setIsCollapsed((prev) => !prev)
   }, [])
 
-  const visibleNodes = useMemo(() => getVisibleNodes(snapshot), [snapshot])
+  // Suppressed — only used by getVisibleNodes helper kept for reference
+  void expandedProjects
+  void toggleExpand
 
   if (isCollapsed) {
     return (
@@ -246,23 +240,16 @@ export function Sidebar() {
         ) : (
           projects.map((project) => {
             const isActive = project.id === activeProjectId
-            const projectNodes = isActive ? visibleNodes : []
-            const isExpanded = expandedProjects.has(project.id)
-            const displayedNodes = isExpanded ? projectNodes : projectNodes.slice(0, NODES_PER_PROJECT)
-            const hasMore = projectNodes.length > NODES_PER_PROJECT && !isExpanded
-
             return (
               <ProjectGroup
                 key={project.id}
                 project={project}
                 isActive={isActive}
-                nodes={displayedNodes}
+                snapshot={isActive ? snapshot : null}
                 selectedNodeId={selectedNodeId}
-                hasMore={hasMore}
                 onClickProject={handleProjectClick}
                 onClickNode={handleNodeClick}
                 onDoubleClickNode={handleOpenBreadcrumb}
-                onClickMore={() => toggleExpand(project.id)}
                 onRemoveProject={handleRemoveProject}
               />
             )
@@ -314,20 +301,29 @@ export function Sidebar() {
 type ProjectGroupProps = {
   project: ProjectSummary
   isActive: boolean
-  nodes: NodeRecord[]
+  snapshot: Snapshot | null
   selectedNodeId: string | null
-  hasMore: boolean
   onClickProject: (id: string) => void
   onClickNode: (id: string) => void
   onDoubleClickNode: (id: string) => Promise<void>
-  onClickMore: () => void
   onRemoveProject: (id: string, name: string) => Promise<void>
 }
 
 function ProjectGroup({
-  project, isActive, nodes, selectedNodeId, hasMore,
-  onClickProject, onClickNode, onDoubleClickNode, onClickMore, onRemoveProject,
+  project, isActive, snapshot, selectedNodeId,
+  onClickProject, onClickNode, onDoubleClickNode, onRemoveProject,
 }: ProjectGroupProps) {
+  const nodeById = useMemo(() => {
+    if (!snapshot) return new Map<string, NodeRecord>()
+    return new Map(
+      snapshot.tree_state.node_registry
+        .filter((n) => !n.is_superseded)
+        .map((n) => [n.node_id, n])
+    )
+  }, [snapshot])
+
+  const rootNodeId = snapshot?.tree_state.root_node_id ?? null
+
   return (
     <div className={`${styles.projectGroup} ${isActive ? styles.projectGroupActive : ''}`}>
       <div className={styles.projectHeaderRow}>
@@ -354,63 +350,111 @@ function ProjectGroup({
         </button>
       </div>
 
-      {isActive && nodes.length > 0 && (
+      {isActive && rootNodeId && nodeById.has(rootNodeId) && (
         <div className={styles.nodeList}>
-          {nodes.map((node) => (
-            <NodeRow
-              key={node.node_id}
-              node={node}
-              isSelected={node.node_id === selectedNodeId}
-              onClick={onClickNode}
-              onDoubleClick={onDoubleClickNode}
-            />
-          ))}
-          {hasMore && (
-            <button type="button" className={styles.moreBtn} onClick={onClickMore}>
-              More…
-            </button>
-          )}
+          <NodeTreeItem
+            nodeId={rootNodeId}
+            nodeById={nodeById}
+            selectedNodeId={selectedNodeId}
+            depth={0}
+            onClickNode={onClickNode}
+            onDoubleClickNode={onDoubleClickNode}
+          />
         </div>
       )}
     </div>
   )
 }
 
-// ─── NodeRow ──────────────────────────────────────────────────────────────────
+// ─── NodeTreeItem (recursive) ─────────────────────────────────────────────────
 
-type NodeRowProps = {
-  node: NodeRecord
-  isSelected: boolean
-  onClick: (id: string) => void
-  onDoubleClick: (id: string) => Promise<void>
+type NodeTreeItemProps = {
+  nodeId: string
+  nodeById: Map<string, NodeRecord>
+  selectedNodeId: string | null
+  depth: number
+  onClickNode: (id: string) => void
+  onDoubleClickNode: (id: string) => Promise<void>
 }
 
-function NodeRow({ node, isSelected, onClick, onDoubleClick }: NodeRowProps) {
+function NodeTreeItem({
+  nodeId, nodeById, selectedNodeId, depth,
+  onClickNode, onDoubleClickNode,
+}: NodeTreeItemProps) {
+  const node = nodeById.get(nodeId)
+  const activeChildren = node?.child_ids.filter((id) => nodeById.has(id)) ?? []
+  const hasChildren = activeChildren.length > 0
+  // Root node starts expanded; all others start collapsed
+  const [expanded, setExpanded] = useState(depth === 0)
+  const isSelected = nodeId === selectedNodeId
+
+  if (!node) return null
+
+  const indentLeft = 10 + depth * 18
+
   return (
-    <button
-      type="button"
-      className={`${styles.nodeRow} ${isSelected ? styles.nodeRowActive : ''}`}
-      onClick={() => onClick(node.node_id)}
-      onDoubleClick={() => void onDoubleClick(node.node_id)}
-      title={`${node.title}\nDouble-click to open chat`}
-    >
-      <StatusDot status={node.status} />
-      <span className={styles.nodeTitle}>{node.title}</span>
-      {node.created_at && (
-        <span className={styles.nodeTime}>{formatRelTime(node.created_at)}</span>
+    <div className={styles.treeItem}>
+      {/* ── Row ── */}
+      <div
+        className={`${styles.nodeRow} ${isSelected ? styles.nodeRowActive : ''}`}
+        style={{ paddingLeft: `${indentLeft}px` }}
+      >
+        {/* Chevron toggle or spacer */}
+        {hasChildren ? (
+          <button
+            type="button"
+            className={styles.treeChevron}
+            onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v) }}
+            aria-label={expanded ? 'Collapse children' : 'Expand children'}
+          >
+            <svg
+              className={`${styles.treeChevronIcon} ${expanded ? styles.treeChevronOpen : ''}`}
+              viewBox="0 0 16 16"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        ) : (
+          <span className={styles.treeChevronSpacer} />
+        )}
+
+        {/* Label area */}
+        <button
+          type="button"
+          className={styles.nodeRowInner}
+          onClick={() => onClickNode(node.node_id)}
+          onDoubleClick={() => void onDoubleClickNode(node.node_id)}
+          title={`${node.hierarchical_number} — ${node.title}\nDouble-click to open chat`}
+        >
+          <StatusDot status={node.status} />
+          <span className={styles.nodeTitle}>
+            <span className={styles.nodeHNum}>{node.hierarchical_number}</span>
+            {' '}{node.title}
+          </span>
+          {node.created_at && (
+            <span className={styles.nodeTime}>{formatRelTime(node.created_at)}</span>
+          )}
+        </button>
+      </div>
+
+      {/* ── Children ── */}
+      {expanded && hasChildren && (
+        <div className={styles.treeChildren}>
+          {activeChildren.map((childId) => (
+            <NodeTreeItem
+              key={childId}
+              nodeId={childId}
+              nodeById={nodeById}
+              selectedNodeId={selectedNodeId}
+              depth={depth + 1}
+              onClickNode={onClickNode}
+              onDoubleClickNode={onDoubleClickNode}
+            />
+          ))}
+        </div>
       )}
-    </button>
+    </div>
   )
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getVisibleNodes(snapshot: Snapshot | null): NodeRecord[] {
-  if (!snapshot) return []
-  return snapshot.tree_state.node_registry
-    .filter((n) => !n.is_superseded)
-    .slice()
-    .sort((a, b) =>
-      a.hierarchical_number.localeCompare(b.hierarchical_number, undefined, { numeric: true }),
-    )
 }

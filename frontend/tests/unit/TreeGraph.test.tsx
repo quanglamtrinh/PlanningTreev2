@@ -427,46 +427,6 @@ describe('TreeGraph', () => {
   })
 
   it('closes the detail panel when the focused node is removed from the snapshot', () => {
-    useProjectStore.setState({
-      ...useProjectStore.getInitialState(),
-      documentsByNode: {
-        'child-1': {
-          task: {
-            title: 'Child',
-            purpose: 'Child node',
-            responsibility: '',
-          },
-          briefing: {
-            user_notes: '',
-            business_context: '',
-            technical_context: '',
-            execution_context: '',
-            clarified_answers: '',
-          },
-          spec: {
-            business_contract: '',
-            technical_contract: '',
-            delivery_acceptance: '',
-            assumptions: '',
-          },
-          state: {
-            phase: 'planning',
-            task_confirmed: false,
-            briefing_confirmed: false,
-            spec_generated: false,
-            spec_generation_status: 'idle',
-            spec_confirmed: false,
-            planning_thread_id: '',
-            execution_thread_id: '',
-            ask_thread_id: '',
-            planning_thread_forked_from_node: '',
-            planning_thread_bootstrapped_at: '',
-            chat_session_id: '',
-          },
-        },
-      },
-    })
-
     const snapshot = buildSnapshot({
       tree_state: {
         root_node_id: 'root',
@@ -507,7 +467,7 @@ describe('TreeGraph', () => {
     )
 
     fireEvent.click(within(screen.getByTestId('graph-node-child-1')).getByRole('button', { name: 'Node details' }))
-    expect(screen.getByDisplayValue('Child')).toBeInTheDocument()
+    expect(screen.getByText('Frame editor is being reworked.')).toBeInTheDocument()
 
     rerender(
       <TreeGraph
@@ -527,6 +487,6 @@ describe('TreeGraph', () => {
       />,
     )
 
-    expect(screen.queryByDisplayValue('Child')).not.toBeInTheDocument()
+    expect(screen.queryByText('Frame editor is being reworked.')).not.toBeInTheDocument()
   })
 })

@@ -11,9 +11,6 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { NodeRecord, Snapshot, SplitMode } from "../../api/types";
-import { useProjectStore } from "../../stores/project-store";
-import { TaskPanel } from "../breadcrumb/TaskPanel";
-import { SpecPanel } from "../breadcrumb/SpecPanel";
 import { ClarifyMockPanel } from "./ClarifyMockPanel";
 import { GraphNode, type GraphNodeData } from "./GraphNode";
 import { buildTreeLayoutPositions } from "./treeGraphLayout";
@@ -44,6 +41,24 @@ type Props = {
 
 function defaultCollapsedForStatus(status: NodeRecord["status"]): boolean {
   return status === "locked" || status === "done";
+}
+
+function RetiredDetailPlaceholder({
+  label,
+  title,
+  body,
+}: {
+  label: string;
+  title: string;
+  body: string;
+}) {
+  return (
+    <section className={styles.detailPlaceholder}>
+      <p className={styles.detailPlaceholderLabel}>{label}</p>
+      <h3 className={styles.detailPlaceholderTitle}>{title}</h3>
+      <p className={styles.detailPlaceholderBody}>{body}</p>
+    </section>
+  );
 }
 
 function findVisibleSelectionFallback(
@@ -98,24 +113,6 @@ export function TreeGraph({
   );
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<"frame" | "clarify" | "spec">("frame");
-  const documentsByNode = useProjectStore((state) => state.documentsByNode);
-  const agentActivityByNode = useProjectStore(
-    (state) => state.agentActivityByNode,
-  );
-  const isLoadingDocuments = useProjectStore(
-    (state) => state.isLoadingDocuments,
-  );
-  const isUpdatingDocument = useProjectStore(
-    (state) => state.isUpdatingDocument,
-  );
-  const isConfirmingNode = useProjectStore((state) => state.isConfirmingNode);
-  const isGeneratingSpec = useProjectStore((state) => state.isGeneratingSpec);
-  const loadNodeDocuments = useProjectStore((state) => state.loadNodeDocuments);
-  const updateNodeTask = useProjectStore((state) => state.updateNodeTask);
-  const updateNodeSpec = useProjectStore((state) => state.updateNodeSpec);
-  const confirmTask = useProjectStore((state) => state.confirmTask);
-  const confirmSpec = useProjectStore((state) => state.confirmSpec);
-  const generateNodeSpec = useProjectStore((state) => state.generateNodeSpec);
   const handlerRef = useRef({
     onSelectNode,
     onCreateChild,
@@ -371,13 +368,6 @@ export function TreeGraph({
   }, [focusedNodeId]);
 
   useEffect(() => {
-    if (!focusedNodeId || documentsByNode[focusedNodeId]) {
-      return;
-    }
-    void loadNodeDocuments(focusedNodeId).catch(() => undefined);
-  }, [documentsByNode, focusedNodeId, loadNodeDocuments]);
-
-  useEffect(() => {
     if (!isFullscreen) {
       return undefined;
     }
@@ -626,24 +616,10 @@ export function TreeGraph({
                   if (!focusedNode) return null;
                   if (detailTab === "frame") {
                     return (
-                      <TaskPanel
-                        node={focusedNode}
-                        documents={documentsByNode[focusedNode.node_id]}
-                        isLoading={isLoadingDocuments}
-                        isUpdating={isUpdatingDocument}
-                        isConfirming={isConfirmingNode}
-                        compact
-                        activity={agentActivityByNode[focusedNode.node_id]}
-                        onReload={() =>
-                          loadNodeDocuments(focusedNode.node_id).then(
-                            () => undefined,
-                          )
-                        }
-                        onSave={(payload) =>
-                          updateNodeTask(focusedNode.node_id, payload)
-                        }
-                        onConfirm={() => confirmTask(focusedNode.node_id)}
-                        onRetryBrief={() => confirmTask(focusedNode.node_id)}
+                      <RetiredDetailPlaceholder
+                        label="Frame"
+                        title="Frame editor is being reworked."
+                        body={`The old task framing UI for "${focusedNode.title}" has been retired from this graph panel.`}
                       />
                     );
                   }
@@ -656,24 +632,10 @@ export function TreeGraph({
                   }
                   if (detailTab === "spec") {
                     return (
-                      <SpecPanel
-                        node={focusedNode}
-                        documents={documentsByNode[focusedNode.node_id]}
-                        isLoading={isLoadingDocuments}
-                        isUpdating={isUpdatingDocument}
-                        isGenerating={isGeneratingSpec}
-                        isConfirming={isConfirmingNode}
-                        activity={agentActivityByNode[focusedNode.node_id]}
-                        onReload={() =>
-                          loadNodeDocuments(focusedNode.node_id).then(
-                            () => undefined,
-                          )
-                        }
-                        onSave={(payload) =>
-                          updateNodeSpec(focusedNode.node_id, payload)
-                        }
-                        onGenerate={() => generateNodeSpec(focusedNode.node_id)}
-                        onConfirm={() => confirmSpec(focusedNode.node_id)}
+                      <RetiredDetailPlaceholder
+                        label="Spec"
+                        title="Spec editor is being reworked."
+                        body={`The previous spec editing flow for "${focusedNode.title}" is temporarily unavailable in this detail panel.`}
                       />
                     );
                   }
