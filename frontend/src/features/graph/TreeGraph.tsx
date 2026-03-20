@@ -14,6 +14,7 @@ import type { NodeRecord, Snapshot, SplitMode } from "../../api/types";
 import { useProjectStore } from "../../stores/project-store";
 import { TaskPanel } from "../breadcrumb/TaskPanel";
 import { SpecPanel } from "../breadcrumb/SpecPanel";
+import { ClarifyMockPanel } from "./ClarifyMockPanel";
 import { GraphNode, type GraphNodeData } from "./GraphNode";
 import { buildTreeLayoutPositions } from "./treeGraphLayout";
 import styles from "./TreeGraph.module.css";
@@ -648,19 +649,9 @@ export function TreeGraph({
                   }
                   if (detailTab === "clarify") {
                     return (
-                      <div className={styles.detailClarifyHint}>
-                        <p className={styles.detailClarifyTitle}>Ask Questions</p>
-                        <p className={styles.detailClarifyBody}>
-                          Open the full breadcrumb workspace to ask clarifying questions and review the planning conversation for this node.
-                        </p>
-                        <button
-                          type="button"
-                          className={styles.detailClarifyBtn}
-                          onClick={() => void onOpenBreadcrumb(focusedNode.node_id)}
-                        >
-                          Open Breadcrumb →
-                        </button>
-                      </div>
+                      <ClarifyMockPanel
+                        onOpenBreadcrumb={() => void onOpenBreadcrumb(focusedNode.node_id)}
+                      />
                     );
                   }
                   if (detailTab === "spec") {

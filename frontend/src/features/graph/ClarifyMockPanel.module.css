@@ -1,0 +1,332 @@
+/* ─── Panel shell ─────────────────────────────────────────────────────────── */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panelHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.panelLabel {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.panelHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+/* ─── Question stack ──────────────────────────────────────────────────────── */
+.questionStack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ─── Card ────────────────────────────────────────────────────────────────── */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-bg-panel) 80%, transparent);
+  backdrop-filter: blur(6px);
+  transition: border-color 0.14s ease;
+}
+
+.cardDone {
+  border-color: color-mix(in srgb, var(--color-status-done) 30%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-status-done-bg) 40%, var(--color-bg-panel));
+}
+
+.questionStep {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.questionText {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.55;
+  color: var(--color-text-primary);
+}
+
+/* ─── Options list ────────────────────────────────────────────────────────── */
+.optionList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.optionRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius-md);
+  transition: background 0.1s ease;
+  position: relative;
+}
+
+.optionRow:hover:not(:has(:disabled)) {
+  background: var(--color-bg-hover);
+}
+
+.optionSelected {
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent) !important;
+}
+
+.optionSubmitted {
+  background: color-mix(in srgb, var(--color-status-done) 12%, transparent) !important;
+}
+
+/* ─── Option button ───────────────────────────────────────────────────────── */
+.optionBtn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.optionBtn:disabled {
+  cursor: default;
+}
+
+.optionNum {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  min-width: 18px;
+}
+
+.optionLabel {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+.optionLabelCustom {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* Info icon */
+.optionInfoWrap {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-tertiary);
+  opacity: 0.7;
+}
+
+.optionInfoIcon {
+  width: 13px;
+  height: 13px;
+}
+
+/* ─── Reorder buttons ─────────────────────────────────────────────────────── */
+.reorderGroup {
+  display: inline-flex;
+  gap: 1px;
+  flex-shrink: 0;
+  padding-right: 6px;
+}
+
+.reorderBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-panel);
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.reorderBtn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+/* ─── Custom option (option 4) ────────────────────────────────────────────── */
+.optionCustomRow {
+  border-top: 1px solid var(--color-border-subtle);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+/* collapsed: show dismiss + submit inline on the right */
+.customCollapsedActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.dismissLabel {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+/* expanded */
+.customExpanded {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.customInput {
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  font: inherit;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  resize: vertical;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.12s ease;
+}
+
+.customInput:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+.customActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ─── Buttons ─────────────────────────────────────────────────────────────── */
+.dismissBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dismissBtn:hover {
+  color: var(--color-text-secondary);
+}
+
+.submitBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+
+.submitBtn:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.submitBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+kbd {
+  display: inline-block;
+  font-size: 10px;
+  font-family: inherit;
+  opacity: 0.75;
+}
+
+.kbd {
+  display: inline-block;
+  font-size: 10px;
+  font-family: inherit;
+  opacity: 0.75;
+}
+
+/* ─── Confirmed badge ─────────────────────────────────────────────────────── */
+.confirmedBadge {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-status-done);
+  letter-spacing: 0.02em;
+}
+
+/* ─── Footer ──────────────────────────────────────────────────────────────── */
+.panelFooter {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.breadcrumbLink {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  color: var(--color-accent);
+  cursor: pointer;
+  opacity: 0.75;
+  transition: opacity 0.12s ease;
+}
+
+.breadcrumbLink:hover {
+  opacity: 1;
+}
