@@ -1,12 +1,14 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { NodeRecord } from '../../api/types'
 import { ClarifyMockPanel } from '../graph/ClarifyMockPanel'
+import { NodeDescribePanel } from './NodeDescribePanel'
 import { NodeDocumentEditor } from './NodeDocumentEditor'
 import styles from './NodeDetailCard.module.css'
 
-type DetailTab = 'frame' | 'clarify' | 'spec'
+type DetailTab = 'describe' | 'frame' | 'clarify' | 'spec'
 
 const DETAIL_STEPS: { id: DetailTab; label: string }[] = [
+  { id: 'describe', label: 'Describe' },
   { id: 'frame', label: 'Frame' },
   { id: 'clarify', label: 'Clarify' },
   { id: 'spec', label: 'Spec' },
@@ -109,11 +111,21 @@ export function NodeDetailCard({
       </div>
 
       <div className={styles.cardBody}>
+        {detailTab === 'describe' && (
+          <div className={variant === 'graph' ? styles.cardBodyAux : undefined}>
+            <NodeDescribePanel node={node} />
+          </div>
+        )}
+
         {detailTab === 'frame' && (
           <NodeDocumentEditor projectId={projectId} node={node} kind="frame" />
         )}
 
-        {detailTab === 'clarify' && <ClarifyMockPanel />}
+        {detailTab === 'clarify' && (
+          <div className={variant === 'graph' ? styles.cardBodyAux : undefined}>
+            <ClarifyMockPanel />
+          </div>
+        )}
 
         {detailTab === 'spec' && (
           <NodeDocumentEditor projectId={projectId} node={node} kind="spec" />

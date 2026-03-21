@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -194,11 +194,12 @@ describe('BreadcrumbChatView', () => {
 
     expect(screen.getByTestId('breadcrumb-thread-pane')).toBeInTheDocument()
     expect(screen.getByTestId('breadcrumb-detail-pane')).toBeInTheDocument()
-    expect(await screen.findByTestId('breadcrumb-node-detail-card')).toBeInTheDocument()
+    const detailCard = await screen.findByTestId('breadcrumb-node-detail-card')
     expect(screen.getByTestId('message-feed')).toBeInTheDocument()
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
-    expect(screen.getByText('Root')).toBeInTheDocument()
-    expect(screen.getByText('Root node')).toBeInTheDocument()
+    fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
+    expect(within(detailCard).getByText('Root')).toBeInTheDocument()
+    expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()
     expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-1')
@@ -223,8 +224,9 @@ describe('BreadcrumbChatView', () => {
     await waitFor(() => {
       expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-1')
     })
-    expect(await screen.findByTestId('breadcrumb-node-detail-card')).toBeInTheDocument()
-    expect(screen.getByText('Root')).toBeInTheDocument()
+    const detailCard = await screen.findByTestId('breadcrumb-node-detail-card')
+    fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
+    expect(within(detailCard).getByText('Root')).toBeInTheDocument()
   })
 
   it('shows an unavailable state when the route node is missing from the snapshot', async () => {

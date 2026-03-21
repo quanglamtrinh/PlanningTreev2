@@ -217,6 +217,37 @@ describe('TreeGraph', () => {
     expect(screen.getByTestId('graph-node-root')).toBeInTheDocument()
   })
 
+  it('expands a locked parent to reveal children via the collapse toggle', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({ node_id: 'root', child_ids: ['child-1'], status: 'locked' }),
+          buildNode({
+            node_id: 'child-1',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Child',
+            description: 'Child node',
+            depth: 1,
+            display_order: 0,
+            hierarchical_number: '1.1',
+            status: 'ready',
+            node_kind: 'original',
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    expect(screen.queryByTestId('rf-node-child-1')).not.toBeInTheDocument()
+    const rootWrapper = screen.getByTestId('rf-node-root')
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Expand node' }))
+    expect(screen.getByTestId('rf-node-child-1')).toBeInTheDocument()
+  })
+
   it('keeps node wrappers interactive and exposes split actions', () => {
     const snapshot = buildSnapshot({
       tree_state: {
@@ -243,16 +274,18 @@ describe('TreeGraph', () => {
     expect(screen.getByText('Phase Breakdown')).toBeInTheDocument()
   })
 
-  it('shows Frame -> Clarify -> Spec stepper in the detail panel header', async () => {
+  it('shows Describe -> Frame -> Clarify -> Spec stepper in the detail panel header', async () => {
     const snapshot = buildSnapshot()
 
     renderTreeGraph(snapshot)
     fireEvent.click(screen.getByRole('button', { name: 'Node details' }))
     const detailCard = screen.getByTestId('graph-node-detail-card')
 
+    expect(within(detailCard).getByRole('button', { name: 'Describe' })).toBeInTheDocument()
     expect(within(detailCard).getByRole('button', { name: 'Frame' })).toBeInTheDocument()
     expect(within(detailCard).getByRole('button', { name: 'Clarify' })).toBeInTheDocument()
     expect(within(detailCard).getByRole('button', { name: 'Spec' })).toBeInTheDocument()
+    fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
     expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
     expect(within(detailCard).queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
     expect(within(detailCard).queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()

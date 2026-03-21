@@ -96,11 +96,11 @@
   pointer-events: all;
   height: calc(100% - 24px);
   display: flex;
-  width: min(340px, calc(100vw - 40px));
+  width: min(clamp(400px, 44vw, 720px), calc(100vw - 40px));
 }
 
 .detailCard {
-  width: min(340px, calc(100vw - 40px));
+  width: min(clamp(400px, 44vw, 720px), calc(100vw - 40px));
   height: 100%;
   max-height: none;
   overflow-y: auto;
@@ -313,6 +313,6 @@
 /* ─── Responsive ─── */
 @media (max-width: 920px) {
   .detailPanel {
-    width: min(300px, calc(100vw - 32px));
+    width: min(clamp(360px, 88vw, 520px), calc(100vw - 32px));
   }
 }

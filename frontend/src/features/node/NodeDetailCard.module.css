@@ -132,6 +132,13 @@
   background: var(--color-bg-hover);
 }
 
+.describePanel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
 .documentPanel {
   display: flex;
   flex-direction: column;
@@ -280,3 +287,40 @@
   line-height: 1.7;
   color: var(--color-text-secondary);
 }
+
+/* Graph overlay: give frame/spec editor remaining height; Clarify scrolls inside */
+section[data-variant='graph'] .cardBody {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+section[data-variant='graph'] .cardBodyAux {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
+section[data-variant='graph'] .documentPanel {
+  flex: 1;
+  min-height: 0;
+}
+
+section[data-variant='graph'] .contentPanel {
+  min-height: auto;
+  flex-shrink: 0;
+}
+
+section[data-variant='graph'] .editorSurface {
+  flex: 1;
+  min-height: 0;
+}
+
+section[data-variant='graph'] .editorSurface :global(.cm-content),
+section[data-variant='graph'] .editorSurface :global(.cm-gutters) {
+  min-height: 0;
+}
+

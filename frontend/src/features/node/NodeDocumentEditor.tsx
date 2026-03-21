@@ -66,17 +66,6 @@ export function NodeDocumentEditor({ projectId, node, kind }: Props) {
 
   return (
     <div className={styles.documentPanel}>
-      <div className={styles.contentPanel}>
-        <p className={styles.eyebrow}>
-          {node.hierarchical_number ? `${node.hierarchical_number} - Node` : 'Node'}
-        </p>
-        <h3 className={styles.title}>{node.title}</h3>
-        <p className={styles.body}>{node.description.trim() || 'No description yet.'}</p>
-        <p className={styles.body}>
-          Status: <strong>{node.status}</strong> . Children: {node.child_ids.length}
-        </p>
-      </div>
-
       <div className={styles.documentStatusRow}>
         <span className={styles.documentFileLabel}>{kind === 'frame' ? 'frame.md' : 'spec.md'}</span>
         <span

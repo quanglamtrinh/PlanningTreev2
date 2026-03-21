@@ -107,7 +107,11 @@ export function TreeGraph({
     onFinishTask,
   }
 
-  const nodeByIdRef = useRef<Map<string, NodeRecord>>(new Map())
+  const nodeById = useMemo(
+    () => new Map(snapshot.tree_state.node_registry.map((node) => [node.node_id, node])),
+    [snapshot.tree_state.node_registry],
+  )
+
   const graphNodeActions = useMemo<GraphNodeActions>(
     () => ({
       selectNode: (nodeId) => {
@@ -115,7 +119,7 @@ export function TreeGraph({
       },
       toggleCollapse: (nodeId) => {
         setCollapseOverrides((current) => {
-          const nodeRecord = nodeByIdRef.current.get(nodeId)
+          const nodeRecord = nodeById.get(nodeId)
           if (!nodeRecord) {
             return current
           }
@@ -143,12 +147,7 @@ export function TreeGraph({
         void handlerRef.current.onSelectNode(nodeId, true)
       },
     }),
-    [],
-  )
-
-  const nodeById = useMemo(
-    () => new Map(snapshot.tree_state.node_registry.map((node) => [node.node_id, node])),
-    [snapshot.tree_state.node_registry],
+    [nodeById],
   )
   const rootNode = useMemo(
     () => nodeById.get(snapshot.tree_state.root_node_id) ?? null,
