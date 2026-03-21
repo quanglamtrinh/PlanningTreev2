@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import detailStyles from '../node/NodeDetailCard.module.css'
 import styles from './ClarifyMockPanel.module.css'
 
 type Question = {
@@ -31,6 +32,7 @@ type CustomInputs = Record<string, string>
 export function ClarifyMockPanel() {
   const [answers, setAnswers] = useState<Answers>({})
   const [customInputs, setCustomInputs] = useState<CustomInputs>({})
+  const [confirmed, setConfirmed] = useState(false)
 
   function handleOptionClick(questionId: string, option: string) {
     setAnswers((prev) =>
@@ -48,37 +50,59 @@ export function ClarifyMockPanel() {
   }
 
   return (
-    <div className={styles.panel}>
-      {QUESTIONS.map((q, idx) => (
-        <div key={q.id}>
-          {idx > 0 && <div className={styles.divider} />}
-          <div className={styles.question}>
-            <p className={styles.questionLabel}>
-              <span className={styles.questionIndex}>{idx + 1}</span>
-              {q.label}
-            </p>
-            <div className={styles.options}>
-              {q.options.map((opt) => (
-                <button
-                  key={opt}
-                  type="button"
-                  className={`${styles.optionBtn} ${answers[q.id] === opt ? styles.optionBtnActive : ''}`}
-                  onClick={() => handleOptionClick(q.id, opt)}
-                >
-                  {opt}
-                </button>
-              ))}
+    <div className={detailStyles.documentPanel}>
+      <div className={styles.clarifyBody}>
+        {QUESTIONS.map((q, idx) => (
+          <div key={q.id}>
+            {idx > 0 && <div className={styles.divider} />}
+            <div className={styles.question}>
+              <p className={styles.questionLabel}>
+                <span className={styles.questionIndex}>{idx + 1}</span>
+                {q.label}
+              </p>
+              <div className={styles.options}>
+                {q.options.map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    className={`${styles.optionBtn} ${answers[q.id] === opt ? styles.optionBtnActive : ''}`}
+                    onClick={() => handleOptionClick(q.id, opt)}
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                className={styles.customInput}
+                rows={2}
+                placeholder="Or describe in your own words…"
+                value={customInputs[q.id] ?? ''}
+                onChange={(e) => handleCustomInput(q.id, e.target.value)}
+              />
             </div>
-            <textarea
-              className={styles.customInput}
-              rows={2}
-              placeholder="Or describe in your own words…"
-              value={customInputs[q.id] ?? ''}
-              onChange={(e) => handleCustomInput(q.id, e.target.value)}
-            />
           </div>
+        ))}
+      </div>
+
+      <div className={detailStyles.tabConfirmRow}>
+        <div className={styles.confirmRowInner}>
+          {confirmed ? (
+            <p className={styles.confirmHint} role="status">
+              Clarify answers confirmed.
+            </p>
+          ) : (
+            <span className={styles.confirmHintSpacer} aria-hidden />
+          )}
+          <button
+            type="button"
+            className={detailStyles.confirmButton}
+            data-testid="confirm-clarify"
+            onClick={() => setConfirmed(true)}
+          >
+            Confirm
+          </button>
         </div>
-      ))}
+      </div>
     </div>
   )
 }

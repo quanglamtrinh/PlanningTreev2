@@ -24,6 +24,47 @@ const nodeTypes = {
   graphNode: GraphNode,
 }
 
+/** React Flow `.react-flow__panel` margin in TreeGraph.module.css */
+const REACT_FLOW_PANEL_MARGIN_PX = 12
+
+/** Expanded sidebar width — keep in sync with `.sidebar` in Sidebar.module.css */
+const GRAPH_SIDEBAR_EXPANDED_PX = 270
+
+/**
+ * Fallback estimate for detail panel width (px) from CSS rules in TreeGraph.module.css.
+ * Caps by the graph column width (window minus sidebar) so fitView matches the real pane.
+ */
+function graphDetailPanelWidthEstimatePx(innerWidth: number, isFullscreen: boolean): number {
+  if (typeof window === 'undefined') {
+    return 400
+  }
+  const graphColumnW = isFullscreen
+    ? innerWidth
+    : Math.max(200, innerWidth - GRAPH_SIDEBAR_EXPANDED_PX)
+  const vw = innerWidth
+  const raw =
+    vw <= 920
+      ? Math.min(Math.max(360, vw * 0.88), 520, vw - 32)
+      : Math.min(Math.max(400, vw * 0.44), 720, vw - 40)
+  return Math.min(raw, graphColumnW)
+}
+
+function graphDetailPanelRightReservePx(
+  innerWidth: number,
+  isFullscreen: boolean,
+  measuredPanelWidthPx?: number,
+  flowPaneWidthPx?: number,
+): number {
+  const fromDom =
+    typeof measuredPanelWidthPx === 'number' && measuredPanelWidthPx > 40
+      ? measuredPanelWidthPx + REACT_FLOW_PANEL_MARGIN_PX
+      : graphDetailPanelWidthEstimatePx(innerWidth, isFullscreen) + REACT_FLOW_PANEL_MARGIN_PX
+  if (typeof flowPaneWidthPx === 'number' && flowPaneWidthPx > 160) {
+    return Math.min(Math.ceil(fromDom), Math.max(flowPaneWidthPx - 100, 80))
+  }
+  return Math.ceil(fromDom)
+}
+
 type Props = {
   snapshot: Snapshot
   selectedNodeId: string | null
@@ -92,6 +133,7 @@ export function TreeGraph({
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
+  const graphShellRef = useRef<HTMLDivElement | null>(null)
   const handlerRef = useRef({
     onSelectNode,
     onCreateChild,
@@ -378,18 +420,50 @@ export function TreeGraph({
   )
 
   useEffect(() => {
-    if (!flowInstance || flowNodes.length === 0) {
+    if (!flowInstance || flowNodes.length === 0 || focusedNodeId) {
       return undefined
     }
     const handle = window.setTimeout(() => {
-      flowInstance.fitView({
+      void flowInstance.fitView({
         padding: 0.18,
         duration: isFullscreen ? 0 : 180,
         maxZoom: 1.12,
       })
     }, 120)
     return () => window.clearTimeout(handle)
-  }, [fitKey, flowInstance, flowNodes.length, isFullscreen])
+  }, [fitKey, flowInstance, flowNodes.length, isFullscreen, focusedNodeId])
+
+  useEffect(() => {
+    if (!flowInstance || !focusedNodeId) {
+      return undefined
+    }
+    const id = focusedNodeId
+    const handle = window.setTimeout(() => {
+      const shell = graphShellRef.current
+      const flowViewport = shell?.querySelector('.react-flow__viewport') as HTMLElement | null
+      const flowPaneW = flowViewport?.clientWidth
+      const detailEl = shell?.querySelector('[data-graph-detail-panel]') as HTMLElement | null
+      const measuredDetailW = detailEl?.getBoundingClientRect().width
+      const rightReserve = graphDetailPanelRightReservePx(
+        window.innerWidth,
+        isFullscreen,
+        measuredDetailW,
+        flowPaneW,
+      )
+      void flowInstance.fitView({
+        nodes: [{ id }],
+        padding: {
+          top: 0.12,
+          bottom: 0.12,
+          left: 0.12,
+          right: `${rightReserve}px`,
+        },
+        duration: isFullscreen ? 0 : 200,
+        maxZoom: 1.12,
+      })
+    }, 80)
+    return () => window.clearTimeout(handle)
+  }, [flowInstance, focusedNodeId, isFullscreen])
 
   function handleFlowNodePointerEvents() {
     return undefined
@@ -398,7 +472,10 @@ export function TreeGraph({
   const focusedNode = focusedNodeId ? nodeById.get(focusedNodeId) ?? null : null
 
   return (
-    <div className={`${styles.graphShell} ${isFullscreen ? styles.graphShellFullscreen : ''}`}>
+    <div
+      ref={graphShellRef}
+      className={`${styles.graphShell} ${isFullscreen ? styles.graphShellFullscreen : ''}`}
+    >
       {hasInvalidRootNode ? (
         <div className={styles.invalidState} role="alert" data-testid="graph-invalid-snapshot">
           <h3>Graph data is invalid</h3>
@@ -444,7 +521,11 @@ export function TreeGraph({
             </Panel>
 
             {focusedNode ? (
-              <Panel position="top-right" className={styles.detailPanel}>
+              <Panel
+                position="top-right"
+                className={styles.detailPanel}
+                data-graph-detail-panel
+              >
                 <NodeDetailCard
                   projectId={snapshot.project.id}
                   node={focusedNode}

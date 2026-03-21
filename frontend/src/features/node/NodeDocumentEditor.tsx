@@ -1,6 +1,6 @@
 import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import type { NodeDocumentKind, NodeRecord } from '../../api/types'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
 import styles from './NodeDetailCard.module.css'
@@ -64,6 +64,12 @@ export function NodeDocumentEditor({ projectId, node, kind }: Props) {
   const isLoadError = Boolean(entry.error) && !entry.hasLoaded
   const isReadOnly = !entry.hasLoaded && (entry.isLoading || Boolean(entry.error))
 
+  const handleConfirm = useCallback(() => {
+    void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
+  }, [flushDocument, kind, node.node_id, projectId])
+
+  const canConfirm = entry.hasLoaded && !isLoadError && !entry.isLoading
+
   return (
     <div className={styles.documentPanel}>
       <div className={styles.documentStatusRow}>
@@ -108,6 +114,18 @@ export function NodeDocumentEditor({ projectId, node, kind }: Props) {
             void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
           }}
         />
+      </div>
+
+      <div className={styles.tabConfirmRow}>
+        <button
+          type="button"
+          className={styles.confirmButton}
+          disabled={!canConfirm || entry.isSaving}
+          data-testid={`confirm-document-${kind}`}
+          onClick={handleConfirm}
+        >
+          Confirm
+        </button>
       </div>
     </div>
   )

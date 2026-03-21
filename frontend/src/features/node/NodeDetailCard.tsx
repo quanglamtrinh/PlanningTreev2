@@ -121,11 +121,7 @@ export function NodeDetailCard({
           <NodeDocumentEditor projectId={projectId} node={node} kind="frame" />
         )}
 
-        {detailTab === 'clarify' && (
-          <div className={variant === 'graph' ? styles.cardBodyAux : undefined}>
-            <ClarifyMockPanel />
-          </div>
-        )}
+        {detailTab === 'clarify' && <ClarifyMockPanel />}
 
         {detailTab === 'spec' && (
           <NodeDocumentEditor projectId={projectId} node={node} kind="spec" />
