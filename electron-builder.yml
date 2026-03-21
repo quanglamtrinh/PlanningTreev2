@@ -1,0 +1,31 @@
+appId: com.planningtree.desktop
+productName: PlanningTree
+
+directories:
+  buildResources: electron
+  output: dist-electron
+
+# Electron JS files go inside ASAR
+files:
+  - electron/**/*
+
+# PyInstaller binary lives OUTSIDE ASAR (native executable)
+extraResources:
+  - from: build/dist/planningtree-server/
+    to: backend
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: electron/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+
+asar: true

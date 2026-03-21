@@ -66,6 +66,19 @@ export function GraphWorkspace() {
     void initialize()
   }, [initialize, setActiveSurface])
 
+  // Dynamic window title
+  useEffect(() => {
+    const projectName = snapshot?.project?.name
+    if (window.electronAPI?.setWindowTitle) {
+      window.electronAPI.setWindowTitle(
+        projectName ? `${projectName} \u2014 PlanningTree` : 'PlanningTree',
+      )
+    }
+    return () => {
+      window.electronAPI?.setWindowTitle?.('PlanningTree')
+    }
+  }, [snapshot?.project?.name])
+
   async function handleWorkspaceSubmit(path: string) {
     try {
       await setWorkspaceRoot(path)
@@ -162,6 +175,16 @@ export function GraphWorkspace() {
       <div className={styles.mainColumn}>
         {error ? <p className={styles.errorBanner}>{error}</p> : null}
 
+        {bootstrap && !bootstrap.codex_available && (
+          <div className={styles.codexBanner}>
+            <strong>Codex CLI not found.</strong> AI features (Split, Chat) require the Codex
+            CLI.{' '}
+            <a href="https://github.com/openai/codex" target="_blank" rel="noreferrer">
+              Install instructions
+            </a>
+          </div>
+        )}
+
         <div className={styles.graphShell}>
           {snapshot ? (
             <TreeGraph
@@ -174,6 +197,7 @@ export function GraphWorkspace() {
               isResetDisabled={
                 !activeProjectId || isLoadingSnapshot || isResettingProject || splitStatus === 'active'
               }
+              codexAvailable={bootstrap?.codex_available ?? false}
               onSelectNode={handleSelectNode}
               onCreateChild={handleCreateChild}
               onSplitNode={handleSplitNode}

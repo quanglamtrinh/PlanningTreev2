@@ -11,6 +11,7 @@ vi.mock('../../src/api/client', () => ({
   api: {
     getCodexSnapshot: apiMock.getCodexSnapshot,
   },
+  appendAuthToken: (url: string) => url,
 }))
 
 class MockEventSource {

@@ -81,6 +81,7 @@ function GraphNodeActionsDropdown({
   canCreateChild,
   canFinishTask,
   canSplit,
+  canOpenBreadcrumb,
   isSplitting,
   isSplitDisabled,
   onClose,
@@ -90,6 +91,7 @@ function GraphNodeActionsDropdown({
   canCreateChild: boolean
   canFinishTask: boolean
   canSplit: boolean
+  canOpenBreadcrumb: boolean
   isSplitting: boolean
   isSplitDisabled: boolean
   onClose: () => void
@@ -156,13 +158,18 @@ function GraphNodeActionsDropdown({
         <button
           type="button"
           className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+          disabled={!canOpenBreadcrumb}
           onClick={() => {
             onClose()
             actions.openBreadcrumb(nodeId)
           }}
         >
           <span className={styles.menuTitle}>Open Breadcrumb</span>
-          <span className={styles.menuDesc}>Open the placeholder breadcrumb route for this node.</span>
+          <span className={styles.menuDesc}>
+            {canOpenBreadcrumb
+              ? 'Open the placeholder breadcrumb route for this node.'
+              : 'Codex CLI is not installed.'}
+          </span>
         </button>
         <button
           type="button"
@@ -221,6 +228,7 @@ export type GraphNodeData = {
   canCreateChild: boolean
   canFinishTask: boolean
   canSplit: boolean
+  canOpenBreadcrumb: boolean
   isSplitting: boolean
   isSplitDisabled: boolean
 }
@@ -245,6 +253,7 @@ function graphNodePropsAreEqual(prev: NodeProps, next: NodeProps): boolean {
     a.canCreateChild === b.canCreateChild &&
     a.canFinishTask === b.canFinishTask &&
     a.canSplit === b.canSplit &&
+    a.canOpenBreadcrumb === b.canOpenBreadcrumb &&
     a.isSplitting === b.isSplitting &&
     a.isSplitDisabled === b.isSplitDisabled &&
     a.node.node_id === b.node.node_id &&
@@ -359,6 +368,7 @@ function GraphNodeComponent({ data }: NodeProps) {
             canCreateChild={d.canCreateChild}
             canFinishTask={d.canFinishTask}
             canSplit={d.canSplit}
+            canOpenBreadcrumb={d.canOpenBreadcrumb}
             isSplitting={d.isSplitting}
             isSplitDisabled={d.isSplitDisabled}
             onClose={closeMenu}

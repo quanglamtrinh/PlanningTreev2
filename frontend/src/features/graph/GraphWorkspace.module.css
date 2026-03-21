@@ -36,6 +36,21 @@
   flex-shrink: 0;
 }
 
+.codexBanner {
+  margin: 0;
+  padding: 8px 16px;
+  background: #fff8e6;
+  border-bottom: 1px solid #e8d5a0;
+  color: #6b5900;
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+}
+
+.codexBanner a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 /* Graph shell */
 .graphShell {
   flex: 1;

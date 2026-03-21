@@ -24,6 +24,12 @@ export function WorkspaceSetup({
     setPath(initialValue ?? '')
   }, [initialValue])
 
+  async function handleBrowse() {
+    if (!window.electronAPI) return
+    const selected = await window.electronAPI.selectFolder()
+    if (selected) setPath(selected)
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     await onSubmit(path)
@@ -41,13 +47,20 @@ export function WorkspaceSetup({
         <form className={styles.form} onSubmit={handleSubmit}>
           <label className={styles.label}>
             Base workspace root
-            <input
-              className={styles.input}
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-              placeholder="C:\Projects"
-              autoComplete="off"
-            />
+            <div className={styles.inputRow}>
+              <input
+                className={styles.input}
+                value={path}
+                onChange={(event) => setPath(event.target.value)}
+                placeholder="C:\Projects"
+                autoComplete="off"
+              />
+              {window.electronAPI && (
+                <button type="button" className={styles.browse} onClick={handleBrowse} disabled={isSaving}>
+                  Browse...
+                </button>
+              )}
+            </div>
           </label>
           {error ? <p className={styles.error}>{error}</p> : null}
           <div className={styles.actions}>

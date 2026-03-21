@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from uuid import uuid4
 
+from backend.config.app_config import get_codex_cmd
 from backend.errors.app_errors import ChatNotAllowed, InvalidRequest, InvalidWorkspaceRoot, WorkspaceNotConfigured
 from backend.services.snapshot_view_service import SnapshotViewService
 from backend.storage.file_utils import ensure_dir, iso_now
@@ -24,7 +25,7 @@ class ProjectService:
         self._snapshot_view_service = snapshot_view_service
         self._chat_service = chat_service
 
-    def bootstrap_status(self) -> Dict[str, bool]:
+    def bootstrap_status(self) -> Dict[str, Any]:
         workspace_root = self.storage.config_store.get_base_workspace_root()
         configured = False
         if workspace_root:
@@ -33,7 +34,13 @@ class ProjectService:
                 configured = True
             except InvalidWorkspaceRoot:
                 configured = False
-        return {"ready": configured, "workspace_configured": configured}
+        codex_path = get_codex_cmd()
+        return {
+            "ready": configured,
+            "workspace_configured": configured,
+            "codex_available": codex_path is not None,
+            "codex_path": codex_path,
+        }
 
     def get_workspace_settings(self) -> Dict[str, Optional[str]]:
         return {"base_workspace_root": self.storage.config_store.get_base_workspace_root()}

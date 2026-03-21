@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api } from '../api/client'
+import { api, appendAuthToken } from '../api/client'
 import type { ChatMessage, ChatSession, MessagePart } from '../api/types'
 
 const SSE_RECONNECT_RETRY_MS = 1000
@@ -143,7 +143,7 @@ function openEventStream(
 ) {
   closeEventSource()
 
-  const es = new EventSource(`/v1/projects/${projectId}/nodes/${nodeId}/chat/events`)
+  const es = new EventSource(appendAuthToken(`/v1/projects/${projectId}/nodes/${nodeId}/chat/events`))
   eventSource = es
 
   es.addEventListener('message', (e) => {

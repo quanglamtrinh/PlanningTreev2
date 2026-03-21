@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -11,8 +12,9 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
-from backend.config.app_config import build_app_paths, get_chat_timeout, get_codex_cmd, get_max_chat_message_chars, get_split_timeout
+from backend.config.app_config import build_app_paths, get_chat_timeout, get_codex_cmd, get_max_chat_message_chars, get_port, get_split_timeout
 from backend.errors.app_errors import AppError
+from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import bootstrap, chat, codex, nodes, projects, settings, split
 from backend.services.chat_service import ChatService
 from backend.services.codex_account_service import CodexAccountService
@@ -72,13 +74,21 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    auth_token = get_auth_token()
+    if auth_token:
+        cors_origins = [f"http://127.0.0.1:{get_port()}"]
+    else:
+        cors_origins = ["*"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.add_middleware(AuthTokenMiddleware, token=auth_token)
 
     app.state.paths = paths
     app.state.storage = storage
@@ -123,7 +133,10 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.include_router(split.router, prefix="/v1")
     app.include_router(chat.router, prefix="/v1")
 
-    dist = Path(__file__).parent.parent / "frontend" / "dist"
+    if getattr(sys, "frozen", False):
+        dist = Path(sys._MEIPASS) / "frontend" / "dist"  # type: ignore[attr-defined]
+    else:
+        dist = Path(__file__).parent.parent / "frontend" / "dist"
     if dist.exists():
         app.mount("/", StaticFiles(directory=str(dist), html=True), name="static")
 

@@ -56,8 +56,20 @@
   color: var(--color-text-secondary);
 }
 
+.inputRow {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
 .input {
   padding: 11px 12px;
+  flex: 1;
+}
+
+.browse {
+  white-space: nowrap;
+  padding: 0 14px;
 }
 
 .actions {

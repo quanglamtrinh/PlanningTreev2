@@ -20,6 +20,34 @@ interface ErrorPayload {
 
 const DEFAULT_TIMEOUT_MS = 300_000
 
+let _cachedAuthToken: string | null = null
+
+/**
+ * Eagerly fetch and cache the auth token before any API calls.
+ * No-op when not running inside Electron.
+ */
+export async function initAuthToken(): Promise<void> {
+  if (!window.electronAPI) return
+  if (_cachedAuthToken === null) {
+    _cachedAuthToken = await window.electronAPI.getAuthToken()
+  }
+}
+
+async function getElectronAuthHeaders(): Promise<Record<string, string>> {
+  if (!window.electronAPI) return {}
+  if (_cachedAuthToken === null) {
+    _cachedAuthToken = await window.electronAPI.getAuthToken()
+  }
+  return { Authorization: `Bearer ${_cachedAuthToken}` }
+}
+
+/** Append ?token= for SSE EventSource (which cannot send headers). */
+export function appendAuthToken(url: string): string {
+  if (!window.electronAPI || !_cachedAuthToken) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}token=${_cachedAuthToken}`
+}
+
 function requestTimeoutMs() {
   const raw = Number(import.meta.env.VITE_API_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS)
   if (Number.isFinite(raw) && raw >= 1_000) {
@@ -58,11 +86,13 @@ export class ApiError extends Error {
 }
 
 async function jsonFetch<T>(path: string, init?: RequestInit, body?: JsonBody): Promise<T> {
+  const authHeaders = await getElectronAuthHeaders()
   const response = await withRequestTimeout(
     fetch(path, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders,
         ...(init?.headers ?? {}),
       },
       body: body === undefined ? init?.body : JSON.stringify(body),

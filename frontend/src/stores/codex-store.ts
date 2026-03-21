@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api } from '../api/client'
+import { api, appendAuthToken } from '../api/client'
 import type { CodexSnapshot } from '../api/types'
 
 const SSE_RECONNECT_RETRY_MS = 1000
@@ -116,7 +116,7 @@ function openEventStream(
     return
   }
 
-  const es = new EventSource('/v1/codex/events')
+  const es = new EventSource(appendAuthToken('/v1/codex/events'))
   eventSource = es
 
   es.onopen = () => {

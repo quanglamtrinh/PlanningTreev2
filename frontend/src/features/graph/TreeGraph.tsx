@@ -32,6 +32,7 @@ type Props = {
   isCreatingNode: boolean
   isResettingProject: boolean
   isResetDisabled: boolean
+  codexAvailable: boolean
   onSelectNode: (nodeId: string, persist?: boolean) => Promise<void>
   onCreateChild: (parentId: string) => Promise<void>
   onSplitNode: (nodeId: string, mode: SplitMode) => Promise<void>
@@ -79,6 +80,7 @@ export function TreeGraph({
   isCreatingNode: _isCreatingNode,
   isResettingProject,
   isResetDisabled,
+  codexAvailable,
   onSelectNode,
   onCreateChild,
   onSplitNode,
@@ -320,19 +322,23 @@ export function TreeGraph({
           directHiddenChildrenCount: directHiddenChildrenById.get(node.node_id) ?? 0,
           canCreateChild: node.status !== 'done' && !node.is_superseded,
           canFinishTask:
+            codexAvailable &&
             !node.is_superseded &&
             (activeChildrenById.get(node.node_id) ?? []).length === 0 &&
             (node.status === 'ready' || node.status === 'in_progress'),
           canSplit:
+            codexAvailable &&
             !node.is_superseded &&
             node.status !== 'done' &&
             (activeChildrenById.get(node.node_id) ?? []).length === 0,
+          canOpenBreadcrumb: codexAvailable,
           isSplitting: splitStatus === 'active' && splittingNodeId === node.node_id,
           isSplitDisabled: splitStatus === 'active',
         },
       }))
   }, [
     activeChildrenById,
+    codexAvailable,
     collapsedById,
     directHiddenChildrenById,
     layout,

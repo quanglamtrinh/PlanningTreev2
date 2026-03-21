@@ -10,6 +10,8 @@ export type SplitJobStatus = 'idle' | 'active' | 'failed'
 export interface BootstrapStatus {
   ready: boolean
   workspace_configured: boolean
+  codex_available: boolean
+  codex_path: string | null
 }
 
 export interface WorkspaceSettings {

@@ -35,6 +35,7 @@ vi.mock('../../src/api/client', () => ({
       this.code = payload?.code ?? null
     }
   },
+  appendAuthToken: (url: string) => url,
 }))
 
 // Mock EventSource
