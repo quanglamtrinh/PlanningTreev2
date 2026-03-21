@@ -515,6 +515,12 @@
   transition: width 0.3s ease;
 }
 
+.usageMeta {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
 /* Footer icon row */
 .footerActions {
   display: flex;

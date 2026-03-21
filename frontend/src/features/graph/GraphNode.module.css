@@ -241,12 +241,11 @@
   height: 13px;
 }
 
-/* ─── Dropdown menu ─── */
+/* ─── Dropdown menu (position set inline via portal + fixed; avoids node overlap & RF transform) ─── */
 .dropdown {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
+  position: fixed;
   width: 220px;
+  min-width: 220px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -256,6 +255,62 @@
   background: var(--color-bg-panel);
   box-shadow: var(--shadow-float);
   backdrop-filter: blur(10px);
+  min-height: 0;
+}
+
+.dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dropdown::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
+  border-radius: 100px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.dropdown::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 26%, transparent);
+  background-clip: padding-box;
+}
+
+/* Collapse arrow buttons (Windows often still paints them unless size is forced to 0) */
+.dropdown::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+.dropdown::-webkit-scrollbar-button:vertical:start:decrement,
+.dropdown::-webkit-scrollbar-button:vertical:end:increment,
+.dropdown::-webkit-scrollbar-button:horizontal:start:decrement,
+.dropdown::-webkit-scrollbar-button:horizontal:end:increment {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.dropdown::-webkit-scrollbar-button:single-button:vertical:decrement,
+.dropdown::-webkit-scrollbar-button:single-button:vertical:increment,
+.dropdown::-webkit-scrollbar-button:single-button:horizontal:decrement,
+.dropdown::-webkit-scrollbar-button:single-button:horizontal:increment {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.dropdown::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .dropdownSection {

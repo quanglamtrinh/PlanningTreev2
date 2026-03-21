@@ -16,6 +16,37 @@ export interface WorkspaceSettings {
   base_workspace_root: string | null
 }
 
+export interface CodexAccount {
+  type: 'chatgpt' | 'apikey' | 'unknown'
+  email: string | null
+  plan_type: string | null
+  requires_openai_auth: boolean | null
+}
+
+export interface CodexRateLimitWindow {
+  used_percent: number
+  window_duration_mins: number | null
+  resets_at: number | null
+}
+
+export interface CodexCredits {
+  has_credits: boolean
+  unlimited: boolean
+  balance: string | null
+}
+
+export interface CodexRateLimits {
+  primary: CodexRateLimitWindow | null
+  secondary: CodexRateLimitWindow | null
+  credits: CodexCredits | null
+  plan_type: string | null
+}
+
+export interface CodexSnapshot {
+  account: CodexAccount | null
+  rate_limits: CodexRateLimits | null
+}
+
 export interface ProjectSummary {
   id: string
   name: string

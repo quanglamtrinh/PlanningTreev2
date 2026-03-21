@@ -2,11 +2,43 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 40px 0 24px;
   display: flex;
   flex-direction: column;
   gap: 0;
   scroll-behavior: smooth;
+  /* Match thread background so overscroll / gutter doesn’t flash white */
+  background: var(--bg-app);
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 18%, transparent) transparent;
+}
+
+.feed::-webkit-scrollbar {
+  width: 6px;
+}
+
+.feed::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.feed::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  border-radius: 100px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.feed::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-primary) 26%, transparent);
+  background-clip: padding-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed {
+    scroll-behavior: auto;
+  }
 }
 
 .empty {
@@ -16,4 +48,6 @@
   justify-content: center;
   color: var(--text-tertiary);
   font-size: 14px;
+  min-height: 0;
+  background: var(--bg-app);
 }

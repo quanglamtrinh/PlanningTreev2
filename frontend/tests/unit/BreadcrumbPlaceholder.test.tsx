@@ -21,7 +21,7 @@ describe('BreadcrumbPlaceholder', () => {
     useChatStore.setState(useChatStore.getInitialState())
   })
 
-  it('renders the breadcrumb toolbar and marks breadcrumb as the active surface', () => {
+  it('renders chat and a floating back control; marks breadcrumb as the active surface', () => {
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat']}>
         <Routes>
@@ -30,14 +30,12 @@ describe('BreadcrumbPlaceholder', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByRole('button', { name: 'Back to graph' })).toBeInTheDocument()
-    expect(screen.getByText('Breadcrumb view')).toBeInTheDocument()
-    expect(screen.getByText('Project project-1 / Node root')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back to Graph' })).toBeInTheDocument()
     expect(screen.getByText('Breadcrumb chat stub')).toBeInTheDocument()
     expect(useUIStore.getState().activeSurface).toBe('breadcrumb')
   })
 
-  it('navigates back to the graph route from the breadcrumb toolbar', () => {
+  it('navigates back to the graph route from the back button', () => {
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat']}>
         <Routes>
@@ -48,7 +46,7 @@ describe('BreadcrumbPlaceholder', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Back to graph' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Graph' }))
 
     expect(screen.getByText('Graph workspace stub')).toBeInTheDocument()
     expect(screen.getByTestId('location-path').textContent).toBe('/')

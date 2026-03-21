@@ -13,15 +13,16 @@ from fastapi.staticfiles import StaticFiles
 from backend.ai.codex_client import CodexAppClient, StdioTransport
 from backend.config.app_config import build_app_paths, get_chat_timeout, get_codex_cmd, get_max_chat_message_chars, get_split_timeout
 from backend.errors.app_errors import AppError
-from backend.routes import bootstrap, chat, nodes, projects, settings, split
+from backend.routes import bootstrap, chat, codex, nodes, projects, settings, split
 from backend.services.chat_service import ChatService
+from backend.services.codex_account_service import CodexAccountService
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
 from backend.services.snapshot_view_service import SnapshotViewService
 from backend.services.split_service import SplitService
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
-from backend.streaming.sse_broker import ChatEventBroker
+from backend.streaming.sse_broker import ChatEventBroker, GlobalEventBroker
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,11 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     project_service = ProjectService(storage, snapshot_view_service, chat_service=None)
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     codex_client = CodexAppClient(StdioTransport(codex_cmd=get_codex_cmd() or "codex"))
+    codex_event_broker = GlobalEventBroker()
+    codex_account_service = CodexAccountService(
+        codex_client=codex_client,
+        event_broker=codex_event_broker,
+    )
     split_service = SplitService(
         storage=storage,
         tree_service=tree_service,
@@ -81,6 +87,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.node_service = node_service
     app.state.snapshot_view_service = snapshot_view_service
     app.state.codex_client = codex_client
+    app.state.codex_event_broker = codex_event_broker
+    app.state.codex_account_service = codex_account_service
     app.state.split_service = split_service
     app.state.chat_service = chat_service
     app.state.chat_event_broker = chat_event_broker
@@ -108,6 +116,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         return {"status": "ok", "version": "0.1.0"}
 
     app.include_router(bootstrap.router, prefix="/v1")
+    app.include_router(codex.router, prefix="/v1")
     app.include_router(settings.router, prefix="/v1")
     app.include_router(projects.router, prefix="/v1")
     app.include_router(nodes.router, prefix="/v1")

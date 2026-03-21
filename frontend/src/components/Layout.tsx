@@ -1,11 +1,14 @@
 import { Outlet } from 'react-router-dom'
 import { useEffect } from 'react'
+import { useCodexStore } from '../stores/codex-store'
 import { THEME_OPTIONS, useUIStore } from '../stores/ui-store'
 import styles from './Layout.module.css'
 
 export function Layout() {
   const theme = useUIStore((state) => state.theme)
   const setTheme = useUIStore((state) => state.setTheme)
+  const initializeCodex = useCodexStore((state) => state.initialize)
+  const disconnectCodex = useCodexStore((state) => state.disconnect)
 
   useEffect(() => {
     const root = document.documentElement
@@ -15,6 +18,13 @@ export function Layout() {
       root.setAttribute('data-theme', theme)
     }
   }, [theme])
+
+  useEffect(() => {
+    void initializeCodex()
+    return () => {
+      disconnectCodex()
+    }
+  }, [disconnectCodex, initializeCodex])
 
   return (
     <div className={styles.page}>

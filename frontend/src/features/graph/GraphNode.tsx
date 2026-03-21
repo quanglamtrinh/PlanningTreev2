@@ -1,11 +1,207 @@
-import { memo, useEffect, useRef, useState } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
-import type { SplitMode } from '../../api/types'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
+import { Handle, Position, useStore, type NodeProps } from '@xyflow/react'
 import { NodeStatusBadge } from '../node/NodeStatusBadge'
+import { useGraphNodeActions } from './graphNodeActionsContext'
 import { GRAPH_SPLIT_OPTIONS } from './splitModes'
 import styles from './GraphNode.module.css'
 
 const CONTROL_CLASS_NAME = 'nodrag nopan'
+
+const DROPDOWN_GAP = 8
+const VIEW_MARGIN = 8
+
+function placeDropdownNearAnchor(anchorEl: HTMLElement, dropdownEl: HTMLElement) {
+  const el = dropdownEl
+  el.style.maxHeight = ''
+  el.style.overflowY = ''
+
+  const anchor = anchorEl.getBoundingClientRect()
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const G = DROPDOWN_GAP
+  const M = VIEW_MARGIN
+
+  const menuWidth = Math.max(el.offsetWidth || el.getBoundingClientRect().width, 220)
+  const menuHeight =
+    el.offsetHeight || el.scrollHeight || el.getBoundingClientRect().height || 1
+
+  let left = anchor.right + G
+  if (left + menuWidth > vw - M) {
+    const leftOfAnchor = anchor.left - G - menuWidth
+    if (leftOfAnchor >= M) {
+      left = leftOfAnchor
+    } else {
+      left = Math.max(M, vw - menuWidth - M)
+    }
+  }
+
+  const spaceBelow = vh - M - anchor.bottom - G
+  const spaceAbove = anchor.top - M - G
+
+  let top: number
+  let maxHeightPx: number | undefined
+
+  if (menuHeight <= spaceBelow) {
+    top = anchor.bottom + G
+  } else if (menuHeight <= spaceAbove) {
+    top = anchor.top - G - menuHeight
+  } else if (spaceBelow >= spaceAbove) {
+    top = anchor.bottom + G
+    maxHeightPx = Math.max(120, spaceBelow)
+  } else {
+    top = M
+    maxHeightPx = Math.max(120, spaceAbove)
+  }
+
+  const blockH = maxHeightPx ?? menuHeight
+  if (top + blockH > vh - M) {
+    top = Math.max(M, vh - M - blockH)
+  }
+  if (top < M) {
+    top = M
+    maxHeightPx = Math.max(120, vh - M - top)
+  }
+
+  el.style.position = 'fixed'
+  el.style.left = `${left}px`
+  el.style.top = `${top}px`
+  el.style.right = 'auto'
+  el.style.bottom = 'auto'
+  el.style.zIndex = '10050'
+  if (maxHeightPx !== undefined) {
+    el.style.maxHeight = `${maxHeightPx}px`
+    el.style.overflowY = 'auto'
+  }
+}
+
+function GraphNodeActionsDropdown({
+  anchorRef,
+  nodeId,
+  canCreateChild,
+  canFinishTask,
+  canSplit,
+  isSplitting,
+  isSplitDisabled,
+  onClose,
+}: {
+  anchorRef: RefObject<HTMLDivElement | null>
+  nodeId: string
+  canCreateChild: boolean
+  canFinishTask: boolean
+  canSplit: boolean
+  isSplitting: boolean
+  isSplitDisabled: boolean
+  onClose: () => void
+}) {
+  const actions = useGraphNodeActions()
+  const dropdownRef = useRef<HTMLDivElement | null>(null)
+  const transform = useStore((s) => s.transform)
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target as globalThis.Node
+      if (anchorRef.current?.contains(target) || dropdownRef.current?.contains(target)) {
+        return
+      }
+      onClose()
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose()
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown, true)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown, true)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [anchorRef, onClose])
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current
+    const dropdown = dropdownRef.current
+    if (!anchor || !dropdown) {
+      return undefined
+    }
+
+    const apply = () => {
+      placeDropdownNearAnchor(anchor, dropdown)
+    }
+
+    apply()
+    window.addEventListener('resize', apply)
+    return () => window.removeEventListener('resize', apply)
+  }, [anchorRef, transform])
+
+  return createPortal(
+    <div ref={dropdownRef} className={`${styles.dropdown} ${CONTROL_CLASS_NAME}`}>
+      <div className={styles.dropdownSection}>
+        <p className={styles.dropdownLabel}>Actions</p>
+        <button
+          type="button"
+          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+          disabled={!canCreateChild}
+          onClick={() => {
+            onClose()
+            actions.createChild(nodeId)
+          }}
+        >
+          <span className={styles.menuTitle}>Create Child</span>
+          <span className={styles.menuDesc}>Append a new child node under this card.</span>
+        </button>
+        <button
+          type="button"
+          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+          onClick={() => {
+            onClose()
+            actions.openBreadcrumb(nodeId)
+          }}
+        >
+          <span className={styles.menuTitle}>Open Breadcrumb</span>
+          <span className={styles.menuDesc}>Open the placeholder breadcrumb route for this node.</span>
+        </button>
+        <button
+          type="button"
+          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+          disabled={!canFinishTask}
+          onClick={() => {
+            onClose()
+            actions.finishTask(nodeId)
+          }}
+        >
+          <span className={styles.menuTitle}>Finish Task</span>
+          <span className={styles.menuDesc}>Jump to the breadcrumb placeholder for this leaf node.</span>
+        </button>
+      </div>
+
+      <div className={styles.dropdownSection}>
+        <p className={styles.dropdownLabel}>AI Split</p>
+        {GRAPH_SPLIT_OPTIONS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+            disabled={!canSplit || isSplitDisabled}
+            onClick={() => {
+              onClose()
+              actions.split(nodeId, option.id)
+            }}
+          >
+            <span className={styles.menuTitle}>
+              {isSplitting ? 'Splitting...' : option.label}
+            </span>
+            <span className={styles.menuDesc}>{option.description}</span>
+          </button>
+        ))}
+      </div>
+    </div>,
+    document.body,
+  )
+}
 
 export type GraphNodeData = {
   node: {
@@ -27,48 +223,49 @@ export type GraphNodeData = {
   canSplit: boolean
   isSplitting: boolean
   isSplitDisabled: boolean
-  onSelect: (nodeId: string) => void
-  onToggleCollapse: (nodeId: string) => void
-  onCreateChild: (nodeId: string) => void
-  onSplit: (nodeId: string, mode: SplitMode) => void
-  onOpenBreadcrumb: (nodeId: string) => void
-  onFinishTask: (nodeId: string) => void
-  onInfoClick: (nodeId: string) => void
+}
+
+function childIdsEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((id, i) => id === b[i])
+}
+
+function graphNodePropsAreEqual(prev: NodeProps, next: NodeProps): boolean {
+  if (prev.id !== next.id) return false
+  if (prev.selected !== next.selected) return false
+  if (prev.dragging !== next.dragging) return false
+  const a = prev.data as GraphNodeData
+  const b = next.data as GraphNodeData
+  if (a === b) return true
+  return (
+    a.isCurrent === b.isCurrent &&
+    a.isSelected === b.isSelected &&
+    a.isCollapsed === b.isCollapsed &&
+    a.directHiddenChildrenCount === b.directHiddenChildrenCount &&
+    a.canCreateChild === b.canCreateChild &&
+    a.canFinishTask === b.canFinishTask &&
+    a.canSplit === b.canSplit &&
+    a.isSplitting === b.isSplitting &&
+    a.isSplitDisabled === b.isSplitDisabled &&
+    a.node.node_id === b.node.node_id &&
+    a.node.title === b.node.title &&
+    a.node.description === b.node.description &&
+    a.node.status === b.node.status &&
+    a.node.depth === b.node.depth &&
+    a.node.is_superseded === b.node.is_superseded &&
+    a.node.hierarchical_number === b.node.hierarchical_number &&
+    childIdsEqual(a.node.child_ids, b.node.child_ids)
+  )
 }
 
 function GraphNodeComponent({ data }: NodeProps) {
-  const nodeData = data as GraphNodeData
+  const actions = useGraphNodeActions()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const closeMenu = useCallback(() => setMenuOpen(false), [])
+  const d = data as GraphNodeData
   const descriptionPreview =
-    nodeData.node.description.trim().length > 0
-      ? nodeData.node.description.trim()
-      : 'No description yet.'
-
-  useEffect(() => {
-    if (!menuOpen) {
-      return undefined
-    }
-
-    function handlePointerDown(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as globalThis.Node)) {
-        setMenuOpen(false)
-      }
-    }
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        setMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handlePointerDown, true)
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown, true)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [menuOpen])
+    d.node.description.trim().length > 0 ? d.node.description.trim() : 'No description yet.'
 
   return (
     <div className={styles.wrapper}>
@@ -76,43 +273,43 @@ function GraphNodeComponent({ data }: NodeProps) {
       <div
         role="button"
         tabIndex={0}
-        className={`${styles.card} ${CONTROL_CLASS_NAME} ${nodeData.isSelected ? styles.selected : ''} ${nodeData.isCurrent ? styles.current : ''} ${nodeData.node.status === 'locked' ? styles.locked : ''} ${nodeData.isSplitting ? styles.splitting : ''}`}
-        data-testid={`graph-node-${nodeData.node.node_id}`}
-        data-node-id={nodeData.node.node_id}
-        data-node-title={nodeData.node.title}
-        data-status={nodeData.node.status}
-        onClick={() => nodeData.onSelect(nodeData.node.node_id)}
+        className={`${styles.card} ${CONTROL_CLASS_NAME} ${d.isSelected ? styles.selected : ''} ${d.isCurrent ? styles.current : ''} ${d.node.status === 'locked' ? styles.locked : ''} ${d.isSplitting ? styles.splitting : ''}`}
+        data-testid={`graph-node-${d.node.node_id}`}
+        data-node-id={d.node.node_id}
+        data-node-title={d.node.title}
+        data-status={d.node.status}
+        onClick={() => actions.selectNode(d.node.node_id)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
-            nodeData.onSelect(nodeData.node.node_id)
+            actions.selectNode(d.node.node_id)
           }
         }}
       >
         <div className={styles.header}>
           <div className={styles.titleWrap}>
             <p className={styles.title}>
-              <span className={styles.number}>{nodeData.node.hierarchical_number}</span>
+              <span className={styles.number}>{d.node.hierarchical_number}</span>
               <span className={styles.separator}>/</span>
-              <span>{nodeData.node.title}</span>
+              <span>{d.node.title}</span>
             </p>
-            <NodeStatusBadge status={nodeData.node.status} />
+            <NodeStatusBadge status={d.node.status} />
           </div>
           <div className={styles.headerControls}>
-            {nodeData.node.child_ids.length > 0 ? (
+            {d.node.child_ids.length > 0 ? (
               <button
                 type="button"
                 className={`${styles.collapseToggle} ${CONTROL_CLASS_NAME}`}
                 onClick={(event) => {
                   event.stopPropagation()
-                  nodeData.onToggleCollapse(nodeData.node.node_id)
+                  actions.toggleCollapse(d.node.node_id)
                 }}
-                aria-label={nodeData.isCollapsed ? 'Expand node' : 'Collapse node'}
-                title={nodeData.isCollapsed ? 'Expand node' : 'Collapse node'}
+                aria-label={d.isCollapsed ? 'Expand node' : 'Collapse node'}
+                title={d.isCollapsed ? 'Expand node' : 'Collapse node'}
               >
-                {nodeData.isCollapsed ? '+' : '-'}
-                {nodeData.isCollapsed && nodeData.directHiddenChildrenCount > 0 ? (
-                  <span className={styles.hiddenCount}>{nodeData.directHiddenChildrenCount}</span>
+                {d.isCollapsed ? '+' : '-'}
+                {d.isCollapsed && d.directHiddenChildrenCount > 0 ? (
+                  <span className={styles.hiddenCount}>{d.directHiddenChildrenCount}</span>
                 ) : null}
               </button>
             ) : null}
@@ -121,7 +318,7 @@ function GraphNodeComponent({ data }: NodeProps) {
               className={`${styles.infoBtn} ${CONTROL_CLASS_NAME}`}
               onClick={(event) => {
                 event.stopPropagation()
-                nodeData.onInfoClick(nodeData.node.node_id)
+                actions.infoClick(d.node.node_id)
               }}
               aria-label="Node details"
               title="View node details"
@@ -133,10 +330,10 @@ function GraphNodeComponent({ data }: NodeProps) {
 
         <p className={styles.description}>{descriptionPreview}</p>
         <p className={styles.meta}>
-          Depth {nodeData.node.depth} / {nodeData.node.child_ids.length} child
-          {nodeData.node.child_ids.length === 1 ? '' : 'ren'}
+          Depth {d.node.depth} / {d.node.child_ids.length} child
+          {d.node.child_ids.length === 1 ? '' : 'ren'}
         </p>
-        {nodeData.isSplitting ? <p className={styles.activity}>AI split in progress...</p> : null}
+        {d.isSplitting ? <p className={styles.activity}>AI split in progress...</p> : null}
       </div>
 
       <div className={`${styles.menuAnchor} ${CONTROL_CLASS_NAME}`} ref={menuRef}>
@@ -156,67 +353,16 @@ function GraphNodeComponent({ data }: NodeProps) {
         </button>
 
         {menuOpen ? (
-          <div className={`${styles.dropdown} ${CONTROL_CLASS_NAME}`}>
-            <div className={styles.dropdownSection}>
-              <p className={styles.dropdownLabel}>Actions</p>
-              <button
-                type="button"
-                className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-                disabled={!nodeData.canCreateChild}
-                onClick={() => {
-                  setMenuOpen(false)
-                  nodeData.onCreateChild(nodeData.node.node_id)
-                }}
-              >
-                <span className={styles.menuTitle}>Create Child</span>
-                <span className={styles.menuDesc}>Append a new child node under this card.</span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-                onClick={() => {
-                  setMenuOpen(false)
-                  nodeData.onOpenBreadcrumb(nodeData.node.node_id)
-                }}
-              >
-                <span className={styles.menuTitle}>Open Breadcrumb</span>
-                <span className={styles.menuDesc}>Open the placeholder breadcrumb route for this node.</span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-                disabled={!nodeData.canFinishTask}
-                onClick={() => {
-                  setMenuOpen(false)
-                  nodeData.onFinishTask(nodeData.node.node_id)
-                }}
-              >
-                <span className={styles.menuTitle}>Finish Task</span>
-                <span className={styles.menuDesc}>Jump to the breadcrumb placeholder for this leaf node.</span>
-              </button>
-            </div>
-
-            <div className={styles.dropdownSection}>
-              <p className={styles.dropdownLabel}>AI Split</p>
-              {GRAPH_SPLIT_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-                  disabled={!nodeData.canSplit || nodeData.isSplitDisabled}
-                  onClick={() => {
-                    setMenuOpen(false)
-                    nodeData.onSplit(nodeData.node.node_id, option.id)
-                  }}
-                >
-                  <span className={styles.menuTitle}>
-                    {nodeData.isSplitting ? 'Splitting...' : option.label}
-                  </span>
-                  <span className={styles.menuDesc}>{option.description}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+          <GraphNodeActionsDropdown
+            anchorRef={menuRef}
+            nodeId={d.node.node_id}
+            canCreateChild={d.canCreateChild}
+            canFinishTask={d.canFinishTask}
+            canSplit={d.canSplit}
+            isSplitting={d.isSplitting}
+            isSplitDisabled={d.isSplitDisabled}
+            onClose={closeMenu}
+          />
         ) : null}
       </div>
 
@@ -225,4 +371,4 @@ function GraphNodeComponent({ data }: NodeProps) {
   )
 }
 
-export const GraphNode = memo(GraphNodeComponent)
+export const GraphNode = memo(GraphNodeComponent, graphNodePropsAreEqual) as typeof GraphNodeComponent

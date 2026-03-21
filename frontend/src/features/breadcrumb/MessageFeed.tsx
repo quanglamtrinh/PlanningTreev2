@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import type { ChatMessage, MessagePart } from '../../api/types'
 import { StatusPill } from './StatusPill'
 import { ToolCallBlock } from './ToolCallBlock'
@@ -174,12 +174,56 @@ function renderAssistantBody(msg: ChatMessage) {
   if (msg.parts && msg.parts.length > 0) {
     return msg.parts.map((part, i) => renderPart(part, i))
   }
-  // Fallback: render flat content
   if (msg.content) {
     return <div className={styles.content}>{renderContent(msg.content)}</div>
   }
   return null
 }
+
+function partsEqual(a: MessagePart[] | undefined, b: MessagePart[] | undefined): boolean {
+  if (a === b) return true
+  if (!a || !b) return a === b
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (JSON.stringify(a[i]) !== JSON.stringify(b[i])) return false
+  }
+  return true
+}
+
+const MessageFeedRow = memo(
+  function MessageFeedRow({ msg }: { msg: ChatMessage }) {
+    return (
+      <div
+        className={`${styles.row} ${msg.role === 'user' ? styles.rowUser : styles.rowAssistant}`}
+      >
+        {msg.role === 'assistant' && <AssistantAvatar />}
+        <div className={styles.bubble}>
+          {msg.role === 'assistant' && msg.status === 'pending' && !msg.parts?.length && (
+            <div className={styles.thinking}>
+              <span className={styles.thinkingDot} />
+              Thinking...
+            </div>
+          )}
+          {msg.role === 'assistant' && msg.status === 'error' && msg.error && (
+            <div style={{ color: 'var(--text-error, #dc2626)', fontSize: 13, marginBottom: 4 }}>
+              Error: {msg.error}
+            </div>
+          )}
+          {msg.role === 'assistant' ? renderAssistantBody(msg) : (
+            msg.content && <div className={styles.content}>{renderContent(msg.content)}</div>
+          )}
+        </div>
+      </div>
+    )
+  },
+  (prev, next) =>
+    prev.msg.message_id === next.msg.message_id &&
+    prev.msg.role === next.msg.role &&
+    prev.msg.status === next.msg.status &&
+    prev.msg.content === next.msg.content &&
+    prev.msg.error === next.msg.error &&
+    partsEqual(prev.msg.parts, next.msg.parts),
+)
 
 interface MessageFeedProps {
   messages: ChatMessage[]
@@ -187,10 +231,23 @@ interface MessageFeedProps {
 
 export function MessageFeed({ messages }: MessageFeedProps) {
   const endRef = useRef<HTMLDivElement>(null)
+  const prevCountRef = useRef(0)
+
+  const tail = messages.length > 0 ? messages[messages.length - 1] : undefined
+  const tailPartsKey = tail?.parts?.length ? JSON.stringify(tail.parts) : ''
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length, messages[messages.length - 1]?.content])
+    const n = messages.length
+    const isNewMessage = n > prevCountRef.current
+    prevCountRef.current = n
+
+    if (n === 0) {
+      return
+    }
+
+    const behavior: ScrollBehavior = isNewMessage ? 'smooth' : 'auto'
+    endRef.current?.scrollIntoView({ behavior, block: 'end' })
+  }, [messages.length, tail?.message_id, tail?.content, tail?.status, tail?.error, tailPartsKey])
 
   if (messages.length === 0) {
     return (
@@ -203,28 +260,7 @@ export function MessageFeed({ messages }: MessageFeedProps) {
   return (
     <div className={feedStyles.feed}>
       {messages.map((msg) => (
-        <div
-          key={msg.message_id}
-          className={`${styles.row} ${msg.role === 'user' ? styles.rowUser : styles.rowAssistant}`}
-        >
-          {msg.role === 'assistant' && <AssistantAvatar />}
-          <div className={styles.bubble}>
-            {msg.role === 'assistant' && msg.status === 'pending' && !msg.parts?.length && (
-              <div className={styles.thinking}>
-                <span className={styles.thinkingDot} />
-                Thinking...
-              </div>
-            )}
-            {msg.role === 'assistant' && msg.status === 'error' && msg.error && (
-              <div style={{ color: 'var(--text-error, #dc2626)', fontSize: 13, marginBottom: 4 }}>
-                Error: {msg.error}
-              </div>
-            )}
-            {msg.role === 'assistant' ? renderAssistantBody(msg) : (
-              msg.content && <div className={styles.content}>{renderContent(msg.content)}</div>
-            )}
-          </div>
-        </div>
+        <MessageFeedRow key={msg.message_id} msg={msg} />
       ))}
       <div ref={endRef} />
     </div>

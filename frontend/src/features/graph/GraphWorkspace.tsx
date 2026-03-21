@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useShallow } from 'zustand/react/shallow'
 import type { SplitMode } from '../../api/types'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
@@ -11,27 +12,53 @@ import styles from './GraphWorkspace.module.css'
 export function GraphWorkspace() {
   const navigate = useNavigate()
 
-  const initialize = useProjectStore((state) => state.initialize)
-  const setWorkspaceRoot = useProjectStore((state) => state.setWorkspaceRoot)
-  const resetProjectToRoot = useProjectStore((state) => state.resetProjectToRoot)
-  const selectNode = useProjectStore((state) => state.selectNode)
-  const createChild = useProjectStore((state) => state.createChild)
-  const splitNode = useProjectStore((state) => state.splitNode)
-  const hasInitialized = useProjectStore((state) => state.hasInitialized)
-  const isInitializing = useProjectStore((state) => state.isInitializing)
-  const bootstrap = useProjectStore((state) => state.bootstrap)
-  const baseWorkspaceRoot = useProjectStore((state) => state.baseWorkspaceRoot)
-  const projects = useProjectStore((state) => state.projects)
-  const activeProjectId = useProjectStore((state) => state.activeProjectId)
-  const snapshot = useProjectStore((state) => state.snapshot)
-  const selectedNodeId = useProjectStore((state) => state.selectedNodeId)
-  const splitStatus = useProjectStore((state) => state.splitStatus)
-  const splitNodeId = useProjectStore((state) => state.splitNodeId)
-  const error = useProjectStore((state) => state.error)
-  const isWorkspaceSaving = useProjectStore((state) => state.isWorkspaceSaving)
-  const isLoadingSnapshot = useProjectStore((state) => state.isLoadingSnapshot)
-  const isCreatingNode = useProjectStore((state) => state.isCreatingNode)
-  const isResettingProject = useProjectStore((state) => state.isResettingProject)
+  const {
+    initialize,
+    setWorkspaceRoot,
+    resetProjectToRoot,
+    selectNode,
+    createChild,
+    splitNode,
+    hasInitialized,
+    isInitializing,
+    bootstrap,
+    baseWorkspaceRoot,
+    projects,
+    activeProjectId,
+    snapshot,
+    selectedNodeId,
+    splitStatus,
+    splitNodeId,
+    error,
+    isWorkspaceSaving,
+    isLoadingSnapshot,
+    isCreatingNode,
+    isResettingProject,
+  } = useProjectStore(
+    useShallow((state) => ({
+      initialize: state.initialize,
+      setWorkspaceRoot: state.setWorkspaceRoot,
+      resetProjectToRoot: state.resetProjectToRoot,
+      selectNode: state.selectNode,
+      createChild: state.createChild,
+      splitNode: state.splitNode,
+      hasInitialized: state.hasInitialized,
+      isInitializing: state.isInitializing,
+      bootstrap: state.bootstrap,
+      baseWorkspaceRoot: state.baseWorkspaceRoot,
+      projects: state.projects,
+      activeProjectId: state.activeProjectId,
+      snapshot: state.snapshot,
+      selectedNodeId: state.selectedNodeId,
+      splitStatus: state.splitStatus,
+      splitNodeId: state.splitNodeId,
+      error: state.error,
+      isWorkspaceSaving: state.isWorkspaceSaving,
+      isLoadingSnapshot: state.isLoadingSnapshot,
+      isCreatingNode: state.isCreatingNode,
+      isResettingProject: state.isResettingProject,
+    })),
+  )
   const setActiveSurface = useUIStore((state) => state.setActiveSurface)
 
   useEffect(() => {

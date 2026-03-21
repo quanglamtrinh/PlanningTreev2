@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
+import { useShallow } from 'zustand/react/shallow'
 import { useChatStore } from '../../stores/chat-store'
 import { useProjectStore } from '../../stores/project-store'
 import { NodeDetailCard } from '../node/NodeDetailCard'
@@ -10,21 +11,37 @@ import styles from './BreadcrumbChatView.module.css'
 export function BreadcrumbChatView() {
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
 
-  const session = useChatStore((s) => s.session)
-  const isLoading = useChatStore((s) => s.isLoading)
-  const isSending = useChatStore((s) => s.isSending)
-  const error = useChatStore((s) => s.error)
-  const loadSession = useChatStore((s) => s.loadSession)
-  const sendMessage = useChatStore((s) => s.sendMessage)
-  const disconnect = useChatStore((s) => s.disconnect)
+  const { session, isLoading, isSending, error, loadSession, sendMessage, disconnect } = useChatStore(
+    useShallow((s) => ({
+      session: s.session,
+      isLoading: s.isLoading,
+      isSending: s.isSending,
+      error: s.error,
+      loadSession: s.loadSession,
+      sendMessage: s.sendMessage,
+      disconnect: s.disconnect,
+    })),
+  )
 
-  const activeProjectId = useProjectStore((state) => state.activeProjectId)
-  const snapshot = useProjectStore((state) => state.snapshot)
-  const selectedNodeId = useProjectStore((state) => state.selectedNodeId)
-  const isLoadingSnapshot = useProjectStore((state) => state.isLoadingSnapshot)
-  const projectError = useProjectStore((state) => state.error)
-  const loadProject = useProjectStore((state) => state.loadProject)
-  const selectNode = useProjectStore((state) => state.selectNode)
+  const {
+    activeProjectId,
+    snapshot,
+    selectedNodeId,
+    isLoadingSnapshot,
+    error: projectError,
+    loadProject,
+    selectNode,
+  } = useProjectStore(
+    useShallow((state) => ({
+      activeProjectId: state.activeProjectId,
+      snapshot: state.snapshot,
+      selectedNodeId: state.selectedNodeId,
+      isLoadingSnapshot: state.isLoadingSnapshot,
+      error: state.error,
+      loadProject: state.loadProject,
+      selectNode: state.selectNode,
+    })),
+  )
 
   useEffect(() => {
     if (projectId && nodeId) {

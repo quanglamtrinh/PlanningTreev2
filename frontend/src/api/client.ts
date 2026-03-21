@@ -1,6 +1,7 @@
 import type {
   BootstrapStatus,
   ChatSession,
+  CodexSnapshot,
   ProjectSummary,
   SendMessageResponse,
   Snapshot,
@@ -87,6 +88,9 @@ async function jsonFetch<T>(path: string, init?: RequestInit, body?: JsonBody): 
 export const api = {
   getBootstrapStatus(): Promise<BootstrapStatus> {
     return jsonFetch('/v1/bootstrap/status')
+  },
+  getCodexSnapshot(): Promise<CodexSnapshot> {
+    return jsonFetch('/v1/codex/account')
   },
   getWorkspaceSettings(): Promise<WorkspaceSettings> {
     return jsonFetch('/v1/settings/workspace')

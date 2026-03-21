@@ -3,6 +3,8 @@ import { useEffect, type ComponentType, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@xyflow/react', () => ({
+  useStore: (selector: (state: { transform: [number, number, number] }) => unknown) =>
+    selector({ transform: [0, 0, 1] }),
   ReactFlow: ({
     nodes,
     nodeTypes,

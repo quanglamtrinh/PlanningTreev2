@@ -1,12 +1,11 @@
 import { useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useUIStore } from '../../stores/ui-store'
 import { BreadcrumbChatView } from './BreadcrumbChatView'
 import styles from './BreadcrumbPlaceholder.module.css'
 
 export function BreadcrumbPlaceholder() {
   const navigate = useNavigate()
-  const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
   const setActiveSurface = useUIStore((state) => state.setActiveSurface)
 
   useEffect(() => {
@@ -20,33 +19,22 @@ export function BreadcrumbPlaceholder() {
 
   return (
     <section className={styles.view}>
-      <div className={styles.toolbar}>
-        <button type="button" className={styles.backButton} onClick={handleBackToGraph}>
-          <svg
-            className={styles.backIcon}
-            viewBox="0 0 16 16"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="M6.5 3.5 2 8m0 0 4.5 4.5M2 8h12"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          <span>Back to graph</span>
-        </button>
-
-        <div className={styles.context}>
-          <p className={styles.eyebrow}>Breadcrumb view</p>
-          <p className={styles.meta}>
-            {projectId ? `Project ${projectId}` : 'Project'}
-            {nodeId ? ` / Node ${nodeId}` : ''}
-          </p>
-        </div>
-      </div>
+      <button
+        type="button"
+        className={styles.backButton}
+        onClick={handleBackToGraph}
+        aria-label="Back to Graph"
+      >
+        <svg className={styles.backIcon} viewBox="0 0 16 16" fill="none" aria-hidden>
+          <path
+            d="M6.5 3.5 2 8m0 0 4.5 4.5M2 8h12"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
 
       <div className={styles.chatPanel}>
         <BreadcrumbChatView />

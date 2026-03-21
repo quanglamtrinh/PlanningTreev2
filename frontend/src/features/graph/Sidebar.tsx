@@ -1,7 +1,10 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useShallow } from 'zustand/react/shallow'
 import type { NodeRecord, ProjectSummary, Snapshot } from '../../api/types'
+import { useCodexStore } from '../../stores/codex-store'
 import { useProjectStore } from '../../stores/project-store'
+import { getCodexUsageLabels } from './usageLabels'
 import styles from './Sidebar.module.css'
 
 // ─── Relative time ────────────────────────────────────────────────────────────
@@ -37,18 +40,34 @@ export function Sidebar() {
   const [isPickerLoading, setIsPickerLoading] = useState(false)
   const [pickerError, setPickerError] = useState<string | null>(null)
 
-  const projects = useProjectStore((s) => s.projects)
-  const activeProjectId = useProjectStore((s) => s.activeProjectId)
-  const isLoadingProjects = useProjectStore((s) => s.isLoadingProjects)
-  const snapshot = useProjectStore((s) => s.snapshot)
-  const selectedNodeId = useProjectStore((s) => s.selectedNodeId)
-
-  const loadProject = useProjectStore((s) => s.loadProject)
-  const refreshProjects = useProjectStore((s) => s.refreshProjects)
-  const selectNode = useProjectStore((s) => s.selectNode)
-  const createProject = useProjectStore((s) => s.createProject)
-  const deleteProject = useProjectStore((s) => s.deleteProject)
-  const setWorkspaceRoot = useProjectStore((s) => s.setWorkspaceRoot)
+  const {
+    projects,
+    activeProjectId,
+    isLoadingProjects,
+    snapshot,
+    selectedNodeId,
+    loadProject,
+    refreshProjects,
+    selectNode,
+    createProject,
+    deleteProject,
+    setWorkspaceRoot,
+  } = useProjectStore(
+    useShallow((s) => ({
+      projects: s.projects,
+      activeProjectId: s.activeProjectId,
+      isLoadingProjects: s.isLoadingProjects,
+      snapshot: s.snapshot,
+      selectedNodeId: s.selectedNodeId,
+      loadProject: s.loadProject,
+      refreshProjects: s.refreshProjects,
+      selectNode: s.selectNode,
+      createProject: s.createProject,
+      deleteProject: s.deleteProject,
+      setWorkspaceRoot: s.setWorkspaceRoot,
+    })),
+  )
+  const codexRateLimits = useCodexStore((s) => s.snapshot?.rate_limits ?? null)
 
   const handleProjectClick = useCallback(
     (projectId: string) => { void loadProject(projectId) },
@@ -128,6 +147,15 @@ export function Sidebar() {
   const toggleSidebar = useCallback(() => {
     setIsCollapsed((prev) => !prev)
   }, [])
+
+  const {
+    sessionPercent,
+    weeklyPercent,
+    sessionResetLabel,
+    weeklyResetLabel,
+    creditsLabel,
+    showWeekly,
+  } = useMemo(() => getCodexUsageLabels(codexRateLimits), [codexRateLimits])
 
   // Suppressed — only used by getVisibleNodes helper kept for reference
   void expandedProjects
@@ -262,20 +290,36 @@ export function Sidebar() {
         <div className={styles.usageBlock}>
           <div className={styles.usageRow}>
             <span className={styles.usageLabel}>Session</span>
-            <span className={styles.usageHint}>· Resets 2 hours</span>
-            <span className={styles.usagePct}>8%</span>
+            <span className={styles.usageHint}>
+              {sessionResetLabel ? `· ${sessionResetLabel}` : ''}
+            </span>
+            <span className={styles.usagePct}>
+              {sessionPercent === null ? '--' : `${sessionPercent}%`}
+            </span>
           </div>
           <div className={styles.usageBar}>
-            <div className={styles.usageBarFill} style={{ width: '8%' }} />
+            <div className={styles.usageBarFill} style={{ width: `${sessionPercent ?? 0}%` }} />
           </div>
-          <div className={styles.usageRow} style={{ marginTop: 8 }}>
-            <span className={styles.usageLabel}>Weekly</span>
-            <span className={styles.usageHint}>· Resets 6 days</span>
-            <span className={styles.usagePct}>22%</span>
-          </div>
-          <div className={styles.usageBar}>
-            <div className={styles.usageBarFillWeekly} style={{ width: '22%' }} />
-          </div>
+          {showWeekly ? (
+            <>
+              <div className={styles.usageRow} style={{ marginTop: 8 }}>
+                <span className={styles.usageLabel}>Weekly</span>
+                <span className={styles.usageHint}>
+                  {weeklyResetLabel ? `· ${weeklyResetLabel}` : ''}
+                </span>
+                <span className={styles.usagePct}>
+                  {weeklyPercent === null ? '--' : `${weeklyPercent}%`}
+                </span>
+              </div>
+              <div className={styles.usageBar}>
+                <div
+                  className={styles.usageBarFillWeekly}
+                  style={{ width: `${weeklyPercent ?? 0}%` }}
+                />
+              </div>
+            </>
+          ) : null}
+          {creditsLabel ? <div className={styles.usageMeta}>{creditsLabel}</div> : null}
         </div>
         <div className={styles.footerActions}>
           <button type="button" className={styles.footerBtn} title="Account" aria-label="Account">

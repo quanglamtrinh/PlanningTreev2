@@ -12,6 +12,10 @@ import {
 import '@xyflow/react/dist/style.css'
 import type { NodeRecord, Snapshot, SplitJobStatus, SplitMode } from '../../api/types'
 import { NodeDetailCard } from '../node/NodeDetailCard'
+import {
+  GraphNodeActionsProvider,
+  type GraphNodeActions,
+} from './graphNodeActionsContext'
 import { GraphNode, type GraphNodeData } from './GraphNode'
 import { buildTreeLayoutPositions } from './treeGraphLayout'
 import styles from './TreeGraph.module.css'
@@ -100,6 +104,45 @@ export function TreeGraph({
     onOpenBreadcrumb,
     onFinishTask,
   }
+
+  const nodeByIdRef = useRef<Map<string, NodeRecord>>(new Map())
+  const graphNodeActions = useMemo<GraphNodeActions>(
+    () => ({
+      selectNode: (nodeId) => {
+        void handlerRef.current.onSelectNode(nodeId, true)
+      },
+      toggleCollapse: (nodeId) => {
+        setCollapseOverrides((current) => {
+          const nodeRecord = nodeByIdRef.current.get(nodeId)
+          if (!nodeRecord) {
+            return current
+          }
+          const currentValue =
+            typeof current[nodeId] === 'boolean'
+              ? current[nodeId]
+              : defaultCollapsedForStatus(nodeRecord.status)
+          return { ...current, [nodeId]: !currentValue }
+        })
+      },
+      createChild: (nodeId) => {
+        void handlerRef.current.onCreateChild(nodeId)
+      },
+      split: (nodeId, mode) => {
+        void handlerRef.current.onSplitNode(nodeId, mode)
+      },
+      openBreadcrumb: (nodeId) => {
+        void handlerRef.current.onOpenBreadcrumb(nodeId)
+      },
+      finishTask: (nodeId) => {
+        void handlerRef.current.onFinishTask(nodeId)
+      },
+      infoClick: (nodeId) => {
+        setFocusedNodeId((prev) => (prev === nodeId ? null : nodeId))
+        void handlerRef.current.onSelectNode(nodeId, true)
+      },
+    }),
+    [],
+  )
 
   const nodeById = useMemo(
     () => new Map(snapshot.tree_state.node_registry.map((node) => [node.node_id, node])),
@@ -286,38 +329,6 @@ export function TreeGraph({
             (activeChildrenById.get(node.node_id) ?? []).length === 0,
           isSplitting: splitStatus === 'active' && splittingNodeId === node.node_id,
           isSplitDisabled: splitStatus === 'active',
-          onSelect: (nodeId) => {
-            void handlerRef.current.onSelectNode(nodeId, true)
-          },
-          onToggleCollapse: (nodeId) => {
-            setCollapseOverrides((current) => {
-              const nodeRecord = nodeById.get(nodeId)
-              if (!nodeRecord) {
-                return current
-              }
-              const currentValue =
-                typeof current[nodeId] === 'boolean'
-                  ? current[nodeId]
-                  : defaultCollapsedForStatus(nodeRecord.status)
-              return { ...current, [nodeId]: !currentValue }
-            })
-          },
-          onCreateChild: (nodeId) => {
-            void handlerRef.current.onCreateChild(nodeId)
-          },
-          onSplit: (nodeId, mode) => {
-            void handlerRef.current.onSplitNode(nodeId, mode)
-          },
-          onOpenBreadcrumb: (nodeId) => {
-            void handlerRef.current.onOpenBreadcrumb(nodeId)
-          },
-          onFinishTask: (nodeId) => {
-            void handlerRef.current.onFinishTask(nodeId)
-          },
-          onInfoClick: (nodeId) => {
-            setFocusedNodeId((prev) => (prev === nodeId ? null : nodeId))
-            void handlerRef.current.onSelectNode(nodeId, true)
-          },
         },
       }))
   }, [
@@ -325,7 +336,6 @@ export function TreeGraph({
     collapsedById,
     directHiddenChildrenById,
     layout,
-    nodeById,
     selectedNode?.node_id,
     splitStatus,
     splittingNodeId,
@@ -367,8 +377,12 @@ export function TreeGraph({
       return undefined
     }
     const handle = window.setTimeout(() => {
-      flowInstance.fitView({ padding: 0.18, duration: 240, maxZoom: 1.12 })
-    }, 20)
+      flowInstance.fitView({
+        padding: 0.18,
+        duration: isFullscreen ? 0 : 180,
+        maxZoom: 1.12,
+      })
+    }, 120)
     return () => window.clearTimeout(handle)
   }, [fitKey, flowInstance, flowNodes.length, isFullscreen])
 
@@ -386,53 +400,56 @@ export function TreeGraph({
           <p>The project snapshot is missing its root node, so the graph cannot be rendered safely.</p>
         </div>
       ) : (
-        <ReactFlow
-          fitView
-          proOptions={{ hideAttribution: true }}
-          nodes={flowNodes}
-          edges={flowEdges}
-          nodeTypes={nodeTypes}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          minZoom={0.2}
-          maxZoom={1.35}
-          onInit={setFlowInstance}
-          onNodeClick={handleFlowNodePointerEvents}
-        >
-          <Background color="var(--color-border-strong)" gap={24} size={1} />
-          <Controls showInteractive={false} position="bottom-right" />
+        <GraphNodeActionsProvider value={graphNodeActions}>
+          <ReactFlow
+            fitView
+            proOptions={{ hideAttribution: true }}
+            nodes={flowNodes}
+            edges={flowEdges}
+            nodeTypes={nodeTypes}
+            onlyRenderVisibleElements
+            nodesDraggable={false}
+            nodesConnectable={false}
+            minZoom={0.2}
+            maxZoom={1.35}
+            onInit={setFlowInstance}
+            onNodeClick={handleFlowNodePointerEvents}
+          >
+            <Background color="var(--color-border-strong)" gap={24} size={1} />
+            <Controls showInteractive={false} position="bottom-right" />
 
-          <Panel position="bottom-left">
-            <div className={styles.controlStack}>
-              <button
-                type="button"
-                className={styles.fullscreenButton}
-                onClick={() => setIsFullscreen((current) => !current)}
-              >
-                {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-              </button>
-              <button
-                type="button"
-                className={styles.resetButton}
-                disabled={isResetDisabled}
-                onClick={() => void onResetProject()}
-              >
-                {isResettingProject ? 'Resetting...' : 'Reset to Root'}
-              </button>
-            </div>
-          </Panel>
-
-          {focusedNode ? (
-            <Panel position="top-right" className={styles.detailPanel}>
-              <NodeDetailCard
-                node={focusedNode}
-                variant="graph"
-                showClose
-                onClose={() => setFocusedNodeId(null)}
-              />
+            <Panel position="bottom-left">
+              <div className={styles.controlStack}>
+                <button
+                  type="button"
+                  className={styles.fullscreenButton}
+                  onClick={() => setIsFullscreen((current) => !current)}
+                >
+                  {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                </button>
+                <button
+                  type="button"
+                  className={styles.resetButton}
+                  disabled={isResetDisabled}
+                  onClick={() => void onResetProject()}
+                >
+                  {isResettingProject ? 'Resetting...' : 'Reset to Root'}
+                </button>
+              </div>
             </Panel>
-          ) : null}
-        </ReactFlow>
+
+            {focusedNode ? (
+              <Panel position="top-right" className={styles.detailPanel}>
+                <NodeDetailCard
+                  node={focusedNode}
+                  variant="graph"
+                  showClose
+                  onClose={() => setFocusedNodeId(null)}
+                />
+              </Panel>
+            ) : null}
+          </ReactFlow>
+        </GraphNodeActionsProvider>
       )}
     </div>
   )

@@ -71,3 +71,30 @@ def test_send_prompt_streaming_forwards_optional_plan_delta_callback(monkeypatch
     assert response["stdout"] == "ok"
     assert captured["prompt"] == "hello"
     assert captured["on_plan_delta"] is callback
+
+
+def test_global_account_notifications_do_not_break_turn_scoped_notifications() -> None:
+    transport = StdioTransport()
+    account_updates: list[dict[str, object]] = []
+    rate_limit_updates: list[dict[str, object]] = []
+    deltas: list[str] = []
+
+    transport.add_account_updated_listener(account_updates.append)
+    transport.add_rate_limits_updated_listener(rate_limit_updates.append)
+
+    state = transport._get_turn_state("turn_1")
+    state.on_delta = deltas.append
+
+    transport._handle_notification("account/updated", {"authMode": "chatgpt"})
+    transport._handle_notification(
+        "account/rateLimits/updated",
+        {"rateLimits": {"primary": {"usedPercent": 10}}},
+    )
+    transport._handle_notification(
+        "item/agentMessage/delta",
+        {"turnId": "turn_1", "delta": "hello"},
+    )
+
+    assert account_updates == [{"authMode": "chatgpt"}]
+    assert rate_limit_updates == [{"rateLimits": {"primary": {"usedPercent": 10}}}]
+    assert deltas == ["hello"]
