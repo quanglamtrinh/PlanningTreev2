@@ -147,6 +147,7 @@ export function BreadcrumbChatView() {
       <aside className={styles.detailPane} data-testid="breadcrumb-detail-pane">
         <div className={styles.detailRail}>
           <NodeDetailCard
+            projectId={projectId ?? null}
             node={detailNode}
             variant="breadcrumb"
             showClose={false}

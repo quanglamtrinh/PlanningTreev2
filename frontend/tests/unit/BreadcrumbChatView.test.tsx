@@ -5,10 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getBootstrapStatus: vi.fn(),
-    getWorkspaceSettings: vi.fn(),
-    setWorkspaceRoot: vi.fn(),
     listProjects: vi.fn(),
-    createProject: vi.fn(),
+    attachProjectFolder: vi.fn(),
     deleteProject: vi.fn(),
     getSnapshot: vi.fn(),
     resetProjectToRoot: vi.fn(),
@@ -17,10 +15,31 @@ const { apiMock } = vi.hoisted(() => ({
     splitNode: vi.fn(),
     getSplitStatus: vi.fn(),
     updateNode: vi.fn(),
+    getNodeDocument: vi.fn(),
+    putNodeDocument: vi.fn(),
     getChatSession: vi.fn(),
     sendChatMessage: vi.fn(),
     resetChatSession: vi.fn(),
   },
+}))
+
+vi.mock('@uiw/react-codemirror', () => ({
+  default: ({
+    value,
+    onChange,
+    onBlur,
+  }: {
+    value: string
+    onChange?: (value: string) => void
+    onBlur?: () => void
+  }) => (
+    <textarea
+      data-testid="mock-codemirror"
+      value={value}
+      onChange={(event) => onChange?.(event.target.value)}
+      onBlur={() => onBlur?.()}
+    />
+  ),
 }))
 
 vi.mock('../../src/api/client', () => {
@@ -58,6 +77,7 @@ vi.mock('../../src/features/breadcrumb/ComposerBar', () => ({
 import type { ChatSession, Snapshot } from '../../src/api/types'
 import { BreadcrumbChatView } from '../../src/features/breadcrumb/BreadcrumbChatView'
 import { useChatStore } from '../../src/stores/chat-store'
+import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useProjectStore } from '../../src/stores/project-store'
 
 function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
@@ -78,8 +98,7 @@ function makeSnapshot(projectId = 'project-1', activeNodeId: string | null = 'ro
       id: projectId,
       name: `Project ${projectId}`,
       root_goal: `Goal ${projectId}`,
-      base_workspace_root: 'C:/workspace',
-      project_workspace_root: `C:/workspace/${projectId}`,
+      project_path: `C:/workspace/${projectId}`,
       created_at: '2026-03-20T00:00:00Z',
       updated_at: '2026-03-20T00:00:00Z',
     },
@@ -151,8 +170,21 @@ describe('BreadcrumbChatView', () => {
     }
     useChatStore.getState().disconnect()
     useProjectStore.setState(useProjectStore.getInitialState())
+    useNodeDocumentStore.getState().reset()
     apiMock.getChatSession.mockResolvedValue(makeSession())
     apiMock.getSplitStatus.mockResolvedValue(makeIdleSplitStatus())
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-20T00:00:00Z',
+    })
+    apiMock.putNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-20T00:00:00Z',
+    })
   })
 
   it('renders a 60/40 thread and detail layout for the route node', async () => {

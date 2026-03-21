@@ -7,8 +7,8 @@ from typing import Any
 from backend.config.app_config import AppPaths
 from backend.errors.app_errors import ProjectNotFound
 from backend.storage.file_utils import atomic_write_json, load_json
-from backend.storage.project_ids import normalize_project_id
 from backend.storage.project_locks import ProjectLockRegistry
+from backend.storage.workspace_store import WorkspaceStore
 
 _DEFAULT_STATE = {
     "thread_id": None,
@@ -18,13 +18,22 @@ _DEFAULT_STATE = {
 
 
 class SplitStateStore:
-    def __init__(self, paths: AppPaths, lock_registry: ProjectLockRegistry) -> None:
+    def __init__(
+        self,
+        paths: AppPaths,
+        workspace_store: WorkspaceStore,
+        lock_registry: ProjectLockRegistry,
+    ) -> None:
         self._paths = paths
+        self._workspace_store = workspace_store
         self._lock_registry = lock_registry
 
+    def _project_dir(self, project_id: str) -> Path:
+        folder_path = self._workspace_store.get_folder_path(project_id)
+        return Path(folder_path).expanduser().resolve() / ".planningtree"
+
     def path(self, project_id: str) -> Path:
-        normalized = normalize_project_id(project_id)
-        return self._paths.projects_root / normalized / "split_state.json"
+        return self._project_dir(project_id) / "split_state.json"
 
     def read_state(self, project_id: str) -> dict[str, Any]:
         with self._lock_registry.for_project(project_id):
@@ -33,7 +42,7 @@ class SplitStateStore:
 
     def write_state(self, project_id: str, state: dict[str, Any]) -> dict[str, Any]:
         with self._lock_registry.for_project(project_id):
-            project_dir = self.path(project_id).parent
+            project_dir = self._project_dir(project_id)
             if not project_dir.exists():
                 raise ProjectNotFound(project_id)
             normalized = self._normalize_state(state)

@@ -4,7 +4,6 @@ import { useShallow } from 'zustand/react/shallow'
 import type { SplitMode } from '../../api/types'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
-import { WorkspaceSetup } from '../auth/WorkspaceSetup'
 import { Sidebar } from './Sidebar'
 import { TreeGraph } from './TreeGraph'
 import styles from './GraphWorkspace.module.css'
@@ -14,7 +13,6 @@ export function GraphWorkspace() {
 
   const {
     initialize,
-    setWorkspaceRoot,
     resetProjectToRoot,
     selectNode,
     createChild,
@@ -22,7 +20,6 @@ export function GraphWorkspace() {
     hasInitialized,
     isInitializing,
     bootstrap,
-    baseWorkspaceRoot,
     projects,
     activeProjectId,
     snapshot,
@@ -30,14 +27,12 @@ export function GraphWorkspace() {
     splitStatus,
     splitNodeId,
     error,
-    isWorkspaceSaving,
     isLoadingSnapshot,
     isCreatingNode,
     isResettingProject,
   } = useProjectStore(
     useShallow((state) => ({
       initialize: state.initialize,
-      setWorkspaceRoot: state.setWorkspaceRoot,
       resetProjectToRoot: state.resetProjectToRoot,
       selectNode: state.selectNode,
       createChild: state.createChild,
@@ -45,7 +40,6 @@ export function GraphWorkspace() {
       hasInitialized: state.hasInitialized,
       isInitializing: state.isInitializing,
       bootstrap: state.bootstrap,
-      baseWorkspaceRoot: state.baseWorkspaceRoot,
       projects: state.projects,
       activeProjectId: state.activeProjectId,
       snapshot: state.snapshot,
@@ -53,7 +47,6 @@ export function GraphWorkspace() {
       splitStatus: state.splitStatus,
       splitNodeId: state.splitNodeId,
       error: state.error,
-      isWorkspaceSaving: state.isWorkspaceSaving,
       isLoadingSnapshot: state.isLoadingSnapshot,
       isCreatingNode: state.isCreatingNode,
       isResettingProject: state.isResettingProject,
@@ -78,14 +71,6 @@ export function GraphWorkspace() {
       window.electronAPI?.setWindowTitle?.('PlanningTree')
     }
   }, [snapshot?.project?.name])
-
-  async function handleWorkspaceSubmit(path: string) {
-    try {
-      await setWorkspaceRoot(path)
-    } catch {
-      return
-    }
-  }
 
   async function handleSelectNode(nodeId: string, persist = true) {
     try {
@@ -157,17 +142,6 @@ export function GraphWorkspace() {
     return <section className={styles.loading}>Loading...</section>
   }
 
-  if (!bootstrap?.workspace_configured) {
-    return (
-      <WorkspaceSetup
-        initialValue={baseWorkspaceRoot}
-        isSaving={isWorkspaceSaving}
-        error={error}
-        onSubmit={handleWorkspaceSubmit}
-      />
-    )
-  }
-
   return (
     <section className={styles.view}>
       <Sidebar />
@@ -213,7 +187,7 @@ export function GraphWorkspace() {
                   ? 'Loading snapshot...'
                   : projects.length > 0
                     ? 'Select a project from the sidebar to render its graph.'
-                    : 'Create a project in the sidebar to get started.'}
+                    : 'Add a project folder to get started.'}
               </p>
             </div>
           )}

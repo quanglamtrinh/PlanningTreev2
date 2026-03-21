@@ -447,6 +447,7 @@ export function TreeGraph({
             {focusedNode ? (
               <Panel position="top-right" className={styles.detailPanel}>
                 <NodeDetailCard
+                  projectId={snapshot.project.id}
                   node={focusedNode}
                   variant="graph"
                   showClose

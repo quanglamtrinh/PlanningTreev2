@@ -18,8 +18,7 @@ def project_id(storage, workspace_root):
     from backend.services.project_service import ProjectService
 
     svc = ProjectService(storage)
-    svc.set_workspace_root(str(workspace_root))
-    snap = svc.create_project("Test", "Test goal")
+    snap = svc.attach_project_folder(str(workspace_root))
     return snap["project"]["id"]
 
 

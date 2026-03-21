@@ -16,6 +16,11 @@ class InvalidRequest(AppError):
         super().__init__("invalid_request", message, 400)
 
 
+class InvalidProjectFolder(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("invalid_project_folder", reason, 400)
+
+
 class InvalidWorkspaceRoot(AppError):
     def __init__(self, reason: str) -> None:
         super().__init__("invalid_workspace_root", reason, 400)

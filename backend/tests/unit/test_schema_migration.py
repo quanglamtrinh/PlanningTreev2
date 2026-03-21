@@ -7,6 +7,7 @@ from backend.storage.file_utils import atomic_write_json
 def test_load_snapshot_rejects_legacy_thread_files(storage, workspace_root) -> None:
     project_service = storage.project_store
     project_id = "a" * 32
+    storage.workspace_store.upsert_entry(project_id, str(workspace_root))
     project_dir = project_service.project_dir(project_id)
     project_dir.mkdir(parents=True)
     atomic_write_json(
@@ -15,8 +16,6 @@ def test_load_snapshot_rejects_legacy_thread_files(storage, workspace_root) -> N
             "id": project_id,
             "name": "Legacy",
             "root_goal": "Old runtime",
-            "base_workspace_root": str(workspace_root),
-            "project_workspace_root": str(workspace_root / "legacy"),
             "created_at": "2026-03-20T00:00:00Z",
             "updated_at": "2026-03-20T00:00:00Z",
         },

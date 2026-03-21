@@ -5,10 +5,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getBootstrapStatus: vi.fn(),
-    getWorkspaceSettings: vi.fn(),
-    setWorkspaceRoot: vi.fn(),
     listProjects: vi.fn(),
-    createProject: vi.fn(),
+    attachProjectFolder: vi.fn(),
+    deleteProject: vi.fn(),
     getSnapshot: vi.fn(),
     resetProjectToRoot: vi.fn(),
     setActiveNode: vi.fn(),
@@ -16,6 +15,8 @@ const { apiMock } = vi.hoisted(() => ({
     splitNode: vi.fn(),
     getSplitStatus: vi.fn(),
     updateNode: vi.fn(),
+    getNodeDocument: vi.fn(),
+    putNodeDocument: vi.fn(),
   },
 }))
 
@@ -76,8 +77,7 @@ function makeProjectSummary(id: string) {
     id,
     name: `Project ${id}`,
     root_goal: `Goal ${id}`,
-    base_workspace_root: 'C:/workspace',
-    project_workspace_root: `C:/workspace/${id}`,
+    project_path: `C:/workspace/${id}`,
     created_at: '2026-03-20T00:00:00Z',
     updated_at: '2026-03-20T00:00:00Z',
   }
@@ -122,12 +122,18 @@ describe('GraphWorkspace', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
   })
 
-  it('gates into workspace setup when bootstrap is not configured', () => {
+  it('shows the empty state when no project folders are attached', () => {
     useProjectStore.setState({
       ...useProjectStore.getInitialState(),
       hasInitialized: true,
       isInitializing: false,
-      bootstrap: { ready: false, workspace_configured: false },
+      bootstrap: {
+        ready: true,
+        workspace_configured: true,
+        codex_available: true,
+        codex_path: 'codex',
+      },
+      projects: [],
     })
 
     render(
@@ -136,13 +142,17 @@ describe('GraphWorkspace', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('Choose a base workspace folder')).toBeInTheDocument()
-    expect(screen.getByText('Save Workspace')).toBeInTheDocument()
+    expect(screen.getByText('No project loaded')).toBeInTheDocument()
+    expect(screen.getByText('Add a project folder to get started.')).toBeInTheDocument()
   })
 
   it('renders a loaded graph after initialization', async () => {
-    apiMock.getBootstrapStatus.mockResolvedValue({ ready: true, workspace_configured: true })
-    apiMock.getWorkspaceSettings.mockResolvedValue({ base_workspace_root: 'C:/workspace' })
+    apiMock.getBootstrapStatus.mockResolvedValue({
+      ready: true,
+      workspace_configured: true,
+      codex_available: true,
+      codex_path: 'codex',
+    })
     apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-2')])
     apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-2'))
     apiMock.getSplitStatus.mockResolvedValue({
@@ -167,8 +177,12 @@ describe('GraphWorkspace', () => {
   })
 
   it('navigates to the breadcrumb placeholder from the graph action', async () => {
-    apiMock.getBootstrapStatus.mockResolvedValue({ ready: true, workspace_configured: true })
-    apiMock.getWorkspaceSettings.mockResolvedValue({ base_workspace_root: 'C:/workspace' })
+    apiMock.getBootstrapStatus.mockResolvedValue({
+      ready: true,
+      workspace_configured: true,
+      codex_available: true,
+      codex_path: 'codex',
+    })
     apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-1')])
     apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1'))
     apiMock.setActiveNode.mockResolvedValue(makeSnapshot('project-1'))

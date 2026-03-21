@@ -3,13 +3,13 @@ from __future__ import annotations
 import pytest
 
 from backend.errors.app_errors import InvalidRequest, NodeCreateNotAllowed
+from backend.services import planningtree_workspace
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
 
 
 def create_project(project_service: ProjectService, workspace_root: str) -> dict:
-    project_service.set_workspace_root(workspace_root)
-    return project_service.create_project("Alpha", "Ship graph-only reset")
+    return project_service.attach_project_folder(workspace_root)
 
 
 def internal_nodes(snapshot: dict) -> dict[str, dict]:
@@ -19,6 +19,7 @@ def internal_nodes(snapshot: dict) -> dict[str, dict]:
 def test_create_child_selects_new_node_and_locks_follow_on_siblings(
     project_service: ProjectService,
     node_service: NodeService,
+    storage,
     workspace_root,
 ) -> None:
     snapshot = create_project(project_service, str(workspace_root))
@@ -36,16 +37,28 @@ def test_create_child_selects_new_node_and_locks_follow_on_siblings(
     assert second["tree_state"]["active_node_id"] == second_child_id
     assert nodes[first_child_id]["status"] == "ready"
     assert nodes[second_child_id]["status"] == "locked"
+    project_dir = storage.project_store.project_dir(project_id)
+    root_dir = project_dir / planningtree_workspace.ROOT_SEGMENT / "1 workspace"
+    first_dir = root_dir / "1.1 New Node"
+    second_dir = root_dir / "1.2 New Node"
+    assert first_dir.is_dir()
+    assert second_dir.is_dir()
+    assert (first_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == ""
+    assert (second_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
 
 
 def test_update_node_changes_inline_title_and_description(
     project_service: ProjectService,
     node_service: NodeService,
+    storage,
     workspace_root,
 ) -> None:
     snapshot = create_project(project_service, str(workspace_root))
     project_id = snapshot["project"]["id"]
     root_id = snapshot["tree_state"]["root_node_id"]
+    project_dir = storage.project_store.project_dir(project_id)
+    original_dir = project_dir / planningtree_workspace.ROOT_SEGMENT / "1 workspace"
+    (original_dir / planningtree_workspace.FRAME_FILE_NAME).write_text("keep me", encoding="utf-8")
 
     updated = node_service.update_node(
         project_id,
@@ -57,6 +70,10 @@ def test_update_node_changes_inline_title_and_description(
 
     assert node["title"] == "Renamed Root"
     assert node["description"] == "New description"
+    renamed_dir = project_dir / planningtree_workspace.ROOT_SEGMENT / "1 Renamed Root"
+    assert renamed_dir.is_dir()
+    assert not original_dir.exists()
+    assert (renamed_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == "keep me"
 
 
 def test_update_node_rejects_blank_title(

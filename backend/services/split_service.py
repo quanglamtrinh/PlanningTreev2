@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -22,6 +23,7 @@ from backend.errors.app_errors import (
     SplitInvalidResponse,
     SplitNotAllowed,
 )
+from backend.services import planningtree_workspace
 from backend.services.tree_service import TreeService
 from backend.split_contract import FlatSubtaskPayload, ServiceSplitMode
 from backend.storage.file_utils import iso_now, new_id
@@ -215,7 +217,8 @@ class SplitService:
             snapshot["tree_state"]["active_node_id"] = created_child_ids[0]
             snapshot["updated_at"] = now
             self._storage.project_store.save_snapshot(project_id, snapshot)
-            self._storage.project_store.touch_meta(project_id, now)
+            snapshot["project"] = self._storage.project_store.touch_meta(project_id, now)
+            self._sync_snapshot_tree(snapshot)
 
     def _ensure_project_thread(self, existing_thread_id: Any, workspace_root: str | None) -> str:
         if isinstance(existing_thread_id, str) and existing_thread_id.strip():
@@ -377,10 +380,16 @@ class SplitService:
         project = snapshot.get("project", {})
         if not isinstance(project, dict):
             return None
-        workspace_root = project.get("project_workspace_root")
+        workspace_root = project.get("project_path")
         if isinstance(workspace_root, str) and workspace_root.strip():
             return workspace_root
         return None
+
+    def _sync_snapshot_tree(self, snapshot: dict[str, Any]) -> None:
+        workspace_root = self._workspace_root_from_snapshot(snapshot)
+        if not workspace_root:
+            return
+        planningtree_workspace.sync_snapshot_tree(Path(workspace_root), snapshot)
 
     def _is_missing_thread_error(self, exc: Exception) -> bool:
         message = str(exc).lower()

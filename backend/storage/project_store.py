@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import copy
-import shutil
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from backend.config.app_config import AppPaths
 from backend.errors.app_errors import LegacyProjectUnsupported, ProjectNotFound
 from backend.storage.file_utils import atomic_write_json, ensure_dir, load_json
 from backend.storage.project_ids import normalize_project_id
 from backend.storage.project_locks import ProjectLockRegistry
+from backend.storage.workspace_store import WorkspaceStore
 
 CURRENT_SCHEMA_VERSION = 6
+PLANNINGTREE_DIR = ".planningtree"
+_ALLOWED_META_FIELDS = {
+    "id",
+    "name",
+    "root_goal",
+    "created_at",
+    "updated_at",
+}
 _ALLOWED_NODE_FIELDS = {
     "node_id",
     "parent_id",
@@ -33,13 +41,19 @@ class ProjectStore:
     def __init__(
         self,
         paths: AppPaths,
+        workspace_store: WorkspaceStore,
         lock_registry: ProjectLockRegistry,
     ) -> None:
         self._paths = paths
+        self._workspace_store = workspace_store
         self._lock_registry = lock_registry
 
     def project_dir(self, project_id: str) -> Path:
-        return self._paths.projects_root / normalize_project_id(project_id)
+        folder_path = self._workspace_store.get_folder_path(project_id)
+        return self.project_dir_for_folder(folder_path)
+
+    def project_dir_for_folder(self, folder_path: str | Path) -> Path:
+        return Path(folder_path).expanduser().resolve() / PLANNINGTREE_DIR
 
     def project_lock(self, project_id: str):
         return self._lock_registry.for_project(project_id)
@@ -47,101 +61,133 @@ class ProjectStore:
     def meta_path(self, project_id: str) -> Path:
         return self.project_dir(project_id) / "meta.json"
 
+    def meta_path_for_folder(self, folder_path: str | Path) -> Path:
+        return self.project_dir_for_folder(folder_path) / "meta.json"
+
     def state_path(self, project_id: str) -> Path:
         return self.project_dir(project_id) / "state.json"
 
     def tree_path(self, project_id: str) -> Path:
         return self.project_dir(project_id) / "tree.json"
 
-    def create_project_files(self, meta: Dict[str, Any], snapshot: Dict[str, Any]) -> None:
+    def tree_path_for_folder(self, folder_path: str | Path) -> Path:
+        return self.project_dir_for_folder(folder_path) / "tree.json"
+
+    def create_project_files(self, folder_path: str, meta: dict[str, Any], snapshot: dict[str, Any]) -> None:
         project_id = str(meta["id"])
         with self.project_lock(project_id):
-            project_dir = ensure_dir(self.project_dir(project_id))
-            atomic_write_json(project_dir / "meta.json", meta)
+            project_dir = ensure_dir(self.project_dir_for_folder(folder_path))
+            atomic_write_json(project_dir / "meta.json", self._sanitize_meta(meta))
             atomic_write_json(project_dir / "tree.json", self._normalize_snapshot_for_persistence(snapshot))
 
-    def save_tree(self, project_id: str, tree: Dict[str, Any]) -> None:
+    def save_tree(self, project_id: str, tree: dict[str, Any]) -> None:
         with self.project_lock(project_id):
             project_dir = self.project_dir(project_id)
             if not project_dir.exists():
                 raise ProjectNotFound(project_id)
             atomic_write_json(self.tree_path(project_id), self._normalize_snapshot_for_persistence(tree))
 
-    def save_snapshot(self, project_id: str, snapshot: Dict[str, Any]) -> None:
+    def save_snapshot(self, project_id: str, snapshot: dict[str, Any]) -> None:
         self.save_tree(project_id, snapshot)
 
-    def load_tree(self, project_id: str) -> Dict[str, Any]:
+    def load_tree(self, project_id: str) -> dict[str, Any]:
         with self.project_lock(project_id):
             project_dir = self.project_dir(project_id)
             if not project_dir.exists():
                 raise ProjectNotFound(project_id)
-            if self._has_legacy_artifacts(project_dir):
-                raise LegacyProjectUnsupported(project_id)
-            tree = load_json(self.tree_path(project_id))
-            if not isinstance(tree, dict):
-                raise ProjectNotFound(project_id)
-            if self._schema_version(tree) != CURRENT_SCHEMA_VERSION:
-                raise LegacyProjectUnsupported(project_id)
-            normalized = self._normalize_snapshot_for_persistence(tree)
-            self._validate_snapshot(project_id, normalized)
-            return normalized
+            return self._load_snapshot_from_dir(project_id, project_dir)
 
-    def load_snapshot(self, project_id: str) -> Dict[str, Any]:
+    def load_snapshot(self, project_id: str) -> dict[str, Any]:
         return self.load_tree(project_id)
 
-    def load_meta(self, project_id: str) -> Dict[str, Any]:
+    def load_snapshot_from_folder(self, folder_path: str) -> dict[str, Any]:
+        project_dir = self.project_dir_for_folder(folder_path)
+        meta = self.load_meta_from_folder(folder_path)
+        project_id = str(meta["id"])
         with self.project_lock(project_id):
-            meta = load_json(self.meta_path(project_id))
-            if meta is None:
-                raise ProjectNotFound(project_id)
-            return meta
+            return self._load_snapshot_from_dir(project_id, project_dir)
 
-    def save_meta(self, project_id: str, meta: Dict[str, Any]) -> None:
+    def load_meta(self, project_id: str) -> dict[str, Any]:
         with self.project_lock(project_id):
-            if not self.project_dir(project_id).exists():
+            project_dir = self.project_dir(project_id)
+            meta = load_json(project_dir / "meta.json")
+            if not isinstance(meta, dict):
                 raise ProjectNotFound(project_id)
-            atomic_write_json(self.meta_path(project_id), meta)
+            return self._runtime_meta(meta, self._workspace_store.get_folder_path(project_id))
 
-    def touch_meta(self, project_id: str, updated_at: str) -> Dict[str, Any]:
+    def load_meta_from_folder(self, folder_path: str) -> dict[str, Any]:
+        project_dir = self.project_dir_for_folder(folder_path)
+        meta = load_json(project_dir / "meta.json")
+        if not isinstance(meta, dict):
+            raise LegacyProjectUnsupported("unattached-folder")
+        sanitized = self._sanitize_meta(meta)
+        project_id = sanitized.get("id")
+        if not isinstance(project_id, str) or not project_id:
+            raise LegacyProjectUnsupported("unattached-folder")
+        return self._runtime_meta(sanitized, str(Path(folder_path).expanduser().resolve()))
+
+    def save_meta(self, project_id: str, meta: dict[str, Any]) -> None:
+        with self.project_lock(project_id):
+            project_dir = self.project_dir(project_id)
+            if not project_dir.exists():
+                raise ProjectNotFound(project_id)
+            atomic_write_json(self.meta_path(project_id), self._sanitize_meta(meta))
+
+    def touch_meta(self, project_id: str, updated_at: str) -> dict[str, Any]:
         with self.project_lock(project_id):
             meta = self.load_meta(project_id)
             meta["updated_at"] = updated_at
             self.save_meta(project_id, meta)
-            return meta
+            return self.load_meta(project_id)
 
-    def delete_project(self, project_id: str) -> None:
-        project_dir = self.project_dir(project_id)
-        if project_dir.exists():
-            shutil.rmtree(project_dir)
-
-    def list_projects(self) -> List[Dict[str, Any]]:
-        ensure_dir(self._paths.projects_root)
-        projects: List[Dict[str, Any]] = []
-        for project_dir in self._paths.projects_root.iterdir():
-            if not project_dir.is_dir():
+    def list_projects(self) -> list[dict[str, Any]]:
+        projects: list[dict[str, Any]] = []
+        stale_project_ids: list[str] = []
+        for entry in self._workspace_store.list_entries():
+            project_id = entry["project_id"]
+            folder_path = entry["folder_path"]
+            project_dir = self.project_dir_for_folder(folder_path)
+            if not Path(folder_path).exists() or not project_dir.exists():
+                stale_project_ids.append(project_id)
                 continue
             meta = load_json(project_dir / "meta.json")
-            if isinstance(meta, dict):
-                projects.append(meta)
+            if not isinstance(meta, dict):
+                stale_project_ids.append(project_id)
+                continue
+            try:
+                runtime_meta = self._runtime_meta(meta, folder_path)
+            except Exception:
+                stale_project_ids.append(project_id)
+                continue
+            if runtime_meta["id"] != project_id:
+                stale_project_ids.append(project_id)
+                continue
+            projects.append(runtime_meta)
+        if stale_project_ids:
+            self._workspace_store.prune_projects(stale_project_ids)
         projects.sort(
             key=lambda item: (str(item.get("updated_at", "")), str(item.get("name", ""))),
             reverse=True,
         )
         return projects
 
-    def list_project_ids(self) -> List[str]:
-        ensure_dir(self._paths.projects_root)
-        project_ids: List[str] = []
-        for project_dir in self._paths.projects_root.iterdir():
-            if not project_dir.is_dir():
-                continue
-            try:
-                project_ids.append(normalize_project_id(project_dir.name))
-            except Exception:
-                continue
-        return sorted(project_ids)
+    def list_project_ids(self) -> list[str]:
+        return sorted(item["project_id"] for item in self._workspace_store.list_entries())
 
-    def _schema_version(self, snapshot: Dict[str, Any]) -> int:
+    def _load_snapshot_from_dir(self, project_id: str, project_dir: Path) -> dict[str, Any]:
+        if self._has_legacy_artifacts(project_dir):
+            raise LegacyProjectUnsupported(project_id)
+        tree = load_json(project_dir / "tree.json")
+        if not isinstance(tree, dict):
+            raise ProjectNotFound(project_id)
+        if self._schema_version(tree) != CURRENT_SCHEMA_VERSION:
+            raise LegacyProjectUnsupported(project_id)
+        normalized = self._normalize_snapshot_for_persistence(tree)
+        normalized["project"] = self.load_meta(project_id)
+        self._validate_snapshot(project_id, normalized)
+        return normalized
+
+    def _schema_version(self, snapshot: dict[str, Any]) -> int:
         try:
             return int(snapshot.get("schema_version", 0))
         except (TypeError, ValueError):
@@ -157,9 +203,10 @@ class ProjectStore:
             )
         )
 
-    def _normalize_snapshot_for_persistence(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_snapshot_for_persistence(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         normalized = copy.deepcopy(snapshot)
         normalized["schema_version"] = CURRENT_SCHEMA_VERSION
+        normalized["project"] = self._sanitize_meta(normalized.get("project"))
         tree_state = normalized.get("tree_state")
         if not isinstance(tree_state, dict):
             tree_state = {}
@@ -176,7 +223,7 @@ class ProjectStore:
         tree_state.pop("node_registry", None)
         return normalized
 
-    def _normalize_node(self, raw_node: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_node(self, raw_node: dict[str, Any]) -> dict[str, Any]:
         node = {key: value for key, value in raw_node.items() if key in _ALLOWED_NODE_FIELDS}
         child_ids = node.get("child_ids")
         if not isinstance(child_ids, list):
@@ -200,7 +247,37 @@ class ProjectStore:
             node["node_id"] = node_id
         return node
 
-    def _validate_snapshot(self, project_id: str, snapshot: Dict[str, Any]) -> None:
+    def _sanitize_meta(self, raw_meta: Any) -> dict[str, Any]:
+        meta = raw_meta if isinstance(raw_meta, dict) else {}
+        sanitized = {key: meta.get(key) for key in _ALLOWED_META_FIELDS if key in meta}
+        project_id = str(sanitized.get("id") or "").strip()
+        if project_id:
+            sanitized["id"] = normalize_project_id(project_id)
+        name = str(sanitized.get("name") or "").strip()
+        if name:
+            sanitized["name"] = name
+        root_goal = str(sanitized.get("root_goal") or "").strip()
+        if root_goal:
+            sanitized["root_goal"] = root_goal
+        created_at = str(sanitized.get("created_at") or "").strip()
+        if created_at:
+            sanitized["created_at"] = created_at
+        updated_at = str(sanitized.get("updated_at") or "").strip()
+        if updated_at:
+            sanitized["updated_at"] = updated_at
+        return sanitized
+
+    def _runtime_meta(self, raw_meta: dict[str, Any], folder_path: str) -> dict[str, Any]:
+        sanitized = self._sanitize_meta(raw_meta)
+        if "id" not in sanitized or "name" not in sanitized:
+            raise LegacyProjectUnsupported(str(raw_meta.get("id") or "unattached-folder"))
+        sanitized["root_goal"] = str(sanitized.get("root_goal") or sanitized["name"])
+        sanitized["created_at"] = str(sanitized.get("created_at") or "")
+        sanitized["updated_at"] = str(sanitized.get("updated_at") or "")
+        sanitized["project_path"] = str(Path(folder_path).expanduser().resolve())
+        return sanitized
+
+    def _validate_snapshot(self, project_id: str, snapshot: dict[str, Any]) -> None:
         tree_state = snapshot.get("tree_state", {})
         if not isinstance(tree_state, dict):
             raise LegacyProjectUnsupported(project_id)

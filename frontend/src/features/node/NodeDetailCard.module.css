@@ -132,6 +132,90 @@
   background: var(--color-bg-hover);
 }
 
+.documentPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+}
+
+.documentStatusRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+}
+
+.documentFileLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.documentStatusValue {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+.documentStatusError {
+  color: #b42318;
+}
+
+.documentErrorPanel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #b42318 28%, var(--color-border-subtle));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, #b42318 8%, var(--color-bg-panel));
+}
+
+.retryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.retryButton:hover {
+  background: var(--color-bg-hover);
+}
+
+.editorSurface {
+  flex: 1;
+  min-height: 240px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
+}
+
+.editorSurface :global(.cm-editor) {
+  height: 100%;
+}
+
+.editorSurface :global(.cm-scroller) {
+  overflow: auto;
+}
+
+.editorSurface :global(.cm-content),
+.editorSurface :global(.cm-gutters) {
+  min-height: 240px;
+}
+
 .eyebrow,
 .title,
 .body {

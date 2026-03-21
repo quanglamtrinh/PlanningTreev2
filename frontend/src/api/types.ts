@@ -6,16 +6,13 @@ export type SplitMode =
   | 'phase_breakdown'
   | 'agent_breakdown'
 export type SplitJobStatus = 'idle' | 'active' | 'failed'
+export type NodeDocumentKind = 'frame' | 'spec'
 
 export interface BootstrapStatus {
   ready: boolean
   workspace_configured: boolean
   codex_available: boolean
   codex_path: string | null
-}
-
-export interface WorkspaceSettings {
-  base_workspace_root: string | null
 }
 
 export interface CodexAccount {
@@ -53,8 +50,7 @@ export interface ProjectSummary {
   id: string
   name: string
   root_goal: string
-  base_workspace_root: string
-  project_workspace_root: string
+  project_path: string
   created_at: string
   updated_at: string
 }
@@ -78,8 +74,7 @@ export interface ProjectRecord {
   id: string
   name: string
   root_goal: string
-  base_workspace_root: string
-  project_workspace_root: string
+  project_path: string
   created_at: string
   updated_at: string
 }
@@ -100,6 +95,13 @@ export interface Snapshot {
 export interface NodeDraft {
   title?: string
   description?: string
+}
+
+export interface NodeDocument {
+  node_id: string
+  kind: NodeDocumentKind
+  content: string
+  updated_at: string | null
 }
 
 export interface SplitAcceptedResponse {

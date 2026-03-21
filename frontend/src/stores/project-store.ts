@@ -10,7 +10,8 @@ import type {
 } from '../api/types'
 
 const ACTIVE_PROJECT_KEY = 'planningtree.active-project-id'
-const LEGACY_PROJECT_MESSAGE = 'Project này thuộc schema legacy đã bị loại bỏ; hãy xóa hoặc tạo lại.'
+const LEGACY_PROJECT_MESSAGE =
+  'This project uses a removed legacy schema. Delete it or recreate it before continuing.'
 const SPLIT_POLL_INTERVAL_MS = 1500
 
 let splitPollTimer: ReturnType<typeof globalThis.setInterval> | null = null
@@ -78,7 +79,6 @@ export type ProjectStoreState = {
   hasInitialized: boolean
   isInitializing: boolean
   bootstrap: BootstrapStatus | null
-  baseWorkspaceRoot: string | null
   projects: ProjectSummary[]
   activeProjectId: string | null
   snapshot: Snapshot | null
@@ -89,20 +89,18 @@ export type ProjectStoreState = {
   splitNodeId: string | null
   splitMode: SplitMode | null
   error: string | null
-  isWorkspaceSaving: boolean
   isLoadingProjects: boolean
   isLoadingSnapshot: boolean
-  isCreatingProject: boolean
+  isAttachingProject: boolean
   isCreatingNode: boolean
   isResettingProject: boolean
   isUpdatingNode: boolean
   isPersistingSelection: boolean
   initialize: () => Promise<void>
   refreshProjects: () => Promise<void>
-  setWorkspaceRoot: (path: string) => Promise<void>
+  attachProjectFolder: (folderPath: string) => Promise<void>
   loadProject: (projectId: string) => Promise<void>
   clearActiveProject: () => void
-  createProject: (name: string, rootGoal: string) => Promise<void>
   deleteProject: (projectId: string) => Promise<void>
   resetProjectToRoot: () => Promise<void>
   selectNode: (nodeId: string | null, persist?: boolean) => Promise<void>
@@ -128,7 +126,6 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
     hasInitialized: false,
     isInitializing: false,
     bootstrap: null,
-    baseWorkspaceRoot: null,
     projects: [],
     activeProjectId: null,
     snapshot: null,
@@ -139,10 +136,9 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
     splitNodeId: null,
     splitMode: null,
     error: null,
-    isWorkspaceSaving: false,
     isLoadingProjects: false,
     isLoadingSnapshot: false,
-    isCreatingProject: false,
+    isAttachingProject: false,
     isCreatingNode: false,
     isResettingProject: false,
     isUpdatingNode: false,
@@ -153,14 +149,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
       }
       set({ isInitializing: true, error: null })
       try {
-        const bootstrap = await api.getBootstrapStatus()
-        let baseWorkspaceRoot: string | null = null
-        let projects: ProjectSummary[] = []
-        if (bootstrap.workspace_configured) {
-          const settings = await api.getWorkspaceSettings()
-          baseWorkspaceRoot = settings.base_workspace_root
-          projects = await api.listProjects()
-        }
+        const [bootstrap, projects] = await Promise.all([
+          api.getBootstrapStatus(),
+          api.listProjects(),
+        ])
 
         const nextProjectId = resolvePreferredProjectId(projects, {
           storedProjectId: readStoredActiveProjectId(),
@@ -170,7 +162,6 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
 
         set({
           bootstrap,
-          baseWorkspaceRoot,
           projects,
           hasInitialized: true,
           isInitializing: false,
@@ -189,22 +180,6 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
       }
     },
     async refreshProjects() {
-      if (!get().bootstrap?.workspace_configured) {
-        stopSplitPolling()
-        writeStoredActiveProjectId(null)
-        set({
-          projects: [],
-          activeProjectId: null,
-          snapshot: null,
-          selectedNodeId: null,
-          nodeDrafts: {},
-          splitStatus: 'idle',
-          splitJobId: null,
-          splitNodeId: null,
-          splitMode: null,
-        })
-        return
-      }
       set({ isLoadingProjects: true, error: null })
       try {
         const projects = await api.listProjects()
@@ -241,45 +216,28 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
         set({ error: toErrorMessage(error), isLoadingProjects: false })
       }
     },
-    async setWorkspaceRoot(path: string) {
-      set({ isWorkspaceSaving: true, error: null })
+    async attachProjectFolder(folderPath: string) {
+      set({ isAttachingProject: true, error: null })
       try {
-        const settings = await api.setWorkspaceRoot(path)
-        const bootstrap = await api.getBootstrapStatus()
-        const projects = bootstrap.workspace_configured ? await api.listProjects() : []
-        const currentState = get()
-        const nextProjectId = resolvePreferredProjectId(projects, {
-          storedProjectId: readStoredActiveProjectId(),
-          currentProjectId: currentState.activeProjectId,
-        })
-        const keepLoadedSnapshot =
-          Boolean(nextProjectId) && currentState.snapshot?.project.id === nextProjectId
-
-        if (!keepLoadedSnapshot) {
-          stopSplitPolling()
-        }
-
-        writeStoredActiveProjectId(nextProjectId)
+        const snapshot = await api.attachProjectFolder(folderPath)
+        const projects = await api.listProjects()
+        const projectId = snapshot.project.id
+        stopSplitPolling()
+        writeStoredActiveProjectId(projectId)
         set({
-          baseWorkspaceRoot: settings.base_workspace_root,
-          bootstrap,
           projects,
-          isWorkspaceSaving: false,
-          activeProjectId: nextProjectId,
-          snapshot: keepLoadedSnapshot ? currentState.snapshot : null,
-          selectedNodeId: keepLoadedSnapshot ? currentState.selectedNodeId : null,
-          nodeDrafts: keepLoadedSnapshot ? currentState.nodeDrafts : {},
-          splitStatus: keepLoadedSnapshot ? currentState.splitStatus : 'idle',
-          splitJobId: keepLoadedSnapshot ? currentState.splitJobId : null,
-          splitNodeId: keepLoadedSnapshot ? currentState.splitNodeId : null,
-          splitMode: keepLoadedSnapshot ? currentState.splitMode : null,
+          activeProjectId: projectId,
+          snapshot,
+          selectedNodeId: rootFallback(snapshot),
+          nodeDrafts: {},
+          splitStatus: 'idle',
+          splitJobId: null,
+          splitNodeId: null,
+          splitMode: null,
+          isAttachingProject: false,
         })
-
-        if (nextProjectId && !keepLoadedSnapshot) {
-          await get().loadProject(nextProjectId)
-        }
       } catch (error) {
-        set({ error: toErrorMessage(error), isWorkspaceSaving: false })
+        set({ error: toErrorMessage(error), isAttachingProject: false })
         throw error
       }
     },
@@ -367,31 +325,6 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
         }
       } catch (error) {
         set({ error: toErrorMessage(error) })
-        throw error
-      }
-    },
-    async createProject(name: string, rootGoal: string) {
-      set({ isCreatingProject: true, error: null })
-      try {
-        const snapshot = await api.createProject(name, rootGoal)
-        const projects = await api.listProjects()
-        const projectId = snapshot.project.id
-        stopSplitPolling()
-        writeStoredActiveProjectId(projectId)
-        set({
-          projects,
-          activeProjectId: projectId,
-          snapshot,
-          selectedNodeId: rootFallback(snapshot),
-          nodeDrafts: {},
-          splitStatus: 'idle',
-          splitJobId: null,
-          splitNodeId: null,
-          splitMode: null,
-          isCreatingProject: false,
-        })
-      } catch (error) {
-        set({ error: toErrorMessage(error), isCreatingProject: false })
         throw error
       }
     },

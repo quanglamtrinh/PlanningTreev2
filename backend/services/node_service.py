@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from backend.errors.app_errors import InvalidRequest, NodeCreateNotAllowed, NodeNotFound
+from backend.services import planningtree_workspace
 from backend.services.snapshot_view_service import SnapshotViewService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now
@@ -77,6 +79,7 @@ class NodeService:
             snapshot["tree_state"]["node_index"][new_node_id] = child_node
             snapshot["tree_state"]["active_node_id"] = new_node_id
             snapshot = self._persist_snapshot(project_id, snapshot)
+            self._sync_snapshot_tree(snapshot)
         return self._public_snapshot(project_id, snapshot)
 
     def update_node(
@@ -98,6 +101,7 @@ class NodeService:
                 raise NodeNotFound(node_id)
 
             did_change = False
+            title_changed = False
             if title is not None:
                 cleaned_title = title.strip()
                 if not cleaned_title:
@@ -105,12 +109,15 @@ class NodeService:
                 if cleaned_title != node.get("title"):
                     node["title"] = cleaned_title
                     did_change = True
+                    title_changed = True
             if description is not None and description != node.get("description"):
                 node["description"] = description
                 did_change = True
 
             if did_change:
                 snapshot = self._persist_snapshot(project_id, snapshot)
+                if title_changed:
+                    self._sync_snapshot_tree(snapshot)
         return self._public_snapshot(project_id, snapshot)
 
     def _persist_snapshot(self, project_id: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
@@ -127,3 +134,12 @@ class NodeService:
 
     def _is_superseded(self, node: Dict[str, Any]) -> bool:
         return str(node.get("node_kind") or "") == "superseded" or bool(node.get("is_superseded"))
+
+    def _sync_snapshot_tree(self, snapshot: Dict[str, Any]) -> None:
+        project = snapshot.get("project", {})
+        if not isinstance(project, dict):
+            return
+        project_path = str(project.get("project_path") or "").strip()
+        if not project_path:
+            return
+        planningtree_workspace.sync_snapshot_tree(Path(project_path), snapshot)

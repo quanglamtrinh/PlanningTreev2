@@ -8,8 +8,8 @@ from typing import Any
 from backend.config.app_config import AppPaths
 from backend.errors.app_errors import ProjectNotFound
 from backend.storage.file_utils import atomic_write_json, iso_now, load_json
-from backend.storage.project_ids import normalize_project_id
 from backend.storage.project_locks import ProjectLockRegistry
+from backend.storage.workspace_store import WorkspaceStore
 
 
 def _default_session() -> dict[str, Any]:
@@ -24,13 +24,22 @@ def _default_session() -> dict[str, Any]:
 
 
 class ChatStateStore:
-    def __init__(self, paths: AppPaths, lock_registry: ProjectLockRegistry) -> None:
+    def __init__(
+        self,
+        paths: AppPaths,
+        workspace_store: WorkspaceStore,
+        lock_registry: ProjectLockRegistry,
+    ) -> None:
         self._paths = paths
+        self._workspace_store = workspace_store
         self._lock_registry = lock_registry
 
+    def _project_dir(self, project_id: str) -> Path:
+        folder_path = self._workspace_store.get_folder_path(project_id)
+        return Path(folder_path).expanduser().resolve() / ".planningtree"
+
     def _chat_dir(self, project_id: str) -> Path:
-        normalized = normalize_project_id(project_id)
-        return self._paths.projects_root / normalized / "chat"
+        return self._project_dir(project_id) / "chat"
 
     def path(self, project_id: str, node_id: str) -> Path:
         return self._chat_dir(project_id) / f"{node_id}.json"
@@ -42,7 +51,7 @@ class ChatStateStore:
 
     def write_session(self, project_id: str, node_id: str, session: dict[str, Any]) -> dict[str, Any]:
         with self._lock_registry.for_project(project_id):
-            project_dir = self._chat_dir(project_id).parent
+            project_dir = self._project_dir(project_id)
             if not project_dir.exists():
                 raise ProjectNotFound(project_id)
             normalized = self._normalize_session(session)

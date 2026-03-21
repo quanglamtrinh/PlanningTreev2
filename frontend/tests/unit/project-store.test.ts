@@ -4,10 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getBootstrapStatus: vi.fn(),
-    getWorkspaceSettings: vi.fn(),
-    setWorkspaceRoot: vi.fn(),
     listProjects: vi.fn(),
-    createProject: vi.fn(),
+    attachProjectFolder: vi.fn(),
+    deleteProject: vi.fn(),
     getSnapshot: vi.fn(),
     resetProjectToRoot: vi.fn(),
     setActiveNode: vi.fn(),
@@ -15,6 +14,8 @@ const { apiMock } = vi.hoisted(() => ({
     splitNode: vi.fn(),
     getSplitStatus: vi.fn(),
     updateNode: vi.fn(),
+    getNodeDocument: vi.fn(),
+    putNodeDocument: vi.fn(),
   },
 }))
 
@@ -43,8 +44,7 @@ function makeProjectSummary(id: string) {
     id,
     name: `Project ${id}`,
     root_goal: `Goal ${id}`,
-    base_workspace_root: 'C:/workspace',
-    project_workspace_root: `C:/workspace/${id}`,
+    project_path: `C:/workspace/${id}`,
     created_at: '2026-03-20T00:00:00Z',
     updated_at: '2026-03-20T00:00:00Z',
   }
@@ -105,8 +105,12 @@ describe('project-store', () => {
     const projectOne = makeProjectSummary('project-1')
     const projectTwo = makeProjectSummary('project-2')
     window.localStorage.setItem('planningtree.active-project-id', 'project-2')
-    apiMock.getBootstrapStatus.mockResolvedValue({ ready: true, workspace_configured: true })
-    apiMock.getWorkspaceSettings.mockResolvedValue({ base_workspace_root: 'C:/workspace' })
+    apiMock.getBootstrapStatus.mockResolvedValue({
+      ready: true,
+      workspace_configured: true,
+      codex_available: true,
+      codex_path: 'codex',
+    })
     apiMock.listProjects.mockResolvedValue([projectOne, projectTwo])
     apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-2'))
     apiMock.getSplitStatus.mockResolvedValue(makeIdleSplitStatus())
@@ -119,6 +123,20 @@ describe('project-store', () => {
     expect(state.activeProjectId).toBe('project-2')
     expect(state.snapshot?.project.id).toBe('project-2')
     expect(state.selectedNodeId).toBe('root')
+  })
+
+  it('attaches a folder and makes it the active project', async () => {
+    apiMock.attachProjectFolder.mockResolvedValue(makeSnapshot('project-3'))
+    apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-3')])
+
+    await act(async () => {
+      await useProjectStore.getState().attachProjectFolder('C:/workspace/project-3')
+    })
+
+    const state = useProjectStore.getState()
+    expect(apiMock.attachProjectFolder).toHaveBeenCalledWith('C:/workspace/project-3')
+    expect(state.activeProjectId).toBe('project-3')
+    expect(state.snapshot?.project.id).toBe('project-3')
   })
 
   it('flushes staged node edits through the snapshot update route', async () => {
@@ -168,7 +186,9 @@ describe('project-store', () => {
 
     await expect(useProjectStore.getState().loadProject('project-legacy')).rejects.toThrow()
 
-    expect(useProjectStore.getState().error).toBe('Project này thuộc schema legacy đã bị loại bỏ; hãy xóa hoặc tạo lại.')
+    expect(useProjectStore.getState().error).toBe(
+      'This project uses a removed legacy schema. Delete it or recreate it before continuing.',
+    )
   })
 
   it('starts split polling after accepting a split request', async () => {

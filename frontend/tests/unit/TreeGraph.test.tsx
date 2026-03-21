@@ -2,6 +2,13 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { useEffect, type ComponentType, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { apiMock } = vi.hoisted(() => ({
+  apiMock: {
+    getNodeDocument: vi.fn(),
+    putNodeDocument: vi.fn(),
+  },
+}))
+
 vi.mock('@xyflow/react', () => ({
   useStore: (selector: (state: { transform: [number, number, number] }) => unknown) =>
     selector({ transform: [0, 0, 1] }),
@@ -61,8 +68,41 @@ vi.mock('@xyflow/react', () => ({
   MarkerType: { ArrowClosed: 'arrow-closed' },
 }))
 
+vi.mock('@uiw/react-codemirror', () => ({
+  default: ({
+    value,
+    onChange,
+    onBlur,
+  }: {
+    value: string
+    onChange?: (value: string) => void
+    onBlur?: () => void
+  }) => (
+    <textarea
+      data-testid="mock-codemirror"
+      value={value}
+      onChange={(event) => onChange?.(event.target.value)}
+      onBlur={() => onBlur?.()}
+    />
+  ),
+}))
+
+vi.mock('../../src/api/client', () => ({
+  api: apiMock,
+  ApiError: class extends Error {
+    status: number
+    code: string | null
+    constructor(status = 400, payload: { message?: string; code?: string } | null = null) {
+      super(payload?.message ?? 'Request failed')
+      this.status = status
+      this.code = payload?.code ?? null
+    }
+  },
+}))
+
 import type { NodeRecord, Snapshot } from '../../src/api/types'
 import { TreeGraph } from '../../src/features/graph/TreeGraph'
+import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useProjectStore } from '../../src/stores/project-store'
 
 function buildNode(overrides: Partial<NodeRecord>): NodeRecord {
@@ -90,8 +130,7 @@ function buildSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
       id: 'project-1',
       name: 'Alpha',
       root_goal: 'Ship graph-only reset',
-      base_workspace_root: 'C:/workspace',
-      project_workspace_root: 'C:/workspace/alpha',
+      project_path: 'C:/workspace/alpha',
       created_at: '2026-03-20T00:00:00Z',
       updated_at: '2026-03-20T00:00:00Z',
     },
@@ -132,7 +171,21 @@ function renderTreeGraph(snapshot: Snapshot) {
 
 describe('TreeGraph', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     useProjectStore.setState(useProjectStore.getInitialState())
+    useNodeDocumentStore.getState().reset()
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-20T00:00:00Z',
+    })
+    apiMock.putNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-20T00:00:00Z',
+    })
   })
 
   it('always includes the root node in the ReactFlow node set', () => {
@@ -190,7 +243,7 @@ describe('TreeGraph', () => {
     expect(screen.getByText('Phase Breakdown')).toBeInTheDocument()
   })
 
-  it('shows Frame -> Clarify -> Spec stepper in the detail panel header', () => {
+  it('shows Frame -> Clarify -> Spec stepper in the detail panel header', async () => {
     const snapshot = buildSnapshot()
 
     renderTreeGraph(snapshot)
@@ -207,7 +260,13 @@ describe('TreeGraph', () => {
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Clarify' }))
     expect(within(detailCard).getByText(/primary goal of this task/i)).toBeInTheDocument()
 
+    apiMock.getNodeDocument.mockResolvedValueOnce({
+      node_id: 'root',
+      kind: 'spec',
+      content: '# Spec',
+      updated_at: '2026-03-20T00:00:01Z',
+    })
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Spec' }))
-    expect(within(detailCard).getByText(/specification document/i)).toBeInTheDocument()
+    expect(await within(detailCard).findByDisplayValue('# Spec')).toBeInTheDocument()
   })
 })

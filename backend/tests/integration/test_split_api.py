@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+from backend.services import planningtree_workspace
 from backend.services.split_service import SplitService
 
 
@@ -53,9 +54,9 @@ def wait_for_terminal_status(client, project_id: str, timeout_sec: float = 2.0) 
 def test_split_api_accepts_jobs_and_updates_snapshot(client, tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
+    project_dir = workspace_root / ".planningtree"
 
-    client.patch("/v1/settings/workspace", json={"base_workspace_root": str(workspace_root)})
-    created = client.post("/v1/projects", json={"name": "Alpha", "root_goal": "Ship split"})
+    created = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
     assert created.status_code == 200
     project_id = created.json()["project"]["id"]
     root_id = created.json()["tree_state"]["root_node_id"]
@@ -82,15 +83,21 @@ def test_split_api_accepts_jobs_and_updates_snapshot(client, tmp_path: Path) -> 
     assert snapshot.status_code == 200
     payload = snapshot.json()
     root = next(node for node in payload["tree_state"]["node_registry"] if node["node_id"] == root_id)
+    root_dir = project_dir / planningtree_workspace.ROOT_SEGMENT / "1 workspace"
+    first_child_dir = root_dir / "1.1 Prep"
+    second_child_dir = root_dir / "1.2 Finish"
     assert len(root["child_ids"]) == 2
+    assert first_child_dir.is_dir()
+    assert second_child_dir.is_dir()
+    assert (first_child_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == ""
+    assert (second_child_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
 
 
 def test_legacy_planning_routes_remain_absent_after_split_rebuild(client, tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    client.patch("/v1/settings/workspace", json={"base_workspace_root": str(workspace_root)})
-    created = client.post("/v1/projects", json={"name": "Alpha", "root_goal": "Ship split"})
+    created = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
     assert created.status_code == 200
     project_id = created.json()["project"]["id"]
     root_id = created.json()["tree_state"]["root_node_id"]

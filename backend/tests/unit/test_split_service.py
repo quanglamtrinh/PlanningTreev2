@@ -6,6 +6,7 @@ import pytest
 
 from backend.ai.codex_client import CodexTransportError
 from backend.errors.app_errors import SplitNotAllowed
+from backend.services import planningtree_workspace
 from backend.services.project_service import ProjectService
 from backend.services.split_service import SplitService
 from backend.services.tree_service import TreeService
@@ -47,8 +48,7 @@ class FakeCodexClient:
 
 
 def create_project(project_service: ProjectService, workspace_root: str) -> dict:
-    project_service.set_workspace_root(workspace_root)
-    return project_service.create_project("Alpha", "Ship split")
+    return project_service.attach_project_folder(workspace_root)
 
 
 def wait_for_terminal_status(service: SplitService, project_id: str, timeout_sec: float = 2.0) -> dict:
@@ -95,8 +95,16 @@ def test_split_service_creates_children_and_reuses_project_thread(
     persisted = storage.project_store.load_snapshot(project_id)
     root = persisted["tree_state"]["node_index"][root_id]
     first_child_id = persisted["tree_state"]["active_node_id"]
+    project_dir = storage.project_store.project_dir(project_id)
+    root_dir = project_dir / planningtree_workspace.ROOT_SEGMENT / "1 workspace"
+    first_child_dir = root_dir / "1.1 Prep"
+    second_child_dir = root_dir / "1.2 Finish"
     assert len(root["child_ids"]) == 2
     assert storage.split_state_store.path(project_id).exists()
+    assert first_child_dir.is_dir()
+    assert second_child_dir.is_dir()
+    assert (first_child_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == ""
+    assert (second_child_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
     first_thread_id = storage.split_state_store.read_state(project_id)["thread_id"]
 
     accepted_second = service.split_node(project_id, first_child_id, "phase_breakdown")

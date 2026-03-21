@@ -23,7 +23,7 @@ def test_ensure_node_path_creates_nested_folders(tmp_path: Path) -> None:
     root_id = "rootid01"
     child_id = "childid01"
     snapshot = {
-        "project": {"project_workspace_root": str(tmp_path)},
+        "project": {"project_path": str(tmp_path)},
         "tree_state": {
             "root_node_id": root_id,
             "node_index": {
@@ -46,7 +46,11 @@ def test_ensure_node_path_creates_nested_folders(tmp_path: Path) -> None:
     }
     planningtree_workspace.ensure_node_path(tmp_path, snapshot, child_id)
     base = tmp_path / ".planningtree" / "root"
-    assert (base / "1 Chair website" / "1.1 Set site scope").is_dir()
+    child_dir = base / "1 Chair website" / "1.1 Set site scope"
+    assert child_dir.is_dir()
+    assert (child_dir / planningtree_workspace.NODE_MARKER_NAME).read_text(encoding="utf-8").strip() == child_id
+    assert (child_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == ""
+    assert (child_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
 
 
 def test_marker_mismatch_uses_disambiguated_segment(tmp_path: Path) -> None:
@@ -55,7 +59,7 @@ def test_marker_mismatch_uses_disambiguated_segment(tmp_path: Path) -> None:
     parent_id = "p"
     a_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     snapshot = {
-        "project": {"project_workspace_root": str(tmp_path)},
+        "project": {"project_path": str(tmp_path)},
         "tree_state": {
             "root_node_id": parent_id,
             "node_index": {
@@ -93,3 +97,48 @@ def test_clear_root_children_removes_entries(tmp_path: Path) -> None:
     (root / "nested" / "x").mkdir(parents=True)
     planningtree_workspace.clear_root_children(tmp_path)
     assert list(root.iterdir()) == []
+
+
+def test_sync_snapshot_tree_renames_node_folder_and_preserves_files(tmp_path: Path) -> None:
+    planningtree_workspace.bootstrap_if_absent(tmp_path)
+    root_id = "rootid01"
+    child_id = "childid01"
+    snapshot = {
+        "project": {"project_path": str(tmp_path)},
+        "tree_state": {
+            "root_node_id": root_id,
+            "node_index": {
+                root_id: {
+                    "node_id": root_id,
+                    "parent_id": None,
+                    "child_ids": [child_id],
+                    "title": "Chair website",
+                    "hierarchical_number": "1",
+                    "display_order": 0,
+                },
+                child_id: {
+                    "node_id": child_id,
+                    "parent_id": root_id,
+                    "child_ids": [],
+                    "title": "Old title",
+                    "hierarchical_number": "1.1",
+                    "display_order": 0,
+                },
+            },
+        },
+    }
+
+    planningtree_workspace.sync_snapshot_tree(tmp_path, snapshot)
+    old_dir = tmp_path / ".planningtree" / "root" / "1 Chair website" / "1.1 Old title"
+    (old_dir / planningtree_workspace.FRAME_FILE_NAME).write_text("frame body", encoding="utf-8")
+    (old_dir / planningtree_workspace.SPEC_FILE_NAME).write_text("spec body", encoding="utf-8")
+
+    snapshot["tree_state"]["node_index"][child_id]["title"] = "New title"
+    planningtree_workspace.sync_snapshot_tree(tmp_path, snapshot)
+
+    new_dir = tmp_path / ".planningtree" / "root" / "1 Chair website" / "1.1 New title"
+    assert new_dir.is_dir()
+    assert not old_dir.exists()
+    assert (new_dir / planningtree_workspace.NODE_MARKER_NAME).read_text(encoding="utf-8").strip() == child_id
+    assert (new_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == "frame body"
+    assert (new_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == "spec body"

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { NodeRecord } from '../../api/types'
 import { ClarifyMockPanel } from '../graph/ClarifyMockPanel'
+import { NodeDocumentEditor } from './NodeDocumentEditor'
 import styles from './NodeDetailCard.module.css'
 
 type DetailTab = 'frame' | 'clarify' | 'spec'
@@ -14,6 +15,7 @@ const DETAIL_STEPS: { id: DetailTab; label: string }[] = [
 type NodeDetailCardState = 'ready' | 'loading' | 'unavailable'
 
 type Props = {
+  projectId: string | null
   node: NodeRecord | null
   variant: 'graph' | 'breadcrumb'
   showClose: boolean
@@ -23,6 +25,7 @@ type Props = {
 }
 
 export function NodeDetailCard({
+  projectId,
   node,
   variant,
   showClose,
@@ -42,7 +45,7 @@ export function NodeDetailCard({
     [variant],
   )
 
-  if (state !== 'ready' || !node) {
+  if (state !== 'ready' || !node || !projectId) {
     return (
       <section
         className={rootClassName}
@@ -107,29 +110,13 @@ export function NodeDetailCard({
 
       <div className={styles.cardBody}>
         {detailTab === 'frame' && (
-          <div className={styles.contentPanel}>
-            <p className={styles.eyebrow}>
-              {node.hierarchical_number ? `${node.hierarchical_number} - Node` : 'Node'}
-            </p>
-            <h3 className={styles.title}>{node.title}</h3>
-            <p className={styles.body}>{node.description.trim() || 'No description yet.'}</p>
-            <p className={styles.body}>
-              Status: <strong>{node.status}</strong> . Children: {node.child_ids.length}
-            </p>
-          </div>
+          <NodeDocumentEditor projectId={projectId} node={node} kind="frame" />
         )}
 
         {detailTab === 'clarify' && <ClarifyMockPanel />}
 
         {detailTab === 'spec' && (
-          <div className={styles.contentPanel}>
-            <p className={styles.eyebrow}>Spec</p>
-            <p className={styles.title}>Specification</p>
-            <p className={styles.body}>
-              The specification document for <strong>{node.title}</strong> will appear here once
-              generated.
-            </p>
-          </div>
+          <NodeDocumentEditor projectId={projectId} node={node} kind="spec" />
         )}
       </div>
     </section>

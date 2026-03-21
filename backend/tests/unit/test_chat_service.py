@@ -84,8 +84,7 @@ class SlowCheckpointCodexClient(FakeChatCodexClient):
 
 def _create_project(storage, workspace_root):
     svc = ProjectService(storage)
-    svc.set_workspace_root(str(workspace_root))
-    snap = svc.create_project("TestChat", "Test chat goal")
+    snap = svc.attach_project_folder(str(workspace_root))
     project_id = snap["project"]["id"]
     root_id = snap["tree_state"]["root_node_id"]
     return project_id, root_id
@@ -423,7 +422,7 @@ def test_project_delete_rejected_when_live_turn(storage, workspace_root):
 
     chat_service.create_message(project_id, root_id, "Hello")
 
-    with pytest.raises(ChatNotAllowed, match="delete"):
+    with pytest.raises(ChatNotAllowed, match="remove"):
         project_service.delete_project(project_id)
 
 

@@ -472,7 +472,7 @@ class ChatService:
         project = snapshot.get("project", {})
         if not isinstance(project, dict):
             return None
-        workspace_root = project.get("project_workspace_root")
+        workspace_root = project.get("project_path")
         if isinstance(workspace_root, str) and workspace_root.strip():
             return workspace_root
         return None

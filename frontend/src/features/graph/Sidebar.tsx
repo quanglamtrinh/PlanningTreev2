@@ -7,8 +7,6 @@ import { useProjectStore } from '../../stores/project-store'
 import { getCodexUsageLabels } from './usageLabels'
 import styles from './Sidebar.module.css'
 
-// ─── Relative time ────────────────────────────────────────────────────────────
-
 function formatRelTime(isoString: string | null | undefined): string {
   if (!isoString) return ''
   const diffMs = Date.now() - new Date(isoString).getTime()
@@ -23,14 +21,10 @@ function formatRelTime(isoString: string | null | undefined): string {
   return `${Math.floor(diffDay / 7)}w`
 }
 
-// ─── Status dot ───────────────────────────────────────────────────────────────
-
 function StatusDot({ status }: { status: string }) {
   const cls = status.replace(/[^a-z]/g, '')
   return <span className={`${styles.dot} ${styles[`dot_${cls}` as keyof typeof styles]}`} />
 }
-
-// ─── Sidebar ──────────────────────────────────────────────────────────────────
 
 export function Sidebar() {
   const navigate = useNavigate()
@@ -49,9 +43,8 @@ export function Sidebar() {
     loadProject,
     refreshProjects,
     selectNode,
-    createProject,
+    attachProjectFolder,
     deleteProject,
-    setWorkspaceRoot,
   } = useProjectStore(
     useShallow((s) => ({
       projects: s.projects,
@@ -62,9 +55,8 @@ export function Sidebar() {
       loadProject: s.loadProject,
       refreshProjects: s.refreshProjects,
       selectNode: s.selectNode,
-      createProject: s.createProject,
+      attachProjectFolder: s.attachProjectFolder,
       deleteProject: s.deleteProject,
-      setWorkspaceRoot: s.setWorkspaceRoot,
     })),
   )
   const codexRateLimits = useCodexStore((s) => s.snapshot?.rate_limits ?? null)
@@ -94,39 +86,40 @@ export function Sidebar() {
           return
         }
         navigate(`/projects/${latestSnapshot.project.id}/nodes/${targetNode.node_id}/chat`)
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     },
     [navigate, selectNode],
   )
 
-  // ── New project: open native OS folder picker → auto-create project ──────────
   const handleNewProjectClick = useCallback(async () => {
     setPickerError(null)
     setIsPickerLoading(true)
     try {
-      // Opens native OS "Select Folder" dialog (same UX as VSCode "Add Workspace Folder")
-      // @ts-expect-error — showDirectoryPicker not in all TS lib versions
-      const handle = await window.showDirectoryPicker({ mode: 'readwrite' }) as { name: string }
-      const folderName = handle.name
-
-      const state = useProjectStore.getState()
-      if (!state.baseWorkspaceRoot) {
-        try { await setWorkspaceRoot(folderName) } catch { /* will show error from createProject */ }
+      if (!window.electronAPI?.selectFolder) {
+        throw new Error('Folder picker is unavailable in this build.')
       }
-
-      await createProject(folderName, folderName)
+      const folderPath = await window.electronAPI.selectFolder()
+      if (!folderPath) {
+        return
+      }
+      await attachProjectFolder(folderPath)
     } catch (e) {
-      if (e instanceof Error && e.name !== 'AbortError') {
+      if (e instanceof Error) {
         setPickerError(e.message)
       }
     } finally {
       setIsPickerLoading(false)
     }
-  }, [createProject, setWorkspaceRoot])
+  }, [attachProjectFolder])
 
   const handleRemoveProject = useCallback(
     async (projectId: string, projectName: string) => {
-      if (!window.confirm(`Remove "${projectName}" from workspace?\nThis cannot be undone.`)) return
+      const confirmed = window.confirm(
+        `Remove "${projectName}" from workspace?\nProject files will stay on disk.`,
+      )
+      if (!confirmed) return
       try {
         await deleteProject(projectId)
       } catch (e) {
@@ -139,7 +132,11 @@ export function Sidebar() {
   const toggleExpand = useCallback((projectId: string) => {
     setExpandedProjects((prev) => {
       const next = new Set(prev)
-      if (next.has(projectId)) { next.delete(projectId) } else { next.add(projectId) }
+      if (next.has(projectId)) {
+        next.delete(projectId)
+      } else {
+        next.add(projectId)
+      }
       return next
     })
   }, [])
@@ -157,7 +154,6 @@ export function Sidebar() {
     showWeekly,
   } = useMemo(() => getCodexUsageLabels(codexRateLimits), [codexRateLimits])
 
-  // Suppressed — only used by getVisibleNodes helper kept for reference
   void expandedProjects
   void toggleExpand
 
@@ -179,7 +175,6 @@ export function Sidebar() {
 
   return (
     <aside className={styles.sidebar}>
-      {/* ── Header ── */}
       <div className={styles.header}>
         <button
           type="button"
@@ -194,7 +189,6 @@ export function Sidebar() {
         </button>
         <span className={styles.headerTitle}>Projects</span>
         <div className={styles.headerActions}>
-          {/* New project — opens native OS folder picker */}
           <button
             type="button"
             className={styles.headerBtn}
@@ -216,7 +210,6 @@ export function Sidebar() {
             )}
           </button>
 
-          {/* Refresh */}
           <button
             type="button"
             className={styles.headerBtn}
@@ -232,7 +225,6 @@ export function Sidebar() {
             </svg>
           </button>
 
-          {/* Search */}
           <button
             type="button"
             className={`${styles.headerBtn} ${searchOpen ? styles.headerBtnActive : ''}`}
@@ -248,10 +240,8 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Folder picker error */}
       {pickerError && <p className={styles.pickerError}>{pickerError}</p>}
 
-      {/* ── Project list ── */}
       <div className={styles.body}>
         {projects.length === 0 && !isLoadingProjects ? (
           <div className={styles.emptyState}>
@@ -285,7 +275,6 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* ── Footer ── */}
       <div className={styles.footer}>
         <div className={styles.usageBlock}>
           <div className={styles.usageRow}>
@@ -340,8 +329,6 @@ export function Sidebar() {
   )
 }
 
-// ─── ProjectGroup ─────────────────────────────────────────────────────────────
-
 type ProjectGroupProps = {
   project: ProjectSummary
   isActive: boolean
@@ -362,7 +349,7 @@ function ProjectGroup({
     return new Map(
       snapshot.tree_state.node_registry
         .filter((n) => !n.is_superseded)
-        .map((n) => [n.node_id, n])
+        .map((n) => [n.node_id, n]),
     )
   }, [snapshot])
 
@@ -410,8 +397,6 @@ function ProjectGroup({
   )
 }
 
-// ─── NodeTreeItem (recursive) ─────────────────────────────────────────────────
-
 type NodeTreeItemProps = {
   nodeId: string
   nodeById: Map<string, NodeRecord>
@@ -428,7 +413,6 @@ function NodeTreeItem({
   const node = nodeById.get(nodeId)
   const activeChildren = node?.child_ids.filter((id) => nodeById.has(id)) ?? []
   const hasChildren = activeChildren.length > 0
-  // Root node starts expanded; all others start collapsed
   const [expanded, setExpanded] = useState(depth === 0)
   const isSelected = nodeId === selectedNodeId
 
@@ -438,12 +422,10 @@ function NodeTreeItem({
 
   return (
     <div className={styles.treeItem}>
-      {/* ── Row ── */}
       <div
         className={`${styles.nodeRow} ${isSelected ? styles.nodeRowActive : ''}`}
         style={{ paddingLeft: `${indentLeft}px` }}
       >
-        {/* Chevron toggle or spacer */}
         {hasChildren ? (
           <button
             type="button"
@@ -464,13 +446,12 @@ function NodeTreeItem({
           <span className={styles.treeChevronSpacer} />
         )}
 
-        {/* Label area */}
         <button
           type="button"
           className={styles.nodeRowInner}
           onClick={() => onClickNode(node.node_id)}
           onDoubleClick={() => void onDoubleClickNode(node.node_id)}
-          title={`${node.hierarchical_number} — ${node.title}\nDouble-click to open chat`}
+          title={`${node.hierarchical_number} - ${node.title}\nDouble-click to open chat`}
         >
           <StatusDot status={node.status} />
           <span className={styles.nodeTitle}>
@@ -483,7 +464,6 @@ function NodeTreeItem({
         </button>
       </div>
 
-      {/* ── Children ── */}
       {expanded && hasChildren && (
         <div className={styles.treeChildren}>
           {activeChildren.map((childId) => (

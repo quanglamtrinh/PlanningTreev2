@@ -34,8 +34,7 @@ class SlowCheckpointCodexClient:
 
 
 def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
-    client.patch("/v1/settings/workspace", json={"base_workspace_root": str(workspace_root)})
-    resp = client.post("/v1/projects", json={"name": "ChatTest", "root_goal": "Test chat"})
+    resp = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
     assert resp.status_code == 200
     snap = resp.json()
     project_id = snap["project"]["id"]

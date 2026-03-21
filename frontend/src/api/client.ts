@@ -2,13 +2,14 @@ import type {
   BootstrapStatus,
   ChatSession,
   CodexSnapshot,
+  NodeDocument,
+  NodeDocumentKind,
   ProjectSummary,
   SendMessageResponse,
   Snapshot,
   SplitAcceptedResponse,
   SplitMode,
   SplitStatusResponse,
-  WorkspaceSettings,
 } from './types'
 
 type JsonBody = Record<string, unknown> | undefined
@@ -122,21 +123,12 @@ export const api = {
   getCodexSnapshot(): Promise<CodexSnapshot> {
     return jsonFetch('/v1/codex/account')
   },
-  getWorkspaceSettings(): Promise<WorkspaceSettings> {
-    return jsonFetch('/v1/settings/workspace')
-  },
-  setWorkspaceRoot(baseWorkspaceRoot: string): Promise<WorkspaceSettings> {
-    return jsonFetch('/v1/settings/workspace', { method: 'PATCH' }, {
-      base_workspace_root: baseWorkspaceRoot,
-    })
-  },
   listProjects(): Promise<ProjectSummary[]> {
     return jsonFetch('/v1/projects')
   },
-  createProject(name: string, rootGoal: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>('/v1/projects', { method: 'POST' }, {
-      name,
-      root_goal: rootGoal,
+  attachProjectFolder(folderPath: string): Promise<Snapshot> {
+    return jsonFetch<Snapshot>('/v1/projects/attach', { method: 'POST' }, {
+      folder_path: folderPath,
     })
   },
   deleteProject(projectId: string): Promise<void> {
@@ -174,6 +166,25 @@ export const api = {
     payload: { title?: string; description?: string },
   ): Promise<Snapshot> {
     return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes/${nodeId}`, { method: 'PATCH' }, payload)
+  },
+  getNodeDocument(
+    projectId: string,
+    nodeId: string,
+    kind: NodeDocumentKind,
+  ): Promise<NodeDocument> {
+    return jsonFetch<NodeDocument>(`/v1/projects/${projectId}/nodes/${nodeId}/documents/${kind}`)
+  },
+  putNodeDocument(
+    projectId: string,
+    nodeId: string,
+    kind: NodeDocumentKind,
+    content: string,
+  ): Promise<NodeDocument> {
+    return jsonFetch<NodeDocument>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/documents/${kind}`,
+      { method: 'PUT' },
+      { content },
+    )
   },
   getChatSession(projectId: string, nodeId: string): Promise<ChatSession> {
     return jsonFetch<ChatSession>(`/v1/projects/${projectId}/nodes/${nodeId}/chat/session`)
