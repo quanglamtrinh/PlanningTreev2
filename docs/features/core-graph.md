@@ -2,13 +2,13 @@
 
 ## Goal
 
-Deliver the first usable rebuild slice: bootstrap a local workspace, create projects, manage a planning tree, and render that tree in a high-fidelity legacy-style graph workspace.
+Deliver a graph-first slice: bootstrap a local workspace, create projects, manage a task tree, run AI split, and render the tree in the graph workspace.
 
 ## Shared Types
 
 - `Project`: `id`, `name`, `root_goal`, `base_workspace_root`, `project_workspace_root`, `created_at`, `updated_at`
 - `ProjectSummary`: `id`, `name`, `root_goal`, `base_workspace_root`, `project_workspace_root`, `created_at`, `updated_at`
-- `Node` (public snapshot): `node_id`, `parent_id`, `child_ids`, `title`, `description`, `status`, `phase`, `planning_mode`, `depth`, `display_order`, `hierarchical_number`, `split_metadata`, `chat_session_id`, `node_kind`, `is_superseded`, `created_at`
+- `Node` (public snapshot): `node_id`, `parent_id`, `child_ids`, `title`, `description`, `status`, `node_kind`, `depth`, `display_order`, `hierarchical_number`, `created_at`, `is_superseded`
 - `TreeState` (public snapshot): `root_node_id`, `active_node_id`, `node_registry`
 - `Snapshot`: `schema_version`, `project`, `tree_state`, `updated_at`
 
@@ -18,12 +18,11 @@ Deliver the first usable rebuild slice: bootstrap a local workspace, create proj
 
 Allowed transitions:
 
-- `locked -> ready` through sibling unlock
+- `locked -> ready` through sibling ordering rules
 - `ready -> draft` when a leaf gains its first child
-- `ready -> in_progress` reserved for Phase 4
-- `ready -> done` through completion
-- `in_progress -> done` through completion
-- `done` is terminal
+- `ready -> in_progress` reserved for future work
+- `ready -> done` reserved for future work
+- `in_progress -> done` reserved for future work
 
 ## Storage Shape
 
@@ -31,7 +30,7 @@ Allowed transitions:
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "project": {
     "id": "string",
     "name": "string",
@@ -50,15 +49,6 @@ Allowed transitions:
 }
 ```
 
-Per-node content lives under:
-
-```text
-nodes/{node_id}/task.md
-nodes/{node_id}/briefing.md
-nodes/{node_id}/spec.md
-nodes/{node_id}/state.yaml
-```
-
 `meta.json`
 
 ```json
@@ -73,16 +63,29 @@ nodes/{node_id}/state.yaml
 }
 ```
 
+`split_state.json`
+
+```json
+{
+  "thread_id": "string | null",
+  "active_job": "object | null",
+  "last_error": "object | null"
+}
+```
+
 ## Tree Rules
 
 - `node_index` is stored as a dict on disk for fast lookup.
-- Public snapshots still expose `node_registry` as an array for frontend compatibility.
+- Public snapshots expose `node_registry` as an array for frontend compatibility.
+- `title` and `description` are stored inline in `tree.json`; there are no per-node content files.
+- Split runtime state is stored separately in `split_state.json`; split results still materialize inline into `tree.json`.
 - "Active children" means `node_kind !== "superseded"`.
 - All traversal logic must operate on active children only.
-- `done` nodes are frozen: no edits and no child creation.
+- `done` nodes are frozen: no child creation.
 
 ## Acceptance
 
 - A fresh install can configure a workspace root and create a project.
-- The user can create child nodes, edit node content, reload, and keep selection state.
-- The completion endpoint enforces progression and unlock rules without any gate-era concepts.
+- The user can create child nodes, edit node title/description, reload, and keep selection state.
+- The user can split an eligible leaf node and get inline child nodes back without opening breadcrumb.
+- Reset-to-root collapses the tree back to its root node.

@@ -24,7 +24,7 @@ def build_split_context(
         "parent_chain_truncated": parent_chain_truncated,
         "prior_node_summaries_compact": _build_prior_node_summaries_compact(node, node_by_id),
         "existing_children_count": len(_active_child_ids(node, node_by_id)),
-}
+    }
 
 
 def _is_superseded(node: dict[str, Any]) -> bool:

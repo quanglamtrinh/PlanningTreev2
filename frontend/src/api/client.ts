@@ -1,31 +1,15 @@
 import type {
-  AcceptedAgentOperation,
-  AskConversationResponse,
-  AskConversationSendAcceptedResponse,
-  PlanningConversationResponse,
-  AskSession,
   BootstrapStatus,
   ChatSession,
-  DeltaContextPacket,
-  ExecutionConversationActionResponse,
-  ExecutionConversationResponse,
-  ExecutionConversationRequestResolvedResponse,
-  ExecutionConversationSendAcceptedResponse,
-  NodeBrief,
-  NodeBriefing,
-  NodeDocuments,
-  NodeRecord,
-  NodeState,
-  NodeSpec,
-  NodeTask,
-  PlanningConversationRequestResolvedResponse,
-  PlanningHistory,
+  CodexSnapshot,
+  NodeDocument,
+  NodeDocumentKind,
   ProjectSummary,
-  RuntimeInputAnswer,
-  SplitMode,
-  SplitAcceptedResponse,
+  SendMessageResponse,
   Snapshot,
-  WorkspaceSettings,
+  SplitAcceptedResponse,
+  SplitMode,
+  SplitStatusResponse,
 } from './types'
 
 type JsonBody = Record<string, unknown> | undefined
@@ -36,13 +20,34 @@ interface ErrorPayload {
 }
 
 const DEFAULT_TIMEOUT_MS = 300_000
-const CANONICAL_SPLIT_MODES = new Set<SplitMode>([
-  'workflow',
-  'simplify_workflow',
-  'phase_breakdown',
-  'agent_breakdown',
-])
-const CANONICAL_SPLIT_OUTPUT_FAMILIES = new Set(['flat_subtasks_v1'])
+
+let _cachedAuthToken: string | null = null
+
+/**
+ * Eagerly fetch and cache the auth token before any API calls.
+ * No-op when not running inside Electron.
+ */
+export async function initAuthToken(): Promise<void> {
+  if (!window.electronAPI) return
+  if (_cachedAuthToken === null) {
+    _cachedAuthToken = await window.electronAPI.getAuthToken()
+  }
+}
+
+async function getElectronAuthHeaders(): Promise<Record<string, string>> {
+  if (!window.electronAPI) return {}
+  if (_cachedAuthToken === null) {
+    _cachedAuthToken = await window.electronAPI.getAuthToken()
+  }
+  return { Authorization: `Bearer ${_cachedAuthToken}` }
+}
+
+/** Append ?token= for SSE EventSource (which cannot send headers). */
+export function appendAuthToken(url: string): string {
+  if (!window.electronAPI || !_cachedAuthToken) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}token=${_cachedAuthToken}`
+}
 
 function requestTimeoutMs() {
   const raw = Number(import.meta.env.VITE_API_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS)
@@ -82,11 +87,13 @@ export class ApiError extends Error {
 }
 
 async function jsonFetch<T>(path: string, init?: RequestInit, body?: JsonBody): Promise<T> {
+  const authHeaders = await getElectronAuthHeaders()
   const response = await withRequestTimeout(
     fetch(path, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders,
         ...(init?.headers ?? {}),
       },
       body: body === undefined ? init?.body : JSON.stringify(body),
@@ -109,418 +116,90 @@ async function jsonFetch<T>(path: string, init?: RequestInit, body?: JsonBody): 
   return (await response.json()) as T
 }
 
-function isCanonicalSplitMode(value: unknown): value is SplitMode {
-  return typeof value === 'string' && CANONICAL_SPLIT_MODES.has(value as SplitMode)
-}
-
-function normalizeSplitMetadata(
-  metadata: Record<string, unknown> | null,
-): Record<string, unknown> | null {
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
-    return null
-  }
-  const normalized = { ...metadata }
-  if (!isCanonicalSplitMode(normalized.mode)) {
-    delete normalized.mode
-  }
-  if (
-    typeof normalized.output_family !== 'string' ||
-    !CANONICAL_SPLIT_OUTPUT_FAMILIES.has(normalized.output_family)
-  ) {
-    delete normalized.output_family
-  }
-  return normalized
-}
-
-function normalizeNodeRecord(node: NodeRecord): NodeRecord {
-  return {
-    ...node,
-    planning_mode: isCanonicalSplitMode(node.planning_mode) ? node.planning_mode : null,
-    split_metadata: normalizeSplitMetadata(node.split_metadata),
-  }
-}
-
-function normalizeSnapshot(snapshot: Snapshot): Snapshot {
-  return {
-    ...snapshot,
-    tree_state: {
-      ...snapshot.tree_state,
-      node_registry: snapshot.tree_state.node_registry.map((node) => normalizeNodeRecord(node)),
-    },
-  }
-}
-
 export const api = {
   getBootstrapStatus(): Promise<BootstrapStatus> {
     return jsonFetch('/v1/bootstrap/status')
   },
-  getWorkspaceSettings(): Promise<WorkspaceSettings> {
-    return jsonFetch('/v1/settings/workspace')
-  },
-  setWorkspaceRoot(baseWorkspaceRoot: string): Promise<WorkspaceSettings> {
-    return jsonFetch('/v1/settings/workspace', { method: 'PATCH' }, {
-      base_workspace_root: baseWorkspaceRoot,
-    })
+  getCodexSnapshot(): Promise<CodexSnapshot> {
+    return jsonFetch('/v1/codex/account')
   },
   listProjects(): Promise<ProjectSummary[]> {
     return jsonFetch('/v1/projects')
   },
-  createProject(name: string, rootGoal: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>('/v1/projects', { method: 'POST' }, {
-      name,
-      root_goal: rootGoal,
-    }).then(normalizeSnapshot)
+  attachProjectFolder(folderPath: string): Promise<Snapshot> {
+    return jsonFetch<Snapshot>('/v1/projects/attach', { method: 'POST' }, {
+      folder_path: folderPath,
+    })
   },
   deleteProject(projectId: string): Promise<void> {
     return jsonFetch<void>(`/v1/projects/${projectId}`, { method: 'DELETE' })
   },
   getSnapshot(projectId: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/snapshot`).then(normalizeSnapshot)
+    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/snapshot`)
   },
   resetProjectToRoot(projectId: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/reset-to-root`, { method: 'POST' }).then(normalizeSnapshot)
+    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/reset-to-root`, { method: 'POST' })
   },
   setActiveNode(projectId: string, activeNodeId: string | null): Promise<Snapshot> {
     return jsonFetch<Snapshot>(`/v1/projects/${projectId}/active-node`, { method: 'PATCH' }, {
       active_node_id: activeNodeId,
-    }).then(normalizeSnapshot)
+    })
   },
   createChild(projectId: string, parentId: string): Promise<Snapshot> {
     return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes`, { method: 'POST' }, {
       parent_id: parentId,
-    }).then(normalizeSnapshot)
-  },
-  splitNode(
-    projectId: string,
-    nodeId: string,
-    mode: SplitMode,
-    confirmReplace = false,
-  ): Promise<SplitAcceptedResponse> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/split`, { method: 'POST' }, {
-      mode,
-      confirm_replace: confirmReplace,
     })
   },
-  getPlanningHistory(projectId: string, nodeId: string): Promise<PlanningHistory> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/planning/history`)
+  splitNode(projectId: string, nodeId: string, mode: SplitMode): Promise<SplitAcceptedResponse> {
+    return jsonFetch<SplitAcceptedResponse>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/split`,
+      { method: 'POST' },
+      { mode },
+    )
   },
-  planningEventsUrl(projectId: string, nodeId: string): string {
-    return `/v1/projects/${projectId}/nodes/${nodeId}/planning/events`
-  },
-  agentEventsUrl(projectId: string, nodeId: string): string {
-    return `/v1/projects/${projectId}/nodes/${nodeId}/agent/events`
+  getSplitStatus(projectId: string): Promise<SplitStatusResponse> {
+    return jsonFetch<SplitStatusResponse>(`/v1/projects/${projectId}/split-status`)
   },
   updateNode(
     projectId: string,
     nodeId: string,
     payload: { title?: string; description?: string },
   ): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes/${nodeId}`, { method: 'PATCH' }, payload).then(normalizeSnapshot)
+    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes/${nodeId}`, { method: 'PATCH' }, payload)
   },
-  getNodeDocuments(projectId: string, nodeId: string): Promise<NodeDocuments> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/documents`)
-  },
-  getNodeTask(projectId: string, nodeId: string): Promise<{ task: NodeTask }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/documents/task`)
-  },
-  updateNodeTask(
+  getNodeDocument(
     projectId: string,
     nodeId: string,
-    payload: Partial<NodeTask>,
-  ): Promise<{ task: NodeTask }> {
-    return jsonFetch(
-      `/v1/projects/${projectId}/nodes/${nodeId}/documents/task`,
+    kind: NodeDocumentKind,
+  ): Promise<NodeDocument> {
+    return jsonFetch<NodeDocument>(`/v1/projects/${projectId}/nodes/${nodeId}/documents/${kind}`)
+  },
+  putNodeDocument(
+    projectId: string,
+    nodeId: string,
+    kind: NodeDocumentKind,
+    content: string,
+  ): Promise<NodeDocument> {
+    return jsonFetch<NodeDocument>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/documents/${kind}`,
       { method: 'PUT' },
-      payload,
+      { content },
     )
   },
-  getNodeBrief(projectId: string, nodeId: string): Promise<{ brief: NodeBrief }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/documents/brief`)
+  getChatSession(projectId: string, nodeId: string): Promise<ChatSession> {
+    return jsonFetch<ChatSession>(`/v1/projects/${projectId}/nodes/${nodeId}/chat/session`)
   },
-  getNodeBriefing(projectId: string, nodeId: string): Promise<{ briefing: NodeBriefing }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/documents/briefing`)
-  },
-  getNodeSpec(projectId: string, nodeId: string): Promise<{ spec: NodeSpec }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/documents/spec`)
-  },
-  updateNodeSpec(
-    projectId: string,
-    nodeId: string,
-    payload: Partial<NodeSpec>,
-  ): Promise<{ spec: NodeSpec }> {
-    return jsonFetch(
-      `/v1/projects/${projectId}/nodes/${nodeId}/documents/spec`,
-      { method: 'PUT' },
-      payload,
-    )
-  },
-  getNodeState(projectId: string, nodeId: string): Promise<{ state: NodeState }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/documents/state`)
-  },
-  confirmTask(projectId: string, nodeId: string): Promise<AcceptedAgentOperation> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/confirm-task`, {
-      method: 'POST',
-    })
-  },
-  confirmBriefing(projectId: string, nodeId: string): Promise<{ state: NodeState }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/confirm-briefing`, {
-      method: 'POST',
-    })
-  },
-  confirmSpec(projectId: string, nodeId: string): Promise<{ state: NodeState }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/confirm-spec`, {
-      method: 'POST',
-    })
-  },
-  generateNodeSpec(projectId: string, nodeId: string): Promise<AcceptedAgentOperation> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/generate-spec`, {
-      method: 'POST',
-    })
-  },
-  startPlan(projectId: string, nodeId: string): Promise<AcceptedAgentOperation> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/plan/start`, {
-      method: 'POST',
-    })
-  },
-  sendPlanMessage(
-    projectId: string,
-    nodeId: string,
-    content: string,
-  ): Promise<AcceptedAgentOperation> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/plan/messages`, {
-      method: 'POST',
-    }, {
-      content,
-    })
-  },
-  resolvePlanInput(
-    projectId: string,
-    nodeId: string,
-    requestId: string,
-    payload: {
-      thread_id?: string | null
-      turn_id?: string | null
-      answers: Record<string, RuntimeInputAnswer>
-    },
-  ): Promise<{ status: 'resolved' | 'already_resolved_or_stale'; session: ChatSession }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/plan/input/${requestId}/resolve`, {
-      method: 'POST',
-    }, payload)
-  },
-  executeNode(projectId: string, nodeId: string): Promise<{ status: string; session: ChatSession; state: NodeState }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/execute`, {
-      method: 'POST',
-    })
-  },
-  completeNode(projectId: string, nodeId: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes/${nodeId}/complete`, {
-      method: 'POST',
-    }).then(normalizeSnapshot)
-  },
-  planAndExecute(projectId: string, nodeId: string): Promise<{ status: string; session: ChatSession; state: NodeState }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/plan-and-execute`, {
-      method: 'POST',
-    })
-  },
-  startExecution(projectId: string, nodeId: string): Promise<{ status: string; session: ChatSession; state: NodeState }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/start-execution`, {
-      method: 'POST',
-    })
-  },
-  getAskSidecar(projectId: string, nodeId: string): Promise<{ session: AskSession }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/session`)
-  },
-  resetAskSidecar(projectId: string, nodeId: string): Promise<{ session: AskSession }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/reset`, {
-      method: 'POST',
-    })
-  },
-  askSidecarEventsUrl(projectId: string, nodeId: string): string {
-    return `/v1/projects/${projectId}/nodes/${nodeId}/ask/events`
-  },
-  getAskConversation(
-    projectId: string,
-    nodeId: string,
-  ): Promise<AskConversationResponse> {
-    return jsonFetch(`/v2/projects/${projectId}/nodes/${nodeId}/conversations/ask`)
-  },
-  getPlanningConversation(
-    projectId: string,
-    nodeId: string,
-  ): Promise<PlanningConversationResponse> {
-    return jsonFetch(`/v2/projects/${projectId}/nodes/${nodeId}/conversations/planning`)
-  },
-  sendAskConversationMessage(
-    projectId: string,
-    nodeId: string,
-    content: string,
-  ): Promise<AskConversationSendAcceptedResponse> {
-    return jsonFetch(
-      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/ask/send`,
+  sendChatMessage(projectId: string, nodeId: string, content: string): Promise<SendMessageResponse> {
+    return jsonFetch<SendMessageResponse>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/chat/message`,
       { method: 'POST' },
       { content },
     )
   },
-  askConversationEventsUrl(
-    projectId: string,
-    nodeId: string,
-    options: {
-      afterEventSeq: number
-      expectedStreamId?: string | null
-    },
-  ): string {
-    const search = new URLSearchParams()
-    search.set('after_event_seq', String(options.afterEventSeq))
-    if (options.expectedStreamId) {
-      search.set('expected_stream_id', options.expectedStreamId)
-    }
-    return `/v2/projects/${projectId}/nodes/${nodeId}/conversations/ask/events?${search.toString()}`
-  },
-  planningConversationEventsUrl(
-    projectId: string,
-    nodeId: string,
-    options: {
-      afterEventSeq: number
-      expectedStreamId?: string | null
-    },
-  ): string {
-    const search = new URLSearchParams()
-    search.set('after_event_seq', String(options.afterEventSeq))
-    if (options.expectedStreamId) {
-      search.set('expected_stream_id', options.expectedStreamId)
-    }
-    return `/v2/projects/${projectId}/nodes/${nodeId}/conversations/planning/events?${search.toString()}`
-  },
-  getExecutionConversation(
-    projectId: string,
-    nodeId: string,
-  ): Promise<ExecutionConversationResponse> {
-    return jsonFetch(`/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution`)
-  },
-  sendExecutionConversationMessage(
-    projectId: string,
-    nodeId: string,
-    content: string,
-  ): Promise<ExecutionConversationSendAcceptedResponse> {
-    return jsonFetch(
-      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/send`,
+  resetChatSession(projectId: string, nodeId: string): Promise<ChatSession> {
+    return jsonFetch<ChatSession>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/chat/reset`,
       { method: 'POST' },
-      { content },
     )
-  },
-  resolveExecutionConversationRequest(
-    projectId: string,
-    nodeId: string,
-    requestId: string,
-    payload: {
-      request_kind: 'approval' | 'user_input'
-      decision?: 'approved' | 'declined'
-      answers?: Record<string, RuntimeInputAnswer>
-      thread_id?: string | null
-      turn_id?: string | null
-    },
-  ): Promise<ExecutionConversationRequestResolvedResponse> {
-    return jsonFetch(
-      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/requests/${requestId}/resolve`,
-      { method: 'POST' },
-      payload,
-    )
-  },
-  resolvePlanningConversationRequest(
-    projectId: string,
-    nodeId: string,
-    requestId: string,
-    payload: {
-      request_kind: 'approval' | 'user_input'
-      decision?: 'approved' | 'declined'
-      answers?: Record<string, RuntimeInputAnswer>
-      thread_id?: string | null
-      turn_id?: string | null
-    },
-  ): Promise<PlanningConversationRequestResolvedResponse> {
-    return jsonFetch(
-      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/planning/requests/${requestId}/resolve`,
-      { method: 'POST' },
-      payload,
-    )
-  },
-  continueExecutionConversationMessage(
-    projectId: string,
-    nodeId: string,
-    messageId: string,
-  ): Promise<ExecutionConversationActionResponse> {
-    return jsonFetch(
-      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/messages/${messageId}/continue`,
-      { method: 'POST' },
-      {},
-    )
-  },
-  retryExecutionConversationMessage(
-    projectId: string,
-    nodeId: string,
-    messageId: string,
-  ): Promise<ExecutionConversationActionResponse> {
-    return jsonFetch(
-      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/messages/${messageId}/retry`,
-      { method: 'POST' },
-      {},
-    )
-  },
-  regenerateExecutionConversationMessage(
-    projectId: string,
-    nodeId: string,
-    messageId: string,
-  ): Promise<ExecutionConversationActionResponse> {
-    return jsonFetch(
-      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/messages/${messageId}/regenerate`,
-      { method: 'POST' },
-      {},
-    )
-  },
-  cancelExecutionConversation(
-    projectId: string,
-    nodeId: string,
-    payload: {
-      stream_id?: string | null
-    },
-  ): Promise<ExecutionConversationActionResponse> {
-    return jsonFetch(
-      `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/cancel`,
-      { method: 'POST' },
-      payload,
-    )
-  },
-  executionConversationEventsUrl(
-    projectId: string,
-    nodeId: string,
-    options: {
-      afterEventSeq: number
-      expectedStreamId?: string | null
-    },
-  ): string {
-    const search = new URLSearchParams()
-    search.set('after_event_seq', String(options.afterEventSeq))
-    if (options.expectedStreamId) {
-      search.set('expected_stream_id', options.expectedStreamId)
-    }
-    return `/v2/projects/${projectId}/nodes/${nodeId}/conversations/execution/events?${search.toString()}`
-  },
-  listAskPackets(projectId: string, nodeId: string): Promise<{ packets: DeltaContextPacket[] }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/packets`)
-  },
-  approveAskPacket(projectId: string, nodeId: string, packetId: string): Promise<{ packet: DeltaContextPacket }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/packets/${packetId}/approve`, {
-      method: 'POST',
-    })
-  },
-  rejectAskPacket(projectId: string, nodeId: string, packetId: string): Promise<{ packet: DeltaContextPacket }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/packets/${packetId}/reject`, {
-      method: 'POST',
-    })
-  },
-  mergeAskPacket(projectId: string, nodeId: string, packetId: string): Promise<{ packet: DeltaContextPacket }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/ask/packets/${packetId}/merge`, {
-      method: 'POST',
-    })
   },
 }

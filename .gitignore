@@ -6,7 +6,6 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 dist/
-build/
 *.so
 
 # Node
@@ -18,6 +17,10 @@ frontend/.vite/
 build/
 *.exe
 *.app
+
+# Electron
+dist-electron/
+*.blockmap
 
 # Environment
 .env

@@ -94,5 +94,8 @@ def parse_route_split_mode_or_raise(raw: str) -> RouteAcceptedSplitMode:
 def split_output_family_for_mode(mode: ServiceSplitMode | str) -> ServiceSplitOutputFamily:
     normalized = mode.strip() if isinstance(mode, str) else mode
     if normalized in CANONICAL_SPLIT_MODE_REGISTRY:
-        return cast(ServiceSplitOutputFamily, CANONICAL_SPLIT_MODE_REGISTRY[cast(CanonicalSplitModeId, normalized)]["output_family"])
+        return cast(
+            ServiceSplitOutputFamily,
+            CANONICAL_SPLIT_MODE_REGISTRY[cast(CanonicalSplitModeId, normalized)]["output_family"],
+        )
     raise InvalidRequest("Unsupported split mode.")

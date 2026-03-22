@@ -1,0 +1,326 @@
+.card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 14px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--color-bg-panel) 97%, transparent);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(12px);
+  box-sizing: border-box;
+}
+
+.cardGraph {
+  width: 100%;
+}
+
+.cardBreadcrumb {
+  width: 100%;
+  background: color-mix(in srgb, var(--color-bg-panel) 98%, transparent);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.stepButton {
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+  position: relative;
+}
+
+.stepButton::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.14s ease;
+}
+
+.stepButton:hover:not(.stepButtonActive) {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-hover);
+}
+
+.stepButtonActive {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.stepButtonActive::after {
+  background: var(--color-accent);
+}
+
+.stepArrow {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--color-border);
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+}
+
+.closeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--color-text-secondary);
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.closeButton:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.cardBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
+.contentPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  min-height: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-hover);
+}
+
+.describePanel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+.documentPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+}
+
+.documentStatusRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+}
+
+.documentFileLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.documentStatusValue {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+.documentStatusError {
+  color: #b42318;
+}
+
+.documentErrorPanel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #b42318 28%, var(--color-border-subtle));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, #b42318 8%, var(--color-bg-panel));
+}
+
+.retryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.retryButton:hover {
+  background: var(--color-bg-hover);
+}
+
+.editorSurface {
+  flex: 1;
+  min-height: 240px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
+}
+
+.editorSurface :global(.cm-editor) {
+  height: 100%;
+}
+
+.editorSurface :global(.cm-scroller) {
+  overflow: auto;
+}
+
+.editorSurface :global(.cm-content),
+.editorSurface :global(.cm-gutters) {
+  min-height: 240px;
+}
+
+.eyebrow,
+.title,
+.body {
+  margin: 0;
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.title {
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--color-text-primary);
+}
+
+.body {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--color-text-secondary);
+}
+
+.unavailableState {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-hover);
+}
+
+.unavailableEyebrow,
+.unavailableTitle,
+.unavailableBody {
+  margin: 0;
+}
+
+.unavailableEyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.unavailableTitle {
+  font-size: 18px;
+  line-height: 1.3;
+  color: var(--color-text-primary);
+}
+
+.unavailableBody {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--color-text-secondary);
+}
+
+/* Graph overlay: give frame/spec editor remaining height; Clarify scrolls inside */
+section[data-variant='graph'] .cardBody {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+section[data-variant='graph'] .cardBodyAux {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
+section[data-variant='graph'] .documentPanel {
+  flex: 1;
+  min-height: 0;
+}
+
+section[data-variant='graph'] .contentPanel {
+  min-height: auto;
+  flex-shrink: 0;
+}
+
+section[data-variant='graph'] .editorSurface {
+  flex: 1;
+  min-height: 0;
+}
+
+section[data-variant='graph'] .editorSurface :global(.cm-content),
+section[data-variant='graph'] .editorSurface :global(.cm-gutters) {
+  min-height: 0;
+}
+

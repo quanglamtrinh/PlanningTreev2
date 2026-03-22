@@ -1,17 +1,28 @@
 {
   "name": "planningtree",
   "version": "0.1.0",
-  "description": "AI-assisted task tree planning — local-first",
+  "description": "AI-assisted task tree planning — local-first desktop app",
   "private": true,
+  "main": "electron/main.js",
   "bin": {
     "planningtree": "./launcher/cli.js"
   },
   "scripts": {
     "dev": "python scripts/dev.py",
-    "build": "npm run build --prefix frontend",
+    "dev:electron": "node scripts/dev-electron.js",
+    "start:electron": "electron .",
+    "build:frontend": "npm run build --prefix frontend",
+    "build:backend": "python scripts/build-backend.py",
+    "build:electron": "electron-builder --win",
+    "build": "npm run build:backend && npm run build:electron",
+    "validate:build": "node scripts/validate-build.js",
     "check:phase6_3_cleanup": "python scripts/check_phase6_3_cleanup.py",
     "typecheck": "npm run typecheck --prefix frontend",
     "test": "npm run test:unit --prefix frontend && python -m pytest backend/tests/unit"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
   },
   "keywords": [],
   "license": "UNLICENSED"

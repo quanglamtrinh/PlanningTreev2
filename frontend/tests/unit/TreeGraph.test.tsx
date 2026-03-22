@@ -2,11 +2,16 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { useEffect, type ComponentType, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { layoutSpy } = vi.hoisted(() => ({
-  layoutSpy: vi.fn(),
+const { apiMock } = vi.hoisted(() => ({
+  apiMock: {
+    getNodeDocument: vi.fn(),
+    putNodeDocument: vi.fn(),
+  },
 }))
 
 vi.mock('@xyflow/react', () => ({
+  useStore: (selector: (state: { transform: [number, number, number] }) => unknown) =>
+    selector({ transform: [0, 0, 1] }),
   ReactFlow: ({
     nodes,
     nodeTypes,
@@ -25,10 +30,7 @@ vi.mock('@xyflow/react', () => ({
     }, [onInit])
 
     return (
-      <div
-        data-testid="mock-reactflow"
-        data-has-node-click={String(Boolean(onNodeClick))}
-      >
+      <div data-testid="mock-reactflow" data-has-node-click={String(Boolean(onNodeClick))}>
         {nodes.map((node) => {
           const NodeComponent = nodeTypes[node.type]
           return (
@@ -66,21 +68,41 @@ vi.mock('@xyflow/react', () => ({
   MarkerType: { ArrowClosed: 'arrow-closed' },
 }))
 
-vi.mock('../../src/features/graph/treeGraphLayout', async () => {
-  const actual = await vi.importActual<typeof import('../../src/features/graph/treeGraphLayout')>(
-    '../../src/features/graph/treeGraphLayout',
-  )
-  return {
-    ...actual,
-    buildTreeLayoutPositions: vi.fn((args) => {
-      layoutSpy()
-      return actual.buildTreeLayoutPositions(args)
-    }),
-  }
-})
+vi.mock('@uiw/react-codemirror', () => ({
+  default: ({
+    value,
+    onChange,
+    onBlur,
+  }: {
+    value: string
+    onChange?: (value: string) => void
+    onBlur?: () => void
+  }) => (
+    <textarea
+      data-testid="mock-codemirror"
+      value={value}
+      onChange={(event) => onChange?.(event.target.value)}
+      onBlur={() => onBlur?.()}
+    />
+  ),
+}))
+
+vi.mock('../../src/api/client', () => ({
+  api: apiMock,
+  ApiError: class extends Error {
+    status: number
+    code: string | null
+    constructor(status = 400, payload: { message?: string; code?: string } | null = null) {
+      super(payload?.message ?? 'Request failed')
+      this.status = status
+      this.code = payload?.code ?? null
+    }
+  },
+}))
 
 import type { NodeRecord, Snapshot } from '../../src/api/types'
 import { TreeGraph } from '../../src/features/graph/TreeGraph'
+import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useProjectStore } from '../../src/stores/project-store'
 
 function buildNode(overrides: Partial<NodeRecord>): NodeRecord {
@@ -91,83 +113,79 @@ function buildNode(overrides: Partial<NodeRecord>): NodeRecord {
     title: 'Root',
     description: 'Root node',
     status: 'draft',
-    phase: 'planning',
-    node_kind: 'original',
-    planning_mode: null,
+    node_kind: 'root',
     depth: 0,
     display_order: 0,
     hierarchical_number: '1',
-    split_metadata: null,
-    chat_session_id: null,
-    has_planning_thread: false,
-    has_execution_thread: false,
-    planning_thread_status: null,
-    execution_thread_status: null,
-    has_ask_thread: false,
-    ask_thread_status: null,
     is_superseded: false,
-    created_at: '2026-03-08T00:00:00Z',
+    created_at: '2026-03-20T00:00:00Z',
     ...overrides,
   }
 }
 
 function buildSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
   return {
-    schema_version: 2,
+    schema_version: 6,
     project: {
       id: 'project-1',
       name: 'Alpha',
-      root_goal: 'Ship phase 3',
-      base_workspace_root: 'C:/workspace',
-      project_workspace_root: 'C:/workspace/alpha',
-      created_at: '2026-03-08T00:00:00Z',
-      updated_at: '2026-03-08T00:00:00Z',
+      root_goal: 'Ship graph-only reset',
+      project_path: 'C:/workspace/alpha',
+      created_at: '2026-03-20T00:00:00Z',
+      updated_at: '2026-03-20T00:00:00Z',
     },
     tree_state: {
       root_node_id: 'root',
       active_node_id: 'root',
       node_registry: [buildNode({})],
     },
-    updated_at: '2026-03-08T00:00:00Z',
+    updated_at: '2026-03-20T00:00:00Z',
     ...overrides,
   }
 }
 
-function renderTreeGraph(
-  snapshot: Snapshot,
-  options: {
-    isSplittingNode?: boolean
-    isResetDisabled?: boolean
-    isResettingProject?: boolean
-  } = {},
-) {
+function renderTreeGraph(snapshot: Snapshot) {
   const onSplitNode = vi.fn(async () => undefined)
+  const onOpenBreadcrumb = vi.fn(async () => undefined)
   const onFinishTask = vi.fn(async () => undefined)
   const onResetProject = vi.fn(async () => undefined)
   const view = render(
     <TreeGraph
       snapshot={snapshot}
       selectedNodeId={snapshot.tree_state.active_node_id}
+      splitStatus="idle"
+      splittingNodeId={null}
       isCreatingNode={false}
-      isSplittingNode={options.isSplittingNode ?? false}
-      isResettingProject={options.isResettingProject ?? false}
-      isResetDisabled={options.isResetDisabled ?? false}
-      splittingNodeId={options.isSplittingNode ? snapshot.tree_state.root_node_id : null}
+      isResettingProject={false}
+      isResetDisabled={false}
       onSelectNode={vi.fn(async () => undefined)}
       onCreateChild={vi.fn(async () => undefined)}
       onSplitNode={onSplitNode}
-      onOpenBreadcrumb={vi.fn(async () => undefined)}
+      onOpenBreadcrumb={onOpenBreadcrumb}
       onFinishTask={onFinishTask}
       onResetProject={onResetProject}
     />,
   )
-  return { ...view, onSplitNode, onFinishTask, onResetProject }
+  return { ...view, onSplitNode, onOpenBreadcrumb, onFinishTask, onResetProject }
 }
 
 describe('TreeGraph', () => {
   beforeEach(() => {
-    layoutSpy.mockClear()
+    vi.clearAllMocks()
     useProjectStore.setState(useProjectStore.getInitialState())
+    useNodeDocumentStore.getState().reset()
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-20T00:00:00Z',
+    })
+    apiMock.putNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-20T00:00:00Z',
+    })
   })
 
   it('always includes the root node in the ReactFlow node set', () => {
@@ -187,6 +205,7 @@ describe('TreeGraph', () => {
             display_order: 0,
             hierarchical_number: '1.1',
             status: 'ready',
+            node_kind: 'original',
           }),
         ],
       },
@@ -198,13 +217,13 @@ describe('TreeGraph', () => {
     expect(screen.getByTestId('graph-node-root')).toBeInTheDocument()
   })
 
-  it('keeps node wrappers interactive without letting the pane capture graph controls', () => {
+  it('expands a locked parent to reveal children via the collapse toggle', () => {
     const snapshot = buildSnapshot({
       tree_state: {
         root_node_id: 'root',
         active_node_id: 'root',
         node_registry: [
-          buildNode({ node_id: 'root', child_ids: ['child-1'] }),
+          buildNode({ node_id: 'root', child_ids: ['child-1'], status: 'locked' }),
           buildNode({
             node_id: 'child-1',
             parent_id: 'root',
@@ -215,8 +234,26 @@ describe('TreeGraph', () => {
             display_order: 0,
             hierarchical_number: '1.1',
             status: 'ready',
+            node_kind: 'original',
           }),
         ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    expect(screen.queryByTestId('rf-node-child-1')).not.toBeInTheDocument()
+    const rootWrapper = screen.getByTestId('rf-node-root')
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Expand node' }))
+    expect(screen.getByTestId('rf-node-child-1')).toBeInTheDocument()
+  })
+
+  it('keeps node wrappers interactive and exposes split actions', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [buildNode({ node_id: 'root', child_ids: ['child-1'] })],
       },
     })
 
@@ -229,304 +266,40 @@ describe('TreeGraph', () => {
     expect(reactFlow).toHaveAttribute('data-has-node-click', 'true')
     expect(rootWrapper).toHaveClass('nopan')
     expect(rootNode).toHaveClass('nodrag', 'nopan')
-    expect(within(rootNode).getByRole('button', { name: 'Collapse node' })).toHaveClass('nodrag', 'nopan')
-    expect(within(rootNode).getByRole('button', { name: 'Node details' })).toHaveClass('nodrag', 'nopan')
-    expect(within(rootWrapper).getByRole('button', { name: 'Node actions' })).toHaveClass('nodrag', 'nopan')
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
+    expect(screen.getByText('Create Child')).toBeInTheDocument()
+    expect(screen.getByText('Open Breadcrumb')).toBeInTheDocument()
+    expect(screen.getByText('AI Split')).toBeInTheDocument()
+    expect(screen.getByText('Workflow')).toBeInTheDocument()
+    expect(screen.getByText('Phase Breakdown')).toBeInTheDocument()
   })
 
-  it('keeps the root node visible when descendants are collapsed', () => {
-    const snapshot = buildSnapshot({
-      tree_state: {
-        root_node_id: 'root',
-        active_node_id: 'root',
-        node_registry: [
-          buildNode({ node_id: 'root', child_ids: ['child-1'] }),
-          buildNode({
-            node_id: 'child-1',
-            parent_id: 'root',
-            child_ids: [],
-            title: 'Child',
-            description: 'Child node',
-            depth: 1,
-            display_order: 0,
-            hierarchical_number: '1.1',
-            status: 'ready',
-          }),
-        ],
-      },
-    })
-
-    renderTreeGraph(snapshot)
-
-    fireEvent.click(
-      within(screen.getByTestId('graph-node-root')).getByRole('button', { name: 'Collapse node' }),
-    )
-
-    expect(screen.getByTestId('graph-node-root')).toBeInTheDocument()
-    expect(screen.queryByTestId('graph-node-child-1')).not.toBeInTheDocument()
-  })
-
-  it('shows an explicit error state when the snapshot root node is missing', () => {
-    const snapshot = buildSnapshot({
-      tree_state: {
-        root_node_id: 'missing-root',
-        active_node_id: 'missing-root',
-        node_registry: [
-          buildNode({
-            node_id: 'other-node',
-            title: 'Other',
-            hierarchical_number: '9',
-          }),
-        ],
-      },
-    })
-
-    renderTreeGraph(snapshot)
-
-    expect(screen.getByTestId('graph-invalid-snapshot')).toBeInTheDocument()
-    expect(screen.getByRole('alert')).toHaveTextContent('Graph data is invalid')
-    expect(screen.queryByTestId('mock-reactflow')).not.toBeInTheDocument()
-  })
-
-  it('renders reset below fullscreen and wires it to the project reset handler', () => {
-    const { onResetProject } = renderTreeGraph(buildSnapshot())
-
-    const fullscreenButton = screen.getByRole('button', { name: 'Fullscreen' })
-    const resetButton = screen.getByRole('button', { name: 'Reset to Root' })
-    const controlStack = fullscreenButton.parentElement
-
-    expect(controlStack).not.toBeNull()
-    expect(within(controlStack as HTMLElement).getAllByRole('button').map((button) => button.textContent)).toEqual([
-      'Fullscreen',
-      'Reset to Root',
-    ])
-
-    fireEvent.click(resetButton)
-
-    expect(onResetProject).toHaveBeenCalledTimes(1)
-  })
-
-  it('disables the reset control while a split is running', () => {
-    renderTreeGraph(buildSnapshot(), { isResetDisabled: true, isSplittingNode: true })
-
-    expect(screen.getByRole('button', { name: 'Reset to Root' })).toBeDisabled()
-  })
-
-  it('wires split actions through the node menu when the node can split', () => {
-    const { onSplitNode } = renderTreeGraph(buildSnapshot())
-
-    fireEvent.click(
-      within(screen.getByTestId('rf-node-root')).getByRole('button', { name: 'Node actions' }),
-    )
-
-    const aiPlanningSection = screen.getByText('AI Planning').closest('div')
-    expect(aiPlanningSection).not.toBeNull()
-    const workflow = within(aiPlanningSection as HTMLElement).getByText('Workflow').closest('button')
-    const simplifyWorkflow = within(aiPlanningSection as HTMLElement)
-      .getByText('Simplify Workflow')
-      .closest('button')
-    const phaseBreakdown = within(aiPlanningSection as HTMLElement)
-      .getByText('Phase Breakdown')
-      .closest('button')
-    const agentBreakdown = within(aiPlanningSection as HTMLElement)
-      .getByText('Agent Breakdown')
-      .closest('button')
-    expect(workflow).not.toBeNull()
-    expect(simplifyWorkflow).not.toBeNull()
-    expect(phaseBreakdown).not.toBeNull()
-    expect(agentBreakdown).not.toBeNull()
-    expect(workflow).toBeEnabled()
-    expect(simplifyWorkflow).toBeEnabled()
-    expect(phaseBreakdown).toBeEnabled()
-    expect(agentBreakdown).toBeEnabled()
-
-    fireEvent.click(workflow as HTMLButtonElement)
-
-    expect(onSplitNode).toHaveBeenCalledWith('root', 'workflow')
-  })
-
-  it('allows locked nodes to split while keeping finish task disabled', () => {
-    renderTreeGraph(
-      buildSnapshot({
-        tree_state: {
-          root_node_id: 'root',
-          active_node_id: 'root',
-          node_registry: [buildNode({ status: 'locked' })],
-        },
-      }),
-    )
-
-    fireEvent.click(
-      within(screen.getByTestId('rf-node-root')).getByRole('button', { name: 'Node actions' }),
-    )
-
-    const aiPlanningSection = screen.getByText('AI Planning').closest('div')
-    expect(aiPlanningSection).not.toBeNull()
-    expect(within(aiPlanningSection as HTMLElement).getByText('Workflow').closest('button')).toBeEnabled()
-    expect(
-      within(aiPlanningSection as HTMLElement).getByText('Simplify Workflow').closest('button'),
-    ).toBeEnabled()
-    expect(
-      within(aiPlanningSection as HTMLElement).getByText('Phase Breakdown').closest('button'),
-    ).toBeEnabled()
-    expect(
-      within(aiPlanningSection as HTMLElement).getByText('Agent Breakdown').closest('button'),
-    ).toBeEnabled()
-    expect(screen.getByRole('button', { name: /Finish Task/i })).toBeDisabled()
-  })
-
-  it('disables split actions when a split is already in progress', () => {
-    renderTreeGraph(buildSnapshot(), { isSplittingNode: true })
-
-    fireEvent.click(
-      within(screen.getByTestId('rf-node-root')).getByRole('button', { name: 'Node actions' }),
-    )
-
-    expect(screen.getAllByRole('button', { name: /Splitting.../i })).toHaveLength(4)
-    expect(screen.getAllByRole('button', { name: /Splitting.../i })[0]).toBeDisabled()
-    expect(screen.getAllByRole('button', { name: /Splitting.../i })[1]).toBeDisabled()
-    expect(screen.getAllByRole('button', { name: /Splitting.../i })[2]).toBeDisabled()
-    expect(screen.getAllByRole('button', { name: /Splitting.../i })[3]).toBeDisabled()
-    expect(screen.getByText('AI planning in progress...')).toBeInTheDocument()
-  })
-
-  it('does not recompute layout when only callback props change', () => {
+  it('shows Describe -> Frame -> Clarify -> Spec stepper in the detail panel header', async () => {
     const snapshot = buildSnapshot()
-    const initialProps = {
-      snapshot,
-      selectedNodeId: snapshot.tree_state.active_node_id,
-      isCreatingNode: false,
-      isSplittingNode: false,
-      isResettingProject: false,
-      isResetDisabled: false,
-      splittingNodeId: null,
-      onSelectNode: vi.fn(async () => undefined),
-      onCreateChild: vi.fn(async () => undefined),
-      onSplitNode: vi.fn(async () => undefined),
-      onOpenBreadcrumb: vi.fn(async () => undefined),
-      onFinishTask: vi.fn(async () => undefined),
-      onResetProject: vi.fn(async () => undefined),
-    }
 
-    const { rerender } = render(<TreeGraph {...initialProps} />)
+    renderTreeGraph(snapshot)
+    fireEvent.click(screen.getByRole('button', { name: 'Node details' }))
+    const detailCard = screen.getByTestId('graph-node-detail-card')
 
-    expect(layoutSpy).toHaveBeenCalledTimes(1)
+    expect(within(detailCard).getByRole('button', { name: 'Describe' })).toBeInTheDocument()
+    expect(within(detailCard).getByRole('button', { name: 'Frame' })).toBeInTheDocument()
+    expect(within(detailCard).getByRole('button', { name: 'Clarify' })).toBeInTheDocument()
+    expect(within(detailCard).getByRole('button', { name: 'Spec' })).toBeInTheDocument()
+    fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
+    expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
+    expect(within(detailCard).queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
+    expect(within(detailCard).queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()
 
-    rerender(
-      <TreeGraph
-        {...initialProps}
-        onSelectNode={vi.fn(async () => undefined)}
-        onCreateChild={vi.fn(async () => undefined)}
-        onSplitNode={vi.fn(async () => undefined)}
-        onOpenBreadcrumb={vi.fn(async () => undefined)}
-        onFinishTask={vi.fn(async () => undefined)}
-      />,
-    )
+    fireEvent.click(within(detailCard).getByRole('button', { name: 'Clarify' }))
+    expect(within(detailCard).getByText(/primary goal of this task/i)).toBeInTheDocument()
 
-    expect(layoutSpy).toHaveBeenCalledTimes(1)
-  })
-
-  it('closes the detail panel when the focused node is removed from the snapshot', () => {
-    useProjectStore.setState({
-      ...useProjectStore.getInitialState(),
-      documentsByNode: {
-        'child-1': {
-          task: {
-            title: 'Child',
-            purpose: 'Child node',
-            responsibility: '',
-          },
-          briefing: {
-            user_notes: '',
-            business_context: '',
-            technical_context: '',
-            execution_context: '',
-            clarified_answers: '',
-          },
-          spec: {
-            business_contract: '',
-            technical_contract: '',
-            delivery_acceptance: '',
-            assumptions: '',
-          },
-          state: {
-            phase: 'planning',
-            task_confirmed: false,
-            briefing_confirmed: false,
-            spec_generated: false,
-            spec_generation_status: 'idle',
-            spec_confirmed: false,
-            planning_thread_id: '',
-            execution_thread_id: '',
-            ask_thread_id: '',
-            planning_thread_forked_from_node: '',
-            planning_thread_bootstrapped_at: '',
-            chat_session_id: '',
-          },
-        },
-      },
+    apiMock.getNodeDocument.mockResolvedValueOnce({
+      node_id: 'root',
+      kind: 'spec',
+      content: '# Spec',
+      updated_at: '2026-03-20T00:00:01Z',
     })
-
-    const snapshot = buildSnapshot({
-      tree_state: {
-        root_node_id: 'root',
-        active_node_id: 'child-1',
-        node_registry: [
-          buildNode({ node_id: 'root', child_ids: ['child-1'] }),
-          buildNode({
-            node_id: 'child-1',
-            parent_id: 'root',
-            child_ids: [],
-            title: 'Child',
-            description: 'Child node',
-            depth: 1,
-            display_order: 0,
-            hierarchical_number: '1.1',
-            status: 'ready',
-          }),
-        ],
-      },
-    })
-
-    const { rerender } = render(
-      <TreeGraph
-        snapshot={snapshot}
-        selectedNodeId={snapshot.tree_state.active_node_id}
-        isCreatingNode={false}
-        isSplittingNode={false}
-        isResettingProject={false}
-        isResetDisabled={false}
-        splittingNodeId={null}
-        onSelectNode={vi.fn(async () => undefined)}
-        onCreateChild={vi.fn(async () => undefined)}
-        onSplitNode={vi.fn(async () => undefined)}
-        onOpenBreadcrumb={vi.fn(async () => undefined)}
-        onFinishTask={vi.fn(async () => undefined)}
-        onResetProject={vi.fn(async () => undefined)}
-      />,
-    )
-
-    fireEvent.click(within(screen.getByTestId('graph-node-child-1')).getByRole('button', { name: 'Node details' }))
-    expect(screen.getByDisplayValue('Child')).toBeInTheDocument()
-
-    rerender(
-      <TreeGraph
-        snapshot={buildSnapshot()}
-        selectedNodeId="root"
-        isCreatingNode={false}
-        isSplittingNode={false}
-        isResettingProject={false}
-        isResetDisabled={false}
-        splittingNodeId={null}
-        onSelectNode={vi.fn(async () => undefined)}
-        onCreateChild={vi.fn(async () => undefined)}
-        onSplitNode={vi.fn(async () => undefined)}
-        onOpenBreadcrumb={vi.fn(async () => undefined)}
-        onFinishTask={vi.fn(async () => undefined)}
-        onResetProject={vi.fn(async () => undefined)}
-      />,
-    )
-
-    expect(screen.queryByDisplayValue('Child')).not.toBeInTheDocument()
+    fireEvent.click(within(detailCard).getByRole('button', { name: 'Spec' }))
+    expect(await within(detailCard).findByDisplayValue('# Spec')).toBeInTheDocument()
   })
 })

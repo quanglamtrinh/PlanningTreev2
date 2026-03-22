@@ -1,12 +1,29 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { initializeCodexMock, disconnectCodexMock } = vi.hoisted(() => ({
+  initializeCodexMock: vi.fn(() => Promise.resolve()),
+  disconnectCodexMock: vi.fn(),
+}))
+
+vi.mock('../../src/stores/codex-store', () => ({
+  useCodexStore: (selector: (state: {
+    initialize: typeof initializeCodexMock
+    disconnect: typeof disconnectCodexMock
+  }) => unknown) =>
+    selector({
+      initialize: initializeCodexMock,
+      disconnect: disconnectCodexMock,
+    }),
+}))
 
 import { Layout } from '../../src/components/Layout'
 import { useUIStore } from '../../src/stores/ui-store'
 
 describe('Layout', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     window.localStorage.clear()
     document.documentElement.removeAttribute('data-theme')
     useUIStore.setState(useUIStore.getInitialState())
@@ -24,12 +41,12 @@ describe('Layout', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByRole('button', { name: 'Default' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Warm Earth' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Slate Pro' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Forest' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Obsidian' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Amethyst' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Canvas' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Terracotta' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Fjord' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Moss' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Graphite' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Aurora' })).toBeInTheDocument()
   })
 
   it('removes data-theme for default and applies explicit theme selections', () => {
@@ -45,10 +62,10 @@ describe('Layout', () => {
 
     expect(document.documentElement).not.toHaveAttribute('data-theme')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Warm Earth' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Terracotta' }))
     expect(document.documentElement).toHaveAttribute('data-theme', 'warm-earth')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Default' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Canvas' }))
     expect(document.documentElement).not.toHaveAttribute('data-theme')
   })
 })

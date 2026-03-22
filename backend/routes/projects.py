@@ -8,9 +8,8 @@ from pydantic import BaseModel
 router = APIRouter(tags=["projects"])
 
 
-class CreateProjectRequest(BaseModel):
-    name: str
-    root_goal: str
+class AttachProjectRequest(BaseModel):
+    folder_path: str
 
 
 class ActiveNodeRequest(BaseModel):
@@ -22,9 +21,9 @@ async def list_projects(request: Request) -> list[dict]:
     return request.app.state.project_service.list_projects()
 
 
-@router.post("/projects")
-async def create_project(request: Request, body: CreateProjectRequest) -> dict:
-    return request.app.state.project_service.create_project(body.name, body.root_goal)
+@router.post("/projects/attach")
+async def attach_project(request: Request, body: AttachProjectRequest) -> dict:
+    return request.app.state.project_service.attach_project_folder(body.folder_path)
 
 
 @router.get("/projects/{project_id}/snapshot")

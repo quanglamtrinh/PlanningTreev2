@@ -1,11 +1,14 @@
 import { Outlet } from 'react-router-dom'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { useCodexStore } from '../stores/codex-store'
 import { THEME_OPTIONS, useUIStore } from '../stores/ui-store'
 import styles from './Layout.module.css'
 
 export function Layout() {
   const theme = useUIStore((state) => state.theme)
   const setTheme = useUIStore((state) => state.setTheme)
+  const initializeCodex = useCodexStore((state) => state.initialize)
+  const disconnectCodex = useCodexStore((state) => state.disconnect)
 
   useEffect(() => {
     const root = document.documentElement
@@ -16,13 +19,28 @@ export function Layout() {
     }
   }, [theme])
 
+  const [appVersion, setAppVersion] = useState('v1')
+
+  useEffect(() => {
+    void initializeCodex()
+    return () => {
+      disconnectCodex()
+    }
+  }, [disconnectCodex, initializeCodex])
+
+  useEffect(() => {
+    if (window.electronAPI?.getAppVersion) {
+      window.electronAPI.getAppVersion().then((v) => setAppVersion(`v${v}`))
+    }
+  }, [])
+
   return (
     <div className={styles.page}>
       <header className={styles.topbar}>
         <h1 className={styles.brand}>
           <span className={styles.brandDot} aria-hidden="true" />
           <span className={styles.brandName}>PlanningTree</span>
-          <span className={styles.brandSub}>v1</span>
+          <span className={styles.brandSub}>{appVersion}</span>
         </h1>
         <div className={styles.inlineActions}>
           <div className={styles.themeSwitcher} title="Switch theme">

@@ -1,0 +1,215 @@
+.wrap {
+  flex-shrink: 0;
+  padding: 16px 0 24px;
+  background: var(--bg-app);
+}
+
+.composer {
+  max-width: 760px;
+  margin: 0 auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  padding: 12px 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+
+.composer:focus-within {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--focus-ring), var(--shadow-sm);
+}
+
+.editorRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding-bottom: 10px;
+  box-sizing: border-box;
+}
+
+.input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  color: var(--text-primary);
+  resize: none;
+  line-height: 1.5;
+  caret-color: var(--text-primary);
+  min-height: 24px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.sendBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: var(--text-primary);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background var(--transition-fast), transform var(--transition-fast), opacity var(--transition-fast);
+}
+
+.sendBtn:hover:not(:disabled) {
+  background: #333;
+  transform: scale(1.05);
+}
+
+.sendBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── Controls strip (mock UI) ───────────────────────────────────── */
+.controlsBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 -24px 0;
+  padding: 10px 24px 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-app) 55%, var(--bg-surface));
+  border-radius: 0 0 calc(var(--radius-xl) - 1px) calc(var(--radius-xl) - 1px);
+}
+
+.controlsLeft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.controlsRight {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px 0 10px;
+  border-radius: 999px;
+  background: var(--bg-surface);
+  border: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+  color: color-mix(in srgb, var(--text-secondary) 92%, var(--text-primary));
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pill:hover {
+  border-color: var(--border-strong);
+}
+
+.pillIconSvg,
+.pillChevronSvg {
+  flex-shrink: 0;
+  color: inherit;
+  opacity: 0.92;
+}
+
+.planCheckbox {
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0.75;
+  position: relative;
+  background: transparent;
+}
+
+.planCheckbox:checked {
+  background: currentColor;
+  opacity: 0.85;
+}
+
+.planCheckbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0.5px;
+  width: 3.5px;
+  height: 6px;
+  border: solid var(--bg-surface);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.pillLabel {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.pillSelect {
+  appearance: none;
+  border: none;
+  margin: 0;
+  padding: 0 2px 0 0;
+  min-width: 0;
+  max-width: 140px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.pillSelect:focus {
+  outline: none;
+}
+
+.pill:focus-within {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.pillChevron {
+  display: flex;
+  margin-left: -2px;
+  pointer-events: none;
+  opacity: 0.65;
+}
+
+.contextRing {
+  flex-shrink: 0;
+}
+
+.contextRingTrack {
+  stroke: color-mix(in srgb, var(--border-strong) 75%, var(--text-tertiary));
+}
+
+.contextRingFill {
+  stroke: color-mix(in srgb, var(--text-primary) 78%, #1e3a5f);
+}

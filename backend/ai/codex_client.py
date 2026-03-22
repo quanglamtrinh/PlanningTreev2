@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -159,6 +160,8 @@ class StdioTransport(CodexTransport):
         self._runtime_request_registry: dict[str, RuntimeRequestRecord] = {}
         self._thread_statuses: dict[str, dict[str, Any]] = {}
         self._loaded_threads: set[str] = set()
+        self._account_updated_callbacks: set[Callable[[dict[str, Any]], None]] = set()
+        self._rate_limits_updated_callbacks: set[Callable[[dict[str, Any]], None]] = set()
         self._next_id = 0
         self._lock = threading.Lock()
         self._write_lock = threading.Lock()
@@ -690,6 +693,22 @@ class StdioTransport(CodexTransport):
             timeout=min(30, timeout_sec),
         )
 
+    def read_account(self, *, timeout_sec: int = 30) -> dict[str, Any]:
+        self._initialize_session(timeout_sec)
+        return self._rpc("account/read", {}, timeout=min(30, timeout_sec))
+
+    def read_rate_limits(self, *, timeout_sec: int = 30) -> dict[str, Any]:
+        self._initialize_session(timeout_sec)
+        return self._rpc("account/rateLimits/read", {}, timeout=min(30, timeout_sec))
+
+    def add_account_updated_listener(self, callback: Callable[[dict[str, Any]], None]) -> None:
+        with self._lock:
+            self._account_updated_callbacks.add(callback)
+
+    def add_rate_limits_updated_listener(self, callback: Callable[[dict[str, Any]], None]) -> None:
+        with self._lock:
+            self._rate_limits_updated_callbacks.add(callback)
+
     def get_runtime_request(self, request_id: str) -> RuntimeRequestRecord | None:
         with self._lock:
             record = self._runtime_request_registry.get(str(request_id))
@@ -836,8 +855,36 @@ class StdioTransport(CodexTransport):
         except Exception:
             logger.debug("StdioTransport thread status callback failed", exc_info=True)
 
+    def _emit_global_notification_callbacks(
+        self,
+        callbacks: tuple[Callable[[dict[str, Any]], None], ...],
+        payload: dict[str, Any],
+        label: str,
+    ) -> None:
+        for callback in callbacks:
+            try:
+                callback(copy.deepcopy(payload))
+            except Exception:
+                logger.debug("StdioTransport %s callback failed", label, exc_info=True)
+
     def _handle_notification(self, method: str, params: Any) -> None:
         if not isinstance(params, dict):
+            return
+
+        if method == "account/updated":
+            with self._lock:
+                callbacks = tuple(self._account_updated_callbacks)
+            self._emit_global_notification_callbacks(callbacks, params, "account/updated")
+            return
+
+        if method == "account/rateLimits/updated":
+            with self._lock:
+                callbacks = tuple(self._rate_limits_updated_callbacks)
+            self._emit_global_notification_callbacks(
+                callbacks,
+                params,
+                "account/rateLimits/updated",
+            )
             return
 
         if method == "thread/status/changed":
@@ -1246,6 +1293,22 @@ class CodexAppClient:
         cwd: str | None = None,
         timeout_sec: int = 30,
     ) -> dict[str, Any]:
+        return self.start_thread(
+            base_instructions=base_instructions,
+            dynamic_tools=dynamic_tools,
+            cwd=cwd,
+            timeout_sec=timeout_sec,
+        )
+
+    def start_thread(
+        self,
+        *,
+        base_instructions: str,
+        dynamic_tools: list[dict[str, Any]],
+        cwd: str | None = None,
+        timeout_sec: int = 30,
+        writable_roots: list[str] | None = None,
+    ) -> dict[str, Any]:
         if not self.is_alive():
             self.start()
         transport = self._require_stdio_transport()
@@ -1254,6 +1317,7 @@ class CodexAppClient:
             timeout_sec=timeout_sec,
             base_instructions=base_instructions,
             dynamic_tools=dynamic_tools,
+            writable_roots=writable_roots,
         )
         return {"thread_id": transport._extract_thread_id(response)}
 
@@ -1357,6 +1421,24 @@ class CodexAppClient:
             include_turns=include_turns,
             timeout_sec=timeout_sec,
         )
+
+    def read_account(self, *, timeout_sec: int = 30) -> dict[str, Any]:
+        if not self.is_alive():
+            self.start()
+        transport = self._require_stdio_transport()
+        return transport.read_account(timeout_sec=timeout_sec)
+
+    def read_rate_limits(self, *, timeout_sec: int = 30) -> dict[str, Any]:
+        if not self.is_alive():
+            self.start()
+        transport = self._require_stdio_transport()
+        return transport.read_rate_limits(timeout_sec=timeout_sec)
+
+    def add_account_updated_listener(self, callback: Callable[[dict[str, Any]], None]) -> None:
+        self._require_stdio_transport().add_account_updated_listener(callback)
+
+    def add_rate_limits_updated_listener(self, callback: Callable[[dict[str, Any]], None]) -> None:
+        self._require_stdio_transport().add_rate_limits_updated_listener(callback)
 
     def get_runtime_request(self, request_id: str) -> RuntimeRequestRecord | None:
         if not self.is_alive():

@@ -1,10 +1,11 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useShallow } from 'zustand/react/shallow'
 import type { NodeRecord, ProjectSummary, Snapshot } from '../../api/types'
+import { useCodexStore } from '../../stores/codex-store'
 import { useProjectStore } from '../../stores/project-store'
+import { getCodexUsageLabels } from './usageLabels'
 import styles from './Sidebar.module.css'
-
-// ─── Relative time ────────────────────────────────────────────────────────────
 
 function formatRelTime(isoString: string | null | undefined): string {
   if (!isoString) return ''
@@ -20,18 +21,10 @@ function formatRelTime(isoString: string | null | undefined): string {
   return `${Math.floor(diffDay / 7)}w`
 }
 
-// ─── Status dot ───────────────────────────────────────────────────────────────
-
 function StatusDot({ status }: { status: string }) {
   const cls = status.replace(/[^a-z]/g, '')
   return <span className={`${styles.dot} ${styles[`dot_${cls}` as keyof typeof styles]}`} />
 }
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const NODES_PER_PROJECT = 4
-
-// ─── Sidebar ──────────────────────────────────────────────────────────────────
 
 export function Sidebar() {
   const navigate = useNavigate()
@@ -41,18 +34,32 @@ export function Sidebar() {
   const [isPickerLoading, setIsPickerLoading] = useState(false)
   const [pickerError, setPickerError] = useState<string | null>(null)
 
-  const projects = useProjectStore((s) => s.projects)
-  const activeProjectId = useProjectStore((s) => s.activeProjectId)
-  const isLoadingProjects = useProjectStore((s) => s.isLoadingProjects)
-  const snapshot = useProjectStore((s) => s.snapshot)
-  const selectedNodeId = useProjectStore((s) => s.selectedNodeId)
-
-  const loadProject = useProjectStore((s) => s.loadProject)
-  const refreshProjects = useProjectStore((s) => s.refreshProjects)
-  const selectNode = useProjectStore((s) => s.selectNode)
-  const createProject = useProjectStore((s) => s.createProject)
-  const deleteProject = useProjectStore((s) => s.deleteProject)
-  const setWorkspaceRoot = useProjectStore((s) => s.setWorkspaceRoot)
+  const {
+    projects,
+    activeProjectId,
+    isLoadingProjects,
+    snapshot,
+    selectedNodeId,
+    loadProject,
+    refreshProjects,
+    selectNode,
+    attachProjectFolder,
+    deleteProject,
+  } = useProjectStore(
+    useShallow((s) => ({
+      projects: s.projects,
+      activeProjectId: s.activeProjectId,
+      isLoadingProjects: s.isLoadingProjects,
+      snapshot: s.snapshot,
+      selectedNodeId: s.selectedNodeId,
+      loadProject: s.loadProject,
+      refreshProjects: s.refreshProjects,
+      selectNode: s.selectNode,
+      attachProjectFolder: s.attachProjectFolder,
+      deleteProject: s.deleteProject,
+    })),
+  )
+  const codexRateLimits = useCodexStore((s) => s.snapshot?.rate_limits ?? null)
 
   const handleProjectClick = useCallback(
     (projectId: string) => { void loadProject(projectId) },
@@ -79,43 +86,40 @@ export function Sidebar() {
           return
         }
         navigate(`/projects/${latestSnapshot.project.id}/nodes/${targetNode.node_id}/chat`)
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     },
     [navigate, selectNode],
   )
 
-  // ── New project: open native OS folder picker → auto-create project ──────────
   const handleNewProjectClick = useCallback(async () => {
     setPickerError(null)
     setIsPickerLoading(true)
     try {
-      // Opens native OS "Select Folder" dialog (same UX as VSCode "Add Workspace Folder")
-      // @ts-expect-error — showDirectoryPicker not in all TS lib versions
-      const handle = await window.showDirectoryPicker({ mode: 'readwrite' }) as { name: string }
-      const folderName = handle.name
-
-      // Ensure workspace root is configured; if not, set it to the picked folder name.
-      // (Browser security prevents exposing full path; backend may need adjustment.)
-      const state = useProjectStore.getState()
-      if (!state.baseWorkspaceRoot) {
-        try { await setWorkspaceRoot(folderName) } catch { /* will show error from createProject */ }
+      if (!window.electronAPI?.selectFolder) {
+        throw new Error('Folder picker is unavailable in this build.')
       }
-
-      // Auto-create project using folder name — no form needed
-      await createProject(folderName, folderName)
+      const folderPath = await window.electronAPI.selectFolder()
+      if (!folderPath) {
+        return
+      }
+      await attachProjectFolder(folderPath)
     } catch (e) {
-      if (e instanceof Error && e.name !== 'AbortError') {
+      if (e instanceof Error) {
         setPickerError(e.message)
       }
-      // AbortError = user cancelled picker — silently ignore
     } finally {
       setIsPickerLoading(false)
     }
-  }, [createProject, setWorkspaceRoot])
+  }, [attachProjectFolder])
 
   const handleRemoveProject = useCallback(
     async (projectId: string, projectName: string) => {
-      if (!window.confirm(`Remove "${projectName}" from workspace?\nThis cannot be undone.`)) return
+      const confirmed = window.confirm(
+        `Remove "${projectName}" from workspace?\nProject files will stay on disk.`,
+      )
+      if (!confirmed) return
       try {
         await deleteProject(projectId)
       } catch (e) {
@@ -128,7 +132,11 @@ export function Sidebar() {
   const toggleExpand = useCallback((projectId: string) => {
     setExpandedProjects((prev) => {
       const next = new Set(prev)
-      if (next.has(projectId)) { next.delete(projectId) } else { next.add(projectId) }
+      if (next.has(projectId)) {
+        next.delete(projectId)
+      } else {
+        next.add(projectId)
+      }
       return next
     })
   }, [])
@@ -137,7 +145,17 @@ export function Sidebar() {
     setIsCollapsed((prev) => !prev)
   }, [])
 
-  const visibleNodes = useMemo(() => getVisibleNodes(snapshot), [snapshot])
+  const {
+    sessionPercent,
+    weeklyPercent,
+    sessionResetLabel,
+    weeklyResetLabel,
+    creditsLabel,
+    showWeekly,
+  } = useMemo(() => getCodexUsageLabels(codexRateLimits), [codexRateLimits])
+
+  void expandedProjects
+  void toggleExpand
 
   if (isCollapsed) {
     return (
@@ -157,7 +175,6 @@ export function Sidebar() {
 
   return (
     <aside className={styles.sidebar}>
-      {/* ── Header ── */}
       <div className={styles.header}>
         <button
           type="button"
@@ -172,7 +189,6 @@ export function Sidebar() {
         </button>
         <span className={styles.headerTitle}>Projects</span>
         <div className={styles.headerActions}>
-          {/* New project — opens native OS folder picker */}
           <button
             type="button"
             className={styles.headerBtn}
@@ -194,7 +210,6 @@ export function Sidebar() {
             )}
           </button>
 
-          {/* Refresh */}
           <button
             type="button"
             className={styles.headerBtn}
@@ -210,7 +225,6 @@ export function Sidebar() {
             </svg>
           </button>
 
-          {/* Search */}
           <button
             type="button"
             className={`${styles.headerBtn} ${searchOpen ? styles.headerBtnActive : ''}`}
@@ -226,10 +240,8 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Folder picker error */}
       {pickerError && <p className={styles.pickerError}>{pickerError}</p>}
 
-      {/* ── Project list ── */}
       <div className={styles.body}>
         {projects.length === 0 && !isLoadingProjects ? (
           <div className={styles.emptyState}>
@@ -246,23 +258,16 @@ export function Sidebar() {
         ) : (
           projects.map((project) => {
             const isActive = project.id === activeProjectId
-            const projectNodes = isActive ? visibleNodes : []
-            const isExpanded = expandedProjects.has(project.id)
-            const displayedNodes = isExpanded ? projectNodes : projectNodes.slice(0, NODES_PER_PROJECT)
-            const hasMore = projectNodes.length > NODES_PER_PROJECT && !isExpanded
-
             return (
               <ProjectGroup
                 key={project.id}
                 project={project}
                 isActive={isActive}
-                nodes={displayedNodes}
+                snapshot={isActive ? snapshot : null}
                 selectedNodeId={selectedNodeId}
-                hasMore={hasMore}
                 onClickProject={handleProjectClick}
                 onClickNode={handleNodeClick}
                 onDoubleClickNode={handleOpenBreadcrumb}
-                onClickMore={() => toggleExpand(project.id)}
                 onRemoveProject={handleRemoveProject}
               />
             )
@@ -270,25 +275,40 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* ── Footer ── */}
       <div className={styles.footer}>
         <div className={styles.usageBlock}>
           <div className={styles.usageRow}>
             <span className={styles.usageLabel}>Session</span>
-            <span className={styles.usageHint}>· Resets 2 hours</span>
-            <span className={styles.usagePct}>8%</span>
+            <span className={styles.usageHint}>
+              {sessionResetLabel ? `· ${sessionResetLabel}` : ''}
+            </span>
+            <span className={styles.usagePct}>
+              {sessionPercent === null ? '--' : `${sessionPercent}%`}
+            </span>
           </div>
           <div className={styles.usageBar}>
-            <div className={styles.usageBarFill} style={{ width: '8%' }} />
+            <div className={styles.usageBarFill} style={{ width: `${sessionPercent ?? 0}%` }} />
           </div>
-          <div className={styles.usageRow} style={{ marginTop: 8 }}>
-            <span className={styles.usageLabel}>Weekly</span>
-            <span className={styles.usageHint}>· Resets 6 days</span>
-            <span className={styles.usagePct}>22%</span>
-          </div>
-          <div className={styles.usageBar}>
-            <div className={styles.usageBarFillWeekly} style={{ width: '22%' }} />
-          </div>
+          {showWeekly ? (
+            <>
+              <div className={styles.usageRow} style={{ marginTop: 8 }}>
+                <span className={styles.usageLabel}>Weekly</span>
+                <span className={styles.usageHint}>
+                  {weeklyResetLabel ? `· ${weeklyResetLabel}` : ''}
+                </span>
+                <span className={styles.usagePct}>
+                  {weeklyPercent === null ? '--' : `${weeklyPercent}%`}
+                </span>
+              </div>
+              <div className={styles.usageBar}>
+                <div
+                  className={styles.usageBarFillWeekly}
+                  style={{ width: `${weeklyPercent ?? 0}%` }}
+                />
+              </div>
+            </>
+          ) : null}
+          {creditsLabel ? <div className={styles.usageMeta}>{creditsLabel}</div> : null}
         </div>
         <div className={styles.footerActions}>
           <button type="button" className={styles.footerBtn} title="Account" aria-label="Account">
@@ -309,25 +329,32 @@ export function Sidebar() {
   )
 }
 
-// ─── ProjectGroup ─────────────────────────────────────────────────────────────
-
 type ProjectGroupProps = {
   project: ProjectSummary
   isActive: boolean
-  nodes: NodeRecord[]
+  snapshot: Snapshot | null
   selectedNodeId: string | null
-  hasMore: boolean
   onClickProject: (id: string) => void
   onClickNode: (id: string) => void
   onDoubleClickNode: (id: string) => Promise<void>
-  onClickMore: () => void
   onRemoveProject: (id: string, name: string) => Promise<void>
 }
 
 function ProjectGroup({
-  project, isActive, nodes, selectedNodeId, hasMore,
-  onClickProject, onClickNode, onDoubleClickNode, onClickMore, onRemoveProject,
+  project, isActive, snapshot, selectedNodeId,
+  onClickProject, onClickNode, onDoubleClickNode, onRemoveProject,
 }: ProjectGroupProps) {
+  const nodeById = useMemo(() => {
+    if (!snapshot) return new Map<string, NodeRecord>()
+    return new Map(
+      snapshot.tree_state.node_registry
+        .filter((n) => !n.is_superseded)
+        .map((n) => [n.node_id, n]),
+    )
+  }, [snapshot])
+
+  const rootNodeId = snapshot?.tree_state.root_node_id ?? null
+
   return (
     <div className={`${styles.projectGroup} ${isActive ? styles.projectGroupActive : ''}`}>
       <div className={styles.projectHeaderRow}>
@@ -354,63 +381,104 @@ function ProjectGroup({
         </button>
       </div>
 
-      {isActive && nodes.length > 0 && (
+      {isActive && rootNodeId && nodeById.has(rootNodeId) && (
         <div className={styles.nodeList}>
-          {nodes.map((node) => (
-            <NodeRow
-              key={node.node_id}
-              node={node}
-              isSelected={node.node_id === selectedNodeId}
-              onClick={onClickNode}
-              onDoubleClick={onDoubleClickNode}
-            />
-          ))}
-          {hasMore && (
-            <button type="button" className={styles.moreBtn} onClick={onClickMore}>
-              More…
-            </button>
-          )}
+          <NodeTreeItem
+            nodeId={rootNodeId}
+            nodeById={nodeById}
+            selectedNodeId={selectedNodeId}
+            depth={0}
+            onClickNode={onClickNode}
+            onDoubleClickNode={onDoubleClickNode}
+          />
         </div>
       )}
     </div>
   )
 }
 
-// ─── NodeRow ──────────────────────────────────────────────────────────────────
-
-type NodeRowProps = {
-  node: NodeRecord
-  isSelected: boolean
-  onClick: (id: string) => void
-  onDoubleClick: (id: string) => Promise<void>
+type NodeTreeItemProps = {
+  nodeId: string
+  nodeById: Map<string, NodeRecord>
+  selectedNodeId: string | null
+  depth: number
+  onClickNode: (id: string) => void
+  onDoubleClickNode: (id: string) => Promise<void>
 }
 
-function NodeRow({ node, isSelected, onClick, onDoubleClick }: NodeRowProps) {
+function NodeTreeItem({
+  nodeId, nodeById, selectedNodeId, depth,
+  onClickNode, onDoubleClickNode,
+}: NodeTreeItemProps) {
+  const node = nodeById.get(nodeId)
+  const activeChildren = node?.child_ids.filter((id) => nodeById.has(id)) ?? []
+  const hasChildren = activeChildren.length > 0
+  const [expanded, setExpanded] = useState(depth === 0)
+  const isSelected = nodeId === selectedNodeId
+
+  if (!node) return null
+
+  const indentLeft = 10 + depth * 18
+
   return (
-    <button
-      type="button"
-      className={`${styles.nodeRow} ${isSelected ? styles.nodeRowActive : ''}`}
-      onClick={() => onClick(node.node_id)}
-      onDoubleClick={() => void onDoubleClick(node.node_id)}
-      title={`${node.title}\nDouble-click to open chat`}
-    >
-      <StatusDot status={node.status} />
-      <span className={styles.nodeTitle}>{node.title}</span>
-      {node.created_at && (
-        <span className={styles.nodeTime}>{formatRelTime(node.created_at)}</span>
+    <div className={styles.treeItem}>
+      <div
+        className={`${styles.nodeRow} ${isSelected ? styles.nodeRowActive : ''}`}
+        style={{ paddingLeft: `${indentLeft}px` }}
+      >
+        {hasChildren ? (
+          <button
+            type="button"
+            className={styles.treeChevron}
+            onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v) }}
+            aria-label={expanded ? 'Collapse children' : 'Expand children'}
+          >
+            <svg
+              className={`${styles.treeChevronIcon} ${expanded ? styles.treeChevronOpen : ''}`}
+              viewBox="0 0 16 16"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        ) : (
+          <span className={styles.treeChevronSpacer} />
+        )}
+
+        <button
+          type="button"
+          className={styles.nodeRowInner}
+          onClick={() => onClickNode(node.node_id)}
+          onDoubleClick={() => void onDoubleClickNode(node.node_id)}
+          title={`${node.hierarchical_number} - ${node.title}\nDouble-click to open chat`}
+        >
+          <StatusDot status={node.status} />
+          <span className={styles.nodeTitle}>
+            <span className={styles.nodeHNum}>{node.hierarchical_number}</span>
+            {' '}{node.title}
+          </span>
+          {node.created_at && (
+            <span className={styles.nodeTime}>{formatRelTime(node.created_at)}</span>
+          )}
+        </button>
+      </div>
+
+      {expanded && hasChildren && (
+        <div className={styles.treeChildren}>
+          {activeChildren.map((childId) => (
+            <NodeTreeItem
+              key={childId}
+              nodeId={childId}
+              nodeById={nodeById}
+              selectedNodeId={selectedNodeId}
+              depth={depth + 1}
+              onClickNode={onClickNode}
+              onDoubleClickNode={onDoubleClickNode}
+            />
+          ))}
+        </div>
       )}
-    </button>
+    </div>
   )
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getVisibleNodes(snapshot: Snapshot | null): NodeRecord[] {
-  if (!snapshot) return []
-  return snapshot.tree_state.node_registry
-    .filter((n) => !n.is_superseded)
-    .slice()
-    .sort((a, b) =>
-      a.hierarchical_number.localeCompare(b.hierarchical_number, undefined, { numeric: true }),
-    )
 }

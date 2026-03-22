@@ -94,11 +94,15 @@
 /* ─── Detail panel (right side) ─── */
 .detailPanel {
   pointer-events: all;
+  height: calc(100% - 24px);
+  display: flex;
+  width: min(clamp(400px, 44vw, 720px), calc(100vw - 40px));
 }
 
 .detailCard {
-  width: min(340px, calc(100vw - 40px));
-  max-height: calc(100vh - 100px);
+  width: min(clamp(400px, 44vw, 720px), calc(100vw - 40px));
+  height: 100%;
+  max-height: none;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 14px;
@@ -243,6 +247,42 @@
   border-color: var(--color-accent);
 }
 
+.detailPlaceholder {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-hover);
+}
+
+.detailPlaceholderLabel,
+.detailPlaceholderTitle,
+.detailPlaceholderBody {
+  margin: 0;
+}
+
+.detailPlaceholderLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.detailPlaceholderTitle {
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--color-text-primary);
+}
+
+.detailPlaceholderBody {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--color-text-secondary);
+}
+
 /* ─── Invalid snapshot state ─── */
 .invalidState {
   position: absolute;
@@ -272,7 +312,7 @@
 
 /* ─── Responsive ─── */
 @media (max-width: 920px) {
-  .detailCard {
-    width: min(300px, calc(100vw - 32px));
+  .detailPanel {
+    width: min(clamp(360px, 88vw, 520px), calc(100vw - 32px));
   }
 }

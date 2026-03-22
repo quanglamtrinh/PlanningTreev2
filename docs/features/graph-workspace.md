@@ -1,38 +1,30 @@
 # Graph Workspace
 
-## Legacy UI Port Scope
+## Scope
 
-Use these legacy files as the design source:
+The graph is the primary product surface in the current build.
 
-- `PlanningTreeCodex/frontend/src/app/App.tsx`
-- `PlanningTreeCodex/frontend/src/features/graph/WorkflowGraph.tsx`
-- `PlanningTreeCodex/frontend/src/features/breadcrumb/BreadcrumbView.tsx`
-- `PlanningTreeCodex/frontend/src/styles.css`
-
-## Visual Requirements
-
-- Port the top bar branding, theme switcher, and full-height workspace shell at high fidelity.
-- Keep the Warm Earth theme as default and preserve the four alternate legacy themes.
-- Port the graph background, node card proportions, border/shadow treatment, floating action affordance, detail panel, and fullscreen control at high fidelity.
-- Rebuild the visuals with `tokens.css`, `globals.css`, and feature-scoped CSS Modules.
+- Route `/` renders the graph workspace.
+- Route `/projects/:projectId/nodes/:nodeId/chat` renders the breadcrumb chat view.
 
 ## Behavior Requirements
 
-- Route `/` renders the graph workspace.
-- Route `/projects/:projectId/nodes/:nodeId/chat` renders the breadcrumb execution workspace.
-- The project root node must always be present in the ReactFlow node set when the snapshot is
-  valid.
+- The root node must always be present when a valid snapshot is loaded.
 - The graph node action menu exposes:
-  enabled `Create Child`
-  enabled `Open Breadcrumb`
-  enabled split actions `Workflow`, `Simplify Workflow`, `Phase Breakdown`, and `Agent Breakdown`
-    when the node can split
-  split actions become unavailable while another split is already in progress
-  enabled `Finish Task` only for leaf nodes in `ready` or `in_progress`
-- Locked nodes may still split; done nodes may not.
-- No separate graph-side split panel exists. The `GraphNode` menu is the sole split entrypoint.
-- The right-side floating detail panel is the main editing surface in Phase 3.
-- Inline edits persist on blur and when selection changes.
-- `Open Breadcrumb` performs unseeded navigation into the breadcrumb workspace.
-- `Finish Task` flushes pending edits, navigates into the breadcrumb workspace, and seeds the composer via transient router state.
-- `Mark Done` lives in the breadcrumb workspace and completes the node via the existing `/complete` endpoint.
+  - `Create Child`
+  - `Workflow`
+  - `Simplify Workflow`
+  - `Phase Breakdown`
+  - `Agent Breakdown`
+  - `Open Breadcrumb`
+  - `Finish Task` for eligible leaf nodes
+- Split actions start an async job and keep the target node in a busy state while polling project split status.
+- Split completion refreshes the snapshot; split failure surfaces an error banner.
+- `Open Breadcrumb` and `Finish Task` both navigate to `/chat` without transient route-state contracts.
+- The right-side detail shell remains present as a lightweight node-info panel.
+- Inline graph edits still persist through the existing node update path.
+
+## Explicit Non-Goals
+
+- Adding new seeded route-state contracts between graph and breadcrumb
+- Reintroducing split transcript or planning-history UI

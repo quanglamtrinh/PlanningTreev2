@@ -10,12 +10,12 @@ export interface ThemeOption {
 }
 
 export const THEME_OPTIONS: ThemeOption[] = [
-  { id: 'default', label: 'Default', swatch: '#111827' },
-  { id: 'warm-earth', label: 'Warm Earth', swatch: '#b34e12' },
-  { id: 'slate', label: 'Slate Pro', swatch: '#2d55b8' },
-  { id: 'forest', label: 'Forest', swatch: '#1e6b45' },
-  { id: 'obsidian', label: 'Obsidian', swatch: '#f0956a' },
-  { id: 'amethyst', label: 'Amethyst', swatch: '#6340bf' },
+  { id: 'default', label: 'Canvas', swatch: '#2563eb' },
+  { id: 'warm-earth', label: 'Terracotta', swatch: '#c2410c' },
+  { id: 'slate', label: 'Fjord', swatch: '#0ea5e9' },
+  { id: 'forest', label: 'Moss', swatch: '#047857' },
+  { id: 'obsidian', label: 'Graphite', swatch: '#0891b2' },
+  { id: 'amethyst', label: 'Aurora', swatch: '#7c3aed' },
 ]
 
 const THEME_KEY = 'planningtree.theme'
