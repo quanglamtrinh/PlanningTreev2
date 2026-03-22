@@ -2,6 +2,7 @@ import type {
   BootstrapStatus,
   ChatSession,
   CodexSnapshot,
+  DetailState,
   NodeDocument,
   NodeDocumentKind,
   ProjectSummary,
@@ -184,6 +185,15 @@ export const api = {
       `/v1/projects/${projectId}/nodes/${nodeId}/documents/${kind}`,
       { method: 'PUT' },
       { content },
+    )
+  },
+  getDetailState(projectId: string, nodeId: string): Promise<DetailState> {
+    return jsonFetch<DetailState>(`/v1/projects/${projectId}/nodes/${nodeId}/detail-state`)
+  },
+  confirmFrame(projectId: string, nodeId: string): Promise<DetailState> {
+    return jsonFetch<DetailState>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/confirm-frame`,
+      { method: 'POST' },
     )
   },
   getChatSession(projectId: string, nodeId: string): Promise<ChatSession> {

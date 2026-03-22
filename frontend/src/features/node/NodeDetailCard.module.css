@@ -77,6 +77,16 @@
   font-weight: 600;
 }
 
+.stepButtonLocked {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.stepButtonLocked:hover {
+  color: var(--color-text-tertiary);
+  background: transparent;
+}
+
 .stepButtonActive::after {
   background: var(--color-accent);
 }

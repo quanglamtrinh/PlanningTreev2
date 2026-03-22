@@ -1,8 +1,11 @@
 import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { NodeDocumentKind, NodeRecord } from '../../api/types'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
+import { useDetailStateStore } from '../../stores/detail-state-store'
+import { useProjectStore } from '../../stores/project-store'
+import { api } from '../../api/client'
 import styles from './NodeDetailCard.module.css'
 
 type EditorEntry = {
@@ -29,6 +32,7 @@ type Props = {
   projectId: string
   node: NodeRecord
   kind: NodeDocumentKind
+  onConfirm?: 'workflow'
 }
 
 function documentStatusText(entry: EditorEntry): string {
@@ -44,12 +48,14 @@ function documentStatusText(entry: EditorEntry): string {
   return 'Saved'
 }
 
-export function NodeDocumentEditor({ projectId, node, kind }: Props) {
+export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) {
   const entryKey = `${projectId}::${node.node_id}::${kind}`
   const entry = useNodeDocumentStore((state) => state.entries[entryKey] ?? EMPTY_ENTRY)
   const loadDocument = useNodeDocumentStore((state) => state.loadDocument)
   const updateDraft = useNodeDocumentStore((state) => state.updateDraft)
   const flushDocument = useNodeDocumentStore((state) => state.flushDocument)
+  const confirmFrame = useDetailStateStore((s) => s.confirmFrame)
+  const [isConfirming, setIsConfirming] = useState(false)
 
   useEffect(() => {
     void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
@@ -64,11 +70,27 @@ export function NodeDocumentEditor({ projectId, node, kind }: Props) {
   const isLoadError = Boolean(entry.error) && !entry.hasLoaded
   const isReadOnly = !entry.hasLoaded && (entry.isLoading || Boolean(entry.error))
 
-  const handleConfirm = useCallback(() => {
-    void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
-  }, [flushDocument, kind, node.node_id, projectId])
+  const handleConfirm = useCallback(async () => {
+    if (onConfirm === 'workflow' && kind === 'frame') {
+      setIsConfirming(true)
+      try {
+        await flushDocument(projectId, node.node_id, kind)
+        await confirmFrame(projectId, node.node_id)
+        // Title may have changed — refresh snapshot so tree UI updates
+        const snapshot = await api.getSnapshot(projectId)
+        useProjectStore.setState({ snapshot })
+      } catch {
+        // detail-state-store / project-store handle their own error state
+      } finally {
+        setIsConfirming(false)
+      }
+    } else {
+      void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
+    }
+  }, [onConfirm, kind, flushDocument, projectId, node.node_id, confirmFrame])
 
-  const canConfirm = entry.hasLoaded && !isLoadError && !entry.isLoading
+  const hasContent = entry.content.trim().length > 0
+  const canConfirm = entry.hasLoaded && !isLoadError && !entry.isLoading && hasContent && !isConfirming
 
   return (
     <div className={styles.documentPanel}>
@@ -124,7 +146,7 @@ export function NodeDocumentEditor({ projectId, node, kind }: Props) {
           data-testid={`confirm-document-${kind}`}
           onClick={handleConfirm}
         >
-          Confirm
+          {isConfirming ? 'Confirming...' : 'Confirm'}
         </button>
       </div>
     </div>

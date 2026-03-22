@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import type { NodeRecord } from '../../api/types'
+import { useDetailStateStore } from '../../stores/detail-state-store'
 import { ClarifyMockPanel } from '../graph/ClarifyMockPanel'
 import { NodeDescribePanel } from './NodeDescribePanel'
 import { NodeDocumentEditor } from './NodeDocumentEditor'
@@ -37,9 +38,30 @@ export function NodeDetailCard({
 }: Props) {
   const [detailTab, setDetailTab] = useState<DetailTab>('frame')
 
+  const detailStateKey = projectId && node ? `${projectId}::${node.node_id}` : ''
+  const detailState = useDetailStateStore((s) => detailStateKey ? s.entries[detailStateKey] : undefined)
+  const loadDetailState = useDetailStateStore((s) => s.loadDetailState)
+
   useEffect(() => {
     setDetailTab('frame')
   }, [node?.node_id, state])
+
+  useEffect(() => {
+    if (projectId && node && state === 'ready') {
+      void loadDetailState(projectId, node.node_id)
+    }
+  }, [projectId, node?.node_id, state, loadDetailState])
+
+  const isTabLocked = useCallback(
+    (tabId: DetailTab): boolean => {
+      if (tabId === 'describe' || tabId === 'frame') return false
+      if (!detailState) return true
+      if (tabId === 'clarify') return !detailState.clarify_unlocked
+      if (tabId === 'spec') return !detailState.spec_unlocked
+      return false
+    },
+    [detailState],
+  )
 
   const rootClassName = useMemo(
     () =>
@@ -80,22 +102,27 @@ export function NodeDetailCard({
     >
       <div className={styles.cardHeader}>
         <nav className={styles.stepper} aria-label="Detail steps">
-          {DETAIL_STEPS.map((step, idx) => (
-            <Fragment key={step.id}>
-              {idx > 0 && (
-                <span className={styles.stepArrow} aria-hidden="true">
-                  {'>'}
-                </span>
-              )}
-              <button
-                type="button"
-                className={`${styles.stepButton} ${detailTab === step.id ? styles.stepButtonActive : ''}`}
-                onClick={() => setDetailTab(step.id)}
-              >
-                {step.label}
-              </button>
-            </Fragment>
-          ))}
+          {DETAIL_STEPS.map((step, idx) => {
+            const locked = isTabLocked(step.id)
+            return (
+              <Fragment key={step.id}>
+                {idx > 0 && (
+                  <span className={styles.stepArrow} aria-hidden="true">
+                    {'>'}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className={`${styles.stepButton} ${detailTab === step.id ? styles.stepButtonActive : ''} ${locked ? styles.stepButtonLocked : ''}`}
+                  onClick={() => { if (!locked) setDetailTab(step.id) }}
+                  disabled={locked}
+                  title={locked ? `${step.label} is locked` : step.label}
+                >
+                  {locked ? `${step.label} \u{1F512}` : step.label}
+                </button>
+              </Fragment>
+            )
+          })}
         </nav>
         {showClose ? (
           <button
@@ -118,7 +145,12 @@ export function NodeDetailCard({
         )}
 
         {detailTab === 'frame' && (
-          <NodeDocumentEditor projectId={projectId} node={node} kind="frame" />
+          <NodeDocumentEditor
+            projectId={projectId}
+            node={node}
+            kind="frame"
+            onConfirm="workflow"
+          />
         )}
 
         {detailTab === 'clarify' && <ClarifyMockPanel />}

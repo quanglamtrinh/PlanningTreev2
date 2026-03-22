@@ -104,6 +104,19 @@ export interface NodeDocument {
   updated_at: string | null
 }
 
+export interface DetailState {
+  node_id: string
+  frame_confirmed: boolean
+  frame_confirmed_revision: number
+  frame_revision: number
+  clarify_unlocked: boolean
+  clarify_stale: boolean
+  clarify_confirmed: boolean
+  spec_unlocked: boolean
+  spec_stale: boolean
+  spec_confirmed: boolean
+}
+
 export interface SplitAcceptedResponse {
   status: 'accepted'
   job_id: string

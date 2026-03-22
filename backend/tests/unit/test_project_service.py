@@ -130,6 +130,7 @@ def test_reset_to_root_keeps_root_identity_and_clears_descendants(
             planningtree_workspace.NODE_MARKER_NAME,
             planningtree_workspace.FRAME_FILE_NAME,
             planningtree_workspace.SPEC_FILE_NAME,
+            planningtree_workspace.FRAME_META_FILE_NAME,
         ]
     )
 

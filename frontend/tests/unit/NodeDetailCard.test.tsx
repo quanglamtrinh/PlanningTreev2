@@ -5,6 +5,20 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getNodeDocument: vi.fn(),
     putNodeDocument: vi.fn(),
+    getDetailState: vi.fn().mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: false,
+      frame_confirmed_revision: 0,
+      frame_revision: 0,
+      clarify_unlocked: true,
+      clarify_stale: false,
+      clarify_confirmed: false,
+      spec_unlocked: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    }),
+    getSnapshot: vi.fn(),
+    confirmFrame: vi.fn(),
   },
 }))
 
@@ -48,6 +62,7 @@ vi.mock('../../src/api/client', () => {
 import type { NodeRecord } from '../../src/api/types'
 import { NodeDetailCard } from '../../src/features/node/NodeDetailCard'
 import { useNodeDocumentStore } from '../../src/stores/node-document-store'
+import { useDetailStateStore } from '../../src/stores/detail-state-store'
 
 function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
   return {
@@ -72,6 +87,7 @@ describe('NodeDetailCard', () => {
     vi.clearAllMocks()
     vi.useRealTimers()
     useNodeDocumentStore.getState().reset()
+    useDetailStateStore.getState().reset()
   })
 
   it('loads frame.md on the default Frame tab', async () => {
@@ -121,7 +137,9 @@ describe('NodeDetailCard', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Spec' }))
+    // Wait for detail state to load so Spec tab is unlocked
+    const specButton = await screen.findByRole('button', { name: 'Spec' })
+    fireEvent.click(specButton)
 
     await waitFor(() => {
       expect(apiMock.getNodeDocument).toHaveBeenCalledWith('project-1', 'root', 'spec')

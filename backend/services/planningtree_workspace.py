@@ -310,11 +310,21 @@ def _prune_empty_dirs(root: Path) -> None:
             continue
 
 
+FRAME_META_FILE_NAME = "frame.meta.json"
+
+
 def _ensure_node_files(node_dir: Path) -> None:
     for filename in (FRAME_FILE_NAME, SPEC_FILE_NAME):
         path = node_dir / filename
         if not path.exists():
             path.touch()
+    meta_path = node_dir / FRAME_META_FILE_NAME
+    if not meta_path.exists():
+        import json
+        meta_path.write_text(
+            json.dumps({"revision": 0, "confirmed_revision": 0, "confirmed_at": None}, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _iter_node_markers(root: Path) -> Iterator[Path]:

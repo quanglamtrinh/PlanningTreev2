@@ -6,6 +6,20 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getNodeDocument: vi.fn(),
     putNodeDocument: vi.fn(),
+    getDetailState: vi.fn().mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: false,
+      frame_confirmed_revision: 0,
+      frame_revision: 0,
+      clarify_unlocked: true,
+      clarify_stale: false,
+      clarify_confirmed: false,
+      spec_unlocked: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    }),
+    getSnapshot: vi.fn(),
+    confirmFrame: vi.fn(),
   },
 }))
 
@@ -103,6 +117,7 @@ vi.mock('../../src/api/client', () => ({
 import type { NodeRecord, Snapshot } from '../../src/api/types'
 import { TreeGraph } from '../../src/features/graph/TreeGraph'
 import { useNodeDocumentStore } from '../../src/stores/node-document-store'
+import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useProjectStore } from '../../src/stores/project-store'
 
 function buildNode(overrides: Partial<NodeRecord>): NodeRecord {
@@ -174,6 +189,7 @@ describe('TreeGraph', () => {
     vi.clearAllMocks()
     useProjectStore.setState(useProjectStore.getInitialState())
     useNodeDocumentStore.getState().reset()
+    useDetailStateStore.getState().reset()
     apiMock.getNodeDocument.mockResolvedValue({
       node_id: 'root',
       kind: 'frame',
@@ -283,7 +299,8 @@ describe('TreeGraph', () => {
 
     expect(within(detailCard).getByRole('button', { name: 'Describe' })).toBeInTheDocument()
     expect(within(detailCard).getByRole('button', { name: 'Frame' })).toBeInTheDocument()
-    expect(within(detailCard).getByRole('button', { name: 'Clarify' })).toBeInTheDocument()
+    // Wait for detail state to load so Clarify/Spec tabs are unlocked
+    expect(await within(detailCard).findByRole('button', { name: 'Clarify' })).toBeInTheDocument()
     expect(within(detailCard).getByRole('button', { name: 'Spec' })).toBeInTheDocument()
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
     expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
