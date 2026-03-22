@@ -259,8 +259,16 @@ def _format_runtime_context_block(task_context: dict[str, Any]) -> str:
     lines = [
         "Runtime context:",
         f"- Parent task: {_context_value(task_context.get('current_node_prompt'))}",
-        f"- Root goal: {_context_value(task_context.get('root_prompt'))}",
     ]
+
+    spec_content = (task_context.get("spec_content") or "").strip()
+    if spec_content:
+        truncated = spec_content[:4000]
+        if len(spec_content) > 4000:
+            truncated += "\n... (truncated)"
+        lines.append(f"- Technical spec:\n{truncated}")
+
+    lines.append(f"- Root goal: {_context_value(task_context.get('root_prompt'))}")
 
     parent_chain = task_context.get("parent_chain_prompts")
     if isinstance(parent_chain, list) and parent_chain:

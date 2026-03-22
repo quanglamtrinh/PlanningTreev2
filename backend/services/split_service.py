@@ -148,6 +148,14 @@ class SplitService:
                 raise SplitBackendUnavailable("Split thread is unavailable. Retry the split.")
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             task_context = build_split_context(snapshot, node, node_by_id)
+            if workspace_root:
+                node_dir = planningtree_workspace.resolve_node_dir(
+                    Path(workspace_root), snapshot, node_id
+                )
+                if node_dir is not None:
+                    spec_path = node_dir / planningtree_workspace.SPEC_FILE_NAME
+                    if spec_path.exists():
+                        task_context["spec_content"] = spec_path.read_text(encoding="utf-8").strip()
 
         retry_feedback: str | None = None
         last_issues = ["No valid split_result payload was captured."]

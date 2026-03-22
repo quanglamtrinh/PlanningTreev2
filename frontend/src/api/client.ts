@@ -13,6 +13,8 @@ import type {
   ProjectSummary,
   SendMessageResponse,
   Snapshot,
+  SpecGenAcceptedResponse,
+  SpecGenStatusResponse,
   SplitAcceptedResponse,
   SplitMode,
   SplitStatusResponse,
@@ -247,6 +249,17 @@ export const api = {
   getClarifyGenStatus(projectId: string, nodeId: string): Promise<ClarifyGenStatusResponse> {
     return jsonFetch<ClarifyGenStatusResponse>(
       `/v1/projects/${projectId}/nodes/${nodeId}/clarify-generation-status`,
+    )
+  },
+  generateSpec(projectId: string, nodeId: string): Promise<SpecGenAcceptedResponse> {
+    return jsonFetch<SpecGenAcceptedResponse>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/generate-spec`,
+      { method: 'POST' },
+    )
+  },
+  getSpecGenStatus(projectId: string, nodeId: string): Promise<SpecGenStatusResponse> {
+    return jsonFetch<SpecGenStatusResponse>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/spec-generation-status`,
     )
   },
   getChatSession(projectId: string, nodeId: string): Promise<ChatSession> {

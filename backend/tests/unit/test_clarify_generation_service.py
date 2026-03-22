@@ -257,7 +257,7 @@ def test_generate_clarify_zero_questions_auto_confirms(
     project_id = snapshot["project"]["id"]
     root_id = snapshot["tree_state"]["root_node_id"]
 
-    # Confirm frame first so detail_state can derive spec_unlocked
+    # Confirm frame first so detail_state can derive active_step='spec'
     detail_service = NodeDetailService(storage, tree_service)
     doc_service = NodeDocumentService(storage)
     doc_service.put_document(project_id, root_id, "frame", "# Task Title\nTest\n")
@@ -274,10 +274,10 @@ def test_generate_clarify_zero_questions_auto_confirms(
     assert clarify["confirmed_at"] is not None
     assert clarify["confirmed_revision"] == 1
 
-    # Spec should be unlocked
+    # active_step should be spec (clarify auto-confirmed → spec)
     state = detail_service.get_detail_state(project_id, root_id)
     assert state["clarify_confirmed"] is True
-    assert state["spec_unlocked"] is True
+    assert state["active_step"] == "spec"
 
 
 def test_generate_clarify_uses_confirmed_content_not_draft(
@@ -336,7 +336,11 @@ def test_generate_clarify_preserves_custom_answer_on_regenerate(
 
     detail_service = NodeDetailService(storage, tree_service)
     doc_service = NodeDocumentService(storage)
-    doc_service.put_document(project_id, root_id, "frame", "# Task Title\nTest\n")
+    # Frame with unresolved fields so seed doesn't auto-confirm
+    doc_service.put_document(
+        project_id, root_id, "frame",
+        "# Task Title\nTest\n\n# Task-Shaping Fields\n- auth_provider:\n",
+    )
     detail_service.confirm_frame(project_id, root_id)
 
     # Seed initial clarify with a question
@@ -379,7 +383,11 @@ def test_generate_clarify_preserves_selected_option_when_still_available(
 
     detail_service = NodeDetailService(storage, tree_service)
     doc_service = NodeDocumentService(storage)
-    doc_service.put_document(project_id, root_id, "frame", "# Task Title\nTest\n")
+    # Frame with unresolved fields so seed doesn't auto-confirm
+    doc_service.put_document(
+        project_id, root_id, "frame",
+        "# Task Title\nTest\n\n# Task-Shaping Fields\n- auth_provider:\n",
+    )
     detail_service.confirm_frame(project_id, root_id)
 
     # First generation with options
@@ -424,6 +432,115 @@ def test_generate_clarify_preserves_selected_option_when_still_available(
 
     clarify = detail_service.get_clarify(project_id, root_id)
     assert clarify["questions"][0]["selected_option_id"] == "oauth2"
+
+
+def test_write_clarify_skips_when_disk_already_confirmed(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """AI write is skipped when deterministic seed already auto-confirmed clarify."""
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    detail_service = NodeDetailService(storage, tree_service)
+    doc_service = NodeDocumentService(storage)
+
+    # Frame with all fields resolved → zero questions → auto-confirm
+    all_resolved = "# Task Title\nTest\n\n# Task-Shaping Fields\n- platform: web\n- db: postgres\n"
+    doc_service.put_document(project_id, root_id, "frame", all_resolved)
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    # Verify auto-confirmed
+    clarify = detail_service.get_clarify(project_id, root_id)
+    assert clarify["confirmed_revision"] == 1
+    assert clarify["confirmed_at"] is not None
+
+    # Start a slow AI generation that was kicked off before auto-confirm happened
+    barrier = threading.Event()
+    codex_mock = _make_codex_mock()
+
+    def slow_run(*args: Any, **kwargs: Any) -> dict:
+        barrier.wait(timeout=5)
+        return {
+            "tool_calls": [
+                {
+                    "tool_name": "emit_clarify_questions",
+                    "arguments": {
+                        "questions": [{"field_name": "stale_q", "question": "Stale?", "options": []}]
+                    },
+                }
+            ],
+            "stdout": "",
+        }
+
+    codex_mock.run_turn_streaming.side_effect = slow_run
+    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service.generate_clarify(project_id, root_id)
+
+    # Let the job complete
+    barrier.set()
+    time.sleep(1)
+
+    # The auto-confirmed clarify should NOT be overwritten
+    clarify = detail_service.get_clarify(project_id, root_id)
+    assert clarify["confirmed_revision"] == 1
+    assert clarify["questions"] == []
+    field_names = [q["field_name"] for q in clarify["questions"]]
+    assert "stale_q" not in field_names
+
+
+def test_write_clarify_skips_when_frame_revision_advanced(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """AI write is skipped when frame.revision advanced since job started (apply-to-frame)."""
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    detail_service = NodeDetailService(storage, tree_service)
+    doc_service = NodeDocumentService(storage)
+
+    # Write and confirm frame (revision 1, confirmed_revision 1)
+    doc_service.put_document(project_id, root_id, "frame", "# Task Title\nTest\n")
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    barrier = threading.Event()
+    codex_mock = _make_codex_mock()
+
+    def slow_run(*args: Any, **kwargs: Any) -> dict:
+        barrier.wait(timeout=5)
+        return {
+            "tool_calls": [
+                {
+                    "tool_name": "emit_clarify_questions",
+                    "arguments": {
+                        "questions": [{"field_name": "stale_q", "question": "Stale?", "options": []}]
+                    },
+                }
+            ],
+            "stdout": "",
+        }
+
+    codex_mock.run_turn_streaming.side_effect = slow_run
+    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+
+    # Start generation (captures frame_revision_at_start = 1)
+    service.generate_clarify(project_id, root_id)
+
+    # Simulate apply-to-frame: bump frame revision WITHOUT re-confirming
+    # This is what happens when clarify decisions are applied back to frame.md
+    detail_service.bump_frame_revision(project_id, root_id)
+
+    # Let the old job complete
+    barrier.set()
+    time.sleep(1)
+
+    # The stale job should NOT have written because frame revision advanced
+    clarify = detail_service.get_clarify(project_id, root_id)
+    field_names = [q["field_name"] for q in clarify["questions"]]
+    assert "stale_q" not in field_names
 
 
 def test_stale_job_does_not_overwrite_newer_clarify(

@@ -106,6 +106,11 @@ class SpecGenerationNotAllowed(AppError):
         super().__init__("spec_generation_not_allowed", reason, 409)
 
 
+class SpecGenerationBackendUnavailable(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("spec_generation_backend_unavailable", reason, 503)
+
+
 class BriefGenerationNotAllowed(AppError):
     def __init__(self, reason: str) -> None:
         super().__init__("brief_generation_not_allowed", reason, 409)

@@ -330,7 +330,7 @@ def _ensure_node_files(node_dir: Path) -> None:
     if not spec_meta_path.exists():
         import json
         spec_meta_path.write_text(
-            json.dumps({"source_frame_revision": 0, "source_clarify_revision": 0, "confirmed_at": None}, indent=2) + "\n",
+            json.dumps({"source_frame_revision": 0, "confirmed_at": None}, indent=2) + "\n",
             encoding="utf-8",
         )
 

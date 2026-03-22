@@ -3,15 +3,17 @@ import type { GenJobStatus, NodeRecord } from '../../api/types'
 import { api, ApiError } from '../../api/client'
 import { useClarifyStore } from '../../stores/clarify-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
+import { useNodeDocumentStore } from '../../stores/node-document-store'
 import detailStyles from './NodeDetailCard.module.css'
 import styles from '../graph/ClarifyMockPanel.module.css'
 
 type Props = {
   projectId: string
   node: NodeRecord
+  readOnly?: boolean
 }
 
-export function ClarifyPanel({ projectId, node }: Props) {
+export function ClarifyPanel({ projectId, node, readOnly }: Props) {
   const key = `${projectId}::${node.node_id}`
   const entry = useClarifyStore((s) => s.entries[key])
   const loadClarify = useClarifyStore((s) => s.loadClarify)
@@ -20,6 +22,7 @@ export function ClarifyPanel({ projectId, node }: Props) {
   const updateCustomAnswer = useClarifyStore((s) => s.updateCustomAnswer)
   const flushAnswers = useClarifyStore((s) => s.flushAnswers)
   const confirmClarify = useClarifyStore((s) => s.confirmClarify)
+  const invalidateFrameDoc = useNodeDocumentStore((s) => s.invalidateEntry)
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
   const loadDetailState = useDetailStateStore((s) => s.loadDetailState)
@@ -136,17 +139,19 @@ export function ClarifyPanel({ projectId, node }: Props) {
 
   const noQuestions = clarify !== undefined && questions.length === 0
 
-  const handleConfirm = useCallback(async () => {
+  const handleApplyToFrame = useCallback(async () => {
     setIsConfirming(true)
     setConfirmError(null)
     try {
       await confirmClarify(projectId, node.node_id)
+      // Invalidate frame document cache so the editor reloads the patched frame.md
+      invalidateFrameDoc(projectId, node.node_id, 'frame')
     } catch (error) {
-      setConfirmError(error instanceof Error ? error.message : 'Confirm failed')
+      setConfirmError(error instanceof Error ? error.message : 'Apply failed')
     } finally {
       setIsConfirming(false)
     }
-  }, [projectId, node.node_id, confirmClarify])
+  }, [projectId, node.node_id, confirmClarify, invalidateFrameDoc])
 
   // Flush pending saves on unmount
   useEffect(() => {
@@ -155,9 +160,10 @@ export function ClarifyPanel({ projectId, node }: Props) {
     }
   }, [projectId, node.node_id, flushAnswers])
 
-  // Check if already confirmed
+  // Check if already confirmed or read-only
   const detailState = useDetailStateStore((s) => s.entries[key])
   const isAlreadyConfirmed = detailState?.clarify_confirmed ?? false
+  const isDisabled = readOnly || isAlreadyConfirmed
 
   // ── Generating state ────────────────────────────────────────
 
@@ -211,37 +217,35 @@ export function ClarifyPanel({ projectId, node }: Props) {
         <p className={detailStyles.body}>
           No unresolved task-shaping fields. All fields were resolved in the frame.
         </p>
-        <div className={detailStyles.tabConfirmRow}>
-          {!isAlreadyConfirmed ? (
-            <>
-              <button
-                type="button"
-                className={detailStyles.generateButton}
-                data-testid="generate-clarify-button"
-                disabled={isConfirming}
-                onClick={handleGenerate}
-              >
-                Generate Questions
-              </button>
-              <button
-                type="button"
-                className={detailStyles.confirmButton}
-                data-testid="confirm-clarify"
-                onClick={handleConfirm}
-                disabled={isConfirming}
-              >
-                {isConfirming ? 'Confirming...' : 'Confirm'}
-              </button>
-            </>
-          ) : null}
-        </div>
+        {!isDisabled ? (
+          <div className={detailStyles.tabConfirmRow}>
+            <button
+              type="button"
+              className={detailStyles.generateButton}
+              data-testid="generate-clarify-button"
+              disabled={isConfirming}
+              onClick={handleGenerate}
+            >
+              Generate Questions
+            </button>
+            <button
+              type="button"
+              className={detailStyles.confirmButton}
+              data-testid="confirm-clarify"
+              onClick={handleApplyToFrame}
+              disabled={isConfirming}
+            >
+              {isConfirming ? 'Applying...' : 'Apply to Frame'}
+            </button>
+          </div>
+        ) : null}
       </div>
     )
   }
 
   // ── Questions state ─────────────────────────────────────────
 
-  const canConfirm = allResolved && !isConfirming && !isSaving && !isAlreadyConfirmed && !isGenerating
+  const canConfirm = allResolved && !isConfirming && !isSaving && !isDisabled && !isGenerating
 
   return (
     <div className={detailStyles.documentPanel}>
@@ -294,7 +298,7 @@ export function ClarifyPanel({ projectId, node }: Props) {
                         const newId = q.selected_option_id === opt.id ? null : opt.id
                         selectOption(projectId, node.node_id, q.field_name, newId)
                       }}
-                      disabled={isAlreadyConfirmed}
+                      disabled={isDisabled}
                     >
                       {opt.label}
                       {opt.recommended ? (
@@ -325,7 +329,7 @@ export function ClarifyPanel({ projectId, node }: Props) {
                     updateCustomAnswer(projectId, node.node_id, q.field_name, e.target.value)
                   }}
                   aria-label={`Custom answer for: ${q.field_name}`}
-                  disabled={isAlreadyConfirmed}
+                  disabled={isDisabled}
                 />
               ) : null}
             </div>
@@ -334,12 +338,11 @@ export function ClarifyPanel({ projectId, node }: Props) {
       </div>
 
       <div className={detailStyles.tabConfirmRow}>
-        {isAlreadyConfirmed ? (
+        {isDisabled ? (
           <p className={styles.confirmHint} role="status">
-            Clarify confirmed.
+            {isAlreadyConfirmed ? 'Clarify confirmed.' : 'Read-only.'}
           </p>
-        ) : null}
-        {!isAlreadyConfirmed ? (
+        ) : (
           <>
             <button
               type="button"
@@ -355,12 +358,12 @@ export function ClarifyPanel({ projectId, node }: Props) {
               className={detailStyles.confirmButton}
               data-testid="confirm-clarify"
               disabled={!canConfirm}
-              onClick={handleConfirm}
+              onClick={handleApplyToFrame}
             >
-              {isConfirming ? 'Confirming...' : 'Confirm'}
+              {isConfirming ? 'Applying...' : 'Apply to Frame'}
             </button>
           </>
-        ) : null}
+        )}
       </div>
     </div>
   )

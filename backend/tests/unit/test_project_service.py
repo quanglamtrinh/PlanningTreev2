@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,10 @@ def test_create_project_initializes_root_and_minimal_files(
     assert (root_dir / planningtree_workspace.NODE_MARKER_NAME).read_text(encoding="utf-8").strip() == root_id
     assert (root_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == ""
     assert (root_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
+    assert json.loads((root_dir / planningtree_workspace.SPEC_META_FILE_NAME).read_text(encoding="utf-8")) == {
+        "source_frame_revision": 0,
+        "confirmed_at": None,
+    }
 
 
 def test_validate_project_folder_rejects_non_directory(

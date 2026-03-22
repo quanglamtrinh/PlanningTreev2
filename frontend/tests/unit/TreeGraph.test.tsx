@@ -11,10 +11,13 @@ const { apiMock } = vi.hoisted(() => ({
       frame_confirmed: false,
       frame_confirmed_revision: 0,
       frame_revision: 0,
-      clarify_unlocked: true,
-      clarify_stale: false,
+      active_step: 'frame' as const,
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: false,
+      clarify_read_only: true,
       clarify_confirmed: false,
-      spec_unlocked: true,
+      spec_read_only: true,
       spec_stale: false,
       spec_confirmed: false,
     }),
@@ -46,6 +49,14 @@ const { apiMock } = vi.hoisted(() => ({
     getFrameGenStatus: vi.fn(),
     generateClarify: vi.fn(),
     getClarifyGenStatus: vi.fn(),
+    generateSpec: vi.fn(),
+    getSpecGenStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    }),
   },
 }))
 
@@ -238,6 +249,13 @@ describe('TreeGraph', () => {
       error: null,
     })
     apiMock.getClarifyGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+    apiMock.getSpecGenStatus.mockResolvedValue({
       status: 'idle',
       job_id: null,
       started_at: null,

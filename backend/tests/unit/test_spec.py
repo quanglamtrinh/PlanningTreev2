@@ -26,12 +26,16 @@ Build login page
 """
 
 
-def _setup_confirmed_clarify(
+def _setup_to_spec_step(
     storage: Storage,
     workspace_root: Path,
     tree_service: TreeService,
 ) -> tuple[str, str, NodeDetailService, NodeDocumentService]:
-    """Create a project and advance the workflow through confirmed clarify."""
+    """Create a project and advance the workflow to active_step='spec'.
+
+    Full loop: confirm frame → resolve clarify → apply to frame → reconfirm
+    → zero questions → auto-confirm → active_step='spec'.
+    """
     project_service = ProjectService(storage)
     snapshot = create_project(project_service, str(workspace_root))
     project_id = snapshot["project"]["id"]
@@ -40,23 +44,30 @@ def _setup_confirmed_clarify(
     doc_service = NodeDocumentService(storage)
     detail_service = NodeDetailService(storage, tree_service)
 
-    # Write and confirm frame
+    # 1. Write frame with one unresolved field and confirm
     doc_service.put_document(project_id, root_id, "frame", FRAME_WITH_UNRESOLVED)
     detail_service.bump_frame_revision(project_id, root_id)
     detail_service.confirm_frame(project_id, root_id)
 
-    # Answer all clarify questions and confirm
+    # 2. Resolve all clarify questions and apply back to frame
     detail_service.update_clarify_answers(
         project_id,
         root_id,
         [{"field_name": "target platform", "custom_answer": "web"}],
     )
-    detail_service.confirm_clarify(project_id, root_id)
+    result = detail_service.apply_clarify_to_frame(project_id, root_id)
+    assert result["active_step"] == "frame"
+    assert result["frame_needs_reconfirm"] is True
+
+    # 3. Reconfirm the patched frame — all fields now resolved → zero questions → auto-confirm
+    detail_service.confirm_frame(project_id, root_id)
+    state = detail_service.get_detail_state(project_id, root_id)
+    assert state["active_step"] == "spec"
 
     return project_id, root_id, detail_service, doc_service
 
 
-def test_confirm_spec_requires_clarify_confirmed(
+def test_confirm_spec_requires_frame_confirmed(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
     project_service = ProjectService(storage)
@@ -67,23 +78,18 @@ def test_confirm_spec_requires_clarify_confirmed(
     doc_service = NodeDocumentService(storage)
     detail_service = NodeDetailService(storage, tree_service)
 
-    # Write frame content and confirm frame
-    doc_service.put_document(project_id, root_id, "frame", FRAME_WITH_UNRESOLVED)
-    detail_service.bump_frame_revision(project_id, root_id)
-    detail_service.confirm_frame(project_id, root_id)
-
-    # Write spec content
+    # Write spec content but don't confirm frame
     doc_service.put_document(project_id, root_id, "spec", "# Spec content")
 
-    # Should fail — clarify not confirmed
-    with pytest.raises(ConfirmationNotAllowed, match="Clarify must be confirmed"):
+    # Should fail — frame not confirmed
+    with pytest.raises(ConfirmationNotAllowed, match="Frame must be confirmed"):
         detail_service.confirm_spec(project_id, root_id)
 
 
 def test_confirm_spec_requires_non_empty_content(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
-    project_id, root_id, detail_service, _doc_service = _setup_confirmed_clarify(
+    project_id, root_id, detail_service, _doc_service = _setup_to_spec_step(
         storage, workspace_root, tree_service
     )
 
@@ -95,7 +101,7 @@ def test_confirm_spec_requires_non_empty_content(
 def test_confirm_spec_succeeds(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
-    project_id, root_id, detail_service, doc_service = _setup_confirmed_clarify(
+    project_id, root_id, detail_service, doc_service = _setup_to_spec_step(
         storage, workspace_root, tree_service
     )
 
@@ -106,11 +112,11 @@ def test_confirm_spec_succeeds(
     assert result["spec_stale"] is False
 
 
-def test_frame_reconfirm_relocks_spec(
+def test_frame_reconfirm_resets_active_step_to_clarify(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
-    """Re-confirming frame re-seeds clarify (confirmed_at=None), which re-locks spec."""
-    project_id, root_id, detail_service, doc_service = _setup_confirmed_clarify(
+    """Re-confirming frame re-seeds clarify (confirmed_at=None), active_step goes to clarify."""
+    project_id, root_id, detail_service, doc_service = _setup_to_spec_step(
         storage, workspace_root, tree_service
     )
 
@@ -124,8 +130,8 @@ def test_frame_reconfirm_relocks_spec(
     detail_service.confirm_frame(project_id, root_id)
 
     state = detail_service.get_detail_state(project_id, root_id)
-    # Clarify was re-seeded → spec locked (not stale)
-    assert state["spec_unlocked"] is False
+    # Clarify was re-seeded with unresolved questions → active_step is clarify
+    assert state["active_step"] == "clarify"
     assert state["clarify_confirmed"] is False
     # Spec content preserved on disk (not wiped)
     spec = doc_service.get_document(project_id, root_id, "spec")
@@ -135,8 +141,8 @@ def test_frame_reconfirm_relocks_spec(
 def test_spec_stale_detection(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
-    """Spec is stale when its source revisions are behind the current confirmed revisions."""
-    project_id, root_id, detail_service, doc_service = _setup_confirmed_clarify(
+    """Spec is stale when its source_frame_revision is behind the current confirmed_revision."""
+    project_id, root_id, detail_service, doc_service = _setup_to_spec_step(
         storage, workspace_root, tree_service
     )
 
@@ -145,47 +151,27 @@ def test_spec_stale_detection(
     result = detail_service.confirm_spec(project_id, root_id)
     assert result["spec_stale"] is False
 
-    # Manually bump frame confirmed_revision to simulate a frame change
-    # without re-seeding clarify (future AI-driven flow)
+    # Manually bump frame confirmed_revision to simulate a subsequent frame change
     snapshot = storage.project_store.load_snapshot(project_id)
     node_dir = detail_service._resolve_node_dir(snapshot, node_id=root_id)
     frame_meta = detail_service._load_frame_meta(node_dir)
-    frame_meta["revision"] = 2
-    frame_meta["confirmed_revision"] = 2
+    frame_meta["revision"] = frame_meta.get("revision", 0) + 1
+    frame_meta["confirmed_revision"] = frame_meta["revision"]
     detail_service._save_frame_meta(node_dir, frame_meta)
 
     state = detail_service.get_detail_state(project_id, root_id)
     assert state["spec_stale"] is True
 
 
-def test_spec_stale_after_clarify_reconfirm(
+def test_active_step_spec_after_full_loop(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
-    """Spec detects staleness when clarify is re-confirmed (no frame change)."""
-    project_id, root_id, detail_service, doc_service = _setup_confirmed_clarify(
-        storage, workspace_root, tree_service
-    )
-
-    # Confirm spec (clarify confirmed_revision == 1)
-    doc_service.put_document(project_id, root_id, "spec", "# Spec\nContent.")
-    result = detail_service.confirm_spec(project_id, root_id)
-    assert result["spec_stale"] is False
-
-    # Re-confirm clarify (bumps confirmed_revision to 2) without any frame change
-    detail_service.confirm_clarify(project_id, root_id)
-
-    state = detail_service.get_detail_state(project_id, root_id)
-    assert state["spec_stale"] is True
-
-
-def test_detail_state_spec_unlocked_after_clarify_confirm(
-    storage: Storage, workspace_root: Path, tree_service: TreeService
-) -> None:
-    project_id, root_id, detail_service, _doc_service = _setup_confirmed_clarify(
+    """After the full Frame→Clarify→Apply→Reconfirm loop, active_step is 'spec'."""
+    project_id, root_id, detail_service, _doc_service = _setup_to_spec_step(
         storage, workspace_root, tree_service
     )
 
     state = detail_service.get_detail_state(project_id, root_id)
-    assert state["spec_unlocked"] is True
+    assert state["active_step"] == "spec"
     assert state["spec_confirmed"] is False
     assert state["clarify_confirmed"] is True

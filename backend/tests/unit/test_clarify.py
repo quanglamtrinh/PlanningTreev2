@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.errors.app_errors import ConfirmationNotAllowed
+from backend.errors.app_errors import ConfirmationNotAllowed, InvalidRequest
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
@@ -189,7 +189,7 @@ def test_clear_selection_reopens_question(
     assert questions["target platform"]["custom_answer"] == ""
 
 
-def test_confirm_clarify_requires_all_resolved(
+def test_apply_clarify_requires_all_resolved(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
     project_service = ProjectService(storage)
@@ -206,7 +206,7 @@ def test_confirm_clarify_requires_all_resolved(
 
     # Should fail — questions are unresolved (no option or custom answer)
     with pytest.raises(ConfirmationNotAllowed, match="still open"):
-        detail_service.confirm_clarify(project_id, root_id)
+        detail_service.apply_clarify_to_frame(project_id, root_id)
 
     # Resolve all via custom_answer
     detail_service.update_clarify_answers(
@@ -218,9 +218,11 @@ def test_confirm_clarify_requires_all_resolved(
         ],
     )
 
-    result = detail_service.confirm_clarify(project_id, root_id)
-    assert result["clarify_confirmed"] is True
-    assert result["spec_unlocked"] is True
+    # Apply writes decisions back to frame and bumps revision
+    result = detail_service.apply_clarify_to_frame(project_id, root_id)
+    # active_step goes back to "frame" because revision was bumped (needs reconfirm)
+    assert result["active_step"] == "frame"
+    assert result["frame_needs_reconfirm"] is True
 
 
 def test_reseed_preserves_custom_answer(
@@ -260,6 +262,105 @@ def test_reseed_preserves_custom_answer(
     assert questions["storage level"]["selected_option_id"] is None
 
 
+def test_reseed_preserves_selected_option_id(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """Re-seeding clarify preserves selected_option_id from old questions."""
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    doc_service = NodeDocumentService(storage)
+    doc_service.put_document(project_id, root_id, "frame", FRAME_WITH_UNRESOLVED)
+
+    detail_service = NodeDetailService(storage, tree_service)
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    # Manually inject options + selection into the seeded clarify
+    snap = storage.project_store.load_snapshot(project_id)
+    node_dir = detail_service._resolve_node_dir(snap, root_id)
+    clarify = detail_service._load_clarify(node_dir)
+    for q in clarify["questions"]:
+        if q["field_name"] == "target platform":
+            q["options"] = [
+                {"id": "web", "label": "Web", "value": "web", "rationale": "Standard", "recommended": True},
+            ]
+            q["selected_option_id"] = "web"
+    detail_service._save_clarify(node_dir, clarify)
+
+    # Re-confirm frame → re-seeds clarify
+    doc_service.put_document(project_id, root_id, "frame", FRAME_WITH_UNRESOLVED)
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    clarify = detail_service.get_clarify(project_id, root_id)
+    questions = {q["field_name"]: q for q in clarify["questions"]}
+    # selected_option_id should survive the re-seed
+    assert questions["target platform"]["selected_option_id"] == "web"
+    # Unresolved field remains unresolved
+    assert questions["storage level"]["selected_option_id"] is None
+
+
+def test_seed_auto_confirms_when_zero_questions(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """When all shaping fields are resolved, seed produces zero questions and auto-confirms."""
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    doc_service = NodeDocumentService(storage)
+    doc_service.put_document(project_id, root_id, "frame", FRAME_ALL_RESOLVED)
+
+    detail_service = NodeDetailService(storage, tree_service)
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    clarify = detail_service.get_clarify(project_id, root_id)
+    assert clarify["questions"] == []
+    assert clarify["confirmed_revision"] == 1
+    assert clarify["confirmed_at"] is not None
+
+
+def test_invalid_option_id_raises_error(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """Selecting a non-existent option ID raises InvalidRequest."""
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    doc_service = NodeDocumentService(storage)
+    doc_service.put_document(project_id, root_id, "frame", FRAME_WITH_UNRESOLVED)
+
+    detail_service = NodeDetailService(storage, tree_service)
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    # Inject options into the seeded clarify
+    snap = storage.project_store.load_snapshot(project_id)
+    node_dir = detail_service._resolve_node_dir(snap, root_id)
+    clarify = detail_service._load_clarify(node_dir)
+    for q in clarify["questions"]:
+        if q["field_name"] == "target platform":
+            q["options"] = [
+                {"id": "web", "label": "Web", "value": "web", "rationale": "Standard", "recommended": True},
+            ]
+    detail_service._save_clarify(node_dir, clarify)
+
+    # Try selecting an option that doesn't exist
+    with pytest.raises(InvalidRequest, match="Invalid option"):
+        detail_service.update_clarify_answers(
+            project_id,
+            root_id,
+            [{"field_name": "target platform", "selected_option_id": "nonexistent"}],
+        )
+
+
 def test_schema_version_is_2(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
@@ -279,3 +380,116 @@ def test_schema_version_is_2(
     clarify = detail_service.get_clarify(project_id, root_id)
     assert clarify["schema_version"] == 2
     assert "confirmed_revision" in clarify
+
+
+def test_apply_clarify_patches_frame_shaping_fields(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """apply_clarify_to_frame writes resolved values into frame.md shaping fields."""
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    doc_service = NodeDocumentService(storage)
+    doc_service.put_document(project_id, root_id, "frame", FRAME_WITH_UNRESOLVED)
+
+    detail_service = NodeDetailService(storage, tree_service)
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    detail_service.update_clarify_answers(
+        project_id,
+        root_id,
+        [
+            {"field_name": "target platform", "custom_answer": "web"},
+            {"field_name": "storage level", "custom_answer": "cloud"},
+        ],
+    )
+
+    detail_service.apply_clarify_to_frame(project_id, root_id)
+
+    # Verify frame.md was patched
+    frame = doc_service.get_document(project_id, root_id, "frame")
+    assert "- target platform: web" in frame["content"]
+    assert "- storage level: cloud" in frame["content"]
+    # Non-target field preserved
+    assert "- auth provider: OAuth2" in frame["content"]
+
+
+def test_apply_clarify_bumps_frame_revision(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """apply_clarify_to_frame increments frame revision so reconfirm is required."""
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    doc_service = NodeDocumentService(storage)
+    doc_service.put_document(project_id, root_id, "frame", FRAME_WITH_UNRESOLVED)
+
+    detail_service = NodeDetailService(storage, tree_service)
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    state_before = detail_service.get_detail_state(project_id, root_id)
+    rev_before = state_before["frame_revision"]
+
+    detail_service.update_clarify_answers(
+        project_id,
+        root_id,
+        [
+            {"field_name": "target platform", "custom_answer": "web"},
+            {"field_name": "storage level", "custom_answer": "local"},
+        ],
+    )
+
+    result = detail_service.apply_clarify_to_frame(project_id, root_id)
+    assert result["frame_revision"] == rev_before + 1
+    assert result["frame_needs_reconfirm"] is True
+    assert result["active_step"] == "frame"
+
+
+def test_apply_clarify_with_selected_option_uses_value(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """When a question has a selected option, its value is written to frame."""
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    doc_service = NodeDocumentService(storage)
+    doc_service.put_document(project_id, root_id, "frame", FRAME_WITH_UNRESOLVED)
+
+    detail_service = NodeDetailService(storage, tree_service)
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    # Inject options into clarify for target platform
+    snap = storage.project_store.load_snapshot(project_id)
+    node_dir = detail_service._resolve_node_dir(snap, root_id)
+    clarify = detail_service._load_clarify(node_dir)
+    for q in clarify["questions"]:
+        if q["field_name"] == "target platform":
+            q["options"] = [
+                {"id": "web", "label": "Web", "value": "web", "rationale": "Standard", "recommended": True},
+            ]
+    detail_service._save_clarify(node_dir, clarify)
+
+    # Select option for one, custom for the other
+    detail_service.update_clarify_answers(
+        project_id,
+        root_id,
+        [
+            {"field_name": "target platform", "selected_option_id": "web"},
+            {"field_name": "storage level", "custom_answer": "local"},
+        ],
+    )
+
+    detail_service.apply_clarify_to_frame(project_id, root_id)
+
+    frame = doc_service.get_document(project_id, root_id, "frame")
+    assert "- target platform: web" in frame["content"]
+    assert "- storage level: local" in frame["content"]

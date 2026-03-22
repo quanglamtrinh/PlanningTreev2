@@ -109,10 +109,14 @@ export interface DetailState {
   frame_confirmed: boolean
   frame_confirmed_revision: number
   frame_revision: number
-  clarify_unlocked: boolean
-  clarify_stale: boolean
+  active_step: 'frame' | 'clarify' | 'spec'
+  workflow_notice: string | null
+  generation_error?: string | null
+  frame_needs_reconfirm: boolean
+  frame_read_only: boolean
+  clarify_read_only: boolean
   clarify_confirmed: boolean
-  spec_unlocked: boolean
+  spec_read_only: boolean
   spec_stale: boolean
   spec_confirmed: boolean
 }
@@ -156,6 +160,22 @@ export interface FrameGenAcceptedResponse {
 
 export interface FrameGenStatusResponse {
   status: FrameGenJobStatus
+  job_id: string | null
+  started_at: string | null
+  completed_at: string | null
+  error: string | null
+}
+
+export type SpecGenJobStatus = GenJobStatus
+
+export interface SpecGenAcceptedResponse {
+  status: 'accepted'
+  job_id: string
+  node_id: string
+}
+
+export interface SpecGenStatusResponse {
+  status: SpecGenJobStatus
   job_id: string | null
   started_at: string | null
   completed_at: string | null

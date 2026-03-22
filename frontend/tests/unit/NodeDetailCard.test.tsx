@@ -19,10 +19,14 @@ const { apiMock, MockApiError } = vi.hoisted(() => ({
       frame_confirmed: false,
       frame_confirmed_revision: 0,
       frame_revision: 0,
-      clarify_unlocked: true,
-      clarify_stale: false,
+      active_step: 'frame' as const,
+      workflow_notice: null,
+      generation_error: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: false,
+      clarify_read_only: true,
       clarify_confirmed: false,
-      spec_unlocked: true,
+      spec_read_only: true,
       spec_stale: false,
       spec_confirmed: false,
     }),
@@ -48,6 +52,14 @@ const { apiMock, MockApiError } = vi.hoisted(() => ({
     }),
     generateClarify: vi.fn(),
     getClarifyGenStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    }),
+    generateSpec: vi.fn(),
+    getSpecGenStatus: vi.fn().mockResolvedValue({
       status: 'idle',
       job_id: null,
       started_at: null,
@@ -124,10 +136,14 @@ describe('NodeDetailCard', () => {
       frame_confirmed: false,
       frame_confirmed_revision: 0,
       frame_revision: 0,
-      clarify_unlocked: true,
-      clarify_stale: false,
+      active_step: 'frame' as const,
+      workflow_notice: null,
+      generation_error: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: false,
+      clarify_read_only: true,
       clarify_confirmed: false,
-      spec_unlocked: true,
+      spec_read_only: true,
       spec_stale: false,
       spec_confirmed: false,
     })
@@ -139,6 +155,13 @@ describe('NodeDetailCard', () => {
       updated_at: null,
     })
     apiMock.getClarifyGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+    apiMock.getSpecGenStatus.mockResolvedValue({
       status: 'idle',
       job_id: null,
       started_at: null,
@@ -305,10 +328,13 @@ describe('NodeDetailCard', () => {
       frame_confirmed: true,
       frame_confirmed_revision: 1,
       frame_revision: 1,
-      clarify_unlocked: true,
-      clarify_stale: false,
+      active_step: 'clarify',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: false,
       clarify_confirmed: false,
-      spec_unlocked: false,
+      spec_read_only: true,
       spec_stale: false,
       spec_confirmed: false,
     })
@@ -376,19 +402,7 @@ describe('NodeDetailCard', () => {
     })
   })
 
-  it('locks Clarify and Spec tabs when detail state says they are locked', async () => {
-    apiMock.getDetailState.mockResolvedValue({
-      node_id: 'root',
-      frame_confirmed: false,
-      frame_confirmed_revision: 0,
-      frame_revision: 0,
-      clarify_unlocked: false,
-      clarify_stale: false,
-      clarify_confirmed: false,
-      spec_unlocked: false,
-      spec_stale: false,
-      spec_confirmed: false,
-    })
+  it('all tabs are always clickable (no locked state)', async () => {
     apiMock.getNodeDocument.mockResolvedValue({
       node_id: 'root',
       kind: 'frame',
@@ -405,25 +419,15 @@ describe('NodeDetailCard', () => {
       />,
     )
 
-    // Wait for detail state to load
     await waitFor(() => {
       expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
     })
 
-    // Clarify and Spec should be disabled with accessible locked label
-    await waitFor(() => {
-      const clarifyBtn = screen.getByRole('button', { name: 'Clarify (locked)' })
-      expect(clarifyBtn).toBeDisabled()
-    })
-    const specBtn = screen.getByRole('button', { name: 'Spec (locked)' })
-    expect(specBtn).toBeDisabled()
-    await waitFor(() => {
-      expect(screen.getByText('Confirm Frame to unlock Clarify.')).toBeInTheDocument()
-    })
-
-    // Describe and Frame should remain clickable
+    // All tabs should be clickable
     expect(screen.getByRole('button', { name: 'Describe' })).not.toBeDisabled()
     expect(screen.getByRole('button', { name: 'Frame' })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Clarify' })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Spec' })).not.toBeDisabled()
   })
 
   it('shows error banner with retry when detail state fails to load', async () => {
@@ -454,10 +458,14 @@ describe('NodeDetailCard', () => {
       frame_confirmed: false,
       frame_confirmed_revision: 0,
       frame_revision: 0,
-      clarify_unlocked: true,
-      clarify_stale: false,
+      active_step: 'frame' as const,
+      workflow_notice: null,
+      generation_error: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: false,
+      clarify_read_only: true,
       clarify_confirmed: false,
-      spec_unlocked: true,
+      spec_read_only: true,
       spec_stale: false,
       spec_confirmed: false,
     })
@@ -466,6 +474,57 @@ describe('NodeDetailCard', () => {
     await waitFor(() => {
       expect(screen.queryByText(/Network error/)).not.toBeInTheDocument()
     })
+  })
+
+  it('shows generation error banner when spec generation did not start', async () => {
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 2,
+      frame_revision: 2,
+      active_step: 'spec',
+      workflow_notice: null,
+      generation_error: 'Spec generation is already in progress for this node.',
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('generation-error-banner')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('generation-error-banner')).toHaveTextContent(
+      /Spec generation did not start/i,
+    )
+    expect(screen.getByTestId('generation-error-banner')).toHaveTextContent(
+      /retry from the Spec tab/i,
+    )
   })
 
   it('loads the next node document when the selected node changes', async () => {
@@ -510,6 +569,22 @@ describe('NodeDetailCard', () => {
   })
 
   it('calls confirmSpec on spec tab workflow confirm', async () => {
+    // Set active_step to spec so buttons are visible and spec is not read-only
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
     apiMock.getNodeDocument
       .mockResolvedValueOnce({
         node_id: 'root',
@@ -534,10 +609,13 @@ describe('NodeDetailCard', () => {
       frame_confirmed: true,
       frame_confirmed_revision: 1,
       frame_revision: 1,
-      clarify_unlocked: true,
-      clarify_stale: false,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
       clarify_confirmed: true,
-      spec_unlocked: true,
+      spec_read_only: false,
       spec_stale: false,
       spec_confirmed: true,
     })
@@ -813,10 +891,13 @@ describe('NodeDetailCard', () => {
       frame_confirmed: true,
       frame_confirmed_revision: 2,
       frame_revision: 2,
-      clarify_unlocked: true,
-      clarify_stale: false,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
       clarify_confirmed: true,
-      spec_unlocked: true,
+      spec_read_only: false,
       spec_stale: true,
       spec_confirmed: true,
     })
@@ -850,7 +931,7 @@ describe('NodeDetailCard', () => {
       expect(screen.getByTestId('stale-banner-spec')).toBeInTheDocument()
     })
     expect(screen.getByTestId('stale-banner-spec')).toHaveTextContent(
-      /Frame or Clarify was updated/,
+      /Frame was updated/,
     )
   })
 })

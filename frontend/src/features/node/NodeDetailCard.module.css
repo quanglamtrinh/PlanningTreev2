@@ -220,6 +220,97 @@
   padding-right: 2px;
 }
 
+/* Match dropdown scrollbar treatment inside node detail + document editors */
+.cardBody,
+.cardBodyAux,
+.editorSurface :global(.cm-scroller) {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-text-primary) 16%, transparent) transparent;
+}
+
+.cardBody::-webkit-scrollbar,
+.cardBodyAux::-webkit-scrollbar,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.cardBody::-webkit-scrollbar-track,
+.cardBodyAux::-webkit-scrollbar-track,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cardBody::-webkit-scrollbar-thumb,
+.cardBodyAux::-webkit-scrollbar-thumb,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
+  border-radius: 100px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.cardBody::-webkit-scrollbar-thumb:hover,
+.cardBodyAux::-webkit-scrollbar-thumb:hover,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 26%, transparent);
+  background-clip: padding-box;
+}
+
+.cardBody::-webkit-scrollbar-button,
+.cardBodyAux::-webkit-scrollbar-button,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+.cardBody::-webkit-scrollbar-button:vertical:start:decrement,
+.cardBody::-webkit-scrollbar-button:vertical:end:increment,
+.cardBody::-webkit-scrollbar-button:horizontal:start:decrement,
+.cardBody::-webkit-scrollbar-button:horizontal:end:increment,
+.cardBodyAux::-webkit-scrollbar-button:vertical:start:decrement,
+.cardBodyAux::-webkit-scrollbar-button:vertical:end:increment,
+.cardBodyAux::-webkit-scrollbar-button:horizontal:start:decrement,
+.cardBodyAux::-webkit-scrollbar-button:horizontal:end:increment,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-button:vertical:start:decrement,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-button:vertical:end:increment,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-button:horizontal:start:decrement,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-button:horizontal:end:increment {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.cardBody::-webkit-scrollbar-button:single-button:vertical:decrement,
+.cardBody::-webkit-scrollbar-button:single-button:vertical:increment,
+.cardBody::-webkit-scrollbar-button:single-button:horizontal:decrement,
+.cardBody::-webkit-scrollbar-button:single-button:horizontal:increment,
+.cardBodyAux::-webkit-scrollbar-button:single-button:vertical:decrement,
+.cardBodyAux::-webkit-scrollbar-button:single-button:vertical:increment,
+.cardBodyAux::-webkit-scrollbar-button:single-button:horizontal:decrement,
+.cardBodyAux::-webkit-scrollbar-button:single-button:horizontal:increment,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-button:single-button:vertical:decrement,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-button:single-button:vertical:increment,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-button:single-button:horizontal:decrement,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-button:single-button:horizontal:increment {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.cardBody::-webkit-scrollbar-corner,
+.cardBodyAux::-webkit-scrollbar-corner,
+.editorSurface :global(.cm-scroller)::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 .contentPanel {
   display: flex;
   flex-direction: column;
@@ -316,6 +407,34 @@
   background: color-mix(in srgb, #b42318 8%, var(--color-bg-panel));
 }
 
+.workflowNoticeBanner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-border-subtle));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-panel));
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.workflowErrorBanner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, #b42318 28%, var(--color-border-subtle));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, #b42318 8%, var(--color-bg-panel));
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
 .staleBanner {
   display: flex;
   align-items: center;
@@ -351,12 +470,15 @@
 .editorSurface {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  /* overflow:hidden here clips the line-number gutter; scroll + clip live in .cm-scroller */
+  overflow: visible;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-lg);
   background: var(--color-bg-panel);
+  box-sizing: border-box;
+  padding: 6px 8px 6px 12px;
 }
 
 /* @uiw/react-codemirror root — must fill .editorSurface or height:100% chain breaks */
@@ -366,7 +488,7 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .editorSurface :global(.cm-editor) {
@@ -376,20 +498,30 @@
   max-height: 100%;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .editorSurface :global(.cm-scroller) {
   flex: 1;
   min-height: 0;
-  overflow-y: auto !important;
-  overflow-x: hidden;
+  /* Do not use overflow-x:hidden — it can clip the line-number gutter when content is wide */
+  overflow: auto !important;
   overscroll-behavior: contain;
 }
 
-.editorSurface :global(.cm-content),
-.editorSurface :global(.cm-gutters) {
+/* Only the text document should shrink in flex layouts — gutters must not get min-height:0 */
+.editorSurface :global(.cm-content) {
   min-height: 0 !important;
+}
+
+.editorSurface :global(.cm-gutters) {
+  flex-shrink: 0;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  align-self: stretch;
+  background: var(--color-bg-panel);
+  box-shadow: 1px 0 0 var(--color-border-subtle);
 }
 
 /* Soft-wrap long lines (frame.md / spec.md) so code blocks stay within the panel */
@@ -536,7 +668,9 @@ section[data-variant='graph'] .cardBodyAux {
 section[data-variant='graph'] .documentTabStack {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  /* Hidden on both axes clips the editor’s left gutter when inner width overflows */
+  overflow-x: visible;
+  overflow-y: hidden;
 }
 
 section[data-variant='graph'] .documentPanel {
@@ -554,8 +688,6 @@ section[data-variant='graph'] .editorSurface {
   min-height: 0;
 }
 
-section[data-variant='graph'] .editorSurface :global(.cm-content),
-section[data-variant='graph'] .editorSurface :global(.cm-gutters) {
+section[data-variant='graph'] .editorSurface :global(.cm-content) {
   min-height: 0;
 }
-

@@ -63,8 +63,8 @@ def clarify_render_tool() -> dict[str, Any]:
                             "field_name": {
                                 "type": "string",
                                 "description": (
-                                    "A unique snake_case key for this question "
-                                    "(e.g. 'auth_provider', 'error_handling_strategy')."
+                                    "The exact field name from the frame's Task-Shaping Fields section "
+                                    "(e.g. 'target platform', 'auth provider'). Must match verbatim."
                                 ),
                             },
                             "question": {

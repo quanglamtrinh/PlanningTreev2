@@ -23,7 +23,6 @@ _DEFAULT_FRAME_META: Dict[str, Any] = {
 
 _DEFAULT_SPEC_META: Dict[str, Any] = {
     "source_frame_revision": 0,
-    "source_clarify_revision": 0,
     "confirmed_at": None,
 }
 
@@ -45,35 +44,53 @@ class NodeDetailService:
             clarify = self._load_clarify(node_dir)
             spec_meta = self._load_spec_meta(node_dir)
 
-            frame_confirmed = (frame_meta.get("confirmed_revision") or 0) >= 1
+            frame_conf_rev = frame_meta.get("confirmed_revision", 0)
+            frame_rev = frame_meta.get("revision", 0)
+            frame_confirmed = frame_conf_rev >= 1
+            frame_needs_reconfirm = frame_confirmed and frame_rev > frame_conf_rev
             clarify_confirmed_at = clarify.get("confirmed_at") if clarify else None
-            clarify_unlocked = frame_confirmed
-            clarify_stale = False
-            if clarify_unlocked and clarify is not None:
-                source_rev = clarify.get("source_frame_revision", 0)
-                frame_conf_rev = frame_meta.get("confirmed_revision", 0)
-                clarify_stale = source_rev < frame_conf_rev
 
-            spec_unlocked = clarify_confirmed_at is not None
-            spec_stale = False
-            if spec_unlocked:
-                spec_src_frame = spec_meta.get("source_frame_revision", 0)
-                spec_src_clarify = spec_meta.get("source_clarify_revision", 0)
-                frame_conf_rev = frame_meta.get("confirmed_revision", 0)
-                clarify_conf_rev = (clarify.get("confirmed_revision") or 0) if clarify else 0
-                spec_stale = spec_src_frame < frame_conf_rev or (
-                    spec_src_clarify < clarify_conf_rev
+            # active_step derivation (ordered rules, first match wins)
+            if not frame_confirmed:
+                active_step = "frame"
+            elif frame_needs_reconfirm:
+                active_step = "frame"
+            elif clarify_confirmed_at is None:
+                active_step = "clarify"
+            else:
+                active_step = "spec"
+
+            workflow_notice: str | None = None
+            if frame_needs_reconfirm:
+                workflow_notice = (
+                    "Clarify decisions were applied to the frame. "
+                    "Review and confirm the updated frame."
                 )
+
+            # Read-only flags
+            frame_read_only = active_step != "frame"
+            clarify_read_only = active_step != "clarify"
+            spec_read_only = active_step != "spec"
+
+            # spec_stale: spec depends only on confirmed frame
+            spec_stale = False
+            if active_step == "spec":
+                spec_src_frame = spec_meta.get("source_frame_revision", 0)
+                spec_stale = spec_src_frame < frame_conf_rev
 
             return {
                 "node_id": node_id,
                 "frame_confirmed": frame_confirmed,
-                "frame_confirmed_revision": frame_meta.get("confirmed_revision", 0),
-                "frame_revision": frame_meta.get("revision", 0),
-                "clarify_unlocked": clarify_unlocked,
-                "clarify_stale": clarify_stale,
+                "frame_confirmed_revision": frame_conf_rev,
+                "frame_revision": frame_rev,
+                "active_step": active_step,
+                "workflow_notice": workflow_notice,
+                "generation_error": None,
+                "frame_needs_reconfirm": frame_needs_reconfirm,
+                "frame_read_only": frame_read_only,
+                "clarify_read_only": clarify_read_only,
                 "clarify_confirmed": clarify_confirmed_at is not None,
-                "spec_unlocked": spec_unlocked,
+                "spec_read_only": spec_read_only,
                 "spec_stale": spec_stale,
                 "spec_confirmed": spec_meta.get("confirmed_at") is not None,
             }
@@ -208,9 +225,13 @@ class NodeDetailService:
                 if selected is not None and str(selected).strip():
                     # Validate option exists
                     option_ids = {o["id"] for o in q.get("options", []) if isinstance(o, dict)}
-                    if str(selected) in option_ids:
-                        q["selected_option_id"] = str(selected)
-                        q["custom_answer"] = ""
+                    if str(selected) not in option_ids:
+                        raise InvalidRequest(
+                            f"Invalid option '{selected}' for field '{field_name}'. "
+                            f"Valid options: {', '.join(sorted(option_ids)) or '(none)'}"
+                        )
+                    q["selected_option_id"] = str(selected)
+                    q["custom_answer"] = ""
                 elif custom is not None and str(custom).strip():
                     q["custom_answer"] = str(custom)
                     q["selected_option_id"] = None
@@ -223,7 +244,8 @@ class NodeDetailService:
             self._save_clarify(node_dir, clarify)
             return clarify
 
-    def confirm_clarify(self, project_id: str, node_id: str) -> Dict[str, Any]:
+    def apply_clarify_to_frame(self, project_id: str, node_id: str) -> Dict[str, Any]:
+        """Resolve clarify decisions back into frame.md and bump frame revision."""
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
@@ -231,7 +253,7 @@ class NodeDetailService:
 
             frame_meta = self._load_frame_meta(node_dir)
             if (frame_meta.get("confirmed_revision") or 0) < 1:
-                raise ConfirmationNotAllowed("Frame must be confirmed before confirming clarify.")
+                raise ConfirmationNotAllowed("Frame must be confirmed before applying clarify.")
 
             clarify = self._load_clarify(node_dir)
             if clarify is None:
@@ -246,13 +268,38 @@ class NodeDetailService:
             ]
             if unresolved:
                 raise ConfirmationNotAllowed(
-                    f"{len(unresolved)} question(s) still open. Resolve all questions before confirming."
+                    f"{len(unresolved)} question(s) still open. Resolve all questions before applying."
                 )
 
-            clarify["confirmed_revision"] = (clarify.get("confirmed_revision") or 0) + 1
-            clarify["confirmed_at"] = iso_now()
-            clarify["updated_at"] = iso_now()
-            self._save_clarify(node_dir, clarify)
+            # Build field_name → resolved_value map
+            resolutions: Dict[str, str] = {}
+            for q in questions:
+                if not isinstance(q, dict):
+                    continue
+                selected_id = q.get("selected_option_id")
+                custom = (q.get("custom_answer") or "").strip()
+                if selected_id:
+                    for opt in q.get("options", []):
+                        if opt.get("id") == selected_id:
+                            resolutions[q["field_name"]] = opt.get("value", selected_id)
+                            break
+                    else:
+                        resolutions[q["field_name"]] = selected_id
+                elif custom:
+                    resolutions[q["field_name"]] = custom
+
+            # Patch frame.md with resolved values
+            frame_path = node_dir / planningtree_workspace.FRAME_FILE_NAME
+            content = ""
+            if frame_path.exists():
+                content = frame_path.read_text(encoding="utf-8")
+
+            patched = self._patch_shaping_fields(content, resolutions)
+            frame_path.write_text(patched, encoding="utf-8")
+
+            # Bump frame revision (triggers frame_needs_reconfirm)
+            frame_meta["revision"] = (frame_meta.get("revision") or 0) + 1
+            self._save_frame_meta(node_dir, frame_meta)
 
             return self.get_detail_state(project_id, node_id)
 
@@ -264,10 +311,10 @@ class NodeDetailService:
             self._require_node(snapshot, node_id)
             node_dir = self._resolve_node_dir(snapshot, node_id)
 
-            # Require clarify confirmed (which implies frame confirmed)
-            clarify = self._load_clarify(node_dir)
-            if clarify is None or clarify.get("confirmed_at") is None:
-                raise ConfirmationNotAllowed("Clarify must be confirmed before confirming spec.")
+            # Require frame confirmed
+            frame_meta = self._load_frame_meta(node_dir)
+            if (frame_meta.get("confirmed_revision") or 0) < 1:
+                raise ConfirmationNotAllowed("Frame must be confirmed before confirming spec.")
 
             # Read spec.md content
             spec_path = node_dir / planningtree_workspace.SPEC_FILE_NAME
@@ -278,11 +325,9 @@ class NodeDetailService:
             if not content.strip():
                 raise ConfirmationNotAllowed("Cannot confirm an empty spec.")
 
-            # Update spec.meta.json
-            frame_meta = self._load_frame_meta(node_dir)
+            # Update spec.meta.json — spec provenance is frame-only
             spec_meta = self._load_spec_meta(node_dir)
             spec_meta["source_frame_revision"] = frame_meta.get("confirmed_revision", 0)
-            spec_meta["source_clarify_revision"] = clarify.get("confirmed_revision", 0)
             spec_meta["confirmed_at"] = iso_now()
             self._save_spec_meta(node_dir, spec_meta)
 
@@ -399,17 +444,48 @@ class NodeDetailService:
                 old = old_by_field.get(q["field_name"])
                 if old:
                     q["custom_answer"] = old.get("custom_answer", "")
-                    # selected_option_id is moot for deterministic seed (empty options)
+                    # Preserve selected_option_id — deterministic seed has empty
+                    # options, but AI regenerate will later merge new options with
+                    # this selection. Keeping it on disk avoids data loss between
+                    # frame re-confirm and AI regenerate completion.
+                    old_selected = old.get("selected_option_id")
+                    if old_selected is not None:
+                        q["selected_option_id"] = old_selected
 
+        # Zero questions = auto-confirm per workflow contract
+        auto_confirm = len(new_questions) == 0
+        now = iso_now()
         clarify: Dict[str, Any] = {
             "schema_version": 2,
             "source_frame_revision": confirmed_revision,
-            "confirmed_revision": 0,
-            "confirmed_at": None,
+            "confirmed_revision": 1 if auto_confirm else 0,
+            "confirmed_at": now if auto_confirm else None,
             "questions": new_questions,
-            "updated_at": iso_now(),
+            "updated_at": now,
         }
         self._save_clarify(node_dir, clarify)
+
+    def _patch_shaping_fields(self, content: str, resolutions: Dict[str, str]) -> str:
+        """Patch resolved values into the Task-Shaping Fields section of frame markdown."""
+        if not resolutions:
+            return content
+        lines = content.split("\n")
+        in_section = False
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if re.match(r"^#\s+Task[- ]Shaping\s+Fields", stripped, re.IGNORECASE):
+                in_section = True
+                continue
+            if in_section and stripped.startswith("#"):
+                break
+            if not in_section:
+                continue
+            m = re.match(r"^(-\s+)(.+?):\s*(.*)", line)
+            if m:
+                field_name = m.group(2).strip()
+                if field_name in resolutions:
+                    lines[i] = f"{m.group(1)}{field_name}: {resolutions[field_name]}"
+        return "\n".join(lines)
 
     def _extract_unresolved_shaping_fields(self, markdown_content: str) -> List[Dict[str, Any]]:
         """Parse '# Task-Shaping Fields' section for unresolved fields.

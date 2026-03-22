@@ -73,6 +73,15 @@ def get_clarify_gen_timeout() -> int:
     return max(10, min(600, timeout))
 
 
+def get_spec_gen_timeout() -> int:
+    raw = os.environ.get("PLANNINGTREE_SPEC_GEN_TIMEOUT_SEC", "120")
+    try:
+        timeout = int(raw)
+    except (TypeError, ValueError):
+        timeout = 120
+    return max(10, min(600, timeout))
+
+
 def get_chat_timeout() -> int:
     raw = os.environ.get("PLANNINGTREE_CHAT_TIMEOUT_SEC", "120")
     try:

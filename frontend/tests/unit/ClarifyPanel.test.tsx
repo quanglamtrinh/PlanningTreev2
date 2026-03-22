@@ -8,10 +8,13 @@ const { apiMock } = vi.hoisted(() => ({
       frame_confirmed: true,
       frame_confirmed_revision: 1,
       frame_revision: 1,
-      clarify_unlocked: true,
-      clarify_stale: false,
+      active_step: 'clarify' as const,
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: false,
       clarify_confirmed: false,
-      spec_unlocked: false,
+      spec_read_only: true,
       spec_stale: false,
       spec_confirmed: false,
     }),
@@ -20,6 +23,14 @@ const { apiMock } = vi.hoisted(() => ({
     confirmClarify: vi.fn(),
     generateClarify: vi.fn(),
     getClarifyGenStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    }),
+    generateSpec: vi.fn(),
+    getSpecGenStatus: vi.fn().mockResolvedValue({
       status: 'idle',
       job_id: null,
       started_at: null,
@@ -226,10 +237,13 @@ describe('ClarifyPanel', () => {
         frame_confirmed: true,
         frame_confirmed_revision: 1,
         frame_revision: 1,
-        clarify_unlocked: true,
-        clarify_stale: false,
-        clarify_confirmed: true,
-        spec_unlocked: true,
+        active_step: 'frame',
+        workflow_notice: 'Clarify decisions were applied to the frame. Review and confirm the updated frame.',
+        frame_needs_reconfirm: true,
+        frame_read_only: false,
+        clarify_read_only: true,
+        clarify_confirmed: false,
+        spec_read_only: true,
         spec_stale: false,
         spec_confirmed: false,
       })
@@ -259,7 +273,7 @@ describe('ClarifyPanel', () => {
       expect(apiMock.confirmClarify).not.toHaveBeenCalled()
     })
 
-    it('flushes dirty drafts then confirms when user clicks Confirm', async () => {
+    it('flushes dirty drafts then applies to frame when user clicks Apply to Frame', async () => {
       const answeredState: ClarifyState = {
         ...CLARIFY_STATE,
         questions: TWO_QUESTIONS.map((q) => ({
@@ -272,11 +286,14 @@ describe('ClarifyPanel', () => {
         node_id: 'root',
         frame_confirmed: true,
         frame_confirmed_revision: 1,
-        frame_revision: 1,
-        clarify_unlocked: true,
-        clarify_stale: false,
-        clarify_confirmed: true,
-        spec_unlocked: true,
+        frame_revision: 2,
+        active_step: 'frame',
+        workflow_notice: 'Clarify decisions were applied to the frame. Review and confirm the updated frame.',
+        frame_needs_reconfirm: true,
+        frame_read_only: false,
+        clarify_read_only: true,
+        clarify_confirmed: false,
+        spec_read_only: true,
         spec_stale: false,
         spec_confirmed: false,
       })
@@ -302,22 +319,23 @@ describe('ClarifyPanel', () => {
 
       expect(apiMock.updateClarify).toHaveBeenCalledTimes(1)
 
-      // Confirm button should be enabled now
-      const confirmBtn = screen.getByTestId('confirm-clarify')
-      expect(confirmBtn).not.toBeDisabled()
+      // Apply to Frame button should be enabled now
+      const applyBtn = screen.getByTestId('confirm-clarify')
+      expect(applyBtn).not.toBeDisabled()
+      expect(applyBtn).toHaveTextContent('Apply to Frame')
 
       await act(async () => {
-        fireEvent.click(confirmBtn)
+        fireEvent.click(applyBtn)
       })
 
-      // flushAnswers is called again (no-op since nothing dirty), then confirmClarify
+      // flushAnswers is called again (no-op since nothing dirty), then confirmClarify (apply)
       expect(apiMock.confirmClarify).toHaveBeenCalledWith('p1', 'root')
     })
   })
 
   // ── Tests that don't need debounce control (real timers) ──
 
-  it('shows confirm error when confirmClarify API fails', async () => {
+  it('shows error when apply-to-frame API fails', async () => {
     const answeredQuestions = TWO_QUESTIONS.map((q) => ({
       ...q,
       selected_option_id: q.options[0]?.id ?? null,

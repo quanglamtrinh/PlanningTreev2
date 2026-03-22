@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { NodeRecord } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { ClarifyPanel } from './ClarifyPanel'
@@ -44,6 +44,7 @@ export function NodeDetailCard({
   const detailStateError = useDetailStateStore((s) => detailStateKey ? s.errors[detailStateKey] : undefined)
   const loadDetailState = useDetailStateStore((s) => s.loadDetailState)
 
+  // Reset to frame on node change
   useEffect(() => {
     setDetailTab('frame')
   }, [node?.node_id, state])
@@ -54,32 +55,10 @@ export function NodeDetailCard({
     }
   }, [projectId, node?.node_id, state, loadDetailState])
 
-  const isTabLocked = useCallback(
-    (tabId: DetailTab): boolean => {
-      if (tabId === 'describe' || tabId === 'frame') return false
-      // If detail state failed to load, don't lock — let the error banner handle it
-      if (detailStateError) return false
-      if (!detailState) return true
-      if (tabId === 'clarify') return !detailState.clarify_unlocked
-      if (tabId === 'spec') return !detailState.spec_unlocked
-      return false
-    },
-    [detailState, detailStateError],
-  )
-
-  const explorationLockHint = useMemo(() => {
-    if (detailStateError) return null
-    if (!detailState) {
-      return 'Loading workflow state…'
-    }
-    if (!detailState.clarify_unlocked) {
-      return 'Confirm Frame to unlock Clarify.'
-    }
-    if (!detailState.spec_unlocked) {
-      return 'Complete Clarify to unlock Spec.'
-    }
-    return null
-  }, [detailState, detailStateError])
+  // Auto-follow active_step from backend
+  useEffect(() => {
+    if (detailState?.active_step) setDetailTab(detailState.active_step)
+  }, [detailState?.active_step])
 
   const rootClassName = useMemo(
     () =>
@@ -142,39 +121,25 @@ export function NodeDetailCard({
 
         <div className={styles.explorationRegion} role="region" aria-label="Task exploration steps">
           <nav className={styles.stepper} aria-label="Describe, Frame, Clarify, Spec">
-            {DETAIL_STEPS.map((step, idx) => {
-              const locked = isTabLocked(step.id)
-              return (
-                <Fragment key={step.id}>
-                  {idx > 0 && (
-                    <span className={styles.stepArrow} aria-hidden="true">
-                      {'>'}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    className={`${styles.stepButton} ${detailTab === step.id ? styles.stepButtonActive : ''} ${locked ? styles.stepButtonLocked : ''}`}
-                    onClick={() => {
-                      if (!locked) setDetailTab(step.id)
-                    }}
-                    disabled={locked}
-                    aria-label={locked ? `${step.label} (locked)` : step.label}
-                    aria-current={detailTab === step.id ? 'step' : undefined}
-                    aria-describedby={
-                      locked && explorationLockHint ? 'exploration-lock-hint' : undefined
-                    }
-                  >
-                    {step.label}
-                  </button>
-                </Fragment>
-              )
-            })}
+            {DETAIL_STEPS.map((step, idx) => (
+              <Fragment key={step.id}>
+                {idx > 0 && (
+                  <span className={styles.stepArrow} aria-hidden="true">
+                    {'>'}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className={`${styles.stepButton} ${detailTab === step.id ? styles.stepButtonActive : ''}`}
+                  onClick={() => setDetailTab(step.id)}
+                  aria-label={step.label}
+                  aria-current={detailTab === step.id ? 'step' : undefined}
+                >
+                  {step.label}
+                </button>
+              </Fragment>
+            ))}
           </nav>
-          {explorationLockHint ? (
-            <p id="exploration-lock-hint" className={styles.explorationLockHint}>
-              {explorationLockHint}
-            </p>
-          ) : null}
         </div>
       </div>
 
@@ -191,6 +156,19 @@ export function NodeDetailCard({
             </button>
           </div>
         ) : null}
+
+        {detailState?.workflow_notice ? (
+          <div className={styles.workflowNoticeBanner} data-testid="workflow-notice" role="status">
+            {detailState.workflow_notice}
+          </div>
+        ) : null}
+
+        {detailState?.generation_error ? (
+          <div className={styles.workflowErrorBanner} data-testid="generation-error-banner" role="alert">
+            Spec generation did not start: {detailState.generation_error}. You can retry from the Spec tab.
+          </div>
+        ) : null}
+
         {detailTab === 'describe' && (
           <div className={variant === 'graph' ? styles.cardBodyAux : undefined}>
             <NodeDescribePanel node={node} />
@@ -204,26 +182,24 @@ export function NodeDetailCard({
               node={node}
               kind="frame"
               onConfirm="workflow"
+              readOnly={detailState?.frame_read_only}
             />
           </div>
         )}
 
         {detailTab === 'clarify' && (
-          <>
-            {detailState?.clarify_stale ? (
-              <div className={styles.staleBanner} data-testid="stale-banner-clarify" role="status">
-                Frame was updated since clarify was seeded. Review questions for accuracy.
-              </div>
-            ) : null}
-            <ClarifyPanel projectId={projectId} node={node} />
-          </>
+          <ClarifyPanel
+            projectId={projectId}
+            node={node}
+            readOnly={detailState?.clarify_read_only}
+          />
         )}
 
         {detailTab === 'spec' && (
           <div className={styles.documentTabStack}>
             {detailState?.spec_stale ? (
               <div className={styles.staleBanner} data-testid="stale-banner-spec" role="status">
-                Frame or Clarify was updated since spec was last reviewed.
+                Frame was updated since spec was last reviewed.
               </div>
             ) : null}
             <NodeDocumentEditor
@@ -231,6 +207,7 @@ export function NodeDetailCard({
               node={node}
               kind="spec"
               onConfirm="workflow"
+              readOnly={detailState?.spec_read_only}
             />
           </div>
         )}

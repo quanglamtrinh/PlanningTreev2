@@ -5,20 +5,20 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from backend.ai.clarify_prompt_builder import (
-    build_clarify_base_instructions,
-    build_clarify_generation_prompt,
-    clarify_render_tool,
-    extract_clarify_questions,
-    extract_clarify_questions_from_text,
-)
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
+from backend.ai.spec_prompt_builder import (
+    build_spec_base_instructions,
+    build_spec_generation_prompt,
+    extract_spec_content,
+    extract_spec_content_from_text,
+    spec_render_tool,
+)
 from backend.ai.split_context_builder import build_split_context
 from backend.errors.app_errors import (
-    ClarifyGenerationBackendUnavailable,
-    ClarifyGenerationNotAllowed,
     NodeNotFound,
     ProjectNotFound,
+    SpecGenerationBackendUnavailable,
+    SpecGenerationNotAllowed,
 )
 from backend.services import planningtree_workspace
 from backend.services.tree_service import TreeService
@@ -27,10 +27,10 @@ from backend.storage.storage import Storage
 
 logger = logging.getLogger(__name__)
 
-CLARIFY_GEN_STATE_FILE = "clarify_gen.json"
+SPEC_GEN_STATE_FILE = "spec_gen.json"
 
 _STALE_JOB_MESSAGE = (
-    "Clarify generation was interrupted because the server restarted before it completed."
+    "Spec generation was interrupted because the server restarted before it completed."
 )
 
 
@@ -43,24 +43,24 @@ def _default_gen_state() -> dict[str, Any]:
     }
 
 
-class ClarifyGenerationService:
+class SpecGenerationService:
     def __init__(
         self,
         storage: Storage,
         tree_service: TreeService,
         codex_client: CodexAppClient,
-        clarify_gen_timeout: int,
+        spec_gen_timeout: int,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
         self._codex_client = codex_client
-        self._timeout = int(clarify_gen_timeout)
+        self._timeout = int(spec_gen_timeout)
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}
 
     # ── Public API ─────────────────────────────────────────────────
 
-    def generate_clarify(self, project_id: str, node_id: str) -> dict[str, Any]:
+    def generate_spec(self, project_id: str, node_id: str) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_by_id = self._tree_service.node_index(snapshot)
@@ -72,8 +72,19 @@ class ClarifyGenerationService:
             gen_state = self._reconcile_stale_job(project_id, node_id, node_dir)
 
             if gen_state.get("active_job"):
-                raise ClarifyGenerationNotAllowed(
-                    "Clarify generation is already in progress for this node."
+                raise SpecGenerationNotAllowed(
+                    "Spec generation is already in progress for this node."
+                )
+
+            # Require frame confirmed
+            from backend.services.node_detail_service import FRAME_META_FILE, _DEFAULT_FRAME_META
+            meta_path = node_dir / FRAME_META_FILE
+            frame_meta = load_json(meta_path, default=None)
+            if not isinstance(frame_meta, dict):
+                frame_meta = dict(_DEFAULT_FRAME_META)
+            if (frame_meta.get("confirmed_revision") or 0) < 1:
+                raise SpecGenerationNotAllowed(
+                    "Frame must be confirmed before generating spec."
                 )
 
             workspace_root = self._workspace_root_from_snapshot(snapshot)
@@ -83,7 +94,7 @@ class ClarifyGenerationService:
         existing_thread_id = gen_state.get("thread_id")
         thread_id = self._ensure_gen_thread(existing_thread_id, workspace_root)
 
-        job_id = new_id("cgen")
+        job_id = new_id("sgen")
         started_at = iso_now()
 
         with self._storage.project_lock(project_id):
@@ -92,14 +103,11 @@ class ClarifyGenerationService:
             node_dir = self._resolve_node_dir(snapshot, node_id)
             gen_state = self._reconcile_stale_job(project_id, node_id, node_dir)
             if gen_state.get("active_job"):
-                raise ClarifyGenerationNotAllowed(
-                    "Clarify generation is already in progress for this node."
+                raise SpecGenerationNotAllowed(
+                    "Spec generation is already in progress for this node."
                 )
 
-            # Read confirmed frame content from sidecar (snapshotted at confirm
-            # time), not from frame.md which may contain post-confirm draft edits.
-            # Fallback: nodes confirmed before the confirmed_content field was added
-            # won't have it — read frame.md as best-effort for migration.
+            # Read confirmed frame content
             from backend.services.node_detail_service import FRAME_META_FILE, _DEFAULT_FRAME_META
             meta_path = node_dir / FRAME_META_FILE
             frame_meta = load_json(meta_path, default=None)
@@ -112,7 +120,6 @@ class ClarifyGenerationService:
                     frame_content = frame_path.read_text(encoding="utf-8")
 
             source_frame_revision = frame_meta.get("confirmed_revision", 0)
-            frame_revision_at_start = frame_meta.get("revision", 0)
 
             gen_state["thread_id"] = thread_id
             gen_state["active_job"] = {
@@ -132,7 +139,6 @@ class ClarifyGenerationService:
                 "started_at": started_at,
                 "frame_content": frame_content,
                 "source_frame_revision": source_frame_revision,
-                "frame_revision_at_start": frame_revision_at_start,
             },
             daemon=True,
         ).start()
@@ -164,19 +170,18 @@ class ClarifyGenerationService:
         started_at: str,
         frame_content: str,
         source_frame_revision: int,
-        frame_revision_at_start: int = 0,
     ) -> None:
         try:
-            questions = self._generate_clarify_questions(project_id, node_id, frame_content)
-            self._write_clarify_content(
-                project_id, node_id, questions, source_frame_revision, frame_revision_at_start
+            spec_content = self._generate_spec_content(project_id, node_id, frame_content)
+            self._write_spec_content(
+                project_id, node_id, spec_content, source_frame_revision
             )
             self._mark_job_completed(project_id, node_id, job_id)
         except ProjectNotFound:
             self._clear_live_job(project_id, node_id, job_id)
         except Exception as exc:
             logger.debug(
-                "Clarify generation failed for %s/%s: %s",
+                "Spec generation failed for %s/%s: %s",
                 project_id,
                 node_id,
                 exc,
@@ -184,9 +189,9 @@ class ClarifyGenerationService:
             )
             self._mark_job_failed(project_id, node_id, job_id, started_at, str(exc))
 
-    def _generate_clarify_questions(
+    def _generate_spec_content(
         self, project_id: str, node_id: str, frame_content: str
-    ) -> list[dict[str, Any]]:
+    ) -> str:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_by_id = self._tree_service.node_index(snapshot)
@@ -198,15 +203,14 @@ class ClarifyGenerationService:
             gen_state = self._load_gen_state(node_dir)
             thread_id = str(gen_state.get("thread_id") or "").strip()
             if not thread_id:
-                raise ClarifyGenerationBackendUnavailable(
+                raise SpecGenerationBackendUnavailable(
                     "Generation thread is unavailable. Retry the generation."
                 )
 
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             task_context = build_split_context(snapshot, node, node_by_id)
 
-        # Build prompt using snapshotted frame content (captured at job start)
-        prompt = build_clarify_generation_prompt(frame_content, task_context)
+        prompt = build_spec_generation_prompt(frame_content, task_context)
         result = self._codex_client.run_turn_streaming(
             prompt,
             thread_id=thread_id,
@@ -215,115 +219,63 @@ class ClarifyGenerationService:
         )
 
         tool_calls = result.get("tool_calls", [])
-        questions = extract_clarify_questions(tool_calls)
-        if questions is not None:
-            return questions
+        content = extract_spec_content(tool_calls)
+        if content is not None:
+            return content
 
-        # Fallback: try parsing stdout as JSON
+        # Fallback: try parsing stdout
         stdout = str(result.get("stdout", "") or "").strip()
         if stdout:
-            questions = extract_clarify_questions_from_text(stdout)
-            if questions is not None:
-                return questions
+            content = extract_spec_content_from_text(stdout)
+            if content is not None:
+                return content
 
-        raise ClarifyGenerationBackendUnavailable(
-            "AI did not produce clarify questions. Retry the generation."
+        raise SpecGenerationBackendUnavailable(
+            "AI did not produce spec content. Retry the generation."
         )
 
-    def _write_clarify_content(
+    def _write_spec_content(
         self,
         project_id: str,
         node_id: str,
-        questions: list[dict[str, Any]],
+        content: str,
         source_frame_revision: int,
-        frame_revision_at_start: int = 0,
     ) -> None:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_dir = self._resolve_node_dir(snapshot, node_id)
 
-            # Stale-job guard 1: if frame was re-confirmed while this job ran,
-            # the on-disk clarify may have been re-seeded with a newer
-            # source_frame_revision. Skip writing to avoid overwriting it.
-            from backend.services.node_detail_service import CLARIFY_FILE, FRAME_META_FILE
-            clarify_path = node_dir / CLARIFY_FILE
-            existing = load_json(clarify_path, default=None)
-            if isinstance(existing, dict):
-                disk_rev = existing.get("source_frame_revision", 0)
-                if disk_rev > source_frame_revision:
+            # Stale-job guard: if frame was re-confirmed while this job ran,
+            # the source_frame_revision is outdated — skip writing.
+            from backend.services.node_detail_service import SPEC_META_FILE
+            spec_meta_path = node_dir / SPEC_META_FILE
+            existing_spec_meta = load_json(spec_meta_path, default=None)
+            if isinstance(existing_spec_meta, dict):
+                disk_src_rev = existing_spec_meta.get("source_frame_revision", 0)
+                if disk_src_rev > source_frame_revision:
                     logger.warning(
-                        "Stale clarify generation for %s/%s: job source_frame_revision=%d "
+                        "Stale spec generation for %s/%s: job source_frame_revision=%d "
                         "< disk source_frame_revision=%d — skipping write.",
                         project_id,
                         node_id,
                         source_frame_revision,
-                        disk_rev,
+                        disk_src_rev,
                     )
                     return
 
-                # Guard 2: on-disk clarify already confirmed (zero-question auto-confirm)
-                disk_confirmed_rev = existing.get("confirmed_revision", 0)
-                if disk_confirmed_rev > 0:
-                    logger.warning(
-                        "Stale clarify generation for %s/%s: on-disk clarify already confirmed "
-                        "(confirmed_revision=%d) — skipping AI write.",
-                        project_id,
-                        node_id,
-                        disk_confirmed_rev,
-                    )
-                    return
+            # Write spec.md
+            # This overwrite behavior is intentional for the workflow: every
+            # generation replaces the current spec draft and clears confirmation.
+            spec_path = node_dir / planningtree_workspace.SPEC_FILE_NAME
+            spec_path.write_text(content, encoding="utf-8")
 
-            # Guard 3: frame draft changed since job started (apply-to-frame bumped revision)
-            if frame_revision_at_start > 0:
-                frame_meta_path = node_dir / FRAME_META_FILE
-                current_frame_meta = load_json(frame_meta_path, default=None)
-                if isinstance(current_frame_meta, dict):
-                    current_frame_rev = current_frame_meta.get("revision", 0)
-                    if current_frame_rev > frame_revision_at_start:
-                        logger.warning(
-                            "Stale clarify generation for %s/%s: frame revision advanced "
-                            "(%d > %d) since job started — skipping AI write.",
-                            project_id,
-                            node_id,
-                            current_frame_rev,
-                            frame_revision_at_start,
-                        )
-                        return
-
-            # Preserve existing selections if re-generating
-            if isinstance(existing, dict):
-                old_by_field = {
-                    q["field_name"]: q
-                    for q in existing.get("questions", [])
-                    if isinstance(q, dict)
-                }
-                for q in questions:
-                    old = old_by_field.get(q["field_name"])
-                    if old:
-                        # Always preserve custom_answer
-                        q["custom_answer"] = old.get("custom_answer", "")
-                        # Preserve selected_option_id only if option still exists
-                        old_selected = old.get("selected_option_id")
-                        if old_selected is not None:
-                            new_option_ids = {
-                                o["id"] for o in q.get("options", [])
-                                if isinstance(o, dict) and "id" in o
-                            }
-                            if old_selected in new_option_ids:
-                                q["selected_option_id"] = old_selected
-
-            # Zero questions = auto-confirm per workflow contract
-            now = iso_now()
-            auto_confirm = len(questions) == 0
-            clarify: dict[str, Any] = {
-                "schema_version": 2,
+            # Update spec.meta.json — does NOT auto-confirm
+            # Reset confirmation on every generation. Spec provenance is frame-only.
+            spec_meta: dict[str, Any] = {
                 "source_frame_revision": source_frame_revision,
-                "confirmed_revision": 1 if auto_confirm else 0,
-                "confirmed_at": now if auto_confirm else None,
-                "questions": questions,
-                "updated_at": now,
+                "confirmed_at": None,
             }
-            atomic_write_json(clarify_path, clarify)
+            atomic_write_json(spec_meta_path, spec_meta)
 
     # ── Thread management ──────────────────────────────────────────
 
@@ -340,21 +292,21 @@ class ClarifyGenerationService:
                 return existing_thread_id.strip()
             except CodexTransportError as exc:
                 if not self._is_missing_thread_error(exc):
-                    raise ClarifyGenerationBackendUnavailable(str(exc)) from exc
+                    raise SpecGenerationBackendUnavailable(str(exc)) from exc
 
         try:
             response = self._codex_client.start_thread(
-                base_instructions=build_clarify_base_instructions(),
-                dynamic_tools=[clarify_render_tool()],
+                base_instructions=build_spec_base_instructions(),
+                dynamic_tools=[spec_render_tool()],
                 cwd=workspace_root,
                 timeout_sec=30,
             )
         except CodexTransportError as exc:
-            raise ClarifyGenerationBackendUnavailable(str(exc)) from exc
+            raise SpecGenerationBackendUnavailable(str(exc)) from exc
 
         thread_id = str(response.get("thread_id") or "").strip()
         if not thread_id:
-            raise ClarifyGenerationBackendUnavailable(
+            raise SpecGenerationBackendUnavailable(
                 "Generation thread start did not return a thread id."
             )
         return thread_id
@@ -362,14 +314,14 @@ class ClarifyGenerationService:
     # ── State persistence ──────────────────────────────────────────
 
     def _load_gen_state(self, node_dir: Path) -> dict[str, Any]:
-        path = node_dir / CLARIFY_GEN_STATE_FILE
+        path = node_dir / SPEC_GEN_STATE_FILE
         payload = load_json(path, default=None)
         if not isinstance(payload, dict):
             return _default_gen_state()
         return payload
 
     def _save_gen_state(self, node_dir: Path, state: dict[str, Any]) -> None:
-        path = node_dir / CLARIFY_GEN_STATE_FILE
+        path = node_dir / SPEC_GEN_STATE_FILE
         atomic_write_json(path, state)
 
     def _reconcile_stale_job(

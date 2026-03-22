@@ -35,6 +35,7 @@ type Props = {
   node: NodeRecord
   kind: NodeDocumentKind
   onConfirm?: 'workflow'
+  readOnly?: boolean
 }
 
 function documentStatusText(entry: EditorEntry, isGenerating: boolean): string {
@@ -53,7 +54,7 @@ function documentStatusText(entry: EditorEntry, isGenerating: boolean): string {
   return 'Saved'
 }
 
-export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) {
+export function NodeDocumentEditor({ projectId, node, kind, onConfirm, readOnly }: Props) {
   const entryKey = `${projectId}::${node.node_id}::${kind}`
   const entry = useNodeDocumentStore((state) => state.entries[entryKey] ?? EMPTY_ENTRY)
   const loadDocument = useNodeDocumentStore((state) => state.loadDocument)
@@ -94,10 +95,14 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
     }
   }, [])
 
+  const pollGenStatus = kind === 'spec'
+    ? api.getSpecGenStatus.bind(api)
+    : api.getFrameGenStatus.bind(api)
+
   const startPolling = useCallback(() => {
     if (pollRef.current !== undefined) return
     pollRef.current = globalThis.setInterval(() => {
-      void api.getFrameGenStatus(projectId, node.node_id).then((status) => {
+      void pollGenStatus(projectId, node.node_id).then((status) => {
         if (status.status !== 'active') {
           if (pollRef.current !== undefined) {
             globalThis.clearInterval(pollRef.current)
@@ -116,13 +121,13 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
         // Keep polling on transient errors
       })
     }, 2000)
-  }, [projectId, node.node_id, kind, invalidateDocument, loadDocument])
+  }, [projectId, node.node_id, kind, pollGenStatus, invalidateDocument, loadDocument])
 
   // Recover generation status on mount — attach to active jobs from prior navigation
   useEffect(() => {
-    if (kind !== 'frame') return
+    if (kind !== 'frame' && kind !== 'spec') return
     let cancelled = false
-    void api.getFrameGenStatus(projectId, node.node_id).then((status) => {
+    void pollGenStatus(projectId, node.node_id).then((status) => {
       if (cancelled) return
       if (status.status === 'active') {
         setGenStatus('active')
@@ -135,13 +140,11 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
       // Ignore — status check is best-effort
     })
     return () => { cancelled = true }
-  }, [kind, projectId, node.node_id, startPolling])
+  }, [kind, projectId, node.node_id, pollGenStatus, startPolling])
 
   const handleGenerate = useCallback(async () => {
     setGenError(null)
     try {
-      // Flush any pending draft before generation overwrites frame.md.
-      // If flush fails, abort — unsaved content must not be overwritten.
       await flushDocument(projectId, node.node_id, kind)
     } catch {
       setGenError('Could not save pending changes. Resolve the save error before generating.')
@@ -149,11 +152,17 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
     }
     setGenStatus('active')
     try {
-      await api.generateFrame(projectId, node.node_id)
+      if (kind === 'spec') {
+        await api.generateSpec(projectId, node.node_id)
+      } else {
+        await api.generateFrame(projectId, node.node_id)
+      }
       startPolling()
     } catch (error) {
-      // If a job is already active (e.g. started from another tab), attach to it
-      if (error instanceof ApiError && error.code === 'frame_generation_not_allowed') {
+      const alreadyActiveCode = kind === 'spec'
+        ? 'spec_generation_not_allowed'
+        : 'frame_generation_not_allowed'
+      if (error instanceof ApiError && error.code === alreadyActiveCode) {
         startPolling()
         return
       }
@@ -183,6 +192,11 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
           snapshot,
           selectedNodeId: prev.selectedNodeId,
         }))
+        // If zero questions → spec generation triggered, invalidate spec doc
+        const newDetailState = useDetailStateStore.getState().entries[detailStateKey]
+        if (newDetailState?.active_step === 'spec') {
+          invalidateDocument(projectId, node.node_id, 'spec')
+        }
       } else if (kind === 'spec') {
         await confirmSpec(projectId, node.node_id)
       }
@@ -195,10 +209,17 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
 
   // ── Derived state ────────────────────────────────────────────
 
+  const detailStateKey = `${projectId}::${node.node_id}`
+  const detailState = useDetailStateStore((s) => s.entries[detailStateKey])
+
   const isLoadError = Boolean(entry.error) && !entry.hasLoaded
-  const isReadOnly = isGenerating || (!entry.hasLoaded && (entry.isLoading || Boolean(entry.error)))
+  const isReadOnly = readOnly || isGenerating || (!entry.hasLoaded && (entry.isLoading || Boolean(entry.error)))
   const hasContent = entry.content.trim().length > 0
   const canConfirm = entry.hasLoaded && !isLoadError && !entry.isLoading && hasContent && !isConfirming && !isGenerating
+
+  const confirmLabel = kind === 'frame' && detailState?.frame_needs_reconfirm
+    ? 'Confirm Updated Frame'
+    : 'Confirm'
 
   return (
     <div className={styles.documentPanel}>
@@ -237,7 +258,7 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
         ) : null}
 
         {genError ? (
-          <div className={styles.documentErrorPanel} data-testid="generate-error-frame">
+          <div className={styles.documentErrorPanel} data-testid={`generate-error-${kind}`}>
             <p className={styles.body}>{genError}</p>
           </div>
         ) : null}
@@ -266,28 +287,34 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
         />
       </div>
 
-      <div className={styles.tabConfirmRow}>
-        {kind === 'frame' ? (
+      {!readOnly ? (
+        <div className={styles.tabConfirmRow}>
+          {(kind === 'frame' || kind === 'spec') ? (
+            <button
+              type="button"
+              className={styles.generateButton}
+              disabled={isGenerating || isConfirming}
+              data-testid={`generate-${kind}-button`}
+              onClick={handleGenerate}
+            >
+              {isGenerating
+                ? 'Generating...'
+                : kind === 'spec'
+                  ? 'Regenerate Spec'
+                  : 'Generate from Chat'}
+            </button>
+          ) : null}
           <button
             type="button"
-            className={styles.generateButton}
-            disabled={isGenerating || isConfirming}
-            data-testid="generate-frame-button"
-            onClick={handleGenerate}
+            className={styles.confirmButton}
+            disabled={!canConfirm || entry.isSaving}
+            data-testid={`confirm-document-${kind}`}
+            onClick={handleConfirm}
           >
-            {isGenerating ? 'Generating...' : 'Generate from Chat'}
+            {isConfirming ? 'Confirming...' : confirmLabel}
           </button>
-        ) : null}
-        <button
-          type="button"
-          className={styles.confirmButton}
-          disabled={!canConfirm || entry.isSaving}
-          data-testid={`confirm-document-${kind}`}
-          onClick={handleConfirm}
-        >
-          {isConfirming ? 'Confirming...' : 'Confirm'}
-        </button>
-      </div>
+        </div>
+      ) : null}
     </div>
   )
 }
