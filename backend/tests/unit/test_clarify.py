@@ -181,3 +181,38 @@ def test_reseed_preserves_existing_answers(
     assert questions["target platform"]["resolution_status"] == "answered"
     # New/unchanged field should still be open
     assert questions["storage level"]["resolution_status"] == "open"
+
+
+def test_reseed_preserves_deferred_status_without_answer(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    doc_service = NodeDocumentService(storage)
+    doc_service.put_document(project_id, root_id, "frame", FRAME_WITH_UNRESOLVED)
+
+    detail_service = NodeDetailService(storage, tree_service)
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    # Mark a question as deferred with NO answer text
+    detail_service.update_clarify_answers(
+        project_id,
+        root_id,
+        [{"field_name": "target platform", "answer": "", "resolution_status": "deferred"}],
+    )
+
+    # Re-seed (frame re-confirmed)
+    doc_service.put_document(project_id, root_id, "frame", FRAME_WITH_UNRESOLVED)
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    clarify = detail_service.get_clarify(project_id, root_id)
+    questions = {q["field_name"]: q for q in clarify["questions"]}
+
+    # Deferred status should be preserved even though answer is empty
+    assert questions["target platform"]["resolution_status"] == "deferred"
+    assert questions["target platform"]["answer"] == ""

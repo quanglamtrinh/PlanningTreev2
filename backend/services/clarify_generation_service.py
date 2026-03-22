@@ -96,12 +96,14 @@ class ClarifyGenerationService:
                     "Clarify generation is already in progress for this node."
                 )
 
-            # Snapshot frame content NOW so the background thread uses the
-            # confirmed content, not a draft the user might edit later.
-            frame_path = node_dir / planningtree_workspace.FRAME_FILE_NAME
-            frame_content = ""
-            if frame_path.exists():
-                frame_content = frame_path.read_text(encoding="utf-8")
+            # Read confirmed frame content from sidecar (snapshotted at confirm
+            # time), not from frame.md which may contain post-confirm draft edits.
+            from backend.services.node_detail_service import FRAME_META_FILE, _DEFAULT_FRAME_META
+            meta_path = node_dir / FRAME_META_FILE
+            frame_meta = load_json(meta_path, default=None)
+            if not isinstance(frame_meta, dict):
+                frame_meta = dict(_DEFAULT_FRAME_META)
+            frame_content = str(frame_meta.get("confirmed_content") or "")
 
             gen_state["thread_id"] = thread_id
             gen_state["active_job"] = {
@@ -199,14 +201,14 @@ class ClarifyGenerationService:
 
         tool_calls = result.get("tool_calls", [])
         questions = extract_clarify_questions(tool_calls)
-        if questions:
+        if questions is not None:
             return questions
 
         # Fallback: try parsing stdout as JSON
         stdout = str(result.get("stdout", "") or "").strip()
         if stdout:
             questions = extract_clarify_questions_from_text(stdout)
-            if questions:
+            if questions is not None:
                 return questions
 
         raise ClarifyGenerationBackendUnavailable(
@@ -228,7 +230,7 @@ class ClarifyGenerationService:
                 frame_meta = dict(_DEFAULT_FRAME_META)
             confirmed_revision = frame_meta.get("confirmed_revision", 0)
 
-            # Preserve existing answers if re-generating
+            # Preserve existing answers/resolution_status if re-generating
             from backend.services.node_detail_service import CLARIFY_FILE
             clarify_path = node_dir / CLARIFY_FILE
             existing = load_json(clarify_path, default=None)
@@ -240,17 +242,20 @@ class ClarifyGenerationService:
                 }
                 for q in questions:
                     old = old_by_field.get(q["field_name"])
-                    if old and old.get("answer"):
-                        q["answer"] = old["answer"]
-                        q["resolution_status"] = old.get("resolution_status", "answered")
+                    if old:
+                        q["answer"] = old.get("answer", "")
+                        q["resolution_status"] = old.get("resolution_status", "open")
 
+            # Zero questions = auto-confirm per workflow contract
+            now = iso_now()
+            auto_confirm = len(questions) == 0
             clarify: dict[str, Any] = {
                 "schema_version": 1,
                 "source_frame_revision": confirmed_revision,
-                "confirmed_revision": 0,
-                "confirmed_at": None,
+                "confirmed_revision": 1 if auto_confirm else 0,
+                "confirmed_at": now if auto_confirm else None,
                 "questions": questions,
-                "updated_at": iso_now(),
+                "updated_at": now,
             }
             atomic_write_json(clarify_path, clarify)
 

@@ -142,6 +142,26 @@ def test_extract_clarify_questions_skips_invalid_items() -> None:
     assert result[0]["field_name"] == "good"
 
 
+def test_extract_clarify_questions_empty_list_from_tool_call() -> None:
+    """Zero questions from tool call returns empty list, not None."""
+    tool_calls = [
+        {
+            "tool_name": "emit_clarify_questions",
+            "arguments": {"questions": []},
+        }
+    ]
+    result = extract_clarify_questions(tool_calls)
+    assert result is not None
+    assert result == []
+
+
+def test_extract_clarify_questions_from_text_empty_json_array() -> None:
+    """Zero questions from stdout JSON returns empty list, not None."""
+    result = extract_clarify_questions_from_text("[]")
+    assert result is not None
+    assert result == []
+
+
 def test_extract_clarify_questions_from_text_json_array() -> None:
     stdout = '[{"field_name": "auth", "question": "Which auth?"}]'
     result = extract_clarify_questions_from_text(stdout)

@@ -101,7 +101,7 @@ def extract_clarify_questions(tool_calls: Any) -> list[dict[str, Any]] | None:
         if not isinstance(arguments, dict):
             continue
         questions = arguments.get("questions")
-        if isinstance(questions, list) and len(questions) > 0:
+        if isinstance(questions, list):
             return _normalize_questions(questions)
     return None
 
@@ -117,7 +117,7 @@ def extract_clarify_questions_from_text(stdout: str) -> list[dict[str, Any]] | N
     if start >= 0 and end > start:
         try:
             parsed = json.loads(text[start : end + 1])
-            if isinstance(parsed, list) and len(parsed) > 0:
+            if isinstance(parsed, list):
                 return _normalize_questions(parsed)
         except (json.JSONDecodeError, ValueError):
             pass

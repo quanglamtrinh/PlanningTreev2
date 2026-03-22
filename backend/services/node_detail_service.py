@@ -95,13 +95,14 @@ class NodeDetailService:
             if not content.strip():
                 raise ConfirmationNotAllowed("Cannot confirm an empty frame.")
 
-            # Bump revision metadata
+            # Bump revision metadata and snapshot confirmed content
             frame_meta = self._load_frame_meta(node_dir)
             revision = frame_meta.get("revision", 0)
             if revision < 1:
                 revision = 1
             frame_meta["confirmed_revision"] = revision
             frame_meta["confirmed_at"] = datetime.now(timezone.utc).isoformat()
+            frame_meta["confirmed_content"] = content
             self._save_frame_meta(node_dir, frame_meta)
 
             # Extract title from # Task Title section and sync to node.title
@@ -358,9 +359,9 @@ class NodeDetailService:
             old_by_field = {q["field_name"]: q for q in existing.get("questions", []) if isinstance(q, dict)}
             for q in new_questions:
                 old = old_by_field.get(q["field_name"])
-                if old and old.get("answer"):
-                    q["answer"] = old["answer"]
-                    q["resolution_status"] = old.get("resolution_status", "answered")
+                if old:
+                    q["answer"] = old.get("answer", "")
+                    q["resolution_status"] = old.get("resolution_status", "open")
 
         clarify: Dict[str, Any] = {
             "schema_version": 1,

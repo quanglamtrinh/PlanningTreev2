@@ -11,9 +11,10 @@ import pytest
 from backend.errors.app_errors import ClarifyGenerationNotAllowed, NodeNotFound
 from backend.services.clarify_generation_service import CLARIFY_GEN_STATE_FILE, ClarifyGenerationService
 from backend.services.node_detail_service import NodeDetailService
+from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
 from backend.services.tree_service import TreeService
-from backend.storage.file_utils import load_json
+from backend.storage.file_utils import atomic_write_json, load_json
 from backend.storage.storage import Storage
 
 
@@ -200,3 +201,118 @@ def test_generate_clarify_stdout_fallback(
     clarify = detail_service.get_clarify(project_id, root_id)
     assert len(clarify["questions"]) == 1
     assert clarify["questions"][0]["field_name"] == "fallback_q"
+
+
+def test_generate_clarify_zero_questions_auto_confirms(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """Zero questions from AI auto-confirms clarify and unlocks spec."""
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    # Confirm frame first so detail_state can derive spec_unlocked
+    detail_service = NodeDetailService(storage, tree_service)
+    doc_service = NodeDocumentService(storage)
+    doc_service.put_document(project_id, root_id, "frame", "# Task Title\nTest\n")
+    detail_service.confirm_frame(project_id, root_id)
+
+    codex_mock = _make_codex_mock(questions=[])
+    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+
+    service.generate_clarify(project_id, root_id)
+    time.sleep(1)
+
+    clarify = detail_service.get_clarify(project_id, root_id)
+    assert clarify["questions"] == []
+    assert clarify["confirmed_at"] is not None
+    assert clarify["confirmed_revision"] == 1
+
+    # Spec should be unlocked
+    state = detail_service.get_detail_state(project_id, root_id)
+    assert state["clarify_confirmed"] is True
+    assert state["spec_unlocked"] is True
+
+
+def test_generate_clarify_uses_confirmed_content_not_draft(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """Generation uses confirmed frame content, not post-confirm draft edits."""
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    detail_service = NodeDetailService(storage, tree_service)
+    doc_service = NodeDocumentService(storage)
+
+    # Write and confirm frame
+    confirmed_text = "# Task Title\nConfirmed Content\n"
+    doc_service.put_document(project_id, root_id, "frame", confirmed_text)
+    detail_service.confirm_frame(project_id, root_id)
+
+    # Write draft edit AFTER confirm (this changes frame.md but not confirmed_content)
+    doc_service.put_document(project_id, root_id, "frame", "# Task Title\nDraft Content\n")
+
+    # Capture what the AI receives
+    received_prompts: list[str] = []
+    codex_mock = _make_codex_mock()
+
+    def capture_run(prompt: str, **kwargs: Any) -> dict:
+        received_prompts.append(prompt)
+        return {
+            "tool_calls": [
+                {
+                    "tool_name": "emit_clarify_questions",
+                    "arguments": {"questions": [{"field_name": "q1", "question": "Q?"}]},
+                }
+            ],
+            "stdout": "",
+        }
+
+    codex_mock.run_turn_streaming.side_effect = capture_run
+    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+
+    service.generate_clarify(project_id, root_id)
+    time.sleep(1)
+
+    assert len(received_prompts) == 1
+    assert "Confirmed Content" in received_prompts[0]
+    assert "Draft Content" not in received_prompts[0]
+
+
+def test_generate_clarify_preserves_resolution_status_without_answer(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """Regeneration preserves deferred/assumed status even when answer is empty."""
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    detail_service = NodeDetailService(storage, tree_service)
+    doc_service = NodeDocumentService(storage)
+    doc_service.put_document(project_id, root_id, "frame", "# Task Title\nTest\n")
+    detail_service.confirm_frame(project_id, root_id)
+
+    # Seed initial clarify with a question, then mark it deferred (no answer)
+    codex_mock = _make_codex_mock([
+        {"field_name": "auth_provider", "question": "Which auth?"},
+    ])
+    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+
+    service.generate_clarify(project_id, root_id)
+    time.sleep(1)
+
+    # Mark the question as deferred with empty answer
+    detail_service.update_clarify_answers(project_id, root_id, [
+        {"field_name": "auth_provider", "answer": "", "resolution_status": "deferred"},
+    ])
+
+    # Regenerate — AI returns the same field
+    service.generate_clarify(project_id, root_id)
+    time.sleep(1)
+
+    clarify = detail_service.get_clarify(project_id, root_id)
+    assert len(clarify["questions"]) == 1
+    assert clarify["questions"][0]["field_name"] == "auth_provider"
+    assert clarify["questions"][0]["resolution_status"] == "deferred"
+    assert clarify["questions"][0]["answer"] == ""

@@ -66,19 +66,21 @@ Re-editing frame after confirmation does NOT lock clarify or spec. It only marks
 
 ## 5. Revision Tracking
 
-No separate `workflow_state.json`. Each artifact carries its own metadata. Sidecar files hold **workflow metadata only** — no content, no parsed fields cache.
+No separate `workflow_state.json`. Each artifact carries its own metadata. Sidecar files hold **workflow metadata only** — no parsed fields cache. The one exception is `confirmed_content` in frame.meta.json, which snapshots frame.md at confirm time for downstream provenance (clarify generation must use confirmed content, not the live draft).
 
 ### frame.meta.json
 ```json
 {
   "revision": 0,
   "confirmed_revision": 0,
-  "confirmed_at": null
+  "confirmed_at": null,
+  "confirmed_content": ""
 }
 ```
 - `revision` increments on every save (draft or confirmed).
 - `confirmed_revision` is set to current `revision` value when user confirms.
 - `confirmed_at` is ISO timestamp of last confirm action.
+- `confirmed_content` is the full frame.md text snapshotted at confirm time. Used by clarify generation to ensure provenance matches `confirmed_revision` even if frame.md has post-confirm draft edits.
 
 ### clarify.json (metadata fields alongside content)
 ```json
