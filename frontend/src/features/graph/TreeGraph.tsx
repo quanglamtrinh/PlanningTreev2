@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   Controls,
@@ -22,6 +22,69 @@ import styles from './TreeGraph.module.css'
 
 const nodeTypes = {
   graphNode: GraphNode,
+}
+
+/** Default fit when graph bounds change without a branch toggle (e.g. snapshot load). */
+const FIT_VIEW_ANIMATION_MS = 320
+/** Longer pan/zoom after expand/collapse so the viewport does not feel like it snaps. */
+const FIT_VIEW_BRANCH_TOGGLE_MS = 560
+/** Detail panel open/resize — between default and branch toggle. */
+const FIT_VIEW_DETAIL_MS = 420
+
+/** Caps automatic fitView so the graph doesn’t land too zoomed-in (lower = more breathing room). */
+const FIT_VIEW_MAX_ZOOM_FULL = 0.92
+const FIT_VIEW_MAX_ZOOM_FOCUS = 0.88
+/** “Set as current root” fits the subtree — use extra padding + lower max zoom so it doesn’t feel tight. */
+const FIT_VIEW_MAX_ZOOM_GRAPH_ROOT = 0.78
+const FIT_VIEW_PADDING_FULL = 0.22
+const FIT_VIEW_PADDING_FOCUS = 0.26
+const FIT_VIEW_PADDING_GRAPH_ROOT = 0.36
+
+/**
+ * After closing node details, block full-graph fitView until this many ms have passed.
+ * A counter is not enough when the user clicks open/close rapidly (opens reset the counter, reflows vary).
+ * Each close extends the deadline so spamming close stays protected.
+ */
+const SUPPRESS_FULL_GRAPH_FIT_MS_AFTER_DETAIL_CLOSE = 1400
+
+function easeInOutQuint(t: number): number {
+  return t < 0.5 ? 16 * t * t * t * t * t : 1 - Math.pow(-2 * t + 2, 5) / 2
+}
+
+function resolveFitViewDurationMs(baseMs: number, isFullscreen: boolean): number {
+  if (baseMs <= 0) {
+    return 0
+  }
+  return isFullscreen ? Math.max(240, Math.round(baseMs * 0.78)) : baseMs
+}
+
+function fitViewSmoothOpts(
+  isFullscreen: boolean,
+  options?: {
+    durationMs?: number
+    ease?: (t: number) => number
+  },
+) {
+  const durationMs = options?.durationMs ?? FIT_VIEW_ANIMATION_MS
+  const ease = options?.ease ?? easeInOutQuint
+  return {
+    duration: resolveFitViewDurationMs(durationMs, isFullscreen),
+    ease,
+  }
+}
+
+function scheduleAfterReflow(run: () => void): () => void {
+  let id1 = 0
+  let id2 = 0
+  id1 = requestAnimationFrame(() => {
+    id2 = requestAnimationFrame(() => {
+      run()
+    })
+  })
+  return () => {
+    cancelAnimationFrame(id1)
+    cancelAnimationFrame(id2)
+  }
 }
 
 /** React Flow `.react-flow__panel` margin in TreeGraph.module.css */
@@ -133,7 +196,17 @@ export function TreeGraph({
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
+  /** Subtree-only graph view; null = show full project tree. */
+  const [graphViewRootId, setGraphViewRootId] = useState<string | null>(null)
   const graphShellRef = useRef<HTMLDivElement | null>(null)
+  /** After expand/collapse toggle, next fitView targets this node so the viewport stays on the toggled card. */
+  const branchToggleFocusNodeIdRef = useRef<string | null>(null)
+  /** After "Set as current root", fitView to that node (runs even when detail panel is open). */
+  const graphViewRootFitPendingRef = useRef<string | null>(null)
+  /** After "Unset current root", fit the full project tree (runs before focused-node early return). */
+  const graphViewRootUnsetFitPendingRef = useRef(false)
+  /** While `performance.now()` is below this, skip full-graph fitView (after closing details). */
+  const suppressFullGraphFitUntilRef = useRef(0)
   const handlerRef = useRef({
     onSelectNode,
     onCreateChild,
@@ -156,6 +229,17 @@ export function TreeGraph({
 
   const graphNodeActions = useMemo<GraphNodeActions>(
     () => ({
+      graphViewRootId,
+      setGraphViewRoot: (nodeId) => {
+        setGraphViewRootId(nodeId)
+        if (nodeId) {
+          graphViewRootFitPendingRef.current = nodeId
+          graphViewRootUnsetFitPendingRef.current = false
+        } else {
+          graphViewRootUnsetFitPendingRef.current = true
+          suppressFullGraphFitUntilRef.current = 0
+        }
+      },
       selectNode: (nodeId) => {
         void handlerRef.current.onSelectNode(nodeId, true)
       },
@@ -165,11 +249,13 @@ export function TreeGraph({
           if (!nodeRecord) {
             return current
           }
-          const currentValue =
+          const isCollapsedNow =
             typeof current[nodeId] === 'boolean'
               ? current[nodeId]
               : defaultCollapsedForStatus(nodeRecord.status)
-          return { ...current, [nodeId]: !currentValue }
+          const nextCollapsed = !isCollapsedNow
+          branchToggleFocusNodeIdRef.current = nodeId
+          return { ...current, [nodeId]: nextCollapsed }
         })
       },
       createChild: (nodeId) => {
@@ -185,11 +271,19 @@ export function TreeGraph({
         void handlerRef.current.onFinishTask(nodeId)
       },
       infoClick: (nodeId) => {
-        setFocusedNodeId((prev) => (prev === nodeId ? null : nodeId))
+        setFocusedNodeId((prev) => {
+          if (prev === nodeId) {
+            suppressFullGraphFitUntilRef.current =
+              performance.now() + SUPPRESS_FULL_GRAPH_FIT_MS_AFTER_DETAIL_CLOSE
+            return null
+          }
+          suppressFullGraphFitUntilRef.current = 0
+          return nodeId
+        })
         void handlerRef.current.onSelectNode(nodeId, true)
       },
     }),
-    [nodeById],
+    [graphViewRootId, nodeById],
   )
   const rootNode = useMemo(
     () => nodeById.get(snapshot.tree_state.root_node_id) ?? null,
@@ -271,6 +365,18 @@ export function TreeGraph({
     return [snapshot.tree_state.root_node_id, ...secondaryRoots]
   }, [nodeById, rootNode, snapshot.tree_state.node_registry, snapshot.tree_state.root_node_id])
 
+  const effectiveRootIds = useMemo(() => {
+    if (graphViewRootId && nodeById.has(graphViewRootId)) {
+      return [graphViewRootId]
+    }
+    return rootIds
+  }, [graphViewRootId, nodeById, rootIds])
+
+  const selectionFallbackRootId =
+    graphViewRootId && nodeById.has(graphViewRootId)
+      ? graphViewRootId
+      : snapshot.tree_state.root_node_id
+
   const visibleNodeIds = useMemo(() => {
     const visible = new Set<string>()
     const visit = (nodeId: string) => {
@@ -282,6 +388,10 @@ export function TreeGraph({
         visit(childId)
       }
     }
+    if (graphViewRootId && nodeById.has(graphViewRootId)) {
+      visit(graphViewRootId)
+      return visible
+    }
     if (rootNode) {
       visit(snapshot.tree_state.root_node_id)
     }
@@ -291,7 +401,14 @@ export function TreeGraph({
       }
     }
     return visible
-  }, [rootIds, rootNode, snapshot.tree_state.root_node_id, visibleChildrenById])
+  }, [
+    graphViewRootId,
+    nodeById,
+    rootIds,
+    rootNode,
+    snapshot.tree_state.root_node_id,
+    visibleChildrenById,
+  ])
 
   const selectedNode = useMemo(() => {
     if (!rootNode) {
@@ -301,20 +418,26 @@ export function TreeGraph({
       selectedNodeId,
       visibleNodeIds,
       parentById,
-      snapshot.tree_state.root_node_id,
+      selectionFallbackRootId,
     )
-    return nodeById.get(effectiveSelectedId) ?? nodeById.get(snapshot.tree_state.root_node_id) ?? null
-  }, [nodeById, parentById, rootNode, selectedNodeId, snapshot.tree_state.root_node_id, visibleNodeIds])
+    return nodeById.get(effectiveSelectedId) ?? nodeById.get(selectionFallbackRootId) ?? null
+  }, [nodeById, parentById, rootNode, selectedNodeId, selectionFallbackRootId, visibleNodeIds])
 
   useEffect(() => {
     if (!rootNode) {
       return
     }
-    const nextSelectedId = selectedNode?.node_id ?? snapshot.tree_state.root_node_id
+    const nextSelectedId = selectedNode?.node_id ?? selectionFallbackRootId
     if (nextSelectedId !== selectedNodeId) {
       void onSelectNode(nextSelectedId, false)
     }
-  }, [onSelectNode, rootNode, selectedNode?.node_id, selectedNodeId, snapshot.tree_state.root_node_id])
+  }, [onSelectNode, rootNode, selectedNode?.node_id, selectedNodeId, selectionFallbackRootId])
+
+  useEffect(() => {
+    if (graphViewRootId && !nodeById.has(graphViewRootId)) {
+      setGraphViewRootId(null)
+    }
+  }, [graphViewRootId, nodeById])
 
   useEffect(() => {
     if (!focusedNodeId) {
@@ -339,15 +462,19 @@ export function TreeGraph({
   }, [isFullscreen])
 
   const layout = useMemo(
-    () => buildTreeLayoutPositions({ nodeById, rootIds, visibleChildrenById }),
-    [nodeById, rootIds, visibleChildrenById],
+    () =>
+      buildTreeLayoutPositions({
+        nodeById,
+        rootIds: effectiveRootIds,
+        visibleChildrenById,
+        depthBaseNodeId: graphViewRootId,
+      }),
+    [nodeById, effectiveRootIds, graphViewRootId, visibleChildrenById],
   )
 
   const flowNodes = useMemo<Node<GraphNodeData>[]>(() => {
     return snapshot.tree_state.node_registry
-      .filter(
-        (node) => node.node_id === snapshot.tree_state.root_node_id || visibleNodeIds.has(node.node_id),
-      )
+      .filter((node) => visibleNodeIds.has(node.node_id))
       .map((node) => ({
         id: node.node_id,
         type: 'graphNode',
@@ -375,6 +502,7 @@ export function TreeGraph({
           canOpenBreadcrumb: codexAvailable,
           isSplitting: splitStatus === 'active' && splittingNodeId === node.node_id,
           isSplitDisabled: splitStatus === 'active',
+          graphViewRootId,
         },
       }))
   }, [
@@ -382,6 +510,7 @@ export function TreeGraph({
     codexAvailable,
     collapsedById,
     directHiddenChildrenById,
+    graphViewRootId,
     layout,
     selectedNode?.node_id,
     splitStatus,
@@ -419,26 +548,73 @@ export function TreeGraph({
     [flowNodes],
   )
 
-  useEffect(() => {
-    if (!flowInstance || flowNodes.length === 0 || focusedNodeId) {
+  useLayoutEffect(() => {
+    if (!flowInstance || flowNodes.length === 0) {
       return undefined
     }
-    const handle = window.setTimeout(() => {
-      void flowInstance.fitView({
-        padding: 0.18,
-        duration: isFullscreen ? 0 : 180,
-        maxZoom: 1.12,
+    if (graphViewRootUnsetFitPendingRef.current) {
+      graphViewRootUnsetFitPendingRef.current = false
+      suppressFullGraphFitUntilRef.current = 0
+      return scheduleAfterReflow(() => {
+        void flowInstance.fitView({
+          padding: FIT_VIEW_PADDING_FULL,
+          maxZoom: FIT_VIEW_MAX_ZOOM_FULL,
+          ...fitViewSmoothOpts(isFullscreen, { durationMs: FIT_VIEW_BRANCH_TOGGLE_MS }),
+        })
       })
-    }, 120)
-    return () => window.clearTimeout(handle)
+    }
+    const pendingGraphViewFit = graphViewRootFitPendingRef.current
+    if (pendingGraphViewFit) {
+      graphViewRootFitPendingRef.current = null
+      suppressFullGraphFitUntilRef.current = 0
+      return scheduleAfterReflow(() => {
+        // Fit the whole visible subtree, not a single node’s bounds (single-node fit zooms in too tight).
+        void flowInstance.fitView({
+          padding: FIT_VIEW_PADDING_GRAPH_ROOT,
+          maxZoom: FIT_VIEW_MAX_ZOOM_GRAPH_ROOT,
+          ...fitViewSmoothOpts(isFullscreen, { durationMs: FIT_VIEW_BRANCH_TOGGLE_MS }),
+        })
+      })
+    }
+    if (focusedNodeId) {
+      branchToggleFocusNodeIdRef.current = null
+      suppressFullGraphFitUntilRef.current = 0
+      return undefined
+    }
+    const focusToggleNodeId = branchToggleFocusNodeIdRef.current
+    branchToggleFocusNodeIdRef.current = null
+
+    if (focusToggleNodeId) {
+      suppressFullGraphFitUntilRef.current = 0
+      return scheduleAfterReflow(() => {
+        void flowInstance.fitView({
+          nodes: [{ id: focusToggleNodeId }],
+          padding: FIT_VIEW_PADDING_FOCUS,
+          maxZoom: FIT_VIEW_MAX_ZOOM_FOCUS,
+          ...fitViewSmoothOpts(isFullscreen, { durationMs: FIT_VIEW_BRANCH_TOGGLE_MS }),
+        })
+      })
+    }
+
+    if (performance.now() < suppressFullGraphFitUntilRef.current) {
+      return undefined
+    }
+
+    return scheduleAfterReflow(() => {
+      void flowInstance.fitView({
+        padding: FIT_VIEW_PADDING_FULL,
+        maxZoom: FIT_VIEW_MAX_ZOOM_FULL,
+        ...fitViewSmoothOpts(isFullscreen),
+      })
+    })
   }, [fitKey, flowInstance, flowNodes.length, isFullscreen, focusedNodeId])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!flowInstance || !focusedNodeId) {
       return undefined
     }
     const id = focusedNodeId
-    const handle = window.setTimeout(() => {
+    return scheduleAfterReflow(() => {
       const shell = graphShellRef.current
       const flowViewport = shell?.querySelector('.react-flow__viewport') as HTMLElement | null
       const flowPaneW = flowViewport?.clientWidth
@@ -453,16 +629,15 @@ export function TreeGraph({
       void flowInstance.fitView({
         nodes: [{ id }],
         padding: {
-          top: 0.12,
-          bottom: 0.12,
-          left: 0.12,
+          top: 0.14,
+          bottom: 0.14,
+          left: 0.14,
           right: `${rightReserve}px`,
         },
-        duration: isFullscreen ? 0 : 200,
-        maxZoom: 1.12,
+        maxZoom: FIT_VIEW_MAX_ZOOM_FOCUS,
+        ...fitViewSmoothOpts(isFullscreen, { durationMs: FIT_VIEW_DETAIL_MS }),
       })
-    }, 80)
-    return () => window.clearTimeout(handle)
+    })
   }, [flowInstance, focusedNodeId, isFullscreen])
 
   function handleFlowNodePointerEvents() {
@@ -485,6 +660,11 @@ export function TreeGraph({
         <GraphNodeActionsProvider value={graphNodeActions}>
           <ReactFlow
             fitView
+            fitViewOptions={{
+              padding: FIT_VIEW_PADDING_FULL,
+              maxZoom: FIT_VIEW_MAX_ZOOM_FULL,
+              ...fitViewSmoothOpts(isFullscreen),
+            }}
             proOptions={{ hideAttribution: true }}
             nodes={flowNodes}
             edges={flowEdges}
@@ -531,7 +711,11 @@ export function TreeGraph({
                   node={focusedNode}
                   variant="graph"
                   showClose
-                  onClose={() => setFocusedNodeId(null)}
+                  onClose={() => {
+                    suppressFullGraphFitUntilRef.current =
+                      performance.now() + SUPPRESS_FULL_GRAPH_FIT_MS_AFTER_DETAIL_CLOSE
+                    setFocusedNodeId(null)
+                  }}
                 />
               </Panel>
             ) : null}

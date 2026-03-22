@@ -174,6 +174,27 @@ function GraphNodeActionsDropdown({
         <button
           type="button"
           className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+          onClick={() => {
+            onClose()
+            if (actions.graphViewRootId === nodeId) {
+              actions.setGraphViewRoot(null)
+            } else {
+              actions.setGraphViewRoot(nodeId)
+            }
+          }}
+        >
+          <span className={styles.menuTitle}>
+            {actions.graphViewRootId === nodeId ? 'Unset current root' : 'Set as current root'}
+          </span>
+          <span className={styles.menuDesc}>
+            {actions.graphViewRootId === nodeId
+              ? 'Show the full project tree again.'
+              : 'Show only this node and its descendants in the graph.'}
+          </span>
+        </button>
+        <button
+          type="button"
+          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
           disabled={!canFinishTask}
           onClick={() => {
             onClose()
@@ -231,6 +252,7 @@ export type GraphNodeData = {
   canOpenBreadcrumb: boolean
   isSplitting: boolean
   isSplitDisabled: boolean
+  graphViewRootId: string | null
 }
 
 function childIdsEqual(a: string[], b: string[]): boolean {

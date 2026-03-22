@@ -38,11 +38,17 @@ export function buildTreeLayoutPositions({
   nodeById,
   rootIds,
   visibleChildrenById,
+  depthBaseNodeId,
 }: {
   nodeById: Map<string, NodeRecord>
   rootIds: string[]
   visibleChildrenById: Map<string, string[]>
+  /** When set, horizontal position uses depth relative to this node (subtree “view root”). */
+  depthBaseNodeId?: string | null
 }) {
+  const baseDepth =
+    depthBaseNodeId && nodeById.has(depthBaseNodeId) ? (nodeById.get(depthBaseNodeId)?.depth ?? 0) : 0
+
   const subtreeUnits = new Map<string, number>()
   const positions = new Map<string, { x: number; y: number }>()
 
@@ -85,7 +91,7 @@ export function buildTreeLayoutPositions({
 
     const nodeUnits = computeUnits(nodeId)
     positions.set(nodeId, {
-      x: node.depth * HORIZONTAL_STEP_PX,
+      x: Math.max(0, node.depth - baseDepth) * HORIZONTAL_STEP_PX,
       y: (startUnit + nodeUnits / 2) * VERTICAL_UNIT_PX,
     })
 
