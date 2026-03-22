@@ -19,6 +19,7 @@ type NodeDocumentStoreState = {
   loadDocument: (projectId: string, nodeId: string, kind: NodeDocumentKind) => Promise<void>
   updateDraft: (projectId: string, nodeId: string, kind: NodeDocumentKind, content: string) => void
   flushDocument: (projectId: string, nodeId: string, kind: NodeDocumentKind) => Promise<void>
+  invalidateEntry: (projectId: string, nodeId: string, kind: NodeDocumentKind) => void
   reset: () => void
 }
 
@@ -218,6 +219,15 @@ export const useNodeDocumentStore = create<NodeDocumentStoreState>((set, get) =>
       scheduleAutosave(projectId, nodeId, kind)
     },
     flushDocument,
+    invalidateEntry(projectId: string, nodeId: string, kind: NodeDocumentKind) {
+      const key = documentKey(projectId, nodeId, kind)
+      clearPendingTimer(key)
+      pendingSaves.delete(key)
+      set((state) => {
+        const { [key]: _, ...rest } = state.entries
+        return { entries: rest }
+      })
+    },
     reset() {
       for (const key of pendingTimers.keys()) {
         clearPendingTimer(key)

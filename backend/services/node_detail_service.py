@@ -60,8 +60,9 @@ class NodeDetailService:
                 spec_src_frame = spec_meta.get("source_frame_revision", 0)
                 spec_src_clarify = spec_meta.get("source_clarify_revision", 0)
                 frame_conf_rev = frame_meta.get("confirmed_revision", 0)
+                clarify_conf_rev = (clarify.get("confirmed_revision") or 0) if clarify else 0
                 spec_stale = spec_src_frame < frame_conf_rev or (
-                    clarify is not None and spec_src_clarify < (clarify.get("source_frame_revision", 0))
+                    spec_src_clarify < clarify_conf_rev
                 )
 
             return {
@@ -231,6 +232,7 @@ class NodeDetailService:
                     f"{len(unresolved)} question(s) still open. Resolve all questions before confirming."
                 )
 
+            clarify["confirmed_revision"] = (clarify.get("confirmed_revision") or 0) + 1
             clarify["confirmed_at"] = iso_now()
             clarify["updated_at"] = iso_now()
             self._save_clarify(node_dir, clarify)
@@ -263,7 +265,7 @@ class NodeDetailService:
             frame_meta = self._load_frame_meta(node_dir)
             spec_meta = self._load_spec_meta(node_dir)
             spec_meta["source_frame_revision"] = frame_meta.get("confirmed_revision", 0)
-            spec_meta["source_clarify_revision"] = clarify.get("source_frame_revision", 0)
+            spec_meta["source_clarify_revision"] = clarify.get("confirmed_revision", 0)
             spec_meta["confirmed_at"] = iso_now()
             self._save_spec_meta(node_dir, spec_meta)
 
@@ -363,6 +365,7 @@ class NodeDetailService:
         clarify: Dict[str, Any] = {
             "schema_version": 1,
             "source_frame_revision": confirmed_revision,
+            "confirmed_revision": 0,
             "confirmed_at": None,
             "questions": new_questions,
             "updated_at": iso_now(),

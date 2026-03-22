@@ -198,12 +198,14 @@ export function NodeDetailCard({
         )}
 
         {detailTab === 'frame' && (
-          <NodeDocumentEditor
-            projectId={projectId}
-            node={node}
-            kind="frame"
-            onConfirm="workflow"
-          />
+          <div className={styles.documentTabStack}>
+            <NodeDocumentEditor
+              projectId={projectId}
+              node={node}
+              kind="frame"
+              onConfirm="workflow"
+            />
+          </div>
         )}
 
         {detailTab === 'clarify' && (
@@ -218,7 +220,7 @@ export function NodeDetailCard({
         )}
 
         {detailTab === 'spec' && (
-          <>
+          <div className={styles.documentTabStack}>
             {detailState?.spec_stale ? (
               <div className={styles.staleBanner} data-testid="stale-banner-spec" role="status">
                 Frame or Clarify was updated since spec was last reviewed.
@@ -230,7 +232,7 @@ export function NodeDetailCard({
               kind="spec"
               onConfirm="workflow"
             />
-          </>
+          </div>
         )}
       </div>
     </section>

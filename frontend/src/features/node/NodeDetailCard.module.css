@@ -243,7 +243,17 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+/* Frame / Spec: fill card body so the editor can scroll inside a bounded height */
+.documentTabStack {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 8px;
+  box-sizing: border-box;
 }
 
 .documentMetaColumn {
@@ -340,34 +350,85 @@
 
 .editorSurface {
   flex: 1;
-  min-height: 240px;
+  min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-lg);
   background: var(--color-bg-panel);
 }
 
-.editorSurface :global(.cm-editor) {
+/* @uiw/react-codemirror root — must fill .editorSurface or height:100% chain breaks */
+.codemirrorHost {
+  flex: 1;
+  min-height: 0;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.editorSurface :global(.cm-editor) {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .editorSurface :global(.cm-scroller) {
-  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
 }
 
 .editorSurface :global(.cm-content),
 .editorSurface :global(.cm-gutters) {
-  min-height: 240px;
+  min-height: 0 !important;
+}
+
+/* Soft-wrap long lines (frame.md / spec.md) so code blocks stay within the panel */
+.editorSurface :global(.cm-line) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .tabConfirmRow {
   display: flex;
   justify-content: flex-end;
   align-items: center;
+  gap: 8px;
   flex-shrink: 0;
   width: 100%;
   box-sizing: border-box;
   padding-top: 8px;
+}
+
+.generateButton {
+  padding: 8px 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.generateButton:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+  border-color: var(--color-accent);
+}
+
+.generateButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .confirmButton {
@@ -470,6 +531,12 @@ section[data-variant='graph'] .cardBodyAux {
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
+}
+
+section[data-variant='graph'] .documentTabStack {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 section[data-variant='graph'] .documentPanel {

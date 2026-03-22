@@ -158,6 +158,26 @@ def test_spec_stale_detection(
     assert state["spec_stale"] is True
 
 
+def test_spec_stale_after_clarify_reconfirm(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """Spec detects staleness when clarify is re-confirmed (no frame change)."""
+    project_id, root_id, detail_service, doc_service = _setup_confirmed_clarify(
+        storage, workspace_root, tree_service
+    )
+
+    # Confirm spec (clarify confirmed_revision == 1)
+    doc_service.put_document(project_id, root_id, "spec", "# Spec\nContent.")
+    result = detail_service.confirm_spec(project_id, root_id)
+    assert result["spec_stale"] is False
+
+    # Re-confirm clarify (bumps confirmed_revision to 2) without any frame change
+    detail_service.confirm_clarify(project_id, root_id)
+
+    state = detail_service.get_detail_state(project_id, root_id)
+    assert state["spec_stale"] is True
+
+
 def test_detail_state_spec_unlocked_after_clarify_confirm(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:

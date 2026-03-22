@@ -1,10 +1,14 @@
 import type {
   BootstrapStatus,
   ChatSession,
+  ClarifyGenAcceptedResponse,
+  ClarifyGenStatusResponse,
   ClarifyQuestion,
   ClarifyState,
   CodexSnapshot,
   DetailState,
+  FrameGenAcceptedResponse,
+  FrameGenStatusResponse,
   NodeDocument,
   NodeDocumentKind,
   ProjectSummary,
@@ -222,6 +226,28 @@ export const api = {
     return jsonFetch<DetailState>(
       `/v1/projects/${projectId}/nodes/${nodeId}/confirm-spec`,
       { method: 'POST' },
+    )
+  },
+  generateFrame(projectId: string, nodeId: string): Promise<FrameGenAcceptedResponse> {
+    return jsonFetch<FrameGenAcceptedResponse>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/generate-frame`,
+      { method: 'POST' },
+    )
+  },
+  getFrameGenStatus(projectId: string, nodeId: string): Promise<FrameGenStatusResponse> {
+    return jsonFetch<FrameGenStatusResponse>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/frame-generation-status`,
+    )
+  },
+  generateClarify(projectId: string, nodeId: string): Promise<ClarifyGenAcceptedResponse> {
+    return jsonFetch<ClarifyGenAcceptedResponse>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/generate-clarify`,
+      { method: 'POST' },
+    )
+  },
+  getClarifyGenStatus(projectId: string, nodeId: string): Promise<ClarifyGenStatusResponse> {
+    return jsonFetch<ClarifyGenStatusResponse>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/clarify-generation-status`,
     )
   },
   getChatSession(projectId: string, nodeId: string): Promise<ChatSession> {

@@ -20,6 +20,45 @@ const { apiMock } = vi.hoisted(() => ({
     getChatSession: vi.fn(),
     sendChatMessage: vi.fn(),
     resetChatSession: vi.fn(),
+    getDetailState: vi.fn().mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: false,
+      frame_confirmed_revision: 0,
+      frame_revision: 0,
+      clarify_unlocked: true,
+      clarify_stale: false,
+      clarify_confirmed: false,
+      spec_unlocked: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    }),
+    confirmFrame: vi.fn(),
+    confirmSpec: vi.fn(),
+    getClarify: vi.fn().mockResolvedValue({
+      schema_version: 1,
+      source_frame_revision: 0,
+      confirmed_at: null,
+      questions: [],
+      updated_at: null,
+    }),
+    updateClarify: vi.fn(),
+    confirmClarify: vi.fn(),
+    generateFrame: vi.fn(),
+    getFrameGenStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    }),
+    generateClarify: vi.fn(),
+    getClarifyGenStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    }),
   },
 }))
 
@@ -184,6 +223,39 @@ describe('BreadcrumbChatView', () => {
       kind: 'frame',
       content: '# Frame',
       updated_at: '2026-03-20T00:00:00Z',
+    })
+    apiMock.getFrameGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: false,
+      frame_confirmed_revision: 0,
+      frame_revision: 0,
+      clarify_unlocked: true,
+      clarify_stale: false,
+      clarify_confirmed: false,
+      spec_unlocked: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+    apiMock.getClarify.mockResolvedValue({
+      schema_version: 1,
+      source_frame_revision: 0,
+      confirmed_at: null,
+      questions: [],
+      updated_at: null,
+    })
+    apiMock.getClarifyGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
     })
   })
 

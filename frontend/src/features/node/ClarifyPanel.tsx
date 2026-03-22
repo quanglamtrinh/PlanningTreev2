@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ClarifyResolutionStatus, NodeRecord } from '../../api/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ClarifyResolutionStatus, GenJobStatus, NodeRecord } from '../../api/types'
+import { api, ApiError } from '../../api/client'
 import { useClarifyStore } from '../../stores/clarify-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import detailStyles from './NodeDetailCard.module.css'
@@ -20,15 +21,95 @@ export function ClarifyPanel({ projectId, node }: Props) {
   const key = `${projectId}::${node.node_id}`
   const entry = useClarifyStore((s) => s.entries[key])
   const loadClarify = useClarifyStore((s) => s.loadClarify)
+  const invalidateClarify = useClarifyStore((s) => s.invalidateEntry)
   const updateDraft = useClarifyStore((s) => s.updateDraft)
   const flushAnswers = useClarifyStore((s) => s.flushAnswers)
   const confirmClarify = useClarifyStore((s) => s.confirmClarify)
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
+  const [genStatus, setGenStatus] = useState<GenJobStatus>('idle')
+  const [genError, setGenError] = useState<string | null>(null)
+  const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
+
+  const isGenerating = genStatus === 'active'
+
+  // ── Document load ───────────────────────────────────────────
 
   useEffect(() => {
     void loadClarify(projectId, node.node_id)
   }, [projectId, node.node_id, loadClarify])
+
+  // ── Generation: polling, recovery, trigger ──────────────────
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current !== undefined) {
+        globalThis.clearInterval(pollRef.current)
+      }
+    }
+  }, [])
+
+  const startPolling = useCallback(() => {
+    if (pollRef.current !== undefined) return
+    pollRef.current = globalThis.setInterval(() => {
+      void api.getClarifyGenStatus(projectId, node.node_id).then((status) => {
+        if (status.status !== 'active') {
+          if (pollRef.current !== undefined) {
+            globalThis.clearInterval(pollRef.current)
+            pollRef.current = undefined
+          }
+          setGenStatus(status.status)
+          if (status.status === 'failed') {
+            setGenError(status.error ?? 'Generation failed')
+          } else {
+            // Reload clarify data after successful generation
+            invalidateClarify(projectId, node.node_id)
+            void loadClarify(projectId, node.node_id)
+          }
+        }
+      }).catch(() => {
+        // Keep polling on transient errors
+      })
+    }, 2000)
+  }, [projectId, node.node_id, invalidateClarify, loadClarify])
+
+  // Recover generation status on mount
+  useEffect(() => {
+    let cancelled = false
+    void api.getClarifyGenStatus(projectId, node.node_id).then((status) => {
+      if (cancelled) return
+      if (status.status === 'active') {
+        setGenStatus('active')
+        startPolling()
+      } else if (status.status === 'failed') {
+        setGenStatus('failed')
+        setGenError(status.error ?? 'Generation failed')
+      }
+    }).catch(() => {
+      // Ignore — status check is best-effort
+    })
+    return () => { cancelled = true }
+  }, [projectId, node.node_id, startPolling])
+
+  const handleGenerate = useCallback(async () => {
+    setGenError(null)
+    setGenStatus('active')
+    try {
+      await api.generateClarify(projectId, node.node_id)
+      startPolling()
+    } catch (error) {
+      // If a job is already active (e.g. started from another tab), attach to it
+      if (error instanceof ApiError && error.code === 'clarify_generation_not_allowed') {
+        startPolling()
+        return
+      }
+      setGenStatus('failed')
+      setGenError(error instanceof Error ? error.message : 'Generate failed')
+    }
+  }, [projectId, node.node_id, startPolling])
+
+  // ── Derived state ───────────────────────────────────────────
 
   const clarify = entry?.clarify
   const isLoading = entry?.isLoading ?? false
@@ -74,6 +155,20 @@ export function ClarifyPanel({ projectId, node }: Props) {
   const detailState = useDetailStateStore((s) => s.entries[key])
   const isAlreadyConfirmed = detailState?.clarify_confirmed ?? false
 
+  // ── Generating state ────────────────────────────────────────
+
+  if (isGenerating) {
+    return (
+      <div className={detailStyles.documentPanel}>
+        <p className={detailStyles.body} data-testid="clarify-generating">
+          Generating clarify questions...
+        </p>
+      </div>
+    )
+  }
+
+  // ── Loading state ───────────────────────────────────────────
+
   if (isLoading && !clarify) {
     return (
       <div className={detailStyles.documentPanel}>
@@ -99,36 +194,62 @@ export function ClarifyPanel({ projectId, node }: Props) {
     )
   }
 
+  // ── No questions state ──────────────────────────────────────
+
   if (noQuestions) {
     return (
       <div className={detailStyles.documentPanel}>
+        {genError ? (
+          <div className={detailStyles.documentErrorPanel} data-testid="generate-error-clarify">
+            <p className={detailStyles.body}>{genError}</p>
+          </div>
+        ) : null}
         <p className={detailStyles.body}>
           No unresolved task-shaping fields. All fields were resolved in the frame.
         </p>
-        {!isAlreadyConfirmed ? (
-          <div className={detailStyles.tabConfirmRow}>
-            <button
-              type="button"
-              className={detailStyles.confirmButton}
-              data-testid="confirm-clarify"
-              onClick={handleConfirm}
-              disabled={isConfirming}
-            >
-              {isConfirming ? 'Confirming...' : 'Confirm'}
-            </button>
-          </div>
-        ) : null}
+        <div className={detailStyles.tabConfirmRow}>
+          {!isAlreadyConfirmed ? (
+            <>
+              <button
+                type="button"
+                className={detailStyles.generateButton}
+                data-testid="generate-clarify-button"
+                disabled={isConfirming}
+                onClick={handleGenerate}
+              >
+                Generate Questions
+              </button>
+              <button
+                type="button"
+                className={detailStyles.confirmButton}
+                data-testid="confirm-clarify"
+                onClick={handleConfirm}
+                disabled={isConfirming}
+              >
+                {isConfirming ? 'Confirming...' : 'Confirm'}
+              </button>
+            </>
+          ) : null}
+        </div>
       </div>
     )
   }
 
-  const canConfirm = allResolved && !isConfirming && !isSaving && !isAlreadyConfirmed
+  // ── Questions state ─────────────────────────────────────────
+
+  const canConfirm = allResolved && !isConfirming && !isSaving && !isAlreadyConfirmed && !isGenerating
 
   return (
     <div className={detailStyles.documentPanel}>
       {confirmError ? (
         <div className={detailStyles.documentErrorPanel} data-testid="confirm-error-clarify">
           <p className={detailStyles.body}>{confirmError}</p>
+        </div>
+      ) : null}
+
+      {genError ? (
+        <div className={detailStyles.documentErrorPanel} data-testid="generate-error-clarify">
+          <p className={detailStyles.body}>{genError}</p>
         </div>
       ) : null}
 
@@ -186,15 +307,26 @@ export function ClarifyPanel({ projectId, node }: Props) {
           </p>
         ) : null}
         {!isAlreadyConfirmed ? (
-          <button
-            type="button"
-            className={detailStyles.confirmButton}
-            data-testid="confirm-clarify"
-            disabled={!canConfirm}
-            onClick={handleConfirm}
-          >
-            {isConfirming ? 'Confirming...' : 'Confirm'}
-          </button>
+          <>
+            <button
+              type="button"
+              className={detailStyles.generateButton}
+              data-testid="generate-clarify-button"
+              disabled={isConfirming || isGenerating}
+              onClick={handleGenerate}
+            >
+              Regenerate Questions
+            </button>
+            <button
+              type="button"
+              className={detailStyles.confirmButton}
+              data-testid="confirm-clarify"
+              disabled={!canConfirm}
+              onClick={handleConfirm}
+            >
+              {isConfirming ? 'Confirming...' : 'Confirm'}
+            </button>
+          </>
         ) : null}
       </div>
     </div>

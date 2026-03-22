@@ -37,6 +37,10 @@ const { apiMock } = vi.hoisted(() => ({
     updateClarify: vi.fn(),
     confirmClarify: vi.fn(),
     confirmSpec: vi.fn(),
+    generateFrame: vi.fn(),
+    getFrameGenStatus: vi.fn(),
+    generateClarify: vi.fn(),
+    getClarifyGenStatus: vi.fn(),
   },
 }))
 
@@ -220,6 +224,20 @@ describe('TreeGraph', () => {
       kind: 'frame',
       content: '# Frame',
       updated_at: '2026-03-20T00:00:00Z',
+    })
+    apiMock.getFrameGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+    apiMock.getClarifyGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
     })
   })
 

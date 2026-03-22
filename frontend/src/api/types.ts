@@ -134,6 +134,37 @@ export interface ClarifyState {
   updated_at: string | null
 }
 
+export type GenJobStatus = 'idle' | 'active' | 'failed'
+export type FrameGenJobStatus = GenJobStatus
+
+export interface FrameGenAcceptedResponse {
+  status: 'accepted'
+  job_id: string
+  node_id: string
+}
+
+export interface FrameGenStatusResponse {
+  status: FrameGenJobStatus
+  job_id: string | null
+  started_at: string | null
+  completed_at: string | null
+  error: string | null
+}
+
+export interface ClarifyGenAcceptedResponse {
+  status: 'accepted'
+  job_id: string
+  node_id: string
+}
+
+export interface ClarifyGenStatusResponse {
+  status: GenJobStatus
+  job_id: string | null
+  started_at: string | null
+  completed_at: string | null
+  error: string | null
+}
+
 export interface SplitAcceptedResponse {
   status: 'accepted'
   job_id: string

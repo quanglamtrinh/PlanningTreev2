@@ -81,6 +81,26 @@ class ConfirmationNotAllowed(AppError):
         super().__init__("confirmation_not_allowed", reason, 409)
 
 
+class FrameGenerationNotAllowed(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("frame_generation_not_allowed", reason, 409)
+
+
+class FrameGenerationBackendUnavailable(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("frame_generation_backend_unavailable", reason, 503)
+
+
+class ClarifyGenerationNotAllowed(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("clarify_generation_not_allowed", reason, 409)
+
+
+class ClarifyGenerationBackendUnavailable(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("clarify_generation_backend_unavailable", reason, 503)
+
+
 class SpecGenerationNotAllowed(AppError):
     def __init__(self, reason: str) -> None:
         super().__init__("spec_generation_not_allowed", reason, 409)

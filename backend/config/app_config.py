@@ -55,6 +55,24 @@ def get_split_timeout() -> int:
     return max(10, min(600, timeout))
 
 
+def get_frame_gen_timeout() -> int:
+    raw = os.environ.get("PLANNINGTREE_FRAME_GEN_TIMEOUT_SEC", "120")
+    try:
+        timeout = int(raw)
+    except (TypeError, ValueError):
+        timeout = 120
+    return max(10, min(600, timeout))
+
+
+def get_clarify_gen_timeout() -> int:
+    raw = os.environ.get("PLANNINGTREE_CLARIFY_GEN_TIMEOUT_SEC", "120")
+    try:
+        timeout = int(raw)
+    except (TypeError, ValueError):
+        timeout = 120
+    return max(10, min(600, timeout))
+
+
 def get_chat_timeout() -> int:
     raw = os.environ.get("PLANNINGTREE_CHAT_TIMEOUT_SEC", "120")
     try:

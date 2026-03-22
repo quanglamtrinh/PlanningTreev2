@@ -1,7 +1,16 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { apiMock } = vi.hoisted(() => ({
+const { apiMock, MockApiError } = vi.hoisted(() => ({
+  MockApiError: class extends Error {
+    status: number
+    code: string | null
+    constructor(status = 400, payload: { message?: string; code?: string } | null = null) {
+      super(payload?.message ?? 'Request failed')
+      this.status = status
+      this.code = payload?.code ?? null
+    }
+  },
   apiMock: {
     getNodeDocument: vi.fn(),
     putNodeDocument: vi.fn(),
@@ -29,6 +38,22 @@ const { apiMock } = vi.hoisted(() => ({
     updateClarify: vi.fn(),
     confirmClarify: vi.fn(),
     confirmSpec: vi.fn(),
+    generateFrame: vi.fn(),
+    getFrameGenStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    }),
+    generateClarify: vi.fn(),
+    getClarifyGenStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    }),
   },
 }))
 
@@ -51,23 +76,10 @@ vi.mock('@uiw/react-codemirror', () => ({
   ),
 }))
 
-vi.mock('../../src/api/client', () => {
-  class ApiError extends Error {
-    status: number
-    code: string | null
-
-    constructor(status = 400, payload: { message?: string; code?: string } | null = null) {
-      super(payload?.message ?? 'Request failed')
-      this.status = status
-      this.code = payload?.code ?? null
-    }
-  }
-
-  return {
-    api: apiMock,
-    ApiError,
-  }
-})
+vi.mock('../../src/api/client', () => ({
+  api: apiMock,
+  ApiError: MockApiError,
+}))
 
 import type { NodeRecord } from '../../src/api/types'
 import { NodeDetailCard } from '../../src/features/node/NodeDetailCard'
@@ -100,6 +112,39 @@ describe('NodeDetailCard', () => {
     useNodeDocumentStore.getState().reset()
     useDetailStateStore.getState().reset()
     useClarifyStore.getState().reset()
+    apiMock.getFrameGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: false,
+      frame_confirmed_revision: 0,
+      frame_revision: 0,
+      clarify_unlocked: true,
+      clarify_stale: false,
+      clarify_confirmed: false,
+      spec_unlocked: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+    apiMock.getClarify.mockResolvedValue({
+      schema_version: 1,
+      source_frame_revision: 0,
+      confirmed_at: null,
+      questions: [],
+      updated_at: null,
+    })
+    apiMock.getClarifyGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
   })
 
   it('loads frame.md on the default Frame tab', async () => {
@@ -519,6 +564,247 @@ describe('NodeDetailCard', () => {
     await waitFor(() => {
       expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
     })
+  })
+
+  it('shows Generate from Chat button on frame tab', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('generate-frame-button')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generate from Chat')
+  })
+
+  it('calls generateFrame and shows Generating state', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+    apiMock.generateFrame.mockResolvedValue({
+      status: 'accepted',
+      job_id: 'fgen_123',
+      node_id: 'root',
+    })
+    apiMock.getFrameGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: '2026-03-21T00:00:05Z',
+      error: null,
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    const genBtn = await screen.findByTestId('generate-frame-button')
+    fireEvent.click(genBtn)
+
+    await waitFor(() => {
+      expect(genBtn).toHaveTextContent('Generating...')
+    })
+    expect(apiMock.generateFrame).toHaveBeenCalledWith('project-1', 'root')
+  })
+
+  it('shows error when generateFrame fails', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+    apiMock.generateFrame.mockRejectedValue(new Error('Codex unavailable'))
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    const genBtn = await screen.findByTestId('generate-frame-button')
+    fireEvent.click(genBtn)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('generate-error-frame')).toHaveTextContent('Codex unavailable')
+    })
+  })
+
+  it('recovers active generation state on mount', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Old frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+    apiMock.getFrameGenStatus.mockResolvedValue({
+      status: 'active',
+      job_id: 'fgen_456',
+      started_at: '2026-03-21T00:00:00Z',
+      completed_at: null,
+      error: null,
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    // Should show Generating state from recovery
+    await waitFor(() => {
+      expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generating...')
+    })
+    // Confirm should be disabled while generating
+    expect(screen.getByTestId('confirm-document-frame')).toBeDisabled()
+  })
+
+  it('disables editor and confirm while generating', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Some content',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+    apiMock.getFrameGenStatus.mockResolvedValue({
+      status: 'active',
+      job_id: 'fgen_789',
+      started_at: '2026-03-21T00:00:00Z',
+      completed_at: null,
+      error: null,
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generating...')
+    })
+
+    // Confirm button should be disabled
+    expect(screen.getByTestId('confirm-document-frame')).toBeDisabled()
+    // Generate button should also be disabled
+    expect(screen.getByTestId('generate-frame-button')).toBeDisabled()
+  })
+
+  it('aborts generation when flush fails instead of overwriting unsaved content', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+    apiMock.putNodeDocument.mockRejectedValue(new Error('Network error'))
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    // Wait for document to fully load before editing
+    await screen.findByDisplayValue('# Frame')
+
+    // Edit to make content dirty
+    const editor = screen.getByTestId('mock-codemirror')
+    fireEvent.change(editor, { target: { value: '# User draft' } })
+
+    // Click Generate — flush should fail, generation should NOT start
+    fireEvent.click(screen.getByTestId('generate-frame-button'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('generate-error-frame')).toHaveTextContent(
+        /could not save pending changes/i,
+      )
+    })
+    // generateFrame should never have been called
+    expect(apiMock.generateFrame).not.toHaveBeenCalled()
+    // Button should still say "Generate from Chat" (not "Generating...")
+    expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generate from Chat')
+  })
+
+  it('attaches to active job instead of showing error when generation is already running', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+    // Mount recovery returns idle (simulating race where recovery didn't catch it)
+    apiMock.getFrameGenStatus
+      .mockResolvedValueOnce({
+        status: 'idle',
+        job_id: null,
+        started_at: null,
+        completed_at: null,
+        error: null,
+      })
+      // Subsequent poll calls return active
+      .mockResolvedValue({
+        status: 'active',
+        job_id: 'fgen_existing',
+        started_at: '2026-03-21T00:00:00Z',
+        completed_at: null,
+        error: null,
+      })
+    // Backend rejects because a job is already running
+    apiMock.generateFrame.mockRejectedValue(
+      new MockApiError(409, { message: 'Frame generation is already in progress for this node.', code: 'frame_generation_not_allowed' }),
+    )
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    const genBtn = await screen.findByTestId('generate-frame-button')
+    fireEvent.click(genBtn)
+
+    // Should show "Generating..." (attached to existing job) instead of error
+    await waitFor(() => {
+      expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generating...')
+    })
+    // No error banner should be shown
+    expect(screen.queryByTestId('generate-error-frame')).not.toBeInTheDocument()
   })
 
   it('shows stale banner on spec tab when spec_stale is true', async () => {

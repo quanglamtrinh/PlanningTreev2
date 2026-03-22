@@ -28,6 +28,7 @@ type ClarifyStoreState = {
   ) => void
   flushAnswers: (projectId: string, nodeId: string) => Promise<void>
   confirmClarify: (projectId: string, nodeId: string) => Promise<void>
+  invalidateEntry: (projectId: string, nodeId: string) => void
   reset: () => void
 }
 
@@ -120,12 +121,12 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
       .updateClarify(projectId, nodeId, dirtyUpdates)
       .then((updated) => {
         set((s) => {
-          const current = s.entries[key] ?? EMPTY_ENTRY
+          if (!s.entries[key]) return s // entry was invalidated
           return {
             entries: {
               ...s.entries,
               [key]: {
-                ...current,
+                ...s.entries[key],
                 clarify: updated,
                 savedQuestions: updated.questions,
                 isSaving: false,
@@ -149,9 +150,9 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
         }
       })
       .catch((error) => {
-        // Rollback local state to saved version and show error
         set((s) => {
-          const current = s.entries[key] ?? EMPTY_ENTRY
+          if (!s.entries[key]) return s // entry was invalidated
+          const current = s.entries[key]
           const rolledBackQuestions = current.clarify.questions.map((q) => {
             const saved = savedByField.get(q.field_name)
             return saved ? { ...saved } : q
@@ -289,6 +290,16 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
         }))
         throw error
       }
+    },
+
+    invalidateEntry(projectId: string, nodeId: string) {
+      const key = stateKey(projectId, nodeId)
+      clearPendingTimer(key)
+      pendingSaves.delete(key)
+      set((s) => {
+        const { [key]: _, ...rest } = s.entries
+        return { entries: rest }
+      })
     },
 
     reset() {

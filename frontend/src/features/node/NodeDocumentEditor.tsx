@@ -1,11 +1,13 @@
 import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
-import { useCallback, useEffect, useState } from 'react'
-import type { NodeDocumentKind, NodeRecord } from '../../api/types'
+import { EditorView } from '@codemirror/view'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { FrameGenJobStatus, NodeDocumentKind, NodeRecord } from '../../api/types'
+import { useClarifyStore } from '../../stores/clarify-store'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
-import { api } from '../../api/client'
+import { api, ApiError } from '../../api/client'
 import styles from './NodeDetailCard.module.css'
 
 type EditorEntry = {
@@ -35,7 +37,10 @@ type Props = {
   onConfirm?: 'workflow'
 }
 
-function documentStatusText(entry: EditorEntry): string {
+function documentStatusText(entry: EditorEntry, isGenerating: boolean): string {
+  if (isGenerating) {
+    return 'Generating...'
+  }
   if (entry.isLoading && !entry.hasLoaded) {
     return 'Loading...'
   }
@@ -54,10 +59,19 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
   const loadDocument = useNodeDocumentStore((state) => state.loadDocument)
   const updateDraft = useNodeDocumentStore((state) => state.updateDraft)
   const flushDocument = useNodeDocumentStore((state) => state.flushDocument)
+  const invalidateDocument = useNodeDocumentStore((state) => state.invalidateEntry)
   const confirmFrame = useDetailStateStore((s) => s.confirmFrame)
   const confirmSpec = useDetailStateStore((s) => s.confirmSpec)
+  const invalidateClarify = useClarifyStore((s) => s.invalidateEntry)
   const [isConfirming, setIsConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
+  const [genStatus, setGenStatus] = useState<FrameGenJobStatus>('idle')
+  const [genError, setGenError] = useState<string | null>(null)
+  const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
+
+  const isGenerating = genStatus === 'active'
+
+  // ── Document load / flush ────────────────────────────────────
 
   useEffect(() => {
     void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
@@ -69,8 +83,86 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
     }
   }, [flushDocument, kind, node.node_id, projectId])
 
-  const isLoadError = Boolean(entry.error) && !entry.hasLoaded
-  const isReadOnly = !entry.hasLoaded && (entry.isLoading || Boolean(entry.error))
+  // ── Generation: polling, recovery, trigger ───────────────────
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current !== undefined) {
+        globalThis.clearInterval(pollRef.current)
+      }
+    }
+  }, [])
+
+  const startPolling = useCallback(() => {
+    if (pollRef.current !== undefined) return
+    pollRef.current = globalThis.setInterval(() => {
+      void api.getFrameGenStatus(projectId, node.node_id).then((status) => {
+        if (status.status !== 'active') {
+          if (pollRef.current !== undefined) {
+            globalThis.clearInterval(pollRef.current)
+            pollRef.current = undefined
+          }
+          setGenStatus(status.status)
+          if (status.status === 'failed') {
+            setGenError(status.error ?? 'Generation failed')
+          } else {
+            // Reload document content after successful generation
+            invalidateDocument(projectId, node.node_id, kind)
+            void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
+          }
+        }
+      }).catch(() => {
+        // Keep polling on transient errors
+      })
+    }, 2000)
+  }, [projectId, node.node_id, kind, invalidateDocument, loadDocument])
+
+  // Recover generation status on mount — attach to active jobs from prior navigation
+  useEffect(() => {
+    if (kind !== 'frame') return
+    let cancelled = false
+    void api.getFrameGenStatus(projectId, node.node_id).then((status) => {
+      if (cancelled) return
+      if (status.status === 'active') {
+        setGenStatus('active')
+        startPolling()
+      } else if (status.status === 'failed') {
+        setGenStatus('failed')
+        setGenError(status.error ?? 'Generation failed')
+      }
+    }).catch(() => {
+      // Ignore — status check is best-effort
+    })
+    return () => { cancelled = true }
+  }, [kind, projectId, node.node_id, startPolling])
+
+  const handleGenerate = useCallback(async () => {
+    setGenError(null)
+    try {
+      // Flush any pending draft before generation overwrites frame.md.
+      // If flush fails, abort — unsaved content must not be overwritten.
+      await flushDocument(projectId, node.node_id, kind)
+    } catch {
+      setGenError('Could not save pending changes. Resolve the save error before generating.')
+      return
+    }
+    setGenStatus('active')
+    try {
+      await api.generateFrame(projectId, node.node_id)
+      startPolling()
+    } catch (error) {
+      // If a job is already active (e.g. started from another tab), attach to it
+      if (error instanceof ApiError && error.code === 'frame_generation_not_allowed') {
+        startPolling()
+        return
+      }
+      setGenStatus('failed')
+      setGenError(error instanceof Error ? error.message : 'Generate failed')
+    }
+  }, [projectId, node.node_id, kind, flushDocument, startPolling])
+
+  // ── Confirm ──────────────────────────────────────────────────
 
   const handleConfirm = useCallback(async () => {
     if (onConfirm !== 'workflow') {
@@ -83,6 +175,8 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
       await flushDocument(projectId, node.node_id, kind)
       if (kind === 'frame') {
         await confirmFrame(projectId, node.node_id)
+        // Frame confirm re-seeds clarify on the backend — invalidate cached entry
+        invalidateClarify(projectId, node.node_id)
         // Title may have changed — refresh snapshot so tree UI updates
         const snapshot = await api.getSnapshot(projectId)
         useProjectStore.setState((prev) => ({
@@ -97,10 +191,14 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
     } finally {
       setIsConfirming(false)
     }
-  }, [onConfirm, kind, flushDocument, projectId, node.node_id, confirmFrame, confirmSpec])
+  }, [onConfirm, kind, flushDocument, projectId, node.node_id, confirmFrame, confirmSpec, invalidateClarify])
 
+  // ── Derived state ────────────────────────────────────────────
+
+  const isLoadError = Boolean(entry.error) && !entry.hasLoaded
+  const isReadOnly = isGenerating || (!entry.hasLoaded && (entry.isLoading || Boolean(entry.error)))
   const hasContent = entry.content.trim().length > 0
-  const canConfirm = entry.hasLoaded && !isLoadError && !entry.isLoading && hasContent && !isConfirming
+  const canConfirm = entry.hasLoaded && !isLoadError && !entry.isLoading && hasContent && !isConfirming && !isGenerating
 
   return (
     <div className={styles.documentPanel}>
@@ -113,7 +211,7 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
             role="status"
             aria-live="polite"
           >
-            {documentStatusText(entry)}
+            {documentStatusText(entry, isGenerating)}
           </span>
         </div>
 
@@ -137,6 +235,12 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
             <p className={styles.body}>{confirmError}</p>
           </div>
         ) : null}
+
+        {genError ? (
+          <div className={styles.documentErrorPanel} data-testid="generate-error-frame">
+            <p className={styles.body}>{genError}</p>
+          </div>
+        ) : null}
       </div>
 
       <div
@@ -144,9 +248,10 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
         aria-busy={Boolean(entry.isLoading && !entry.hasLoaded)}
       >
         <CodeMirror
+          className={styles.codemirrorHost}
           value={entry.content}
           height="100%"
-          extensions={[markdown()]}
+          extensions={[markdown(), EditorView.lineWrapping]}
           basicSetup={{
             foldGutter: false,
             lineNumbers: true,
@@ -162,6 +267,17 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
       </div>
 
       <div className={styles.tabConfirmRow}>
+        {kind === 'frame' ? (
+          <button
+            type="button"
+            className={styles.generateButton}
+            disabled={isGenerating || isConfirming}
+            data-testid="generate-frame-button"
+            onClick={handleGenerate}
+          >
+            {isGenerating ? 'Generating...' : 'Generate from Chat'}
+          </button>
+        ) : null}
         <button
           type="button"
           className={styles.confirmButton}

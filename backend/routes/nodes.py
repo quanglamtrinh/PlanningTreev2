@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["nodes"])
@@ -72,7 +73,15 @@ async def get_detail_state(request: Request, project_id: str, node_id: str) -> d
 
 @router.post("/projects/{project_id}/nodes/{node_id}/confirm-frame")
 async def confirm_frame(request: Request, project_id: str, node_id: str) -> dict:
-    return request.app.state.node_detail_service.confirm_frame(project_id, node_id)
+    detail_state = request.app.state.node_detail_service.confirm_frame(project_id, node_id)
+    # Auto-trigger async AI clarify generation after frame confirm.
+    # Non-fatal: deterministic seed already created by confirm_frame;
+    # AI generation replaces it with richer questions when it completes.
+    try:
+        request.app.state.clarify_generation_service.generate_clarify(project_id, node_id)
+    except Exception:
+        pass
+    return detail_state
 
 
 @router.get("/projects/{project_id}/nodes/{node_id}/clarify")
@@ -97,3 +106,25 @@ async def confirm_clarify(request: Request, project_id: str, node_id: str) -> di
 @router.post("/projects/{project_id}/nodes/{node_id}/confirm-spec")
 async def confirm_spec(request: Request, project_id: str, node_id: str) -> dict:
     return request.app.state.node_detail_service.confirm_spec(project_id, node_id)
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/generate-frame")
+async def generate_frame(request: Request, project_id: str, node_id: str) -> JSONResponse:
+    payload = request.app.state.frame_generation_service.generate_frame(project_id, node_id)
+    return JSONResponse(status_code=202, content=payload)
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/generate-clarify")
+async def generate_clarify(request: Request, project_id: str, node_id: str) -> JSONResponse:
+    payload = request.app.state.clarify_generation_service.generate_clarify(project_id, node_id)
+    return JSONResponse(status_code=202, content=payload)
+
+
+@router.get("/projects/{project_id}/nodes/{node_id}/clarify-generation-status")
+async def get_clarify_generation_status(request: Request, project_id: str, node_id: str) -> dict:
+    return request.app.state.clarify_generation_service.get_generation_status(project_id, node_id)
+
+
+@router.get("/projects/{project_id}/nodes/{node_id}/frame-generation-status")
+async def get_frame_generation_status(request: Request, project_id: str, node_id: str) -> dict:
+    return request.app.state.frame_generation_service.get_generation_status(project_id, node_id)

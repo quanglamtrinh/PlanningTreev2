@@ -50,14 +50,14 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
   async confirmFrame(projectId: string, nodeId: string) {
     const state = await api.confirmFrame(projectId, nodeId)
     const key = stateKey(projectId, nodeId)
-    set((s) => ({ entries: { ...s.entries, [key]: state } }))
+    set((s) => ({ entries: { ...s.entries, [key]: state }, errors: { ...s.errors, [key]: '' } }))
     return state
   },
 
   async confirmSpec(projectId: string, nodeId: string) {
     const state = await api.confirmSpec(projectId, nodeId)
     const key = stateKey(projectId, nodeId)
-    set((s) => ({ entries: { ...s.entries, [key]: state } }))
+    set((s) => ({ entries: { ...s.entries, [key]: state }, errors: { ...s.errors, [key]: '' } }))
     return state
   },
 

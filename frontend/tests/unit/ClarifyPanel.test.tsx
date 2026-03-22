@@ -18,6 +18,14 @@ const { apiMock } = vi.hoisted(() => ({
     getClarify: vi.fn(),
     updateClarify: vi.fn(),
     confirmClarify: vi.fn(),
+    generateClarify: vi.fn(),
+    getClarifyGenStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    }),
   },
 }))
 
@@ -101,6 +109,13 @@ describe('ClarifyPanel', () => {
     vi.clearAllMocks()
     useClarifyStore.getState().reset()
     useDetailStateStore.getState().reset()
+    apiMock.getClarifyGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
   })
 
   // ── Debounce-controlled tests (fake timers, pre-seeded store) ──
