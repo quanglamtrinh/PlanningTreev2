@@ -19,6 +19,16 @@ const { apiMock } = vi.hoisted(() => ({
     }),
     getSnapshot: vi.fn(),
     confirmFrame: vi.fn(),
+    getClarify: vi.fn().mockResolvedValue({
+      schema_version: 1,
+      source_frame_revision: 0,
+      confirmed_at: null,
+      questions: [],
+      updated_at: null,
+    }),
+    updateClarify: vi.fn(),
+    confirmClarify: vi.fn(),
+    confirmSpec: vi.fn(),
   },
 }))
 
@@ -63,6 +73,7 @@ import type { NodeRecord } from '../../src/api/types'
 import { NodeDetailCard } from '../../src/features/node/NodeDetailCard'
 import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
+import { useClarifyStore } from '../../src/stores/clarify-store'
 
 function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
   return {
@@ -88,6 +99,7 @@ describe('NodeDetailCard', () => {
     vi.useRealTimers()
     useNodeDocumentStore.getState().reset()
     useDetailStateStore.getState().reset()
+    useClarifyStore.getState().reset()
   })
 
   it('loads frame.md on the default Frame tab', async () => {
@@ -353,15 +365,16 @@ describe('NodeDetailCard', () => {
       expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
     })
 
-    // Clarify and Spec should be disabled with lock icon
+    // Clarify and Spec should be disabled with accessible locked label
     await waitFor(() => {
-      const clarifyBtn = screen.getByRole('button', { name: /Clarify/ })
+      const clarifyBtn = screen.getByRole('button', { name: 'Clarify (locked)' })
       expect(clarifyBtn).toBeDisabled()
-      expect(clarifyBtn).toHaveTextContent(/\u{1F512}/u)
     })
-    const specBtn = screen.getByRole('button', { name: /Spec/ })
+    const specBtn = screen.getByRole('button', { name: 'Spec (locked)' })
     expect(specBtn).toBeDisabled()
-    expect(specBtn).toHaveTextContent(/\u{1F512}/u)
+    await waitFor(() => {
+      expect(screen.getByText('Confirm Frame to unlock Clarify.')).toBeInTheDocument()
+    })
 
     // Describe and Frame should remain clickable
     expect(screen.getByRole('button', { name: 'Describe' })).not.toBeDisabled()
@@ -449,5 +462,109 @@ describe('NodeDetailCard', () => {
       expect(apiMock.getNodeDocument).toHaveBeenCalledWith('project-1', 'child-1', 'frame')
     })
     expect(screen.getByDisplayValue('# Child Frame')).toBeInTheDocument()
+  })
+
+  it('calls confirmSpec on spec tab workflow confirm', async () => {
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec content',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+    apiMock.putNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'spec',
+      content: '# Spec content',
+      updated_at: '2026-03-21T00:00:02Z',
+    })
+    apiMock.confirmSpec.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      clarify_unlocked: true,
+      clarify_stale: false,
+      clarify_confirmed: true,
+      spec_unlocked: true,
+      spec_stale: false,
+      spec_confirmed: true,
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    // Switch to Spec tab
+    const specButton = await screen.findByRole('button', { name: 'Spec' })
+    fireEvent.click(specButton)
+
+    await screen.findByDisplayValue('# Spec content')
+    const confirmBtn = screen.getByTestId('confirm-document-spec')
+    expect(confirmBtn).not.toBeDisabled()
+
+    fireEvent.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
+    })
+  })
+
+  it('shows stale banner on spec tab when spec_stale is true', async () => {
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 2,
+      frame_revision: 2,
+      clarify_unlocked: true,
+      clarify_stale: false,
+      clarify_confirmed: true,
+      spec_unlocked: true,
+      spec_stale: true,
+      spec_confirmed: true,
+    })
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Stale Spec',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    const specButton = await screen.findByRole('button', { name: 'Spec' })
+    fireEvent.click(specButton)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('stale-banner-spec')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('stale-banner-spec')).toHaveTextContent(
+      /Frame or Clarify was updated/,
+    )
   })
 })

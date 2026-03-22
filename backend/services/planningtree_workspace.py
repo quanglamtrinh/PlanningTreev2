@@ -311,6 +311,7 @@ def _prune_empty_dirs(root: Path) -> None:
 
 
 FRAME_META_FILE_NAME = "frame.meta.json"
+SPEC_META_FILE_NAME = "spec.meta.json"
 
 
 def _ensure_node_files(node_dir: Path) -> None:
@@ -323,6 +324,13 @@ def _ensure_node_files(node_dir: Path) -> None:
         import json
         meta_path.write_text(
             json.dumps({"revision": 0, "confirmed_revision": 0, "confirmed_at": None}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    spec_meta_path = node_dir / SPEC_META_FILE_NAME
+    if not spec_meta_path.exists():
+        import json
+        spec_meta_path.write_text(
+            json.dumps({"source_frame_revision": 0, "source_clarify_revision": 0, "confirmed_at": None}, indent=2) + "\n",
             encoding="utf-8",
         )
 

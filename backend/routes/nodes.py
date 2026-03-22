@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["nodes"])
 
@@ -19,6 +19,16 @@ class UpdateNodeRequest(BaseModel):
 
 class UpdateNodeDocumentRequest(BaseModel):
     content: str
+
+
+class ClarifyAnswerUpdate(BaseModel):
+    field_name: str = Field(..., min_length=1)
+    answer: Optional[str] = None
+    resolution_status: Optional[Literal["open", "answered", "assumed", "deferred"]] = None
+
+
+class UpdateClarifyRequest(BaseModel):
+    answers: list[ClarifyAnswerUpdate]
 
 
 @router.post("/projects/{project_id}/nodes")
@@ -63,3 +73,27 @@ async def get_detail_state(request: Request, project_id: str, node_id: str) -> d
 @router.post("/projects/{project_id}/nodes/{node_id}/confirm-frame")
 async def confirm_frame(request: Request, project_id: str, node_id: str) -> dict:
     return request.app.state.node_detail_service.confirm_frame(project_id, node_id)
+
+
+@router.get("/projects/{project_id}/nodes/{node_id}/clarify")
+async def get_clarify(request: Request, project_id: str, node_id: str) -> dict:
+    return request.app.state.node_detail_service.get_clarify(project_id, node_id)
+
+
+@router.put("/projects/{project_id}/nodes/{node_id}/clarify")
+async def update_clarify(
+    request: Request, project_id: str, node_id: str, body: UpdateClarifyRequest
+) -> dict:
+    return request.app.state.node_detail_service.update_clarify_answers(
+        project_id, node_id, [a.model_dump(exclude_none=True) for a in body.answers]
+    )
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/confirm-clarify")
+async def confirm_clarify(request: Request, project_id: str, node_id: str) -> dict:
+    return request.app.state.node_detail_service.confirm_clarify(project_id, node_id)
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/confirm-spec")
+async def confirm_spec(request: Request, project_id: str, node_id: str) -> dict:
+    return request.app.state.node_detail_service.confirm_spec(project_id, node_id)

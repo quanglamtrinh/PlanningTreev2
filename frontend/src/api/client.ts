@@ -1,6 +1,8 @@
 import type {
   BootstrapStatus,
   ChatSession,
+  ClarifyQuestion,
+  ClarifyState,
   CodexSnapshot,
   DetailState,
   NodeDocument,
@@ -193,6 +195,32 @@ export const api = {
   confirmFrame(projectId: string, nodeId: string): Promise<DetailState> {
     return jsonFetch<DetailState>(
       `/v1/projects/${projectId}/nodes/${nodeId}/confirm-frame`,
+      { method: 'POST' },
+    )
+  },
+  getClarify(projectId: string, nodeId: string): Promise<ClarifyState> {
+    return jsonFetch<ClarifyState>(`/v1/projects/${projectId}/nodes/${nodeId}/clarify`)
+  },
+  updateClarify(
+    projectId: string,
+    nodeId: string,
+    answers: Pick<ClarifyQuestion, 'field_name' | 'answer' | 'resolution_status'>[],
+  ): Promise<ClarifyState> {
+    return jsonFetch<ClarifyState>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/clarify`,
+      { method: 'PUT' },
+      { answers },
+    )
+  },
+  confirmClarify(projectId: string, nodeId: string): Promise<DetailState> {
+    return jsonFetch<DetailState>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/confirm-clarify`,
+      { method: 'POST' },
+    )
+  },
+  confirmSpec(projectId: string, nodeId: string): Promise<DetailState> {
+    return jsonFetch<DetailState>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/confirm-spec`,
       { method: 'POST' },
     )
   },

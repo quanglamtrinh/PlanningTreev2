@@ -55,6 +55,7 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
   const updateDraft = useNodeDocumentStore((state) => state.updateDraft)
   const flushDocument = useNodeDocumentStore((state) => state.flushDocument)
   const confirmFrame = useDetailStateStore((s) => s.confirmFrame)
+  const confirmSpec = useDetailStateStore((s) => s.confirmSpec)
   const [isConfirming, setIsConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
 
@@ -72,11 +73,15 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
   const isReadOnly = !entry.hasLoaded && (entry.isLoading || Boolean(entry.error))
 
   const handleConfirm = useCallback(async () => {
-    if (onConfirm === 'workflow' && kind === 'frame') {
-      setIsConfirming(true)
-      setConfirmError(null)
-      try {
-        await flushDocument(projectId, node.node_id, kind)
+    if (onConfirm !== 'workflow') {
+      void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
+      return
+    }
+    setIsConfirming(true)
+    setConfirmError(null)
+    try {
+      await flushDocument(projectId, node.node_id, kind)
+      if (kind === 'frame') {
         await confirmFrame(projectId, node.node_id)
         // Title may have changed — refresh snapshot so tree UI updates
         const snapshot = await api.getSnapshot(projectId)
@@ -84,53 +89,60 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
           snapshot,
           selectedNodeId: prev.selectedNodeId,
         }))
-      } catch (error) {
-        setConfirmError(error instanceof Error ? error.message : 'Confirm failed')
-      } finally {
-        setIsConfirming(false)
+      } else if (kind === 'spec') {
+        await confirmSpec(projectId, node.node_id)
       }
-    } else {
-      void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
+    } catch (error) {
+      setConfirmError(error instanceof Error ? error.message : 'Confirm failed')
+    } finally {
+      setIsConfirming(false)
     }
-  }, [onConfirm, kind, flushDocument, projectId, node.node_id, confirmFrame])
+  }, [onConfirm, kind, flushDocument, projectId, node.node_id, confirmFrame, confirmSpec])
 
   const hasContent = entry.content.trim().length > 0
   const canConfirm = entry.hasLoaded && !isLoadError && !entry.isLoading && hasContent && !isConfirming
 
   return (
     <div className={styles.documentPanel}>
-      <div className={styles.documentStatusRow}>
-        <span className={styles.documentFileLabel}>{kind === 'frame' ? 'frame.md' : 'spec.md'}</span>
-        <span
-          className={`${styles.documentStatusValue} ${entry.error ? styles.documentStatusError : ''}`}
-          data-testid={`document-status-${kind}`}
-        >
-          {documentStatusText(entry)}
-        </span>
+      <div className={styles.documentMetaColumn}>
+        <div className={styles.documentStatusRow}>
+          <span className={styles.documentFileLabel}>{kind === 'frame' ? 'frame.md' : 'spec.md'}</span>
+          <span
+            className={`${styles.documentStatusValue} ${entry.error ? styles.documentStatusError : ''}`}
+            data-testid={`document-status-${kind}`}
+            role="status"
+            aria-live="polite"
+          >
+            {documentStatusText(entry)}
+          </span>
+        </div>
+
+        {isLoadError ? (
+          <div className={styles.documentErrorPanel}>
+            <p className={styles.body}>{entry.error}</p>
+            <button
+              type="button"
+              className={styles.retryButton}
+              onClick={() => {
+                void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        {confirmError ? (
+          <div className={styles.documentErrorPanel} data-testid={`confirm-error-${kind}`}>
+            <p className={styles.body}>{confirmError}</p>
+          </div>
+        ) : null}
       </div>
 
-      {isLoadError ? (
-        <div className={styles.documentErrorPanel}>
-          <p className={styles.body}>{entry.error}</p>
-          <button
-            type="button"
-            className={styles.retryButton}
-            onClick={() => {
-              void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
-            }}
-          >
-            Retry
-          </button>
-        </div>
-      ) : null}
-
-      {confirmError ? (
-        <div className={styles.documentErrorPanel} data-testid={`confirm-error-${kind}`}>
-          <p className={styles.body}>{confirmError}</p>
-        </div>
-      ) : null}
-
-      <div className={styles.editorSurface}>
+      <div
+        className={styles.editorSurface}
+        aria-busy={Boolean(entry.isLoading && !entry.hasLoaded)}
+      >
         <CodeMirror
           value={entry.content}
           height="100%"

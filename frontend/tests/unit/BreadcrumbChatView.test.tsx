@@ -198,7 +198,8 @@ describe('BreadcrumbChatView', () => {
     expect(screen.getByTestId('message-feed')).toBeInTheDocument()
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
-    expect(within(detailCard).getByText('Root')).toBeInTheDocument()
+    expect(within(detailCard).getByRole('heading', { level: 2, name: 'Root' })).toBeInTheDocument()
+    expect(within(detailCard).getByRole('heading', { level: 3, name: 'Root' })).toBeInTheDocument()
     expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()
@@ -226,7 +227,7 @@ describe('BreadcrumbChatView', () => {
     })
     const detailCard = await screen.findByTestId('breadcrumb-node-detail-card')
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
-    expect(within(detailCard).getByText('Root')).toBeInTheDocument()
+    expect(within(detailCard).getByRole('heading', { level: 2, name: 'Root' })).toBeInTheDocument()
   })
 
   it('shows an unavailable state when the route node is missing from the snapshot', async () => {

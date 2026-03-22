@@ -1,9 +1,10 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import type { NodeRecord } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
-import { ClarifyMockPanel } from '../graph/ClarifyMockPanel'
+import { ClarifyPanel } from './ClarifyPanel'
 import { NodeDescribePanel } from './NodeDescribePanel'
 import { NodeDocumentEditor } from './NodeDocumentEditor'
+import { NodeStatusBadge } from './NodeStatusBadge'
 import styles from './NodeDetailCard.module.css'
 
 type DetailTab = 'describe' | 'frame' | 'clarify' | 'spec'
@@ -66,6 +67,20 @@ export function NodeDetailCard({
     [detailState, detailStateError],
   )
 
+  const explorationLockHint = useMemo(() => {
+    if (detailStateError) return null
+    if (!detailState) {
+      return 'Loading workflow state…'
+    }
+    if (!detailState.clarify_unlocked) {
+      return 'Confirm Frame to unlock Clarify.'
+    }
+    if (!detailState.spec_unlocked) {
+      return 'Complete Clarify to unlock Spec.'
+    }
+    return null
+  }, [detailState, detailStateError])
+
   const rootClassName = useMemo(
     () =>
       `${styles.card} ${variant === 'breadcrumb' ? styles.cardBreadcrumb : styles.cardGraph}`,
@@ -104,40 +119,63 @@ export function NodeDetailCard({
       data-variant={variant}
     >
       <div className={styles.cardHeader}>
-        <nav className={styles.stepper} aria-label="Detail steps">
-          {DETAIL_STEPS.map((step, idx) => {
-            const locked = isTabLocked(step.id)
-            return (
-              <Fragment key={step.id}>
-                {idx > 0 && (
-                  <span className={styles.stepArrow} aria-hidden="true">
-                    {'>'}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className={`${styles.stepButton} ${detailTab === step.id ? styles.stepButtonActive : ''} ${locked ? styles.stepButtonLocked : ''}`}
-                  onClick={() => { if (!locked) setDetailTab(step.id) }}
-                  disabled={locked}
-                  title={locked ? `${step.label} is locked` : step.label}
-                >
-                  {locked ? `${step.label} \u{1F512}` : step.label}
-                </button>
-              </Fragment>
-            )
-          })}
-        </nav>
-        {showClose ? (
-          <button
-            type="button"
-            className={styles.closeButton}
-            onClick={onClose}
-            aria-label="Close detail panel"
-            title="Close"
-          >
-            x
-          </button>
-        ) : null}
+        <div className={styles.cardHeaderTop}>
+          <div className={styles.nodeTitleBlock}>
+            <p className={styles.nodeEyebrow}>Task</p>
+            <div className={styles.nodeTitleRow}>
+              <span className={styles.nodeHier}>{node.hierarchical_number}</span>
+              <h2 className={styles.nodeHeading}>{node.title}</h2>
+              <NodeStatusBadge status={node.status} />
+            </div>
+          </div>
+          {showClose ? (
+            <button
+              type="button"
+              className={styles.closeButton}
+              onClick={onClose}
+              aria-label="Close detail panel"
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+          ) : null}
+        </div>
+
+        <div className={styles.explorationRegion} role="region" aria-label="Task exploration steps">
+          <nav className={styles.stepper} aria-label="Describe, Frame, Clarify, Spec">
+            {DETAIL_STEPS.map((step, idx) => {
+              const locked = isTabLocked(step.id)
+              return (
+                <Fragment key={step.id}>
+                  {idx > 0 && (
+                    <span className={styles.stepArrow} aria-hidden="true">
+                      {'>'}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className={`${styles.stepButton} ${detailTab === step.id ? styles.stepButtonActive : ''} ${locked ? styles.stepButtonLocked : ''}`}
+                    onClick={() => {
+                      if (!locked) setDetailTab(step.id)
+                    }}
+                    disabled={locked}
+                    aria-label={locked ? `${step.label} (locked)` : step.label}
+                    aria-current={detailTab === step.id ? 'step' : undefined}
+                    aria-describedby={
+                      locked && explorationLockHint ? 'exploration-lock-hint' : undefined
+                    }
+                  >
+                    {step.label}
+                  </button>
+                </Fragment>
+              )
+            })}
+          </nav>
+          {explorationLockHint ? (
+            <p id="exploration-lock-hint" className={styles.explorationLockHint}>
+              {explorationLockHint}
+            </p>
+          ) : null}
+        </div>
       </div>
 
       <div className={styles.cardBody}>
@@ -168,10 +206,31 @@ export function NodeDetailCard({
           />
         )}
 
-        {detailTab === 'clarify' && <ClarifyMockPanel />}
+        {detailTab === 'clarify' && (
+          <>
+            {detailState?.clarify_stale ? (
+              <div className={styles.staleBanner} data-testid="stale-banner-clarify" role="status">
+                Frame was updated since clarify was seeded. Review questions for accuracy.
+              </div>
+            ) : null}
+            <ClarifyPanel projectId={projectId} node={node} />
+          </>
+        )}
 
         {detailTab === 'spec' && (
-          <NodeDocumentEditor projectId={projectId} node={node} kind="spec" />
+          <>
+            {detailState?.spec_stale ? (
+              <div className={styles.staleBanner} data-testid="stale-banner-spec" role="status">
+                Frame or Clarify was updated since spec was last reviewed.
+              </div>
+            ) : null}
+            <NodeDocumentEditor
+              projectId={projectId}
+              node={node}
+              kind="spec"
+              onConfirm="workflow"
+            />
+          </>
         )}
       </div>
     </section>

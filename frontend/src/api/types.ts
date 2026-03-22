@@ -117,6 +117,23 @@ export interface DetailState {
   spec_confirmed: boolean
 }
 
+export type ClarifyResolutionStatus = 'open' | 'answered' | 'assumed' | 'deferred'
+
+export interface ClarifyQuestion {
+  field_name: string
+  question: string
+  answer: string
+  resolution_status: ClarifyResolutionStatus
+}
+
+export interface ClarifyState {
+  schema_version: number
+  source_frame_revision: number
+  confirmed_at: string | null
+  questions: ClarifyQuestion[]
+  updated_at: string | null
+}
+
 export interface SplitAcceptedResponse {
   status: 'accepted'
   job_id: string

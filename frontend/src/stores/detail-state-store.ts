@@ -10,6 +10,7 @@ type DetailStateStoreState = {
 
   loadDetailState: (projectId: string, nodeId: string) => Promise<void>
   confirmFrame: (projectId: string, nodeId: string) => Promise<DetailState>
+  confirmSpec: (projectId: string, nodeId: string) => Promise<DetailState>
   reset: () => void
 }
 
@@ -48,6 +49,13 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
 
   async confirmFrame(projectId: string, nodeId: string) {
     const state = await api.confirmFrame(projectId, nodeId)
+    const key = stateKey(projectId, nodeId)
+    set((s) => ({ entries: { ...s.entries, [key]: state } }))
+    return state
+  },
+
+  async confirmSpec(projectId: string, nodeId: string) {
+    const state = await api.confirmSpec(projectId, nodeId)
     const key = stateKey(projectId, nodeId)
     set((s) => ({ entries: { ...s.entries, [key]: state } }))
     return state

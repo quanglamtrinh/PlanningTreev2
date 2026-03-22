@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import detailStyles from '../node/NodeDetailCard.module.css'
 import styles from './ClarifyMockPanel.module.css'
 
@@ -29,16 +29,49 @@ const QUESTIONS: Question[] = [
 type Answers = Record<string, string>
 type CustomInputs = Record<string, string>
 
+function formatAnswerForSummary(raw: string): string {
+  if (!raw) return ''
+  if (raw.startsWith('__custom__')) {
+    const rest = raw.slice('__custom__'.length).trim()
+    return rest ? `Custom: ${rest}` : ''
+  }
+  return raw
+}
+
 export function ClarifyMockPanel() {
   const [answers, setAnswers] = useState<Answers>({})
   const [customInputs, setCustomInputs] = useState<CustomInputs>({})
   const [confirmed, setConfirmed] = useState(false)
 
+  const hasAnySelection = useMemo(
+    () => Object.values(answers).some((v) => v && v.trim().length > 0),
+    [answers],
+  )
+
+  const selectionSummary = useMemo(() => {
+    const parts: string[] = []
+    for (const q of QUESTIONS) {
+      const raw = answers[q.id]
+      if (!raw) continue
+      const display = formatAnswerForSummary(raw)
+      if (display) {
+        parts.push(`${q.label} → ${display}`)
+      }
+    }
+    if (parts.length === 0) {
+      return 'No selections yet — choose options or add a short note below.'
+    }
+    return parts.join(' · ')
+  }, [answers])
+
   function handleOptionClick(questionId: string, option: string) {
+    setCustomInputs((prev) => {
+      const next = { ...prev }
+      delete next[questionId]
+      return next
+    })
     setAnswers((prev) =>
-      prev[questionId] === option
-        ? { ...prev, [questionId]: '' }
-        : { ...prev, [questionId]: option },
+      prev[questionId] === option ? { ...prev, [questionId]: '' } : { ...prev, [questionId]: option },
     )
   }
 
@@ -46,31 +79,53 @@ export function ClarifyMockPanel() {
     setCustomInputs((prev) => ({ ...prev, [questionId]: value }))
     if (value.trim()) {
       setAnswers((prev) => ({ ...prev, [questionId]: `__custom__${value}` }))
+    } else {
+      setAnswers((prev) => {
+        const next = { ...prev }
+        delete next[questionId]
+        return next
+      })
     }
   }
 
+  const canConfirm = hasAnySelection && !confirmed
+
   return (
     <div className={detailStyles.documentPanel}>
+      <div
+        className={styles.selectionSummary}
+        role="region"
+        aria-label="Current clarify selections"
+        aria-live="polite"
+      >
+        <span className={styles.selectionSummaryLabel}>Current selections</span>
+        <p className={styles.selectionSummaryText}>{selectionSummary}</p>
+      </div>
+
       <div className={styles.clarifyBody}>
         {QUESTIONS.map((q, idx) => (
           <div key={q.id}>
             {idx > 0 && <div className={styles.divider} />}
             <div className={styles.question}>
-              <p className={styles.questionLabel}>
+              <p className={styles.questionLabel} id={`clarify-q-${q.id}`}>
                 <span className={styles.questionIndex}>{idx + 1}</span>
                 {q.label}
               </p>
-              <div className={styles.options}>
-                {q.options.map((opt) => (
-                  <button
-                    key={opt}
-                    type="button"
-                    className={`${styles.optionBtn} ${answers[q.id] === opt ? styles.optionBtnActive : ''}`}
-                    onClick={() => handleOptionClick(q.id, opt)}
-                  >
-                    {opt}
-                  </button>
-                ))}
+              <div className={styles.options} role="group" aria-labelledby={`clarify-q-${q.id}`}>
+                {q.options.map((opt) => {
+                  const selected = answers[q.id] === opt
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      className={`${styles.optionBtn} ${selected ? styles.optionBtnActive : ''}`}
+                      aria-pressed={selected}
+                      onClick={() => handleOptionClick(q.id, opt)}
+                    >
+                      {opt}
+                    </button>
+                  )
+                })}
               </div>
               <textarea
                 className={styles.customInput}
@@ -78,6 +133,7 @@ export function ClarifyMockPanel() {
                 placeholder="Or describe in your own words…"
                 value={customInputs[q.id] ?? ''}
                 onChange={(e) => handleCustomInput(q.id, e.target.value)}
+                aria-label={`Additional notes for: ${q.label}`}
               />
             </div>
           </div>
@@ -97,6 +153,8 @@ export function ClarifyMockPanel() {
             type="button"
             className={detailStyles.confirmButton}
             data-testid="confirm-clarify"
+            disabled={!canConfirm}
+            title={!hasAnySelection ? 'Choose at least one answer before confirming' : undefined}
             onClick={() => setConfirmed(true)}
           >
             Confirm

@@ -20,6 +20,23 @@ const { apiMock } = vi.hoisted(() => ({
     }),
     getSnapshot: vi.fn(),
     confirmFrame: vi.fn(),
+    getClarify: vi.fn().mockResolvedValue({
+      schema_version: 1,
+      source_frame_revision: 0,
+      confirmed_at: null,
+      questions: [
+        {
+          field_name: 'target_platform',
+          question: 'What target platform?',
+          answer: '',
+          resolution_status: 'open',
+        },
+      ],
+      updated_at: null,
+    }),
+    updateClarify: vi.fn(),
+    confirmClarify: vi.fn(),
+    confirmSpec: vi.fn(),
   },
 }))
 
@@ -118,6 +135,7 @@ import type { NodeRecord, Snapshot } from '../../src/api/types'
 import { TreeGraph } from '../../src/features/graph/TreeGraph'
 import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
+import { useClarifyStore } from '../../src/stores/clarify-store'
 import { useProjectStore } from '../../src/stores/project-store'
 
 function buildNode(overrides: Partial<NodeRecord>): NodeRecord {
@@ -190,6 +208,7 @@ describe('TreeGraph', () => {
     useProjectStore.setState(useProjectStore.getInitialState())
     useNodeDocumentStore.getState().reset()
     useDetailStateStore.getState().reset()
+    useClarifyStore.getState().reset()
     apiMock.getNodeDocument.mockResolvedValue({
       node_id: 'root',
       kind: 'frame',
@@ -308,7 +327,7 @@ describe('TreeGraph', () => {
     expect(within(detailCard).queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()
 
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Clarify' }))
-    expect(within(detailCard).getByText(/primary goal of this task/i)).toBeInTheDocument()
+    expect(await within(detailCard).findByText(/What target platform/)).toBeInTheDocument()
 
     apiMock.getNodeDocument.mockResolvedValueOnce({
       node_id: 'root',
