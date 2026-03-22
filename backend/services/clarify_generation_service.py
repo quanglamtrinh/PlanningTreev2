@@ -96,6 +96,13 @@ class ClarifyGenerationService:
                     "Clarify generation is already in progress for this node."
                 )
 
+            # Snapshot frame content NOW so the background thread uses the
+            # confirmed content, not a draft the user might edit later.
+            frame_path = node_dir / planningtree_workspace.FRAME_FILE_NAME
+            frame_content = ""
+            if frame_path.exists():
+                frame_content = frame_path.read_text(encoding="utf-8")
+
             gen_state["thread_id"] = thread_id
             gen_state["active_job"] = {
                 "job_id": job_id,
@@ -112,6 +119,7 @@ class ClarifyGenerationService:
                 "node_id": node_id,
                 "job_id": job_id,
                 "started_at": started_at,
+                "frame_content": frame_content,
             },
             daemon=True,
         ).start()
@@ -141,9 +149,10 @@ class ClarifyGenerationService:
         node_id: str,
         job_id: str,
         started_at: str,
+        frame_content: str,
     ) -> None:
         try:
-            questions = self._generate_clarify_questions(project_id, node_id)
+            questions = self._generate_clarify_questions(project_id, node_id, frame_content)
             self._write_clarify_content(project_id, node_id, questions)
             self._mark_job_completed(project_id, node_id, job_id)
         except ProjectNotFound:
@@ -159,7 +168,7 @@ class ClarifyGenerationService:
             self._mark_job_failed(project_id, node_id, job_id, started_at, str(exc))
 
     def _generate_clarify_questions(
-        self, project_id: str, node_id: str
+        self, project_id: str, node_id: str, frame_content: str
     ) -> list[dict[str, Any]]:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
@@ -179,13 +188,7 @@ class ClarifyGenerationService:
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             task_context = build_split_context(snapshot, node, node_by_id)
 
-            # Read confirmed frame content
-            frame_path = node_dir / planningtree_workspace.FRAME_FILE_NAME
-            frame_content = ""
-            if frame_path.exists():
-                frame_content = frame_path.read_text(encoding="utf-8")
-
-        # Build prompt and run turn (outside lock)
+        # Build prompt using snapshotted frame content (captured at job start)
         prompt = build_clarify_generation_prompt(frame_content, task_context)
         result = self._codex_client.run_turn_streaming(
             prompt,

@@ -94,6 +94,14 @@ export function ClarifyPanel({ projectId, node }: Props) {
 
   const handleGenerate = useCallback(async () => {
     setGenError(null)
+    try {
+      // Flush any pending answer drafts before generation overwrites clarify.json.
+      // If flush fails, abort — unsaved answers must not be overwritten.
+      await flushAnswers(projectId, node.node_id)
+    } catch {
+      setGenError('Could not save pending answers. Resolve the save error before generating.')
+      return
+    }
     setGenStatus('active')
     try {
       await api.generateClarify(projectId, node.node_id)
@@ -107,7 +115,7 @@ export function ClarifyPanel({ projectId, node }: Props) {
       setGenStatus('failed')
       setGenError(error instanceof Error ? error.message : 'Generate failed')
     }
-  }, [projectId, node.node_id, startPolling])
+  }, [projectId, node.node_id, flushAnswers, startPolling])
 
   // ── Derived state ───────────────────────────────────────────
 
