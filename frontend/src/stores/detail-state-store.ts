@@ -6,6 +6,7 @@ type DetailStateStoreState = {
   /** Keyed by `${projectId}::${nodeId}` */
   entries: Record<string, DetailState>
   loading: Record<string, boolean>
+  errors: Record<string, string>
 
   loadDetailState: (projectId: string, nodeId: string) => Promise<void>
   confirmFrame: (projectId: string, nodeId: string) => Promise<DetailState>
@@ -16,22 +17,32 @@ function stateKey(projectId: string, nodeId: string): string {
   return `${projectId}::${nodeId}`
 }
 
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
 export const useDetailStateStore = create<DetailStateStoreState>((set, get) => ({
   entries: {},
   loading: {},
+  errors: {},
 
   async loadDetailState(projectId: string, nodeId: string) {
     const key = stateKey(projectId, nodeId)
     if (get().loading[key]) return
-    set((s) => ({ loading: { ...s.loading, [key]: true } }))
+    set((s) => ({ loading: { ...s.loading, [key]: true }, errors: { ...s.errors, [key]: '' } }))
     try {
       const state = await api.getDetailState(projectId, nodeId)
       set((s) => ({
         entries: { ...s.entries, [key]: state },
         loading: { ...s.loading, [key]: false },
+        errors: { ...s.errors, [key]: '' },
       }))
-    } catch {
-      set((s) => ({ loading: { ...s.loading, [key]: false } }))
+    } catch (error) {
+      set((s) => ({
+        loading: { ...s.loading, [key]: false },
+        errors: { ...s.errors, [key]: toErrorMessage(error) },
+      }))
     }
   },
 
@@ -43,6 +54,6 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
   },
 
   reset() {
-    set({ entries: {}, loading: {} })
+    set({ entries: {}, loading: {}, errors: {} })
   },
 }))

@@ -207,6 +207,209 @@ describe('NodeDetailCard', () => {
     expect(screen.getByDisplayValue('# Draft')).toBeInTheDocument()
   })
 
+  it('disables Confirm button when frame content is empty', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getNodeDocument).toHaveBeenCalledWith('project-1', 'root', 'frame')
+    })
+    expect(screen.getByTestId('confirm-document-frame')).toBeDisabled()
+  })
+
+  it('calls confirmFrame and refreshes snapshot on workflow confirm', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame content',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+    apiMock.putNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame content',
+      updated_at: '2026-03-21T00:00:01Z',
+    })
+    apiMock.confirmFrame.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      clarify_unlocked: true,
+      clarify_stale: false,
+      clarify_confirmed: false,
+      spec_unlocked: false,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+    apiMock.getSnapshot.mockResolvedValue({
+      schema_version: 1,
+      project: { id: 'project-1', name: 'Test' },
+      tree_state: { root_node_id: 'root', active_node_id: 'root', node_registry: [] },
+      updated_at: '2026-03-21T00:00:02Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await screen.findByDisplayValue('# Frame content')
+    const confirmBtn = screen.getByTestId('confirm-document-frame')
+    expect(confirmBtn).not.toBeDisabled()
+
+    fireEvent.click(confirmBtn)
+    expect(confirmBtn).toHaveTextContent('Confirming...')
+
+    await waitFor(() => {
+      expect(apiMock.confirmFrame).toHaveBeenCalledWith('project-1', 'root')
+    })
+    await waitFor(() => {
+      expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-1')
+    })
+    expect(confirmBtn).toHaveTextContent('Confirm')
+  })
+
+  it('shows error when confirm fails', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame content',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+    apiMock.putNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame content',
+      updated_at: '2026-03-21T00:00:01Z',
+    })
+    apiMock.confirmFrame.mockRejectedValue(new Error('Frame is empty'))
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await screen.findByDisplayValue('# Frame content')
+    fireEvent.click(screen.getByTestId('confirm-document-frame'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('confirm-error-frame')).toHaveTextContent('Frame is empty')
+    })
+  })
+
+  it('locks Clarify and Spec tabs when detail state says they are locked', async () => {
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: false,
+      frame_confirmed_revision: 0,
+      frame_revision: 0,
+      clarify_unlocked: false,
+      clarify_stale: false,
+      clarify_confirmed: false,
+      spec_unlocked: false,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    // Wait for detail state to load
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
+    })
+
+    // Clarify and Spec should be disabled with lock icon
+    await waitFor(() => {
+      const clarifyBtn = screen.getByRole('button', { name: /Clarify/ })
+      expect(clarifyBtn).toBeDisabled()
+      expect(clarifyBtn).toHaveTextContent(/\u{1F512}/u)
+    })
+    const specBtn = screen.getByRole('button', { name: /Spec/ })
+    expect(specBtn).toBeDisabled()
+    expect(specBtn).toHaveTextContent(/\u{1F512}/u)
+
+    // Describe and Frame should remain clickable
+    expect(screen.getByRole('button', { name: 'Describe' })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Frame' })).not.toBeDisabled()
+  })
+
+  it('shows error banner with retry when detail state fails to load', async () => {
+    apiMock.getDetailState.mockRejectedValue(new Error('Network error'))
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/Network error/)).toBeInTheDocument()
+    })
+
+    // Retry button should re-fetch
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: false,
+      frame_confirmed_revision: 0,
+      frame_revision: 0,
+      clarify_unlocked: true,
+      clarify_stale: false,
+      clarify_confirmed: false,
+      spec_unlocked: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Network error/)).not.toBeInTheDocument()
+    })
+  })
+
   it('loads the next node document when the selected node changes', async () => {
     apiMock.getNodeDocument
       .mockResolvedValueOnce({

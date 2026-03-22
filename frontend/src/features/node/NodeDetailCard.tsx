@@ -40,6 +40,7 @@ export function NodeDetailCard({
 
   const detailStateKey = projectId && node ? `${projectId}::${node.node_id}` : ''
   const detailState = useDetailStateStore((s) => detailStateKey ? s.entries[detailStateKey] : undefined)
+  const detailStateError = useDetailStateStore((s) => detailStateKey ? s.errors[detailStateKey] : undefined)
   const loadDetailState = useDetailStateStore((s) => s.loadDetailState)
 
   useEffect(() => {
@@ -55,12 +56,14 @@ export function NodeDetailCard({
   const isTabLocked = useCallback(
     (tabId: DetailTab): boolean => {
       if (tabId === 'describe' || tabId === 'frame') return false
+      // If detail state failed to load, don't lock — let the error banner handle it
+      if (detailStateError) return false
       if (!detailState) return true
       if (tabId === 'clarify') return !detailState.clarify_unlocked
       if (tabId === 'spec') return !detailState.spec_unlocked
       return false
     },
-    [detailState],
+    [detailState, detailStateError],
   )
 
   const rootClassName = useMemo(
@@ -138,6 +141,18 @@ export function NodeDetailCard({
       </div>
 
       <div className={styles.cardBody}>
+        {detailStateError ? (
+          <div className={styles.detailStateError}>
+            <p className={styles.body}>Failed to load detail state: {detailStateError}</p>
+            <button
+              type="button"
+              className={styles.retryButton}
+              onClick={() => { if (projectId && node) void loadDetailState(projectId, node.node_id) }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
         {detailTab === 'describe' && (
           <div className={variant === 'graph' ? styles.cardBodyAux : undefined}>
             <NodeDescribePanel node={node} />

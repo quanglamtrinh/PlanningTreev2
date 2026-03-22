@@ -56,6 +56,7 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
   const flushDocument = useNodeDocumentStore((state) => state.flushDocument)
   const confirmFrame = useDetailStateStore((s) => s.confirmFrame)
   const [isConfirming, setIsConfirming] = useState(false)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
 
   useEffect(() => {
     void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
@@ -73,14 +74,18 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
   const handleConfirm = useCallback(async () => {
     if (onConfirm === 'workflow' && kind === 'frame') {
       setIsConfirming(true)
+      setConfirmError(null)
       try {
         await flushDocument(projectId, node.node_id, kind)
         await confirmFrame(projectId, node.node_id)
         // Title may have changed — refresh snapshot so tree UI updates
         const snapshot = await api.getSnapshot(projectId)
-        useProjectStore.setState({ snapshot })
-      } catch {
-        // detail-state-store / project-store handle their own error state
+        useProjectStore.setState((prev) => ({
+          snapshot,
+          selectedNodeId: prev.selectedNodeId,
+        }))
+      } catch (error) {
+        setConfirmError(error instanceof Error ? error.message : 'Confirm failed')
       } finally {
         setIsConfirming(false)
       }
@@ -116,6 +121,12 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm }: Props) 
           >
             Retry
           </button>
+        </div>
+      ) : null}
+
+      {confirmError ? (
+        <div className={styles.documentErrorPanel} data-testid={`confirm-error-${kind}`}>
+          <p className={styles.body}>{confirmError}</p>
         </div>
       ) : null}
 
