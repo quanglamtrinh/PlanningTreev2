@@ -61,7 +61,7 @@ Re-editing frame after confirmation does NOT lock clarify or spec. It only marks
 | Artifact | Can confirm when | Notes |
 |----------|-----------------|-------|
 | Frame | `frame.md` is non-empty (content beyond whitespace) | No structural validation — markdown is freeform |
-| Clarify | All questions have `resolution_status != "open"` | Zero questions = auto-confirm, immediately unlock spec |
+| Clarify | All questions have `selected_option_id != null` OR `custom_answer.trim() != ""` | Zero questions = auto-confirm, immediately unlock spec |
 | Spec | `spec.md` is non-empty | Confirm is a "reviewed" marker, no structural gate |
 
 ## 5. Revision Tracking
@@ -85,14 +85,17 @@ No separate `workflow_state.json`. Each artifact carries its own metadata. Sidec
 ### clarify.json (metadata fields alongside content)
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source_frame_revision": 0,
+  "confirmed_revision": 0,
   "confirmed_at": null,
   "questions": [...],
   "updated_at": ""
 }
 ```
+- `schema_version` tracks the clarify data model version. Current: 2 (choice-based).
 - `source_frame_revision` is `frame.confirmed_revision` at time clarify was seeded.
+- `confirmed_revision` is the clarify revision at time of confirm. Used by spec init (`source_clarify_revision`).
 - `confirmed_at` is ISO timestamp of last confirm action.
 
 ### spec.meta.json
@@ -146,16 +149,30 @@ Sinh viên cần một công cụ đơn giản...
 
 Clarify is the only structured artifact in this workflow. It uses JSON because it's a Q&A interaction, not a document.
 
-### Question schema
+### Question schema (choice-based)
 | Field | Type | Description |
 |-------|------|-------------|
 | field_name | string | Name of the shaping field from frame |
+| question | string | Clarification question for the user |
 | why_it_matters | string | Why this field affects steering |
 | current_value | string | Value from frame (may be empty) |
-| question | string | Clarification question for the user |
-| answer | string | User's answer (freetext) |
-| resolution_status | enum | `open` / `answered` / `assumed` / `deferred` |
-| source | enum | `user` / `agent` / `default` |
+| options | ClarifyOption[] | AI-generated concrete options |
+| selected_option_id | string \| null | ID of user-selected option, or null if unresolved |
+| custom_answer | string | User's freeform answer (alternative to option selection) |
+| allow_custom | boolean | Whether custom freeform answer is allowed (always true) |
+
+**Resolution rule:** A question is resolved when `selected_option_id != null` OR `custom_answer.trim() != ""`. Both null/empty = unresolved (open).
+
+**Mutual exclusivity:** Selecting an option clears `custom_answer`; typing a custom answer clears `selected_option_id`. Both enforced on frontend and backend.
+
+### ClarifyOption schema
+| Field | Type | Description |
+|-------|------|-------------|
+| id | string | Stable identifier — `snake_case(value)`, enforced by backend |
+| label | string | Short display label for the option |
+| value | string | Concrete value this option represents |
+| rationale | string | Why this option makes sense |
+| recommended | boolean | Exactly one option per question must be `true` |
 
 ### Seeding rule (only unresolved steering fields)
 When frame is confirmed, `node_detail_service` reads `# Task-Shaping Fields` from frame.md:
@@ -167,8 +184,8 @@ This matches details.md principle: only unknowns with steering value at the curr
 ### Re-seeding on stale
 When re-seeding from updated frame:
 - New unresolved fields → add new questions
-- Removed fields → mark as removed (keep answers for reference)
-- Matching field names → preserve existing answers and resolution_status
+- Removed fields → drop from questions list
+- Matching field names → preserve `selected_option_id` (if option id still exists in new options) and always preserve `custom_answer`
 
 ## 8. Spec — Markdown Artifact
 
@@ -193,35 +210,31 @@ Frame revision 2
 ...
 
 # Assumptions & Defaults
-- assumed single-user unless stated otherwise
+- single-user unless stated otherwise
 
 # Task-Shaping Fields
-- target platform: mobile-responsive web (answered)
-...
-
-# Deferred / Unresolved Points
-- authentication model
+- target platform: mobile-responsive web
 ...
 
 # Key Risks / Boundaries
 - reminder feature may expand scope
 
 # Clarification Notes
+- target platform: selected "mobile-responsive web" (recommended option)
 ...
 ```
 
 ### Initialization (deterministic, writes markdown directly)
 When clarify is confirmed, `node_detail_service.init_spec()`:
-1. Reads frame.md sections and clarify.json answers
+1. Reads frame.md sections and clarify.json questions/choices
 2. Composes spec.md as markdown text:
    - `# Working Goal` = "{Task Title}: {User Story}" from frame
    - `# Source Frame` = "Frame revision {confirmed_revision}"
    - `# Functional Requirements`, `# Success Criteria`, `# Out of Scope` = copied from frame.md
-   - `# Assumptions & Defaults` = clarify items with `resolution_status == "assumed"`
-   - `# Task-Shaping Fields` = merged frame values + clarify answered values
-   - `# Deferred / Unresolved Points` = clarify items with `resolution_status == "deferred"`
+   - `# Assumptions & Defaults` = reasonable defaults from frame context
+   - `# Task-Shaping Fields` = merged frame values + selected option values or custom answers from clarify
    - `# Key Risks / Boundaries` = empty (user fills or AI generates later)
-   - `# Clarification Notes` = summary of clarify answers
+   - `# Clarification Notes` = summary of clarify choices (which option was selected, or custom answer text)
 3. Writes spec.md to disk
 4. Creates spec.meta.json with source revisions
 

@@ -69,20 +69,35 @@ const TWO_QUESTIONS: ClarifyQuestion[] = [
   {
     field_name: 'target_platform',
     question: "What should 'target_platform' be for this task?",
-    answer: '',
-    resolution_status: 'open',
+    why_it_matters: 'Affects build tooling',
+    current_value: '',
+    options: [
+      { id: 'web', label: 'Web', value: 'Web', rationale: 'Standard', recommended: true },
+      { id: 'mobile', label: 'Mobile', value: 'Mobile', rationale: 'Mobile first', recommended: false },
+    ],
+    selected_option_id: null,
+    custom_answer: '',
+    allow_custom: true,
   },
   {
     field_name: 'storage_level',
     question: "What should 'storage_level' be for this task?",
-    answer: '',
-    resolution_status: 'open',
+    why_it_matters: 'Affects persistence model',
+    current_value: '',
+    options: [
+      { id: 'local', label: 'Local', value: 'Local', rationale: 'Simple', recommended: true },
+      { id: 'cloud', label: 'Cloud', value: 'Cloud', rationale: 'Scalable', recommended: false },
+    ],
+    selected_option_id: null,
+    custom_answer: '',
+    allow_custom: true,
   },
 ]
 
 const CLARIFY_STATE: ClarifyState = {
-  schema_version: 1,
+  schema_version: 2,
   source_frame_revision: 1,
+  confirmed_revision: 0,
   confirmed_at: null,
   questions: TWO_QUESTIONS,
   updated_at: null,
@@ -135,7 +150,7 @@ describe('ClarifyPanel', () => {
 
       render(<ClarifyPanel projectId="p1" node={makeNode()} />)
 
-      const textarea = screen.getByLabelText('Answer for: target_platform')
+      const textarea = screen.getByLabelText('Custom answer for: target_platform')
       await act(async () => {
         fireEvent.change(textarea, { target: { value: 'web' } })
       })
@@ -152,7 +167,7 @@ describe('ClarifyPanel', () => {
 
       render(<ClarifyPanel projectId="p1" node={makeNode()} />)
 
-      const textarea = screen.getByLabelText('Answer for: target_platform')
+      const textarea = screen.getByLabelText('Custom answer for: target_platform')
 
       await act(async () => {
         fireEvent.change(textarea, { target: { value: 'mobile' } })
@@ -172,7 +187,7 @@ describe('ClarifyPanel', () => {
 
       render(<ClarifyPanel projectId="p1" node={makeNode()} />)
 
-      const textarea = screen.getByLabelText('Answer for: target_platform')
+      const textarea = screen.getByLabelText('Custom answer for: target_platform')
 
       await act(async () => {
         fireEvent.change(textarea, { target: { value: 'w' } })
@@ -198,9 +213,9 @@ describe('ClarifyPanel', () => {
       })
 
       expect(apiMock.updateClarify).toHaveBeenCalledTimes(1)
-      // The single call should contain the final value
+      // The single call should contain the final custom_answer value
       expect(apiMock.updateClarify).toHaveBeenCalledWith('p1', 'root', [
-        expect.objectContaining({ field_name: 'target_platform', answer: 'web' }),
+        expect.objectContaining({ field_name: 'target_platform', custom_answer: 'web' }),
       ])
     })
 
@@ -223,22 +238,22 @@ describe('ClarifyPanel', () => {
 
       // Make changes so there's a dirty draft
       await act(async () => {
-        fireEvent.change(screen.getByLabelText('Answer for: target_platform'), {
+        fireEvent.change(screen.getByLabelText('Custom answer for: target_platform'), {
           target: { value: 'web' },
         })
       })
       await act(async () => {
-        fireEvent.change(screen.getByLabelText('Answer for: storage_level'), {
+        fireEvent.change(screen.getByLabelText('Custom answer for: storage_level'), {
           target: { value: 'local' },
         })
       })
 
-      // Flush triggers and fails → rollback to original open state
+      // Flush triggers and fails → rollback to original state
       await act(async () => {
         await vi.advanceTimersByTimeAsync(900)
       })
 
-      // After rollback, questions are back to "open", so confirm is disabled
+      // After rollback, questions are unresolved, so confirm is disabled
       expect(screen.getByTestId('confirm-clarify')).toBeDisabled()
       // confirmClarify should NOT have been called
       expect(apiMock.confirmClarify).not.toHaveBeenCalled()
@@ -249,8 +264,7 @@ describe('ClarifyPanel', () => {
         ...CLARIFY_STATE,
         questions: TWO_QUESTIONS.map((q) => ({
           ...q,
-          answer: q.field_name === 'target_platform' ? 'web' : 'local',
-          resolution_status: 'answered' as const,
+          custom_answer: q.field_name === 'target_platform' ? 'web' : 'local',
         })),
       }
       apiMock.updateClarify.mockResolvedValue(answeredState)
@@ -269,14 +283,14 @@ describe('ClarifyPanel', () => {
 
       render(<ClarifyPanel projectId="p1" node={makeNode()} />)
 
-      // Answer both questions
+      // Answer both questions via custom_answer
       await act(async () => {
-        fireEvent.change(screen.getByLabelText('Answer for: target_platform'), {
+        fireEvent.change(screen.getByLabelText('Custom answer for: target_platform'), {
           target: { value: 'web' },
         })
       })
       await act(async () => {
-        fireEvent.change(screen.getByLabelText('Answer for: storage_level'), {
+        fireEvent.change(screen.getByLabelText('Custom answer for: storage_level'), {
           target: { value: 'local' },
         })
       })
@@ -306,8 +320,7 @@ describe('ClarifyPanel', () => {
   it('shows confirm error when confirmClarify API fails', async () => {
     const answeredQuestions = TWO_QUESTIONS.map((q) => ({
       ...q,
-      answer: 'some answer',
-      resolution_status: 'answered' as const,
+      selected_option_id: q.options[0]?.id ?? null,
     }))
     apiMock.getClarify.mockResolvedValue({
       ...CLARIFY_STATE,

@@ -98,12 +98,20 @@ class ClarifyGenerationService:
 
             # Read confirmed frame content from sidecar (snapshotted at confirm
             # time), not from frame.md which may contain post-confirm draft edits.
+            # Fallback: nodes confirmed before the confirmed_content field was added
+            # won't have it — read frame.md as best-effort for migration.
             from backend.services.node_detail_service import FRAME_META_FILE, _DEFAULT_FRAME_META
             meta_path = node_dir / FRAME_META_FILE
             frame_meta = load_json(meta_path, default=None)
             if not isinstance(frame_meta, dict):
                 frame_meta = dict(_DEFAULT_FRAME_META)
             frame_content = str(frame_meta.get("confirmed_content") or "")
+            if not frame_content:
+                frame_path = node_dir / planningtree_workspace.FRAME_FILE_NAME
+                if frame_path.exists():
+                    frame_content = frame_path.read_text(encoding="utf-8")
+
+            source_frame_revision = frame_meta.get("confirmed_revision", 0)
 
             gen_state["thread_id"] = thread_id
             gen_state["active_job"] = {
@@ -122,6 +130,7 @@ class ClarifyGenerationService:
                 "job_id": job_id,
                 "started_at": started_at,
                 "frame_content": frame_content,
+                "source_frame_revision": source_frame_revision,
             },
             daemon=True,
         ).start()
@@ -152,10 +161,11 @@ class ClarifyGenerationService:
         job_id: str,
         started_at: str,
         frame_content: str,
+        source_frame_revision: int,
     ) -> None:
         try:
             questions = self._generate_clarify_questions(project_id, node_id, frame_content)
-            self._write_clarify_content(project_id, node_id, questions)
+            self._write_clarify_content(project_id, node_id, questions, source_frame_revision)
             self._mark_job_completed(project_id, node_id, job_id)
         except ProjectNotFound:
             self._clear_live_job(project_id, node_id, job_id)
@@ -216,24 +226,36 @@ class ClarifyGenerationService:
         )
 
     def _write_clarify_content(
-        self, project_id: str, node_id: str, questions: list[dict[str, Any]]
+        self,
+        project_id: str,
+        node_id: str,
+        questions: list[dict[str, Any]],
+        source_frame_revision: int,
     ) -> None:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_dir = self._resolve_node_dir(snapshot, node_id)
 
-            # Get confirmed frame revision for source tracking
-            from backend.services.node_detail_service import FRAME_META_FILE, _DEFAULT_FRAME_META
-            meta_path = node_dir / FRAME_META_FILE
-            frame_meta = load_json(meta_path, default=None)
-            if not isinstance(frame_meta, dict):
-                frame_meta = dict(_DEFAULT_FRAME_META)
-            confirmed_revision = frame_meta.get("confirmed_revision", 0)
-
-            # Preserve existing answers/resolution_status if re-generating
+            # Stale-job guard: if frame was re-confirmed while this job ran,
+            # the on-disk clarify may have been re-seeded with a newer
+            # source_frame_revision. Skip writing to avoid overwriting it.
             from backend.services.node_detail_service import CLARIFY_FILE
             clarify_path = node_dir / CLARIFY_FILE
             existing = load_json(clarify_path, default=None)
+            if isinstance(existing, dict):
+                disk_rev = existing.get("source_frame_revision", 0)
+                if disk_rev > source_frame_revision:
+                    logger.warning(
+                        "Stale clarify generation for %s/%s: job source_frame_revision=%d "
+                        "< disk source_frame_revision=%d — skipping write.",
+                        project_id,
+                        node_id,
+                        source_frame_revision,
+                        disk_rev,
+                    )
+                    return
+
+            # Preserve existing selections if re-generating
             if isinstance(existing, dict):
                 old_by_field = {
                     q["field_name"]: q
@@ -243,15 +265,24 @@ class ClarifyGenerationService:
                 for q in questions:
                     old = old_by_field.get(q["field_name"])
                     if old:
-                        q["answer"] = old.get("answer", "")
-                        q["resolution_status"] = old.get("resolution_status", "open")
+                        # Always preserve custom_answer
+                        q["custom_answer"] = old.get("custom_answer", "")
+                        # Preserve selected_option_id only if option still exists
+                        old_selected = old.get("selected_option_id")
+                        if old_selected is not None:
+                            new_option_ids = {
+                                o["id"] for o in q.get("options", [])
+                                if isinstance(o, dict) and "id" in o
+                            }
+                            if old_selected in new_option_ids:
+                                q["selected_option_id"] = old_selected
 
             # Zero questions = auto-confirm per workflow contract
             now = iso_now()
             auto_confirm = len(questions) == 0
             clarify: dict[str, Any] = {
-                "schema_version": 1,
-                "source_frame_revision": confirmed_revision,
+                "schema_version": 2,
+                "source_frame_revision": source_frame_revision,
                 "confirmed_revision": 1 if auto_confirm else 0,
                 "confirmed_at": now if auto_confirm else None,
                 "questions": questions,

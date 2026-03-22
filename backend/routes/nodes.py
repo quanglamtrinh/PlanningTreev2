@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -24,8 +24,8 @@ class UpdateNodeDocumentRequest(BaseModel):
 
 class ClarifyAnswerUpdate(BaseModel):
     field_name: str = Field(..., min_length=1)
-    answer: Optional[str] = None
-    resolution_status: Optional[Literal["open", "answered", "assumed", "deferred"]] = None
+    selected_option_id: Optional[str] = None
+    custom_answer: Optional[str] = None
 
 
 class UpdateClarifyRequest(BaseModel):
@@ -94,7 +94,7 @@ async def update_clarify(
     request: Request, project_id: str, node_id: str, body: UpdateClarifyRequest
 ) -> dict:
     return request.app.state.node_detail_service.update_clarify_answers(
-        project_id, node_id, [a.model_dump(exclude_none=True) for a in body.answers]
+        project_id, node_id, [a.model_dump() for a in body.answers]
     )
 
 

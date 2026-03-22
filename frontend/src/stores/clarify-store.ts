@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ClarifyQuestion, ClarifyResolutionStatus, ClarifyState } from '../api/types'
+import type { ClarifyQuestion, ClarifyState } from '../api/types'
 import { api } from '../api/client'
 import { useDetailStateStore } from './detail-state-store'
 
@@ -19,12 +19,17 @@ type ClarifyStoreState = {
   entries: Record<string, ClarifyEntry>
 
   loadClarify: (projectId: string, nodeId: string) => Promise<void>
-  updateDraft: (
+  selectOption: (
     projectId: string,
     nodeId: string,
     fieldName: string,
-    answer: string,
-    status: ClarifyResolutionStatus,
+    optionId: string | null,
+  ) => void
+  updateCustomAnswer: (
+    projectId: string,
+    nodeId: string,
+    fieldName: string,
+    text: string,
   ) => void
   flushAnswers: (projectId: string, nodeId: string) => Promise<void>
   confirmClarify: (projectId: string, nodeId: string) => Promise<void>
@@ -34,8 +39,9 @@ type ClarifyStoreState = {
 
 const EMPTY_ENTRY: ClarifyEntry = {
   clarify: {
-    schema_version: 1,
+    schema_version: 2,
     source_frame_revision: 0,
+    confirmed_revision: 0,
     confirmed_at: null,
     questions: [],
     updated_at: null,
@@ -96,14 +102,18 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
 
     // Compute dirty fields by comparing current questions to saved
     const savedByField = new Map(entry.savedQuestions.map((q) => [q.field_name, q]))
-    const dirtyUpdates: Pick<ClarifyQuestion, 'field_name' | 'answer' | 'resolution_status'>[] = []
+    const dirtyUpdates: { field_name: string; selected_option_id?: string | null; custom_answer?: string }[] = []
     for (const q of entry.clarify.questions) {
       const saved = savedByField.get(q.field_name)
-      if (!saved || saved.answer !== q.answer || saved.resolution_status !== q.resolution_status) {
+      if (
+        !saved ||
+        saved.selected_option_id !== q.selected_option_id ||
+        saved.custom_answer !== q.custom_answer
+      ) {
         dirtyUpdates.push({
           field_name: q.field_name,
-          answer: q.answer,
-          resolution_status: q.resolution_status,
+          selected_option_id: q.selected_option_id,
+          custom_answer: q.custom_answer,
         })
       }
     }
@@ -142,7 +152,11 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
           const newSaved = new Map(current.savedQuestions.map((q) => [q.field_name, q]))
           const stillDirty = current.clarify.questions.some((q) => {
             const s = newSaved.get(q.field_name)
-            return !s || s.answer !== q.answer || s.resolution_status !== q.resolution_status
+            return (
+              !s ||
+              s.selected_option_id !== q.selected_option_id ||
+              s.custom_answer !== q.custom_answer
+            )
           })
           if (stillDirty) {
             scheduleAutosave(projectId, nodeId)
@@ -225,18 +239,47 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
       }
     },
 
-    updateDraft(
+    selectOption(
       projectId: string,
       nodeId: string,
       fieldName: string,
-      answer: string,
-      status: ClarifyResolutionStatus,
+      optionId: string | null,
     ) {
       const key = stateKey(projectId, nodeId)
       set((s) => {
         const entry = s.entries[key] ?? EMPTY_ENTRY
         const updatedQuestions = entry.clarify.questions.map((q) =>
-          q.field_name === fieldName ? { ...q, answer, resolution_status: status } : q,
+          q.field_name === fieldName
+            ? { ...q, selected_option_id: optionId, custom_answer: '' }
+            : q,
+        )
+        return {
+          entries: {
+            ...s.entries,
+            [key]: {
+              ...entry,
+              clarify: { ...entry.clarify, questions: updatedQuestions },
+              saveError: '',
+            },
+          },
+        }
+      })
+      scheduleAutosave(projectId, nodeId)
+    },
+
+    updateCustomAnswer(
+      projectId: string,
+      nodeId: string,
+      fieldName: string,
+      text: string,
+    ) {
+      const key = stateKey(projectId, nodeId)
+      set((s) => {
+        const entry = s.entries[key] ?? EMPTY_ENTRY
+        const updatedQuestions = entry.clarify.questions.map((q) =>
+          q.field_name === fieldName
+            ? { ...q, custom_answer: text, selected_option_id: null }
+            : q,
         )
         return {
           entries: {

@@ -144,8 +144,9 @@ class NodeDetailService:
             clarify = self._load_clarify(node_dir)
             if clarify is None:
                 return {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "source_frame_revision": 0,
+                    "confirmed_revision": 0,
                     "confirmed_at": None,
                     "questions": [],
                     "updated_at": None,
@@ -201,12 +202,22 @@ class NodeDetailService:
                 if not field_name or field_name not in by_field:
                     continue
                 q = by_field[field_name]
-                if "answer" in update:
-                    q["answer"] = str(update["answer"])
-                if "resolution_status" in update:
-                    status = str(update["resolution_status"]).strip()
-                    if status in ("open", "answered", "assumed", "deferred"):
-                        q["resolution_status"] = status
+                selected = update.get("selected_option_id")
+                custom = update.get("custom_answer")
+
+                if selected is not None and str(selected).strip():
+                    # Validate option exists
+                    option_ids = {o["id"] for o in q.get("options", []) if isinstance(o, dict)}
+                    if str(selected) in option_ids:
+                        q["selected_option_id"] = str(selected)
+                        q["custom_answer"] = ""
+                elif custom is not None and str(custom).strip():
+                    q["custom_answer"] = str(custom)
+                    q["selected_option_id"] = None
+                else:
+                    # Both null/empty = clear/reopen
+                    q["selected_option_id"] = None
+                    q["custom_answer"] = ""
 
             clarify["updated_at"] = iso_now()
             self._save_clarify(node_dir, clarify)
@@ -227,7 +238,12 @@ class NodeDetailService:
                 raise ConfirmationNotAllowed("Clarify has not been seeded yet.")
 
             questions = clarify.get("questions", [])
-            unresolved = [q for q in questions if isinstance(q, dict) and q.get("resolution_status") == "open"]
+            unresolved = [
+                q for q in questions
+                if isinstance(q, dict)
+                and q.get("selected_option_id") is None
+                and not (q.get("custom_answer") or "").strip()
+            ]
             if unresolved:
                 raise ConfirmationNotAllowed(
                     f"{len(unresolved)} question(s) still open. Resolve all questions before confirming."
@@ -342,6 +358,28 @@ class NodeDetailService:
         data = load_json(path, default=None)
         if not isinstance(data, dict):
             return None
+        # v1 → v2 migration: status-based → choice-based
+        if (data.get("schema_version") or 1) < 2:
+            for q in data.get("questions", []):
+                if not isinstance(q, dict):
+                    continue
+                # Map answer → custom_answer
+                if "answer" in q and "custom_answer" not in q:
+                    q["custom_answer"] = q.pop("answer")
+                elif "answer" in q:
+                    q.pop("answer", None)
+                # Drop resolution_status
+                q.pop("resolution_status", None)
+                q.pop("source", None)
+                # Add defaults for new fields
+                q.setdefault("why_it_matters", "")
+                q.setdefault("current_value", "")
+                q.setdefault("options", [])
+                q.setdefault("selected_option_id", None)
+                q.setdefault("custom_answer", "")
+                q.setdefault("allow_custom", True)
+            data["schema_version"] = 2
+            data.setdefault("confirmed_revision", 0)
         return data
 
     def _save_clarify(self, node_dir: Path, clarify: Dict[str, Any]) -> None:
@@ -360,11 +398,11 @@ class NodeDetailService:
             for q in new_questions:
                 old = old_by_field.get(q["field_name"])
                 if old:
-                    q["answer"] = old.get("answer", "")
-                    q["resolution_status"] = old.get("resolution_status", "open")
+                    q["custom_answer"] = old.get("custom_answer", "")
+                    # selected_option_id is moot for deterministic seed (empty options)
 
         clarify: Dict[str, Any] = {
-            "schema_version": 1,
+            "schema_version": 2,
             "source_frame_revision": confirmed_revision,
             "confirmed_revision": 0,
             "confirmed_at": None,
@@ -406,8 +444,12 @@ class NodeDetailService:
             questions.append({
                 "field_name": field_name,
                 "question": f"What should '{field_name}' be for this task?",
-                "answer": "",
-                "resolution_status": "open",
+                "why_it_matters": "",
+                "current_value": "",
+                "options": [],
+                "selected_option_id": None,
+                "custom_answer": "",
+                "allow_custom": True,
             })
 
         return questions

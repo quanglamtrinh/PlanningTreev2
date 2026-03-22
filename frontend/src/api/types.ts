@@ -117,18 +117,29 @@ export interface DetailState {
   spec_confirmed: boolean
 }
 
-export type ClarifyResolutionStatus = 'open' | 'answered' | 'assumed' | 'deferred'
+export interface ClarifyOption {
+  id: string
+  label: string
+  value: string
+  rationale: string
+  recommended: boolean
+}
 
 export interface ClarifyQuestion {
   field_name: string
   question: string
-  answer: string
-  resolution_status: ClarifyResolutionStatus
+  why_it_matters: string
+  current_value: string
+  options: ClarifyOption[]
+  selected_option_id: string | null
+  custom_answer: string
+  allow_custom: boolean
 }
 
 export interface ClarifyState {
   schema_version: number
   source_frame_revision: number
+  confirmed_revision: number
   confirmed_at: string | null
   questions: ClarifyQuestion[]
   updated_at: string | null

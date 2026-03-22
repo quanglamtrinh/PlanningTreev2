@@ -5,7 +5,7 @@
 The node detail card provides a sequential workflow for shaping tasks through three artifacts: Frame, Clarify, and Spec. Each artifact must be confirmed before the next becomes available.
 
 - Frame: markdown document — human-friendly thin spec (steering source of truth). Codex writes it, user reviews and edits the markdown.
-- Clarify: structured Q&A — task-shaping field questions for unresolved steering items. The only structured UI in this workflow.
+- Clarify: choice-based Q&A — AI generates concrete options per question for unresolved steering items. User selects an option or types a custom answer. The only structured UI in this workflow.
 - Spec: markdown document — agent-friendly expanded version initialized from frame + clarify. Codex writes it, user reviews and edits the markdown.
 
 The Describe tab remains unchanged (read-only node metadata).
@@ -48,7 +48,7 @@ Future (AI phases):
 |------|--------|---------|---------|
 | `frame.md` | Markdown | Frame artifact content | Canonical human-readable document |
 | `frame.meta.json` | JSON | `{ revision, confirmed_revision, confirmed_at }` | Workflow metadata only — no content |
-| `clarify.json` | JSON | Questions, answers, resolution status + metadata | Structured Q&A state |
+| `clarify.json` | JSON | Choice-based Q&A: questions with AI-generated options, selected option / custom answer + metadata | Structured Q&A state |
 | `spec.md` | Markdown | Spec artifact content | Canonical human-readable document |
 | `spec.meta.json` | JSON | `{ source_frame_revision, source_clarify_revision, confirmed_at }` | Workflow metadata only — no content |
 
@@ -74,5 +74,5 @@ Confirming frame extracts the `# Task Title` section content from frame.md and p
 | Artifact | Can confirm when |
 |----------|-----------------|
 | Frame | `frame.md` is non-empty (has content beyond whitespace) |
-| Clarify | All questions have `resolution_status != "open"` (each answered, assumed, or deferred). Zero questions = auto-confirm. |
+| Clarify | All questions have `selected_option_id != null` OR `custom_answer.trim() != ""`. Zero questions = auto-confirm. |
 | Spec | `spec.md` is non-empty. Confirm is a "reviewed" marker. |

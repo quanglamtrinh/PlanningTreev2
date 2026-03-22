@@ -24,12 +24,32 @@ def _create_project(storage: Storage, workspace_root: str) -> dict:
 
 
 def _make_codex_mock(
-    questions: list[dict[str, str]] | None = None,
+    questions: list[dict[str, Any]] | None = None,
 ) -> MagicMock:
     if questions is None:
         questions = [
-            {"field_name": "auth_provider", "question": "Which auth provider should we use?"},
-            {"field_name": "storage_backend", "question": "What storage backend?"},
+            {
+                "field_name": "auth_provider",
+                "question": "Which auth provider should we use?",
+                "why_it_matters": "Affects security model",
+                "current_value": "",
+                "options": [
+                    {"id": "oauth2", "label": "OAuth2", "value": "OAuth2", "rationale": "Standard", "recommended": True},
+                    {"id": "api_key", "label": "API Key", "value": "API Key", "rationale": "Simple", "recommended": False},
+                ],
+                "allow_custom": True,
+            },
+            {
+                "field_name": "storage_backend",
+                "question": "What storage backend?",
+                "why_it_matters": "Affects persistence",
+                "current_value": "",
+                "options": [
+                    {"id": "local_disk", "label": "Local Disk", "value": "Local Disk", "rationale": "Simple", "recommended": True},
+                    {"id": "cloud_s3", "label": "Cloud S3", "value": "Cloud S3", "rationale": "Scalable", "recommended": False},
+                ],
+                "allow_custom": True,
+            },
         ]
     mock = MagicMock()
     mock.start_thread.return_value = {"thread_id": "test-thread-456"}
@@ -79,7 +99,11 @@ def test_generate_clarify_rejects_double_start(
                 {
                     "tool_name": "emit_clarify_questions",
                     "arguments": {
-                        "questions": [{"field_name": "x", "question": "y?"}]
+                        "questions": [{
+                            "field_name": "x",
+                            "question": "y?",
+                            "options": [],
+                        }]
                     },
                 }
             ],
@@ -105,8 +129,26 @@ def test_generate_clarify_writes_clarify_json(
     root_id = snapshot["tree_state"]["root_node_id"]
 
     expected_questions = [
-        {"field_name": "auth_provider", "question": "Which auth?"},
-        {"field_name": "error_handling", "question": "How to handle errors?"},
+        {
+            "field_name": "auth_provider",
+            "question": "Which auth?",
+            "why_it_matters": "Security",
+            "current_value": "",
+            "options": [
+                {"id": "oauth2", "label": "OAuth2", "value": "OAuth2", "rationale": "Standard", "recommended": True},
+            ],
+            "allow_custom": True,
+        },
+        {
+            "field_name": "error_handling",
+            "question": "How to handle errors?",
+            "why_it_matters": "UX",
+            "current_value": "",
+            "options": [
+                {"id": "toast", "label": "Toast", "value": "Toast", "rationale": "Non-blocking", "recommended": True},
+            ],
+            "allow_custom": True,
+        },
     ]
     codex_mock = _make_codex_mock(expected_questions)
     service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
@@ -117,11 +159,13 @@ def test_generate_clarify_writes_clarify_json(
     # Verify clarify.json was written
     detail_service = NodeDetailService(storage, tree_service)
     clarify = detail_service.get_clarify(project_id, root_id)
-    assert clarify["schema_version"] == 1
+    assert clarify["schema_version"] == 2
     assert len(clarify["questions"]) == 2
     assert clarify["questions"][0]["field_name"] == "auth_provider"
-    assert clarify["questions"][0]["answer"] == ""
-    assert clarify["questions"][0]["resolution_status"] == "open"
+    assert clarify["questions"][0]["selected_option_id"] is None
+    assert clarify["questions"][0]["custom_answer"] == ""
+    assert clarify["questions"][0]["allow_custom"] is True
+    assert len(clarify["questions"][0]["options"]) == 1
     assert clarify["questions"][1]["field_name"] == "error_handling"
 
 
@@ -201,6 +245,8 @@ def test_generate_clarify_stdout_fallback(
     clarify = detail_service.get_clarify(project_id, root_id)
     assert len(clarify["questions"]) == 1
     assert clarify["questions"][0]["field_name"] == "fallback_q"
+    assert clarify["questions"][0]["selected_option_id"] is None
+    assert clarify["questions"][0]["custom_answer"] == ""
 
 
 def test_generate_clarify_zero_questions_auto_confirms(
@@ -263,7 +309,7 @@ def test_generate_clarify_uses_confirmed_content_not_draft(
             "tool_calls": [
                 {
                     "tool_name": "emit_clarify_questions",
-                    "arguments": {"questions": [{"field_name": "q1", "question": "Q?"}]},
+                    "arguments": {"questions": [{"field_name": "q1", "question": "Q?", "options": []}]},
                 }
             ],
             "stdout": "",
@@ -280,10 +326,10 @@ def test_generate_clarify_uses_confirmed_content_not_draft(
     assert "Draft Content" not in received_prompts[0]
 
 
-def test_generate_clarify_preserves_resolution_status_without_answer(
+def test_generate_clarify_preserves_custom_answer_on_regenerate(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
-    """Regeneration preserves deferred/assumed status even when answer is empty."""
+    """Regeneration preserves custom_answer from previous generation."""
     snapshot = _create_project(storage, str(workspace_root))
     project_id = snapshot["project"]["id"]
     root_id = snapshot["tree_state"]["root_node_id"]
@@ -293,18 +339,24 @@ def test_generate_clarify_preserves_resolution_status_without_answer(
     doc_service.put_document(project_id, root_id, "frame", "# Task Title\nTest\n")
     detail_service.confirm_frame(project_id, root_id)
 
-    # Seed initial clarify with a question, then mark it deferred (no answer)
+    # Seed initial clarify with a question
     codex_mock = _make_codex_mock([
-        {"field_name": "auth_provider", "question": "Which auth?"},
+        {
+            "field_name": "auth_provider",
+            "question": "Which auth?",
+            "options": [
+                {"id": "oauth2", "label": "OAuth2", "value": "OAuth2", "rationale": "Standard", "recommended": True},
+            ],
+        },
     ])
     service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
 
     service.generate_clarify(project_id, root_id)
     time.sleep(1)
 
-    # Mark the question as deferred with empty answer
+    # Set custom answer
     detail_service.update_clarify_answers(project_id, root_id, [
-        {"field_name": "auth_provider", "answer": "", "resolution_status": "deferred"},
+        {"field_name": "auth_provider", "custom_answer": "custom auth method"},
     ])
 
     # Regenerate — AI returns the same field
@@ -314,5 +366,119 @@ def test_generate_clarify_preserves_resolution_status_without_answer(
     clarify = detail_service.get_clarify(project_id, root_id)
     assert len(clarify["questions"]) == 1
     assert clarify["questions"][0]["field_name"] == "auth_provider"
-    assert clarify["questions"][0]["resolution_status"] == "deferred"
-    assert clarify["questions"][0]["answer"] == ""
+    assert clarify["questions"][0]["custom_answer"] == "custom auth method"
+
+
+def test_generate_clarify_preserves_selected_option_when_still_available(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """Regeneration preserves selected_option_id if option ID still exists in new options."""
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    detail_service = NodeDetailService(storage, tree_service)
+    doc_service = NodeDocumentService(storage)
+    doc_service.put_document(project_id, root_id, "frame", "# Task Title\nTest\n")
+    detail_service.confirm_frame(project_id, root_id)
+
+    # First generation with options
+    first_questions = [
+        {
+            "field_name": "auth_provider",
+            "question": "Which auth?",
+            "options": [
+                {"id": "oauth2", "label": "OAuth2", "value": "OAuth2", "rationale": "Standard", "recommended": True},
+                {"id": "api_key", "label": "API Key", "value": "API Key", "rationale": "Simple", "recommended": False},
+            ],
+        },
+    ]
+    codex_mock = _make_codex_mock(first_questions)
+    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+
+    service.generate_clarify(project_id, root_id)
+    time.sleep(1)
+
+    # Select an option
+    detail_service.update_clarify_answers(project_id, root_id, [
+        {"field_name": "auth_provider", "selected_option_id": "oauth2"},
+    ])
+
+    # Regenerate with same option still available
+    second_questions = [
+        {
+            "field_name": "auth_provider",
+            "question": "Which auth? (revised)",
+            "options": [
+                {"id": "oauth2", "label": "OAuth2", "value": "OAuth2", "rationale": "Revised", "recommended": True},
+                {"id": "saml", "label": "SAML", "value": "SAML", "rationale": "Enterprise", "recommended": False},
+            ],
+        },
+    ]
+    codex_mock.run_turn_streaming.return_value = {
+        "tool_calls": [{"tool_name": "emit_clarify_questions", "arguments": {"questions": second_questions}}],
+        "stdout": "",
+    }
+    service.generate_clarify(project_id, root_id)
+    time.sleep(1)
+
+    clarify = detail_service.get_clarify(project_id, root_id)
+    assert clarify["questions"][0]["selected_option_id"] == "oauth2"
+
+
+def test_stale_job_does_not_overwrite_newer_clarify(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """If frame is re-confirmed during generation, old job skips write."""
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    detail_service = NodeDetailService(storage, tree_service)
+    doc_service = NodeDocumentService(storage)
+
+    # Write and confirm frame (revision 1)
+    doc_service.put_document(project_id, root_id, "frame", "# Task Title\nFirst\n")
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    barrier = threading.Event()
+    codex_mock = _make_codex_mock()
+
+    def slow_run(*args: Any, **kwargs: Any) -> dict:
+        barrier.wait(timeout=5)
+        return {
+            "tool_calls": [
+                {
+                    "tool_name": "emit_clarify_questions",
+                    "arguments": {
+                        "questions": [{"field_name": "stale_q", "question": "Stale?", "options": []}]
+                    },
+                }
+            ],
+            "stdout": "",
+        }
+
+    codex_mock.run_turn_streaming.side_effect = slow_run
+    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+
+    # Start generation (captures source_frame_revision = 1)
+    service.generate_clarify(project_id, root_id)
+
+    # Re-confirm frame while generation is running (bumps to revision 2)
+    doc_service.put_document(project_id, root_id, "frame", "# Task Title\nSecond\n")
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    # Let the old job complete
+    barrier.set()
+    time.sleep(1)
+
+    # The stale job should NOT have overwritten the newer clarify
+    clarify = detail_service.get_clarify(project_id, root_id)
+    # The newer clarify was seeded by the second confirm_frame — it should have
+    # source_frame_revision == 2, not the stale job's revision 1
+    assert clarify["source_frame_revision"] == 2
+    # The stale question should NOT be present
+    field_names = [q["field_name"] for q in clarify["questions"]]
+    assert "stale_q" not in field_names

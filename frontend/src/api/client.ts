@@ -3,7 +3,6 @@ import type {
   ChatSession,
   ClarifyGenAcceptedResponse,
   ClarifyGenStatusResponse,
-  ClarifyQuestion,
   ClarifyState,
   CodexSnapshot,
   DetailState,
@@ -208,7 +207,7 @@ export const api = {
   updateClarify(
     projectId: string,
     nodeId: string,
-    answers: Pick<ClarifyQuestion, 'field_name' | 'answer' | 'resolution_status'>[],
+    answers: { field_name: string; selected_option_id?: string | null; custom_answer?: string }[],
   ): Promise<ClarifyState> {
     return jsonFetch<ClarifyState>(
       `/v1/projects/${projectId}/nodes/${nodeId}/clarify`,

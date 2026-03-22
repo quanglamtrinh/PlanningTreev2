@@ -49,7 +49,7 @@ def _setup_confirmed_clarify(
     detail_service.update_clarify_answers(
         project_id,
         root_id,
-        [{"field_name": "target platform", "answer": "web", "resolution_status": "answered"}],
+        [{"field_name": "target platform", "custom_answer": "web"}],
     )
     detail_service.confirm_clarify(project_id, root_id)
 

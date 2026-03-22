@@ -21,15 +21,20 @@ const { apiMock } = vi.hoisted(() => ({
     getSnapshot: vi.fn(),
     confirmFrame: vi.fn(),
     getClarify: vi.fn().mockResolvedValue({
-      schema_version: 1,
+      schema_version: 2,
       source_frame_revision: 0,
+      confirmed_revision: 0,
       confirmed_at: null,
       questions: [
         {
           field_name: 'target_platform',
           question: 'What target platform?',
-          answer: '',
-          resolution_status: 'open',
+          why_it_matters: '',
+          current_value: '',
+          options: [],
+          selected_option_id: null,
+          custom_answer: '',
+          allow_custom: true,
         },
       ],
       updated_at: null,

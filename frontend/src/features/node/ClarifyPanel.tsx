@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ClarifyResolutionStatus, GenJobStatus, NodeRecord } from '../../api/types'
+import type { GenJobStatus, NodeRecord } from '../../api/types'
 import { api, ApiError } from '../../api/client'
 import { useClarifyStore } from '../../stores/clarify-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import detailStyles from './NodeDetailCard.module.css'
 import styles from '../graph/ClarifyMockPanel.module.css'
-
-const RESOLUTION_OPTIONS: { value: ClarifyResolutionStatus; label: string }[] = [
-  { value: 'answered', label: 'Answered' },
-  { value: 'assumed', label: 'Assumed' },
-  { value: 'deferred', label: 'Deferred' },
-]
 
 type Props = {
   projectId: string
@@ -22,11 +16,13 @@ export function ClarifyPanel({ projectId, node }: Props) {
   const entry = useClarifyStore((s) => s.entries[key])
   const loadClarify = useClarifyStore((s) => s.loadClarify)
   const invalidateClarify = useClarifyStore((s) => s.invalidateEntry)
-  const updateDraft = useClarifyStore((s) => s.updateDraft)
+  const selectOption = useClarifyStore((s) => s.selectOption)
+  const updateCustomAnswer = useClarifyStore((s) => s.updateCustomAnswer)
   const flushAnswers = useClarifyStore((s) => s.flushAnswers)
   const confirmClarify = useClarifyStore((s) => s.confirmClarify)
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
+  const loadDetailState = useDetailStateStore((s) => s.loadDetailState)
   const [genStatus, setGenStatus] = useState<GenJobStatus>('idle')
   const [genError, setGenError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
@@ -63,16 +59,19 @@ export function ClarifyPanel({ projectId, node }: Props) {
           if (status.status === 'failed') {
             setGenError(status.error ?? 'Generation failed')
           } else {
-            // Reload clarify data after successful generation
+            // Reload clarify data and detail state after successful generation.
+            // Detail state refresh is needed because zero-question generation
+            // auto-confirms clarify on the backend, which unlocks the Spec tab.
             invalidateClarify(projectId, node.node_id)
             void loadClarify(projectId, node.node_id)
+            void loadDetailState(projectId, node.node_id)
           }
         }
       }).catch(() => {
         // Keep polling on transient errors
       })
     }, 2000)
-  }, [projectId, node.node_id, invalidateClarify, loadClarify])
+  }, [projectId, node.node_id, invalidateClarify, loadClarify, loadDetailState])
 
   // Recover generation status on mount
   useEffect(() => {
@@ -127,18 +126,15 @@ export function ClarifyPanel({ projectId, node }: Props) {
   const questions = clarify?.questions ?? []
 
   const allResolved = useMemo(
-    () => questions.length > 0 && questions.every((q) => q.resolution_status !== 'open'),
+    () =>
+      questions.length > 0 &&
+      questions.every(
+        (q) => q.selected_option_id != null || q.custom_answer.trim() !== '',
+      ),
     [questions],
   )
 
   const noQuestions = clarify !== undefined && questions.length === 0
-
-  const handleDraftChange = useCallback(
-    (fieldName: string, answer: string, status: ClarifyResolutionStatus) => {
-      updateDraft(projectId, node.node_id, fieldName, answer, status)
-    },
-    [projectId, node.node_id, updateDraft],
-  )
 
   const handleConfirm = useCallback(async () => {
     setIsConfirming(true)
@@ -276,33 +272,62 @@ export function ClarifyPanel({ projectId, node }: Props) {
                 <span className={styles.questionIndex}>{idx + 1}</span>
                 {q.question}
               </p>
-              <textarea
-                className={styles.customInput}
-                rows={2}
-                placeholder="Your answer..."
-                value={q.answer}
-                onChange={(e) => {
-                  const val = e.target.value
-                  const status: ClarifyResolutionStatus = val.trim() ? 'answered' : 'open'
-                  handleDraftChange(q.field_name, val, status)
-                }}
-                aria-label={`Answer for: ${q.field_name}`}
-                disabled={isAlreadyConfirmed}
-              />
-              <div className={styles.options} role="group" aria-label="Resolution status">
-                {RESOLUTION_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className={`${styles.optionBtn} ${q.resolution_status === opt.value ? styles.optionBtnActive : ''}`}
-                    aria-pressed={q.resolution_status === opt.value}
-                    onClick={() => handleDraftChange(q.field_name, q.answer, opt.value)}
-                    disabled={isAlreadyConfirmed}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
+              {q.why_it_matters ? (
+                <p className={styles.whyItMatters}>{q.why_it_matters}</p>
+              ) : null}
+              {q.current_value ? (
+                <p className={styles.whyItMatters}>
+                  Current value: <strong>{q.current_value}</strong>
+                </p>
+              ) : null}
+
+              {/* Options as pill buttons */}
+              {q.options.length > 0 ? (
+                <div className={styles.options} role="group" aria-label="Options">
+                  {q.options.map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      className={`${styles.optionBtn} ${q.selected_option_id === opt.id ? styles.optionBtnActive : ''}`}
+                      aria-pressed={q.selected_option_id === opt.id}
+                      onClick={() => {
+                        const newId = q.selected_option_id === opt.id ? null : opt.id
+                        selectOption(projectId, node.node_id, q.field_name, newId)
+                      }}
+                      disabled={isAlreadyConfirmed}
+                    >
+                      {opt.label}
+                      {opt.recommended ? (
+                        <span className={styles.recommendedBadge}> (Recommended)</span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {q.options.length > 0 && q.selected_option_id ? (
+                (() => {
+                  const selected = q.options.find((o) => o.id === q.selected_option_id)
+                  return selected?.rationale ? (
+                    <p className={styles.optionRationale}>{selected.rationale}</p>
+                  ) : null
+                })()
+              ) : null}
+
+              {/* Custom answer textarea */}
+              {q.allow_custom ? (
+                <textarea
+                  className={styles.customInput}
+                  rows={2}
+                  placeholder="Or describe in your own words..."
+                  value={q.custom_answer}
+                  onChange={(e) => {
+                    updateCustomAnswer(projectId, node.node_id, q.field_name, e.target.value)
+                  }}
+                  aria-label={`Custom answer for: ${q.field_name}`}
+                  disabled={isAlreadyConfirmed}
+                />
+              ) : null}
             </div>
           </div>
         ))}

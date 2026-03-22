@@ -170,3 +170,25 @@
   color: var(--color-accent);
   text-align: right;
 }
+
+.recommendedBadge {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--color-accent);
+  letter-spacing: 0.02em;
+}
+
+.optionRationale {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.whyItMatters {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+}
