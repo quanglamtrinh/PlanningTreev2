@@ -249,8 +249,24 @@ def test_rollup_backward_transition_accepted_to_ready_rejected(review_store, pro
     review_store.write_state(project_id, "review1", state)
 
     from backend.errors.app_errors import InvalidRequest
-    with pytest.raises(InvalidRequest, match="Invalid rollup transition"):
+    with pytest.raises(InvalidRequest, match="already accepted and immutable"):
         review_store.set_rollup(project_id, "review1", status="ready")
+
+
+def test_rollup_accepted_retry_rejected(review_store, project_id):
+    """Once accepted, even a second accepted call is rejected (write-once)."""
+    state = {
+        "checkpoints": [],
+        "rollup": {"status": "accepted", "summary": "done", "sha": "sha256:final",
+                   "accepted_at": "2026-03-23T12:00:00Z"},
+        "pending_siblings": [],
+    }
+    review_store.write_state(project_id, "review1", state)
+
+    from backend.errors.app_errors import InvalidRequest
+    with pytest.raises(InvalidRequest, match="already accepted and immutable"):
+        review_store.set_rollup(project_id, "review1", status="accepted",
+                                summary="retry", sha="sha256:other")
 
 
 def test_rollup_backward_transition_ready_to_pending_rejected(review_store, project_id):

@@ -113,6 +113,11 @@ class ReviewStateStore:
             rollup = state.get("rollup", copy.deepcopy(_DEFAULT_ROLLUP))
             current = rollup.get("status", "pending")
 
+            if current == "accepted":
+                raise InvalidRequest(
+                    "Rollup is already accepted and immutable. No further transitions allowed."
+                )
+
             if status != current:
                 allowed_next = _ROLLUP_TRANSITIONS.get(current)
                 if allowed_next != status:

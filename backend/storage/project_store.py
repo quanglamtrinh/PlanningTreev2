@@ -242,7 +242,13 @@ class ProjectStore:
         node["hierarchical_number"] = str(node.get("hierarchical_number") or "")
         node["created_at"] = str(node.get("created_at") or "")
         parent_id = node.get("parent_id")
-        node["parent_id"] = parent_id if isinstance(parent_id, str) and parent_id else None
+        node["parent_id"] = parent_id if isinstance(parent_id, str) and parent_id.strip() else None
+        review_node_id = node.get("review_node_id")
+        node["review_node_id"] = (
+            review_node_id.strip()
+            if isinstance(review_node_id, str) and review_node_id.strip()
+            else None
+        )
         node_id = str(node.get("node_id") or "").strip()
         if node_id:
             node["node_id"] = node_id
