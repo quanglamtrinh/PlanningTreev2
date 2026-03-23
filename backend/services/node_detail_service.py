@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 
 from backend.errors.app_errors import ConfirmationNotAllowed, InvalidRequest, NodeNotFound
 from backend.services import planningtree_workspace
@@ -26,6 +26,127 @@ _DEFAULT_SPEC_META: Dict[str, Any] = {
     "confirmed_at": None,
 }
 
+WorkflowStep = Literal["frame", "clarify", "spec"]
+
+
+def _load_frame_meta_from_node_dir(node_dir: Path) -> Dict[str, Any]:
+    path = node_dir / FRAME_META_FILE
+    data = load_json(path, default=None)
+    if not isinstance(data, dict):
+        return dict(_DEFAULT_FRAME_META)
+    return data
+
+
+def _load_spec_meta_from_node_dir(node_dir: Path) -> Dict[str, Any]:
+    path = node_dir / SPEC_META_FILE
+    data = load_json(path, default=None)
+    if not isinstance(data, dict):
+        return dict(_DEFAULT_SPEC_META)
+    return data
+
+
+def _load_clarify_from_node_dir(node_dir: Path) -> Dict[str, Any] | None:
+    path = node_dir / CLARIFY_FILE
+    data = load_json(path, default=None)
+    if not isinstance(data, dict):
+        return None
+    if (data.get("schema_version") or 1) < 2:
+        for q in data.get("questions", []):
+            if not isinstance(q, dict):
+                continue
+            if "answer" in q and "custom_answer" not in q:
+                q["custom_answer"] = q.pop("answer")
+            elif "answer" in q:
+                q.pop("answer", None)
+            q.pop("resolution_status", None)
+            q.pop("source", None)
+            q.setdefault("why_it_matters", "")
+            q.setdefault("current_value", "")
+            q.setdefault("options", [])
+            q.setdefault("selected_option_id", None)
+            q.setdefault("custom_answer", "")
+            q.setdefault("allow_custom", True)
+        data["schema_version"] = 2
+        data.setdefault("confirmed_revision", 0)
+    return data
+
+
+def derive_workflow_summary_from_artifacts(
+    frame_meta: Dict[str, Any],
+    clarify: Dict[str, Any] | None,
+    spec_meta: Dict[str, Any],
+) -> Dict[str, Any]:
+    frame_conf_rev = frame_meta.get("confirmed_revision", 0)
+    frame_rev = frame_meta.get("revision", 0)
+    frame_confirmed = frame_conf_rev >= 1
+    frame_needs_reconfirm = frame_confirmed and frame_rev > frame_conf_rev
+    clarify_confirmed_at = clarify.get("confirmed_at") if clarify else None
+
+    active_step: WorkflowStep = "frame"
+    if not frame_confirmed:
+        active_step = "frame"
+    elif frame_needs_reconfirm:
+        active_step = "frame"
+    elif clarify_confirmed_at is None:
+        active_step = "clarify"
+    else:
+        active_step = "spec"
+
+    return {
+        "frame_confirmed": frame_confirmed,
+        "active_step": active_step,
+        "spec_confirmed": spec_meta.get("confirmed_at") is not None,
+    }
+
+
+def derive_workflow_summary_from_node_dir(node_dir: Path) -> Dict[str, Any]:
+    frame_meta = _load_frame_meta_from_node_dir(node_dir)
+    clarify = _load_clarify_from_node_dir(node_dir)
+    spec_meta = _load_spec_meta_from_node_dir(node_dir)
+    return derive_workflow_summary_from_artifacts(frame_meta, clarify, spec_meta)
+
+
+def build_detail_state(node_id: str, node_dir: Path) -> Dict[str, Any]:
+    frame_meta = _load_frame_meta_from_node_dir(node_dir)
+    clarify = _load_clarify_from_node_dir(node_dir)
+    spec_meta = _load_spec_meta_from_node_dir(node_dir)
+    workflow = derive_workflow_summary_from_artifacts(frame_meta, clarify, spec_meta)
+
+    frame_conf_rev = frame_meta.get("confirmed_revision", 0)
+    frame_rev = frame_meta.get("revision", 0)
+    frame_needs_reconfirm = workflow["frame_confirmed"] and frame_rev > frame_conf_rev
+    clarify_confirmed_at = clarify.get("confirmed_at") if clarify else None
+    active_step = workflow["active_step"]
+
+    workflow_notice: str | None = None
+    if frame_needs_reconfirm:
+        workflow_notice = (
+            "Clarify decisions were applied to the frame. "
+            "Review and confirm the updated frame."
+        )
+
+    spec_stale = False
+    if active_step == "spec":
+        spec_src_frame = spec_meta.get("source_frame_revision", 0)
+        spec_stale = spec_src_frame < frame_conf_rev
+
+    return {
+        "node_id": node_id,
+        "frame_confirmed": workflow["frame_confirmed"],
+        "frame_confirmed_revision": frame_conf_rev,
+        "frame_revision": frame_rev,
+        "active_step": active_step,
+        "workflow_notice": workflow_notice,
+        "generation_error": None,
+        "frame_needs_reconfirm": frame_needs_reconfirm,
+        "frame_read_only": active_step != "frame",
+        "clarify_read_only": active_step != "clarify",
+        "clarify_confirmed": clarify_confirmed_at is not None,
+        "spec_read_only": active_step != "spec",
+        "spec_stale": spec_stale,
+        "spec_confirmed": workflow["spec_confirmed"],
+    }
+
 
 class NodeDetailService:
     def __init__(self, storage: Storage, tree_service: TreeService) -> None:
@@ -39,61 +160,7 @@ class NodeDetailService:
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
             node_dir = self._resolve_node_dir(snapshot, node_id)
-
-            frame_meta = self._load_frame_meta(node_dir)
-            clarify = self._load_clarify(node_dir)
-            spec_meta = self._load_spec_meta(node_dir)
-
-            frame_conf_rev = frame_meta.get("confirmed_revision", 0)
-            frame_rev = frame_meta.get("revision", 0)
-            frame_confirmed = frame_conf_rev >= 1
-            frame_needs_reconfirm = frame_confirmed and frame_rev > frame_conf_rev
-            clarify_confirmed_at = clarify.get("confirmed_at") if clarify else None
-
-            # active_step derivation (ordered rules, first match wins)
-            if not frame_confirmed:
-                active_step = "frame"
-            elif frame_needs_reconfirm:
-                active_step = "frame"
-            elif clarify_confirmed_at is None:
-                active_step = "clarify"
-            else:
-                active_step = "spec"
-
-            workflow_notice: str | None = None
-            if frame_needs_reconfirm:
-                workflow_notice = (
-                    "Clarify decisions were applied to the frame. "
-                    "Review and confirm the updated frame."
-                )
-
-            # Read-only flags
-            frame_read_only = active_step != "frame"
-            clarify_read_only = active_step != "clarify"
-            spec_read_only = active_step != "spec"
-
-            # spec_stale: spec depends only on confirmed frame
-            spec_stale = False
-            if active_step == "spec":
-                spec_src_frame = spec_meta.get("source_frame_revision", 0)
-                spec_stale = spec_src_frame < frame_conf_rev
-
-            return {
-                "node_id": node_id,
-                "frame_confirmed": frame_confirmed,
-                "frame_confirmed_revision": frame_conf_rev,
-                "frame_revision": frame_rev,
-                "active_step": active_step,
-                "workflow_notice": workflow_notice,
-                "generation_error": None,
-                "frame_needs_reconfirm": frame_needs_reconfirm,
-                "frame_read_only": frame_read_only,
-                "clarify_read_only": clarify_read_only,
-                "clarify_confirmed": clarify_confirmed_at is not None,
-                "spec_read_only": spec_read_only,
-                "spec_stale": spec_stale,
-                "spec_confirmed": spec_meta.get("confirmed_at") is not None,
-            }
+            return build_detail_state(node_id, node_dir)
 
     # ── Confirm frame ─────────────────────────────────────────────
 
@@ -379,53 +446,19 @@ class NodeDetailService:
             planningtree_workspace.sync_snapshot_tree(Path(raw_path), snapshot)
 
     def _load_frame_meta(self, node_dir: Path) -> Dict[str, Any]:
-        path = node_dir / FRAME_META_FILE
-        data = load_json(path, default=None)
-        if not isinstance(data, dict):
-            return dict(_DEFAULT_FRAME_META)
-        return data
+        return _load_frame_meta_from_node_dir(node_dir)
 
     def _save_frame_meta(self, node_dir: Path, meta: Dict[str, Any]) -> None:
         atomic_write_json(node_dir / FRAME_META_FILE, meta)
 
     def _load_spec_meta(self, node_dir: Path) -> Dict[str, Any]:
-        path = node_dir / SPEC_META_FILE
-        data = load_json(path, default=None)
-        if not isinstance(data, dict):
-            return dict(_DEFAULT_SPEC_META)
-        return data
+        return _load_spec_meta_from_node_dir(node_dir)
 
     def _save_spec_meta(self, node_dir: Path, meta: Dict[str, Any]) -> None:
         atomic_write_json(node_dir / SPEC_META_FILE, meta)
 
     def _load_clarify(self, node_dir: Path) -> Dict[str, Any] | None:
-        path = node_dir / CLARIFY_FILE
-        data = load_json(path, default=None)
-        if not isinstance(data, dict):
-            return None
-        # v1 → v2 migration: status-based → choice-based
-        if (data.get("schema_version") or 1) < 2:
-            for q in data.get("questions", []):
-                if not isinstance(q, dict):
-                    continue
-                # Map answer → custom_answer
-                if "answer" in q and "custom_answer" not in q:
-                    q["custom_answer"] = q.pop("answer")
-                elif "answer" in q:
-                    q.pop("answer", None)
-                # Drop resolution_status
-                q.pop("resolution_status", None)
-                q.pop("source", None)
-                # Add defaults for new fields
-                q.setdefault("why_it_matters", "")
-                q.setdefault("current_value", "")
-                q.setdefault("options", [])
-                q.setdefault("selected_option_id", None)
-                q.setdefault("custom_answer", "")
-                q.setdefault("allow_custom", True)
-            data["schema_version"] = 2
-            data.setdefault("confirmed_revision", 0)
-        return data
+        return _load_clarify_from_node_dir(node_dir)
 
     def _save_clarify(self, node_dir: Path, clarify: Dict[str, Any]) -> None:
         atomic_write_json(node_dir / CLARIFY_FILE, clarify)

@@ -9,14 +9,33 @@
   background: var(--color-graph-bg);
 }
 
-/* Ensure step/straight edge paths use theme stroke (fallback if inline stroke is ignored) */
+@keyframes graph-edge-flow {
+  to {
+    /* One full dash+gap cycle (7 + 11) so the motion loops seamlessly */
+    stroke-dashoffset: -18;
+  }
+}
+
+/* Animated “flow” along edges (dash pattern moves along the path). */
 .graphShell :global(.react-flow__edge-path) {
   stroke: var(--graph-edge-stroke);
   stroke-width: var(--graph-edge-width);
+  stroke-dasharray: 7 11;
+  stroke-dashoffset: 0;
+  animation: graph-edge-flow 1.2s linear infinite;
 }
 
 .graphShell :global(.react-flow__edge.selected .react-flow__edge-path) {
   stroke: color-mix(in srgb, var(--color-accent) 45%, var(--graph-edge-stroke));
+  animation: graph-edge-flow 1.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graphShell :global(.react-flow__edge-path),
+  .graphShell :global(.react-flow__edge.selected .react-flow__edge-path) {
+    animation: none;
+    stroke-dasharray: none;
+  }
 }
 
 .graphShell :global(.react-flow__panel) {

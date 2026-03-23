@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 
@@ -9,7 +8,8 @@ import pytest
 from backend.ai.codex_client import CodexTransportError
 from backend.errors.app_errors import SplitNotAllowed
 from backend.services import planningtree_workspace
-from backend.services.node_detail_service import FRAME_META_FILE
+from backend.services.node_detail_service import NodeDetailService
+from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
 from backend.services.split_service import SplitService
 from backend.services.tree_service import TreeService
@@ -57,6 +57,33 @@ def create_project(project_service: ProjectService, workspace_root: str) -> dict
     return project_service.attach_project_folder(workspace_root)
 
 
+def make_node_split_ready(
+    storage: Storage,
+    tree_service: TreeService,
+    project_id: str,
+    node_id: str,
+    *,
+    shaping_field_line: str = "- target platform: web",
+) -> None:
+    snapshot = storage.project_store.load_snapshot(project_id)
+    title = str(snapshot["tree_state"]["node_index"][node_id]["title"])
+    doc_service = NodeDocumentService(storage)
+    detail_service = NodeDetailService(storage, tree_service)
+    doc_service.put_document(
+        project_id,
+        node_id,
+        "frame",
+        (
+            f"# Task Title\n{title}\n\n"
+            "# Task-Shaping Fields\n"
+            f"{shaping_field_line}\n"
+        ),
+    )
+    detail_service.bump_frame_revision(project_id, node_id)
+    state = detail_service.confirm_frame(project_id, node_id)
+    assert state["active_step"] == "spec"
+
+
 def wait_for_terminal_status(service: SplitService, project_id: str, timeout_sec: float = 2.0) -> dict:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
@@ -75,6 +102,8 @@ def test_split_service_creates_children_and_reuses_project_thread(
     snapshot = create_project(project_service, str(workspace_root))
     project_id = snapshot["project"]["id"]
     root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    make_node_split_ready(storage, tree_service, project_id, root_id)
     fake_client = FakeCodexClient(
         payloads=[
             {
@@ -91,7 +120,7 @@ def test_split_service_creates_children_and_reuses_project_thread(
             },
         ]
     )
-    service = SplitService(storage, TreeService(), fake_client, split_timeout=5)
+    service = SplitService(storage, tree_service, fake_client, split_timeout=5)
 
     accepted = service.split_node(project_id, root_id, "workflow")
     assert accepted["status"] == "accepted"
@@ -113,6 +142,7 @@ def test_split_service_creates_children_and_reuses_project_thread(
     assert (second_child_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
     first_thread_id = storage.split_state_store.read_state(project_id)["thread_id"]
 
+    make_node_split_ready(storage, tree_service, project_id, first_child_id)
     accepted_second = service.split_node(project_id, first_child_id, "phase_breakdown")
     assert accepted_second["status"] == "accepted"
     second_terminal = wait_for_terminal_status(service, project_id)
@@ -131,6 +161,8 @@ def test_split_service_rejects_nodes_with_existing_children(
     snapshot = create_project(project_service, str(workspace_root))
     project_id = snapshot["project"]["id"]
     root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    make_node_split_ready(storage, tree_service, project_id, root_id)
     fake_client = FakeCodexClient(
         payloads=[
             {
@@ -141,7 +173,7 @@ def test_split_service_rejects_nodes_with_existing_children(
             }
         ]
     )
-    service = SplitService(storage, TreeService(), fake_client, split_timeout=5)
+    service = SplitService(storage, tree_service, fake_client, split_timeout=5)
 
     service.split_node(project_id, root_id, "workflow")
     terminal = wait_for_terminal_status(service, project_id)
@@ -159,6 +191,8 @@ def test_split_service_recreates_thread_when_resume_fails(
     snapshot = create_project(project_service, str(workspace_root))
     project_id = snapshot["project"]["id"]
     root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    make_node_split_ready(storage, tree_service, project_id, root_id)
     fake_client = FakeCodexClient(
         payloads=[
             {
@@ -175,7 +209,7 @@ def test_split_service_recreates_thread_when_resume_fails(
             },
         ]
     )
-    service = SplitService(storage, TreeService(), fake_client, split_timeout=5)
+    service = SplitService(storage, tree_service, fake_client, split_timeout=5)
 
     service.split_node(project_id, root_id, "workflow")
     wait_for_terminal_status(service, project_id)
@@ -184,6 +218,7 @@ def test_split_service_recreates_thread_when_resume_fails(
     fake_client.fail_resume = True
     current_snapshot = storage.project_store.load_snapshot(project_id)
     first_child_id = current_snapshot["tree_state"]["active_node_id"]
+    make_node_split_ready(storage, tree_service, project_id, first_child_id)
     service.split_node(project_id, first_child_id, "workflow")
     wait_for_terminal_status(service, project_id)
     second_thread_id = storage.split_state_store.read_state(project_id)["thread_id"]
@@ -200,27 +235,19 @@ def test_split_service_uses_frame_context_not_spec_context(
     snapshot = create_project(project_service, str(workspace_root))
     project_id = snapshot["project"]["id"]
     root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    make_node_split_ready(
+        storage,
+        tree_service,
+        project_id,
+        root_id,
+        shaping_field_line="- frontend stack: React + Tailwind",
+    )
     persisted = storage.project_store.load_snapshot(project_id)
     workspace_path = Path(str(persisted["project"]["project_path"]))
     node_dir = planningtree_workspace.resolve_node_dir(workspace_path, persisted, root_id)
     assert node_dir is not None
 
-    (node_dir / FRAME_META_FILE).write_text(
-        json.dumps(
-            {
-                "revision": 1,
-                "confirmed_revision": 1,
-                "confirmed_at": "2026-03-22T00:00:00Z",
-                "confirmed_content": (
-                    "# Task Title\n"
-                    "Marketing Site Entry\n\n"
-                    "# Task-Shaping Fields\n"
-                    "- frontend stack: React + Tailwind\n"
-                ),
-            }
-        ),
-        encoding="utf-8",
-    )
     (node_dir / planningtree_workspace.SPEC_FILE_NAME).write_text(
         "# Overview\nUse Vue + Bootstrap.\n",
         encoding="utf-8",
@@ -236,7 +263,7 @@ def test_split_service_uses_frame_context_not_spec_context(
             }
         ]
     )
-    service = SplitService(storage, TreeService(), fake_client, split_timeout=5)
+    service = SplitService(storage, tree_service, fake_client, split_timeout=5)
 
     service.split_node(project_id, root_id, "workflow")
     wait_for_terminal_status(service, project_id)
@@ -246,6 +273,81 @@ def test_split_service_uses_frame_context_not_spec_context(
     assert "React + Tailwind" in prompt
     assert "Technical spec:" not in prompt
     assert "Vue + Bootstrap" not in prompt
+
+
+def test_split_service_rejects_when_frame_is_not_confirmed(
+    storage: Storage,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    service = SplitService(storage, TreeService(), FakeCodexClient(payloads=[]), split_timeout=5)
+
+    with pytest.raises(SplitNotAllowed, match="frame is confirmed"):
+        service.split_node(project_id, root_id, "workflow")
+
+
+def test_split_service_rejects_when_clarify_questions_remain(
+    storage: Storage,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    doc_service = NodeDocumentService(storage)
+    detail_service = NodeDetailService(storage, tree_service)
+    title = str(storage.project_store.load_snapshot(project_id)["tree_state"]["node_index"][root_id]["title"])
+    doc_service.put_document(
+        project_id,
+        root_id,
+        "frame",
+        f"# Task Title\n{title}\n\n# Task-Shaping Fields\n- target platform:\n",
+    )
+    detail_service.bump_frame_revision(project_id, root_id)
+    state = detail_service.confirm_frame(project_id, root_id)
+    assert state["active_step"] == "clarify"
+    service = SplitService(storage, tree_service, FakeCodexClient(payloads=[]), split_timeout=5)
+
+    with pytest.raises(SplitNotAllowed, match="no remaining clarify questions"):
+        service.split_node(project_id, root_id, "workflow")
+
+
+def test_split_service_rejects_when_frame_needs_reconfirm(
+    storage: Storage,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    doc_service = NodeDocumentService(storage)
+    detail_service = NodeDetailService(storage, tree_service)
+    title = str(storage.project_store.load_snapshot(project_id)["tree_state"]["node_index"][root_id]["title"])
+    doc_service.put_document(
+        project_id,
+        root_id,
+        "frame",
+        f"# Task Title\n{title}\n\n# Task-Shaping Fields\n- target platform:\n",
+    )
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+    detail_service.update_clarify_answers(
+        project_id,
+        root_id,
+        [{"field_name": "target platform", "custom_answer": "web"}],
+    )
+    state = detail_service.apply_clarify_to_frame(project_id, root_id)
+    assert state["active_step"] == "frame"
+    assert state["frame_needs_reconfirm"] is True
+    service = SplitService(storage, tree_service, FakeCodexClient(payloads=[]), split_timeout=5)
+
+    with pytest.raises(SplitNotAllowed, match="re-confirmed"):
+        service.split_node(project_id, root_id, "workflow")
 
 
 def test_split_status_marks_stale_jobs_as_failed(

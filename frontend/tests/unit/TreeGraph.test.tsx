@@ -208,6 +208,11 @@ function buildNode(overrides: Partial<NodeRecord>): NodeRecord {
     hierarchical_number: '1',
     is_superseded: false,
     created_at: '2026-03-20T00:00:00Z',
+    workflow: {
+      frame_confirmed: false,
+      active_step: 'frame',
+      spec_confirmed: false,
+    },
     ...overrides,
   }
 }
@@ -410,6 +415,85 @@ describe('TreeGraph', () => {
     expect(screen.getByText('AI Split')).toBeInTheDocument()
     expect(screen.getByText('Workflow')).toBeInTheDocument()
     expect(screen.getByText('Phase Breakdown')).toBeInTheDocument()
+  })
+
+  it('disables Finish Task until spec is confirmed', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({
+            node_id: 'root',
+            status: 'ready',
+            workflow: {
+              frame_confirmed: true,
+              active_step: 'spec',
+              spec_confirmed: false,
+            },
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    const rootWrapper = screen.getByTestId('rf-node-root')
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
+    expect(screen.getByText('Finish Task').closest('button')).toBeDisabled()
+  })
+
+  it('disables Split until the node reaches the Spec workflow step', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({
+            node_id: 'root',
+            status: 'ready',
+            workflow: {
+              frame_confirmed: true,
+              active_step: 'clarify',
+              spec_confirmed: false,
+            },
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    const rootWrapper = screen.getByTestId('rf-node-root')
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
+    expect(screen.getByText('Workflow').closest('button')).toBeDisabled()
+  })
+
+  it('enables Finish Task and Split only when workflow readiness is met', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({
+            node_id: 'root',
+            status: 'ready',
+            workflow: {
+              frame_confirmed: true,
+              active_step: 'spec',
+              spec_confirmed: true,
+            },
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    const rootWrapper = screen.getByTestId('rf-node-root')
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
+    expect(screen.getByText('Finish Task').closest('button')).toBeEnabled()
+    expect(screen.getByText('Workflow').closest('button')).toBeEnabled()
   })
 
   it('shows Describe -> Frame -> Clarify -> Spec stepper in the detail panel header', async () => {

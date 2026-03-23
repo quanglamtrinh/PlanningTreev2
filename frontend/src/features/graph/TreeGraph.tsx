@@ -523,12 +523,15 @@ export function TreeGraph({
             codexAvailable &&
             !node.is_superseded &&
             (activeChildrenById.get(node.node_id) ?? []).length === 0 &&
-            (node.status === 'ready' || node.status === 'in_progress'),
+            (node.status === 'ready' || node.status === 'in_progress') &&
+            node.workflow.spec_confirmed,
           canSplit:
             codexAvailable &&
             !node.is_superseded &&
             node.status !== 'done' &&
-            (activeChildrenById.get(node.node_id) ?? []).length === 0,
+            (activeChildrenById.get(node.node_id) ?? []).length === 0 &&
+            node.workflow.frame_confirmed &&
+            node.workflow.active_step === 'spec',
           canOpenBreadcrumb: codexAvailable,
           isSplitting: splitStatus === 'active' && splittingNodeId === node.node_id,
           isSplitDisabled: splitStatus === 'active',

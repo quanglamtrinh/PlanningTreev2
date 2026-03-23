@@ -21,7 +21,7 @@
   flex-direction: column;
 }
 
-/* Ask / Execution / Artifact — same chrome as detail stepper (accent + underline) */
+/* Ask / Execution / Audit — same chrome as detail stepper (accent + underline) */
 .threadTabBar {
   display: flex;
   align-items: center;

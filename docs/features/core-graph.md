@@ -8,7 +8,7 @@ Deliver a graph-first slice: bootstrap a local workspace, create projects, manag
 
 - `Project`: `id`, `name`, `root_goal`, `base_workspace_root`, `project_workspace_root`, `created_at`, `updated_at`
 - `ProjectSummary`: `id`, `name`, `root_goal`, `base_workspace_root`, `project_workspace_root`, `created_at`, `updated_at`
-- `Node` (public snapshot): `node_id`, `parent_id`, `child_ids`, `title`, `description`, `status`, `node_kind`, `depth`, `display_order`, `hierarchical_number`, `created_at`, `is_superseded`
+- `Node` (public snapshot): `node_id`, `parent_id`, `child_ids`, `title`, `description`, `status`, `node_kind`, `depth`, `display_order`, `hierarchical_number`, `created_at`, `is_superseded`, `workflow`
 - `TreeState` (public snapshot): `root_node_id`, `active_node_id`, `node_registry`
 - `Snapshot`: `schema_version`, `project`, `tree_state`, `updated_at`
 
@@ -82,10 +82,11 @@ Allowed transitions:
 - "Active children" means `node_kind !== "superseded"`.
 - All traversal logic must operate on active children only.
 - `done` nodes are frozen: no child creation.
+- `workflow` is derived from node artifact metadata and currently exposes `frame_confirmed`, `active_step`, and `spec_confirmed` for graph action gating.
 
 ## Acceptance
 
 - A fresh install can configure a workspace root and create a project.
 - The user can create child nodes, edit node title/description, reload, and keep selection state.
-- The user can split an eligible leaf node and get inline child nodes back without opening breadcrumb.
+- The user can split an eligible leaf node only after the node is workflow-ready (`frame_confirmed` and `active_step = spec`) and get inline child nodes back without opening breadcrumb.
 - Reset-to-root collapses the tree back to its root node.

@@ -1,5 +1,6 @@
 export type NodeStatus = 'locked' | 'draft' | 'ready' | 'in_progress' | 'done'
 export type NodeKind = 'root' | 'original' | 'superseded'
+export type WorkflowStep = 'frame' | 'clarify' | 'spec'
 export type SplitMode =
   | 'workflow'
   | 'simplify_workflow'
@@ -68,6 +69,13 @@ export interface NodeRecord {
   hierarchical_number: string
   created_at: string
   is_superseded: boolean
+  workflow: NodeWorkflowSummary
+}
+
+export interface NodeWorkflowSummary {
+  frame_confirmed: boolean
+  active_step: WorkflowStep
+  spec_confirmed: boolean
 }
 
 export interface ProjectRecord {
@@ -109,7 +117,7 @@ export interface DetailState {
   frame_confirmed: boolean
   frame_confirmed_revision: number
   frame_revision: number
-  active_step: 'frame' | 'clarify' | 'spec'
+  active_step: WorkflowStep
   workflow_notice: string | null
   generation_error?: string | null
   frame_needs_reconfirm: boolean
