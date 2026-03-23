@@ -8,12 +8,15 @@ Status: spec (Phase 1 artifact). Defines all new and modified types for the thre
 
 ```typescript
 // TypeScript
-type ThreadRole = 'audit' | 'ask_planning' | 'execution'
+type ThreadRole = 'audit' | 'ask_planning' | 'execution' | 'integration'
 ```
+
+- `audit`, `ask_planning`, `execution`: used by task nodes
+- `integration`: used by review nodes only (for agent-based integration rollup)
 
 ```python
 # Python (typing)
-ThreadRole = Literal["audit", "ask_planning", "execution"]
+ThreadRole = Literal["audit", "ask_planning", "execution", "integration"]
 ```
 
 ### Extended NodeKind
@@ -28,17 +31,21 @@ type NodeKind = 'root' | 'original' | 'superseded' | 'review'
 _ALLOWED_NODE_KINDS = {"root", "original", "superseded", "review"}
 ```
 
-### Extended NodeStatus
+### NodeStatus (unchanged)
+
+`node.status` stays coarse. It does NOT gain `executing` or `in_review` values. Execution/review lifecycle is tracked solely by `execution_state.status`.
 
 ```typescript
-// TypeScript — was: 'locked' | 'draft' | 'ready' | 'in_progress' | 'done'
-type NodeStatus = 'locked' | 'draft' | 'ready' | 'in_progress' | 'done' | 'executing' | 'in_review'
+// TypeScript — unchanged
+type NodeStatus = 'locked' | 'draft' | 'ready' | 'in_progress' | 'done'
 ```
 
 ```python
-# Python — _ALLOWED_NODE_STATUSES in project_store.py
-_ALLOWED_NODE_STATUSES = {"locked", "draft", "ready", "in_progress", "done", "executing", "in_review"}
+# Python — _ALLOWED_NODE_STATUSES in project_store.py — unchanged
+_ALLOWED_NODE_STATUSES = {"locked", "draft", "ready", "in_progress", "done"}
 ```
+
+UI badges for execution/review state ("Executing", "In Review", "Accepted") are derived from `execution_state.status`, not from `node.status`. See `execution-state-model.md` for the Status Model section.
 
 ### ExecutionStatus
 
@@ -138,7 +145,7 @@ interface NodeRecord {
   child_ids: string[]
   title: string
   description: string
-  status: NodeStatus          // extended with 'executing' | 'in_review'
+  status: NodeStatus          // unchanged (coarse); execution lifecycle in execution_state
   node_kind: NodeKind         // extended with 'review'
   depth: number
   display_order: number
@@ -147,8 +154,8 @@ interface NodeRecord {
   workflow: NodeWorkflowSummary | null  // null for review nodes
 
   // NEW fields
-  execution_state?: ExecutionState | null   // present after Finish Task
   review_node_id?: string | null            // present on parent that has been split
+  // Note: execution_state is NOT in NodeRecord / tree.json — it is loaded separately via detail-state
 }
 ```
 
@@ -160,17 +167,18 @@ _ALLOWED_NODE_FIELDS = {
     "child_ids",
     "title",
     "description",
-    "status",
-    "node_kind",
+    "status",           # coarse: locked/draft/ready/in_progress/done (unchanged)
+    "node_kind",        # extended with "review"
     "depth",
     "display_order",
     "hierarchical_number",
     "created_at",
     # NEW
-    "execution_state",
-    "review_node_id",
+    "review_node_id",   # points to review node (on parent that was split)
 }
 ```
+
+Note: `execution_state` is stored in a separate file (`execution_state.json` in the node directory), NOT as a field in `tree.json`. This keeps snapshot payloads lean. Execution state is loaded on demand via `detail-state` endpoint.
 
 ### NodeWorkflowSummary (extended)
 

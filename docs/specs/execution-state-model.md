@@ -21,8 +21,8 @@ Per-node structure stored in `execution_state.json` within the node's working di
 | Field | Type | Description |
 |-------|------|-------------|
 | `status` | string enum | Current execution lifecycle phase |
-| `initial_sha` | string or null | Baseline content hash at execution start |
-| `head_sha` | string or null | Content hash after execution completes |
+| `initial_sha` | string or null | Workspace/subtree state SHA inherited from the latest checkpoint when this node's turn began |
+| `head_sha` | string or null | Workspace/subtree state SHA after execution completes |
 | `started_at` | ISO string or null | Timestamp when Finish Task was clicked |
 | `completed_at` | ISO string or null | Timestamp when execution finished |
 
@@ -76,14 +76,15 @@ When Finish Task is triggered:
    ```json
    {
      "status": "executing",
-     "initial_sha": "<content-hash>",
+     "initial_sha": "<workspace-sha-from-checkpoint>",
      "head_sha": null,
      "started_at": "<ISO-now>",
      "completed_at": null
    }
    ```
+   `initial_sha` is the workspace/subtree state SHA from the latest checkpoint of the parent's review node. For the first child, this is K0's SHA. For sibling N, this is K(N-1)'s SHA. This is the same SHA type used in checkpoints and handoff.
 
-3. **Update node status** in `tree.json`: set `status = "executing"`
+3. **Update node status** in `tree.json`: set `status = "in_progress"` (node.status stays coarse — see Status Model below)
 
 4. **Create execution chat session**: `chat/{node_id}/execution.json` with the new Codex `thread_id`
 
@@ -133,14 +134,69 @@ If Codex execution fails:
 
 ## SHA Strategy
 
-Until git integration is implemented, SHAs are content-based hashes:
+**SHA always means workspace/subtree state SHA.** It represents the state of the workspace (code, files) at a point in time, not the state of shaping artifacts.
 
-- **initial_sha**: SHA-256 of `frame.md + spec.md` content at Finish Task time
-- **head_sha**: SHA-256 of workspace content after execution completes (or same content hash if execution made no file changes)
+### Consistent SHA meaning across the system
 
-Format: `sha256:<hex-digest>` (prefix distinguishes from future git SHAs which will be plain hex).
+| Context | SHA meaning |
+|---------|------------|
+| `execution_state.initial_sha` | Workspace state when this node's turn began (inherited from checkpoint) |
+| `execution_state.head_sha` | Workspace state after this node's execution completed |
+| Checkpoint K(N) SHA | Workspace state after sibling N's execution + local review |
+| Rollup SHA | Final workspace state after entire subtree completed |
+| Upward handoff SHA | Same as rollup SHA |
 
-SHA computation is a pure function: `compute_content_sha(node_dir: Path) -> str`.
+All SHAs are the same type: workspace/subtree state. This ensures local review (initial_sha vs head_sha), checkpoint chaining, and sibling seeding all use a single coherent anchor.
+
+### Placeholder implementation (before git integration)
+
+Until real git integration:
+- SHA is computed as SHA-256 of the workspace directory tree (file paths + contents)
+- Format: `sha256:<hex-digest>`
+- Computation: `compute_workspace_sha(workspace_root: Path) -> str`
+
+After git integration:
+- SHA becomes the actual git commit SHA
+- Format: plain 40-char hex (standard git SHA)
+- The schema field stays the same; only the value format changes
+
+### What SHA is NOT
+
+SHA is not a hash of shaping artifacts (frame.md + spec.md). If artifact fingerprinting is needed later, it should use a separate field name (e.g., `artifact_fingerprint`), not the `sha` fields.
+
+## Status Model
+
+There are two separate status systems. They do not overlap.
+
+### node.status (coarse workflow/tree state)
+
+```
+"locked" | "draft" | "ready" | "in_progress" | "done"
+```
+
+`node.status` describes where the node is in the overall tree lifecycle. It does NOT have `executing` or `in_review` values. Those are tracked by `execution_state.status`.
+
+| node.status | Meaning |
+|-------------|---------|
+| `locked` | Waiting for predecessor or parent |
+| `draft` | Parent has been split (children exist) |
+| `ready` | Node can begin shaping |
+| `in_progress` | User has started working on this node (chat or shaping) |
+| `done` | Node work is complete (all reviews accepted) |
+
+Finish Task sets `node.status = "in_progress"` (if not already). It does NOT set a special execution status on node.status.
+
+### execution_state.status (execution/review lifecycle)
+
+```
+"idle" | "executing" | "completed" | "review_pending" | "review_accepted"
+```
+
+`execution_state.status` is the **sole source of truth** for execution and review lifecycle. UI badges ("Executing", "In Review", "Accepted") read from this field, not from `node.status`.
+
+### When node.status transitions to "done"
+
+`node.status` becomes `"done"` when `execution_state.status` reaches `"review_accepted"`. This is the only path to `done` for task nodes that go through execution.
 
 ## Detail State Extensions
 

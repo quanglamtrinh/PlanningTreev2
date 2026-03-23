@@ -49,10 +49,12 @@ This document is the single source of truth for what actions are allowed when. S
 
 | Action | Preconditions | Error if violated |
 |--------|--------------|-------------------|
-| **Start local review** | `execution_state.status == completed` | `ReviewNotAllowed` |
-| **Accept local review** | `execution_state.status == review_pending` AND user has provided summary | `ReviewNotAllowed` |
+| **Start local review** (Layer 1) | `execution_state.status == completed` | `ReviewNotAllowed` |
+| **Accept local review** (Layer 1) | `execution_state.status == review_pending` AND user has provided summary | `ReviewNotAllowed` |
 | **Activate next sibling** | Previous sibling `execution_state.status == review_accepted` AND checkpoint K(N) exists AND next `pending_siblings` entry exists | `SiblingActivationNotAllowed` |
-| **Accept rollup review** | `rollup.status == ready` AND user has provided summary | `ReviewNotAllowed` |
+| **Start integration rollup** (Layer 2) | `rollup.status == ready` (auto-triggered when all siblings accepted) | `ReviewNotAllowed` |
+| **Accept integration rollup** (Layer 2) | Integration agent has produced rollup summary AND user approves | `ReviewNotAllowed` |
+| **Package audit** (Layer 3) | Rollup accepted AND package written to parent audit | N/A (happens in parent audit chat) |
 
 ## Derived UI State
 
@@ -81,6 +83,10 @@ The backend returns these derived booleans so the frontend doesn't need to re-de
 1. **Service layer** (primary): all precondition checks happen in service methods. This is the authoritative enforcement.
 2. **Route layer**: routes pass through to services; no duplicate checks needed.
 3. **Frontend** (secondary): UI uses derived state fields to disable buttons/actions. This is for UX only — the service layer is the real gate.
+
+## Status Model Note
+
+All execution/review gates use `execution_state.status`, NOT `node.status`. `node.status` remains coarse (`locked | draft | ready | in_progress | done`) and is NOT extended with execution/review values. See `execution-state-model.md` Status Model section.
 
 ## Invariant: shaping_frozen is permanent
 

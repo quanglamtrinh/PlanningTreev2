@@ -30,9 +30,11 @@ This separation ensures that tree traversal logic (depth calculation, sibling or
 
 A review node is created during `_materialize_split_payload` in `split_service.py`, at the same time as the first child node.
 
-### No Workflow
+### No Shaping Workflow
 
 Review nodes do not go through the frame/clarify/spec workflow. They have no `frame.md`, `clarify.json`, or `spec.md`. The `workflow` summary for a review node is null/empty.
+
+Review nodes DO have a dedicated `integration` thread for agent-based rollup analysis (see Integration Thread section below).
 
 The UI shows a dedicated checkpoint/rollup view for review nodes instead of the shaping NodeDetailCard.
 
@@ -105,8 +107,10 @@ K3 (after 1.C)
   -> rollup review
 ```
 
-- **K0**: created at split time. SHA is the parent's content hash at split. Summary is null.
-- **K(N)**: created when sibling N's local review is accepted. SHA is sibling N's `head_sha`. Summary is the accepted local review summary.
+- **K0**: created at split time. SHA is the workspace/subtree state SHA at the moment of split. Summary is null.
+- **K(N)**: created when sibling N's local review is accepted. SHA is sibling N's `head_sha` (workspace state after that sibling's execution). Summary is the accepted local review summary.
+
+All SHAs here are workspace/subtree state SHAs — the same type used in `execution_state.initial_sha`, `execution_state.head_sha`, and upward handoff. See `execution-state-model.md` SHA Strategy for the consistent definition.
 
 ### Checkpoint as Sibling Seed
 
@@ -115,6 +119,71 @@ When a new sibling is activated (see `lazy-sibling-creation.md`), its audit thre
 - The sibling's split item (title + objective from `pending_siblings`)
 
 This ensures each sibling starts from the latest accepted state, not stale split-time context.
+
+## Three-Layer Review Model
+
+Review happens at three distinct layers. Each layer has a different scope and purpose.
+
+### Layer 1: Local Review (child audit)
+
+- **Where**: in each child node's `audit` thread, after execution completes
+- **Scope**: review that individual subtask's own work
+- **Compares**: `initial_sha` (workspace state when child started) vs `head_sha` (workspace state after execution)
+- **Outcome**: accepted summary + head_sha for this one child
+- **Purpose**: "Did this subtask do what its spec said?"
+
+### Layer 2: Integration Rollup (review node)
+
+- **Where**: in the review node's dedicated `integration` thread
+- **Scope**: review how all children fit together as a whole
+- **Input**: all checkpoint summaries + SHAs (K0 through K(N)), all accepted local review summaries
+- **Agent role**: detect conflicts between subtasks, overlap, missing glue, integration mismatches, ordering issues
+- **Outcome**: rollup summary + final subtree SHA
+- **Purpose**: "Do these pieces work together correctly?"
+
+The review node has its own Codex thread (`integration` role — see `thread-state-model.md`) specifically for this agent-based analysis. This is NOT a standard ask/planning or execution thread. It is a specialized thread where the agent reasons across the set of child SHAs and summaries.
+
+### Layer 3: Package Audit (parent audit)
+
+- **Where**: in the parent node's `audit` thread, after rollup is accepted
+- **Scope**: review the entire rollup package against the parent's original intent
+- **Input**: accepted rollup summary + SHA from the review node
+- **Question**: "Does this completed package satisfy my frame and split rationale?"
+- **Outcome**: parent accepts or flags issues with the package
+- **Purpose**: "Is the order I placed fulfilled correctly?"
+
+### Naming Convention
+
+To avoid confusion between "review" at different layers:
+
+| Layer | Name | Location |
+|-------|------|----------|
+| Layer 1 | **Local review** | child audit thread |
+| Layer 2 | **Integration rollup** | review node (integration thread) |
+| Layer 3 | **Package audit** | parent audit thread |
+
+## Integration Thread
+
+Review nodes have a dedicated `integration` thread (stored at `chat/{review_node_id}/integration.json`).
+
+This thread is:
+- Created lazily when rollup status transitions to `ready` (all siblings accepted)
+- Used by a Codex agent to perform integration analysis
+- NOT interactive chat — agent runs analysis, user reviews the output
+- Read-only after rollup is accepted
+
+The integration thread receives:
+- Parent's confirmed frame and split rationale
+- All checkpoint records (K0 through final)
+- All accepted local review summaries from child nodes
+- Workspace/subtree state at each checkpoint
+
+The agent's job:
+- Detect conflicts between subtask outputs
+- Identify overlap or redundant work
+- Flag missing integration glue
+- Check that the realized subtree matches the split rationale
+- Produce a rollup summary + final subtree SHA
 
 ## Rollup Review
 
@@ -144,35 +213,36 @@ Rollup transitions from `pending` to `ready` **automatically** when:
 
 This check runs inside `accept_local_review()` after updating the checkpoint. No user action needed.
 
-### Rollup Review Process
+### Rollup Review Process (Integration Rollup — Layer 2)
 
 When rollup is `ready`:
 
-1. The review node's detail view shows a "Rollup Review" section
-2. Agent (Codex) can be invoked to compare:
-   - The integrated subtree result (all checkpoint summaries + final SHA)
-   - Against the parent's confirmed frame and split rationale
-3. Agent produces a rollup summary answering:
-   - Do the children collectively satisfy the parent task?
-   - Does the realized subtree match the split rationale?
-   - Are there cross-child integration gaps?
-4. User reviews and accepts the rollup summary
-5. On acceptance: `rollup.status = "accepted"`, `rollup.summary` and `rollup.sha` are set
+1. Create the `integration` thread for the review node (`chat/{review_node_id}/integration.json`)
+2. Seed the thread with parent frame, split rationale, all checkpoint records, all accepted local review summaries
+3. Run Codex agent in the integration thread — agent performs automated analysis:
+   - Detect conflicts, overlap, missing glue, integration mismatches
+   - Compare realized subtree against parent's split rationale
+4. Agent produces a rollup summary + final subtree SHA
+5. Review node detail view shows the rollup summary for user review
+6. User accepts or flags issues
+7. On acceptance: `rollup.status = "accepted"`, `rollup.summary` and `rollup.sha` are set
 
-### Upward Handoff
+### Upward Handoff (to Package Audit — Layer 3)
 
-After rollup is accepted, the review node holds the official result for the parent:
+After rollup is accepted, the accepted package is written to the parent node's `audit` thread:
 
 ```json
 {
   "summary": "Rollup summary text...",
-  "sha": "sha256:final-subtree-hash",
+  "sha": "sha256:final-subtree-sha",
   "review_node_id": "uuid-hex",
   "accepted_at": "ISO"
 }
 ```
 
 This is the compact handoff unit. The parent receives this, not raw child discussion.
+
+The parent then performs **package audit** (Layer 3) in its own audit thread: reviewing whether the completed package satisfies the parent's frame and split rationale. See `thread-state-model.md` audit Phase 4.
 
 ## Graph Layout
 
@@ -217,6 +287,9 @@ Review nodes appear in `node_registry` (the public snapshot response) with `node
 2. Review node is created exactly once per split (alongside the first child).
 3. Checkpoints are append-only. No checkpoint is ever removed.
 4. Rollup status transitions forward only: `pending -> ready -> accepted`.
-5. Review node has no workflow artifacts (no frame/clarify/spec).
+5. Review node has no shaping workflow artifacts (no frame/clarify/spec).
 6. Review node `status` is always `ready` (it does not go through locked/draft/in_progress/done).
 7. `pending_siblings` entries are ordered by `index` and processed sequentially.
+8. All SHAs in checkpoints and rollup are workspace/subtree state SHAs (same type as `execution_state` SHAs).
+9. The `integration` thread is created lazily when rollup transitions to `ready`, not at split time.
+10. Review at three layers: local review (child audit) -> integration rollup (review node) -> package audit (parent audit).
