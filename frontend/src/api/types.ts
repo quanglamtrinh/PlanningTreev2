@@ -1,6 +1,9 @@
 export type NodeStatus = 'locked' | 'draft' | 'ready' | 'in_progress' | 'done'
-export type NodeKind = 'root' | 'original' | 'superseded'
+export type NodeKind = 'root' | 'original' | 'superseded' | 'review'
 export type WorkflowStep = 'frame' | 'clarify' | 'spec'
+export type ThreadRole = 'audit' | 'ask_planning' | 'execution' | 'integration'
+export type ExecutionStatus = 'idle' | 'executing' | 'completed' | 'review_pending' | 'review_accepted'
+export type RollupStatus = 'pending' | 'ready' | 'accepted'
 export type SplitMode =
   | 'workflow'
   | 'simplify_workflow'
@@ -69,7 +72,8 @@ export interface NodeRecord {
   hierarchical_number: string
   created_at: string
   is_superseded: boolean
-  workflow: NodeWorkflowSummary
+  workflow: NodeWorkflowSummary | null
+  review_node_id?: string | null
 }
 
 export interface NodeWorkflowSummary {
@@ -127,6 +131,14 @@ export interface DetailState {
   spec_read_only: boolean
   spec_stale: boolean
   spec_confirmed: boolean
+  execution_started?: boolean
+  execution_completed?: boolean
+  shaping_frozen?: boolean
+  can_finish_task?: boolean
+  execution_status?: ExecutionStatus | null
+  audit_writable?: boolean
+  package_audit_ready?: boolean
+  review_status?: RollupStatus | null
 }
 
 export interface ClarifyOption {
@@ -251,6 +263,7 @@ export interface ChatMessage {
 
 export interface ChatSession {
   thread_id: string | null
+  thread_role: ThreadRole
   active_turn_id: string | null
   messages: ChatMessage[]
   created_at: string
@@ -261,4 +274,44 @@ export interface SendMessageResponse {
   user_message: ChatMessage
   assistant_message: ChatMessage
   active_turn_id: string
+}
+
+// ── Execution state types ────────────────────────────────────────
+
+export interface ExecutionState {
+  status: ExecutionStatus
+  initial_sha: string | null
+  head_sha: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+// ── Review and checkpoint types ──────────────────────────────────
+
+export interface CheckpointRecord {
+  label: string
+  sha: string
+  summary: string | null
+  source_node_id: string | null
+  accepted_at: string
+}
+
+export interface RollupState {
+  status: RollupStatus
+  summary: string | null
+  sha: string | null
+  accepted_at: string | null
+}
+
+export interface PendingSibling {
+  index: number
+  title: string
+  objective: string
+  materialized_node_id: string | null
+}
+
+export interface ReviewState {
+  checkpoints: CheckpointRecord[]
+  rollup: RollupState
+  pending_siblings: PendingSibling[]
 }

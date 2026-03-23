@@ -267,6 +267,8 @@ interface DetailStateResponse {
   shaping_frozen: boolean
   can_finish_task: boolean
   execution_status: ExecutionStatus | null
+  audit_writable: boolean              // true when audit chat is writable (local review OR package audit)
+  package_audit_ready: boolean         // true when review node rollup accepted + package appended
   review_status: RollupStatus | null   // for review nodes only
 }
 ```

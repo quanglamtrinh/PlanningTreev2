@@ -108,13 +108,13 @@ These appends happen via service-level side effects (not user action). They are 
 
 **Phase 3 — Local review (after execution completes):**
 
-Audit opens for user + agent chat to perform local review. See Read-Only Rules below.
+Audit opens for user + agent chat to perform local review. This applies to nodes that went through execution (leaf task nodes).
 
 **Phase 4 — Package audit (after rollup review from review node):**
 
-If this node is a parent that was split, after its review node completes integration rollup, the accepted rollup package (summary + SHA) is written to this node's audit. The parent then reviews whether the package satisfies its own frame and split rationale.
+If this node is a parent that was split, after its review node completes integration rollup, the accepted rollup package (summary + SHA) is written to this node's audit. Audit then opens for user + agent chat so the parent can review whether the package satisfies its own frame and split rationale. This applies even if the parent never executed (split parents typically don't execute).
 
-Before execution completes, audit is **read-only** from the user's perspective.
+Audit is **read-only** except in these two writability windows. See Read-Only Rules below.
 
 ### execution
 
@@ -128,7 +128,15 @@ Execution thread uses an automated Codex prompt (not interactive chat). The thre
 |-------------|---------------|---------------|
 | `ask_planning` | `execution_state` exists on node (Finish Task was clicked) | Before Finish Task |
 | `execution` | `execution_state.status == completed` | During execution (`status == executing`) — but only Codex writes, not user |
-| `audit` | `execution_state` is null OR `execution_state.status != completed` | After execution completes (`status == completed`) |
+| `audit` | Neither writability condition is met (see below) | **Exactly two cases** (see below) |
+
+**Audit is writable in exactly two cases:**
+
+1. **Local review**: after this node's own execution completes (`execution_state.status >= completed`). Applies to leaf task nodes that went through Finish Task.
+
+2. **Package audit**: after this node's review node has produced an accepted rollup package AND that package has been appended to this node's audit. Applies to parent nodes that were split. Condition: `node.review_node_id` is set AND the review node's `rollup.status == accepted` AND the rollup package message exists in audit.
+
+These two cases are mutually exclusive in practice: a leaf node executes (case 1), a split parent receives a rollup package (case 2). A node that both executes and later splits would use case 1 first, then case 2 after its children complete.
 
 "Read-only" means:
 - `create_message()` raises `ThreadReadOnly` error

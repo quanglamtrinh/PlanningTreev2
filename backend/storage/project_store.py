@@ -32,8 +32,9 @@ _ALLOWED_NODE_FIELDS = {
     "display_order",
     "hierarchical_number",
     "created_at",
+    "review_node_id",
 }
-_ALLOWED_NODE_KINDS = {"root", "original", "superseded"}
+_ALLOWED_NODE_KINDS = {"root", "original", "superseded", "review"}
 _ALLOWED_NODE_STATUSES = {"locked", "draft", "ready", "in_progress", "done"}
 
 

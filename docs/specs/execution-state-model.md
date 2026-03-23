@@ -21,7 +21,7 @@ Per-node structure stored in `execution_state.json` within the node's working di
 | Field | Type | Description |
 |-------|------|-------------|
 | `status` | string enum | Current execution lifecycle phase |
-| `initial_sha` | string or null | Workspace/subtree state SHA inherited from the latest checkpoint when this node's turn began |
+| `initial_sha` | string or null | Workspace/subtree state SHA at execution start (source depends on context — see initial_sha Source Selection) |
 | `head_sha` | string or null | Workspace/subtree state SHA after execution completes |
 | `started_at` | ISO string or null | Timestamp when Finish Task was clicked |
 | `completed_at` | ISO string or null | Timestamp when execution finished |
@@ -76,13 +76,13 @@ When Finish Task is triggered:
    ```json
    {
      "status": "executing",
-     "initial_sha": "<workspace-sha-from-checkpoint>",
+     "initial_sha": "<workspace-sha>",
      "head_sha": null,
      "started_at": "<ISO-now>",
      "completed_at": null
    }
    ```
-   `initial_sha` is the workspace/subtree state SHA from the latest checkpoint of the parent's review node. For the first child, this is K0's SHA. For sibling N, this is K(N-1)'s SHA. This is the same SHA type used in checkpoints and handoff.
+   `initial_sha` source depends on context — see initial_sha Source Selection below.
 
 3. **Update node status** in `tree.json`: set `status = "in_progress"` (node.status stays coarse — see Status Model below)
 
@@ -140,13 +140,31 @@ If Codex execution fails:
 
 | Context | SHA meaning |
 |---------|------------|
-| `execution_state.initial_sha` | Workspace state when this node's turn began (inherited from checkpoint) |
+| `execution_state.initial_sha` | Workspace state at the start of this node's execution |
 | `execution_state.head_sha` | Workspace state after this node's execution completed |
 | Checkpoint K(N) SHA | Workspace state after sibling N's execution + local review |
 | Rollup SHA | Final workspace state after entire subtree completed |
 | Upward handoff SHA | Same as rollup SHA |
 
 All SHAs are the same type: workspace/subtree state. This ensures local review (initial_sha vs head_sha), checkpoint chaining, and sibling seeding all use a single coherent anchor.
+
+### initial_sha Source Selection
+
+`initial_sha` always means the workspace/subtree state at the start of execution. The source depends on context:
+
+| Node context | initial_sha source |
+|-------------|-------------------|
+| Node belongs to a checkpointed sibling chain | Latest checkpoint SHA from parent's review node. For first child: K0's SHA. For sibling N: K(N-1)'s SHA. |
+| Standalone node (root, or leaf without parent review node) | Current workspace SHA computed at Finish Task time |
+
+The rule is simple: if a checkpoint exists, use it; otherwise, snapshot the workspace now.
+
+This means:
+- Root node executing directly: `initial_sha = compute_workspace_sha(workspace_root)` at Finish Task time
+- Any leaf that was never part of a split chain: same fallback
+- Sibling in a chain: `initial_sha = parent_review_node.checkpoints[-1].sha`
+
+In all cases, the SHA is the same type (workspace state), only the source of the baseline differs.
 
 ### Placeholder implementation (before git integration)
 

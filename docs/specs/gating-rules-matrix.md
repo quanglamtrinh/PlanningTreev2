@@ -40,7 +40,8 @@ This document is the single source of truth for what actions are allowed when. S
 |--------|--------------|-------------------|
 | **Send message to ask_planning** | `shaping_frozen == false` (no execution_state exists) | `ThreadReadOnly` |
 | **Send message to execution** | Never (execution is automated, user cannot send messages) | `ThreadReadOnly` |
-| **Send message to audit** | `execution_state.status == completed` or later | `ThreadReadOnly` |
+| **Send message to audit (local review)** | `execution_state.status >= completed` (node went through execution) | `ThreadReadOnly` |
+| **Send message to audit (package audit)** | `node.review_node_id` is set AND review node `rollup.status == accepted` AND rollup package appended to audit | `ThreadReadOnly` |
 | **Reset ask_planning** | `shaping_frozen == false` | `ThreadReadOnly` |
 | **Reset execution** | Never | `ThreadReadOnly` |
 | **Reset audit** | Never (audit seed messages are immutable) | `ThreadReadOnly` |
@@ -65,8 +66,10 @@ The backend returns these derived booleans so the frontend doesn't need to re-de
 | `can_finish_task` | spec confirmed AND leaf AND status ready/in_progress AND no execution_state | Finish Task button |
 | `shaping_frozen` | execution_state exists | All shaping tab interactions |
 | `execution_started` | execution_state exists AND status != idle | Execution tab visibility |
-| `execution_completed` | execution_state.status in {completed, review_pending, review_accepted} | Audit chat enablement |
+| `execution_completed` | execution_state.status in {completed, review_pending, review_accepted} | Audit chat (local review) |
 | `can_accept_local_review` | execution_state.status == review_pending | Accept Review button |
+| `audit_writable` | `execution_completed` OR `package_audit_ready` | Audit ComposerBar |
+| `package_audit_ready` | review_node_id set AND review node rollup.status == accepted AND package appended | Audit chat (package audit) |
 
 ## New Error Types
 

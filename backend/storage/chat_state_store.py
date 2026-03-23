@@ -7,15 +7,19 @@ from typing import Any
 
 from backend.config.app_config import AppPaths
 from backend.errors.app_errors import ProjectNotFound
-from backend.storage.file_utils import atomic_write_json, iso_now, load_json
+from backend.storage.file_utils import atomic_write_json, ensure_dir, iso_now, load_json
 from backend.storage.project_locks import ProjectLockRegistry
 from backend.storage.workspace_store import WorkspaceStore
 
+_VALID_THREAD_ROLES = {"audit", "ask_planning", "execution", "integration"}
+_DEFAULT_THREAD_ROLE = "ask_planning"
 
-def _default_session() -> dict[str, Any]:
+
+def _default_session(thread_role: str = _DEFAULT_THREAD_ROLE) -> dict[str, Any]:
     now = iso_now()
     return {
         "thread_id": None,
+        "thread_role": thread_role,
         "active_turn_id": None,
         "messages": [],
         "created_at": now,
@@ -41,41 +45,98 @@ class ChatStateStore:
     def _chat_dir(self, project_id: str) -> Path:
         return self._project_dir(project_id) / "chat"
 
-    def path(self, project_id: str, node_id: str) -> Path:
+    def _flat_path(self, project_id: str, node_id: str) -> Path:
+        """Legacy flat file path: chat/{node_id}.json"""
         return self._chat_dir(project_id) / f"{node_id}.json"
 
-    def read_session(self, project_id: str, node_id: str) -> dict[str, Any]:
-        with self._lock_registry.for_project(project_id):
-            payload = load_json(self.path(project_id, node_id), default=None)
-            return self._normalize_session(payload)
+    def _role_dir(self, project_id: str, node_id: str) -> Path:
+        """Directory for per-role sessions: chat/{node_id}/"""
+        return self._chat_dir(project_id) / node_id
 
-    def write_session(self, project_id: str, node_id: str, session: dict[str, Any]) -> dict[str, Any]:
+    def _role_path(self, project_id: str, node_id: str, thread_role: str) -> Path:
+        """Per-role session path: chat/{node_id}/{role}.json"""
+        return self._role_dir(project_id, node_id) / f"{thread_role}.json"
+
+    def path(self, project_id: str, node_id: str, thread_role: str = _DEFAULT_THREAD_ROLE) -> Path:
+        """Public path accessor. Returns the role-based path."""
+        return self._role_path(project_id, node_id, thread_role)
+
+    def _maybe_migrate(self, project_id: str, node_id: str) -> None:
+        """Lazy migration: move flat chat/{node_id}.json to chat/{node_id}/ask_planning.json.
+
+        Migration runs on first access. If directory already exists, skip.
+        If flat file does not exist, skip (nothing to migrate).
+        """
+        flat = self._flat_path(project_id, node_id)
+        role_dir = self._role_dir(project_id, node_id)
+
+        if role_dir.exists():
+            return
+        if not flat.exists():
+            return
+
+        payload = load_json(flat, default=None)
+        if payload is None:
+            flat.unlink(missing_ok=True)
+            return
+
+        if isinstance(payload, dict):
+            payload["thread_role"] = _DEFAULT_THREAD_ROLE
+
+        ensure_dir(role_dir)
+        target = role_dir / f"{_DEFAULT_THREAD_ROLE}.json"
+        atomic_write_json(target, payload)
+        flat.unlink(missing_ok=True)
+
+    def read_session(
+        self, project_id: str, node_id: str, thread_role: str = _DEFAULT_THREAD_ROLE
+    ) -> dict[str, Any]:
+        role = thread_role if thread_role in _VALID_THREAD_ROLES else _DEFAULT_THREAD_ROLE
+        with self._lock_registry.for_project(project_id):
+            self._maybe_migrate(project_id, node_id)
+            payload = load_json(self._role_path(project_id, node_id, role), default=None)
+            return self._normalize_session(payload, role)
+
+    def write_session(
+        self, project_id: str, node_id: str, session: dict[str, Any],
+        thread_role: str = _DEFAULT_THREAD_ROLE,
+    ) -> dict[str, Any]:
+        role = thread_role if thread_role in _VALID_THREAD_ROLES else _DEFAULT_THREAD_ROLE
         with self._lock_registry.for_project(project_id):
             project_dir = self._project_dir(project_id)
             if not project_dir.exists():
                 raise ProjectNotFound(project_id)
-            normalized = self._normalize_session(session)
+            self._maybe_migrate(project_id, node_id)
+            normalized = self._normalize_session(session, role)
             normalized["updated_at"] = iso_now()
-            atomic_write_json(self.path(project_id, node_id), normalized)
+            target = self._role_path(project_id, node_id, role)
+            ensure_dir(target.parent)
+            atomic_write_json(target, normalized)
             return copy.deepcopy(normalized)
 
-    def clear_session(self, project_id: str, node_id: str) -> dict[str, Any]:
-        return self.write_session(project_id, node_id, _default_session())
+    def clear_session(
+        self, project_id: str, node_id: str, thread_role: str = _DEFAULT_THREAD_ROLE
+    ) -> dict[str, Any]:
+        role = thread_role if thread_role in _VALID_THREAD_ROLES else _DEFAULT_THREAD_ROLE
+        return self.write_session(project_id, node_id, _default_session(role), thread_role=role)
 
     def clear_all_sessions(self, project_id: str) -> None:
         chat_dir = self._chat_dir(project_id)
         if chat_dir.exists():
             shutil.rmtree(chat_dir, ignore_errors=True)
 
-    def _normalize_session(self, payload: Any) -> dict[str, Any]:
+    def _normalize_session(self, payload: Any, thread_role: str = _DEFAULT_THREAD_ROLE) -> dict[str, Any]:
         if not isinstance(payload, dict):
-            return _default_session()
+            return _default_session(thread_role)
 
         thread_id = payload.get("thread_id")
         active_turn_id = payload.get("active_turn_id")
         raw_messages = payload.get("messages")
         created_at = payload.get("created_at")
         updated_at = payload.get("updated_at")
+        raw_role = payload.get("thread_role")
+
+        role = raw_role if isinstance(raw_role, str) and raw_role in _VALID_THREAD_ROLES else thread_role
 
         messages: list[dict[str, Any]] = []
         if isinstance(raw_messages, list):
@@ -86,6 +147,7 @@ class ChatStateStore:
 
         return {
             "thread_id": thread_id.strip() if isinstance(thread_id, str) and thread_id.strip() else None,
+            "thread_role": role,
             "active_turn_id": (
                 active_turn_id.strip()
                 if isinstance(active_turn_id, str) and active_turn_id.strip()
