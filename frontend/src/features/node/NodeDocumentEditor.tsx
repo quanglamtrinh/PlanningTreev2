@@ -1,6 +1,7 @@
 import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorView } from '@codemirror/view'
+import { vscodeMarkdownSyntaxHighlighting } from './codemirror/vscodeMarkdownHighlight'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FrameGenJobStatus, NodeDocumentKind, NodeRecord } from '../../api/types'
 import { useClarifyStore } from '../../stores/clarify-store'
@@ -272,7 +273,8 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm, readOnly 
           className={styles.codemirrorHost}
           value={entry.content}
           height="100%"
-          extensions={[markdown(), EditorView.lineWrapping]}
+          theme="none"
+          extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
           basicSetup={{
             foldGutter: false,
             lineNumbers: true,

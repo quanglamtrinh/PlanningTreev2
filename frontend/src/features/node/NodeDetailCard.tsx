@@ -170,7 +170,7 @@ export function NodeDetailCard({
         ) : null}
 
         {detailTab === 'describe' && (
-          <div className={variant === 'graph' ? styles.cardBodyAux : undefined}>
+          <div className={styles.cardBodyAux}>
             <NodeDescribePanel node={node} />
           </div>
         )}

@@ -1,12 +1,15 @@
 import type { NodeRecord } from '../../api/types'
 
-// ─── Layout constants ───────────────────────────────────────────────
-// Horizontal distance between depth levels (parent → child column gap)
-const HORIZONTAL_STEP_PX = 380
+// ─── Layout constants (vertical tree: root top → children below, siblings left–right) ───
+// Vertical distance between depth levels (parent row → child row)
+const DEPTH_STEP_PX = 380
 
-// Height of one vertical "unit" in pixels. All vertical spacing is measured
-// in these units so the math stays integer-friendly.
-const VERTICAL_UNIT_PX = 28
+/** Exported for TreeGraph position fallback when layout map misses a node. */
+export const TREE_DEPTH_STEP_PX = DEPTH_STEP_PX
+
+// Width of one horizontal "unit" in pixels. Subtree width is measured in these
+// units (same packing math as before, applied on X for siblings).
+const HORIZONTAL_UNIT_PX = 28
 
 // Every node occupies at least this many units of vertical space, regardless
 // of how short its text is. Keeps leaf nodes a comfortable height.
@@ -28,10 +31,10 @@ function estimateTextLines(value: string, charsPerLine: number): number {
     .reduce((sum, lines) => sum + lines, 0)
 }
 
+/** Height used for graph layout (graph cards: title + badge row only; no description/meta). */
 export function estimateNodeHeight(node: NodeRecord): number {
   const titleLines = estimateTextLines(node.title, 26)
-  const descriptionLines = estimateTextLines(node.description, 32)
-  return 80 + titleLines * 16 + Math.min(descriptionLines, 3) * 17
+  return 38 + titleLines * 16
 }
 
 export function buildTreeLayoutPositions({
@@ -52,7 +55,7 @@ export function buildTreeLayoutPositions({
   const subtreeUnits = new Map<string, number>()
   const positions = new Map<string, { x: number; y: number }>()
 
-  // Compute how many vertical units a subtree rooted at nodeId needs.
+  // Compute how many stack units a subtree rooted at nodeId needs (sibling axis).
   // For leaf nodes this equals the node's own height (in units).
   // For parents it equals the sum of all children's subtree units
   // PLUS gaps between siblings.
@@ -67,7 +70,7 @@ export function buildTreeLayoutPositions({
     }
     const ownUnits = Math.max(
       MIN_NODE_SPAN_UNITS,
-      Math.ceil(estimateNodeHeight(node) / VERTICAL_UNIT_PX),
+      Math.ceil(estimateNodeHeight(node) / HORIZONTAL_UNIT_PX),
     )
     const children = visibleChildrenById.get(nodeId) ?? []
     if (children.length === 0) {
@@ -91,8 +94,8 @@ export function buildTreeLayoutPositions({
 
     const nodeUnits = computeUnits(nodeId)
     positions.set(nodeId, {
-      x: Math.max(0, node.depth - baseDepth) * HORIZONTAL_STEP_PX,
-      y: (startUnit + nodeUnits / 2) * VERTICAL_UNIT_PX,
+      x: (startUnit + nodeUnits / 2) * HORIZONTAL_UNIT_PX,
+      y: Math.max(0, node.depth - baseDepth) * DEPTH_STEP_PX,
     })
 
     const children = visibleChildrenById.get(nodeId) ?? []

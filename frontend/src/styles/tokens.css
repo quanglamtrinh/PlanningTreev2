@@ -127,6 +127,44 @@
 
   --transition-fast: 0.14s ease;
   --transition-base: 0.22s ease;
+
+  /* CodeMirror markdown / fenced code — tied to accent + status colors */
+  --syntax-md-h1: var(--color-accent);
+  --syntax-md-h2: color-mix(in srgb, var(--color-accent) 84%, var(--text-primary));
+  --syntax-md-h3: color-mix(in srgb, var(--color-accent) 68%, var(--text-primary));
+  --syntax-md-h4: color-mix(in srgb, var(--color-accent) 52%, var(--text-primary));
+  --syntax-md-h5: color-mix(in srgb, var(--text-secondary) 92%, var(--text-primary));
+  --syntax-md-h6: color-mix(in srgb, var(--text-tertiary) 88%, var(--text-primary));
+  --syntax-strong: color-mix(in srgb, var(--warning) 58%, var(--text-primary));
+  --syntax-em: color-mix(in srgb, var(--color-accent) 42%, var(--text-primary));
+  --syntax-strike: var(--color-text-tertiary);
+  --syntax-link: var(--color-accent);
+  --syntax-list: color-mix(in srgb, var(--color-accent) 72%, var(--text-primary));
+  --syntax-quote: var(--color-text-tertiary);
+  --syntax-hr: var(--color-border-strong);
+  --syntax-inline-code: color-mix(in srgb, var(--danger) 52%, var(--text-primary));
+  --syntax-meta: var(--color-text-tertiary);
+  --syntax-keyword: var(--color-accent);
+  --syntax-control: color-mix(in srgb, var(--color-accent) 55%, var(--text-primary));
+  --syntax-string: color-mix(in srgb, var(--warning) 78%, var(--text-primary));
+  --syntax-string-special: color-mix(in srgb, var(--color-accent) 38%, var(--warning));
+  --syntax-regexp: color-mix(in srgb, var(--danger) 58%, var(--text-primary));
+  --syntax-number: color-mix(in srgb, var(--success) 74%, var(--text-primary));
+  --syntax-comment: var(--color-text-tertiary);
+  --syntax-variable: color-mix(in srgb, var(--color-accent) 36%, var(--text-primary));
+  --syntax-function: color-mix(in srgb, var(--color-accent) 30%, var(--text-primary));
+  --syntax-type: color-mix(in srgb, var(--color-accent) 78%, var(--text-primary));
+  --syntax-enum: color-mix(in srgb, var(--color-accent) 62%, var(--text-primary));
+  --syntax-property: color-mix(in srgb, var(--color-accent) 34%, var(--text-primary));
+  --syntax-operator: var(--color-text-secondary);
+  --syntax-delimiter: var(--color-text-secondary);
+  --syntax-bracket: color-mix(in srgb, var(--color-accent) 44%, var(--text-primary));
+  --syntax-angle: var(--color-text-tertiary);
+  --syntax-invalid: var(--danger);
+  --syntax-inserted: var(--success);
+  --syntax-deleted: var(--danger);
+  --syntax-name: var(--color-text-primary);
+  --syntax-content: var(--color-text-primary);
 }
 
 /* ─── Terracotta: warm paper, clay accent ─── */

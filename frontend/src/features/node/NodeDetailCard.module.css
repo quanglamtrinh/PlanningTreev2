@@ -331,11 +331,214 @@
 }
 
 .documentPanel {
+  /* Editor chrome — aligned with app surface / accent tokens (not fixed VS Code dark) */
+  --editor-vscode-bg: var(--color-bg-input);
+  --editor-vscode-panel: var(--color-bg-panel-alt);
+  --editor-vscode-border: var(--color-border-subtle);
+  --editor-vscode-text: var(--color-text-primary);
+  --editor-vscode-muted: var(--color-text-secondary);
+  --editor-vscode-gutter: var(--color-text-tertiary);
+  --editor-vscode-active: var(--color-bg-hover);
+  --editor-vscode-selection: color-mix(in srgb, var(--color-accent) 22%, var(--color-bg-input));
+  --editor-vscode-button: var(--color-accent);
+  --editor-vscode-button-hover: var(--color-accent-hover);
+  --editor-vscode-button-secondary: var(--chip-bg);
+  --editor-vscode-button-secondary-hover: color-mix(in srgb, var(--color-text-primary) 10%, var(--chip-bg));
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-height: 0;
   box-sizing: border-box;
+}
+
+/* Syntax token classes — colors from tokens.css (--syntax-*) */
+.documentPanel :global(.pt-sx-md-h1) {
+  color: var(--syntax-md-h1);
+  font-weight: 700;
+}
+
+.documentPanel :global(.pt-sx-md-h2) {
+  color: var(--syntax-md-h2);
+  font-weight: 700;
+}
+
+.documentPanel :global(.pt-sx-md-h3) {
+  color: var(--syntax-md-h3);
+  font-weight: 650;
+}
+
+.documentPanel :global(.pt-sx-md-h4) {
+  color: var(--syntax-md-h4);
+  font-weight: 650;
+}
+
+.documentPanel :global(.pt-sx-md-h5) {
+  color: var(--syntax-md-h5);
+  font-weight: 600;
+}
+
+.documentPanel :global(.pt-sx-md-h6) {
+  color: var(--syntax-md-h6);
+  font-weight: 600;
+}
+
+.documentPanel :global(.pt-sx-md-h) {
+  color: var(--syntax-md-h1);
+  font-weight: 600;
+}
+
+.documentPanel :global(.pt-sx-strong) {
+  color: var(--syntax-strong);
+  font-weight: 700;
+}
+
+.documentPanel :global(.pt-sx-em) {
+  color: var(--syntax-em);
+  font-style: italic;
+}
+
+.documentPanel :global(.pt-sx-strike) {
+  color: var(--syntax-strike);
+  text-decoration: line-through;
+}
+
+.documentPanel :global(.pt-sx-link) {
+  color: var(--syntax-link);
+  text-decoration: underline;
+}
+
+.documentPanel :global(.pt-sx-url) {
+  color: var(--syntax-link);
+}
+
+.documentPanel :global(.pt-sx-list) {
+  color: var(--syntax-list);
+}
+
+.documentPanel :global(.pt-sx-quote) {
+  color: var(--syntax-quote);
+  font-style: italic;
+}
+
+.documentPanel :global(.pt-sx-hr) {
+  color: var(--syntax-hr);
+}
+
+.documentPanel :global(.pt-sx-code) {
+  color: var(--syntax-inline-code);
+}
+
+.documentPanel :global(.pt-sx-meta) {
+  color: var(--syntax-meta);
+}
+
+.documentPanel :global(.pt-sx-keyword) {
+  color: var(--syntax-keyword);
+}
+
+.documentPanel :global(.pt-sx-control) {
+  color: var(--syntax-control);
+}
+
+.documentPanel :global(.pt-sx-string) {
+  color: var(--syntax-string);
+}
+
+.documentPanel :global(.pt-sx-string-special) {
+  color: var(--syntax-string-special);
+}
+
+.documentPanel :global(.pt-sx-regexp) {
+  color: var(--syntax-regexp);
+}
+
+.documentPanel :global(.pt-sx-number) {
+  color: var(--syntax-number);
+}
+
+.documentPanel :global(.pt-sx-comment) {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+
+.documentPanel :global(.pt-sx-var) {
+  color: var(--syntax-variable);
+}
+
+.documentPanel :global(.pt-sx-fn) {
+  color: var(--syntax-function);
+}
+
+.documentPanel :global(.pt-sx-type) {
+  color: var(--syntax-type);
+}
+
+.documentPanel :global(.pt-sx-class) {
+  color: var(--syntax-type);
+}
+
+.documentPanel :global(.pt-sx-enum) {
+  color: var(--syntax-enum);
+}
+
+.documentPanel :global(.pt-sx-namespace) {
+  color: var(--syntax-type);
+}
+
+.documentPanel :global(.pt-sx-property) {
+  color: var(--syntax-property);
+}
+
+.documentPanel :global(.pt-sx-operator) {
+  color: var(--syntax-operator);
+}
+
+.documentPanel :global(.pt-sx-delimiter) {
+  color: var(--syntax-delimiter);
+}
+
+.documentPanel :global(.pt-sx-bracket) {
+  color: var(--syntax-bracket);
+}
+
+.documentPanel :global(.pt-sx-bracket-list) {
+  color: var(--syntax-list);
+}
+
+.documentPanel :global(.pt-sx-angle) {
+  color: var(--syntax-angle);
+}
+
+.documentPanel :global(.pt-sx-tag) {
+  color: var(--syntax-keyword);
+}
+
+.documentPanel :global(.pt-sx-invalid) {
+  color: var(--syntax-invalid);
+}
+
+.documentPanel :global(.pt-sx-inserted) {
+  color: var(--syntax-inserted);
+}
+
+.documentPanel :global(.pt-sx-deleted) {
+  color: var(--syntax-deleted);
+}
+
+.documentPanel :global(.pt-sx-changed) {
+  color: var(--syntax-keyword);
+}
+
+.documentPanel :global(.pt-sx-name) {
+  color: var(--syntax-name);
+}
+
+.documentPanel :global(.pt-sx-content) {
+  color: var(--syntax-content);
+}
+
+.documentPanel :global(.pt-sx-literal) {
+  color: var(--syntax-string);
 }
 
 /* Frame / Spec: fill card body so the editor can scroll inside a bounded height */
@@ -359,8 +562,12 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 4px;
-  min-height: 28px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--editor-vscode-border);
+  border-radius: var(--radius-md);
+  background: var(--editor-vscode-panel);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 6%, transparent);
 }
 
 .documentFileLabel {
@@ -368,13 +575,13 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-text-tertiary);
+  color: var(--editor-vscode-text);
 }
 
 .documentStatusValue {
   font-size: 12px;
   line-height: 1.4;
-  color: var(--color-text-secondary);
+  color: var(--editor-vscode-muted);
   min-height: 1.4em;
   text-align: right;
 }
@@ -474,11 +681,12 @@
   overflow: visible;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--color-bg-panel);
+  border: 1px solid var(--editor-vscode-border);
+  border-radius: var(--radius-md);
+  background: var(--editor-vscode-bg);
   box-sizing: border-box;
   padding: 6px 8px 6px 12px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 5%, transparent);
 }
 
 /* @uiw/react-codemirror root — must fill .editorSurface or height:100% chain breaks */
@@ -499,6 +707,8 @@
   display: flex;
   flex-direction: column;
   overflow: visible;
+  background: var(--editor-vscode-bg);
+  color: var(--editor-vscode-text);
 }
 
 .editorSurface :global(.cm-scroller) {
@@ -507,11 +717,15 @@
   /* Do not use overflow-x:hidden — it can clip the line-number gutter when content is wide */
   overflow: auto !important;
   overscroll-behavior: contain;
+  background: var(--editor-vscode-bg);
 }
 
 /* Only the text document should shrink in flex layouts — gutters must not get min-height:0 */
 .editorSurface :global(.cm-content) {
   min-height: 0 !important;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
 }
 
 .editorSurface :global(.cm-gutters) {
@@ -520,14 +734,37 @@
   left: 0;
   z-index: 2;
   align-self: stretch;
-  background: var(--color-bg-panel);
-  box-shadow: 1px 0 0 var(--color-border-subtle);
+  background: var(--editor-vscode-bg);
+  color: var(--editor-vscode-gutter);
+  box-shadow: 1px 0 0 var(--editor-vscode-border);
 }
 
 /* Soft-wrap long lines (frame.md / spec.md) so code blocks stay within the panel */
 .editorSurface :global(.cm-line) {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.editorSurface :global(.cm-activeLine),
+.editorSurface :global(.cm-activeLineGutter) {
+  background: var(--editor-vscode-active);
+}
+
+.editorSurface :global(.cm-selectionBackground) {
+  background: var(--editor-vscode-selection) !important;
+}
+
+.editorSurface :global(.cm-cursor),
+.editorSurface :global(.cm-dropCursor) {
+  border-left-color: var(--editor-vscode-text);
+}
+
+.editorSurface :global(.cm-focused) {
+  outline: none;
+}
+
+.editorSurface :global(.cm-lineNumbers .cm-gutterElement) {
+  color: var(--editor-vscode-gutter);
 }
 
 .tabConfirmRow {
@@ -544,9 +781,9 @@
 .generateButton {
   padding: 8px 18px;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text-primary);
+  border: 1px solid var(--editor-vscode-button-secondary);
+  background: var(--editor-vscode-button-secondary);
+  color: var(--editor-vscode-text);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -554,8 +791,8 @@
 }
 
 .generateButton:hover:not(:disabled) {
-  background: var(--color-bg-hover);
-  border-color: var(--color-accent);
+  background: var(--editor-vscode-button-secondary-hover);
+  border-color: var(--editor-vscode-button-secondary-hover);
 }
 
 .generateButton:disabled {
@@ -566,9 +803,9 @@
 .confirmButton {
   padding: 8px 18px;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--color-accent);
-  background: var(--color-accent);
-  color: #fff;
+  border: 1px solid var(--editor-vscode-button);
+  background: var(--editor-vscode-button);
+  color: #ffffff;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -576,7 +813,7 @@
 }
 
 .confirmButton:hover:not(:disabled) {
-  filter: brightness(1.05);
+  background: var(--editor-vscode-button-hover);
 }
 
 .confirmButton:disabled {
@@ -689,5 +926,42 @@ section[data-variant='graph'] .editorSurface {
 }
 
 section[data-variant='graph'] .editorSurface :global(.cm-content) {
+  min-height: 0;
+}
+
+/* Breadcrumb detail pane: same flex chain as graph so frame/spec editor fills height */
+section[data-variant='breadcrumb'] .cardBody {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+section[data-variant='breadcrumb'] .cardBodyAux {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
+section[data-variant='breadcrumb'] .documentTabStack {
+  flex: 1;
+  min-height: 0;
+  overflow-x: visible;
+  overflow-y: hidden;
+}
+
+section[data-variant='breadcrumb'] .documentPanel {
+  flex: 1;
+  min-height: 0;
+}
+
+section[data-variant='breadcrumb'] .editorSurface {
+  flex: 1;
+  min-height: 0;
+}
+
+section[data-variant='breadcrumb'] .editorSurface :global(.cm-content) {
   min-height: 0;
 }

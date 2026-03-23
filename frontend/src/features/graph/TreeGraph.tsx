@@ -4,6 +4,7 @@ import {
   Controls,
   MarkerType,
   Panel,
+  Position,
   ReactFlow,
   type Edge,
   type Node,
@@ -17,7 +18,7 @@ import {
   type GraphNodeActions,
 } from './graphNodeActionsContext'
 import { GraphNode, type GraphNodeData } from './GraphNode'
-import { buildTreeLayoutPositions } from './treeGraphLayout'
+import { buildTreeLayoutPositions, TREE_DEPTH_STEP_PX } from './treeGraphLayout'
 import styles from './TreeGraph.module.css'
 
 const nodeTypes = {
@@ -479,7 +480,7 @@ export function TreeGraph({
         id: node.node_id,
         type: 'graphNode',
         className: 'nopan',
-        position: layout.get(node.node_id) ?? { x: node.depth * 350, y: 0 },
+        position: layout.get(node.node_id) ?? { x: 0, y: node.depth * TREE_DEPTH_STEP_PX },
         draggable: false,
         selectable: false,
         data: {
@@ -530,7 +531,9 @@ export function TreeGraph({
           id: `e-${node.node_id}-${childId}`,
           source: node.node_id,
           target: childId,
-          type: 'smoothstep',
+          type: 'straight',
+          sourcePosition: Position.Bottom,
+          targetPosition: Position.Top,
           style: { stroke: 'var(--color-edge)', strokeWidth: 2.4 },
           markerEnd: {
             type: MarkerType.ArrowClosed,
