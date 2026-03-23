@@ -21,6 +21,76 @@
   flex-direction: column;
 }
 
+/* Ask / Execution / Artifact — same chrome as detail stepper (accent + underline) */
+.threadTabBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 10px 16px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: var(--bg-app);
+}
+
+.threadTab {
+  padding: 6px 12px 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  position: relative;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease;
+}
+
+.threadTab:hover:not(.threadTabActive) {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+}
+
+.threadTab:focus {
+  outline: none;
+}
+
+.threadTab:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.threadTab::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.14s ease;
+}
+
+.threadTabActive {
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+.threadTabActive::after {
+  background: var(--accent-primary);
+}
+
+.threadTabBody {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
 .detailPane {
   display: flex;
   flex: 2;

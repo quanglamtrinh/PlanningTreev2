@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
@@ -19,6 +20,7 @@ _LEGACY_NODE_MARKER_NAMES = (".planningtree-node-id",)
 _ALL_NODE_MARKER_NAMES = (NODE_MARKER_NAME, *_LEGACY_NODE_MARKER_NAMES)
 
 _MAX_SEGMENT_LEN = 200
+_WINDOWS_MAX_PATH = 259
 
 # Windows reserved device names (case-insensitive).
 _RESERVED_WIN_NAMES = {
@@ -312,9 +314,26 @@ def _prune_empty_dirs(root: Path) -> None:
 
 FRAME_META_FILE_NAME = "frame.meta.json"
 SPEC_META_FILE_NAME = "spec.meta.json"
+# Reserve room for the longest node-local filename, including the temporary
+# `.tmp` suffix used by atomic writes elsewhere in the backend.
+_NODE_FILE_NAME_BUDGET = max(
+    len(name)
+    for name in (
+        NODE_MARKER_NAME,
+        FRAME_FILE_NAME,
+        SPEC_FILE_NAME,
+        FRAME_META_FILE_NAME,
+        SPEC_META_FILE_NAME,
+        "clarify.json",
+        "frame_gen.json",
+        "spec_gen.json",
+        "clarify_gen.json",
+    )
+) + len(".tmp")
 
 
 def _ensure_node_files(node_dir: Path) -> None:
+    ensure_dir(node_dir)
     for filename in (FRAME_FILE_NAME, SPEC_FILE_NAME):
         path = node_dir / filename
         if not path.exists():
@@ -361,6 +380,32 @@ def _sanitize_dir_segment(raw: str) -> str:
     return cleaned or "untitled"
 
 
+def _is_windows_path_limited() -> bool:
+    return os.name == "nt"
+
+
+def _node_path_within_budget(parent: Path, segment: str) -> bool:
+    if not _is_windows_path_limited():
+        return True
+    candidate = parent / segment / ("x" * _NODE_FILE_NAME_BUDGET)
+    return len(str(candidate)) <= _WINDOWS_MAX_PATH
+
+
+def _trim_segment_to_fit(parent: Path, segment: str, suffix: str = "") -> str:
+    if not _is_windows_path_limited():
+        return segment
+
+    fitted = segment
+    while fitted and not _node_path_within_budget(parent, f"{fitted}{suffix}"):
+        fitted = fitted[:-1].rstrip(" .")
+
+    if fitted:
+        return fitted
+
+    fallback = "x"
+    return fallback if _node_path_within_budget(parent, f"{fallback}{suffix}") else fallback
+
+
 def _read_node_marker(dir_path: Path) -> str | None:
     for marker_name in _ALL_NODE_MARKER_NAMES:
         marker = dir_path / marker_name
@@ -385,7 +430,7 @@ def _write_node_marker(dir_path: Path, node_id: str) -> None:
 
 
 def _resolve_unique_segment(parent: Path, node: Dict[str, Any]) -> str:
-    primary = segment_for_node(node)
+    primary = _trim_segment_to_fit(parent, segment_for_node(node))
     nid = str(node.get("node_id") or "")
     target = parent / primary
 
@@ -404,10 +449,11 @@ def _resolve_unique_segment(parent: Path, node: Dict[str, Any]) -> str:
 
 def _pick_free_segment(parent: Path, primary: str, node_id: str) -> str:
     suffix = node_id[:8] if len(node_id) >= 8 else node_id or "x"
-    base = f"{primary}_{suffix}"
-    candidate = base
-    n = 2
-    while (parent / candidate).exists():
-        candidate = f"{base}_{n}"
+    n = 0
+    while True:
+        extra = f"_{suffix}" if n == 0 else f"_{suffix}_{n + 1}"
+        stem = _trim_segment_to_fit(parent, primary, extra)
+        candidate = f"{stem}{extra}"
+        if not (parent / candidate).exists():
+            return candidate
         n += 1
-    return candidate

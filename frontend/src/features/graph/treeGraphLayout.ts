@@ -1,11 +1,24 @@
 import type { NodeRecord } from '../../api/types'
 
 // ─── Layout constants (vertical tree: root top → children below, siblings left–right) ───
-// Vertical distance between depth levels (parent row → child row)
-const DEPTH_STEP_PX = 380
+// Vertical distance between depth levels (parent row → child row).
+// Tuned for org-chart–like edges. Large enough that parent + fixed-gap review + review card
+// usually clears the child row (see buildReviewOverlayPositions).
+const DEPTH_STEP_PX = 340
 
 /** Exported for TreeGraph position fallback when layout map misses a node. */
 export const TREE_DEPTH_STEP_PX = DEPTH_STEP_PX
+
+/**
+ * Vertical gap from the **bottom** of the parent card to the **top** of the review card.
+ * Review `y` is always `parentBottom + REVIEW_PARENT_GAP_PX` (no mixing with child-row clamps).
+ */
+export const REVIEW_PARENT_GAP_PX = 48
+
+/**
+ * @deprecated No longer used for review Y (parent→review gap is fixed). Kept for tests/docs tuning.
+ */
+export const REVIEW_CHILD_TOP_CLEARANCE_PX = 152
 
 // Width of one horizontal "unit" in pixels. Subtree width is measured in these
 // units (same packing math as before, applied on X for siblings).
@@ -31,10 +44,18 @@ function estimateTextLines(value: string, charsPerLine: number): number {
     .reduce((sum, lines) => sum + lines, 0)
 }
 
-/** Height used for graph layout (graph cards: title + badge row only; no description/meta). */
+/**
+ * Height of the graph card in layout (matches `GraphNode`: number/title line + badge row, padding).
+ * Uses the same headline as the UI (`hierarchical_number / title`) so wrapped titles match DOM.
+ */
 export function estimateNodeHeight(node: NodeRecord): number {
-  const titleLines = estimateTextLines(node.title, 26)
-  return 38 + titleLines * 16
+  const headline = `${node.hierarchical_number} / ${node.title}`.trim()
+  const titleLines = estimateTextLines(headline, 22)
+  const paddingY = 12 + 14
+  const titleLinePx = 20
+  const gapTitleToBadge = 5
+  const badgeRowPx = 24
+  return paddingY + titleLines * titleLinePx + gapTitleToBadge + badgeRowPx
 }
 
 export function buildTreeLayoutPositions({
@@ -124,4 +145,57 @@ export function buildTreeLayoutPositions({
   }
 
   return positions
+}
+
+export function buildReviewOverlayPositions({
+  nodeById,
+  visibleChildrenById,
+  treePositions,
+}: {
+  nodeById: Map<string, NodeRecord>
+  visibleChildrenById: Map<string, string[]>
+  treePositions: Map<string, { x: number; y: number }>
+}) {
+  const reviewPositions = new Map<string, { x: number; y: number }>()
+
+  for (const [parentId, childIds] of visibleChildrenById) {
+    if (childIds.length < 2) {
+      continue
+    }
+
+    const parentPosition = treePositions.get(parentId)
+    const parentRecord = nodeById.get(parentId)
+    if (!parentPosition || !parentRecord) {
+      continue
+    }
+
+    const visibleChildCount = childIds.reduce(
+      (count, childId) => count + (treePositions.has(childId) ? 1 : 0),
+      0,
+    )
+    if (visibleChildCount < 2) {
+      continue
+    }
+
+    const directChildYs = childIds
+      .map((childId) => treePositions.get(childId)?.y)
+      .filter((value): value is number => typeof value === 'number')
+    if (directChildYs.length < 2) {
+      continue
+    }
+
+    const parentY = parentPosition.y
+    const parentBottom = parentY + estimateNodeHeight(parentRecord)
+    // Fixed gap from parent card bottom → review card top (REVIEW_PARENT_GAP_PX).
+    const reviewY = parentBottom + REVIEW_PARENT_GAP_PX
+
+    reviewPositions.set(`review::${parentId}`, {
+      // Tree layout centers the parent over its direct-child block, so the
+      // parent's x-coordinate is already the block center we want for review.
+      x: parentPosition.x,
+      y: reviewY,
+    })
+  }
+
+  return reviewPositions
 }

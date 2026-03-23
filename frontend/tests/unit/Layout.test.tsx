@@ -68,4 +68,41 @@ describe('Layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Canvas' }))
     expect(document.documentElement).not.toHaveAttribute('data-theme')
   })
+
+  it('does not show Back to Graph on the graph route', () => {
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<div>workspace</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Back to Graph' })).not.toBeInTheDocument()
+  })
+
+  it('shows Back to Graph on breadcrumb chat route and navigates to graph', () => {
+    render(
+      <MemoryRouter
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        initialEntries={['/projects/project-1/nodes/root/chat']}
+      >
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<div>Graph workspace stub</div>} />
+            <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<div>breadcrumb chat</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('button', { name: 'Back to Graph' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Graph' }))
+
+    expect(screen.getByText('Graph workspace stub')).toBeInTheDocument()
+    expect(useUIStore.getState().activeSurface).toBe('graph')
+  })
 })

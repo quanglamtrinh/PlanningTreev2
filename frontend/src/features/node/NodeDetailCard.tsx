@@ -66,6 +66,20 @@ export function NodeDetailCard({
     [variant],
   )
 
+  const activeStepIndex = useMemo(
+    () => DETAIL_STEPS.findIndex((s) => s.id === detailTab),
+    [detailTab],
+  )
+
+  const isStepConfirmed = (stepId: DetailTab): boolean => {
+    if (!detailState) return false
+    if (stepId === 'describe') return false
+    if (stepId === 'frame') return detailState.frame_confirmed
+    if (stepId === 'clarify') return detailState.clarify_confirmed
+    if (stepId === 'spec') return detailState.spec_confirmed
+    return false
+  }
+
   if (state !== 'ready' || !node || !projectId) {
     return (
       <section
@@ -121,24 +135,45 @@ export function NodeDetailCard({
 
         <div className={styles.explorationRegion} role="region" aria-label="Task exploration steps">
           <nav className={styles.stepper} aria-label="Describe, Frame, Clarify, Spec">
-            {DETAIL_STEPS.map((step, idx) => (
-              <Fragment key={step.id}>
-                {idx > 0 && (
-                  <span className={styles.stepArrow} aria-hidden="true">
-                    {'>'}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className={`${styles.stepButton} ${detailTab === step.id ? styles.stepButtonActive : ''}`}
-                  onClick={() => setDetailTab(step.id)}
-                  aria-label={step.label}
-                  aria-current={detailTab === step.id ? 'step' : undefined}
-                >
-                  {step.label}
-                </button>
-              </Fragment>
-            ))}
+            {DETAIL_STEPS.map((step, idx) => {
+              const isActive = detailTab === step.id
+              const confirmed = isStepConfirmed(step.id)
+              const isDescribe = step.id === 'describe'
+              const arrowBold = idx > 0 && idx <= activeStepIndex
+              return (
+                <Fragment key={step.id}>
+                  {idx > 0 && (
+                    <span
+                      className={`${styles.stepArrow} ${arrowBold ? styles.stepArrowBold : ''}`}
+                      aria-hidden="true"
+                    >
+                      {'>'}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className={[
+                      styles.stepButton,
+                      isDescribe ? styles.stepButtonDescribe : '',
+                      confirmed ? styles.stepButtonDone : '',
+                      isActive ? styles.stepButtonActive : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    onClick={() => setDetailTab(step.id)}
+                    aria-label={step.label}
+                    aria-current={isActive ? 'step' : undefined}
+                  >
+                    <span>{step.label}</span>
+                    {confirmed ? (
+                      <span className={styles.stepDoneTick} aria-hidden="true">
+                        ✓
+                      </span>
+                    ) : null}
+                  </button>
+                </Fragment>
+              )
+            })}
           </nav>
         </div>
       </div>

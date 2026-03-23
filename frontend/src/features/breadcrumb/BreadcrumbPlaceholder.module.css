@@ -10,48 +10,6 @@
     var(--bg-app);
 }
 
-.backButton {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 2;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--border-default) 92%, transparent);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-  box-shadow: var(--shadow-xs);
-  color: var(--text-primary);
-  cursor: pointer;
-  transition:
-    transform var(--transition-fast),
-    border-color var(--transition-fast),
-    background var(--transition-fast),
-    box-shadow var(--transition-fast);
-}
-
-.backButton:hover {
-  transform: translateX(-1px);
-  border-color: var(--border-strong);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
-}
-
-.backButton:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--focus-ring), var(--shadow-sm);
-}
-
-.backIcon {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-}
-
 .chatPanel {
   display: flex;
   flex: 1;

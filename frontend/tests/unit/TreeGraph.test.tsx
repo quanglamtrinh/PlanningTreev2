@@ -65,12 +65,29 @@ vi.mock('@xyflow/react', () => ({
     selector({ transform: [0, 0, 1] }),
   ReactFlow: ({
     nodes,
+    edges,
     nodeTypes,
     children,
     onInit,
     onNodeClick,
   }: {
-    nodes: Array<{ id: string; type: string; data: unknown; className?: string }>
+    nodes: Array<{
+      id: string
+      type: string
+      data: unknown
+      className?: string
+      position?: { x: number; y: number }
+    }>
+    edges?: Array<{
+      id: string
+      source: string
+      target: string
+      data?: { kind?: string }
+      sourcePosition?: string
+      targetPosition?: string
+      markerEnd?: unknown
+      style?: { strokeDasharray?: string | number }
+    }>
     nodeTypes: Record<string, ComponentType<Record<string, unknown>>>
     children?: ReactNode
     onInit?: (instance: { fitView: ReturnType<typeof vi.fn> }) => void
@@ -81,13 +98,31 @@ vi.mock('@xyflow/react', () => ({
     }, [onInit])
 
     return (
-      <div data-testid="mock-reactflow" data-has-node-click={String(Boolean(onNodeClick))}>
+      <div
+        data-testid="mock-reactflow"
+        data-has-node-click={String(Boolean(onNodeClick))}
+      >
+        {(edges ?? []).map((edge) => (
+          <div
+            key={edge.id}
+            data-testid={`rf-edge-${edge.id}`}
+            data-edge-kind={edge.data?.kind ?? ''}
+            data-edge-source={edge.source}
+            data-edge-target={edge.target}
+            data-edge-source-position={edge.sourcePosition ?? ''}
+            data-edge-target-position={edge.targetPosition ?? ''}
+            data-edge-dashed={String(Boolean(edge.style?.strokeDasharray))}
+            data-edge-has-marker={String(Boolean(edge.markerEnd))}
+          />
+        ))}
         {nodes.map((node) => {
           const NodeComponent = nodeTypes[node.type]
           return (
             <div
               key={node.id}
               data-testid={`rf-node-${node.id}`}
+              data-position-x={String(node.position?.x ?? '')}
+              data-position-y={String(node.position?.y ?? '')}
               className={node.className}
               onClick={() => onNodeClick?.({}, { id: node.id })}
             >
@@ -111,12 +146,12 @@ vi.mock('@xyflow/react', () => ({
   },
   Background: () => null,
   Controls: () => null,
+  MarkerType: { ArrowClosed: 'arrowclosed' },
   Panel: ({ children, className }: { children?: ReactNode; className?: string }) => (
     <div className={className}>{children}</div>
   ),
   Handle: () => null,
-  Position: { Left: 'left', Right: 'right' },
-  MarkerType: { ArrowClosed: 'arrow-closed' },
+  Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
 }))
 
 vi.mock('@uiw/react-codemirror', () => ({
@@ -153,6 +188,7 @@ vi.mock('../../src/api/client', () => ({
 
 import type { NodeRecord, Snapshot } from '../../src/api/types'
 import { TreeGraph } from '../../src/features/graph/TreeGraph'
+import { estimateNodeHeight, REVIEW_PARENT_GAP_PX } from '../../src/features/graph/treeGraphLayout'
 import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useClarifyStore } from '../../src/stores/clarify-store'
@@ -197,7 +233,16 @@ function buildSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
   }
 }
 
-function renderTreeGraph(snapshot: Snapshot) {
+function renderTreeGraph(
+  snapshot: Snapshot,
+  options: {
+    onSelectNode?: ReturnType<typeof vi.fn>
+    selectedNodeId?: string | null
+    codexAvailable?: boolean
+  } = {},
+) {
+  const onSelectNode = options.onSelectNode ?? vi.fn(async () => undefined)
+  const onCreateChild = vi.fn(async () => undefined)
   const onSplitNode = vi.fn(async () => undefined)
   const onOpenBreadcrumb = vi.fn(async () => undefined)
   const onFinishTask = vi.fn(async () => undefined)
@@ -205,21 +250,38 @@ function renderTreeGraph(snapshot: Snapshot) {
   const view = render(
     <TreeGraph
       snapshot={snapshot}
-      selectedNodeId={snapshot.tree_state.active_node_id}
+      selectedNodeId={options.selectedNodeId ?? snapshot.tree_state.active_node_id}
       splitStatus="idle"
       splittingNodeId={null}
       isCreatingNode={false}
       isResettingProject={false}
       isResetDisabled={false}
-      onSelectNode={vi.fn(async () => undefined)}
-      onCreateChild={vi.fn(async () => undefined)}
+      codexAvailable={options.codexAvailable ?? true}
+      onSelectNode={onSelectNode}
+      onCreateChild={onCreateChild}
       onSplitNode={onSplitNode}
       onOpenBreadcrumb={onOpenBreadcrumb}
       onFinishTask={onFinishTask}
       onResetProject={onResetProject}
     />,
   )
-  return { ...view, onSplitNode, onOpenBreadcrumb, onFinishTask, onResetProject }
+  return {
+    ...view,
+    onCreateChild,
+    onFinishTask,
+    onOpenBreadcrumb,
+    onResetProject,
+    onSelectNode,
+    onSplitNode,
+  }
+}
+
+function renderedEdges(kind?: string): HTMLElement[] {
+  const allEdges = screen.queryAllByTestId(/^rf-edge-/)
+  if (!kind) {
+    return allEdges
+  }
+  return allEdges.filter((edge) => edge.getAttribute('data-edge-kind') === kind)
 }
 
 describe('TreeGraph', () => {
@@ -359,7 +421,6 @@ describe('TreeGraph', () => {
 
     expect(within(detailCard).getByRole('button', { name: 'Describe' })).toBeInTheDocument()
     expect(within(detailCard).getByRole('button', { name: 'Frame' })).toBeInTheDocument()
-    // Wait for detail state to load so Clarify/Spec tabs are unlocked
     expect(await within(detailCard).findByRole('button', { name: 'Clarify' })).toBeInTheDocument()
     expect(within(detailCard).getByRole('button', { name: 'Spec' })).toBeInTheDocument()
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
@@ -378,5 +439,324 @@ describe('TreeGraph', () => {
     })
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Spec' }))
     expect(await within(detailCard).findByDisplayValue('# Spec')).toBeInTheDocument()
+  })
+
+  it('renders child-to-review arrows and a review-return arrow while keeping structural edges', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({ node_id: 'root', child_ids: ['child-1', 'child-2', 'child-3'] }),
+          buildNode({
+            node_id: 'child-1',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Prep',
+            description: 'Prep step',
+            depth: 1,
+            display_order: 0,
+            hierarchical_number: '1.1',
+            status: 'ready',
+            node_kind: 'original',
+          }),
+          buildNode({
+            node_id: 'child-2',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Build',
+            description: 'Build step',
+            depth: 1,
+            display_order: 1,
+            hierarchical_number: '1.2',
+            status: 'locked',
+            node_kind: 'original',
+          }),
+          buildNode({
+            node_id: 'child-3',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Polish',
+            description: 'Polish step',
+            depth: 1,
+            display_order: 2,
+            hierarchical_number: '1.3',
+            status: 'locked',
+            node_kind: 'original',
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    expect(screen.getByTestId('rf-node-review::root')).toBeInTheDocument()
+    expect(screen.getByTestId('graph-review-node-root')).toHaveTextContent('Review')
+    expect(renderedEdges('structural')).toHaveLength(3)
+    expect(renderedEdges('review-child')).toHaveLength(3)
+    expect(renderedEdges('review-return')).toHaveLength(1)
+    expect(screen.getByTestId('rf-edge-review-child-child-1-root')).toHaveAttribute('data-edge-source', 'child-1')
+    expect(screen.getByTestId('rf-edge-review-child-child-1-root')).toHaveAttribute('data-edge-target', 'review::root')
+    expect(screen.getByTestId('rf-edge-review-child-child-1-root')).toHaveAttribute('data-edge-source-position', 'right')
+    expect(screen.getByTestId('rf-edge-review-child-child-1-root')).toHaveAttribute('data-edge-target-position', 'bottom')
+    expect(screen.getByTestId('rf-edge-review-child-child-1-root')).toHaveAttribute('data-edge-dashed', 'false')
+    expect(screen.getByTestId('rf-edge-review-child-child-2-root')).toHaveAttribute('data-edge-source-position', 'top')
+    expect(screen.getByTestId('rf-edge-review-child-child-3-root')).toHaveAttribute('data-edge-source-position', 'left')
+    expect(screen.getByTestId('rf-edge-review-return-root')).toHaveAttribute('data-edge-source', 'review::root')
+    expect(screen.getByTestId('rf-edge-review-return-root')).toHaveAttribute('data-edge-target', 'root')
+    expect(screen.getByTestId('rf-edge-review-return-root')).toHaveAttribute('data-edge-source-position', 'top')
+    expect(screen.getByTestId('rf-edge-review-return-root')).toHaveAttribute('data-edge-target-position', 'bottom')
+    expect(screen.getByTestId('rf-edge-review-return-root')).toHaveAttribute('data-edge-has-marker', 'true')
+    expect(screen.getByTestId('rf-edge-review-return-root')).toHaveAttribute('data-edge-dashed', 'false')
+    expect(screen.getByTestId('rf-edge-e-root-child-1')).toHaveAttribute('data-edge-kind', 'structural')
+  })
+
+  it('does not render a review overlay for parents with fewer than two active children', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({ node_id: 'root', child_ids: ['child-1'] }),
+          buildNode({
+            node_id: 'child-1',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Only child',
+            description: 'Single visible child',
+            depth: 1,
+            display_order: 0,
+            hierarchical_number: '1.1',
+            status: 'ready',
+            node_kind: 'original',
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    expect(screen.queryByTestId('rf-node-review::root')).not.toBeInTheDocument()
+    expect(renderedEdges('structural')).toHaveLength(1)
+    expect(renderedEdges('review-child')).toHaveLength(0)
+    expect(renderedEdges('review-return')).toHaveLength(0)
+  })
+
+  it('removes the review overlay when a branch is collapsed', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({
+            node_id: 'root',
+            child_ids: ['child-1', 'child-2', 'child-3'],
+            status: 'locked',
+          }),
+          buildNode({
+            node_id: 'child-1',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Prep',
+            description: 'Prep step',
+            depth: 1,
+            display_order: 0,
+            hierarchical_number: '1.1',
+            status: 'ready',
+            node_kind: 'original',
+          }),
+          buildNode({
+            node_id: 'child-2',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Build',
+            description: 'Build step',
+            depth: 1,
+            display_order: 1,
+            hierarchical_number: '1.2',
+            status: 'locked',
+            node_kind: 'original',
+          }),
+          buildNode({
+            node_id: 'child-3',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Polish',
+            description: 'Polish step',
+            depth: 1,
+            display_order: 2,
+            hierarchical_number: '1.3',
+            status: 'locked',
+            node_kind: 'original',
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    expect(screen.queryByTestId('rf-node-review::root')).not.toBeInTheDocument()
+    const rootWrapper = screen.getByTestId('rf-node-root')
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Expand node' }))
+    expect(screen.getByTestId('rf-node-review::root')).toBeInTheDocument()
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Collapse node' }))
+    expect(screen.queryByTestId('rf-node-review::root')).not.toBeInTheDocument()
+  })
+
+  it('does not render a review overlay when the parent is outside the current graph root', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({ node_id: 'root', child_ids: ['child-1', 'child-2'] }),
+          buildNode({
+            node_id: 'child-1',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Prep',
+            description: 'Prep step',
+            depth: 1,
+            display_order: 0,
+            hierarchical_number: '1.1',
+            status: 'ready',
+            node_kind: 'original',
+          }),
+          buildNode({
+            node_id: 'child-2',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Build',
+            description: 'Build step',
+            depth: 1,
+            display_order: 1,
+            hierarchical_number: '1.2',
+            status: 'ready',
+            node_kind: 'original',
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    expect(screen.getByTestId('rf-node-review::root')).toBeInTheDocument()
+    const childWrapper = screen.getByTestId('rf-node-child-1')
+    fireEvent.click(within(childWrapper).getByRole('button', { name: 'Node actions' }))
+    fireEvent.click(screen.getByRole('button', { name: /Set as current root/i }))
+
+    expect(screen.queryByTestId('rf-node-root')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('rf-node-review::root')).not.toBeInTheDocument()
+  })
+
+  it('keeps the review card read-only and clicking it does not select a node', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({ node_id: 'root', child_ids: ['child-1', 'child-2'] }),
+          buildNode({
+            node_id: 'child-1',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Prep',
+            description: 'Prep step',
+            depth: 1,
+            display_order: 0,
+            hierarchical_number: '1.1',
+            status: 'ready',
+            node_kind: 'original',
+          }),
+          buildNode({
+            node_id: 'child-2',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Build',
+            description: 'Build step',
+            depth: 1,
+            display_order: 1,
+            hierarchical_number: '1.2',
+            status: 'locked',
+            node_kind: 'original',
+          }),
+        ],
+      },
+    })
+
+    const onSelectNode = vi.fn(async () => undefined)
+    renderTreeGraph(snapshot, { onSelectNode })
+
+    const reviewCard = screen.getByTestId('graph-review-node-root')
+    fireEvent.click(reviewCard)
+
+    expect(onSelectNode).not.toHaveBeenCalled()
+    expect(within(reviewCard).queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('places the review node between the parent row and the direct child row', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({ node_id: 'root', child_ids: ['child-1', 'child-2'] }),
+          buildNode({
+            node_id: 'child-1',
+            parent_id: 'root',
+            child_ids: ['grandchild-1'],
+            title: 'Prep',
+            description: 'Prep step',
+            depth: 1,
+            display_order: 0,
+            hierarchical_number: '1.1',
+            status: 'ready',
+            node_kind: 'original',
+          }),
+          buildNode({
+            node_id: 'child-2',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Build',
+            description: 'Build step',
+            depth: 1,
+            display_order: 1,
+            hierarchical_number: '1.2',
+            status: 'locked',
+            node_kind: 'original',
+          }),
+          buildNode({
+            node_id: 'grandchild-1',
+            parent_id: 'child-1',
+            child_ids: [],
+            title: 'Prep detail',
+            description: 'Grandchild step',
+            depth: 2,
+            display_order: 0,
+            hierarchical_number: '1.1.1',
+            status: 'ready',
+            node_kind: 'original',
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    const parentNode = screen.getByTestId('rf-node-root')
+    const directChildNode = screen.getByTestId('rf-node-child-1')
+    const reviewNode = screen.getByTestId('rf-node-review::root')
+    const grandchildNode = screen.getByTestId('rf-node-grandchild-1')
+    const parentY = Number(parentNode.getAttribute('data-position-y'))
+    const directChildY = Number(directChildNode.getAttribute('data-position-y'))
+    const reviewY = Number(reviewNode.getAttribute('data-position-y'))
+    const grandchildY = Number(grandchildNode.getAttribute('data-position-y'))
+
+    const parentRecord = snapshot.tree_state.node_registry.find((n) => n.node_id === 'root')
+    expect(parentRecord).toBeDefined()
+    expect(reviewY).toBe(parentY + estimateNodeHeight(parentRecord!) + REVIEW_PARENT_GAP_PX)
+    expect(reviewY).toBeGreaterThan(parentY)
+    expect(reviewY).toBeLessThan(directChildY)
+    expect(grandchildY).toBeGreaterThan(directChildY)
   })
 })

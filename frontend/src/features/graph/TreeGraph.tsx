@@ -18,24 +18,42 @@ import {
   type GraphNodeActions,
 } from './graphNodeActionsContext'
 import { GraphNode, type GraphNodeData } from './GraphNode'
-import { buildTreeLayoutPositions, TREE_DEPTH_STEP_PX } from './treeGraphLayout'
+import { ReviewGraphNode, type ReviewGraphNodeData } from './ReviewGraphNode'
+import {
+  buildReviewOverlayPositions,
+  buildTreeLayoutPositions,
+  TREE_DEPTH_STEP_PX,
+} from './treeGraphLayout'
 import styles from './TreeGraph.module.css'
 
 const nodeTypes = {
   graphNode: GraphNode,
+  reviewNode: ReviewGraphNode,
+}
+
+const REVIEW_NODE_PREFIX = 'review::'
+const REVIEW_EDGE_STROKE = 'var(--color-accent)'
+const STRUCTURAL_EDGE_STROKE = 'var(--graph-edge-stroke)'
+
+/** Slightly larger than React Flow default (12.5) so arrowheads match thicker edges. */
+const EDGE_ARROW_MARKER = { width: 15, height: 15 } as const
+
+type FlowEdgeData = {
+  kind: 'structural' | 'review-child' | 'review-return'
+  parentId: string
 }
 
 /** Default fit when graph bounds change without a branch toggle (e.g. snapshot load). */
 const FIT_VIEW_ANIMATION_MS = 320
 /** Longer pan/zoom after expand/collapse so the viewport does not feel like it snaps. */
 const FIT_VIEW_BRANCH_TOGGLE_MS = 560
-/** Detail panel open/resize — between default and branch toggle. */
+/** Detail panel open/resize, between default and branch toggle. */
 const FIT_VIEW_DETAIL_MS = 420
 
-/** Caps automatic fitView so the graph doesn’t land too zoomed-in (lower = more breathing room). */
+/** Caps automatic fitView so the graph does not land too zoomed-in (lower = more breathing room). */
 const FIT_VIEW_MAX_ZOOM_FULL = 0.92
 const FIT_VIEW_MAX_ZOOM_FOCUS = 0.88
-/** “Set as current root” fits the subtree — use extra padding + lower max zoom so it doesn’t feel tight. */
+/** "Set as current root" fits the subtree, use extra padding + lower max zoom so it does not feel tight. */
 const FIT_VIEW_MAX_ZOOM_GRAPH_ROOT = 0.78
 const FIT_VIEW_PADDING_FULL = 0.22
 const FIT_VIEW_PADDING_FOCUS = 0.26
@@ -91,7 +109,7 @@ function scheduleAfterReflow(run: () => void): () => void {
 /** React Flow `.react-flow__panel` margin in TreeGraph.module.css */
 const REACT_FLOW_PANEL_MARGIN_PX = 12
 
-/** Expanded sidebar width — keep in sync with `.sidebar` in Sidebar.module.css */
+/** Expanded sidebar width, keep in sync with `.sidebar` in Sidebar.module.css */
 const GRAPH_SIDEBAR_EXPANDED_PX = 270
 
 /**
@@ -286,6 +304,7 @@ export function TreeGraph({
     }),
     [graphViewRootId, nodeById],
   )
+
   const rootNode = useMemo(
     () => nodeById.get(snapshot.tree_state.root_node_id) ?? null,
     [nodeById, snapshot.tree_state.root_node_id],
@@ -473,7 +492,17 @@ export function TreeGraph({
     [nodeById, effectiveRootIds, graphViewRootId, visibleChildrenById],
   )
 
-  const flowNodes = useMemo<Node<GraphNodeData>[]>(() => {
+  const reviewOverlayPositions = useMemo(
+    () =>
+      buildReviewOverlayPositions({
+        nodeById,
+        visibleChildrenById,
+        treePositions: layout,
+      }),
+    [layout, nodeById, visibleChildrenById],
+  )
+
+  const realFlowNodes = useMemo<Node<GraphNodeData>[]>(() => {
     return snapshot.tree_state.node_registry
       .filter((node) => visibleNodeIds.has(node.node_id))
       .map((node) => ({
@@ -518,35 +547,158 @@ export function TreeGraph({
     splittingNodeId,
     snapshot.tree_state.active_node_id,
     snapshot.tree_state.node_registry,
-    snapshot.tree_state.root_node_id,
     visibleNodeIds,
   ])
 
-  const flowEdges = useMemo<Edge[]>(() => {
+  const reviewFlowNodes = useMemo<Node<ReviewGraphNodeData>[]>(() => {
+    const nodes: Node<ReviewGraphNodeData>[] = []
+    for (const [reviewId, position] of reviewOverlayPositions.entries()) {
+      const parentId = reviewId.slice(REVIEW_NODE_PREFIX.length)
+      const parent = nodeById.get(parentId)
+      if (!parent) {
+        continue
+      }
+      nodes.push({
+        id: reviewId,
+        type: 'reviewNode',
+        className: 'nopan',
+        position,
+        draggable: false,
+        selectable: false,
+        data: {
+          parentNodeId: parent.node_id,
+          parentTitle: parent.title,
+          parentHierarchicalNumber: parent.hierarchical_number,
+        },
+      })
+    }
+    return nodes
+  }, [nodeById, reviewOverlayPositions])
+
+  const flowNodes = useMemo<Array<Node<GraphNodeData | ReviewGraphNodeData>>>(
+    () => [...realFlowNodes, ...reviewFlowNodes],
+    [realFlowNodes, reviewFlowNodes],
+  )
+
+  const flowEdges = useMemo<Edge<FlowEdgeData>[]>(() => {
     const visibleSet = new Set(flowNodes.map((node) => node.id))
-    return snapshot.tree_state.node_registry.flatMap((node) =>
+
+    const structuralEdges = snapshot.tree_state.node_registry.flatMap((node) =>
       (visibleChildrenById.get(node.node_id) ?? [])
         .filter((childId) => visibleSet.has(node.node_id) && visibleSet.has(childId))
         .map((childId) => ({
           id: `e-${node.node_id}-${childId}`,
           source: node.node_id,
           target: childId,
+          sourceHandle: 'out',
+          targetHandle: 'in',
+          data: {
+            kind: 'structural' as const,
+            parentId: node.node_id,
+          },
           type: 'straight',
           sourcePosition: Position.Bottom,
           targetPosition: Position.Top,
-          style: { stroke: 'var(--color-edge)', strokeWidth: 2.4 },
           markerEnd: {
             type: MarkerType.ArrowClosed,
-            color: 'var(--color-edge)',
+            color: STRUCTURAL_EDGE_STROKE,
+            ...EDGE_ARROW_MARKER,
+          },
+          style: {
+            stroke: STRUCTURAL_EDGE_STROKE,
+            strokeWidth: 'var(--graph-edge-width)',
+            strokeLinecap: 'round' as const,
           },
         })),
     )
-  }, [flowNodes, snapshot.tree_state.node_registry, visibleChildrenById])
+
+    const reviewEdges = [...reviewOverlayPositions.keys()].flatMap((reviewId) => {
+      const parentId = reviewId.slice(REVIEW_NODE_PREFIX.length)
+      const reviewPosition = reviewOverlayPositions.get(reviewId)
+      const childIds = (visibleChildrenById.get(parentId) ?? []).filter((childId) =>
+        visibleSet.has(childId),
+      )
+      if (
+        childIds.length < 2 ||
+        !reviewPosition ||
+        !visibleSet.has(reviewId) ||
+        !visibleSet.has(parentId)
+      ) {
+        return []
+      }
+
+      const inboundEdges = childIds.map((childId) => {
+        const childPosition = layout.get(childId)
+        let sourcePosition = Position.Top
+        if (childPosition) {
+          if (childPosition.x < reviewPosition.x - 16) {
+            sourcePosition = Position.Right
+          } else if (childPosition.x > reviewPosition.x + 16) {
+            sourcePosition = Position.Left
+          }
+        }
+
+        return {
+          id: `review-child-${childId}-${parentId}`,
+          source: childId,
+          target: reviewId,
+          sourceHandle: 'out',
+          targetHandle: 'in',
+          data: {
+            kind: 'review-child' as const,
+            parentId,
+          },
+          type: 'straight',
+          sourcePosition,
+          targetPosition: Position.Bottom,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: REVIEW_EDGE_STROKE,
+            ...EDGE_ARROW_MARKER,
+          },
+          style: {
+            stroke: REVIEW_EDGE_STROKE,
+            strokeWidth: 'var(--graph-edge-width)',
+            strokeLinecap: 'round' as const,
+          },
+        }
+      })
+
+      const returnEdge = {
+        id: `review-return-${parentId}`,
+        source: reviewId,
+        target: parentId,
+        sourceHandle: 'out',
+        targetHandle: 'review-return',
+        data: {
+          kind: 'review-return' as const,
+          parentId,
+        },
+        type: 'straight',
+        sourcePosition: Position.Top,
+        targetPosition: Position.Bottom,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: REVIEW_EDGE_STROKE,
+          ...EDGE_ARROW_MARKER,
+        },
+        style: {
+          stroke: REVIEW_EDGE_STROKE,
+          strokeWidth: 'var(--graph-edge-width)',
+          strokeLinecap: 'round' as const,
+        },
+      }
+
+      return [...inboundEdges, returnEdge]
+    })
+
+    return [...structuralEdges, ...reviewEdges]
+  }, [flowNodes, layout, reviewOverlayPositions, snapshot.tree_state.node_registry, visibleChildrenById])
 
   const fitKey = useMemo(
     () =>
       flowNodes
-        .map((node) => `${node.id}:${node.position.x}:${node.position.y}:${node.data.isCollapsed ? 'c' : 'o'}`)
+        .map((node) => `${node.id}:${node.position.x}:${node.position.y}`)
         .join('|'),
     [flowNodes],
   )
@@ -571,7 +723,7 @@ export function TreeGraph({
       graphViewRootFitPendingRef.current = null
       suppressFullGraphFitUntilRef.current = 0
       return scheduleAfterReflow(() => {
-        // Fit the whole visible subtree, not a single node’s bounds (single-node fit zooms in too tight).
+        // Fit the whole visible subtree, not a single node's bounds (single-node fit zooms in too tight).
         void flowInstance.fitView({
           padding: FIT_VIEW_PADDING_GRAPH_ROOT,
           maxZoom: FIT_VIEW_MAX_ZOOM_GRAPH_ROOT,
@@ -680,7 +832,7 @@ export function TreeGraph({
             onInit={setFlowInstance}
             onNodeClick={handleFlowNodePointerEvents}
           >
-            <Background color="var(--color-border-strong)" gap={24} size={1} />
+            <Background color="var(--color-border-subtle)" gap={22} size={1} />
             <Controls showInteractive={false} position="bottom-right" />
 
             <Panel position="bottom-left">

@@ -298,7 +298,13 @@ function GraphNodeComponent({ data }: NodeProps) {
 
   return (
     <div className={styles.wrapper}>
-      <Handle className={styles.handle} type="target" position={Position.Top} isConnectable={false} />
+      <Handle
+        className={styles.handle}
+        type="target"
+        position={Position.Top}
+        id="in"
+        isConnectable={false}
+      />
       <div
         role="button"
         tabIndex={0}
@@ -404,7 +410,21 @@ function GraphNodeComponent({ data }: NodeProps) {
         ) : null}
       </div>
 
-      <Handle className={styles.handle} type="source" position={Position.Bottom} isConnectable={false} />
+      <Handle
+        className={styles.handle}
+        type="source"
+        position={Position.Bottom}
+        id="out"
+        isConnectable={false}
+      />
+      {/* Incoming from review overlay (edge ends at parent bottom; distinct from `out` source to children). */}
+      <Handle
+        className={styles.handle}
+        type="target"
+        position={Position.Bottom}
+        id="review-return"
+        isConnectable={false}
+      />
     </div>
   )
 }

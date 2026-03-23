@@ -1,0 +1,60 @@
+.wrapper {
+  position: relative;
+  width: 220px;
+  overflow: visible;
+}
+
+.handle {
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  opacity: 0;
+}
+
+.card {
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px 14px;
+  border: 1px dashed color-mix(in srgb, var(--color-accent) 36%, var(--graph-node-border));
+  border-radius: var(--graph-node-radius);
+  background: color-mix(in srgb, var(--color-accent-muted) 58%, var(--color-bg-panel));
+  box-shadow: var(--shadow-xs);
+  color: var(--color-text-primary);
+  text-align: left;
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  line-height: var(--line-height-tight);
+  color: var(--color-text-primary);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-text-secondary);
+  word-break: break-word;
+}
+
+.parentNumber {
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+}

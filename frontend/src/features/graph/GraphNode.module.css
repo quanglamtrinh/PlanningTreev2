@@ -6,25 +6,29 @@
   overflow: visible;
 }
 
-/* ─── Handles ─── */
+/* ─── Handles (invisible anchors — edges meet card like an org chart) ─── */
 .handle {
-  width: 7px;
-  height: 7px;
-  border: 1.5px solid var(--color-accent);
-  background: var(--color-bg-panel);
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  opacity: 0;
 }
 
-/* ─── Card ─── */
+/* ─── Card (org-chart: white panel, thin neutral border, small radius, soft shadow) ─── */
 .card {
   width: 220px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 11px 12px 13px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-lg);
+  padding: 12px 14px 14px;
+  border: 1px solid var(--graph-node-border);
+  border-radius: var(--graph-node-radius);
   background: var(--color-bg-panel);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--graph-node-shadow);
   color: var(--color-text-primary);
   text-align: left;
   cursor: pointer;
@@ -36,8 +40,10 @@
 
 .card:hover {
   background: var(--color-bg-hover);
-  border-color: var(--color-border);
-  box-shadow: var(--shadow-sm);
+  border-color: color-mix(in srgb, var(--color-text-primary) 14%, var(--graph-node-border));
+  box-shadow:
+    var(--graph-node-shadow),
+    0 2px 6px rgba(15, 23, 42, 0.05);
 }
 
 .card:focus-visible {

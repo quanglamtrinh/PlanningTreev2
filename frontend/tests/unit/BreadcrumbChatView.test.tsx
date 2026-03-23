@@ -304,6 +304,26 @@ describe('BreadcrumbChatView', () => {
     })
   })
 
+  it('offers Ask, Execution, and Artifact thread tabs; Artifact uses an empty feed and disabled composer', async () => {
+    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'child-1'))
+
+    renderBreadcrumbChatView()
+
+    await screen.findByTestId('breadcrumb-node-detail-card')
+
+    expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+
+    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-artifact'))
+    expect(screen.getByTestId('breadcrumb-thread-tab-artifact')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('message-feed')).toHaveTextContent('0 messages')
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
+
+    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-ask'))
+    expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+  })
+
   it('reloads project details when the store is focused on another project', async () => {
     useProjectStore.setState({
       ...useProjectStore.getInitialState(),
