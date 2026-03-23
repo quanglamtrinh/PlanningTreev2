@@ -26,7 +26,7 @@ from backend.errors.app_errors import (
 from backend.services import planningtree_workspace
 from backend.services.tree_service import TreeService
 from backend.split_contract import FlatSubtaskPayload, ServiceSplitMode
-from backend.storage.file_utils import iso_now, new_id
+from backend.storage.file_utils import iso_now, load_json, new_id
 from backend.storage.storage import Storage
 
 _RETRY_LIMIT = 2
@@ -148,6 +148,29 @@ class SplitService:
                 raise SplitBackendUnavailable("Split thread is unavailable. Retry the split.")
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             task_context = build_split_context(snapshot, node, node_by_id)
+            if workspace_root:
+                node_dir = planningtree_workspace.resolve_node_dir(
+                    Path(workspace_root), snapshot, node_id
+                )
+                if node_dir is not None:
+                    from backend.services.node_detail_service import (
+                        FRAME_META_FILE,
+                        _DEFAULT_FRAME_META,
+                    )
+
+                    frame_meta_path = node_dir / FRAME_META_FILE
+                    frame_meta = load_json(frame_meta_path, default=None)
+                    if not isinstance(frame_meta, dict):
+                        frame_meta = dict(_DEFAULT_FRAME_META)
+
+                    frame_content = str(frame_meta.get("confirmed_content") or "").strip()
+                    if not frame_content:
+                        frame_path = node_dir / planningtree_workspace.FRAME_FILE_NAME
+                        if frame_path.exists():
+                            frame_content = frame_path.read_text(encoding="utf-8").strip()
+
+                    if frame_content:
+                        task_context["frame_content"] = frame_content
 
         retry_feedback: str | None = None
         last_issues = ["No valid split_result payload was captured."]

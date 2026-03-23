@@ -12,12 +12,16 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
-from backend.config.app_config import build_app_paths, get_chat_timeout, get_codex_cmd, get_max_chat_message_chars, get_port, get_split_timeout
+from backend.config.app_config import build_app_paths, get_chat_timeout, get_clarify_gen_timeout, get_codex_cmd, get_frame_gen_timeout, get_max_chat_message_chars, get_port, get_spec_gen_timeout, get_split_timeout
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import bootstrap, chat, codex, nodes, projects, split
 from backend.services.chat_service import ChatService
 from backend.services.codex_account_service import CodexAccountService
+from backend.services.clarify_generation_service import ClarifyGenerationService
+from backend.services.frame_generation_service import FrameGenerationService
+from backend.services.node_detail_service import NodeDetailService
+from backend.services.spec_generation_service import SpecGenerationService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
@@ -38,6 +42,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     project_service = ProjectService(storage, snapshot_view_service, chat_service=None)
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
+    node_detail_service = NodeDetailService(storage, tree_service)
     codex_client = CodexAppClient(StdioTransport(codex_cmd=get_codex_cmd() or "codex"))
     codex_event_broker = GlobalEventBroker()
     codex_account_service = CodexAccountService(
@@ -49,6 +54,24 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         tree_service=tree_service,
         codex_client=codex_client,
         split_timeout=get_split_timeout(),
+    )
+    frame_generation_service = FrameGenerationService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        frame_gen_timeout=get_frame_gen_timeout(),
+    )
+    clarify_generation_service = ClarifyGenerationService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        clarify_gen_timeout=get_clarify_gen_timeout(),
+    )
+    spec_generation_service = SpecGenerationService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        spec_gen_timeout=get_spec_gen_timeout(),
     )
     chat_event_broker = ChatEventBroker()
     chat_service = ChatService(
@@ -98,11 +121,15 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.project_service = project_service
     app.state.node_service = node_service
     app.state.node_document_service = node_document_service
+    app.state.node_detail_service = node_detail_service
     app.state.snapshot_view_service = snapshot_view_service
     app.state.codex_client = codex_client
     app.state.codex_event_broker = codex_event_broker
     app.state.codex_account_service = codex_account_service
     app.state.split_service = split_service
+    app.state.frame_generation_service = frame_generation_service
+    app.state.clarify_generation_service = clarify_generation_service
+    app.state.spec_generation_service = spec_generation_service
     app.state.chat_service = chat_service
     app.state.chat_event_broker = chat_event_broker
 

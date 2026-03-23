@@ -51,6 +51,8 @@ def test_ensure_node_path_creates_nested_folders(tmp_path: Path) -> None:
     assert (child_dir / planningtree_workspace.NODE_MARKER_NAME).read_text(encoding="utf-8").strip() == child_id
     assert (child_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == ""
     assert (child_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
+    assert (child_dir / planningtree_workspace.FRAME_META_FILE_NAME).is_file()
+    assert (child_dir / planningtree_workspace.SPEC_META_FILE_NAME).is_file()
 
 
 def test_marker_mismatch_uses_disambiguated_segment(tmp_path: Path) -> None:
@@ -142,3 +144,77 @@ def test_sync_snapshot_tree_renames_node_folder_and_preserves_files(tmp_path: Pa
     assert (new_dir / planningtree_workspace.NODE_MARKER_NAME).read_text(encoding="utf-8").strip() == child_id
     assert (new_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == "frame body"
     assert (new_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == "spec body"
+
+
+def test_sync_snapshot_tree_truncates_segments_to_keep_node_files_within_path_budget(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    planningtree_workspace.bootstrap_if_absent(tmp_path)
+    monkeypatch.setattr(planningtree_workspace, "_is_windows_path_limited", lambda: True)
+
+    root_id = "rootid01"
+    branch_id = "branchid01"
+    leaf_id = "leafid01"
+    snapshot = {
+        "project": {"project_path": str(tmp_path)},
+        "tree_state": {
+            "root_node_id": root_id,
+            "node_index": {
+                root_id: {
+                    "node_id": root_id,
+                    "parent_id": None,
+                    "child_ids": [branch_id],
+                    "title": "workspace title with several words",
+                    "hierarchical_number": "1",
+                    "display_order": 0,
+                },
+                branch_id: {
+                    "node_id": branch_id,
+                    "parent_id": root_id,
+                    "child_ids": [leaf_id],
+                    "title": "branch title with enough length to trigger truncation",
+                    "hierarchical_number": "1.1",
+                    "display_order": 0,
+                },
+                leaf_id: {
+                    "node_id": leaf_id,
+                    "parent_id": branch_id,
+                    "child_ids": [],
+                    "title": "leaf title with enough length to trigger truncation again",
+                    "hierarchical_number": "1.1.1",
+                    "display_order": 0,
+                },
+            },
+        },
+    }
+
+    node_index = snapshot["tree_state"]["node_index"]
+    raw_leaf_path = (
+        tmp_path
+        / ".planningtree"
+        / "root"
+        / planningtree_workspace.segment_for_node(node_index[root_id])
+        / planningtree_workspace.segment_for_node(node_index[branch_id])
+        / planningtree_workspace.segment_for_node(node_index[leaf_id])
+        / "clarify_gen.json.tmp"
+    )
+    minimal_leaf_path = (
+        tmp_path / ".planningtree" / "root" / "x" / "x" / "x" / "clarify_gen.json.tmp"
+    )
+    windows_limit = planningtree_workspace._WINDOWS_MAX_PATH
+    monkeypatch.setattr(
+        planningtree_workspace,
+        "_WINDOWS_MAX_PATH",
+        min(windows_limit, max(len(str(minimal_leaf_path)), len(str(raw_leaf_path)) - 20)),
+    )
+
+    planningtree_workspace.sync_snapshot_tree(tmp_path, snapshot)
+    node_dir = planningtree_workspace.resolve_node_dir(tmp_path, snapshot, leaf_id)
+
+    assert node_dir is not None
+    assert (node_dir / planningtree_workspace.FRAME_META_FILE_NAME).is_file()
+    assert len(str(node_dir / "clarify_gen.json.tmp")) <= planningtree_workspace._WINDOWS_MAX_PATH
+    assert node_dir.name != planningtree_workspace.segment_for_node(
+        snapshot["tree_state"]["node_index"][leaf_id]
+    )

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { useChatStore } from '../../stores/chat-store'
@@ -8,8 +8,11 @@ import { ComposerBar } from './ComposerBar'
 import { MessageFeed } from './MessageFeed'
 import styles from './BreadcrumbChatView.module.css'
 
+type ThreadTab = 'ask' | 'execution' | 'artifact'
+
 export function BreadcrumbChatView() {
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
+  const [threadTab, setThreadTab] = useState<ThreadTab>('ask')
 
   const { session, isLoading, isSending, error, loadSession, sendMessage, disconnect } = useChatStore(
     useShallow((s) => ({
@@ -118,29 +121,73 @@ export function BreadcrumbChatView() {
   }, [projectId, nodeId, detailState, projectError, activeProjectId, snapshot, detailNode])
 
   const isActiveTurn = !!session?.active_turn_id
-  const composerDisabled = isActiveTurn || isSending || isLoading || !session
+  const composerDisabledAsk = isActiveTurn || isSending || isLoading || !session
 
   return (
     <div className={styles.root}>
       <div className={styles.threadPane} data-testid="breadcrumb-thread-pane">
         <div className={styles.threadSurface}>
-          {isLoading && (
-            <div className={styles.loadingState}>
-              Loading...
-            </div>
-          )}
-          {error && (
-            <div className={styles.errorBanner}>
-              {error}
-            </div>
-          )}
-          {!isLoading && session && (
-            <MessageFeed messages={session.messages} />
-          )}
-          <ComposerBar
-            onSend={sendMessage}
-            disabled={composerDisabled}
-          />
+          <nav className={styles.threadTabBar} role="tablist" aria-label="Thread mode">
+            <button
+              type="button"
+              role="tab"
+              className={`${styles.threadTab} ${threadTab === 'ask' ? styles.threadTabActive : ''}`}
+              data-testid="breadcrumb-thread-tab-ask"
+              aria-selected={threadTab === 'ask'}
+              onClick={() => setThreadTab('ask')}
+            >
+              Ask
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={`${styles.threadTab} ${threadTab === 'execution' ? styles.threadTabActive : ''}`}
+              data-testid="breadcrumb-thread-tab-execution"
+              aria-selected={threadTab === 'execution'}
+              onClick={() => setThreadTab('execution')}
+            >
+              Execution
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={`${styles.threadTab} ${threadTab === 'artifact' ? styles.threadTabActive : ''}`}
+              data-testid="breadcrumb-thread-tab-artifact"
+              aria-selected={threadTab === 'artifact'}
+              onClick={() => setThreadTab('artifact')}
+            >
+              Artifact
+            </button>
+          </nav>
+
+          <div className={styles.threadTabBody}>
+            {threadTab === 'ask' ? (
+              <>
+                {isLoading && (
+                  <div className={styles.loadingState}>
+                    Loading...
+                  </div>
+                )}
+                {error && (
+                  <div className={styles.errorBanner}>
+                    {error}
+                  </div>
+                )}
+                {!isLoading && session && (
+                  <MessageFeed messages={session.messages} />
+                )}
+                <ComposerBar
+                  onSend={sendMessage}
+                  disabled={composerDisabledAsk}
+                />
+              </>
+            ) : (
+              <>
+                <MessageFeed messages={[]} />
+                <ComposerBar onSend={sendMessage} disabled />
+              </>
+            )}
+          </div>
         </div>
       </div>
 

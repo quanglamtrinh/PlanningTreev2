@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   Controls,
   MarkerType,
   Panel,
+  Position,
   ReactFlow,
   type Edge,
   type Node,
@@ -17,11 +18,133 @@ import {
   type GraphNodeActions,
 } from './graphNodeActionsContext'
 import { GraphNode, type GraphNodeData } from './GraphNode'
-import { buildTreeLayoutPositions } from './treeGraphLayout'
+import { ReviewGraphNode, type ReviewGraphNodeData } from './ReviewGraphNode'
+import {
+  buildReviewOverlayPositions,
+  buildTreeLayoutPositions,
+  TREE_DEPTH_STEP_PX,
+} from './treeGraphLayout'
 import styles from './TreeGraph.module.css'
 
 const nodeTypes = {
   graphNode: GraphNode,
+  reviewNode: ReviewGraphNode,
+}
+
+const REVIEW_NODE_PREFIX = 'review::'
+const REVIEW_EDGE_STROKE = 'var(--color-accent)'
+const STRUCTURAL_EDGE_STROKE = 'var(--graph-edge-stroke)'
+
+/** Slightly larger than React Flow default (12.5) so arrowheads match thicker edges. */
+const EDGE_ARROW_MARKER = { width: 15, height: 15 } as const
+
+type FlowEdgeData = {
+  kind: 'structural' | 'review-child' | 'review-return'
+  parentId: string
+}
+
+/** Default fit when graph bounds change without a branch toggle (e.g. snapshot load). */
+const FIT_VIEW_ANIMATION_MS = 320
+/** Longer pan/zoom after expand/collapse so the viewport does not feel like it snaps. */
+const FIT_VIEW_BRANCH_TOGGLE_MS = 560
+/** Detail panel open/resize, between default and branch toggle. */
+const FIT_VIEW_DETAIL_MS = 420
+
+/** Caps automatic fitView so the graph does not land too zoomed-in (lower = more breathing room). */
+const FIT_VIEW_MAX_ZOOM_FULL = 0.92
+const FIT_VIEW_MAX_ZOOM_FOCUS = 0.88
+/** "Set as current root" fits the subtree, use extra padding + lower max zoom so it does not feel tight. */
+const FIT_VIEW_MAX_ZOOM_GRAPH_ROOT = 0.78
+const FIT_VIEW_PADDING_FULL = 0.22
+const FIT_VIEW_PADDING_FOCUS = 0.26
+const FIT_VIEW_PADDING_GRAPH_ROOT = 0.36
+
+/**
+ * After closing node details, block full-graph fitView until this many ms have passed.
+ * A counter is not enough when the user clicks open/close rapidly (opens reset the counter, reflows vary).
+ * Each close extends the deadline so spamming close stays protected.
+ */
+const SUPPRESS_FULL_GRAPH_FIT_MS_AFTER_DETAIL_CLOSE = 1400
+
+function easeInOutQuint(t: number): number {
+  return t < 0.5 ? 16 * t * t * t * t * t : 1 - Math.pow(-2 * t + 2, 5) / 2
+}
+
+function resolveFitViewDurationMs(baseMs: number, isFullscreen: boolean): number {
+  if (baseMs <= 0) {
+    return 0
+  }
+  return isFullscreen ? Math.max(240, Math.round(baseMs * 0.78)) : baseMs
+}
+
+function fitViewSmoothOpts(
+  isFullscreen: boolean,
+  options?: {
+    durationMs?: number
+    ease?: (t: number) => number
+  },
+) {
+  const durationMs = options?.durationMs ?? FIT_VIEW_ANIMATION_MS
+  const ease = options?.ease ?? easeInOutQuint
+  return {
+    duration: resolveFitViewDurationMs(durationMs, isFullscreen),
+    ease,
+  }
+}
+
+function scheduleAfterReflow(run: () => void): () => void {
+  let id1 = 0
+  let id2 = 0
+  id1 = requestAnimationFrame(() => {
+    id2 = requestAnimationFrame(() => {
+      run()
+    })
+  })
+  return () => {
+    cancelAnimationFrame(id1)
+    cancelAnimationFrame(id2)
+  }
+}
+
+/** React Flow `.react-flow__panel` margin in TreeGraph.module.css */
+const REACT_FLOW_PANEL_MARGIN_PX = 12
+
+/** Expanded sidebar width, keep in sync with `.sidebar` in Sidebar.module.css */
+const GRAPH_SIDEBAR_EXPANDED_PX = 270
+
+/**
+ * Fallback estimate for detail panel width (px) from CSS rules in TreeGraph.module.css.
+ * Caps by the graph column width (window minus sidebar) so fitView matches the real pane.
+ */
+function graphDetailPanelWidthEstimatePx(innerWidth: number, isFullscreen: boolean): number {
+  if (typeof window === 'undefined') {
+    return 400
+  }
+  const graphColumnW = isFullscreen
+    ? innerWidth
+    : Math.max(200, innerWidth - GRAPH_SIDEBAR_EXPANDED_PX)
+  const vw = innerWidth
+  const raw =
+    vw <= 920
+      ? Math.min(Math.max(360, vw * 0.88), 520, vw - 32)
+      : Math.min(Math.max(400, vw * 0.44), 720, vw - 40)
+  return Math.min(raw, graphColumnW)
+}
+
+function graphDetailPanelRightReservePx(
+  innerWidth: number,
+  isFullscreen: boolean,
+  measuredPanelWidthPx?: number,
+  flowPaneWidthPx?: number,
+): number {
+  const fromDom =
+    typeof measuredPanelWidthPx === 'number' && measuredPanelWidthPx > 40
+      ? measuredPanelWidthPx + REACT_FLOW_PANEL_MARGIN_PX
+      : graphDetailPanelWidthEstimatePx(innerWidth, isFullscreen) + REACT_FLOW_PANEL_MARGIN_PX
+  if (typeof flowPaneWidthPx === 'number' && flowPaneWidthPx > 160) {
+    return Math.min(Math.ceil(fromDom), Math.max(flowPaneWidthPx - 100, 80))
+  }
+  return Math.ceil(fromDom)
 }
 
 type Props = {
@@ -92,6 +215,17 @@ export function TreeGraph({
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
+  /** Subtree-only graph view; null = show full project tree. */
+  const [graphViewRootId, setGraphViewRootId] = useState<string | null>(null)
+  const graphShellRef = useRef<HTMLDivElement | null>(null)
+  /** After expand/collapse toggle, next fitView targets this node so the viewport stays on the toggled card. */
+  const branchToggleFocusNodeIdRef = useRef<string | null>(null)
+  /** After "Set as current root", fitView to that node (runs even when detail panel is open). */
+  const graphViewRootFitPendingRef = useRef<string | null>(null)
+  /** After "Unset current root", fit the full project tree (runs before focused-node early return). */
+  const graphViewRootUnsetFitPendingRef = useRef(false)
+  /** While `performance.now()` is below this, skip full-graph fitView (after closing details). */
+  const suppressFullGraphFitUntilRef = useRef(0)
   const handlerRef = useRef({
     onSelectNode,
     onCreateChild,
@@ -114,6 +248,17 @@ export function TreeGraph({
 
   const graphNodeActions = useMemo<GraphNodeActions>(
     () => ({
+      graphViewRootId,
+      setGraphViewRoot: (nodeId) => {
+        setGraphViewRootId(nodeId)
+        if (nodeId) {
+          graphViewRootFitPendingRef.current = nodeId
+          graphViewRootUnsetFitPendingRef.current = false
+        } else {
+          graphViewRootUnsetFitPendingRef.current = true
+          suppressFullGraphFitUntilRef.current = 0
+        }
+      },
       selectNode: (nodeId) => {
         void handlerRef.current.onSelectNode(nodeId, true)
       },
@@ -123,11 +268,13 @@ export function TreeGraph({
           if (!nodeRecord) {
             return current
           }
-          const currentValue =
+          const isCollapsedNow =
             typeof current[nodeId] === 'boolean'
               ? current[nodeId]
               : defaultCollapsedForStatus(nodeRecord.status)
-          return { ...current, [nodeId]: !currentValue }
+          const nextCollapsed = !isCollapsedNow
+          branchToggleFocusNodeIdRef.current = nodeId
+          return { ...current, [nodeId]: nextCollapsed }
         })
       },
       createChild: (nodeId) => {
@@ -143,12 +290,21 @@ export function TreeGraph({
         void handlerRef.current.onFinishTask(nodeId)
       },
       infoClick: (nodeId) => {
-        setFocusedNodeId((prev) => (prev === nodeId ? null : nodeId))
+        setFocusedNodeId((prev) => {
+          if (prev === nodeId) {
+            suppressFullGraphFitUntilRef.current =
+              performance.now() + SUPPRESS_FULL_GRAPH_FIT_MS_AFTER_DETAIL_CLOSE
+            return null
+          }
+          suppressFullGraphFitUntilRef.current = 0
+          return nodeId
+        })
         void handlerRef.current.onSelectNode(nodeId, true)
       },
     }),
-    [nodeById],
+    [graphViewRootId, nodeById],
   )
+
   const rootNode = useMemo(
     () => nodeById.get(snapshot.tree_state.root_node_id) ?? null,
     [nodeById, snapshot.tree_state.root_node_id],
@@ -229,6 +385,18 @@ export function TreeGraph({
     return [snapshot.tree_state.root_node_id, ...secondaryRoots]
   }, [nodeById, rootNode, snapshot.tree_state.node_registry, snapshot.tree_state.root_node_id])
 
+  const effectiveRootIds = useMemo(() => {
+    if (graphViewRootId && nodeById.has(graphViewRootId)) {
+      return [graphViewRootId]
+    }
+    return rootIds
+  }, [graphViewRootId, nodeById, rootIds])
+
+  const selectionFallbackRootId =
+    graphViewRootId && nodeById.has(graphViewRootId)
+      ? graphViewRootId
+      : snapshot.tree_state.root_node_id
+
   const visibleNodeIds = useMemo(() => {
     const visible = new Set<string>()
     const visit = (nodeId: string) => {
@@ -240,6 +408,10 @@ export function TreeGraph({
         visit(childId)
       }
     }
+    if (graphViewRootId && nodeById.has(graphViewRootId)) {
+      visit(graphViewRootId)
+      return visible
+    }
     if (rootNode) {
       visit(snapshot.tree_state.root_node_id)
     }
@@ -249,7 +421,14 @@ export function TreeGraph({
       }
     }
     return visible
-  }, [rootIds, rootNode, snapshot.tree_state.root_node_id, visibleChildrenById])
+  }, [
+    graphViewRootId,
+    nodeById,
+    rootIds,
+    rootNode,
+    snapshot.tree_state.root_node_id,
+    visibleChildrenById,
+  ])
 
   const selectedNode = useMemo(() => {
     if (!rootNode) {
@@ -259,20 +438,26 @@ export function TreeGraph({
       selectedNodeId,
       visibleNodeIds,
       parentById,
-      snapshot.tree_state.root_node_id,
+      selectionFallbackRootId,
     )
-    return nodeById.get(effectiveSelectedId) ?? nodeById.get(snapshot.tree_state.root_node_id) ?? null
-  }, [nodeById, parentById, rootNode, selectedNodeId, snapshot.tree_state.root_node_id, visibleNodeIds])
+    return nodeById.get(effectiveSelectedId) ?? nodeById.get(selectionFallbackRootId) ?? null
+  }, [nodeById, parentById, rootNode, selectedNodeId, selectionFallbackRootId, visibleNodeIds])
 
   useEffect(() => {
     if (!rootNode) {
       return
     }
-    const nextSelectedId = selectedNode?.node_id ?? snapshot.tree_state.root_node_id
+    const nextSelectedId = selectedNode?.node_id ?? selectionFallbackRootId
     if (nextSelectedId !== selectedNodeId) {
       void onSelectNode(nextSelectedId, false)
     }
-  }, [onSelectNode, rootNode, selectedNode?.node_id, selectedNodeId, snapshot.tree_state.root_node_id])
+  }, [onSelectNode, rootNode, selectedNode?.node_id, selectedNodeId, selectionFallbackRootId])
+
+  useEffect(() => {
+    if (graphViewRootId && !nodeById.has(graphViewRootId)) {
+      setGraphViewRootId(null)
+    }
+  }, [graphViewRootId, nodeById])
 
   useEffect(() => {
     if (!focusedNodeId) {
@@ -297,20 +482,34 @@ export function TreeGraph({
   }, [isFullscreen])
 
   const layout = useMemo(
-    () => buildTreeLayoutPositions({ nodeById, rootIds, visibleChildrenById }),
-    [nodeById, rootIds, visibleChildrenById],
+    () =>
+      buildTreeLayoutPositions({
+        nodeById,
+        rootIds: effectiveRootIds,
+        visibleChildrenById,
+        depthBaseNodeId: graphViewRootId,
+      }),
+    [nodeById, effectiveRootIds, graphViewRootId, visibleChildrenById],
   )
 
-  const flowNodes = useMemo<Node<GraphNodeData>[]>(() => {
+  const reviewOverlayPositions = useMemo(
+    () =>
+      buildReviewOverlayPositions({
+        nodeById,
+        visibleChildrenById,
+        treePositions: layout,
+      }),
+    [layout, nodeById, visibleChildrenById],
+  )
+
+  const realFlowNodes = useMemo<Node<GraphNodeData>[]>(() => {
     return snapshot.tree_state.node_registry
-      .filter(
-        (node) => node.node_id === snapshot.tree_state.root_node_id || visibleNodeIds.has(node.node_id),
-      )
+      .filter((node) => visibleNodeIds.has(node.node_id))
       .map((node) => ({
         id: node.node_id,
         type: 'graphNode',
         className: 'nopan',
-        position: layout.get(node.node_id) ?? { x: node.depth * 350, y: 0 },
+        position: layout.get(node.node_id) ?? { x: 0, y: node.depth * TREE_DEPTH_STEP_PX },
         draggable: false,
         selectable: false,
         data: {
@@ -333,6 +532,7 @@ export function TreeGraph({
           canOpenBreadcrumb: codexAvailable,
           isSplitting: splitStatus === 'active' && splittingNodeId === node.node_id,
           isSplitDisabled: splitStatus === 'active',
+          graphViewRootId,
         },
       }))
   }, [
@@ -340,56 +540,260 @@ export function TreeGraph({
     codexAvailable,
     collapsedById,
     directHiddenChildrenById,
+    graphViewRootId,
     layout,
     selectedNode?.node_id,
     splitStatus,
     splittingNodeId,
     snapshot.tree_state.active_node_id,
     snapshot.tree_state.node_registry,
-    snapshot.tree_state.root_node_id,
     visibleNodeIds,
   ])
 
-  const flowEdges = useMemo<Edge[]>(() => {
+  const reviewFlowNodes = useMemo<Node<ReviewGraphNodeData>[]>(() => {
+    const nodes: Node<ReviewGraphNodeData>[] = []
+    for (const [reviewId, position] of reviewOverlayPositions.entries()) {
+      const parentId = reviewId.slice(REVIEW_NODE_PREFIX.length)
+      const parent = nodeById.get(parentId)
+      if (!parent) {
+        continue
+      }
+      nodes.push({
+        id: reviewId,
+        type: 'reviewNode',
+        className: 'nopan',
+        position,
+        draggable: false,
+        selectable: false,
+        data: {
+          parentNodeId: parent.node_id,
+          parentTitle: parent.title,
+          parentHierarchicalNumber: parent.hierarchical_number,
+        },
+      })
+    }
+    return nodes
+  }, [nodeById, reviewOverlayPositions])
+
+  const flowNodes = useMemo<Array<Node<GraphNodeData | ReviewGraphNodeData>>>(
+    () => [...realFlowNodes, ...reviewFlowNodes],
+    [realFlowNodes, reviewFlowNodes],
+  )
+
+  const flowEdges = useMemo<Edge<FlowEdgeData>[]>(() => {
     const visibleSet = new Set(flowNodes.map((node) => node.id))
-    return snapshot.tree_state.node_registry.flatMap((node) =>
+
+    const structuralEdges = snapshot.tree_state.node_registry.flatMap((node) =>
       (visibleChildrenById.get(node.node_id) ?? [])
         .filter((childId) => visibleSet.has(node.node_id) && visibleSet.has(childId))
         .map((childId) => ({
           id: `e-${node.node_id}-${childId}`,
           source: node.node_id,
           target: childId,
-          type: 'smoothstep',
-          style: { stroke: 'var(--color-edge)', strokeWidth: 2.4 },
+          sourceHandle: 'out',
+          targetHandle: 'in',
+          data: {
+            kind: 'structural' as const,
+            parentId: node.node_id,
+          },
+          type: 'straight',
+          sourcePosition: Position.Bottom,
+          targetPosition: Position.Top,
           markerEnd: {
             type: MarkerType.ArrowClosed,
-            color: 'var(--color-edge)',
+            color: STRUCTURAL_EDGE_STROKE,
+            ...EDGE_ARROW_MARKER,
+          },
+          style: {
+            stroke: STRUCTURAL_EDGE_STROKE,
+            strokeWidth: 'var(--graph-edge-width)',
+            strokeLinecap: 'round' as const,
           },
         })),
     )
-  }, [flowNodes, snapshot.tree_state.node_registry, visibleChildrenById])
+
+    const reviewEdges = [...reviewOverlayPositions.keys()].flatMap((reviewId) => {
+      const parentId = reviewId.slice(REVIEW_NODE_PREFIX.length)
+      const reviewPosition = reviewOverlayPositions.get(reviewId)
+      const childIds = (visibleChildrenById.get(parentId) ?? []).filter((childId) =>
+        visibleSet.has(childId),
+      )
+      if (
+        childIds.length < 2 ||
+        !reviewPosition ||
+        !visibleSet.has(reviewId) ||
+        !visibleSet.has(parentId)
+      ) {
+        return []
+      }
+
+      const inboundEdges = childIds.map((childId) => {
+        const childPosition = layout.get(childId)
+        let sourcePosition = Position.Top
+        if (childPosition) {
+          if (childPosition.x < reviewPosition.x - 16) {
+            sourcePosition = Position.Right
+          } else if (childPosition.x > reviewPosition.x + 16) {
+            sourcePosition = Position.Left
+          }
+        }
+
+        return {
+          id: `review-child-${childId}-${parentId}`,
+          source: childId,
+          target: reviewId,
+          sourceHandle: 'out',
+          targetHandle: 'in',
+          data: {
+            kind: 'review-child' as const,
+            parentId,
+          },
+          type: 'straight',
+          sourcePosition,
+          targetPosition: Position.Bottom,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: REVIEW_EDGE_STROKE,
+            ...EDGE_ARROW_MARKER,
+          },
+          style: {
+            stroke: REVIEW_EDGE_STROKE,
+            strokeWidth: 'var(--graph-edge-width)',
+            strokeLinecap: 'round' as const,
+          },
+        }
+      })
+
+      const returnEdge = {
+        id: `review-return-${parentId}`,
+        source: reviewId,
+        target: parentId,
+        sourceHandle: 'out',
+        targetHandle: 'review-return',
+        data: {
+          kind: 'review-return' as const,
+          parentId,
+        },
+        type: 'straight',
+        sourcePosition: Position.Top,
+        targetPosition: Position.Bottom,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: REVIEW_EDGE_STROKE,
+          ...EDGE_ARROW_MARKER,
+        },
+        style: {
+          stroke: REVIEW_EDGE_STROKE,
+          strokeWidth: 'var(--graph-edge-width)',
+          strokeLinecap: 'round' as const,
+        },
+      }
+
+      return [...inboundEdges, returnEdge]
+    })
+
+    return [...structuralEdges, ...reviewEdges]
+  }, [flowNodes, layout, reviewOverlayPositions, snapshot.tree_state.node_registry, visibleChildrenById])
 
   const fitKey = useMemo(
     () =>
       flowNodes
-        .map((node) => `${node.id}:${node.position.x}:${node.position.y}:${node.data.isCollapsed ? 'c' : 'o'}`)
+        .map((node) => `${node.id}:${node.position.x}:${node.position.y}`)
         .join('|'),
     [flowNodes],
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!flowInstance || flowNodes.length === 0) {
       return undefined
     }
-    const handle = window.setTimeout(() => {
-      flowInstance.fitView({
-        padding: 0.18,
-        duration: isFullscreen ? 0 : 180,
-        maxZoom: 1.12,
+    if (graphViewRootUnsetFitPendingRef.current) {
+      graphViewRootUnsetFitPendingRef.current = false
+      suppressFullGraphFitUntilRef.current = 0
+      return scheduleAfterReflow(() => {
+        void flowInstance.fitView({
+          padding: FIT_VIEW_PADDING_FULL,
+          maxZoom: FIT_VIEW_MAX_ZOOM_FULL,
+          ...fitViewSmoothOpts(isFullscreen, { durationMs: FIT_VIEW_BRANCH_TOGGLE_MS }),
+        })
       })
-    }, 120)
-    return () => window.clearTimeout(handle)
-  }, [fitKey, flowInstance, flowNodes.length, isFullscreen])
+    }
+    const pendingGraphViewFit = graphViewRootFitPendingRef.current
+    if (pendingGraphViewFit) {
+      graphViewRootFitPendingRef.current = null
+      suppressFullGraphFitUntilRef.current = 0
+      return scheduleAfterReflow(() => {
+        // Fit the whole visible subtree, not a single node's bounds (single-node fit zooms in too tight).
+        void flowInstance.fitView({
+          padding: FIT_VIEW_PADDING_GRAPH_ROOT,
+          maxZoom: FIT_VIEW_MAX_ZOOM_GRAPH_ROOT,
+          ...fitViewSmoothOpts(isFullscreen, { durationMs: FIT_VIEW_BRANCH_TOGGLE_MS }),
+        })
+      })
+    }
+    if (focusedNodeId) {
+      branchToggleFocusNodeIdRef.current = null
+      suppressFullGraphFitUntilRef.current = 0
+      return undefined
+    }
+    const focusToggleNodeId = branchToggleFocusNodeIdRef.current
+    branchToggleFocusNodeIdRef.current = null
+
+    if (focusToggleNodeId) {
+      suppressFullGraphFitUntilRef.current = 0
+      return scheduleAfterReflow(() => {
+        void flowInstance.fitView({
+          nodes: [{ id: focusToggleNodeId }],
+          padding: FIT_VIEW_PADDING_FOCUS,
+          maxZoom: FIT_VIEW_MAX_ZOOM_FOCUS,
+          ...fitViewSmoothOpts(isFullscreen, { durationMs: FIT_VIEW_BRANCH_TOGGLE_MS }),
+        })
+      })
+    }
+
+    if (performance.now() < suppressFullGraphFitUntilRef.current) {
+      return undefined
+    }
+
+    return scheduleAfterReflow(() => {
+      void flowInstance.fitView({
+        padding: FIT_VIEW_PADDING_FULL,
+        maxZoom: FIT_VIEW_MAX_ZOOM_FULL,
+        ...fitViewSmoothOpts(isFullscreen),
+      })
+    })
+  }, [fitKey, flowInstance, flowNodes.length, isFullscreen, focusedNodeId])
+
+  useLayoutEffect(() => {
+    if (!flowInstance || !focusedNodeId) {
+      return undefined
+    }
+    const id = focusedNodeId
+    return scheduleAfterReflow(() => {
+      const shell = graphShellRef.current
+      const flowViewport = shell?.querySelector('.react-flow__viewport') as HTMLElement | null
+      const flowPaneW = flowViewport?.clientWidth
+      const detailEl = shell?.querySelector('[data-graph-detail-panel]') as HTMLElement | null
+      const measuredDetailW = detailEl?.getBoundingClientRect().width
+      const rightReserve = graphDetailPanelRightReservePx(
+        window.innerWidth,
+        isFullscreen,
+        measuredDetailW,
+        flowPaneW,
+      )
+      void flowInstance.fitView({
+        nodes: [{ id }],
+        padding: {
+          top: 0.14,
+          bottom: 0.14,
+          left: 0.14,
+          right: `${rightReserve}px`,
+        },
+        maxZoom: FIT_VIEW_MAX_ZOOM_FOCUS,
+        ...fitViewSmoothOpts(isFullscreen, { durationMs: FIT_VIEW_DETAIL_MS }),
+      })
+    })
+  }, [flowInstance, focusedNodeId, isFullscreen])
 
   function handleFlowNodePointerEvents() {
     return undefined
@@ -398,7 +802,10 @@ export function TreeGraph({
   const focusedNode = focusedNodeId ? nodeById.get(focusedNodeId) ?? null : null
 
   return (
-    <div className={`${styles.graphShell} ${isFullscreen ? styles.graphShellFullscreen : ''}`}>
+    <div
+      ref={graphShellRef}
+      className={`${styles.graphShell} ${isFullscreen ? styles.graphShellFullscreen : ''}`}
+    >
       {hasInvalidRootNode ? (
         <div className={styles.invalidState} role="alert" data-testid="graph-invalid-snapshot">
           <h3>Graph data is invalid</h3>
@@ -408,6 +815,11 @@ export function TreeGraph({
         <GraphNodeActionsProvider value={graphNodeActions}>
           <ReactFlow
             fitView
+            fitViewOptions={{
+              padding: FIT_VIEW_PADDING_FULL,
+              maxZoom: FIT_VIEW_MAX_ZOOM_FULL,
+              ...fitViewSmoothOpts(isFullscreen),
+            }}
             proOptions={{ hideAttribution: true }}
             nodes={flowNodes}
             edges={flowEdges}
@@ -420,7 +832,7 @@ export function TreeGraph({
             onInit={setFlowInstance}
             onNodeClick={handleFlowNodePointerEvents}
           >
-            <Background color="var(--color-border-strong)" gap={24} size={1} />
+            <Background color="var(--color-border-subtle)" gap={22} size={1} />
             <Controls showInteractive={false} position="bottom-right" />
 
             <Panel position="bottom-left">
@@ -444,13 +856,21 @@ export function TreeGraph({
             </Panel>
 
             {focusedNode ? (
-              <Panel position="top-right" className={styles.detailPanel}>
+              <Panel
+                position="top-right"
+                className={styles.detailPanel}
+                data-graph-detail-panel
+              >
                 <NodeDetailCard
                   projectId={snapshot.project.id}
                   node={focusedNode}
                   variant="graph"
                   showClose
-                  onClose={() => setFocusedNodeId(null)}
+                  onClose={() => {
+                    suppressFullGraphFitUntilRef.current =
+                      performance.now() + SUPPRESS_FULL_GRAPH_FIT_MS_AFTER_DETAIL_CLOSE
+                    setFocusedNodeId(null)
+                  }}
                 />
               </Panel>
             ) : null}

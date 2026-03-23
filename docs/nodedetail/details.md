@@ -162,15 +162,21 @@ risk và boundaries
 Frame không phải artifact hoàn toàn khác với spec.
  Frame là thin spec.
 Spec là version mở rộng hơn từ frame để agent tiếp tục làm việc.
-2.6. Trong bản demo, frame là artifact nguồn
+2.6. Trong bản demo, frame giữ steering nguồn còn spec có thể cụ thể hơn
 Ở mức demo, để giữ hệ thống đơn giản và tránh drift:
-frame là artifact nguồn
+frame giữ intent, user-facing scope và các steering decisions đã align với user
 
 
-working spec luôn được build từ frame hiện tại
+working spec luôn được khởi tạo từ frame hiện tại
 
 
-spec không được chỉnh độc lập ngoài frame
+sau khi được tạo, spec có thể được cập nhật để tăng specificity hoặc bổ sung implementation / operational detail không cần đẩy lên frame
+
+
+spec không được mâu thuẫn với frame
+
+
+nếu spec không đúng ý user ở mức steering thì user cần sửa ở frame trước
 
 
 Điều này giúp:
@@ -180,7 +186,13 @@ giảm độ phức tạp triển khai
 giữ user-facing artifact làm tâm điểm
 
 
-tránh việc frame và spec sync lệch nhau
+tránh sync ngược liên tục từ spec về frame cho các chi tiết không cần user-facing
+
+
+vẫn cho phép spec trưởng thành hơn frame khi cần
+
+
+hạn chế drift giữa frame và spec
 
 
 2.7. Task không cần rõ hết mới tiến lên được
@@ -274,13 +286,16 @@ task title là nhãn ngắn gọn của task
 frame là artifact chính user nhìn thấy và chỉnh sửa
 
 
-spec là artifact nội bộ cho agent
+spec là working artifact chủ yếu cho agent
 
 
-trong bản demo, frame là nguồn để build spec
+trong bản demo, spec luôn bắt đầu từ frame hiện tại
 
 
-spec không phải nguồn sự thật độc lập
+spec có thể cụ thể hơn frame hoặc chứa implementation detail không cần xuất hiện ở frame
+
+
+spec không được mâu thuẫn với frame về intent, scope, success criteria hoặc steering decisions
 
 
 
@@ -335,7 +350,7 @@ tạo nền cho quá trình clarify
 làm base để tạo spec
 
 
-là artifact nguồn trong bản demo
+là artifact nguồn cho intent và steering user-facing trong bản demo
 
 
 Format frame đề xuất
@@ -464,6 +479,8 @@ research task: time horizon, source quality, depth
 Working spec là version mở rộng của frame cho agent.
 Spec không cần là design doc chi tiết.
  Nó chỉ cần đủ rõ để agent không đi sai hướng và có thể giữ context qua refine hoặc split sau này.
+ Spec không chỉ là bản dịch từ human-friendly sang agent-friendly.
+ Nó là working artifact cụ thể hơn ở tầng hiện tại.
 Vai trò của spec
 normalize lại task ở ngôn ngữ agent dễ reason hơn
 
@@ -481,6 +498,12 @@ giữ risk và boundaries để agent không drift
 
 
 làm nền cho split tiếp hoặc execute sau này
+
+
+chứa thêm implementation / operational detail không cần đẩy lên frame
+
+
+tăng specificity mà vẫn giữ đúng intent và steering đã nằm trong frame
 
 
 Format working spec đề xuất
@@ -536,7 +559,8 @@ user story / problem trong frame
 
 
 Source frame
-Tham chiếu ngắn gọn về frame hiện tại mà spec được build từ đó.
+Tham chiếu ngắn gọn về frame hiện tại mà spec được khởi tạo từ đó.
+Field này giúp kiểm tra spec còn cùng hướng với frame hay cần review lại.
 Functional requirements
 FR đã được agent normalize thêm nếu cần.
 Success criteria
@@ -957,8 +981,9 @@ thêm risk/boundary phục vụ agent
 
 
 Nguyên tắc quan trọng
-Working spec luôn được tổng hợp từ updated frame, không phải từ frame draft ban đầu.
- Trong bản demo, spec không được chỉnh độc lập ngoài frame.
+Working spec luôn được khởi tạo từ updated frame, không phải từ frame draft ban đầu.
+ Sau khi được khởi tạo, spec có thể tiếp tục được cập nhật để tăng specificity hoặc bổ sung implementation / operational detail.
+ Spec không được mâu thuẫn với frame; nếu có vấn đề ở mức steering thì frame phải được sửa trước.
 Phase 6 — Progressive Refinement in Lower Layers
 Nếu task được split sau này, subtasks sẽ tiếp tục quá trình tương tự:
 draft frame
@@ -1118,8 +1143,8 @@ Không biến spec thành design doc chi tiết
  Vì spec chỉ cần đủ cho steering và progressive refinement.
 
 
-Không để spec trở thành nguồn sự thật độc lập trong bản demo
- Vì điều đó làm tăng nguy cơ drift với frame.
+Không để spec mâu thuẫn với frame ở phần intent và steering trong bản demo
+ Vì spec có thể cụ thể hơn frame, nhưng không được tự đổi hướng mà không qua frame.
 
 
 Không để agent quyết định split hay execute trong bản demo
@@ -1158,9 +1183,9 @@ Nếu user không muốn đi sâu, giữ phần chưa rõ trong deferred / unres
 Rule 10
 Assumptions phải được ghi rõ, không để agent đoán ngầm.
 Rule 11
-Working spec luôn được build từ updated frame, không phải từ frame draft ban đầu.
+Working spec luôn được khởi tạo từ updated frame, không phải từ frame draft ban đầu.
 Rule 12
-Trong bản demo, spec không được chỉnh độc lập ngoài frame.
+Spec có thể tiếp tục được cập nhật để tăng specificity hoặc bổ sung implementation detail, nhưng không được mâu thuẫn với frame. Nếu user thấy spec sai ở mức intent, scope, success criteria hoặc steering thì phải sửa ở frame trước.
 Rule 13
 Dùng Working Goal trong spec để chuẩn hóa mục tiêu cho agent, thay vì lặp lại task title.
 Rule 14
@@ -1290,7 +1315,7 @@ user scope: single-user
 storage level: persistent
 
 
-Working Spec (Built Behind the Scene)
+Working Spec (Initially Built Behind the Scene)
 Working Goal
 Build a single-user study planner MVP for mobile-responsive web that helps a student manage subjects and weekly deadlines with low setup friction.
 Source frame
@@ -1525,6 +1550,15 @@ agent cập nhật frame ở hậu trường
 
 
 agent tổng hợp working spec từ frame đã cập nhật
+
+
+working spec có thể tiếp tục cụ thể hơn frame hoặc mang implementation detail không cần đưa lên frame
+
+
+working spec không được mâu thuẫn với frame
+
+
+nếu spec sai ở mức steering thì user sửa ở frame trước
 
 
 working spec dùng working goal để chuẩn hóa mục tiêu cho agent

@@ -20,6 +20,56 @@ const { apiMock } = vi.hoisted(() => ({
     getChatSession: vi.fn(),
     sendChatMessage: vi.fn(),
     resetChatSession: vi.fn(),
+    getDetailState: vi.fn().mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: false,
+      frame_confirmed_revision: 0,
+      frame_revision: 0,
+      active_step: 'frame' as const,
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: false,
+      clarify_read_only: true,
+      clarify_confirmed: false,
+      spec_read_only: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    }),
+    confirmFrame: vi.fn(),
+    confirmSpec: vi.fn(),
+    getClarify: vi.fn().mockResolvedValue({
+      schema_version: 1,
+      source_frame_revision: 0,
+      confirmed_at: null,
+      questions: [],
+      updated_at: null,
+    }),
+    updateClarify: vi.fn(),
+    confirmClarify: vi.fn(),
+    generateFrame: vi.fn(),
+    getFrameGenStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    }),
+    generateClarify: vi.fn(),
+    getClarifyGenStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    }),
+    generateSpec: vi.fn(),
+    getSpecGenStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    }),
   },
 }))
 
@@ -185,6 +235,49 @@ describe('BreadcrumbChatView', () => {
       content: '# Frame',
       updated_at: '2026-03-20T00:00:00Z',
     })
+    apiMock.getFrameGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: false,
+      frame_confirmed_revision: 0,
+      frame_revision: 0,
+      active_step: 'frame' as const,
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: false,
+      clarify_read_only: true,
+      clarify_confirmed: false,
+      spec_read_only: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+    apiMock.getClarify.mockResolvedValue({
+      schema_version: 1,
+      source_frame_revision: 0,
+      confirmed_at: null,
+      questions: [],
+      updated_at: null,
+    })
+    apiMock.getClarifyGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+    apiMock.getSpecGenStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
   })
 
   it('renders a 60/40 thread and detail layout for the route node', async () => {
@@ -198,7 +291,8 @@ describe('BreadcrumbChatView', () => {
     expect(screen.getByTestId('message-feed')).toBeInTheDocument()
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
-    expect(within(detailCard).getByText('Root')).toBeInTheDocument()
+    expect(within(detailCard).getByRole('heading', { level: 2, name: 'Root' })).toBeInTheDocument()
+    expect(within(detailCard).getByRole('heading', { level: 3, name: 'Root' })).toBeInTheDocument()
     expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()
@@ -208,6 +302,26 @@ describe('BreadcrumbChatView', () => {
     await waitFor(() => {
       expect(useProjectStore.getState().selectedNodeId).toBe('root')
     })
+  })
+
+  it('offers Ask, Execution, and Artifact thread tabs; Artifact uses an empty feed and disabled composer', async () => {
+    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'child-1'))
+
+    renderBreadcrumbChatView()
+
+    await screen.findByTestId('breadcrumb-node-detail-card')
+
+    expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+
+    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-artifact'))
+    expect(screen.getByTestId('breadcrumb-thread-tab-artifact')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('message-feed')).toHaveTextContent('0 messages')
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
+
+    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-ask'))
+    expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
   })
 
   it('reloads project details when the store is focused on another project', async () => {
@@ -226,7 +340,7 @@ describe('BreadcrumbChatView', () => {
     })
     const detailCard = await screen.findByTestId('breadcrumb-node-detail-card')
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
-    expect(within(detailCard).getByText('Root')).toBeInTheDocument()
+    expect(within(detailCard).getByRole('heading', { level: 2, name: 'Root' })).toBeInTheDocument()
   })
 
   it('shows an unavailable state when the route node is missing from the snapshot', async () => {

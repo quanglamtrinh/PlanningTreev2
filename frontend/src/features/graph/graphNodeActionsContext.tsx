@@ -9,6 +9,8 @@ export type GraphNodeActions = {
   openBreadcrumb: (nodeId: string) => void
   finishTask: (nodeId: string) => void
   infoClick: (nodeId: string) => void
+  graphViewRootId: string | null
+  setGraphViewRoot: (nodeId: string | null) => void
 }
 
 const GraphNodeActionsContext = createContext<GraphNodeActions | null>(null)

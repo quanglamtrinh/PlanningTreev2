@@ -174,6 +174,27 @@ function GraphNodeActionsDropdown({
         <button
           type="button"
           className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+          onClick={() => {
+            onClose()
+            if (actions.graphViewRootId === nodeId) {
+              actions.setGraphViewRoot(null)
+            } else {
+              actions.setGraphViewRoot(nodeId)
+            }
+          }}
+        >
+          <span className={styles.menuTitle}>
+            {actions.graphViewRootId === nodeId ? 'Unset current root' : 'Set as current root'}
+          </span>
+          <span className={styles.menuDesc}>
+            {actions.graphViewRootId === nodeId
+              ? 'Show the full project tree again.'
+              : 'Show only this node and its descendants in the graph.'}
+          </span>
+        </button>
+        <button
+          type="button"
+          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
           disabled={!canFinishTask}
           onClick={() => {
             onClose()
@@ -231,6 +252,7 @@ export type GraphNodeData = {
   canOpenBreadcrumb: boolean
   isSplitting: boolean
   isSplitDisabled: boolean
+  graphViewRootId: string | null
 }
 
 function childIdsEqual(a: string[], b: string[]): boolean {
@@ -273,12 +295,16 @@ function GraphNodeComponent({ data }: NodeProps) {
   const menuRef = useRef<HTMLDivElement | null>(null)
   const closeMenu = useCallback(() => setMenuOpen(false), [])
   const d = data as GraphNodeData
-  const descriptionPreview =
-    d.node.description.trim().length > 0 ? d.node.description.trim() : 'No description yet.'
 
   return (
     <div className={styles.wrapper}>
-      <Handle className={styles.handle} type="target" position={Position.Left} isConnectable={false} />
+      <Handle
+        className={styles.handle}
+        type="target"
+        position={Position.Top}
+        id="in"
+        isConnectable={false}
+      />
       <div
         role="button"
         tabIndex={0}
@@ -302,7 +328,20 @@ function GraphNodeComponent({ data }: NodeProps) {
               <span className={styles.separator}>/</span>
               <span>{d.node.title}</span>
             </p>
-            <NodeStatusBadge status={d.node.status} />
+            <div className={styles.badgeRow}>
+              {d.node.status === 'locked' ? (
+                <span className={styles.lockIcon} title="Locked" aria-hidden="true">
+                  <svg viewBox="0 0 20 20" fill="currentColor">
+                    <path
+                      fillRule="evenodd"
+                      d="M5 9V7a5 5 0 0110 0v2h1a1 1 0 011 1v7a2 2 0 01-2 2H6a2 2 0 01-2-2v-7a1 1 0 011-1h1zm2-2a3 3 0 016 0v2H7V7z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </span>
+              ) : null}
+              <NodeStatusBadge status={d.node.status} />
+            </div>
           </div>
           <div className={styles.headerControls}>
             {d.node.child_ids.length > 0 ? (
@@ -337,11 +376,6 @@ function GraphNodeComponent({ data }: NodeProps) {
           </div>
         </div>
 
-        <p className={styles.description}>{descriptionPreview}</p>
-        <p className={styles.meta}>
-          Depth {d.node.depth} / {d.node.child_ids.length} child
-          {d.node.child_ids.length === 1 ? '' : 'ren'}
-        </p>
         {d.isSplitting ? <p className={styles.activity}>AI split in progress...</p> : null}
       </div>
 
@@ -376,7 +410,21 @@ function GraphNodeComponent({ data }: NodeProps) {
         ) : null}
       </div>
 
-      <Handle className={styles.handle} type="source" position={Position.Right} isConnectable={false} />
+      <Handle
+        className={styles.handle}
+        type="source"
+        position={Position.Bottom}
+        id="out"
+        isConnectable={false}
+      />
+      {/* Incoming from review overlay (edge ends at parent bottom; distinct from `out` source to children). */}
+      <Handle
+        className={styles.handle}
+        type="target"
+        position={Position.Bottom}
+        id="review-return"
+        isConnectable={false}
+      />
     </div>
   )
 }

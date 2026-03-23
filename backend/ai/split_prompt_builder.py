@@ -19,7 +19,8 @@ Goal:
 Produce a workflow-first split that is easy for the user to review and easy for the next step to execute as child nodes.
 
 Important:
-- The source input is a parent task, not a parent spec.
+- The source input is a parent task.
+- If a task frame is provided, treat it as supporting task-shaping context and honor its decisions when they are relevant.
 - Do not ask clarification questions.
 - Do not implement anything.
 - Do not redesign the project.
@@ -37,6 +38,7 @@ Rules:
 7. Do not merge unrelated workflows into one subtask.
 8. Do not restate the parent task as a single broad subtask.
 9. If the task is underspecified, prefer reversible and low-risk workflow boundaries.
+10. If the task frame fixes relevant choices, reflect those choices concretely in affected subtasks instead of generic wording.
 """.strip(),
     "simplify_workflow": """
 You are a decomposition agent working inside an existing repository.
@@ -48,7 +50,8 @@ Goal:
 Identify the smallest core workflow that still proves the task is real, then add the remaining parts back step by step.
 
 Important:
-- The source input is a parent task, not a parent spec.
+- The source input is a parent task.
+- If a task frame is provided, treat it as supporting task-shaping context and honor its decisions when they are relevant.
 - Do not ask clarification questions.
 - Do not implement anything.
 - Do not redesign the project.
@@ -66,6 +69,7 @@ Rules:
 7. Do not split by technical layers unless simplification cannot be expressed as workflow steps.
 8. Do not restate the parent task as a single broad subtask.
 9. If the task is underspecified, prefer reversible and low-risk simplifications.
+10. If the task frame fixes relevant choices, reflect those choices concretely in affected subtasks instead of generic wording.
 """.strip(),
     "phase_breakdown": """
 You are a decomposition agent working inside an existing repository.
@@ -77,7 +81,8 @@ Goal:
 Produce a phase-based split that is easy for the user to review and easy for the next step to execute as child nodes.
 
 Important:
-- The source input is a parent task, not a parent spec.
+- The source input is a parent task.
+- If a task frame is provided, treat it as supporting task-shaping context and honor its decisions when they are relevant.
 - Do not ask clarification questions.
 - Do not implement anything.
 - Do not redesign the project.
@@ -95,6 +100,7 @@ Rules:
 7. Do not split into tiny implementation chores.
 8. Do not restate the parent task as a single broad phase.
 9. If the task is underspecified, prefer reversible and low-risk early phases.
+10. If the task frame fixes relevant choices, reflect those choices concretely in affected phases instead of generic wording.
 """.strip(),
     "agent_breakdown": """
 You are a decomposition agent working inside an existing repository.
@@ -107,6 +113,7 @@ Produce the best agent-driven breakdown for downstream child-node execution.
 
 Important:
 - The source input is a parent task.
+- If a task frame is provided, treat it as supporting task-shaping context and honor its decisions when they are relevant.
 - Do not ask clarification questions.
 - Do not implement anything.
 - Do not redesign the project.
@@ -124,6 +131,7 @@ Rules:
 7. Do not split into tiny implementation chores.
 8. Do not restate the parent task as a single broad subtask.
 9. If the task is underspecified, prefer conservative and reversible boundaries.
+10. If the task frame fixes relevant choices, reflect those choices concretely in affected subtasks instead of generic wording.
 """.strip(),
 }
 
@@ -153,6 +161,7 @@ def build_split_base_instructions(mode: CanonicalSplitModeId | None = None) -> s
         "For split turns, produce structured UI data with emit_render_data(kind='split_result', payload=...).",
         "The split payload must use exactly one top-level key: subtasks.",
         "Each subtask item must use exactly: id, title, objective, why_now.",
+        "If a task frame is provided, treat its shaping decisions as constraints for relevant subtasks.",
         "If you can produce a valid split, call emit_render_data before writing a short summary for the user.",
         "Do not duplicate the structured payload in the summary text.",
     ]
@@ -259,8 +268,16 @@ def _format_runtime_context_block(task_context: dict[str, Any]) -> str:
     lines = [
         "Runtime context:",
         f"- Parent task: {_context_value(task_context.get('current_node_prompt'))}",
-        f"- Root goal: {_context_value(task_context.get('root_prompt'))}",
     ]
+
+    frame_content = (task_context.get("frame_content") or "").strip()
+    if frame_content:
+        truncated = frame_content[:4000]
+        if len(frame_content) > 4000:
+            truncated += "\n... (truncated)"
+        lines.append(f"- Task frame:\n{truncated}")
+
+    lines.append(f"- Root goal: {_context_value(task_context.get('root_prompt'))}")
 
     parent_chain = task_context.get("parent_chain_prompts")
     if isinstance(parent_chain, list) and parent_chain:
@@ -310,6 +327,8 @@ def _structured_output_contract(mode: CanonicalSplitModeId) -> str:
             "- \"objective\" must be exactly 1 sentence focused on the outcome of that subtask.",
             "- \"why_now\" must explain why this subtask belongs at this point in the sequence.",
             "- \"why_now\" must not simply restate the objective.",
+            "- If a task frame is provided, its shaping decisions are constraints for any relevant subtask.",
+            "- When the frame fixes a stack, platform, UX boundary, or similar steering choice, reflect that choice concretely instead of writing a generic subtask.",
             "- Subtasks must be sequential, non-overlapping, and suitable for child-node creation.",
             "- Do not include implementation details, architecture plans, code suggestions, clarification questions, assumptions lists, done criteria, scope breakdown, rationale bullets, or internal notes.",
             "- After the tool call, write a brief user-facing summary without repeating the payload.",

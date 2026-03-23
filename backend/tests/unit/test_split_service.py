@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 
 import pytest
 
 from backend.ai.codex_client import CodexTransportError
 from backend.errors.app_errors import SplitNotAllowed
 from backend.services import planningtree_workspace
+from backend.services.node_detail_service import FRAME_META_FILE
 from backend.services.project_service import ProjectService
 from backend.services.split_service import SplitService
 from backend.services.tree_service import TreeService
@@ -18,6 +21,7 @@ class FakeCodexClient:
         self.payloads = list(payloads or [])
         self.started_threads: list[str] = []
         self.resumed_threads: list[str] = []
+        self.turns_run: list[str] = []
         self.fail_resume = False
 
     def start_thread(self, **_: object) -> dict[str, str]:
@@ -32,6 +36,8 @@ class FakeCodexClient:
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, *_: object, **__: object) -> dict:
+        if _:
+            self.turns_run.append(str(_[0]))
         payload = self.payloads.pop(0)
         return {
             "stdout": "ok",
@@ -184,6 +190,62 @@ def test_split_service_recreates_thread_when_resume_fails(
 
     assert first_thread_id != second_thread_id
     assert fake_client.started_threads == ["thread-1", "thread-2"]
+
+
+def test_split_service_uses_frame_context_not_spec_context(
+    storage: Storage,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    persisted = storage.project_store.load_snapshot(project_id)
+    workspace_path = Path(str(persisted["project"]["project_path"]))
+    node_dir = planningtree_workspace.resolve_node_dir(workspace_path, persisted, root_id)
+    assert node_dir is not None
+
+    (node_dir / FRAME_META_FILE).write_text(
+        json.dumps(
+            {
+                "revision": 1,
+                "confirmed_revision": 1,
+                "confirmed_at": "2026-03-22T00:00:00Z",
+                "confirmed_content": (
+                    "# Task Title\n"
+                    "Marketing Site Entry\n\n"
+                    "# Task-Shaping Fields\n"
+                    "- frontend stack: React + Tailwind\n"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (node_dir / planningtree_workspace.SPEC_FILE_NAME).write_text(
+        "# Overview\nUse Vue + Bootstrap.\n",
+        encoding="utf-8",
+    )
+
+    fake_client = FakeCodexClient(
+        payloads=[
+            {
+                "subtasks": [
+                    {"id": "S1", "title": "Prep", "objective": "Prepare the flow.", "why_now": "It starts the work."},
+                    {"id": "S2", "title": "Finish", "objective": "Complete the flow.", "why_now": "It depends on prep."},
+                ]
+            }
+        ]
+    )
+    service = SplitService(storage, TreeService(), fake_client, split_timeout=5)
+
+    service.split_node(project_id, root_id, "workflow")
+    wait_for_terminal_status(service, project_id)
+
+    prompt = fake_client.turns_run[0]
+    assert "Task frame:" in prompt
+    assert "React + Tailwind" in prompt
+    assert "Technical spec:" not in prompt
+    assert "Vue + Bootstrap" not in prompt
 
 
 def test_split_status_marks_stale_jobs_as_failed(
