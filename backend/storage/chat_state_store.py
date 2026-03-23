@@ -64,15 +64,19 @@ class ChatStateStore:
     def _maybe_migrate(self, project_id: str, node_id: str) -> None:
         """Lazy migration: move flat chat/{node_id}.json to chat/{node_id}/ask_planning.json.
 
-        Migration runs on first access. If directory already exists, skip.
-        If flat file does not exist, skip (nothing to migrate).
+        Migration triggers when the flat file exists AND ask_planning.json does not.
+        The directory may already exist (e.g. an audit session was created first);
+        we still migrate the flat file into it.  The flat file is only removed after
+        ask_planning.json is successfully written.  If both exist, the directory
+        version wins and the flat file is kept as-is (no silent deletion).
         """
         flat = self._flat_path(project_id, node_id)
-        role_dir = self._role_dir(project_id, node_id)
-
-        if role_dir.exists():
-            return
         if not flat.exists():
+            return
+
+        target = self._role_path(project_id, node_id, _DEFAULT_THREAD_ROLE)
+        if target.exists():
+            # Already migrated (or written directly). Keep flat file intact.
             return
 
         payload = load_json(flat, default=None)
@@ -83,8 +87,7 @@ class ChatStateStore:
         if isinstance(payload, dict):
             payload["thread_role"] = _DEFAULT_THREAD_ROLE
 
-        ensure_dir(role_dir)
-        target = role_dir / f"{_DEFAULT_THREAD_ROLE}.json"
+        ensure_dir(target.parent)
         atomic_write_json(target, payload)
         flat.unlink(missing_ok=True)
 

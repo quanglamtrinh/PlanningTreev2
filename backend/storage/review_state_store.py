@@ -5,12 +5,16 @@ from pathlib import Path
 from typing import Any
 
 from backend.config.app_config import AppPaths
-from backend.errors.app_errors import ProjectNotFound
+from backend.errors.app_errors import InvalidRequest, ProjectNotFound
 from backend.storage.file_utils import atomic_write_json, ensure_dir, iso_now, load_json
 from backend.storage.project_locks import ProjectLockRegistry
 from backend.storage.workspace_store import WorkspaceStore
 
 _VALID_ROLLUP_STATUSES = {"pending", "ready", "accepted"}
+_ROLLUP_TRANSITIONS: dict[str, str] = {
+    "pending": "ready",
+    "ready": "accepted",
+}
 
 _DEFAULT_ROLLUP: dict[str, Any] = {
     "status": "pending",
@@ -101,18 +105,41 @@ class ReviewStateStore:
         summary: str | None = None,
         sha: str | None = None,
     ) -> dict[str, Any]:
-        """Update the rollup state."""
+        """Update the rollup state. Enforces forward-only transitions:
+        pending -> ready -> accepted.  No backward transitions allowed.
+        Transitioning to 'accepted' requires both summary and sha."""
         with self._lock_registry.for_project(project_id):
             state = self._read_unlocked(project_id, review_node_id)
             rollup = state.get("rollup", copy.deepcopy(_DEFAULT_ROLLUP))
-            if status in _VALID_ROLLUP_STATUSES:
-                rollup["status"] = status
-            if summary is not None:
-                rollup["summary"] = summary
-            if sha is not None:
-                rollup["sha"] = sha
+            current = rollup.get("status", "pending")
+
+            if status != current:
+                allowed_next = _ROLLUP_TRANSITIONS.get(current)
+                if allowed_next != status:
+                    raise InvalidRequest(
+                        f"Invalid rollup transition: {current} -> {status}. "
+                        f"Allowed: {current} -> {allowed_next}."
+                    )
+
             if status == "accepted":
+                if not summary or not summary.strip():
+                    raise InvalidRequest(
+                        "Rollup transition to 'accepted' requires a non-empty summary."
+                    )
+                if not sha or not sha.strip():
+                    raise InvalidRequest(
+                        "Rollup transition to 'accepted' requires a non-empty sha."
+                    )
+                rollup["summary"] = summary.strip()
+                rollup["sha"] = sha.strip()
                 rollup["accepted_at"] = iso_now()
+            else:
+                if summary is not None:
+                    rollup["summary"] = summary
+                if sha is not None:
+                    rollup["sha"] = sha
+
+            rollup["status"] = status
             state["rollup"] = rollup
             return self._write_unlocked(project_id, review_node_id, state)
 

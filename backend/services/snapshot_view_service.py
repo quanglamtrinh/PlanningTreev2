@@ -41,15 +41,18 @@ class SnapshotViewService:
             node_kind = str(node.get("node_kind") or "").strip()
             if node_id and node_id == root_node_id:
                 node_kind = "root"
-            elif node_kind not in {"root", "original", "superseded"}:
+            elif node_kind not in {"root", "original", "superseded", "review"}:
                 node_kind = "original"
             node["node_kind"] = node_kind
             node["is_superseded"] = node_kind == "superseded"
-            node["workflow"] = self._workflow_summary(
-                project_path=project_path,
-                snapshot=public_snapshot,
-                node_id=node_id,
-            )
+            if node_kind == "review":
+                node["workflow"] = None
+            else:
+                node["workflow"] = self._workflow_summary(
+                    project_path=project_path,
+                    snapshot=public_snapshot,
+                    node_id=node_id,
+                )
             registry.append(node)
         tree_state["node_registry"] = registry
         return public_snapshot

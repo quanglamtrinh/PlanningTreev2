@@ -99,23 +99,51 @@ def test_flat_file_migration(chat_store, project_id):
     assert (role_dir / "ask_planning.json").exists()
 
 
-def test_migration_skipped_if_directory_exists(chat_store, project_id):
-    """If directory already exists, don't migrate even if flat file exists."""
+def test_migration_when_directory_exists_but_ask_planning_missing(chat_store, project_id):
+    """If directory exists (e.g. audit created first) but ask_planning.json is missing,
+    flat file should still be migrated into ask_planning.json."""
     flat_path = chat_store._flat_path(project_id, "node2")
     flat_path.parent.mkdir(parents=True, exist_ok=True)
-    flat_data = {"thread_id": "old", "active_turn_id": None, "messages": [],
+    flat_data = {"thread_id": "old-history", "active_turn_id": None, "messages": [],
                  "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
     flat_path.write_text(json.dumps(flat_data), encoding="utf-8")
 
-    # Create the directory first
+    # Create the directory first (simulating an audit session created earlier)
     role_dir = chat_store._role_dir(project_id, "node2")
     role_dir.mkdir(parents=True, exist_ok=True)
 
     session = chat_store.read_session(project_id, "node2")
-    # Should return default (no migrated data) since directory exists but no ask_planning.json
-    assert session["thread_id"] is None
+    # Should have migrated the flat file data
+    assert session["thread_id"] == "old-history"
+    assert session["thread_role"] == "ask_planning"
 
-    # Flat file should still exist (wasn't migrated)
+    # Flat file should be gone, ask_planning.json should exist
+    assert not flat_path.exists()
+    assert (role_dir / "ask_planning.json").exists()
+
+
+def test_migration_skipped_when_both_flat_and_ask_planning_exist(chat_store, project_id):
+    """If both flat file and ask_planning.json exist, ask_planning.json wins
+    and flat file is kept intact (not silently deleted)."""
+    flat_path = chat_store._flat_path(project_id, "node3")
+    flat_path.parent.mkdir(parents=True, exist_ok=True)
+    flat_data = {"thread_id": "old-flat", "active_turn_id": None, "messages": [],
+                 "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+    flat_path.write_text(json.dumps(flat_data), encoding="utf-8")
+
+    # Also create the ask_planning.json with different data
+    role_dir = chat_store._role_dir(project_id, "node3")
+    role_dir.mkdir(parents=True, exist_ok=True)
+    new_data = {"thread_id": "new-dir", "thread_role": "ask_planning",
+                "active_turn_id": None, "messages": [],
+                "created_at": "2026-02-01T00:00:00Z", "updated_at": "2026-02-01T00:00:00Z"}
+    (role_dir / "ask_planning.json").write_text(json.dumps(new_data), encoding="utf-8")
+
+    session = chat_store.read_session(project_id, "node3")
+    # Directory version wins
+    assert session["thread_id"] == "new-dir"
+
+    # Flat file is kept intact (not silently deleted)
     assert flat_path.exists()
 
 
