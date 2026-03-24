@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef } from 'react'
 import type { ChatMessage, MessagePart } from '../../api/types'
+import { AgentSpinner } from '../../components/AgentSpinner'
 import { StatusPill } from './StatusPill'
 import { ToolCallBlock } from './ToolCallBlock'
 import styles from './BreadcrumbChatView.module.css'
@@ -192,6 +193,21 @@ function partsEqual(a: MessagePart[] | undefined, b: MessagePart[] | undefined):
 
 const MessageFeedRow = memo(
   function MessageFeedRow({ msg }: { msg: ChatMessage }) {
+    if (msg.role === 'system') {
+      return (
+        <div className={`${styles.row} ${styles.rowSystem}`}>
+          <div className={styles.systemCard} role="note" aria-label="Thread context">
+            <p className={styles.systemEyebrow}>Context</p>
+            {msg.content ? (
+              <div className={`${styles.content} ${styles.systemContent}`}>
+                {renderContent(msg.content)}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div
         className={`${styles.row} ${msg.role === 'user' ? styles.rowUser : styles.rowAssistant}`}
@@ -200,8 +216,7 @@ const MessageFeedRow = memo(
         <div className={styles.bubble}>
           {msg.role === 'assistant' && msg.status === 'pending' && !msg.parts?.length && (
             <div className={styles.thinking}>
-              <span className={styles.thinkingDot} />
-              Thinking...
+              <AgentSpinner />
             </div>
           )}
           {msg.role === 'assistant' && msg.status === 'error' && msg.error && (

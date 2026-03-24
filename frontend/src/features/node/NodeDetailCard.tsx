@@ -4,6 +4,7 @@ import { useDetailStateStore } from '../../stores/detail-state-store'
 import { ClarifyPanel } from './ClarifyPanel'
 import { NodeDescribePanel } from './NodeDescribePanel'
 import { NodeDocumentEditor } from './NodeDocumentEditor'
+import { ExecutionStatusBadge } from './ExecutionStatusBadge'
 import { NodeStatusBadge } from './NodeStatusBadge'
 import styles from './NodeDetailCard.module.css'
 
@@ -127,6 +128,10 @@ export function NodeDetailCard({
               <span className={styles.nodeHier}>{node.hierarchical_number}</span>
               <h2 className={styles.nodeHeading}>{node.title}</h2>
               <NodeStatusBadge status={node.status} />
+              <ExecutionStatusBadge
+                status={detailState?.execution_status}
+                className={styles.executionStatusBadge}
+              />
             </div>
           </div>
           <div className={styles.cardHeaderActions}>

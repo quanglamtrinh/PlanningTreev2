@@ -32,6 +32,7 @@
   font-size: 12px;
 }
 
+/* Legacy .spinner kept for safety; AgentSpinner now used via .runningSpinner */
 .spinner {
   width: 12px;
   height: 12px;
@@ -43,6 +44,12 @@
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* Wrapper for AgentSpinner inside the icon slot */
+.runningSpinner {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .name {

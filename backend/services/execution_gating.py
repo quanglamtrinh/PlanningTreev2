@@ -9,6 +9,7 @@ from backend.storage.storage import Storage
 AUDIT_FRAME_RECORD_MESSAGE_ID = "audit-record:frame"
 AUDIT_SPEC_RECORD_MESSAGE_ID = "audit-record:spec"
 AUDIT_ROLLUP_PACKAGE_MESSAGE_ID = "audit-package:rollup"
+SYSTEM_MESSAGE_ROLE = "system"
 
 _LOCAL_REVIEW_EXECUTION_STATUSES = {"completed", "review_pending", "review_accepted"}
 
@@ -127,11 +128,14 @@ def derive_execution_workflow_fields(
             status = rollup.get("status")
             review_status = str(status) if isinstance(status, str) and status else None
 
+    can_accept_local = exec_status == "review_pending"
+
     return {
         "execution_started": started,
         "execution_completed": completed,
         "shaping_frozen": shaping_frozen,
         "can_finish_task": can_finish_task,
+        "can_accept_local_review": can_accept_local,
         "execution_status": exec_status,
         "audit_writable": writable,
         "package_audit_ready": package_ready,
@@ -151,13 +155,34 @@ def append_immutable_audit_record(
         session = storage.chat_state_store.read_session(project_id, node_id, thread_role="audit")
         for message in session.get("messages", []):
             if message.get("message_id") == message_id:
+                changed = False
+                if message.get("role") != SYSTEM_MESSAGE_ROLE:
+                    message["role"] = SYSTEM_MESSAGE_ROLE
+                    changed = True
+                if message.get("status") != "completed":
+                    message["status"] = "completed"
+                    changed = True
+                if message.get("error") is not None:
+                    message["error"] = None
+                    changed = True
+                if message.get("turn_id") is not None:
+                    message["turn_id"] = None
+                    changed = True
+                if changed:
+                    message["updated_at"] = iso_now()
+                    return storage.chat_state_store.write_session(
+                        project_id,
+                        node_id,
+                        session,
+                        thread_role="audit",
+                    )
                 return session
 
         now = iso_now()
         session["messages"].append(
             {
                 "message_id": message_id,
-                "role": "assistant",
+                "role": SYSTEM_MESSAGE_ROLE,
                 "content": content,
                 "status": "completed",
                 "error": None,

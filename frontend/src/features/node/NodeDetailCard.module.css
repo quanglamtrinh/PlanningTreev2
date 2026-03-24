@@ -120,6 +120,10 @@
   min-width: 0;
 }
 
+.executionStatusBadge {
+  flex-shrink: 0;
+}
+
 .nodeHier {
   flex-shrink: 0;
   font-size: 12px;

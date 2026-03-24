@@ -86,6 +86,7 @@ export interface NodeWorkflowSummary {
   execution_completed?: boolean
   shaping_frozen?: boolean
   can_finish_task?: boolean
+  can_accept_local_review?: boolean
   execution_status?: ExecutionStatus | null
 }
 
@@ -133,6 +134,7 @@ export interface ChangedFileRecord {
 
 export interface DetailState {
   node_id: string
+  workflow: NodeWorkflowSummary | null
   frame_confirmed: boolean
   frame_confirmed_revision: number
   frame_revision: number
@@ -150,6 +152,7 @@ export interface DetailState {
   execution_completed?: boolean
   shaping_frozen?: boolean
   can_finish_task?: boolean
+  can_accept_local_review?: boolean
   execution_status?: ExecutionStatus | null
   audit_writable?: boolean
   package_audit_ready?: boolean
@@ -266,7 +269,7 @@ export interface SplitStatusResponse {
 // ── Chat types ──────────────────────────────────────────────────────
 
 export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'error'
-export type MessageRole = 'user' | 'assistant'
+export type MessageRole = 'user' | 'assistant' | 'system'
 
 export type MessagePart =
   | { type: 'assistant_text'; content: string; is_streaming: boolean }

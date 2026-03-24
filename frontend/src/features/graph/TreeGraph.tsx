@@ -576,9 +576,12 @@ export function TreeGraph({
           canFinishTask:
             codexAvailable &&
             !node.is_superseded &&
-            (activeChildrenById.get(node.node_id) ?? []).length === 0 &&
-            (node.status === 'ready' || node.status === 'in_progress') &&
-            (node.workflow?.spec_confirmed ?? false),
+            (node.workflow?.can_finish_task ??
+              (
+                (activeChildrenById.get(node.node_id) ?? []).length === 0 &&
+                (node.status === 'ready' || node.status === 'in_progress') &&
+                (node.workflow?.spec_confirmed ?? false)
+              )),
           canSplit:
             codexAvailable &&
             !node.is_superseded &&
@@ -589,6 +592,7 @@ export function TreeGraph({
           canOpenBreadcrumb: codexAvailable,
           isSplitting: splitStatus === 'active' && splittingNodeId === node.node_id,
           isSplitDisabled: splitStatus === 'active',
+          executionStatus: node.workflow?.execution_status ?? null,
           graphViewRootId,
         },
       }))

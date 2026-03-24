@@ -1,0 +1,32 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: inherit;
+  color: inherit;
+  line-height: 1;
+}
+
+/* The blinking star ✦ */
+.star {
+  display: inline-block;
+  flex-shrink: 0;
+  animation: agentBlink 1s step-end infinite;
+  /* Inherit accent color from context; callers can override via className */
+}
+
+/* The cycling word — fixed min-width so the layout does not shift */
+.word {
+  display: inline-block;
+  min-width: 6ch;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes agentBlink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .star { animation: none; }
+}

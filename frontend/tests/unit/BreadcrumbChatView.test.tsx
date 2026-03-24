@@ -107,6 +107,9 @@ vi.mock('../../src/api/client', () => {
   return {
     api: apiMock,
     ApiError,
+    buildChatEventsUrl: (projectId: string, nodeId: string, threadRole = 'ask_planning') =>
+      `/v1/projects/${projectId}/nodes/${nodeId}/chat/events?thread_role=${threadRole}`,
+    appendAuthToken: (url: string) => url,
   }
 })
 
@@ -127,12 +130,14 @@ vi.mock('../../src/features/breadcrumb/ComposerBar', () => ({
 import type { ChatSession, Snapshot } from '../../src/api/types'
 import { BreadcrumbChatView } from '../../src/features/breadcrumb/BreadcrumbChatView'
 import { useChatStore } from '../../src/stores/chat-store'
+import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useProjectStore } from '../../src/stores/project-store'
 
 function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
   return {
     thread_id: null,
+    thread_role: 'ask_planning',
     active_turn_id: null,
     messages: [],
     created_at: '2026-03-20T00:00:00Z',
@@ -212,6 +217,43 @@ function makeIdleSplitStatus() {
   }
 }
 
+function makeDetailState(overrides: Record<string, unknown> = {}) {
+  return {
+    node_id: 'root',
+    workflow: {
+      frame_confirmed: false,
+      active_step: 'frame' as const,
+      spec_confirmed: false,
+      execution_started: false,
+      execution_completed: false,
+      shaping_frozen: false,
+      can_finish_task: false,
+      execution_status: null,
+    },
+    frame_confirmed: false,
+    frame_confirmed_revision: 0,
+    frame_revision: 0,
+    active_step: 'frame' as const,
+    workflow_notice: null,
+    frame_needs_reconfirm: false,
+    frame_read_only: false,
+    clarify_read_only: true,
+    clarify_confirmed: false,
+    spec_read_only: true,
+    spec_stale: false,
+    spec_confirmed: false,
+    execution_started: false,
+    execution_completed: false,
+    shaping_frozen: false,
+    can_finish_task: false,
+    execution_status: null,
+    audit_writable: false,
+    package_audit_ready: false,
+    review_status: null,
+    ...overrides,
+  }
+}
+
 function renderBreadcrumbChatView(initialEntry = '/projects/project-1/nodes/root/chat') {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
@@ -230,6 +272,7 @@ describe('BreadcrumbChatView', () => {
     }
     useChatStore.getState().disconnect()
     useProjectStore.setState(useProjectStore.getInitialState())
+    useDetailStateStore.getState().reset()
     useNodeDocumentStore.getState().reset()
     apiMock.getChatSession.mockResolvedValue(makeSession())
     apiMock.getSplitStatus.mockResolvedValue(makeIdleSplitStatus())
@@ -252,21 +295,7 @@ describe('BreadcrumbChatView', () => {
       completed_at: null,
       error: null,
     })
-    apiMock.getDetailState.mockResolvedValue({
-      node_id: 'root',
-      frame_confirmed: false,
-      frame_confirmed_revision: 0,
-      frame_revision: 0,
-      active_step: 'frame' as const,
-      workflow_notice: null,
-      frame_needs_reconfirm: false,
-      frame_read_only: false,
-      clarify_read_only: true,
-      clarify_confirmed: false,
-      spec_read_only: true,
-      spec_stale: false,
-      spec_confirmed: false,
-    })
+    apiMock.getDetailState.mockResolvedValue(makeDetailState())
     apiMock.getClarify.mockResolvedValue({
       schema_version: 1,
       source_frame_revision: 0,
@@ -305,17 +334,29 @@ describe('BreadcrumbChatView', () => {
     expect(within(detailCard).getByRole('heading', { level: 3, name: 'Root' })).toBeInTheDocument()
     expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()
+    expect(within(detailCard).getByRole('button', { name: 'Finish Task' })).toBeDisabled()
     expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-1')
-    expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'root')
+    expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'root', 'ask_planning')
 
     await waitFor(() => {
       expect(useProjectStore.getState().selectedNodeId).toBe('root')
     })
   })
 
-  it('offers Ask, Execution, and Audit thread tabs; Audit uses an empty feed and disabled composer', async () => {
+  it('switches between Ask, Execution, and Audit thread sessions', async () => {
     apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'child-1'))
+    apiMock.getChatSession.mockImplementation(
+      async (_projectId: string, _nodeId: string, threadRole?: string) =>
+        makeSession({
+          thread_role: (threadRole ?? 'ask_planning') as ChatSession['thread_role'],
+          messages:
+            threadRole === 'execution'
+              ? [{ message_id: 'exec-1' } as never]
+              : threadRole === 'audit'
+                ? [{ message_id: 'audit-1' } as never, { message_id: 'audit-2' } as never]
+                : [],
+        }),
+    )
 
     renderBreadcrumbChatView()
 
@@ -323,14 +364,72 @@ describe('BreadcrumbChatView', () => {
 
     expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+    expect(screen.getByTestId('message-feed')).toHaveTextContent('0 messages')
+
+    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-execution'))
+    await waitFor(() => {
+      expect(screen.getByTestId('breadcrumb-thread-tab-execution')).toHaveAttribute('aria-selected', 'true')
+    })
+    expect(screen.getByTestId('message-feed')).toHaveTextContent('1 messages')
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
 
     fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
-    expect(screen.getByTestId('breadcrumb-thread-tab-audit')).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByTestId('message-feed')).toHaveTextContent('0 messages')
+    await waitFor(() => {
+      expect(screen.getByTestId('breadcrumb-thread-tab-audit')).toHaveAttribute('aria-selected', 'true')
+    })
+    expect(screen.getByTestId('message-feed')).toHaveTextContent('2 messages')
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
 
     fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-ask'))
-    expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => {
+      expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
+    })
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+    expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'root', 'execution')
+    expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'root', 'audit')
+  })
+
+  it('disables ask_planning when shaping is frozen', async () => {
+    apiMock.getSnapshot.mockResolvedValue(
+      makeSnapshot('project-1', 'root'),
+    )
+    apiMock.getDetailState.mockResolvedValue(
+      makeDetailState({
+        shaping_frozen: true,
+        execution_started: true,
+        execution_completed: true,
+        execution_status: 'completed',
+      }),
+    )
+
+    renderBreadcrumbChatView()
+
+    await screen.findByTestId('breadcrumb-node-detail-card')
+    await waitFor(() => {
+      expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
+    })
+  })
+
+  it('enables audit only when audit_writable is true', async () => {
+    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'child-1'))
+    apiMock.getDetailState.mockResolvedValue(
+      makeDetailState({
+        shaping_frozen: true,
+        execution_started: true,
+        execution_completed: true,
+        execution_status: 'completed',
+        audit_writable: true,
+      }),
+    )
+
+    renderBreadcrumbChatView()
+
+    await screen.findByTestId('breadcrumb-node-detail-card')
+
+    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
+    await waitFor(() => {
+      expect(screen.getByTestId('breadcrumb-thread-tab-audit')).toHaveAttribute('aria-selected', 'true')
+    })
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
   })
 

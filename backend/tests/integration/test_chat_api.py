@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from backend.ai.codex_client import CodexTransportError
+from backend.services import planningtree_workspace
 from backend.services import chat_service as chat_service_module
 
 
@@ -51,8 +54,6 @@ class ExecutionCodexClient:
         thread_id = str(kwargs.get("thread_id", ""))
         cwd = kwargs.get("cwd")
         if isinstance(cwd, str) and cwd:
-            from pathlib import Path
-
             Path(cwd, "integration-finish-task.txt").write_text("done\n", encoding="utf-8")
         return {"stdout": self.response_text, "thread_id": thread_id}
 
@@ -64,6 +65,75 @@ def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
     project_id = snap["project"]["id"]
     root_id = snap["tree_state"]["root_node_id"]
     return project_id, root_id
+
+
+def _add_review_node(client: TestClient, project_id: str, parent_id: str) -> str:
+    review_id = "review-001"
+    snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
+    snapshot["tree_state"]["node_index"][review_id] = {
+        "node_id": review_id,
+        "parent_id": parent_id,
+        "child_ids": [],
+        "title": "Review",
+        "description": "",
+        "status": "ready",
+        "node_kind": "review",
+        "depth": 1,
+        "display_order": 99,
+        "hierarchical_number": "1.R",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    snapshot["tree_state"]["node_index"][parent_id]["review_node_id"] = review_id
+    client.app.state.storage.project_store.save_snapshot(project_id, snapshot)
+    return review_id
+
+
+def _add_child(
+    client: TestClient,
+    project_id: str,
+    parent_id: str,
+    *,
+    node_id: str,
+    title: str,
+    description: str,
+    status: str = "ready",
+) -> None:
+    snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
+    node_index = snapshot["tree_state"]["node_index"]
+    parent = node_index[parent_id]
+    child_ids = [*parent.get("child_ids", []), node_id]
+    parent["child_ids"] = child_ids
+    node_index[node_id] = {
+        "node_id": node_id,
+        "parent_id": parent_id,
+        "child_ids": [],
+        "title": title,
+        "description": description,
+        "status": status,
+        "node_kind": "original",
+        "depth": int(parent.get("depth", 0) or 0) + 1,
+        "display_order": len(child_ids) - 1,
+        "hierarchical_number": f"{parent.get('hierarchical_number', '1')}.{len(child_ids)}",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    client.app.state.storage.project_store.save_snapshot(project_id, snapshot)
+
+
+def _write_confirmed_frame(client: TestClient, project_id: str, node_id: str, content: str) -> None:
+    snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
+    project_path = Path(snapshot["project"]["project_path"])
+    node_dir = planningtree_workspace.resolve_node_dir(project_path, snapshot, node_id)
+    assert node_dir is not None
+    (node_dir / "frame.meta.json").write_text(
+        json.dumps(
+            {
+                "confirmed_revision": 1,
+                "confirmed_at": "2026-01-01T00:00:00Z",
+                "confirmed_content": content,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_get_session_empty(client: TestClient, workspace_root):
@@ -106,6 +176,201 @@ def test_chat_session_honors_thread_role_query(client: TestClient, workspace_roo
     )
     assert resp.status_code == 200
     assert resp.json()["thread_role"] == "audit"
+
+
+def test_audit_session_returns_system_seed_messages_for_ready_child(client: TestClient, workspace_root):
+    project_id, root_id = _setup_project(client, workspace_root)
+    snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
+    snapshot["tree_state"]["node_index"][root_id]["title"] = "Parent Task"
+    snapshot["tree_state"]["node_index"][root_id]["description"] = "Parent summary"
+    client.app.state.storage.project_store.save_snapshot(project_id, snapshot)
+
+    _add_child(
+        client,
+        project_id,
+        root_id,
+        node_id="child-seed",
+        title="Auth guard",
+        description="Add route guard\n\nWhy now: Gate requests",
+    )
+    review_id = _add_review_node(client, project_id, root_id)
+    client.app.state.storage.review_state_store.write_state(
+        project_id,
+        review_id,
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:base",
+                    "summary": None,
+                    "source_node_id": None,
+                    "accepted_at": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "label": "K1",
+                    "sha": "sha256:k1",
+                    "summary": "Guard accepted",
+                    "source_node_id": "child-seed",
+                    "accepted_at": "2026-01-01T01:00:00Z",
+                },
+            ],
+            "rollup": {"status": "pending", "summary": None, "sha": None, "accepted_at": None},
+            "pending_siblings": [],
+        },
+    )
+
+    response = client.get(
+        f"/v1/projects/{project_id}/nodes/child-seed/chat/session",
+        params={"thread_role": "audit"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [message["role"] for message in payload["messages"]] == ["system", "system", "system"]
+    assert "Auth guard" in payload["messages"][0]["content"]
+    assert "sha256:k1" in payload["messages"][1]["content"]
+    assert "Parent Task" in payload["messages"][2]["content"]
+
+
+def test_task_node_rejects_invalid_thread_role_pair(client: TestClient, workspace_root):
+    project_id, root_id = _setup_project(client, workspace_root)
+    resp = client.get(
+        f"/v1/projects/{project_id}/nodes/{root_id}/chat/session",
+        params={"thread_role": "integration"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "invalid_request"
+
+
+def test_review_node_accepts_integration_thread_role(client: TestClient, workspace_root):
+    project_id, root_id = _setup_project(client, workspace_root)
+    review_id = _add_review_node(client, project_id, root_id)
+    resp = client.get(
+        f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
+        params={"thread_role": "integration"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["thread_role"] == "integration"
+
+
+def test_integration_session_returns_system_seed_messages_when_rollup_ready(
+    client: TestClient,
+    workspace_root,
+):
+    project_id, root_id = _setup_project(client, workspace_root)
+    snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
+    snapshot["tree_state"]["node_index"][root_id]["title"] = "Build auth package"
+    snapshot["tree_state"]["node_index"][root_id]["description"] = "Parent package"
+    client.app.state.storage.project_store.save_snapshot(project_id, snapshot)
+
+    _add_child(
+        client,
+        project_id,
+        root_id,
+        node_id="child-a",
+        title="Auth guard",
+        description="Guard routes\n\nWhy now: First gate",
+        status="done",
+    )
+    _add_child(
+        client,
+        project_id,
+        root_id,
+        node_id="child-b",
+        title="Session parser",
+        description="Parse cookies\n\nWhy now: After gate",
+        status="done",
+    )
+    review_id = _add_review_node(client, project_id, root_id)
+    client.app.state.storage.review_state_store.write_state(
+        project_id,
+        review_id,
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:k0",
+                    "summary": None,
+                    "source_node_id": None,
+                    "accepted_at": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "label": "K1",
+                    "sha": "sha256:k1",
+                    "summary": "Guard accepted",
+                    "source_node_id": "child-a",
+                    "accepted_at": "2026-01-01T01:00:00Z",
+                },
+                {
+                    "label": "K2",
+                    "sha": "sha256:k2",
+                    "summary": "Parser accepted",
+                    "source_node_id": "child-b",
+                    "accepted_at": "2026-01-01T02:00:00Z",
+                },
+            ],
+            "rollup": {"status": "ready", "summary": None, "sha": None, "accepted_at": None},
+            "pending_siblings": [],
+        },
+    )
+    _write_confirmed_frame(client, project_id, root_id, "# Parent Frame\nShip auth package\n")
+
+    response = client.get(
+        f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
+        params={"thread_role": "integration"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["thread_role"] == "integration"
+    assert [message["role"] for message in payload["messages"]] == [
+        "system",
+        "system",
+        "system",
+        "system",
+        "system",
+    ]
+    assert "Ship auth package" in payload["messages"][0]["content"]
+    assert "Auth guard" in payload["messages"][1]["content"]
+    assert "K2" in payload["messages"][2]["content"]
+    assert "Parser accepted" in payload["messages"][3]["content"]
+
+
+def test_review_node_rejects_task_thread_role_pair(client: TestClient, workspace_root):
+    project_id, root_id = _setup_project(client, workspace_root)
+    review_id = _add_review_node(client, project_id, root_id)
+    resp = client.get(
+        f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
+        params={"thread_role": "ask_planning"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "invalid_request"
+
+
+def test_invalid_thread_role_pair_returns_400_for_message_reset_and_events(client: TestClient, workspace_root):
+    project_id, root_id = _setup_project(client, workspace_root)
+
+    message_resp = client.post(
+        f"/v1/projects/{project_id}/nodes/{root_id}/chat/message",
+        params={"thread_role": "integration"},
+        json={"content": "hello"},
+    )
+    assert message_resp.status_code == 400
+    assert message_resp.json()["code"] == "invalid_request"
+
+    reset_resp = client.post(
+        f"/v1/projects/{project_id}/nodes/{root_id}/chat/reset",
+        params={"thread_role": "integration"},
+    )
+    assert reset_resp.status_code == 400
+    assert reset_resp.json()["code"] == "invalid_request"
+
+    events_resp = client.get(
+        f"/v1/projects/{project_id}/nodes/{root_id}/chat/events",
+        params={"thread_role": "integration"},
+    )
+    assert events_resp.status_code == 400
+    assert events_resp.json()["code"] == "invalid_request"
 
 
 def test_reset_nonexistent_node(client: TestClient, workspace_root):

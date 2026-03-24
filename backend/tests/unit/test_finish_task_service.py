@@ -373,20 +373,21 @@ def test_complete_execution_fails_not_executing(finish_service, storage, project
 
 
 def test_workspace_sha_is_deterministic_and_ignores_planningtree(
-    finish_service,
     workspace_root: Path,
 ) -> None:
+    from backend.services.workspace_sha import compute_workspace_sha
+
     (workspace_root / "src.txt").write_text("hello\n", encoding="utf-8")
     (workspace_root / ".planningtree").mkdir(exist_ok=True)
     (workspace_root / ".planningtree" / "ignored.txt").write_text("ignore-me\n", encoding="utf-8")
 
-    first = finish_service._compute_workspace_sha_from_root(workspace_root)
+    first = compute_workspace_sha(workspace_root)
 
     (workspace_root / ".planningtree" / "ignored.txt").write_text("still ignored\n", encoding="utf-8")
-    second = finish_service._compute_workspace_sha_from_root(workspace_root)
+    second = compute_workspace_sha(workspace_root)
     assert second == first
 
     (workspace_root / "src.txt").write_text("hello world\n", encoding="utf-8")
-    third = finish_service._compute_workspace_sha_from_root(workspace_root)
+    third = compute_workspace_sha(workspace_root)
     assert third != first
     assert third.startswith("sha256:")

@@ -1,7 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Handle, Position, useStore, type NodeProps } from '@xyflow/react'
+import type { ExecutionStatus } from '../../api/types'
 import { NodeStatusBadge } from '../node/NodeStatusBadge'
+import { ExecutionStatusBadge } from '../node/ExecutionStatusBadge'
+import { AgentSpinner, SPINNER_WORDS_SPLITTING } from '../../components/AgentSpinner'
 import { useGraphNodeActions } from './graphNodeActionsContext'
 import { GRAPH_SPLIT_OPTIONS } from './splitModes'
 import styles from './GraphNode.module.css'
@@ -252,6 +255,7 @@ export type GraphNodeData = {
   canOpenBreadcrumb: boolean
   isSplitting: boolean
   isSplitDisabled: boolean
+  executionStatus: ExecutionStatus | null
   graphViewRootId: string | null
   /** 1-based order among siblings on the same layer (not hierarchical). */
   siblingLayerIndex: number
@@ -280,6 +284,7 @@ function graphNodePropsAreEqual(prev: NodeProps, next: NodeProps): boolean {
     a.canOpenBreadcrumb === b.canOpenBreadcrumb &&
     a.isSplitting === b.isSplitting &&
     a.isSplitDisabled === b.isSplitDisabled &&
+    a.executionStatus === b.executionStatus &&
     a.siblingLayerIndex === b.siblingLayerIndex &&
     a.node.node_id === b.node.node_id &&
     a.node.title === b.node.title &&
@@ -420,12 +425,18 @@ function GraphNodeComponent({ data }: NodeProps) {
                   status={d.node.status}
                   className={`${styles.graphStatusBadge} ${d.node.status === 'in_progress' ? styles.graphStatusInProgress : ''}`}
                 />
+                <ExecutionStatusBadge
+                  status={d.executionStatus}
+                  className={styles.graphExecutionBadge}
+                />
               </div>
             </div>
             {hasDescription && descriptionExpanded ? (
               <p className={styles.description}>{descriptionText}</p>
             ) : null}
-            {d.isSplitting ? <p className={styles.activity}>AI split in progress...</p> : null}
+            {d.isSplitting ? (
+              <AgentSpinner className={styles.activity} words={SPINNER_WORDS_SPLITTING} />
+            ) : null}
           </div>
         </div>
       </div>

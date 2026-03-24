@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from backend.errors.app_errors import ThreadReadOnly
+from backend.errors.app_errors import InvalidRequest, ThreadReadOnly
 from backend.services.chat_service import ChatService
 from backend.services.execution_gating import AUDIT_ROLLUP_PACKAGE_MESSAGE_ID
 from backend.services.project_service import ProjectService
@@ -23,6 +23,28 @@ def root_node_id(storage, project_id):
 
 
 @pytest.fixture
+def review_node_id(storage, project_id, root_node_id):
+    review_id = "review-001"
+    snap = storage.project_store.load_snapshot(project_id)
+    snap["tree_state"]["node_index"][review_id] = {
+        "node_id": review_id,
+        "parent_id": root_node_id,
+        "child_ids": [],
+        "title": "Review",
+        "description": "",
+        "status": "ready",
+        "node_kind": "review",
+        "depth": 1,
+        "display_order": 99,
+        "hierarchical_number": "1.R",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    snap["tree_state"]["node_index"][root_node_id]["review_node_id"] = review_id
+    storage.project_store.save_snapshot(project_id, snap)
+    return review_id
+
+
+@pytest.fixture
 def chat_service(storage, tree_service):
     return ChatService(
         storage=storage,
@@ -38,9 +60,30 @@ def test_execution_thread_always_readonly(chat_service, project_id, root_node_id
         chat_service.create_message(project_id, root_node_id, "test", thread_role="execution")
 
 
-def test_integration_thread_always_readonly(chat_service, project_id, root_node_id):
+def test_integration_thread_always_readonly(chat_service, project_id, review_node_id):
     with pytest.raises(ThreadReadOnly, match="integration"):
-        chat_service.create_message(project_id, root_node_id, "test", thread_role="integration")
+        chat_service.create_message(project_id, review_node_id, "test", thread_role="integration")
+
+
+def test_task_node_rejects_integration_thread_role(chat_service, project_id, root_node_id):
+    with pytest.raises(InvalidRequest, match="not valid for node_kind"):
+        chat_service.get_session(project_id, root_node_id, thread_role="integration")
+
+
+@pytest.mark.parametrize("thread_role", ["ask_planning", "audit", "execution"])
+def test_review_node_rejects_task_thread_roles(chat_service, project_id, review_node_id, thread_role):
+    with pytest.raises(InvalidRequest, match="not valid for node_kind"):
+        chat_service.get_session(project_id, review_node_id, thread_role=thread_role)
+
+
+def test_review_node_allows_integration_session(chat_service, project_id, review_node_id):
+    session = chat_service.get_session(project_id, review_node_id, thread_role="integration")
+    assert session["thread_role"] == "integration"
+
+
+def test_unknown_thread_role_is_rejected(chat_service, project_id, root_node_id):
+    with pytest.raises(InvalidRequest, match="Invalid thread_role"):
+        chat_service.get_session(project_id, root_node_id, thread_role="foo")
 
 
 def test_ask_planning_writable_before_execution(chat_service, project_id, root_node_id):
@@ -132,24 +175,11 @@ def test_audit_reset_is_never_allowed(chat_service, storage, project_id, root_no
         chat_service.reset_session(project_id, root_node_id, thread_role="audit")
 
 
-def test_package_audit_requires_rollup_package_record(chat_service, storage, project_id, root_node_id):
+def test_package_audit_requires_rollup_package_record(
+    chat_service, storage, project_id, root_node_id, review_node_id
+):
     snap = storage.project_store.load_snapshot(project_id)
-    review_node_id = "review-001"
-    snap["tree_state"]["node_index"][review_node_id] = {
-        "node_id": review_node_id,
-        "parent_id": root_node_id,
-        "child_ids": [],
-        "title": "Review",
-        "description": "",
-        "status": "ready",
-        "node_kind": "review",
-        "depth": 1,
-        "display_order": 99,
-        "hierarchical_number": "1.R",
-        "created_at": "2026-01-01T00:00:00Z",
-    }
-    snap["tree_state"]["node_index"][root_node_id]["review_node_id"] = review_node_id
-    storage.project_store.save_snapshot(project_id, snap)
+    assert snap["tree_state"]["node_index"][root_node_id]["review_node_id"] == review_node_id
     storage.review_state_store.write_state(
         project_id,
         review_node_id,
@@ -212,7 +242,7 @@ def test_live_turn_tracking_is_isolated_by_thread_role(chat_service, storage, pr
     assert recovered["messages"][0]["error"] is not None
 
 
-def test_get_session_works_for_all_roles(chat_service, project_id, root_node_id):
+def test_get_session_works_for_all_task_roles(chat_service, project_id, root_node_id):
     for role in ("ask_planning", "audit", "execution"):
         session = chat_service.get_session(project_id, root_node_id, thread_role=role)
         assert session["thread_role"] == role

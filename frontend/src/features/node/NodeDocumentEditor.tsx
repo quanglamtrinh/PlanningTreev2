@@ -4,6 +4,7 @@ import { EditorView } from '@codemirror/view'
 import { vscodeMarkdownSyntaxHighlighting } from './codemirror/vscodeMarkdownHighlight'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FrameGenJobStatus, NodeDocumentKind, NodeRecord } from '../../api/types'
+import { AgentSpinner, SPINNER_WORDS_GENERATING } from '../../components/AgentSpinner'
 import { useClarifyStore } from '../../stores/clarify-store'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
@@ -200,6 +201,11 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm, readOnly 
         }
       } else if (kind === 'spec') {
         await confirmSpec(projectId, node.node_id)
+        const snapshot = await api.getSnapshot(projectId)
+        useProjectStore.setState((prev) => ({
+          snapshot,
+          selectedNodeId: prev.selectedNodeId,
+        }))
       }
     } catch (error) {
       setConfirmError(error instanceof Error ? error.message : 'Confirm failed')
@@ -233,7 +239,11 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm, readOnly 
             role="status"
             aria-live="polite"
           >
-            {documentStatusText(entry, isGenerating)}
+            {isGenerating ? (
+              <AgentSpinner words={SPINNER_WORDS_GENERATING} />
+            ) : (
+              documentStatusText(entry, false)
+            )}
           </span>
         </div>
 
@@ -299,11 +309,13 @@ export function NodeDocumentEditor({ projectId, node, kind, onConfirm, readOnly 
               data-testid={`generate-${kind}-button`}
               onClick={handleGenerate}
             >
-              {isGenerating
-                ? 'Generating...'
-                : kind === 'spec'
-                  ? 'Regenerate Spec'
-                  : 'Generate from Chat'}
+              {isGenerating ? (
+                <AgentSpinner words={SPINNER_WORDS_GENERATING} />
+              ) : kind === 'spec' ? (
+                'Regenerate Spec'
+              ) : (
+                'Generate from Chat'
+              )}
             </button>
           ) : null}
           <button

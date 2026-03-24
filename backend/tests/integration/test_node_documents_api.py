@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
@@ -31,6 +32,17 @@ class FakeCodexClient:
                 }
             ],
         }
+
+
+class FinishTaskCodexClient:
+    def start_thread(self, **_: object) -> dict[str, str]:
+        return {"thread_id": "exec-thread-1"}
+
+    def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def run_turn_streaming(self, *_: object, **__: object) -> dict[str, str]:
+        return {"stdout": "Execution complete", "thread_id": "exec-thread-1"}
 
 
 def wait_for_terminal_status(client, project_id: str, timeout_sec: float = 2.0) -> dict:
@@ -125,3 +137,143 @@ def test_split_created_child_document_endpoints_work(client, tmp_path: Path) -> 
     child_frame = client.get(f"/v1/projects/{project_id}/nodes/{child_id}/documents/frame")
     assert child_frame.status_code == 200
     assert child_frame.json()["content"] == ""
+
+
+def _prepare_finishable_task(client, project_id: str, root_id: str) -> None:
+    frame_resp = client.put(
+        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        json={"content": "# Task Title\nTask\n\n# Objective\nDo it\n"},
+    )
+    assert frame_resp.status_code == 200
+    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame").status_code == 200
+
+    spec_resp = client.put(
+        f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec",
+        json={"content": "# Spec\nImplement it\n"},
+    )
+    assert spec_resp.status_code == 200
+    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-spec").status_code == 200
+
+    snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
+    snapshot["tree_state"]["node_index"][root_id]["status"] = "ready"
+    client.app.state.storage.project_store.save_snapshot(project_id, snapshot)
+
+
+def test_frozen_frame_and_spec_saves_do_not_mutate_files(client, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+
+    attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    assert attached.status_code == 200
+    payload = attached.json()
+    project_id = payload["project"]["id"]
+    root_id = payload["tree_state"]["root_node_id"]
+
+    initial_frame = client.put(
+        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        json={"content": "# Original Frame\n"},
+    )
+    assert initial_frame.status_code == 200
+    initial_spec = client.put(
+        f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec",
+        json={"content": "# Original Spec\n"},
+    )
+    assert initial_spec.status_code == 200
+
+    client.app.state.storage.execution_state_store.write_state(
+        project_id,
+        root_id,
+        {
+            "status": "executing",
+            "initial_sha": "sha256:abc",
+            "head_sha": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "completed_at": None,
+        },
+    )
+
+    frame_resp = client.put(
+        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        json={"content": "# New Frame\n"},
+    )
+    assert frame_resp.status_code == 409
+    assert frame_resp.json()["code"] == "shaping_frozen"
+    refreshed_frame = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame")
+    assert refreshed_frame.status_code == 200
+    assert refreshed_frame.json()["content"] == "# Original Frame\n"
+
+    spec_resp = client.put(
+        f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec",
+        json={"content": "# New Spec\n"},
+    )
+    assert spec_resp.status_code == 409
+    assert spec_resp.json()["code"] == "shaping_frozen"
+    refreshed_spec = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec")
+    assert refreshed_spec.status_code == 200
+    assert refreshed_spec.json()["content"] == "# Original Spec\n"
+
+
+def test_frame_save_is_atomic_against_concurrent_finish_task(client, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+
+    attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    assert attached.status_code == 200
+    payload = attached.json()
+    project_id = payload["project"]["id"]
+    root_id = payload["tree_state"]["root_node_id"]
+    _prepare_finishable_task(client, project_id, root_id)
+    client.app.state.finish_task_service._codex_client = FinishTaskCodexClient()
+
+    original_bump = client.app.state.node_detail_service.bump_frame_revision
+    entered_bump = threading.Event()
+    release_bump = threading.Event()
+
+    def blocking_bump(project_id_arg: str, node_id_arg: str) -> None:
+        entered_bump.set()
+        assert release_bump.wait(timeout=2.0), "finish-task race guard timed out"
+        original_bump(project_id_arg, node_id_arg)
+
+    client.app.state.node_detail_service.bump_frame_revision = blocking_bump
+
+    put_result: dict[str, object] = {}
+    finish_result: dict[str, object] = {}
+
+    def do_put() -> None:
+        put_result["response"] = client.put(
+            f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+            json={"content": "# Task Title\nTask updated\n\n# Objective\nDo it now\n"},
+        )
+
+    def do_finish() -> None:
+        finish_result["response"] = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
+
+    put_thread = threading.Thread(target=do_put, daemon=True)
+    finish_thread = threading.Thread(target=do_finish, daemon=True)
+
+    put_thread.start()
+    assert entered_bump.wait(timeout=2.0), "frame save never reached bump_frame_revision"
+
+    finish_thread.start()
+    time.sleep(0.1)
+    assert finish_thread.is_alive(), "finish-task should block until frame save finishes"
+
+    release_bump.set()
+    put_thread.join(timeout=2.0)
+    finish_thread.join(timeout=2.0)
+    client.app.state.node_detail_service.bump_frame_revision = original_bump
+
+    assert "response" in put_result
+    assert "response" in finish_result
+    assert put_result["response"].status_code == 200
+    assert finish_result["response"].status_code == 200
+
+    frame_resp = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame")
+    assert frame_resp.status_code == 200
+    assert frame_resp.json()["content"] == "# Task Title\nTask updated\n\n# Objective\nDo it now\n"
+
+    detail_resp = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/detail-state")
+    assert detail_resp.status_code == 200
+    detail = detail_resp.json()
+    assert detail["frame_revision"] >= 2
+    assert detail["execution_started"] is True

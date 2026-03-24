@@ -1,18 +1,21 @@
 import { create } from 'zustand'
-import { api, appendAuthToken } from '../api/client'
-import type { ChatMessage, ChatSession, MessagePart } from '../api/types'
+import { api, appendAuthToken, buildChatEventsUrl } from '../api/client'
+import type { ChatMessage, ChatSession, MessagePart, ThreadRole } from '../api/types'
+import { useDetailStateStore } from './detail-state-store'
 
 const SSE_RECONNECT_RETRY_MS = 1000
+const DEFAULT_THREAD_ROLE: ThreadRole = 'ask_planning'
 
 export type ChatStoreState = {
   session: ChatSession | null
   activeProjectId: string | null
   activeNodeId: string | null
+  activeThreadRole: ThreadRole
   isLoading: boolean
   isSending: boolean
   error: string | null
 
-  loadSession(projectId: string, nodeId: string): Promise<void>
+  loadSession(projectId: string, nodeId: string, threadRole?: ThreadRole): Promise<void>
   sendMessage(content: string): Promise<void>
   resetSession(): Promise<void>
   disconnect(): void
@@ -37,11 +40,16 @@ function clearReconnectTimer() {
 }
 
 function isActiveTarget(
-  state: Pick<ChatStoreState, 'activeProjectId' | 'activeNodeId'>,
+  state: Pick<ChatStoreState, 'activeProjectId' | 'activeNodeId' | 'activeThreadRole'>,
   projectId: string,
   nodeId: string,
+  threadRole: ThreadRole,
 ) {
-  return state.activeProjectId === projectId && state.activeNodeId === nodeId
+  return (
+    state.activeProjectId === projectId &&
+    state.activeNodeId === nodeId &&
+    state.activeThreadRole === threadRole
+  )
 }
 
 function isCurrentGeneration(generation: number) {
@@ -78,16 +86,17 @@ function scheduleStreamReopen(
   ) => void,
   projectId: string,
   nodeId: string,
+  threadRole: ThreadRole,
   generation: number,
 ) {
   clearReconnectTimer()
   reconnectTimer = globalThis.setTimeout(() => {
     reconnectTimer = null
     const state = get()
-    if (!isCurrentGeneration(generation) || !isActiveTarget(state, projectId, nodeId)) {
+    if (!isCurrentGeneration(generation) || !isActiveTarget(state, projectId, nodeId, threadRole)) {
       return
     }
-    openEventStream(get, set, projectId, nodeId, generation)
+    openEventStream(get, set, projectId, nodeId, threadRole, generation)
   }, SSE_RECONNECT_RETRY_MS)
 }
 
@@ -100,32 +109,33 @@ function scheduleRecoverAndReconnect(
   ) => void,
   projectId: string,
   nodeId: string,
+  threadRole: ThreadRole,
   generation: number,
 ) {
   clearReconnectTimer()
   reconnectTimer = globalThis.setTimeout(() => {
     reconnectTimer = null
     const state = get()
-    if (!isCurrentGeneration(generation) || !isActiveTarget(state, projectId, nodeId)) {
+    if (!isCurrentGeneration(generation) || !isActiveTarget(state, projectId, nodeId, threadRole)) {
       return
     }
 
-    void api.getChatSession(projectId, nodeId)
+    void api.getChatSession(projectId, nodeId, threadRole)
       .then((session) => {
         const latestState = get()
-        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId, threadRole)) {
           return
         }
         set({ session, error: null })
-        openEventStream(get, set, projectId, nodeId, generation)
+        openEventStream(get, set, projectId, nodeId, threadRole, generation)
       })
       .catch((err) => {
         const latestState = get()
-        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId, threadRole)) {
           return
         }
         set({ error: err instanceof Error ? err.message : String(err) })
-        scheduleRecoverAndReconnect(get, set, projectId, nodeId, generation)
+        scheduleRecoverAndReconnect(get, set, projectId, nodeId, threadRole, generation)
       })
   }, SSE_RECONNECT_RETRY_MS)
 }
@@ -139,11 +149,12 @@ function openEventStream(
   ) => void,
   projectId: string,
   nodeId: string,
+  threadRole: ThreadRole,
   generation: number,
 ) {
   closeEventSource()
 
-  const es = new EventSource(appendAuthToken(`/v1/projects/${projectId}/nodes/${nodeId}/chat/events`))
+  const es = new EventSource(appendAuthToken(buildChatEventsUrl(projectId, nodeId, threadRole)))
   eventSource = es
 
   es.addEventListener('message', (e) => {
@@ -153,8 +164,11 @@ function openEventStream(
       }
       const event = JSON.parse(e.data) as Record<string, unknown>
       const state = get()
-      if (state.session && isActiveTarget(state, projectId, nodeId)) {
+      if (state.session && isActiveTarget(state, projectId, nodeId, threadRole)) {
         set({ session: applyChatEvent(state.session, event) })
+      }
+      if (event.type === 'execution_completed') {
+        void useDetailStateStore.getState().refreshExecutionState(projectId, nodeId)
       }
     } catch {
       // Ignore parse errors.
@@ -170,26 +184,26 @@ function openEventStream(
     clearReconnectTimer()
 
     const state = get()
-    if (!isActiveTarget(state, projectId, nodeId)) {
+    if (!isActiveTarget(state, projectId, nodeId, threadRole)) {
       return
     }
 
-    void api.getChatSession(projectId, nodeId)
+    void api.getChatSession(projectId, nodeId, threadRole)
       .then((session) => {
         const latestState = get()
-        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId, threadRole)) {
           return
         }
         set({ session, error: null })
-        scheduleStreamReopen(get, set, projectId, nodeId, generation)
+        scheduleStreamReopen(get, set, projectId, nodeId, threadRole, generation)
       })
       .catch((err) => {
         const latestState = get()
-        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+        if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId, threadRole)) {
           return
         }
         set({ error: err instanceof Error ? err.message : String(err) })
-        scheduleRecoverAndReconnect(get, set, projectId, nodeId, generation)
+        scheduleRecoverAndReconnect(get, set, projectId, nodeId, threadRole, generation)
       })
   }
 }
@@ -342,15 +356,17 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
   session: null,
   activeProjectId: null,
   activeNodeId: null,
+  activeThreadRole: DEFAULT_THREAD_ROLE,
   isLoading: false,
   isSending: false,
   error: null,
 
-  async loadSession(projectId: string, nodeId: string) {
+  async loadSession(projectId: string, nodeId: string, threadRole: ThreadRole = DEFAULT_THREAD_ROLE) {
     const current = get()
     if (
       current.activeProjectId === projectId &&
       current.activeNodeId === nodeId &&
+      current.activeThreadRole === threadRole &&
       current.session &&
       (eventSource !== null || reconnectTimer !== null)
     ) {
@@ -366,20 +382,21 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
       error: null,
       activeProjectId: projectId,
       activeNodeId: nodeId,
+      activeThreadRole: threadRole,
       session: null,
     })
 
     try {
-      const session = await api.getChatSession(projectId, nodeId)
+      const session = await api.getChatSession(projectId, nodeId, threadRole)
       const latestState = get()
-      if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+      if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId, threadRole)) {
         return
       }
       set({ session, isLoading: false, error: null })
-      openEventStream(get, set, projectId, nodeId, generation)
+      openEventStream(get, set, projectId, nodeId, threadRole, generation)
     } catch (err) {
       const latestState = get()
-      if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId)) {
+      if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, projectId, nodeId, threadRole)) {
         return
       }
       set({
@@ -390,7 +407,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
   },
 
   async sendMessage(content: string) {
-    const { activeProjectId, activeNodeId, session } = get()
+    const { activeProjectId, activeNodeId, activeThreadRole, session } = get()
     if (!activeProjectId || !activeNodeId || !session) {
       return
     }
@@ -398,12 +415,12 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const generation = sessionGeneration
     set({ isSending: true, error: null })
     try {
-      const result = await api.sendChatMessage(activeProjectId, activeNodeId, content)
+      const result = await api.sendChatMessage(activeProjectId, activeNodeId, content, activeThreadRole)
       set((state) => {
         if (
           !isCurrentGeneration(generation) ||
           !state.session ||
-          !isActiveTarget(state, activeProjectId, activeNodeId)
+          !isActiveTarget(state, activeProjectId, activeNodeId, activeThreadRole)
         ) {
           return {}
         }
@@ -421,7 +438,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
       })
     } catch (err) {
       const state = get()
-      if (!isCurrentGeneration(generation) || !isActiveTarget(state, activeProjectId, activeNodeId)) {
+      if (!isCurrentGeneration(generation) || !isActiveTarget(state, activeProjectId, activeNodeId, activeThreadRole)) {
         return
       }
       set({
@@ -432,7 +449,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
   },
 
   async resetSession() {
-    const { activeProjectId, activeNodeId } = get()
+    const { activeProjectId, activeNodeId, activeThreadRole } = get()
     if (!activeProjectId || !activeNodeId) {
       return
     }
@@ -440,16 +457,16 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const generation = sessionGeneration
     set({ error: null })
     try {
-      const session = await api.resetChatSession(activeProjectId, activeNodeId)
+      const session = await api.resetChatSession(activeProjectId, activeNodeId, activeThreadRole)
       set((state) => {
-        if (!isCurrentGeneration(generation) || !isActiveTarget(state, activeProjectId, activeNodeId)) {
+        if (!isCurrentGeneration(generation) || !isActiveTarget(state, activeProjectId, activeNodeId, activeThreadRole)) {
           return {}
         }
         return { session }
       })
     } catch (err) {
       const state = get()
-      if (!isCurrentGeneration(generation) || !isActiveTarget(state, activeProjectId, activeNodeId)) {
+      if (!isCurrentGeneration(generation) || !isActiveTarget(state, activeProjectId, activeNodeId, activeThreadRole)) {
         return
       }
       set({ error: err instanceof Error ? err.message : String(err) })
@@ -464,6 +481,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
       session: null,
       activeProjectId: null,
       activeNodeId: null,
+      activeThreadRole: DEFAULT_THREAD_ROLE,
       error: null,
       isLoading: false,
       isSending: false,

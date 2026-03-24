@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { AgentSpinner, SPINNER_WORDS_THINKING } from '../../components/AgentSpinner'
 import styles from './ToolCallBlock.module.css'
 
 function formatToolName(name: string): string {
@@ -19,7 +20,7 @@ export function ToolCallBlock({ toolName, arguments: args, status }: ToolCallBlo
       <div className={styles.header} onClick={() => setExpanded(!expanded)}>
         <span className={styles.icon}>
           {status === 'running' ? (
-            <span className={styles.spinner} />
+            <AgentSpinner words={SPINNER_WORDS_THINKING} className={styles.runningSpinner} />
           ) : status === 'error' ? (
             '\u2717'
           ) : (

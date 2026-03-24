@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { apiMock, MockApiError } = vi.hoisted(() => ({
@@ -230,6 +230,69 @@ describe('NodeDetailCard', () => {
       expect(apiMock.getNodeDocument).toHaveBeenCalledWith('project-1', 'root', 'spec')
     })
     expect(screen.getByDisplayValue('# Spec')).toBeInTheDocument()
+  })
+
+  it('shows execution lifecycle badge separately from coarse node status', async () => {
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      workflow: {
+        frame_confirmed: true,
+        active_step: 'spec' as const,
+        spec_confirmed: true,
+        execution_started: true,
+        execution_completed: true,
+        shaping_frozen: true,
+        can_finish_task: false,
+        execution_status: 'completed' as const,
+      },
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec' as const,
+      workflow_notice: null,
+      generation_error: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: true,
+      spec_stale: false,
+      spec_confirmed: true,
+      execution_started: true,
+      execution_completed: true,
+      shaping_frozen: true,
+      can_finish_task: false,
+      execution_status: 'completed' as const,
+      audit_writable: true,
+      package_audit_ready: false,
+      review_status: null,
+    })
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({
+          status: 'in_progress',
+          workflow: {
+            frame_confirmed: true,
+            active_step: 'spec',
+            spec_confirmed: true,
+            execution_status: 'completed',
+          },
+        })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    expect(screen.getByText('In Progress')).toBeInTheDocument()
+    expect(await screen.findByText('Execution Complete')).toBeInTheDocument()
   })
 
   it('flushes the active document immediately on blur', async () => {
@@ -705,7 +768,7 @@ describe('NodeDetailCard', () => {
     fireEvent.click(genBtn)
 
     await waitFor(() => {
-      expect(genBtn).toHaveTextContent('Generating...')
+      expect(within(genBtn).getByRole('status', { name: 'Generating' })).toBeInTheDocument()
     })
     expect(apiMock.generateFrame).toHaveBeenCalledWith('project-1', 'root')
   })
@@ -762,7 +825,11 @@ describe('NodeDetailCard', () => {
 
     // Should show Generating state from recovery
     await waitFor(() => {
-      expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generating...')
+      expect(
+        within(screen.getByTestId('generate-frame-button')).getByRole('status', {
+          name: 'Generating',
+        }),
+      ).toBeInTheDocument()
     })
     // Confirm should be disabled while generating
     expect(screen.getByTestId('confirm-document-frame')).toBeDisabled()
@@ -793,7 +860,11 @@ describe('NodeDetailCard', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generating...')
+      expect(
+        within(screen.getByTestId('generate-frame-button')).getByRole('status', {
+          name: 'Generating',
+        }),
+      ).toBeInTheDocument()
     })
 
     // Confirm button should be disabled
@@ -884,7 +955,11 @@ describe('NodeDetailCard', () => {
 
     // Should show "Generating..." (attached to existing job) instead of error
     await waitFor(() => {
-      expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generating...')
+      expect(
+        within(screen.getByTestId('generate-frame-button')).getByRole('status', {
+          name: 'Generating',
+        }),
+      ).toBeInTheDocument()
     })
     // No error banner should be shown
     expect(screen.queryByTestId('generate-error-frame')).not.toBeInTheDocument()

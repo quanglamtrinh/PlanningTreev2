@@ -36,6 +36,14 @@ function withThreadRole(path: string, threadRole?: ThreadRole): string {
   return `${path}${sep}thread_role=${encodeURIComponent(threadRole)}`
 }
 
+export function buildChatEventsUrl(
+  projectId: string,
+  nodeId: string,
+  threadRole?: ThreadRole,
+): string {
+  return withThreadRole(`/v1/projects/${projectId}/nodes/${nodeId}/chat/events`, threadRole)
+}
+
 let _cachedAuthToken: string | null = null
 
 /**

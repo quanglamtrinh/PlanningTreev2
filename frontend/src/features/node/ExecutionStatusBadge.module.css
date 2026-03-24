@@ -1,0 +1,32 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.executing {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+.completed {
+  color: var(--color-status-ready);
+  background: color-mix(in srgb, var(--color-status-ready-bg) 92%, white);
+}
+
+.review_pending {
+  color: var(--color-status-in-progress);
+  background: color-mix(in srgb, var(--color-status-in-progress-bg) 92%, white);
+}
+
+.review_accepted {
+  color: var(--color-status-done);
+  background: var(--color-status-done-bg);
+}

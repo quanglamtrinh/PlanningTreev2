@@ -63,10 +63,15 @@ async def update_node_document(
     kind: str,
     body: UpdateNodeDocumentRequest,
 ) -> dict:
-    result = request.app.state.node_document_service.put_document(project_id, node_id, kind, body.content)
     if kind == "frame":
-        request.app.state.node_detail_service.bump_frame_revision(project_id, node_id)
-    return result
+        with request.app.state.storage.project_lock(project_id):
+            result = request.app.state.node_document_service.put_document(
+                project_id, node_id, kind, body.content
+            )
+            request.app.state.node_detail_service.bump_frame_revision(project_id, node_id)
+            return result
+
+    return request.app.state.node_document_service.put_document(project_id, node_id, kind, body.content)
 
 
 @router.get("/projects/{project_id}/nodes/{node_id}/detail-state")

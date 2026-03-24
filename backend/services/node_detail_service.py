@@ -157,9 +157,18 @@ def build_detail_state(
         review_state=review_state,
     )
     shaping_frozen = bool(execution_fields["shaping_frozen"])
+    workflow_summary = {
+        **workflow,
+        "execution_started": execution_fields["execution_started"],
+        "execution_completed": execution_fields["execution_completed"],
+        "shaping_frozen": shaping_frozen,
+        "can_finish_task": execution_fields["can_finish_task"],
+        "execution_status": execution_fields["execution_status"],
+    }
 
     return {
         "node_id": node_id,
+        "workflow": workflow_summary,
         "frame_confirmed": workflow["frame_confirmed"],
         "frame_confirmed_revision": frame_conf_rev,
         "frame_revision": frame_rev,
@@ -180,10 +189,55 @@ def build_detail_state(
         "execution_completed": execution_fields["execution_completed"],
         "shaping_frozen": shaping_frozen,
         "can_finish_task": execution_fields["can_finish_task"],
+        "can_accept_local_review": execution_fields["can_accept_local_review"],
         "execution_status": execution_fields["execution_status"],
         "audit_writable": execution_fields["audit_writable"],
         "package_audit_ready": execution_fields["package_audit_ready"],
         "review_status": execution_fields["review_status"],
+    }
+
+
+def build_review_detail_state(
+    node_id: str,
+    *,
+    review_state: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    review_status: str | None = None
+    if isinstance(review_state, dict):
+        rollup = review_state.get("rollup", {})
+        if isinstance(rollup, dict):
+            status = rollup.get("status")
+            if isinstance(status, str) and status:
+                review_status = status
+
+    return {
+        "node_id": node_id,
+        "workflow": None,
+        "frame_confirmed": False,
+        "frame_confirmed_revision": 0,
+        "frame_revision": 0,
+        "active_step": "frame",
+        "workflow_notice": None,
+        "generation_error": None,
+        "frame_needs_reconfirm": False,
+        "frame_read_only": True,
+        "clarify_read_only": True,
+        "clarify_confirmed": False,
+        "spec_read_only": True,
+        "spec_stale": False,
+        "spec_confirmed": False,
+        "initial_sha": None,
+        "head_sha": None,
+        "changed_files": [],
+        "execution_started": False,
+        "execution_completed": False,
+        "shaping_frozen": False,
+        "can_finish_task": False,
+        "can_accept_local_review": False,
+        "execution_status": None,
+        "audit_writable": False,
+        "package_audit_ready": False,
+        "review_status": review_status,
     }
 
 
@@ -203,17 +257,22 @@ class NodeDetailService:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
-            node_dir = self._resolve_node_dir(snapshot, node_id)
             node_index = snapshot.get("tree_state", {}).get("node_index", {})
             node = node_index.get(node_id, {})
-            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
-            # Load review state if this node has a review_node_id or IS a review node
+            node_kind = str(node.get("node_kind") or "")
             review_state = None
             review_node_id = node.get("review_node_id")
             if review_node_id:
                 review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
-            elif node.get("node_kind") == "review":
+            elif node_kind == "review":
                 review_state = self._storage.review_state_store.read_state(project_id, node_id)
+                return build_review_detail_state(
+                    node_id,
+                    review_state=review_state,
+                )
+
+            node_dir = self._resolve_node_dir(snapshot, node_id)
+            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
             return build_detail_state(
                 self._storage,
                 project_id,

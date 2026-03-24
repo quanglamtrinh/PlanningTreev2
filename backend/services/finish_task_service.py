@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import threading
 import time
@@ -323,7 +322,8 @@ class FinishTaskService:
                     thread_role="execution",
                 )
 
-            head_sha = self._compute_workspace_sha_from_root(Path(workspace_root)) if workspace_root else None
+            from backend.services.workspace_sha import compute_workspace_sha
+            head_sha = compute_workspace_sha(Path(workspace_root)) if workspace_root else None
             self.complete_execution(project_id, node_id, head_sha=head_sha)
         except Exception as exc:
             logger.debug(
@@ -514,39 +514,8 @@ class FinishTaskService:
         workspace_root = self._workspace_root_from_snapshot(snapshot)
         if workspace_root is None:
             raise FinishTaskNotAllowed("Project snapshot is missing project_path.")
-        return self._compute_workspace_sha_from_root(Path(workspace_root))
-
-    def _compute_workspace_sha_from_root(self, workspace_root: Path) -> str:
-        digest = hashlib.sha256()
-        if not workspace_root.exists():
-            return "sha256:" + digest.hexdigest()
-
-        entries: list[Path] = []
-        for path in workspace_root.rglob("*"):
-            rel_parts = path.relative_to(workspace_root).parts
-            if rel_parts and rel_parts[0] == planningtree_workspace.PLANNINGTREE_DIR:
-                continue
-            entries.append(path)
-        entries.sort(key=lambda item: item.relative_to(workspace_root).as_posix())
-
-        for path in entries:
-            rel = path.relative_to(workspace_root).as_posix()
-            if path.is_dir():
-                digest.update(f"D {rel}\n".encode("utf-8"))
-                continue
-            if path.is_symlink():
-                digest.update(f"S {rel}\n".encode("utf-8"))
-                digest.update(str(path.readlink()).encode("utf-8", errors="replace"))
-                continue
-            if path.is_file():
-                digest.update(f"F {rel}\n".encode("utf-8"))
-                with path.open("rb") as handle:
-                    while True:
-                        chunk = handle.read(65536)
-                        if not chunk:
-                            break
-                        digest.update(chunk)
-        return f"sha256:{digest.hexdigest()}"
+        from backend.services.workspace_sha import compute_workspace_sha
+        return compute_workspace_sha(Path(workspace_root))
 
     def _load_confirmed_frame_content(self, node_dir: Path) -> str:
         meta_path = node_dir / "frame.meta.json"

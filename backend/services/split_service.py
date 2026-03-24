@@ -205,37 +205,102 @@ class SplitService:
                 raise NodeNotFound(node_id)
             self._validate_split_eligibility(snapshot, parent, node_by_id)
 
+            subtasks = payload["subtasks"]
+            if not subtasks:
+                raise SplitInvalidResponse(["payload.subtasks must contain at least one item"])
+
             now = iso_now()
             inherited_locked = parent.get("status") == "locked" or self._tree_service.has_locked_ancestor(parent, node_by_id)
             parent_hnum = str(parent.get("hierarchical_number") or "1")
-            created_child_ids: list[str] = []
-            for index, subtask in enumerate(payload["subtasks"], start=1):
-                child_id = uuid4().hex
-                child_node = {
-                    "node_id": child_id,
-                    "parent_id": node_id,
-                    "child_ids": [],
+            parent_depth = int(parent.get("depth", 0) or 0)
+
+            # ── Create only the first child ──────────────────────────
+            first_subtask = subtasks[0]
+            first_child_id = uuid4().hex
+            first_child = {
+                "node_id": first_child_id,
+                "parent_id": node_id,
+                "child_ids": [],
+                "title": first_subtask["title"],
+                "description": _build_flat_subtask_description(first_subtask),
+                "status": "locked" if inherited_locked else "ready",
+                "node_kind": "original",
+                "depth": parent_depth + 1,
+                "display_order": 0,
+                "hierarchical_number": f"{parent_hnum}.1",
+                "created_at": now,
+            }
+            parent.setdefault("child_ids", []).append(first_child_id)
+            snapshot["tree_state"]["node_index"][first_child_id] = first_child
+            node_by_id[first_child_id] = first_child
+
+            # ── Create real review node ──────────────────────────────
+            review_node_id = uuid4().hex
+            parent_title = str(parent.get("title") or "")
+            review_node = {
+                "node_id": review_node_id,
+                "parent_id": node_id,
+                "child_ids": [],
+                "title": "Review",
+                "description": f"Review node for {parent_hnum} {parent_title}".strip(),
+                "status": "ready",
+                "node_kind": "review",
+                "depth": parent_depth + 1,
+                "display_order": 0,
+                "hierarchical_number": f"{parent_hnum}.R",
+                "created_at": now,
+            }
+            # Review node is NOT in parent.child_ids — stored via review_node_id
+            snapshot["tree_state"]["node_index"][review_node_id] = review_node
+            node_by_id[review_node_id] = review_node
+            parent["review_node_id"] = review_node_id
+
+            # ── Compute K0 baseline SHA ──────────────────────────────
+            workspace_root = self._workspace_root_from_snapshot(snapshot)
+            if workspace_root:
+                from backend.services.workspace_sha import compute_workspace_sha
+                k0_sha = compute_workspace_sha(Path(workspace_root))
+            else:
+                k0_sha = "sha256:" + "0" * 64
+
+            # ── Build pending siblings manifest ──────────────────────
+            pending_siblings = []
+            for index, subtask in enumerate(subtasks[1:], start=2):
+                pending_siblings.append({
+                    "index": index,
                     "title": subtask["title"],
-                    "description": _build_flat_subtask_description(subtask),
-                    "status": "locked" if inherited_locked or index != 1 else "ready",
-                    "node_kind": "original",
-                    "depth": int(parent.get("depth", 0) or 0) + 1,
-                    "display_order": index - 1,
-                    "hierarchical_number": f"{parent_hnum}.{index}",
-                    "created_at": now,
-                }
-                parent.setdefault("child_ids", []).append(child_id)
-                snapshot["tree_state"]["node_index"][child_id] = child_node
-                node_by_id[child_id] = child_node
-                created_child_ids.append(child_id)
+                    "objective": subtask["objective"],
+                    "materialized_node_id": None,
+                })
 
-            if not created_child_ids:
-                raise SplitInvalidResponse(["payload.subtasks must contain at least one item"])
+            # ── Write review_state.json ──────────────────────────────
+            review_state = {
+                "checkpoints": [
+                    {
+                        "label": "K0",
+                        "sha": k0_sha,
+                        "summary": None,
+                        "source_node_id": None,
+                        "accepted_at": now,
+                    }
+                ],
+                "rollup": {
+                    "status": "pending",
+                    "summary": None,
+                    "sha": None,
+                    "accepted_at": None,
+                },
+                "pending_siblings": pending_siblings,
+            }
+            self._storage.review_state_store.write_state(
+                project_id, review_node_id, review_state
+            )
 
+            # ── Update parent and snapshot ───────────────────────────
             if parent.get("status") in {"ready", "in_progress"}:
                 parent["status"] = "draft"
 
-            snapshot["tree_state"]["active_node_id"] = created_child_ids[0]
+            snapshot["tree_state"]["active_node_id"] = first_child_id
             snapshot["updated_at"] = now
             self._storage.project_store.save_snapshot(project_id, snapshot)
             snapshot["project"] = self._storage.project_store.touch_meta(project_id, now)

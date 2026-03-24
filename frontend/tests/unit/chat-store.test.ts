@@ -35,6 +35,8 @@ vi.mock('../../src/api/client', () => ({
       this.code = payload?.code ?? null
     }
   },
+  buildChatEventsUrl: (projectId: string, nodeId: string, threadRole = 'ask_planning') =>
+    `/v1/projects/${projectId}/nodes/${nodeId}/chat/events?thread_role=${threadRole}`,
   appendAuthToken: (url: string) => url,
 }))
 
@@ -90,6 +92,7 @@ function deferred<T>() {
 function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
   return {
     thread_id: null,
+    thread_role: 'ask_planning',
     active_turn_id: null,
     messages: [],
     created_at: '2026-01-01T00:00:00Z',
@@ -118,7 +121,23 @@ describe('chat-store', () => {
     expect(state.session).toEqual(session)
     expect(state.activeProjectId).toBe('p1')
     expect(state.activeNodeId).toBe('n1')
+    expect(state.activeThreadRole).toBe('ask_planning')
     expect(state.isLoading).toBe(false)
+    expect(apiMock.getChatSession).toHaveBeenCalledWith('p1', 'n1', 'ask_planning')
+  })
+
+  it('loads role-specific sessions and opens a role-scoped event stream', async () => {
+    apiMock.getChatSession.mockResolvedValue(
+      makeSession({ thread_role: 'audit' }),
+    )
+
+    await act(async () => {
+      await useChatStore.getState().loadSession('p1', 'n1', 'audit')
+    })
+
+    expect(useChatStore.getState().activeThreadRole).toBe('audit')
+    expect(apiMock.getChatSession).toHaveBeenCalledWith('p1', 'n1', 'audit')
+    expect(MockEventSource.instances[0]?.url).toContain('thread_role=audit')
   })
 
   it('sendMessage uses server-returned canonical messages', async () => {
@@ -208,7 +227,7 @@ describe('chat-store', () => {
     expect(state.activeNodeId).toBe('n2')
     expect(state.session?.created_at).toBe('session-2')
     expect(MockEventSource.instances).toHaveLength(1)
-    expect(MockEventSource.instances[0]?.url).toContain('/nodes/n2/chat/events')
+    expect(MockEventSource.instances[0]?.url).toContain('/nodes/n2/chat/events?thread_role=ask_planning')
   })
 
   it('ignores stale sendMessage results after navigating to another node', async () => {

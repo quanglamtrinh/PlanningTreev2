@@ -318,3 +318,13 @@ class ThreadReadOnly(AppError):
 class FinishTaskNotAllowed(AppError):
     def __init__(self, reason: str) -> None:
         super().__init__("finish_task_not_allowed", reason, 400)
+
+
+class ReviewNotAllowed(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("review_not_allowed", reason, 400)
+
+
+class SiblingActivationNotAllowed(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("sibling_activation_not_allowed", reason, 400)

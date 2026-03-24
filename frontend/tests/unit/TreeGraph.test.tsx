@@ -363,6 +363,33 @@ describe('TreeGraph', () => {
     expect(screen.getByTestId('graph-node-root')).toBeInTheDocument()
   })
 
+  it('shows execution lifecycle badge separately from the coarse node status', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({
+            node_id: 'root',
+            status: 'in_progress',
+            workflow: {
+              frame_confirmed: true,
+              active_step: 'spec',
+              spec_confirmed: true,
+              execution_status: 'completed',
+            },
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    const graphNode = screen.getByTestId('graph-node-root')
+    expect(within(graphNode).getByText('In Progress')).toBeInTheDocument()
+    expect(within(graphNode).getByText('Execution Complete')).toBeInTheDocument()
+  })
+
   it('expands a locked parent to reveal children via the collapse toggle', () => {
     const snapshot = buildSnapshot({
       tree_state: {
@@ -513,7 +540,7 @@ describe('TreeGraph', () => {
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
     expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
     expect(within(detailCard).queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
-    expect(within(detailCard).queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()
+    expect(within(detailCard).getByRole('button', { name: 'Finish Task' })).toBeDisabled()
 
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Clarify' }))
     expect(await within(detailCard).findByText(/What target platform/)).toBeInTheDocument()

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GenJobStatus, NodeRecord } from '../../api/types'
+import { AgentSpinner, SPINNER_WORDS_APPLYING, SPINNER_WORDS_GENERATING } from '../../components/AgentSpinner'
 import { api, ApiError } from '../../api/client'
 import { useClarifyStore } from '../../stores/clarify-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
@@ -171,7 +172,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
     return (
       <div className={detailStyles.documentPanel}>
         <p className={detailStyles.body} data-testid="clarify-generating">
-          Generating clarify questions...
+          <AgentSpinner words={SPINNER_WORDS_GENERATING} />
         </p>
       </div>
     )
@@ -235,7 +236,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
               onClick={handleApplyToFrame}
               disabled={isConfirming}
             >
-              {isConfirming ? 'Applying...' : 'Apply to Frame'}
+              {isConfirming ? <AgentSpinner words={SPINNER_WORDS_APPLYING} /> : 'Apply to Frame'}
             </button>
           </div>
         ) : null}
@@ -360,7 +361,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
               disabled={!canConfirm}
               onClick={handleApplyToFrame}
             >
-              {isConfirming ? 'Applying...' : 'Apply to Frame'}
+              {isConfirming ? <AgentSpinner words={SPINNER_WORDS_APPLYING} /> : 'Apply to Frame'}
             </button>
           </>
         )}

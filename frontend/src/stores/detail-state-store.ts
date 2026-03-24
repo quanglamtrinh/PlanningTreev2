@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import type { DetailState } from '../api/types'
 import { api } from '../api/client'
 import { mergeMockDetailState } from '../dev/mockDetailState'
+import { useProjectStore } from './project-store'
+
+const EXECUTION_POLL_INTERVAL_MS = 1000
 
 type DetailStateStoreState = {
   /** Keyed by `${projectId}::${nodeId}` */
@@ -14,9 +17,9 @@ type DetailStateStoreState = {
   resettingWorkspace: Record<string, boolean>
 
   loadDetailState: (projectId: string, nodeId: string) => Promise<void>
+  refreshExecutionState: (projectId: string, nodeId: string) => Promise<void>
   confirmFrame: (projectId: string, nodeId: string) => Promise<DetailState>
   confirmSpec: (projectId: string, nodeId: string) => Promise<DetailState>
-  /** Stub until POST .../finish-task exists */
   finishTask: (projectId: string, nodeId: string) => Promise<void>
   /** Stub until POST .../git/init exists */
   initGit: (projectId: string) => Promise<void>
@@ -32,6 +35,31 @@ function stateKey(projectId: string, nodeId: string): string {
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
+}
+
+function syncProjectSnapshot(projectId: string) {
+  void api.getSnapshot(projectId).then((snapshot) => {
+    useProjectStore.setState((prev) => ({
+      snapshot,
+      selectedNodeId: prev.selectedNodeId,
+    }))
+  }).catch(() => undefined)
+}
+
+const executionPollTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
+
+function stopExecutionPolling(key: string) {
+  const timer = executionPollTimers.get(key)
+  if (timer !== undefined) {
+    globalThis.clearTimeout(timer)
+    executionPollTimers.delete(key)
+  }
+}
+
+function stopAllExecutionPolling() {
+  for (const key of executionPollTimers.keys()) {
+    stopExecutionPolling(key)
+  }
 }
 
 export const useDetailStateStore = create<DetailStateStoreState>((set, get) => ({
@@ -53,9 +81,47 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
         loading: { ...s.loading, [key]: false },
         errors: { ...s.errors, [key]: '' },
       }))
+      if (state.execution_status === 'executing') {
+        if (!executionPollTimers.has(key)) {
+          const timer = globalThis.setTimeout(() => {
+            executionPollTimers.delete(key)
+            void get().refreshExecutionState(projectId, nodeId)
+          }, EXECUTION_POLL_INTERVAL_MS)
+          executionPollTimers.set(key, timer)
+        }
+      } else {
+        stopExecutionPolling(key)
+      }
     } catch (error) {
       set((s) => ({
         loading: { ...s.loading, [key]: false },
+        errors: { ...s.errors, [key]: toErrorMessage(error) },
+      }))
+      stopExecutionPolling(key)
+    }
+  },
+
+  async refreshExecutionState(projectId: string, nodeId: string) {
+    const key = stateKey(projectId, nodeId)
+    stopExecutionPolling(key)
+    try {
+      const raw = await api.getDetailState(projectId, nodeId)
+      const state = mergeMockDetailState(raw)
+      set((s) => ({
+        entries: { ...s.entries, [key]: state },
+        errors: { ...s.errors, [key]: '' },
+      }))
+      if (state.execution_status === 'executing') {
+        const timer = globalThis.setTimeout(() => {
+          executionPollTimers.delete(key)
+          void get().refreshExecutionState(projectId, nodeId)
+        }, EXECUTION_POLL_INTERVAL_MS)
+        executionPollTimers.set(key, timer)
+      } else {
+        syncProjectSnapshot(projectId)
+      }
+    } catch (error) {
+      set((s) => ({
         errors: { ...s.errors, [key]: toErrorMessage(error) },
       }))
     }
@@ -79,10 +145,32 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
 
   async finishTask(projectId: string, nodeId: string) {
     const key = stateKey(projectId, nodeId)
-    set((s) => ({ finishingTask: { ...s.finishingTask, [key]: true } }))
+    set((s) => ({
+      finishingTask: { ...s.finishingTask, [key]: true },
+      errors: { ...s.errors, [key]: '' },
+    }))
     try {
-      // await api.finishTask(projectId, nodeId) when API exists
-      await Promise.resolve()
+      const raw = await api.finishTask(projectId, nodeId)
+      const state = mergeMockDetailState(raw)
+      set((s) => ({
+        entries: { ...s.entries, [key]: state },
+        errors: { ...s.errors, [key]: '' },
+      }))
+      syncProjectSnapshot(projectId)
+      if (state.execution_status === 'executing') {
+        stopExecutionPolling(key)
+        const timer = globalThis.setTimeout(() => {
+          executionPollTimers.delete(key)
+          void get().refreshExecutionState(projectId, nodeId)
+        }, EXECUTION_POLL_INTERVAL_MS)
+        executionPollTimers.set(key, timer)
+      } else {
+        stopExecutionPolling(key)
+      }
+    } catch (error) {
+      set((s) => ({
+        errors: { ...s.errors, [key]: toErrorMessage(error) },
+      }))
     } finally {
       set((s) => ({ finishingTask: { ...s.finishingTask, [key]: false } }))
     }
@@ -107,6 +195,7 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
   },
 
   reset() {
+    stopAllExecutionPolling()
     set({ entries: {}, loading: {}, errors: {}, finishingTask: {}, resettingWorkspace: {} })
   },
 }))
