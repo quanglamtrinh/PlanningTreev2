@@ -61,6 +61,12 @@ export interface ProjectSummary {
   git_initialized?: boolean
 }
 
+export interface ReviewSummary {
+  checkpoint_count: number
+  rollup_status: RollupStatus | null
+  pending_sibling_count: number
+}
+
 export interface NodeRecord {
   node_id: string
   parent_id: string | null
@@ -76,6 +82,7 @@ export interface NodeRecord {
   is_superseded: boolean
   workflow: NodeWorkflowSummary | null
   review_node_id?: string | null
+  review_summary?: ReviewSummary | null
 }
 
 export interface NodeWorkflowSummary {
@@ -334,6 +341,13 @@ export interface RollupState {
   summary: string | null
   sha: string | null
   accepted_at: string | null
+  draft: RollupDraft
+}
+
+export interface RollupDraft {
+  summary: string | null
+  sha: string | null
+  generated_at: string | null
 }
 
 export interface PendingSibling {

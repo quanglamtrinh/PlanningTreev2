@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { ThreadRole } from '../../api/types'
@@ -72,6 +72,7 @@ export function BreadcrumbChatView() {
     detailStateKey ? state.entries[detailStateKey] : undefined,
   )
   const loadDetailState = useDetailStateStore((state) => state.loadDetailState)
+  const acceptLocalReviewAction = useDetailStateStore((state) => state.acceptLocalReview)
 
   useEffect(() => {
     if (projectId && nodeId) {
@@ -155,6 +156,25 @@ export function BreadcrumbChatView() {
     return 'Node details are unavailable for this breadcrumb route.'
   }, [projectId, nodeId, detailCardState, projectError, activeProjectId, snapshot, detailNode])
 
+  const [reviewSummaryDraft, setReviewSummaryDraft] = useState('')
+  const [isAccepting, setIsAccepting] = useState(false)
+  const reviewInputRef = useRef<HTMLInputElement>(null)
+
+  const canAcceptLocalReview = nodeDetailState?.can_accept_local_review === true
+  const showAcceptReview = threadTab === 'audit' && canAcceptLocalReview
+
+  const handleAcceptReview = useCallback(async () => {
+    const summary = reviewSummaryDraft.trim()
+    if (!summary || !projectId || !nodeId) return
+    setIsAccepting(true)
+    try {
+      await acceptLocalReviewAction(projectId, nodeId, summary)
+      setReviewSummaryDraft('')
+    } finally {
+      setIsAccepting(false)
+    }
+  }, [reviewSummaryDraft, projectId, nodeId, acceptLocalReviewAction])
+
   const isActiveTurn = !!session?.active_turn_id
   const shapingFrozen = nodeDetailState?.shaping_frozen ?? (detailNode?.workflow?.shaping_frozen === true)
   const auditWritable = nodeDetailState?.audit_writable === true
@@ -215,6 +235,34 @@ export function BreadcrumbChatView() {
               )}
               {!isLoading && session && (
                 <MessageFeed messages={session.messages} />
+              )}
+              {showAcceptReview && (
+                <div className={styles.acceptReviewBar} data-testid="accept-review-bar">
+                  <input
+                    ref={reviewInputRef}
+                    type="text"
+                    className={styles.acceptReviewInput}
+                    placeholder="Review summary..."
+                    value={reviewSummaryDraft}
+                    onChange={(e) => setReviewSummaryDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        void handleAcceptReview()
+                      }
+                    }}
+                    disabled={isAccepting}
+                  />
+                  <button
+                    type="button"
+                    className={styles.acceptReviewButton}
+                    disabled={isAccepting || !reviewSummaryDraft.trim()}
+                    onClick={() => void handleAcceptReview()}
+                    data-testid="accept-review-button"
+                  >
+                    {isAccepting ? 'Accepting...' : 'Accept Review'}
+                  </button>
+                </div>
               )}
               <ComposerBar
                 onSend={sendMessage}

@@ -14,6 +14,21 @@ const { apiMock, MockApiError } = vi.hoisted(() => ({
   apiMock: {
     getNodeDocument: vi.fn(),
     putNodeDocument: vi.fn(),
+    getReviewState: vi.fn().mockResolvedValue({
+      checkpoints: [],
+      rollup: {
+        status: 'pending',
+        summary: null,
+        sha: null,
+        accepted_at: null,
+        draft: {
+          summary: null,
+          sha: null,
+          generated_at: null,
+        },
+      },
+      pending_siblings: [],
+    }),
     getDetailState: vi.fn().mockResolvedValue({
       node_id: 'root',
       frame_confirmed: false,
@@ -65,6 +80,12 @@ const { apiMock, MockApiError } = vi.hoisted(() => ({
       started_at: null,
       completed_at: null,
       error: null,
+    }),
+    acceptRollupReview: vi.fn().mockResolvedValue({
+      review_node_id: 'review-1',
+      rollup_status: 'accepted',
+      summary: 'Accepted rollup summary',
+      sha: 'sha256:accepted',
     }),
   },
 }))
@@ -122,6 +143,36 @@ function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
   }
 }
 
+function makeReviewDetailState(overrides: Record<string, unknown> = {}) {
+  return {
+    node_id: 'review-1',
+    workflow: null,
+    frame_confirmed: false,
+    frame_confirmed_revision: 0,
+    frame_revision: 0,
+    active_step: 'frame' as const,
+    workflow_notice: null,
+    generation_error: null,
+    frame_needs_reconfirm: false,
+    frame_read_only: true,
+    clarify_read_only: true,
+    clarify_confirmed: false,
+    spec_read_only: true,
+    spec_stale: false,
+    spec_confirmed: false,
+    execution_started: false,
+    execution_completed: false,
+    shaping_frozen: false,
+    can_finish_task: false,
+    can_accept_local_review: false,
+    execution_status: null,
+    audit_writable: false,
+    package_audit_ready: false,
+    review_status: 'pending' as const,
+    ...overrides,
+  }
+}
+
 describe('NodeDetailCard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -172,6 +223,27 @@ describe('NodeDetailCard', () => {
       started_at: null,
       completed_at: null,
       error: null,
+    })
+    apiMock.getReviewState.mockResolvedValue({
+      checkpoints: [],
+      rollup: {
+        status: 'pending',
+        summary: null,
+        sha: null,
+        accepted_at: null,
+        draft: {
+          summary: null,
+          sha: null,
+          generated_at: null,
+        },
+      },
+      pending_siblings: [],
+    })
+    apiMock.acceptRollupReview.mockResolvedValue({
+      review_node_id: 'review-1',
+      rollup_status: 'accepted',
+      summary: 'Accepted rollup summary',
+      sha: 'sha256:accepted',
     })
   })
 
@@ -1012,6 +1084,231 @@ describe('NodeDetailCard', () => {
     })
     expect(screen.getByTestId('stale-banner-spec')).toHaveTextContent(
       /Frame was updated/,
+    )
+  })
+
+  it('renders the review detail surface and accepts a rollup draft', async () => {
+    apiMock.getDetailState
+      .mockResolvedValueOnce(
+        makeReviewDetailState({
+          node_id: 'review-1',
+          review_status: 'ready',
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeReviewDetailState({
+          node_id: 'review-1',
+          review_status: 'accepted',
+        }),
+      )
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        frame_confirmed: true,
+        frame_confirmed_revision: 1,
+        frame_revision: 1,
+        active_step: 'spec' as const,
+        workflow_notice: null,
+        generation_error: null,
+        frame_needs_reconfirm: false,
+        frame_read_only: true,
+        clarify_read_only: true,
+        clarify_confirmed: true,
+        spec_read_only: true,
+        spec_stale: false,
+        spec_confirmed: true,
+        execution_started: true,
+        execution_completed: true,
+        shaping_frozen: true,
+        can_finish_task: false,
+        can_accept_local_review: false,
+        execution_status: 'review_accepted' as const,
+        audit_writable: true,
+        package_audit_ready: true,
+        review_status: 'accepted' as const,
+      })
+    apiMock.getReviewState
+      .mockResolvedValueOnce({
+        checkpoints: [
+          {
+            label: 'K0',
+            sha: 'sha256:checkpoint',
+            summary: 'Child review accepted.',
+            source_node_id: 'child-1',
+            accepted_at: '2026-03-24T00:00:00Z',
+          },
+        ],
+        rollup: {
+          status: 'ready',
+          summary: null,
+          sha: null,
+          accepted_at: null,
+          draft: {
+            summary: 'Rollup draft summary',
+            sha: 'sha256:draft',
+            generated_at: '2026-03-24T00:05:00Z',
+          },
+        },
+        pending_siblings: [
+          {
+            index: 1,
+            title: 'Child 2',
+            objective: 'Finish follow-up work',
+            materialized_node_id: 'child-2',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        checkpoints: [
+          {
+            label: 'K0',
+            sha: 'sha256:checkpoint',
+            summary: 'Child review accepted.',
+            source_node_id: 'child-1',
+            accepted_at: '2026-03-24T00:00:00Z',
+          },
+        ],
+        rollup: {
+          status: 'accepted',
+          summary: 'Accepted rollup summary',
+          sha: 'sha256:accepted',
+          accepted_at: '2026-03-24T00:10:00Z',
+          draft: {
+            summary: null,
+            sha: null,
+            generated_at: null,
+          },
+        },
+        pending_siblings: [
+          {
+            index: 1,
+            title: 'Child 2',
+            objective: 'Finish follow-up work',
+            materialized_node_id: 'child-2',
+          },
+        ],
+      })
+    apiMock.getSnapshot.mockResolvedValue({
+      schema_version: 6,
+      project: {
+        id: 'project-1',
+        name: 'Project',
+        root_goal: 'Goal',
+        project_path: 'C:/workspace/project-1',
+        created_at: '2026-03-24T00:00:00Z',
+        updated_at: '2026-03-24T00:00:00Z',
+      },
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'review-1',
+        node_registry: [
+          {
+            ...makeNode({
+              node_id: 'root',
+              workflow: {
+                frame_confirmed: true,
+                active_step: 'spec',
+                spec_confirmed: true,
+                execution_status: 'review_accepted',
+              },
+            }),
+            review_node_id: 'review-1',
+          },
+          makeNode({
+            node_id: 'review-1',
+            parent_id: 'root',
+            status: 'ready',
+            node_kind: 'review',
+            title: 'Review',
+            hierarchical_number: '1.R',
+            workflow: null,
+          }),
+        ],
+      },
+      updated_at: '2026-03-24T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({
+          node_id: 'review-1',
+          parent_id: 'root',
+          status: 'ready',
+          node_kind: 'review',
+          title: 'Review',
+          hierarchical_number: '1.R',
+          workflow: null,
+        })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    expect(await screen.findByTestId('review-detail-panel')).toBeInTheDocument()
+    expect(screen.getByText('Child review accepted.')).toBeInTheDocument()
+    expect(screen.getByText('Sibling 2: Child 2')).toBeInTheDocument()
+    expect(screen.getByText('Rollup draft summary')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('accept-rollup-button'))
+
+    await waitFor(() => {
+      expect(apiMock.acceptRollupReview).toHaveBeenCalledWith('project-1', 'review-1')
+    })
+    expect(await screen.findByText('Accepted rollup summary')).toBeInTheDocument()
+  })
+
+  it('shows a package-audit-ready banner on parent task nodes', async () => {
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec' as const,
+      workflow_notice: null,
+      generation_error: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: true,
+      spec_stale: false,
+      spec_confirmed: true,
+      execution_started: true,
+      execution_completed: true,
+      shaping_frozen: true,
+      can_finish_task: false,
+      can_accept_local_review: false,
+      execution_status: 'review_accepted' as const,
+      audit_writable: true,
+      package_audit_ready: true,
+      review_status: 'accepted' as const,
+    })
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({
+          status: 'done',
+          workflow: {
+            frame_confirmed: true,
+            active_step: 'spec',
+            spec_confirmed: true,
+            execution_status: 'review_accepted',
+          },
+        })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    expect(await screen.findByTestId('package-audit-ready-banner')).toHaveTextContent(
+      /Package audit ready/i,
     )
   })
 })

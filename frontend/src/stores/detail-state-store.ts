@@ -212,6 +212,7 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
       set((s) => ({
         errors: { ...s.errors, [key]: toErrorMessage(error) },
       }))
+      throw error
     }
   },
 

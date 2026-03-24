@@ -248,6 +248,77 @@ def test_accept_local_review_route_happy_path(client: TestClient, workspace_root
     assert exec_state["status"] == "review_accepted"
 
 
+def test_get_review_state_route_returns_default_state(client: TestClient, workspace_root):
+    project_id, root_id = _setup_project(client, workspace_root)
+    review_id = _add_review_node(client, project_id, root_id)
+
+    resp = client.get(f"/v1/projects/{project_id}/nodes/{review_id}/review-state")
+    assert resp.status_code == 200
+
+    payload = resp.json()
+    assert payload["checkpoints"] == []
+    assert payload["pending_siblings"] == []
+    assert payload["rollup"]["status"] == "pending"
+    assert payload["rollup"]["summary"] is None
+    assert payload["rollup"]["sha"] is None
+    assert payload["rollup"]["accepted_at"] is None
+    assert payload["rollup"]["draft"] == {
+        "summary": None,
+        "sha": None,
+        "generated_at": None,
+    }
+
+
+def test_get_review_state_route_returns_rollup_draft_and_progress(client: TestClient, workspace_root):
+    project_id, root_id = _setup_project(client, workspace_root)
+    review_id = _add_review_node(client, project_id, root_id)
+    client.app.state.storage.review_state_store.write_state(
+        project_id,
+        review_id,
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:checkpoint",
+                    "summary": "Accepted child implementation",
+                    "source_node_id": "child-1",
+                    "accepted_at": "2026-01-01T00:00:00Z",
+                }
+            ],
+            "rollup": {
+                "status": "ready",
+                "summary": None,
+                "sha": None,
+                "accepted_at": None,
+                "draft": {
+                    "summary": "Integrated child work into a coherent package.",
+                    "sha": "sha256:rollupdraft",
+                    "generated_at": "2026-01-01T00:05:00Z",
+                },
+            },
+            "pending_siblings": [
+                {
+                    "index": 1,
+                    "title": "Follow-up child",
+                    "objective": "Handle the remaining package work",
+                    "materialized_node_id": "child-2",
+                }
+            ],
+        },
+    )
+
+    resp = client.get(f"/v1/projects/{project_id}/nodes/{review_id}/review-state")
+    assert resp.status_code == 200
+
+    payload = resp.json()
+    assert payload["checkpoints"][0]["label"] == "K0"
+    assert payload["checkpoints"][0]["summary"] == "Accepted child implementation"
+    assert payload["rollup"]["status"] == "ready"
+    assert payload["rollup"]["draft"]["summary"] == "Integrated child work into a coherent package."
+    assert payload["rollup"]["draft"]["sha"] == "sha256:rollupdraft"
+    assert payload["pending_siblings"][0]["materialized_node_id"] == "child-2"
+
+
 def test_accept_local_review_route_rejects_empty_summary(client: TestClient, workspace_root):
     project_id, node_id = _setup_node_with_execution_completed(client, workspace_root)
     client.app.state.review_service.start_local_review(project_id, node_id)

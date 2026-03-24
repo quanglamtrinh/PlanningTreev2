@@ -51,6 +51,7 @@ class SnapshotViewService:
             node["is_superseded"] = node_kind == "superseded"
             if node_kind == "review":
                 node["workflow"] = None
+                node["review_summary"] = self._review_summary(project_id, node_id)
             else:
                 node["workflow"] = self._workflow_summary(
                     project_id=project_id,
@@ -118,3 +119,20 @@ class SnapshotViewService:
         for field in ("audit_writable", "package_audit_ready", "review_status"):
             workflow.pop(field, None)
         return workflow
+
+    def _review_summary(self, project_id: str, review_node_id: str) -> dict[str, Any] | None:
+        if self._storage is None:
+            return None
+        review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
+        if not isinstance(review_state, dict):
+            return None
+        checkpoints = review_state.get("checkpoints", [])
+        pending = review_state.get("pending_siblings", [])
+        rollup = review_state.get("rollup", {})
+        return {
+            "checkpoint_count": len(checkpoints) if isinstance(checkpoints, list) else 0,
+            "rollup_status": str(rollup.get("status")) if isinstance(rollup, dict) and rollup.get("status") else None,
+            "pending_sibling_count": sum(
+                1 for s in pending if isinstance(s, dict) and s.get("materialized_node_id") is None
+            ) if isinstance(pending, list) else 0,
+        }

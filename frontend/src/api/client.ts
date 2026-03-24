@@ -13,6 +13,7 @@ import type {
   NodeDocument,
   NodeDocumentKind,
   ProjectSummary,
+  ReviewState,
   SendMessageResponse,
   Snapshot,
   SpecGenAcceptedResponse,
@@ -213,6 +214,9 @@ export const api = {
   },
   getDetailState(projectId: string, nodeId: string): Promise<DetailState> {
     return jsonFetch<DetailState>(`/v1/projects/${projectId}/nodes/${nodeId}/detail-state`)
+  },
+  getReviewState(projectId: string, nodeId: string): Promise<ReviewState> {
+    return jsonFetch<ReviewState>(`/v1/projects/${projectId}/nodes/${nodeId}/review-state`)
   },
   confirmFrame(projectId: string, nodeId: string): Promise<DetailState> {
     return jsonFetch<DetailState>(

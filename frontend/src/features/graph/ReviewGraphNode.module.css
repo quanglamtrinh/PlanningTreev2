@@ -58,3 +58,38 @@
   color: var(--color-accent);
   font-variant-numeric: tabular-nums;
 }
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.stat {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+}
+
+.rollupBadge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+}
+
+.rollup_pending {
+  color: var(--color-text-tertiary);
+  background: color-mix(in srgb, var(--color-text-tertiary) 12%, transparent);
+}
+
+.rollup_ready {
+  color: var(--color-status-in-progress);
+  background: var(--color-status-in-progress-bg);
+}
+
+.rollup_accepted {
+  color: var(--color-status-done);
+  background: var(--color-status-done-bg);
+}

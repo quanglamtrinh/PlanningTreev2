@@ -182,39 +182,38 @@ export function buildReviewOverlayPositions({
   const reviewPositions = new Map<string, { x: number; y: number }>()
 
   for (const [parentId, childIds] of visibleChildrenById) {
-    if (childIds.length < 2) {
+    if (childIds.length === 0) {
+      continue
+    }
+
+    const parentRecord = nodeById.get(parentId)
+    if (!parentRecord) {
+      continue
+    }
+
+    // Use real review_node_id if the parent has one; fall back to synthetic for legacy 2+ child trees.
+    const reviewNodeId = parentRecord.review_node_id
+    const useSynthetic = !reviewNodeId && childIds.length >= 2
+    if (!reviewNodeId && !useSynthetic) {
       continue
     }
 
     const parentPosition = treePositions.get(parentId)
-    const parentRecord = nodeById.get(parentId)
-    if (!parentPosition || !parentRecord) {
-      continue
-    }
-
-    const visibleChildCount = childIds.reduce(
-      (count, childId) => count + (treePositions.has(childId) ? 1 : 0),
-      0,
-    )
-    if (visibleChildCount < 2) {
+    if (!parentPosition) {
       continue
     }
 
     const directChildYs = childIds
       .map((childId) => treePositions.get(childId)?.y)
       .filter((value): value is number => typeof value === 'number')
-    if (directChildYs.length < 2) {
+    if (directChildYs.length === 0) {
       continue
     }
 
     const parentY = parentPosition.y
     const parentBottom = parentY + estimateNodeHeight(parentRecord) + GRAPH_NODE_MARGIN_BOTTOM_PX
-
-    // Top edge of the children row (min Y across all visible direct children).
     const childrenTop = Math.min(...directChildYs)
 
-    // Place review card vertically centered in the gap between parent bottom and children top,
-    // but always keep at least MIN_REVIEW_GAP_PX of breathing room on each side.
     const midpoint = (parentBottom + childrenTop) / 2
     const reviewY = Math.min(
       Math.max(
@@ -224,8 +223,8 @@ export function buildReviewOverlayPositions({
       childrenTop - REVIEW_CARD_HEIGHT_PX - MIN_REVIEW_GAP_PX,
     )
 
-    reviewPositions.set(`review::${parentId}`, {
-      // Center the narrower review card (220px) under the graph node (270px).
+    const id = reviewNodeId ?? `review::${parentId}`
+    reviewPositions.set(id, {
       x: parentPosition.x + (GRAPH_NODE_WIDTH_PX - REVIEW_NODE_WIDTH_PX) / 2,
       y: reviewY,
     })

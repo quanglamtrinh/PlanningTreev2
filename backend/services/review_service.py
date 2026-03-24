@@ -67,6 +67,21 @@ class ReviewService:
             exec_state["status"] = "review_pending"
             return self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
+    def get_review_state(self, project_id: str, review_node_id: str) -> dict[str, Any]:
+        with self._storage.project_lock(project_id):
+            snapshot = self._storage.project_store.load_snapshot(project_id)
+            node_by_id = self._tree_service.node_index(snapshot)
+            review_node = node_by_id.get(review_node_id)
+            if review_node is None:
+                raise NodeNotFound(review_node_id)
+            if str(review_node.get("node_kind") or "").strip() != "review":
+                raise ReviewNotAllowed("Review state is only valid for review nodes.")
+
+            review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
+            if review_state is None:
+                return self._storage.review_state_store.default_state()
+            return review_state
+
     def accept_local_review(
         self, project_id: str, node_id: str, summary: str
     ) -> dict[str, Any]:

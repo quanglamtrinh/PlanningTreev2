@@ -78,6 +78,9 @@ class ReviewStateStore:
             atomic_write_json(target, normalized)
             return copy.deepcopy(normalized)
 
+    def default_state(self) -> dict[str, Any]:
+        return copy.deepcopy(_DEFAULT_STATE)
+
     def add_checkpoint(
         self,
         project_id: str,

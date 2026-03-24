@@ -31,7 +31,7 @@ const nodeTypes = {
   reviewNode: ReviewGraphNode,
 }
 
-const REVIEW_NODE_PREFIX = 'review::'
+const SYNTHETIC_REVIEW_PREFIX = 'review::'
 const REVIEW_EDGE_STROKE = 'var(--color-accent)'
 const STRUCTURAL_EDGE_STROKE = 'var(--graph-edge-stroke)'
 
@@ -557,7 +557,7 @@ export function TreeGraph({
 
   const realFlowNodes = useMemo<Node<GraphNodeData>[]>(() => {
     return snapshot.tree_state.node_registry
-      .filter((node) => visibleNodeIds.has(node.node_id))
+      .filter((node) => visibleNodeIds.has(node.node_id) && node.node_kind !== 'review')
       .map((node) => ({
         id: node.node_id,
         type: 'graphNode',
@@ -615,11 +615,16 @@ export function TreeGraph({
   const reviewFlowNodes = useMemo<Node<ReviewGraphNodeData>[]>(() => {
     const nodes: Node<ReviewGraphNodeData>[] = []
     for (const [reviewId, position] of reviewOverlayPositions.entries()) {
-      const parentId = reviewId.slice(REVIEW_NODE_PREFIX.length)
+      const isSynthetic = reviewId.startsWith(SYNTHETIC_REVIEW_PREFIX)
+      const parentId = isSynthetic
+        ? reviewId.slice(SYNTHETIC_REVIEW_PREFIX.length)
+        : nodeById.get(reviewId)?.parent_id ?? ''
       const parent = nodeById.get(parentId)
       if (!parent) {
         continue
       }
+      const realReviewNode = isSynthetic ? null : nodeById.get(reviewId)
+      const summary = realReviewNode?.review_summary
       nodes.push({
         id: reviewId,
         type: 'reviewNode',
@@ -631,6 +636,9 @@ export function TreeGraph({
           parentNodeId: parent.node_id,
           parentTitle: parent.title,
           parentHierarchicalNumber: parent.hierarchical_number,
+          checkpointCount: summary?.checkpoint_count ?? 0,
+          rollupStatus: summary?.rollup_status ?? null,
+          pendingSiblingCount: summary?.pending_sibling_count ?? 0,
         },
       })
     }
@@ -675,13 +683,16 @@ export function TreeGraph({
     )
 
     const reviewEdges = [...reviewOverlayPositions.keys()].flatMap((reviewId) => {
-      const parentId = reviewId.slice(REVIEW_NODE_PREFIX.length)
+      const isSynthetic = reviewId.startsWith(SYNTHETIC_REVIEW_PREFIX)
+      const parentId = isSynthetic
+        ? reviewId.slice(SYNTHETIC_REVIEW_PREFIX.length)
+        : nodeById.get(reviewId)?.parent_id ?? ''
       const reviewPosition = reviewOverlayPositions.get(reviewId)
       const childIds = (visibleChildrenById.get(parentId) ?? []).filter((childId) =>
         visibleSet.has(childId),
       )
       if (
-        childIds.length < 2 ||
+        childIds.length === 0 ||
         !reviewPosition ||
         !visibleSet.has(reviewId) ||
         !visibleSet.has(parentId)

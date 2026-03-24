@@ -6,6 +6,7 @@ import { NodeDescribePanel } from './NodeDescribePanel'
 import { NodeDocumentEditor } from './NodeDocumentEditor'
 import { ExecutionStatusBadge } from './ExecutionStatusBadge'
 import { NodeStatusBadge } from './NodeStatusBadge'
+import { ReviewDetailPanel } from './ReviewDetailPanel'
 import styles from './NodeDetailCard.module.css'
 
 type DetailTab = 'describe' | 'frame' | 'clarify' | 'spec'
@@ -39,6 +40,7 @@ export function NodeDetailCard({
   message = null,
 }: Props) {
   const [detailTab, setDetailTab] = useState<DetailTab>('frame')
+  const isReviewNode = node?.node_kind === 'review'
 
   const detailStateKey = projectId && node ? `${projectId}::${node.node_id}` : ''
   const detailState = useDetailStateStore((s) => (detailStateKey ? s.entries[detailStateKey] : undefined))
@@ -53,7 +55,6 @@ export function NodeDetailCard({
     detailStateKey ? (s.resettingWorkspace[detailStateKey] ?? false) : false,
   )
 
-  // Reset to frame on node change
   useEffect(() => {
     setDetailTab('frame')
   }, [node?.node_id, state])
@@ -64,7 +65,6 @@ export function NodeDetailCard({
     }
   }, [projectId, node?.node_id, state, loadDetailState])
 
-  // Auto-follow active_step from backend
   useEffect(() => {
     if (detailState?.active_step) setDetailTab(detailState.active_step)
   }, [detailState?.active_step])
@@ -123,38 +123,42 @@ export function NodeDetailCard({
       <div className={styles.cardHeader}>
         <div className={styles.cardHeaderTop}>
           <div className={styles.nodeTitleBlock}>
-            <p className={styles.nodeEyebrow}>Task</p>
+            <p className={styles.nodeEyebrow}>{isReviewNode ? 'Review Node' : 'Task'}</p>
             <div className={styles.nodeTitleRow}>
               <span className={styles.nodeHier}>{node.hierarchical_number}</span>
               <h2 className={styles.nodeHeading}>{node.title}</h2>
               <NodeStatusBadge status={node.status} />
-              <ExecutionStatusBadge
-                status={detailState?.execution_status}
-                className={styles.executionStatusBadge}
-              />
+              {!isReviewNode ? (
+                <ExecutionStatusBadge
+                  status={detailState?.execution_status}
+                  className={styles.executionStatusBadge}
+                />
+              ) : null}
             </div>
           </div>
           <div className={styles.cardHeaderActions}>
-            <button
-              type="button"
-              className={styles.finishTaskButton}
-              disabled={
-                !detailState ||
-                detailState.can_finish_task !== true ||
-                detailState.git_ready === false ||
-                isFinishingTask
-              }
-              title={
-                detailState?.git_ready === false && detailState.git_blocker_message
-                  ? detailState.git_blocker_message
-                  : detailState?.can_finish_task !== true
-                    ? 'Complete and confirm the spec, then satisfy Git prerequisites to finish this task.'
-                    : 'Run execution for this task'
-              }
-              onClick={() => void finishTaskAction(projectId, node.node_id)}
-            >
-              {isFinishingTask ? 'Finishing…' : 'Finish Task'}
-            </button>
+            {!isReviewNode ? (
+              <button
+                type="button"
+                className={styles.finishTaskButton}
+                disabled={
+                  !detailState ||
+                  detailState.can_finish_task !== true ||
+                  detailState.git_ready === false ||
+                  isFinishingTask
+                }
+                title={
+                  detailState?.git_ready === false && detailState.git_blocker_message
+                    ? detailState.git_blocker_message
+                    : detailState?.can_finish_task !== true
+                      ? 'Complete and confirm the spec, then satisfy Git prerequisites to finish this task.'
+                      : 'Run execution for this task'
+                }
+                onClick={() => void finishTaskAction(projectId, node.node_id)}
+              >
+                {isFinishingTask ? 'Finishing...' : 'Finish Task'}
+              </button>
+            ) : null}
             {showClose ? (
               <button
                 type="button"
@@ -162,55 +166,57 @@ export function NodeDetailCard({
                 onClick={onClose}
                 aria-label="Close detail panel"
               >
-                <span aria-hidden="true">×</span>
+                <span aria-hidden="true">x</span>
               </button>
             ) : null}
           </div>
         </div>
 
-        <div className={styles.explorationRegion} role="region" aria-label="Task exploration steps">
-          <nav className={styles.stepper} aria-label="Describe, Frame, Clarify, Spec">
-            {DETAIL_STEPS.map((step, idx) => {
-              const isActive = detailTab === step.id
-              const confirmed = isStepConfirmed(step.id)
-              const isDescribe = step.id === 'describe'
-              const arrowBold = idx > 0 && idx <= activeStepIndex
-              return (
-                <Fragment key={step.id}>
-                  {idx > 0 && (
-                    <span
-                      className={`${styles.stepArrow} ${arrowBold ? styles.stepArrowBold : ''}`}
-                      aria-hidden="true"
-                    >
-                      {'>'}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    className={[
-                      styles.stepButton,
-                      isDescribe ? styles.stepButtonDescribe : '',
-                      confirmed ? styles.stepButtonDone : '',
-                      isActive ? styles.stepButtonActive : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                    onClick={() => setDetailTab(step.id)}
-                    aria-label={step.label}
-                    aria-current={isActive ? 'step' : undefined}
-                  >
-                    <span>{step.label}</span>
-                    {confirmed ? (
-                      <span className={styles.stepDoneTick} aria-hidden="true">
-                        ✓
+        {!isReviewNode ? (
+          <div className={styles.explorationRegion} role="region" aria-label="Task exploration steps">
+            <nav className={styles.stepper} aria-label="Describe, Frame, Clarify, Spec">
+              {DETAIL_STEPS.map((step, idx) => {
+                const isActive = detailTab === step.id
+                const confirmed = isStepConfirmed(step.id)
+                const isDescribe = step.id === 'describe'
+                const arrowBold = idx > 0 && idx <= activeStepIndex
+                return (
+                  <Fragment key={step.id}>
+                    {idx > 0 && (
+                      <span
+                        className={`${styles.stepArrow} ${arrowBold ? styles.stepArrowBold : ''}`}
+                        aria-hidden="true"
+                      >
+                        {'>'}
                       </span>
-                    ) : null}
-                  </button>
-                </Fragment>
-              )
-            })}
-          </nav>
-        </div>
+                    )}
+                    <button
+                      type="button"
+                      className={[
+                        styles.stepButton,
+                        isDescribe ? styles.stepButtonDescribe : '',
+                        confirmed ? styles.stepButtonDone : '',
+                        isActive ? styles.stepButtonActive : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      onClick={() => setDetailTab(step.id)}
+                      aria-label={step.label}
+                      aria-current={isActive ? 'step' : undefined}
+                    >
+                      <span>{step.label}</span>
+                      {confirmed ? (
+                        <span className={styles.stepDoneTick} aria-hidden="true">
+                          OK
+                        </span>
+                      ) : null}
+                    </button>
+                  </Fragment>
+                )
+              })}
+            </nav>
+          </div>
+        ) : null}
       </div>
 
       <div className={styles.cardBody}>
@@ -220,7 +226,9 @@ export function NodeDetailCard({
             <button
               type="button"
               className={styles.retryButton}
-              onClick={() => { if (projectId && node) void loadDetailState(projectId, node.node_id) }}
+              onClick={() => {
+                if (projectId && node) void loadDetailState(projectId, node.node_id)
+              }}
             >
               Retry
             </button>
@@ -230,6 +238,17 @@ export function NodeDetailCard({
         {detailState?.workflow_notice ? (
           <div className={styles.workflowNoticeBanner} data-testid="workflow-notice" role="status">
             {detailState.workflow_notice}
+          </div>
+        ) : null}
+
+        {!isReviewNode && detailState?.package_audit_ready ? (
+          <div
+            className={styles.packageAuditReadyBanner}
+            data-testid="package-audit-ready-banner"
+            role="status"
+          >
+            Package audit ready. The accepted rollup package is now available in the Audit thread for
+            this task.
           </div>
         ) : null}
 
@@ -245,7 +264,9 @@ export function NodeDetailCard({
           </div>
         ) : null}
 
-        {detailTab === 'describe' && (
+        {isReviewNode ? <ReviewDetailPanel projectId={projectId} node={node} /> : null}
+
+        {!isReviewNode && detailTab === 'describe' ? (
           <div className={styles.cardBodyAux}>
             <NodeDescribePanel
               node={node}
@@ -258,9 +279,9 @@ export function NodeDetailCard({
               onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
             />
           </div>
-        )}
+        ) : null}
 
-        {detailTab === 'frame' && (
+        {!isReviewNode && detailTab === 'frame' ? (
           <div className={styles.documentTabStack}>
             <NodeDocumentEditor
               projectId={projectId}
@@ -270,17 +291,17 @@ export function NodeDetailCard({
               readOnly={detailState?.frame_read_only}
             />
           </div>
-        )}
+        ) : null}
 
-        {detailTab === 'clarify' && (
+        {!isReviewNode && detailTab === 'clarify' ? (
           <ClarifyPanel
             projectId={projectId}
             node={node}
             readOnly={detailState?.clarify_read_only}
           />
-        )}
+        ) : null}
 
-        {detailTab === 'spec' && (
+        {!isReviewNode && detailTab === 'spec' ? (
           <div className={styles.documentTabStack}>
             {detailState?.spec_stale ? (
               <div className={styles.staleBanner} data-testid="stale-banner-spec" role="status">
@@ -295,7 +316,7 @@ export function NodeDetailCard({
               readOnly={detailState?.spec_read_only}
             />
           </div>
-        )}
+        ) : null}
       </div>
     </section>
   )

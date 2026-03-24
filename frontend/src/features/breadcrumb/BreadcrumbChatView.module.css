@@ -91,6 +91,55 @@
   flex-direction: column;
 }
 
+.acceptReviewBar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid color-mix(in srgb, var(--color-text-tertiary) 16%, transparent);
+  background: color-mix(in srgb, var(--color-status-done) 6%, var(--bg-surface));
+}
+
+.acceptReviewInput {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-text-tertiary) 24%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.acceptReviewInput:focus {
+  border-color: var(--color-accent);
+}
+
+.acceptReviewInput:disabled {
+  opacity: 0.6;
+}
+
+.acceptReviewButton {
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--color-status-done);
+  color: #fff;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.acceptReviewButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.acceptReviewButton:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
 .detailPane {
   display: flex;
   flex: 2;
