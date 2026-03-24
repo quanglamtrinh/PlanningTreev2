@@ -640,6 +640,58 @@ def test_integration_rollup_failure_keeps_ready_without_draft_and_marks_session_
 # ── Tests: accept_rollup_review ──────────────────────────────────
 
 
+def test_integration_rollup_can_retry_after_error_and_persist_new_draft(
+    storage: Storage, workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    codex_client = FakeIntegrationCodexClient(fail=True)
+    review_service = make_review_service(
+        storage,
+        tree_service,
+        codex_client=codex_client,
+    )
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=1)
+    first_child_id = split_result["first_child_id"]
+    review_node_id = split_result["review_node_id"]
+
+    simulate_execution_completed(storage, project_id, first_child_id, "sha256:only-child")
+    review_service.start_local_review(project_id, first_child_id)
+    review_service.accept_local_review(project_id, first_child_id, "Only child done.")
+
+    failed_session = wait_for_integration_terminal(storage, project_id, review_node_id)
+    failed_assistant = next(
+        message
+        for message in reversed(failed_session["messages"])
+        if message.get("role") == "assistant"
+    )
+    assert failed_assistant["status"] == "error"
+
+    codex_client.fail = False
+    codex_client.summary = "Recovered integration draft."
+
+    restarted = review_service.start_integration_rollup(project_id, review_node_id)
+    assert restarted is True
+
+    review_state = wait_for_rollup_draft(storage, project_id, review_node_id)
+    assert review_state["rollup"]["draft"]["summary"] == "Recovered integration draft."
+    assert review_state["rollup"]["draft"]["sha"].startswith("sha256:")
+    assert len(codex_client.started_threads) == 1
+
+    session = wait_for_integration_terminal(storage, project_id, review_node_id)
+    assistants = [
+        message
+        for message in session["messages"]
+        if isinstance(message, dict) and message.get("role") == "assistant"
+    ]
+    assert [message["status"] for message in assistants[-2:]] == ["error", "completed"]
+    assert "Recovered integration draft." in assistants[-1]["content"]
+
+
 def test_accept_rollup_review_sets_accepted_and_appends_to_parent_audit(
     storage: Storage, workspace_root,
 ) -> None:

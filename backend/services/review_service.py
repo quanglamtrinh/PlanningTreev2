@@ -211,8 +211,6 @@ class ReviewService:
             )
             if session.get("active_turn_id"):
                 return False
-            if self._has_integration_attempt(session):
-                return False
 
             system_messages = [
                 message
@@ -735,13 +733,6 @@ class ReviewService:
             if message.get("message_id") == assistant_message_id:
                 return message
         return None
-
-    @staticmethod
-    def _has_integration_attempt(session: dict[str, Any]) -> bool:
-        return any(
-            isinstance(message, dict) and message.get("role") == "assistant"
-            for message in session.get("messages", [])
-        )
 
     @staticmethod
     def _finalize_parts(parts: list[dict[str, Any]], final_content: str) -> list[dict[str, Any]]:

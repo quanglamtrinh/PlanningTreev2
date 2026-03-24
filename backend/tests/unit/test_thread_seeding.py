@@ -10,6 +10,8 @@ from backend.services.chat_service import ChatService
 from backend.services.execution_gating import AUDIT_FRAME_RECORD_MESSAGE_ID
 from backend.services.project_service import ProjectService
 from backend.services.thread_seed_service import (
+    ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
+    ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
     AUDIT_SEED_CHECKPOINT_MESSAGE_ID,
     AUDIT_SEED_PARENT_CONTEXT_MESSAGE_ID,
     AUDIT_SEED_SPLIT_ITEM_MESSAGE_ID,
@@ -174,6 +176,74 @@ def test_audit_session_seeds_system_context_for_ready_child(
     assert "K1" in session["messages"][1]["content"]
     assert "sha256:child-a" in session["messages"][1]["content"]
     assert "Authentication" in session["messages"][2]["content"]
+
+
+def test_ask_planning_session_seeds_checkpoint_handoff_and_reseeds_after_reset(
+    chat_service,
+    storage,
+    project_id,
+    root_node_id,
+):
+    snap = storage.project_store.load_snapshot(project_id)
+    snap["tree_state"]["node_index"][root_node_id]["title"] = "Authentication"
+    snap["tree_state"]["node_index"][root_node_id]["description"] = "Parent auth package"
+    storage.project_store.save_snapshot(project_id, snap)
+
+    _add_child(
+        storage,
+        project_id,
+        root_node_id,
+        node_id="child-planning",
+        title="Implement auth guard",
+        description="Add route guard middleware\n\nWhy now: Child owns request gating",
+        status="ready",
+    )
+    _add_review_node(storage, project_id, root_node_id, "review-planning")
+    storage.review_state_store.write_state(
+        project_id,
+        "review-planning",
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:baseline",
+                    "summary": None,
+                    "source_node_id": None,
+                    "accepted_at": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "label": "K1",
+                    "sha": "sha256:child-a",
+                    "summary": "Auth base completed",
+                    "source_node_id": "child-a",
+                    "accepted_at": "2026-01-01T01:00:00Z",
+                },
+            ],
+            "rollup": {"status": "pending", "summary": None, "sha": None, "accepted_at": None},
+            "pending_siblings": [],
+        },
+    )
+
+    session = chat_service.get_session(project_id, "child-planning", thread_role="ask_planning")
+
+    assert [message["message_id"] for message in session["messages"]] == [
+        ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
+        ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
+    ]
+    assert all(message["role"] == "system" for message in session["messages"])
+    assert "Implement auth guard" in session["messages"][0]["content"]
+    assert "K1" in session["messages"][1]["content"]
+    assert "sha256:child-a" in session["messages"][1]["content"]
+    assert "Auth base completed" in session["messages"][1]["content"]
+
+    reset = chat_service.reset_session(project_id, "child-planning", thread_role="ask_planning")
+    assert reset["messages"] == []
+
+    reseeded = chat_service.get_session(project_id, "child-planning", thread_role="ask_planning")
+    assert [message["message_id"] for message in reseeded["messages"]] == [
+        ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
+        ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
+    ]
 
 
 def test_audit_session_does_not_seed_locked_child_before_turn(

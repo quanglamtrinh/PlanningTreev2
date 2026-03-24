@@ -15,6 +15,9 @@ from backend.storage.storage import Storage
 
 SYSTEM_MESSAGE_ROLE = "system"
 
+ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID = "seed:ask_planning:split-item"
+ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID = "seed:ask_planning:checkpoint"
+
 AUDIT_SEED_SPLIT_ITEM_MESSAGE_ID = "seed:audit:split-item"
 AUDIT_SEED_CHECKPOINT_MESSAGE_ID = "seed:audit:checkpoint"
 AUDIT_SEED_PARENT_CONTEXT_MESSAGE_ID = "seed:audit:parent-context"
@@ -24,6 +27,13 @@ INTEGRATION_SEED_SPLIT_PACKAGE_MESSAGE_ID = "seed:integration:split-package"
 INTEGRATION_SEED_CHECKPOINTS_MESSAGE_ID = "seed:integration:checkpoints"
 INTEGRATION_SEED_CHILD_REVIEWS_MESSAGE_ID = "seed:integration:child-reviews"
 INTEGRATION_SEED_GOAL_MESSAGE_ID = "seed:integration:goal"
+
+ASK_PLANNING_IMMUTABLE_MESSAGE_IDS = frozenset(
+    {
+        ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
+        ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
+    }
+)
 
 AUDIT_IMMUTABLE_MESSAGE_IDS = frozenset(
     {
@@ -63,7 +73,7 @@ def ensure_thread_seeded_session(
     node: dict[str, Any],
     session: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
-    """Insert immutable system seed messages for audit/integration threads.
+    """Insert immutable system seed messages for seeded thread roles.
 
     Seeds are write-once and ordered ahead of later chat discussion. Missing seeds are
     inserted without disturbing existing user/assistant messages.
@@ -118,6 +128,8 @@ def build_thread_seed_messages(
     if not isinstance(node_index, dict):
         node_index = {}
 
+    if thread_role == "ask_planning":
+        return _build_ask_planning_seed_messages(storage, project_id, node_index, node)
     if thread_role == "audit":
         return _build_audit_seed_messages(storage, project_id, snapshot, node_index, node)
     if thread_role == "integration":
@@ -140,6 +152,8 @@ def build_system_message(message_id: str, content: str) -> dict[str, Any]:
 
 
 def _immutable_ids_for_role(thread_role: str) -> frozenset[str]:
+    if thread_role == "ask_planning":
+        return ASK_PLANNING_IMMUTABLE_MESSAGE_IDS
     if thread_role == "audit":
         return AUDIT_IMMUTABLE_MESSAGE_IDS
     if thread_role == "integration":
@@ -232,6 +246,35 @@ def _build_audit_seed_messages(
     parent_context = _build_audit_parent_context_content(node_index, node)
     if parent_context:
         messages.append(build_system_message(AUDIT_SEED_PARENT_CONTEXT_MESSAGE_ID, parent_context))
+
+    return messages
+
+
+def _build_ask_planning_seed_messages(
+    storage: Storage,
+    project_id: str,
+    node_index: dict[str, Any],
+    node: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if str(node.get("status") or "") == "locked":
+        return []
+
+    messages: list[dict[str, Any]] = []
+
+    split_item = _build_audit_split_item_content(node)
+    if split_item:
+        messages.append(
+            build_system_message(ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID, split_item)
+        )
+
+    checkpoint_context = _build_audit_checkpoint_content(storage, project_id, node_index, node)
+    if checkpoint_context:
+        messages.append(
+            build_system_message(
+                ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
+                checkpoint_context,
+            )
+        )
 
     return messages
 

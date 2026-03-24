@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from backend.ai.chat_prompt_builder import build_chat_prompt
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
@@ -21,6 +21,9 @@ from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now, new_id
 from backend.storage.storage import Storage
 from backend.streaming.sse_broker import ChatEventBroker
+
+if TYPE_CHECKING:
+    from backend.services.review_service import ReviewService
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,7 @@ class ChatService:
         self._max_message_chars = max_message_chars
         self._live_turns: set[tuple[str, str, str, str]] = set()
         self._live_turns_lock = threading.Lock()
+        self._review_service: ReviewService | None = None
 
     def get_session(
         self, project_id: str, node_id: str, thread_role: str = "ask_planning"
@@ -138,6 +142,12 @@ class ChatService:
             },
             thread_role=thread_role,
         )
+
+        if thread_role == "audit" and self._review_service is not None:
+            try:
+                self._review_service.start_local_review(project_id, node_id)
+            except Exception:
+                pass
 
         threading.Thread(
             target=self._run_background_turn,

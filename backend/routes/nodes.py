@@ -163,3 +163,19 @@ async def generate_spec(request: Request, project_id: str, node_id: str) -> JSON
 @router.get("/projects/{project_id}/nodes/{node_id}/spec-generation-status")
 async def get_spec_generation_status(request: Request, project_id: str, node_id: str) -> dict:
     return request.app.state.spec_generation_service.get_generation_status(project_id, node_id)
+
+
+class AcceptLocalReviewRequest(BaseModel):
+    summary: str = Field(..., min_length=1)
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/accept-local-review")
+async def accept_local_review(
+    request: Request, project_id: str, node_id: str, body: AcceptLocalReviewRequest
+) -> dict:
+    return request.app.state.review_service.accept_local_review(project_id, node_id, body.summary)
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/accept-rollup-review")
+async def accept_rollup_review(request: Request, project_id: str, node_id: str) -> dict:
+    return request.app.state.review_service.accept_rollup_review(project_id, node_id)

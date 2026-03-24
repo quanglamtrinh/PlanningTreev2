@@ -458,6 +458,66 @@ def test_integration_session_includes_assistant_output_after_auto_start(
     assert review_state["rollup"]["draft"]["sha"].startswith("sha256:")
 
 
+def test_ask_planning_session_returns_checkpoint_handoff_for_child_node(
+    client: TestClient,
+    workspace_root,
+):
+    project_id, root_id = _setup_project(client, workspace_root)
+    snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
+    snapshot["tree_state"]["node_index"][root_id]["title"] = "Build auth package"
+    snapshot["tree_state"]["node_index"][root_id]["description"] = "Parent package"
+    client.app.state.storage.project_store.save_snapshot(project_id, snapshot)
+
+    _add_child(
+        client,
+        project_id,
+        root_id,
+        node_id="child-planning",
+        title="Auth guard follow-up",
+        description="Handle middleware cleanup\n\nWhy now: Follows the previous checkpoint",
+        status="ready",
+    )
+    review_id = _add_review_node(client, project_id, root_id)
+    client.app.state.storage.review_state_store.write_state(
+        project_id,
+        review_id,
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:k0",
+                    "summary": None,
+                    "source_node_id": None,
+                    "accepted_at": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "label": "K1",
+                    "sha": "sha256:k1",
+                    "summary": "Auth middleware accepted",
+                    "source_node_id": "child-a",
+                    "accepted_at": "2026-01-01T01:00:00Z",
+                },
+            ],
+            "rollup": {"status": "pending", "summary": None, "sha": None, "accepted_at": None},
+            "pending_siblings": [],
+        },
+    )
+
+    response = client.get(
+        f"/v1/projects/{project_id}/nodes/child-planning/chat/session",
+        params={"thread_role": "ask_planning"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["thread_role"] == "ask_planning"
+    assert [message["role"] for message in payload["messages"]] == ["system", "system"]
+    assert "Auth guard follow-up" in payload["messages"][0]["content"]
+    assert "K1" in payload["messages"][1]["content"]
+    assert "sha256:k1" in payload["messages"][1]["content"]
+    assert "Auth middleware accepted" in payload["messages"][1]["content"]
+
+
 def test_review_node_rejects_task_thread_role_pair(client: TestClient, workspace_root):
     project_id, root_id = _setup_project(client, workspace_root)
     review_id = _add_review_node(client, project_id, root_id)
