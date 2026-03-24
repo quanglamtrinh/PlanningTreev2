@@ -120,6 +120,8 @@ class ChatService:
             )
             if session.get("active_turn_id"):
                 raise ChatTurnAlreadyActive()
+            if thread_role == "audit":
+                self._maybe_start_local_review_for_audit_write(project_id, node_id)
 
             session["messages"].append(user_message)
             session["messages"].append(assistant_message)
@@ -143,12 +145,6 @@ class ChatService:
             thread_role=thread_role,
         )
 
-        if thread_role == "audit" and self._review_service is not None:
-            try:
-                self._review_service.start_local_review(project_id, node_id)
-            except Exception:
-                pass
-
         threading.Thread(
             target=self._run_background_turn,
             kwargs={
@@ -167,6 +163,21 @@ class ChatService:
             "assistant_message": assistant_message,
             "active_turn_id": turn_id,
         }
+
+    def _maybe_start_local_review_for_audit_write(
+        self,
+        project_id: str,
+        node_id: str,
+    ) -> None:
+        exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+        status = str(exec_state.get("status") or "").strip() if isinstance(exec_state, dict) else ""
+        if status != "completed":
+            return
+        if self._review_service is None:
+            raise RuntimeError(
+                "ChatService review service is not configured for audit-triggered local review."
+            )
+        self._review_service.start_local_review(project_id, node_id)
 
     def reset_session(
         self, project_id: str, node_id: str, thread_role: str = "ask_planning"
