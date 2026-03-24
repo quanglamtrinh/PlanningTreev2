@@ -189,6 +189,18 @@ class ChatService:
         with self._live_turns_lock:
             return any(turn[0] == project_id for turn in self._live_turns)
 
+    def register_external_live_turn(
+        self, project_id: str, node_id: str, thread_role: str, turn_id: str
+    ) -> None:
+        with self._live_turns_lock:
+            self._live_turns.add((project_id, node_id, thread_role, turn_id))
+
+    def clear_external_live_turn(
+        self, project_id: str, node_id: str, thread_role: str, turn_id: str
+    ) -> None:
+        with self._live_turns_lock:
+            self._live_turns.discard((project_id, node_id, thread_role, turn_id))
+
     def _run_background_turn(
         self,
         *,

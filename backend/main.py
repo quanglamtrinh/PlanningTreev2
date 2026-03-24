@@ -26,6 +26,7 @@ from backend.services.spec_generation_service import SpecGenerationService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
+from backend.services.review_service import ReviewService
 from backend.services.snapshot_view_service import SnapshotViewService
 from backend.services.split_service import SplitService
 from backend.services.tree_service import TreeService
@@ -82,6 +83,14 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_event_broker=chat_event_broker,
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),
+    )
+    review_service = ReviewService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=get_chat_timeout(),
+        chat_service=chat_service,
     )
     finish_task_service = FinishTaskService(
         storage=storage,
@@ -141,6 +150,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.spec_generation_service = spec_generation_service
     app.state.chat_service = chat_service
     app.state.chat_event_broker = chat_event_broker
+    app.state.review_service = review_service
     app.state.finish_task_service = finish_task_service
 
     @app.exception_handler(AppError)

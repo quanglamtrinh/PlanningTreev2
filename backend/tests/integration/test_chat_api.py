@@ -58,6 +58,28 @@ class ExecutionCodexClient:
         return {"stdout": self.response_text, "thread_id": thread_id}
 
 
+class IntegrationRollupCodexClient:
+    def __init__(self, *, summary: str = "Integration complete") -> None:
+        self.summary = summary
+        self.started_threads: list[str] = []
+
+    def start_thread(self, **_: object) -> dict[str, str]:
+        thread_id = f"integration-thread-{len(self.started_threads) + 1}"
+        self.started_threads.append(thread_id)
+        return {"thread_id": thread_id}
+
+    def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        del prompt
+        payload = json.dumps({"summary": self.summary})
+        on_delta = kwargs.get("on_delta")
+        if callable(on_delta):
+            on_delta(payload)
+        return {"stdout": payload, "thread_id": str(kwargs.get("thread_id") or "")}
+
+
 def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
     resp = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
     assert resp.status_code == 200
@@ -134,6 +156,32 @@ def _write_confirmed_frame(client: TestClient, project_id: str, node_id: str, co
         ),
         encoding="utf-8",
     )
+
+
+def _wait_for_integration_completion(
+    client: TestClient, project_id: str, review_node_id: str, *, timeout_sec: float = 2.0
+) -> dict:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        session = client.app.state.storage.chat_state_store.read_session(
+            project_id,
+            review_node_id,
+            thread_role="integration",
+        )
+        if not session.get("active_turn_id"):
+            messages = session.get("messages", [])
+            assistant = next(
+                (
+                    message
+                    for message in reversed(messages)
+                    if isinstance(message, dict) and message.get("role") == "assistant"
+                ),
+                None,
+            )
+            if assistant is not None and assistant.get("status") == "completed":
+                return session
+        time.sleep(0.01)
+    raise AssertionError("Timed out waiting for integration completion.")
 
 
 def test_get_session_empty(client: TestClient, workspace_root):
@@ -334,6 +382,80 @@ def test_integration_session_returns_system_seed_messages_when_rollup_ready(
     assert "Auth guard" in payload["messages"][1]["content"]
     assert "K2" in payload["messages"][2]["content"]
     assert "Parser accepted" in payload["messages"][3]["content"]
+
+
+def test_integration_session_includes_assistant_output_after_auto_start(
+    client: TestClient,
+    workspace_root,
+):
+    project_id, root_id = _setup_project(client, workspace_root)
+    snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
+    snapshot["tree_state"]["node_index"][root_id]["title"] = "Build auth package"
+    snapshot["tree_state"]["node_index"][root_id]["description"] = "Parent package"
+    client.app.state.storage.project_store.save_snapshot(project_id, snapshot)
+
+    _add_child(
+        client,
+        project_id,
+        root_id,
+        node_id="child-a",
+        title="Auth guard",
+        description="Guard routes\n\nWhy now: First gate",
+        status="done",
+    )
+    review_id = _add_review_node(client, project_id, root_id)
+    client.app.state.storage.review_state_store.write_state(
+        project_id,
+        review_id,
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:k0",
+                    "summary": None,
+                    "source_node_id": None,
+                    "accepted_at": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "label": "K1",
+                    "sha": "sha256:k1",
+                    "summary": "Guard accepted",
+                    "source_node_id": "child-a",
+                    "accepted_at": "2026-01-01T01:00:00Z",
+                },
+            ],
+            "rollup": {"status": "ready", "summary": None, "sha": None, "accepted_at": None},
+            "pending_siblings": [],
+        },
+    )
+    _write_confirmed_frame(client, project_id, root_id, "# Parent Frame\nShip auth package\n")
+
+    client.app.state.review_service._codex_client = IntegrationRollupCodexClient(
+        summary="Integration output is ready."
+    )
+    started = client.app.state.review_service.start_integration_rollup(project_id, review_id)
+    assert started is True
+
+    _wait_for_integration_completion(client, project_id, review_id)
+
+    response = client.get(
+        f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
+        params={"thread_role": "integration"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["thread_role"] == "integration"
+    assert payload["active_turn_id"] is None
+    assert payload["messages"][-1]["role"] == "assistant"
+    assert payload["messages"][-1]["status"] == "completed"
+    assert "Integration output is ready." in payload["messages"][-1]["content"]
+
+    review_state = client.app.state.storage.review_state_store.read_state(project_id, review_id)
+    assert review_state is not None
+    assert review_state["rollup"]["status"] == "ready"
+    assert review_state["rollup"]["draft"]["summary"] == "Integration output is ready."
+    assert review_state["rollup"]["draft"]["sha"].startswith("sha256:")
 
 
 def test_review_node_rejects_task_thread_role_pair(client: TestClient, workspace_root):
