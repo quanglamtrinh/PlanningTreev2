@@ -45,6 +45,55 @@
   min-width: 0;
 }
 
+.cardHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.finishTaskButton {
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  color: var(--on-primary);
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-container) 100%);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease,
+    filter 0.14s ease;
+}
+
+.finishTaskButton:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--accent-primary-hover) 0%, var(--primary-container) 100%);
+}
+
+.finishTaskButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gitBlockerBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--danger) 8%, var(--color-bg-panel));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--danger) 18%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
 .nodeTitleBlock {
   display: flex;
   flex-direction: column;
@@ -434,8 +483,194 @@
 .describePanel {
   display: flex;
   flex-direction: column;
+  gap: var(--space-4);
   min-height: 100%;
   box-sizing: border-box;
+}
+
+.describeCommitSection,
+.describeFilesSection,
+.describeWorkspaceSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 18px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-hover);
+  box-sizing: border-box;
+}
+
+.describeTaskMissingBanner {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface-container-lowest, var(--color-bg-panel)));
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-text-secondary);
+}
+
+.describeWorkspaceHint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-text-tertiary);
+}
+
+.describeResetRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.resetWorkspaceButtonSecondary {
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--on-surface);
+  background: var(--surface-container-highest);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.resetWorkspaceButtonSecondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--on-surface) 8%, var(--surface-container-highest));
+}
+
+.resetWorkspaceButtonDanger {
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: color-mix(in srgb, var(--danger) 92%, #1a0a0a);
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface-container-lowest));
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.resetWorkspaceButtonDanger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 18%, var(--surface-container-lowest));
+}
+
+.resetWorkspaceButtonSecondary:disabled,
+.resetWorkspaceButtonDanger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.describeSectionTitle {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: var(--line-height-ui);
+  color: var(--color-text-primary);
+  font-family: var(--font-display, var(--font-sans));
+}
+
+.shaFieldRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.shaFieldLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.shaFieldInput {
+  width: 100%;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-ui);
+  color: var(--color-text-primary);
+  background: var(--surface-container-low, var(--color-bg-input));
+  box-sizing: border-box;
+  cursor: default;
+}
+
+.shaFieldInput:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 20%, transparent);
+}
+
+.changedFilesEmpty {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-text-tertiary);
+}
+
+.changedFilesList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.changedFilesItem {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.changedFilesStatus {
+  flex-shrink: 0;
+  min-width: 1.25rem;
+  font-size: 10px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  line-height: 1.4;
+  text-align: center;
+  color: var(--on-primary);
+  background: var(--tertiary);
+  border-radius: var(--radius-pill);
+  padding: 2px 6px;
+}
+
+.changedFilesStatus[data-status='A'] {
+  background: var(--success);
+}
+
+.changedFilesStatus[data-status='M'] {
+  background: color-mix(in srgb, var(--primary) 85%, #1a0a0a);
+}
+
+.changedFilesStatus[data-status='D'] {
+  background: color-mix(in srgb, var(--danger) 88%, #1a0a0a);
+}
+
+.changedFilesStatus[data-status='R'] {
+  background: color-mix(in srgb, var(--tertiary) 90%, #0a1a18);
+}
+
+.changedFilesPath {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+  word-break: break-all;
+  color: var(--color-text-secondary);
 }
 
 .documentPanel {

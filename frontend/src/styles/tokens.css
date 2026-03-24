@@ -1,57 +1,72 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap');
 
-/* ─── Canvas (default): cool neutral shell, single blue accent ─── */
+/* ─── Default: Methodical Canvas — editorial neutrals, terracotta accent, light sidebar rail ─── */
 :root {
-  font-family: 'Inter', 'SF Pro Text', 'Segoe UI', 'Noto Sans', sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
 
-  --bg-app: #fafafa;
-  --bg-surface: #ffffff;
-  --bg-subtle: #f4f4f5;
-  --bg-sidebar: #18181b;
-  --bg-sidebar-hover: rgba(255, 255, 255, 0.06);
-  --bg-sidebar-active: rgba(255, 255, 255, 0.1);
+  /* Semantic surface system (Methodical Canvas) */
+  --surface: #f9f9f7;
+  --surface-container-low: #f4f4f2;
+  --surface-container-highest: #e2e3e1;
+  --surface-container-lowest: #ffffff;
+  --on-surface: #1a1c1b;
+  --primary: #9a401c;
+  --primary-container: #ba5831;
+  --on-primary: #faf8f5;
+  --tertiary: #0d9488;
+  --outline: #1a1c1b;
+  --outline-variant: color-mix(in srgb, var(--outline) 15%, transparent);
+  --glass-fill: color-mix(in srgb, var(--surface-container-lowest) 80%, transparent);
 
-  --border-default: #e4e4e7;
-  --border-subtle: #f4f4f5;
-  --border-strong: #d4d4d8;
+  /* Legacy layout tokens (mapped to Methodical) */
+  --bg-app: var(--surface);
+  --bg-surface: var(--surface-container-lowest);
+  --bg-subtle: var(--surface-container-low);
+  --bg-sidebar: var(--surface-container-low);
+  --bg-sidebar-hover: color-mix(in srgb, var(--on-surface) 5%, transparent);
+  --bg-sidebar-active: color-mix(in srgb, var(--primary) 9%, var(--surface-container-highest));
 
-  --text-primary: #18181b;
-  --text-secondary: #71717a;
-  --text-tertiary: #a1a1aa;
-  --text-quaternary: #c4c4cc;
+  --border-default: color-mix(in srgb, var(--outline) 14%, var(--surface-container-low));
+  --border-subtle: color-mix(in srgb, var(--outline) 6%, var(--surface));
+  --border-strong: color-mix(in srgb, var(--outline) 24%, var(--surface-container-low));
+
+  --text-primary: var(--on-surface);
+  --text-secondary: #575b59;
+  --text-tertiary: #7a7e7c;
+  --text-quaternary: #a1a5a3;
   --text-on-dark: rgba(255, 255, 255, 0.92);
   --text-on-dark-muted: rgba(255, 255, 255, 0.65);
 
-  --accent-primary: #2563eb;
-  --accent-primary-hover: #1d4ed8;
-  --accent-primary-pressed: #1e40af;
-  --accent-soft: rgba(37, 99, 235, 0.09);
+  --accent-primary: var(--primary);
+  --accent-primary-hover: color-mix(in srgb, var(--primary) 88%, #0a0b0a);
+  --accent-primary-pressed: color-mix(in srgb, var(--primary) 78%, #0a0b0a);
+  --accent-soft: color-mix(in srgb, var(--primary) 11%, transparent);
 
   --success: #15803d;
   --warning: #b45309;
   --danger: #b91c1c;
 
-  --chip-bg: #f4f4f5;
+  --chip-bg: color-mix(in srgb, var(--on-surface) 5%, var(--surface-container-low));
   --chip-text: #52525b;
-  --focus-ring: rgba(37, 99, 235, 0.22);
+  --focus-ring: color-mix(in srgb, var(--primary) 22%, transparent);
 
-  --color-bg-page: var(--bg-app);
-  --color-bg-panel: var(--bg-surface);
-  --color-bg-panel-alt: var(--bg-subtle);
-  --color-bg-input: var(--bg-surface);
-  --color-bg-hover: #fafafa;
-  --color-bg-active: var(--bg-subtle);
-  --color-bg-tree: #f4f4f5;
-  --color-bg-tree-hdr: #fafafa;
-  --color-graph-bg: #ececee;
+  --color-bg-page: var(--surface);
+  --color-bg-panel: var(--surface-container-lowest);
+  --color-bg-panel-alt: var(--surface-container-low);
+  --color-bg-input: var(--surface-container-low);
+  --color-bg-hover: var(--surface-container-highest);
+  --color-bg-active: color-mix(in srgb, var(--on-surface) 6%, var(--surface-container-low));
+  --color-bg-tree: var(--surface-container-low);
+  --color-bg-tree-hdr: color-mix(in srgb, var(--surface-container-lowest) 55%, var(--surface-container-low));
+  --color-graph-bg: var(--surface);
 
-  /* Tree graph (org-chart style): neutral connectors + card chrome */
-  --graph-edge-stroke: #b8b8b8;
+  /* Tree graph: tonal layering, dashed connectors */
+  --graph-edge-stroke: color-mix(in srgb, var(--outline) 40%, transparent);
   --graph-edge-width: 1.5px;
-  --graph-node-border: #dcdcdc;
-  --graph-node-radius: 6px;
-  --graph-node-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --graph-node-border: transparent;
+  --graph-node-radius: 1rem;
+  --graph-node-shadow: 0 8px 24px rgba(26, 28, 27, 0.06);
 
   --color-border: var(--border-default);
   --color-border-subtle: var(--border-subtle);
@@ -65,9 +80,9 @@
   --color-accent: var(--accent-primary);
   --color-accent-hover: var(--accent-primary-hover);
   --color-accent-muted: var(--accent-soft);
-  --color-accent-text: #ffffff;
+  --color-accent-text: var(--on-primary);
 
-  /* Detail stepper: completed pill — dark terracotta from accent; solid fallback if color-mix unsupported */
+  /* Detail stepper: completed pill */
   --step-done-bg-fallback: #7a3a2c;
   --step-done-bg: color-mix(in srgb, var(--color-accent) 72%, #2a1814);
   --step-done-fg: #ffffff;
@@ -78,36 +93,41 @@
   --color-status-in-progress: var(--warning);
   --color-status-done: var(--success);
 
-  --color-status-locked-bg: #f4f4f5;
-  --color-status-draft-bg: #f4f4f5;
-  --color-status-ready-bg: rgba(37, 99, 235, 0.08);
-  --color-status-in-progress-bg: rgba(180, 83, 9, 0.09);
-  --color-status-done-bg: rgba(21, 128, 61, 0.09);
+  --color-status-locked-bg: var(--surface-container-low);
+  --color-status-draft-bg: var(--surface-container-low);
+  --color-status-ready-bg: color-mix(in srgb, var(--primary) 12%, transparent);
+  --color-status-in-progress-bg: color-mix(in srgb, var(--warning) 10%, transparent);
+  --color-status-done-bg: color-mix(in srgb, var(--success) 10%, transparent);
 
   --color-edge: var(--accent-primary);
-  --color-explorer-bg: var(--bg-sidebar);
-  --color-explorer-icon: var(--text-on-dark-muted);
-  --color-explorer-icon-hover: rgba(255, 255, 255, 0.84);
-  --color-explorer-icon-active: var(--text-on-dark);
-  --color-explorer-item-hover: var(--bg-sidebar-hover);
-  --color-explorer-item-active: var(--bg-sidebar-active);
-  --color-explorer-border: rgba(255, 255, 255, 0.06);
-  --color-explorer-avatar-bg: var(--bg-sidebar);
-  --color-explorer-avatar-fg: rgba(255, 255, 255, 0.88);
+  --color-explorer-bg: var(--surface-container-low);
+  --color-explorer-icon: var(--text-secondary);
+  --color-explorer-icon-hover: var(--on-surface);
+  --color-explorer-icon-active: var(--on-surface);
+  --color-explorer-item-hover: var(--surface-container-highest);
+  --color-explorer-item-active: color-mix(in srgb, var(--primary) 8%, var(--surface-container-highest));
+  --color-explorer-border: transparent;
+  --color-explorer-avatar-bg: var(--surface-container-low);
+  --color-explorer-avatar-fg: var(--primary);
+
+  --color-banner-error-bg: color-mix(in srgb, var(--danger) 7%, var(--surface-container-lowest));
+  --color-banner-error-fg: color-mix(in srgb, var(--danger) 55%, #1a0a0a);
+  --color-banner-warning-bg: color-mix(in srgb, var(--warning) 10%, var(--surface-container-lowest));
+  --color-banner-warning-fg: #5c4d12;
 
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-lg: 1rem;
   --radius-xl: 16px;
   --radius-bubble: 18px;
   --radius-pill: 999px;
 
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.03);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.03);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.03);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.06), 0 3px 8px rgba(0, 0, 0, 0.04);
-  --shadow-float: 0 14px 40px rgba(0, 0, 0, 0.08), 0 6px 16px rgba(0, 0, 0, 0.05);
+  --shadow-xs: 0 1px 2px rgba(26, 28, 27, 0.04);
+  --shadow-sm: 0 1px 2px rgba(26, 28, 27, 0.05), 0 1px 3px rgba(26, 28, 27, 0.04);
+  --shadow-md: 0 4px 12px rgba(26, 28, 27, 0.06), 0 2px 4px rgba(26, 28, 27, 0.04);
+  --shadow-lg: 0 8px 24px rgba(26, 28, 27, 0.07), 0 3px 8px rgba(26, 28, 27, 0.05);
+  --shadow-float: 0 14px 40px rgba(26, 28, 27, 0.09), 0 6px 16px rgba(26, 28, 27, 0.06);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -118,8 +138,10 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
+  --space-24: 6rem;
 
   --font-sans: 'Inter', 'SF Pro Text', 'Segoe UI', 'Noto Sans', sans-serif;
+  --font-display: 'Manrope', 'Inter', var(--font-sans);
   --font-mono: 'JetBrains Mono', 'Cascadia Code', monospace;
 
   --font-size-xs: 12px;
@@ -136,6 +158,20 @@
   --line-height-base: 1.5;
   --line-height-relaxed: 1.6;
   --line-height-loose: 1.7;
+
+  /* Type roles (Methodical Canvas) */
+  --type-display-md-size: var(--font-size-3xl);
+  --type-display-md-weight: 600;
+  --type-display-md-line: var(--line-height-tight);
+  --type-title-lg-size: var(--font-size-md);
+  --type-title-lg-weight: 600;
+  --type-title-lg-line: var(--line-height-ui);
+  --type-title-sm-size: var(--font-size-sm);
+  --type-title-sm-weight: 600;
+  --type-title-sm-line: var(--line-height-ui);
+  --type-label-sm-size: var(--font-size-xs);
+  --type-label-sm-weight: 500;
+  --type-label-sm-line: var(--line-height-ui);
 
   --transition-fast: 0.14s ease;
   --transition-base: 0.22s ease;
@@ -234,6 +270,18 @@
 
   --color-edge: var(--accent-primary);
   --color-explorer-avatar-fg: #fdba74;
+
+  --surface: var(--bg-app);
+  --surface-container-low: var(--bg-subtle);
+  --surface-container-highest: color-mix(in srgb, var(--bg-subtle) 78%, var(--border-strong));
+  --surface-container-lowest: var(--bg-surface);
+  --on-surface: var(--text-primary);
+  --primary: var(--accent-primary);
+  --primary-container: color-mix(in srgb, var(--accent-primary) 68%, #ffffff);
+  --outline: var(--text-primary);
+  --outline-variant: color-mix(in srgb, var(--outline) 15%, transparent);
+  --glass-fill: color-mix(in srgb, var(--surface-container-lowest) 80%, transparent);
+  --graph-edge-stroke: color-mix(in srgb, var(--outline) 40%, transparent);
 }
 
 /* ─── Fjord: cool mist, sky accent ─── */
@@ -291,6 +339,18 @@
 
   --color-edge: var(--accent-primary);
   --color-explorer-avatar-fg: #7dd3fc;
+
+  --surface: var(--bg-app);
+  --surface-container-low: var(--bg-subtle);
+  --surface-container-highest: color-mix(in srgb, var(--bg-subtle) 78%, var(--border-strong));
+  --surface-container-lowest: var(--bg-surface);
+  --on-surface: var(--text-primary);
+  --primary: var(--accent-primary);
+  --primary-container: color-mix(in srgb, var(--accent-primary) 68%, #ffffff);
+  --outline: var(--text-primary);
+  --outline-variant: color-mix(in srgb, var(--outline) 15%, transparent);
+  --glass-fill: color-mix(in srgb, var(--surface-container-lowest) 80%, transparent);
+  --graph-edge-stroke: color-mix(in srgb, var(--outline) 40%, transparent);
 }
 
 /* ─── Moss: sage fog, deep green accent ─── */
@@ -348,6 +408,18 @@
 
   --color-edge: var(--accent-primary);
   --color-explorer-avatar-fg: #86efac;
+
+  --surface: var(--bg-app);
+  --surface-container-low: var(--bg-subtle);
+  --surface-container-highest: color-mix(in srgb, var(--bg-subtle) 78%, var(--border-strong));
+  --surface-container-lowest: var(--bg-surface);
+  --on-surface: var(--text-primary);
+  --primary: var(--accent-primary);
+  --primary-container: color-mix(in srgb, var(--accent-primary) 68%, #ffffff);
+  --outline: var(--text-primary);
+  --outline-variant: color-mix(in srgb, var(--outline) 15%, transparent);
+  --glass-fill: color-mix(in srgb, var(--surface-container-lowest) 80%, transparent);
+  --graph-edge-stroke: color-mix(in srgb, var(--outline) 40%, transparent);
 }
 
 /* ─── Graphite: zinc neutrals, cyan accent ─── */
@@ -405,6 +477,18 @@
 
   --color-edge: var(--accent-primary);
   --color-explorer-avatar-fg: #67e8f9;
+
+  --surface: var(--bg-app);
+  --surface-container-low: var(--bg-subtle);
+  --surface-container-highest: color-mix(in srgb, var(--bg-subtle) 78%, var(--border-strong));
+  --surface-container-lowest: var(--bg-surface);
+  --on-surface: var(--text-primary);
+  --primary: var(--accent-primary);
+  --primary-container: color-mix(in srgb, var(--accent-primary) 68%, #ffffff);
+  --outline: var(--text-primary);
+  --outline-variant: color-mix(in srgb, var(--outline) 15%, transparent);
+  --glass-fill: color-mix(in srgb, var(--surface-container-lowest) 80%, transparent);
+  --graph-edge-stroke: color-mix(in srgb, var(--outline) 40%, transparent);
 }
 
 /* ─── Aurora: soft violet haze, electric violet accent ─── */
@@ -462,4 +546,16 @@
 
   --color-edge: var(--accent-primary);
   --color-explorer-avatar-fg: #c4b5fd;
+
+  --surface: var(--bg-app);
+  --surface-container-low: var(--bg-subtle);
+  --surface-container-highest: color-mix(in srgb, var(--bg-subtle) 78%, var(--border-strong));
+  --surface-container-lowest: var(--bg-surface);
+  --on-surface: var(--text-primary);
+  --primary: var(--accent-primary);
+  --primary-container: color-mix(in srgb, var(--accent-primary) 68%, #ffffff);
+  --outline: var(--text-primary);
+  --outline-variant: color-mix(in srgb, var(--outline) 15%, transparent);
+  --glass-fill: color-mix(in srgb, var(--surface-container-lowest) 80%, transparent);
+  --graph-edge-stroke: color-mix(in srgb, var(--outline) 40%, transparent);
 }

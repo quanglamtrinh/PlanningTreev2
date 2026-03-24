@@ -24,9 +24,13 @@ from backend.errors.app_errors import (
     SplitNotAllowed,
 )
 from backend.services import planningtree_workspace
+from backend.services.node_detail_service import (
+    _load_frame_meta_from_node_dir,
+    derive_workflow_summary_from_node_dir,
+)
 from backend.services.tree_service import TreeService
 from backend.split_contract import FlatSubtaskPayload, ServiceSplitMode
-from backend.storage.file_utils import iso_now, load_json, new_id
+from backend.storage.file_utils import iso_now, new_id
 from backend.storage.storage import Storage
 
 _RETRY_LIMIT = 2
@@ -55,7 +59,7 @@ class SplitService:
             node = node_by_id.get(node_id)
             if node is None:
                 raise NodeNotFound(node_id)
-            self._validate_split_eligibility(node, node_by_id)
+            self._validate_split_eligibility(snapshot, node, node_by_id)
             split_state = self._reconcile_stale_job_locked(project_id, self._storage.split_state_store.read_state(project_id))
             if split_state.get("active_job"):
                 raise SplitNotAllowed("A split is already active for this project.")
@@ -72,7 +76,7 @@ class SplitService:
             node = node_by_id.get(node_id)
             if node is None:
                 raise NodeNotFound(node_id)
-            self._validate_split_eligibility(node, node_by_id)
+            self._validate_split_eligibility(snapshot, node, node_by_id)
             split_state = self._reconcile_stale_job_locked(project_id, self._storage.split_state_store.read_state(project_id))
             if split_state.get("active_job"):
                 raise SplitNotAllowed("A split is already active for this project.")
@@ -153,15 +157,7 @@ class SplitService:
                     Path(workspace_root), snapshot, node_id
                 )
                 if node_dir is not None:
-                    from backend.services.node_detail_service import (
-                        FRAME_META_FILE,
-                        _DEFAULT_FRAME_META,
-                    )
-
-                    frame_meta_path = node_dir / FRAME_META_FILE
-                    frame_meta = load_json(frame_meta_path, default=None)
-                    if not isinstance(frame_meta, dict):
-                        frame_meta = dict(_DEFAULT_FRAME_META)
+                    frame_meta = _load_frame_meta_from_node_dir(node_dir)
 
                     frame_content = str(frame_meta.get("confirmed_content") or "").strip()
                     if not frame_content:
@@ -205,7 +201,7 @@ class SplitService:
             parent = node_by_id.get(node_id)
             if parent is None:
                 raise NodeNotFound(node_id)
-            self._validate_split_eligibility(parent, node_by_id)
+            self._validate_split_eligibility(snapshot, parent, node_by_id)
 
             now = iso_now()
             inherited_locked = parent.get("status") == "locked" or self._tree_service.has_locked_ancestor(parent, node_by_id)
@@ -371,6 +367,7 @@ class SplitService:
 
     def _validate_split_eligibility(
         self,
+        snapshot: dict[str, Any],
         node: dict[str, Any],
         node_by_id: dict[str, dict[str, Any]],
     ) -> None:
@@ -380,6 +377,34 @@ class SplitService:
             raise SplitNotAllowed("Cannot split a done node.")
         if self._tree_service.active_child_ids(node, node_by_id):
             raise SplitNotAllowed("Cannot split a node that already has child nodes.")
+        workflow = self._workflow_summary(snapshot, str(node.get("node_id") or ""))
+        if not workflow["frame_confirmed"]:
+            raise SplitNotAllowed("Cannot split until the frame is confirmed.")
+        if workflow["active_step"] == "clarify":
+            raise SplitNotAllowed(
+                "Cannot split until the latest confirmed frame has no remaining clarify questions."
+            )
+        if workflow["active_step"] == "frame":
+            raise SplitNotAllowed(
+                "Cannot split until the updated frame is re-confirmed and clarify is cleared."
+            )
+
+    def _workflow_summary(self, snapshot: dict[str, Any], node_id: str) -> dict[str, Any]:
+        workspace_root = self._workspace_root_from_snapshot(snapshot)
+        if not workspace_root or not node_id:
+            return {
+                "frame_confirmed": False,
+                "active_step": "frame",
+                "spec_confirmed": False,
+            }
+        node_dir = planningtree_workspace.resolve_node_dir(Path(workspace_root), snapshot, node_id)
+        if node_dir is None:
+            return {
+                "frame_confirmed": False,
+                "active_step": "frame",
+                "spec_confirmed": False,
+            }
+        return derive_workflow_summary_from_node_dir(node_dir)
 
     def _extract_split_payload(self, tool_calls: Any) -> dict[str, Any] | None:
         if not isinstance(tool_calls, list):

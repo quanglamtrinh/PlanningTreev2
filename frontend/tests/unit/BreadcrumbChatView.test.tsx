@@ -169,6 +169,11 @@ function makeSnapshot(projectId = 'project-1', activeNodeId: string | null = 'ro
           hierarchical_number: '1',
           is_superseded: false,
           created_at: '2026-03-20T00:00:00Z',
+          workflow: {
+            frame_confirmed: false,
+            active_step: 'frame',
+            spec_confirmed: false,
+          },
         },
         {
           node_id: 'child-1',
@@ -183,6 +188,11 @@ function makeSnapshot(projectId = 'project-1', activeNodeId: string | null = 'ro
           hierarchical_number: '1.1',
           is_superseded: false,
           created_at: '2026-03-20T00:00:00Z',
+          workflow: {
+            frame_confirmed: false,
+            active_step: 'frame',
+            spec_confirmed: false,
+          },
         },
       ],
     },
@@ -304,7 +314,7 @@ describe('BreadcrumbChatView', () => {
     })
   })
 
-  it('offers Ask, Execution, and Artifact thread tabs; Artifact uses an empty feed and disabled composer', async () => {
+  it('offers Ask, Execution, and Audit thread tabs; Audit uses an empty feed and disabled composer', async () => {
     apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'child-1'))
 
     renderBreadcrumbChatView()
@@ -314,8 +324,8 @@ describe('BreadcrumbChatView', () => {
     expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
 
-    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-artifact'))
-    expect(screen.getByTestId('breadcrumb-thread-tab-artifact')).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
+    expect(screen.getByTestId('breadcrumb-thread-tab-audit')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('message-feed')).toHaveTextContent('0 messages')
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
 

@@ -8,7 +8,7 @@ import { ComposerBar } from './ComposerBar'
 import { MessageFeed } from './MessageFeed'
 import styles from './BreadcrumbChatView.module.css'
 
-type ThreadTab = 'ask' | 'execution' | 'artifact'
+type ThreadTab = 'ask' | 'execution' | 'audit'
 
 export function BreadcrumbChatView() {
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
@@ -151,12 +151,12 @@ export function BreadcrumbChatView() {
             <button
               type="button"
               role="tab"
-              className={`${styles.threadTab} ${threadTab === 'artifact' ? styles.threadTabActive : ''}`}
-              data-testid="breadcrumb-thread-tab-artifact"
-              aria-selected={threadTab === 'artifact'}
-              onClick={() => setThreadTab('artifact')}
+              className={`${styles.threadTab} ${threadTab === 'audit' ? styles.threadTabActive : ''}`}
+              data-testid="breadcrumb-thread-tab-audit"
+              aria-selected={threadTab === 'audit'}
+              onClick={() => setThreadTab('audit')}
             >
-              Artifact
+              Audit
             </button>
           </nav>
 

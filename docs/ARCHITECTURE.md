@@ -89,3 +89,7 @@ Older project layouts are rejected with `legacy_project_unsupported`.
 - `backend/routes/` defines the thin HTTP layer.
 - `backend/services/` owns graph CRUD and split business rules.
 - `backend/storage/` owns atomic file persistence.
+
+## Planned Model References
+
+- Future thread and review model: [planned-thread-review-model.md](C:/Users/Thong/PlanningTreeMain/docs/reference/planned-thread-review-model.md)

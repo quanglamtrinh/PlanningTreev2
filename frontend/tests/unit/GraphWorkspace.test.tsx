@@ -104,6 +104,11 @@ function makeSnapshot(projectId = 'project-1') {
           hierarchical_number: '1',
           is_superseded: false,
           created_at: '2026-03-20T00:00:00Z',
+          workflow: {
+            frame_confirmed: false,
+            active_step: 'frame',
+            spec_confirmed: false,
+          },
         },
       ],
     },

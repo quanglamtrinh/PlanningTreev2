@@ -46,6 +46,7 @@ def test_create_project_initializes_root_and_minimal_files(
         "display_order": 0,
         "hierarchical_number": "1",
         "created_at": root_node["created_at"],
+        "review_node_id": None,
     }
     assert storage.project_store.meta_path(project_id).exists()
     assert storage.project_store.tree_path(project_id).exists()

@@ -1,5 +1,9 @@
 export type NodeStatus = 'locked' | 'draft' | 'ready' | 'in_progress' | 'done'
-export type NodeKind = 'root' | 'original' | 'superseded'
+export type NodeKind = 'root' | 'original' | 'superseded' | 'review'
+export type WorkflowStep = 'frame' | 'clarify' | 'spec'
+export type ThreadRole = 'audit' | 'ask_planning' | 'execution' | 'integration'
+export type ExecutionStatus = 'idle' | 'executing' | 'completed' | 'review_pending' | 'review_accepted'
+export type RollupStatus = 'pending' | 'ready' | 'accepted'
 export type SplitMode =
   | 'workflow'
   | 'simplify_workflow'
@@ -53,6 +57,8 @@ export interface ProjectSummary {
   project_path: string
   created_at: string
   updated_at: string
+  /** When false, project folder has no Git repo (sidebar may show Initialize Git). */
+  git_initialized?: boolean
 }
 
 export interface NodeRecord {
@@ -68,6 +74,14 @@ export interface NodeRecord {
   hierarchical_number: string
   created_at: string
   is_superseded: boolean
+  workflow: NodeWorkflowSummary | null
+  review_node_id?: string | null
+}
+
+export interface NodeWorkflowSummary {
+  frame_confirmed: boolean
+  active_step: WorkflowStep
+  spec_confirmed: boolean
 }
 
 export interface ProjectRecord {
@@ -104,12 +118,20 @@ export interface NodeDocument {
   updated_at: string | null
 }
 
+export type ChangedFileStatus = 'A' | 'M' | 'D' | 'R'
+
+export interface ChangedFileRecord {
+  path: string
+  status: ChangedFileStatus
+  previous_path?: string | null
+}
+
 export interface DetailState {
   node_id: string
   frame_confirmed: boolean
   frame_confirmed_revision: number
   frame_revision: number
-  active_step: 'frame' | 'clarify' | 'spec'
+  active_step: WorkflowStep
   workflow_notice: string | null
   generation_error?: string | null
   frame_needs_reconfirm: boolean
@@ -119,6 +141,29 @@ export interface DetailState {
   spec_read_only: boolean
   spec_stale: boolean
   spec_confirmed: boolean
+  execution_started?: boolean
+  execution_completed?: boolean
+  shaping_frozen?: boolean
+  can_finish_task?: boolean
+  execution_status?: ExecutionStatus | null
+  audit_writable?: boolean
+  package_audit_ready?: boolean
+  review_status?: RollupStatus | null
+  /** Workspace state at execution start (from execution state file, if any). */
+  initial_sha?: string | null
+  /** Workspace state after execution completes (from execution state file, if any). */
+  head_sha?: string | null
+  /** Deterministic commit message for this task execution (when committed). */
+  commit_message?: string | null
+  /** Current repo HEAD (may differ from head_sha after user moves workspace). */
+  current_head_sha?: string | null
+  /** False if task SHAs are no longer on the ancestry path of current HEAD. */
+  task_present_in_current_workspace?: boolean | null
+  /** When false, execution/finish should be blocked; see git_blocker_message. */
+  git_ready?: boolean | null
+  git_blocker_message?: string | null
+  /** Paths changed for this task (from git or execution metadata). */
+  changed_files?: ChangedFileRecord[] | string[]
 }
 
 export interface ClarifyOption {
@@ -243,6 +288,7 @@ export interface ChatMessage {
 
 export interface ChatSession {
   thread_id: string | null
+  thread_role: ThreadRole
   active_turn_id: string | null
   messages: ChatMessage[]
   created_at: string
@@ -253,4 +299,44 @@ export interface SendMessageResponse {
   user_message: ChatMessage
   assistant_message: ChatMessage
   active_turn_id: string
+}
+
+// ── Execution state types ────────────────────────────────────────
+
+export interface ExecutionState {
+  status: ExecutionStatus
+  initial_sha: string | null
+  head_sha: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+// ── Review and checkpoint types ──────────────────────────────────
+
+export interface CheckpointRecord {
+  label: string
+  sha: string
+  summary: string | null
+  source_node_id: string | null
+  accepted_at: string
+}
+
+export interface RollupState {
+  status: RollupStatus
+  summary: string | null
+  sha: string | null
+  accepted_at: string | null
+}
+
+export interface PendingSibling {
+  index: number
+  title: string
+  objective: string
+  materialized_node_id: string | null
+}
+
+export interface ReviewState {
+  checkpoints: CheckpointRecord[]
+  rollup: RollupState
+  pending_siblings: PendingSibling[]
 }
