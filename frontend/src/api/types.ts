@@ -57,6 +57,8 @@ export interface ProjectSummary {
   project_path: string
   created_at: string
   updated_at: string
+  /** When false, project folder has no Git repo (sidebar may show Initialize Git). */
+  git_initialized?: boolean
 }
 
 export interface NodeRecord {
@@ -116,6 +118,14 @@ export interface NodeDocument {
   updated_at: string | null
 }
 
+export type ChangedFileStatus = 'A' | 'M' | 'D' | 'R'
+
+export interface ChangedFileRecord {
+  path: string
+  status: ChangedFileStatus
+  previous_path?: string | null
+}
+
 export interface DetailState {
   node_id: string
   frame_confirmed: boolean
@@ -139,6 +149,21 @@ export interface DetailState {
   audit_writable?: boolean
   package_audit_ready?: boolean
   review_status?: RollupStatus | null
+  /** Workspace state at execution start (from execution state file, if any). */
+  initial_sha?: string | null
+  /** Workspace state after execution completes (from execution state file, if any). */
+  head_sha?: string | null
+  /** Deterministic commit message for this task execution (when committed). */
+  commit_message?: string | null
+  /** Current repo HEAD (may differ from head_sha after user moves workspace). */
+  current_head_sha?: string | null
+  /** False if task SHAs are no longer on the ancestry path of current HEAD. */
+  task_present_in_current_workspace?: boolean | null
+  /** When false, execution/finish should be blocked; see git_blocker_message. */
+  git_ready?: boolean | null
+  git_blocker_message?: string | null
+  /** Paths changed for this task (from git or execution metadata). */
+  changed_files?: ChangedFileRecord[] | string[]
 }
 
 export interface ClarifyOption {

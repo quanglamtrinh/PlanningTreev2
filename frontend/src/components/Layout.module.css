@@ -11,8 +11,8 @@
   gap: 16px;
   min-height: 56px;
   padding: 0 20px;
-  background: #ffffff;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--surface-container-lowest);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--outline) 8%, transparent);
   flex-shrink: 0;
   z-index: 10;
   -webkit-app-region: drag;
@@ -70,6 +70,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  font-family: var(--font-display);
   font-size: 15px;
   line-height: 22px;
   font-weight: 500;
@@ -85,7 +86,7 @@
 }
 
 .brandName {
-  color: #111827;
+  color: var(--on-surface);
 }
 
 .brandSub {
@@ -109,8 +110,8 @@
   gap: 8px;
   padding: 6px 8px;
   border-radius: var(--radius-pill);
-  border: 1px solid #e5e7eb;
-  background: #ffffff;
+  border: none;
+  background: var(--surface-container-low);
 }
 
 .themeSwatch {

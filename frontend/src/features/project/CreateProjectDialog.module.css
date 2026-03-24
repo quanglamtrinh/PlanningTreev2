@@ -4,9 +4,10 @@
   flex-direction: column;
   gap: 12px;
   padding: 16px 18px;
-  border: 1px solid var(--color-border-subtle);
+  border: none;
   border-radius: var(--radius-lg);
-  background: var(--color-bg-panel);
+  background: var(--surface-container-lowest);
+  box-shadow: var(--shadow-sm);
   min-width: min(320px, 100%);
 }
 
@@ -113,15 +114,14 @@
   font-size: var(--font-size-sm);
   font-weight: 500;
   white-space: nowrap;
-  background: var(--color-accent);
-  color: var(--color-accent-text);
-  border-color: var(--color-accent);
+  border: none;
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-container) 100%);
+  color: var(--on-primary);
   border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
 
 .primary:hover:not(:disabled) {
-  background: var(--color-accent-hover);
-  border-color: var(--color-accent-hover);
-  color: var(--color-accent-text);
+  background: linear-gradient(180deg, var(--accent-primary-hover) 0%, var(--primary-container) 100%);
+  color: var(--on-primary);
 }

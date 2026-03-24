@@ -145,6 +145,9 @@ def build_detail_state(node_id: str, node_dir: Path) -> Dict[str, Any]:
         "spec_read_only": active_step != "spec",
         "spec_stale": spec_stale,
         "spec_confirmed": workflow["spec_confirmed"],
+        "initial_sha": None,
+        "head_sha": None,
+        "changed_files": [],
     }
 
 
@@ -160,7 +163,12 @@ class NodeDetailService:
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
             node_dir = self._resolve_node_dir(snapshot, node_id)
-            return build_detail_state(node_id, node_dir)
+            state = build_detail_state(node_id, node_dir)
+            exec_payload = self._storage.execution_state_store.read_state(project_id, node_id)
+            if exec_payload:
+                state["initial_sha"] = exec_payload.get("initial_sha")
+                state["head_sha"] = exec_payload.get("head_sha")
+            return state
 
     # ── Confirm frame ─────────────────────────────────────────────
 

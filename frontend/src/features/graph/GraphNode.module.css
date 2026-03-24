@@ -18,83 +18,80 @@
   opacity: 0;
 }
 
-/* ─── Card (org-chart: white panel, thin neutral border, small radius, soft shadow) ─── */
+/* ─── Card — borderless tonal lift (Methodical Canvas) ─── */
 .card {
   width: 220px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 12px 14px 14px;
-  border: 1px solid var(--graph-node-border);
+  border: none;
   border-radius: var(--graph-node-radius);
-  background: var(--color-bg-panel);
+  background: var(--surface-container-lowest);
   box-shadow: var(--graph-node-shadow);
   color: var(--color-text-primary);
   text-align: left;
   cursor: pointer;
   transition:
-    border-color 0.14s ease,
     box-shadow 0.14s ease,
-    background 0.14s ease;
+    background 0.14s ease,
+    outline-color 0.14s ease;
 }
 
 .card:hover {
   background: var(--color-bg-hover);
-  border-color: color-mix(in srgb, var(--color-text-primary) 14%, var(--graph-node-border));
   box-shadow:
     var(--graph-node-shadow),
-    0 2px 6px rgba(15, 23, 42, 0.05);
+    0 2px 6px rgba(26, 28, 27, 0.05);
 }
 
 .card:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
   outline-offset: 3px;
 }
 
 /* ─── States ─── */
 .selected {
-  border-color: var(--color-accent);
-  border-width: 1.5px;
+  outline: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+  outline-offset: 0;
   box-shadow:
     0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent),
-    var(--shadow-sm);
+    var(--graph-node-shadow);
 }
 
 .current:not(.selected) {
-  border-color: var(--color-status-done);
+  outline: 1px solid color-mix(in srgb, var(--color-status-done) 35%, transparent);
+  outline-offset: 0;
   box-shadow:
     0 0 0 3px color-mix(in srgb, var(--color-status-done) 10%, transparent),
     var(--shadow-xs);
 }
 
 /*
- * Locked: show “blocked” without washing out text (avoid whole-card opacity).
- * Rely on dashed border + tinted surface; badge still says “Locked”.
+ * Locked: dashed ghost outline + tinted surface
  */
 .locked {
-  border-style: dashed;
-  border-color: color-mix(in srgb, var(--color-status-locked) 42%, var(--color-border-subtle));
-  background: color-mix(in srgb, var(--color-status-locked-bg) 72%, var(--color-bg-panel));
+  outline: 1px dashed color-mix(in srgb, var(--color-status-locked) 45%, var(--outline-variant));
+  outline-offset: 0;
+  background: color-mix(in srgb, var(--color-status-locked-bg) 72%, var(--surface-container-lowest));
   box-shadow: var(--shadow-xs);
 }
 
 .locked:hover {
   background: color-mix(in srgb, var(--color-status-locked-bg) 82%, var(--color-bg-hover));
-  border-color: color-mix(in srgb, var(--color-status-locked) 50%, var(--color-border-subtle));
+  outline-color: color-mix(in srgb, var(--color-status-locked) 50%, var(--outline-variant));
 }
 
-/* Selected + locked: keep dashed cue inside the accent ring */
+/* Selected + locked: keep dashed cue */
 .selected.locked {
-  border-style: dashed;
-  border-color: var(--color-accent);
+  outline: 1px dashed var(--color-accent);
   box-shadow:
     0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent),
-    var(--shadow-sm);
+    var(--graph-node-shadow);
 }
 
 .current:not(.selected).locked {
-  border-style: dashed;
-  border-color: color-mix(in srgb, var(--color-status-done) 55%, var(--color-status-locked));
+  outline: 1px dashed color-mix(in srgb, var(--color-status-done) 55%, var(--color-status-locked));
   box-shadow:
     0 0 0 3px color-mix(in srgb, var(--color-status-done) 10%, transparent),
     var(--shadow-xs);
@@ -105,10 +102,10 @@
 }
 
 .splitting {
-  border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border-subtle));
+  outline: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
   box-shadow:
     0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent),
-    var(--shadow-sm);
+    var(--graph-node-shadow);
 }
 
 /* ─── Header row ─── */
@@ -175,12 +172,12 @@
 
 .infoBtn:hover {
   background: var(--color-accent-muted);
-  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border-subtle));
   color: var(--color-accent);
 }
 
 .title {
   margin: 0;
+  font-family: var(--font-display);
   font-size: var(--font-size-sm);
   font-weight: 600;
   line-height: var(--line-height-ui);
@@ -217,8 +214,8 @@
   height: 22px;
   padding: 0 5px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-subtle);
-  background: transparent;
+  border: none;
+  background: var(--surface-container-highest);
   font-size: 12px;
   font-weight: 500;
   color: var(--color-text-secondary);
@@ -250,8 +247,8 @@
   height: 28px;
   border: none;
   border-radius: 50%;
-  background: var(--color-accent);
-  color: #fff;
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-container) 100%);
+  color: var(--on-primary);
   box-shadow: var(--shadow-sm);
   display: inline-flex;
   align-items: center;
@@ -282,11 +279,12 @@
   flex-direction: column;
   gap: 6px;
   padding: 8px;
-  border: 1px solid var(--color-border-subtle);
+  border: none;
   border-radius: var(--radius-lg);
-  background: var(--color-bg-panel);
+  background: var(--glass-fill);
   box-shadow: var(--shadow-float);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(16px) saturate(1.1);
+  -webkit-backdrop-filter: blur(16px) saturate(1.1);
   min-height: 0;
 }
 

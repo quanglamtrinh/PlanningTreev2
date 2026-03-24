@@ -40,9 +40,17 @@ export function NodeDetailCard({
   const [detailTab, setDetailTab] = useState<DetailTab>('frame')
 
   const detailStateKey = projectId && node ? `${projectId}::${node.node_id}` : ''
-  const detailState = useDetailStateStore((s) => detailStateKey ? s.entries[detailStateKey] : undefined)
-  const detailStateError = useDetailStateStore((s) => detailStateKey ? s.errors[detailStateKey] : undefined)
+  const detailState = useDetailStateStore((s) => (detailStateKey ? s.entries[detailStateKey] : undefined))
+  const detailStateError = useDetailStateStore((s) => (detailStateKey ? s.errors[detailStateKey] : undefined))
   const loadDetailState = useDetailStateStore((s) => s.loadDetailState)
+  const finishTaskAction = useDetailStateStore((s) => s.finishTask)
+  const resetWorkspaceAction = useDetailStateStore((s) => s.resetWorkspace)
+  const isFinishingTask = useDetailStateStore((s) =>
+    detailStateKey ? (s.finishingTask[detailStateKey] ?? false) : false,
+  )
+  const isResettingWorkspace = useDetailStateStore((s) =>
+    detailStateKey ? (s.resettingWorkspace[detailStateKey] ?? false) : false,
+  )
 
   // Reset to frame on node change
   useEffect(() => {
@@ -121,16 +129,38 @@ export function NodeDetailCard({
               <NodeStatusBadge status={node.status} />
             </div>
           </div>
-          {showClose ? (
+          <div className={styles.cardHeaderActions}>
             <button
               type="button"
-              className={styles.closeButton}
-              onClick={onClose}
-              aria-label="Close detail panel"
+              className={styles.finishTaskButton}
+              disabled={
+                !detailState ||
+                detailState.can_finish_task !== true ||
+                detailState.git_ready === false ||
+                isFinishingTask
+              }
+              title={
+                detailState?.git_ready === false && detailState.git_blocker_message
+                  ? detailState.git_blocker_message
+                  : detailState?.can_finish_task !== true
+                    ? 'Complete and confirm the spec, then satisfy Git prerequisites to finish this task.'
+                    : 'Run execution for this task'
+              }
+              onClick={() => void finishTaskAction(projectId, node.node_id)}
             >
-              <span aria-hidden="true">×</span>
+              {isFinishingTask ? 'Finishing…' : 'Finish Task'}
             </button>
-          ) : null}
+            {showClose ? (
+              <button
+                type="button"
+                className={styles.closeButton}
+                onClick={onClose}
+                aria-label="Close detail panel"
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <div className={styles.explorationRegion} role="region" aria-label="Task exploration steps">
@@ -204,9 +234,24 @@ export function NodeDetailCard({
           </div>
         ) : null}
 
+        {detailState?.git_ready === false && detailState.git_blocker_message ? (
+          <div className={styles.gitBlockerBanner} role="status">
+            {detailState.git_blocker_message}
+          </div>
+        ) : null}
+
         {detailTab === 'describe' && (
           <div className={styles.cardBodyAux}>
-            <NodeDescribePanel node={node} />
+            <NodeDescribePanel
+              node={node}
+              projectId={projectId}
+              detailState={detailState}
+              isResetting={isResettingWorkspace}
+              onResetToBefore={() =>
+                void resetWorkspaceAction(projectId, node.node_id, 'initial')
+              }
+              onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
+            />
           </div>
         )}
 

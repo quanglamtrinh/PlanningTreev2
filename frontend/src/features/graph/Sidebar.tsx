@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { NodeRecord, ProjectSummary, Snapshot } from '../../api/types'
 import { useCodexStore } from '../../stores/codex-store'
+import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
 import { getCodexUsageLabels } from './usageLabels'
 import styles from './Sidebar.module.css'
@@ -60,6 +61,7 @@ export function Sidebar() {
     })),
   )
   const codexRateLimits = useCodexStore((s) => s.snapshot?.rate_limits ?? null)
+  const initGit = useDetailStateStore((s) => s.initGit)
 
   const handleProjectClick = useCallback(
     (projectId: string) => { void loadProject(projectId) },
@@ -269,6 +271,8 @@ export function Sidebar() {
                 onClickNode={handleNodeClick}
                 onDoubleClickNode={handleOpenBreadcrumb}
                 onRemoveProject={handleRemoveProject}
+                showGitInit={showGitInitCta(project)}
+                onInitGit={() => void initGit(project.id).then(() => refreshProjects())}
               />
             )
           })
@@ -329,6 +333,14 @@ export function Sidebar() {
   )
 }
 
+/** Show CTA until the API explicitly reports a Git repo (`git_initialized === true`). */
+function showGitInitCta(project: ProjectSummary): boolean {
+  if (import.meta.env.DEV && import.meta.env.VITE_MOCK_GIT_INIT_CTA === '1') {
+    return true
+  }
+  return project.git_initialized !== true
+}
+
 type ProjectGroupProps = {
   project: ProjectSummary
   isActive: boolean
@@ -338,11 +350,14 @@ type ProjectGroupProps = {
   onClickNode: (id: string) => void
   onDoubleClickNode: (id: string) => Promise<void>
   onRemoveProject: (id: string, name: string) => Promise<void>
+  showGitInit: boolean
+  onInitGit: () => void
 }
 
 function ProjectGroup({
   project, isActive, snapshot, selectedNodeId,
   onClickProject, onClickNode, onDoubleClickNode, onRemoveProject,
+  showGitInit, onInitGit,
 }: ProjectGroupProps) {
   const nodeById = useMemo(() => {
     if (!snapshot) return new Map<string, NodeRecord>()
@@ -380,6 +395,18 @@ function ProjectGroup({
           </svg>
         </button>
       </div>
+
+      {showGitInit ? (
+        <div className={styles.gitNotice} role="note" aria-label="Git status">
+          <p className={styles.gitNoticeText}>
+            This project folder isn&apos;t a Git repository yet. Initialize Git when you&apos;re ready to
+            track changes.
+          </p>
+          <button type="button" className={styles.gitInitButton} onClick={onInitGit}>
+            Initialize Git
+          </button>
+        </div>
+      ) : null}
 
       {isActive && rootNodeId && nodeById.has(rootNodeId) && (
         <div className={styles.nodeList}>
