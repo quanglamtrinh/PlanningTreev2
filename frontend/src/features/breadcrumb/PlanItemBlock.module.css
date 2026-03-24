@@ -1,0 +1,30 @@
+.root {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+}
+
+.icon {
+  display: inline-flex;
+  min-width: 16px;
+  justify-content: center;
+  color: var(--accent-primary);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.spinner {
+  min-width: 0;
+}
+
+.content {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}

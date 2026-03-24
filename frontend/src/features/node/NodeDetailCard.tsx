@@ -1,22 +1,18 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { NodeRecord } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { ClarifyPanel } from './ClarifyPanel'
 import { NodeDescribePanel } from './NodeDescribePanel'
 import { NodeDocumentEditor } from './NodeDocumentEditor'
+import { SplitPanel } from './SplitPanel'
 import { ExecutionStatusBadge } from './ExecutionStatusBadge'
 import { NodeStatusBadge } from './NodeStatusBadge'
 import { ReviewDetailPanel } from './ReviewDetailPanel'
+import { WorkflowStepper } from './WorkflowStepper'
+import type { WorkflowTab } from './WorkflowStepper'
 import styles from './NodeDetailCard.module.css'
 
-type DetailTab = 'describe' | 'frame' | 'clarify' | 'spec'
-
-const DETAIL_STEPS: { id: DetailTab; label: string }[] = [
-  { id: 'describe', label: 'Describe' },
-  { id: 'frame', label: 'Frame' },
-  { id: 'clarify', label: 'Clarify' },
-  { id: 'spec', label: 'Spec' },
-]
+type DetailTab = WorkflowTab
 
 type NodeDetailCardState = 'ready' | 'loading' | 'unavailable'
 
@@ -28,6 +24,13 @@ type Props = {
   onClose?: () => void
   state?: NodeDetailCardState
   message?: string | null
+}
+
+function deriveDetailTab(activeStep: 'frame' | 'clarify' | 'spec', frameBranchReady?: boolean): DetailTab {
+  if (frameBranchReady) {
+    return 'frame_updated'
+  }
+  return activeStep
 }
 
 export function NodeDetailCard({
@@ -46,11 +49,7 @@ export function NodeDetailCard({
   const detailState = useDetailStateStore((s) => (detailStateKey ? s.entries[detailStateKey] : undefined))
   const detailStateError = useDetailStateStore((s) => (detailStateKey ? s.errors[detailStateKey] : undefined))
   const loadDetailState = useDetailStateStore((s) => s.loadDetailState)
-  const finishTaskAction = useDetailStateStore((s) => s.finishTask)
   const resetWorkspaceAction = useDetailStateStore((s) => s.resetWorkspace)
-  const isFinishingTask = useDetailStateStore((s) =>
-    detailStateKey ? (s.finishingTask[detailStateKey] ?? false) : false,
-  )
   const isResettingWorkspace = useDetailStateStore((s) =>
     detailStateKey ? (s.resettingWorkspace[detailStateKey] ?? false) : false,
   )
@@ -66,28 +65,22 @@ export function NodeDetailCard({
   }, [projectId, node?.node_id, state, loadDetailState])
 
   useEffect(() => {
-    if (detailState?.active_step) setDetailTab(detailState.active_step)
-  }, [detailState?.active_step])
+    if (detailState?.active_step) {
+      const nextTab = deriveDetailTab(detailState.active_step, detailState.frame_branch_ready)
+      setDetailTab((currentTab) => {
+        if (currentTab === 'split' && (nextTab === 'frame_updated' || nextTab === 'spec')) {
+          return currentTab
+        }
+        return nextTab
+      })
+    }
+  }, [detailState?.active_step, detailState?.frame_branch_ready])
 
   const rootClassName = useMemo(
     () =>
       `${styles.card} ${variant === 'breadcrumb' ? styles.cardBreadcrumb : styles.cardGraph}`,
     [variant],
   )
-
-  const activeStepIndex = useMemo(
-    () => DETAIL_STEPS.findIndex((s) => s.id === detailTab),
-    [detailTab],
-  )
-
-  const isStepConfirmed = (stepId: DetailTab): boolean => {
-    if (!detailState) return false
-    if (stepId === 'describe') return false
-    if (stepId === 'frame') return detailState.frame_confirmed
-    if (stepId === 'clarify') return detailState.clarify_confirmed
-    if (stepId === 'spec') return detailState.spec_confirmed
-    return false
-  }
 
   if (state !== 'ready' || !node || !projectId) {
     return (
@@ -123,10 +116,8 @@ export function NodeDetailCard({
       <div className={styles.cardHeader}>
         <div className={styles.cardHeaderTop}>
           <div className={styles.nodeTitleBlock}>
-            <p className={styles.nodeEyebrow}>{isReviewNode ? 'Review Node' : 'Task'}</p>
-            <div className={styles.nodeTitleRow}>
+            <div className={styles.nodeMetaRow}>
               <span className={styles.nodeHier}>{node.hierarchical_number}</span>
-              <h2 className={styles.nodeHeading}>{node.title}</h2>
               <NodeStatusBadge status={node.status} />
               {!isReviewNode ? (
                 <ExecutionStatusBadge
@@ -135,30 +126,9 @@ export function NodeDetailCard({
                 />
               ) : null}
             </div>
+            <h2 className={styles.nodeHeading}>{node.title}</h2>
           </div>
           <div className={styles.cardHeaderActions}>
-            {!isReviewNode ? (
-              <button
-                type="button"
-                className={styles.finishTaskButton}
-                disabled={
-                  !detailState ||
-                  detailState.can_finish_task !== true ||
-                  detailState.git_ready === false ||
-                  isFinishingTask
-                }
-                title={
-                  detailState?.git_ready === false && detailState.git_blocker_message
-                    ? detailState.git_blocker_message
-                    : detailState?.can_finish_task !== true
-                      ? 'Complete and confirm the spec, then satisfy Git prerequisites to finish this task.'
-                      : 'Run execution for this task'
-                }
-                onClick={() => void finishTaskAction(projectId, node.node_id)}
-              >
-                {isFinishingTask ? 'Finishing...' : 'Finish Task'}
-              </button>
-            ) : null}
             {showClose ? (
               <button
                 type="button"
@@ -174,47 +144,11 @@ export function NodeDetailCard({
 
         {!isReviewNode ? (
           <div className={styles.explorationRegion} role="region" aria-label="Task exploration steps">
-            <nav className={styles.stepper} aria-label="Describe, Frame, Clarify, Spec">
-              {DETAIL_STEPS.map((step, idx) => {
-                const isActive = detailTab === step.id
-                const confirmed = isStepConfirmed(step.id)
-                const isDescribe = step.id === 'describe'
-                const arrowBold = idx > 0 && idx <= activeStepIndex
-                return (
-                  <Fragment key={step.id}>
-                    {idx > 0 && (
-                      <span
-                        className={`${styles.stepArrow} ${arrowBold ? styles.stepArrowBold : ''}`}
-                        aria-hidden="true"
-                      >
-                        {'>'}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      className={[
-                        styles.stepButton,
-                        isDescribe ? styles.stepButtonDescribe : '',
-                        confirmed ? styles.stepButtonDone : '',
-                        isActive ? styles.stepButtonActive : '',
-                      ]
-                        .filter(Boolean)
-                        .join(' ')}
-                      onClick={() => setDetailTab(step.id)}
-                      aria-label={step.label}
-                      aria-current={isActive ? 'step' : undefined}
-                    >
-                      <span>{step.label}</span>
-                      {confirmed ? (
-                        <span className={styles.stepDoneTick} aria-hidden="true">
-                          OK
-                        </span>
-                      ) : null}
-                    </button>
-                  </Fragment>
-                )
-              })}
-            </nav>
+            <WorkflowStepper
+              detailTab={detailTab}
+              detailState={detailState}
+              onTabChange={setDetailTab}
+            />
           </div>
         ) : null}
       </div>
@@ -252,12 +186,6 @@ export function NodeDetailCard({
           </div>
         ) : null}
 
-        {detailState?.generation_error ? (
-          <div className={styles.workflowErrorBanner} data-testid="generation-error-banner" role="alert">
-            Spec generation did not start: {detailState.generation_error}. You can retry from the Spec tab.
-          </div>
-        ) : null}
-
         {detailState?.git_ready === false && detailState.git_blocker_message ? (
           <div className={styles.gitBlockerBanner} role="status">
             {detailState.git_blocker_message}
@@ -281,12 +209,14 @@ export function NodeDetailCard({
           </div>
         ) : null}
 
-        {!isReviewNode && detailTab === 'frame' ? (
+        {!isReviewNode && (detailTab === 'frame' || detailTab === 'frame_updated') ? (
           <div className={styles.documentTabStack}>
             <NodeDocumentEditor
               projectId={projectId}
               node={node}
               kind="frame"
+              workflowTab={detailTab}
+              onWorkflowTabChange={setDetailTab}
               onConfirm="workflow"
               readOnly={detailState?.frame_read_only}
             />
@@ -301,6 +231,16 @@ export function NodeDetailCard({
           />
         ) : null}
 
+        {!isReviewNode && detailTab === 'split' ? (
+          <div className={styles.cardBodyAux}>
+            <SplitPanel
+              projectId={projectId}
+              node={node}
+              detailState={detailState}
+            />
+          </div>
+        ) : null}
+
         {!isReviewNode && detailTab === 'spec' ? (
           <div className={styles.documentTabStack}>
             {detailState?.spec_stale ? (
@@ -312,6 +252,7 @@ export function NodeDetailCard({
               projectId={projectId}
               node={node}
               kind="spec"
+              workflowTab="spec"
               onConfirm="workflow"
               readOnly={detailState?.spec_read_only}
             />

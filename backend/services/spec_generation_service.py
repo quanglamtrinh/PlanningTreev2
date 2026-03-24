@@ -130,6 +130,14 @@ class SpecGenerationService:
             }
             gen_state["last_error"] = None
             self._save_gen_state(node_dir, gen_state)
+            spec_meta_path = node_dir / planningtree_workspace.SPEC_META_FILE_NAME
+            atomic_write_json(
+                spec_meta_path,
+                {
+                    "source_frame_revision": source_frame_revision,
+                    "confirmed_at": None,
+                },
+            )
             self._mark_live_job(project_id, node_id, job_id)
 
         threading.Thread(

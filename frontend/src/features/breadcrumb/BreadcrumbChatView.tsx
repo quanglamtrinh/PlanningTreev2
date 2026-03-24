@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { ThreadRole } from '../../api/types'
 import { useChatStore } from '../../stores/chat-store'
@@ -32,10 +32,12 @@ function isThreadComposerReadOnly(
 }
 
 export function BreadcrumbChatView() {
+  const navigate = useNavigate()
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
   const [threadTab, setThreadTab] = useState<ThreadTab>('ask')
   const threadRole: ThreadRole = threadTab === 'ask' ? 'ask_planning' : threadTab
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
+  const lastRouteSelectionSyncRef = useRef<string | null>(null)
 
   const { session, isLoading, isSending, error, loadSession, sendMessage, disconnect } = useChatStore(
     useShallow((s) => ({
@@ -111,9 +113,15 @@ export function BreadcrumbChatView() {
     if (!projectId || !nodeId || !detailNode || !snapshot || snapshot.project.id !== projectId) {
       return
     }
+    const routeKey = `${projectId}::${nodeId}`
     if (selectedNodeId === nodeId) {
+      lastRouteSelectionSyncRef.current = routeKey
       return
     }
+    if (lastRouteSelectionSyncRef.current === routeKey) {
+      return
+    }
+    lastRouteSelectionSyncRef.current = routeKey
     void selectNode(nodeId, false).catch(() => undefined)
   }, [projectId, nodeId, detailNode, snapshot, selectedNodeId, selectNode])
 
@@ -176,16 +184,20 @@ export function BreadcrumbChatView() {
     setIsAccepting(true)
     setAcceptReviewError(null)
     try {
-      await acceptLocalReviewAction(projectId, nodeId, summary)
+      const activatedSiblingId = await acceptLocalReviewAction(projectId, nodeId, summary)
       setReviewSummaryDraft('')
       setAcceptReviewError(null)
+      if (activatedSiblingId) {
+        setThreadTab('ask')
+        void navigate(`/projects/${projectId}/nodes/${activatedSiblingId}/chat`)
+      }
     } catch (error) {
       setAcceptReviewError(error instanceof Error ? error.message : String(error))
       reviewInputRef.current?.focus()
     } finally {
       setIsAccepting(false)
     }
-  }, [reviewSummaryDraft, projectId, nodeId, acceptLocalReviewAction])
+  }, [reviewSummaryDraft, projectId, nodeId, acceptLocalReviewAction, navigate])
 
   const isActiveTurn = !!session?.active_turn_id
   const shapingFrozen = nodeDetailState?.shaping_frozen ?? (detailNode?.workflow?.shaping_frozen === true)

@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import logging
 from typing import Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["nodes"])
 
@@ -92,24 +89,12 @@ async def finish_task(request: Request, project_id: str, node_id: str) -> dict:
 @router.post("/projects/{project_id}/nodes/{node_id}/confirm-frame")
 async def confirm_frame(request: Request, project_id: str, node_id: str) -> dict:
     detail_state = request.app.state.node_detail_service.confirm_frame(project_id, node_id)
-    generation_error: str | None = None
-    if detail_state["active_step"] == "spec":
-        # Zero questions → auto-confirmed clarify → trigger AI spec generation
-        if hasattr(request.app.state, "spec_generation_service"):
-            try:
-                request.app.state.spec_generation_service.generate_spec(project_id, node_id)
-            except Exception as exc:
-                logger.warning("Spec generation start failed: %s", exc)
-                generation_error = str(exc)
-    else:
-        # Has questions → trigger AI clarify generation for richer options.
+    if detail_state["active_step"] == "clarify":
         # Non-fatal: deterministic seed already created by confirm_frame.
         try:
             request.app.state.clarify_generation_service.generate_clarify(project_id, node_id)
         except Exception:
             pass
-    if generation_error:
-        detail_state["generation_error"] = generation_error
     return detail_state
 
 

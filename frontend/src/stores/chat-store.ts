@@ -77,6 +77,40 @@ function mergeMessagePair(
   return merged
 }
 
+function closeTrailingStreamingPart(parts: MessagePart[]) {
+  const lastPart = parts.length > 0 ? parts[parts.length - 1] : null
+  if (!lastPart) {
+    return
+  }
+  if (lastPart.type === 'assistant_text') {
+    parts[parts.length - 1] = { ...lastPart, is_streaming: false }
+  }
+  if (lastPart.type === 'plan_item') {
+    parts[parts.length - 1] = { ...lastPart, is_streaming: false }
+  }
+}
+
+function finalizeParts(parts: MessagePart[] | undefined, threadRole: ThreadRole): MessagePart[] {
+  const finalizedParts = [...(parts ?? [])].map((part) => {
+    if (part.type === 'assistant_text') {
+      return { ...part, is_streaming: false }
+    }
+    if (part.type === 'plan_item') {
+      return { ...part, is_streaming: false }
+    }
+    if (part.type === 'tool_call' && part.status === 'running') {
+      return { ...part, status: 'completed' as const }
+    }
+    return part
+  })
+
+  if (threadRole !== 'execution') {
+    return finalizedParts.filter((part) => part.type !== 'status_block')
+  }
+
+  return finalizedParts
+}
+
 function scheduleStreamReopen(
   get: () => ChatStoreState,
   set: (
@@ -232,6 +266,7 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
             return message
           }
           const parts = [...(message.parts ?? [])]
+          closeTrailingStreamingPart(parts)
           const lastPart = parts.length > 0 ? parts[parts.length - 1] : null
           if (lastPart && lastPart.type === 'assistant_text') {
             parts[parts.length - 1] = {
@@ -252,6 +287,44 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
       }
     }
 
+    case 'assistant_plan_delta': {
+      const messageId = event.message_id as string
+      const itemId = event.item_id as string
+      const delta = event.delta as string
+      return {
+        ...session,
+        messages: session.messages.map((message) => {
+          if (message.message_id !== messageId) {
+            return message
+          }
+          const parts = [...(message.parts ?? [])]
+          const lastPart = parts.length > 0 ? parts[parts.length - 1] : null
+          if (lastPart && lastPart.type === 'plan_item' && lastPart.item_id === itemId) {
+            parts[parts.length - 1] = {
+              ...lastPart,
+              content: lastPart.content + delta,
+              is_streaming: true,
+              timestamp: new Date().toISOString(),
+            }
+          } else {
+            closeTrailingStreamingPart(parts)
+            parts.push({
+              type: 'plan_item',
+              item_id: itemId,
+              content: delta,
+              is_streaming: true,
+              timestamp: new Date().toISOString(),
+            })
+          }
+          return {
+            ...message,
+            parts,
+            status: 'streaming' as const,
+          }
+        }),
+      }
+    }
+
     case 'assistant_tool_call': {
       const messageId = event.message_id as string
       const toolName = event.tool_name as string
@@ -263,11 +336,7 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
             return message
           }
           const parts: MessagePart[] = [...(message.parts ?? [])]
-          // Close current streaming text part
-          const lastPart = parts.length > 0 ? parts[parts.length - 1] : null
-          if (lastPart && lastPart.type === 'assistant_text') {
-            parts[parts.length - 1] = { ...lastPart, is_streaming: false }
-          }
+          closeTrailingStreamingPart(parts)
           parts.push({
             type: 'tool_call',
             tool_name: toolName,
@@ -291,6 +360,7 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
             return message
           }
           const parts: MessagePart[] = [...(message.parts ?? [])]
+          closeTrailingStreamingPart(parts)
           const statusPart: MessagePart = {
             type: 'status_block',
             status_type: statusType,
@@ -320,13 +390,7 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
           if (message.message_id !== messageId) {
             return message
           }
-          const parts: MessagePart[] = (message.parts ?? [])
-            .filter((p) => p.type !== 'status_block')
-            .map((p) => {
-              if (p.type === 'assistant_text') return { ...p, is_streaming: false }
-              if (p.type === 'tool_call' && p.status === 'running') return { ...p, status: 'completed' }
-              return p
-            })
+          const parts = finalizeParts(message.parts, session.thread_role)
           return { ...message, content, parts, status: 'completed' as const }
         }),
       }

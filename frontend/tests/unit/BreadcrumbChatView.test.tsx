@@ -340,7 +340,8 @@ describe('BreadcrumbChatView', () => {
     expect(within(detailCard).getByRole('heading', { level: 3, name: 'Root' })).toBeInTheDocument()
     expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
-    expect(within(detailCard).getByRole('button', { name: 'Finish Task' })).toBeDisabled()
+    expect(within(detailCard).getByText('Finish Task')).toBeInTheDocument()
+    expect(within(detailCard).queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()
     expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-1')
     expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'root', 'ask_planning')
 
@@ -547,5 +548,142 @@ describe('BreadcrumbChatView', () => {
       expect(screen.queryByTestId('accept-review-bar')).not.toBeInTheDocument()
     })
     expect(screen.queryByTestId('accept-review-error')).not.toBeInTheDocument()
+  })
+
+  it('navigates to the activated sibling and resets to Ask after accept review succeeds', async () => {
+    let accepted = false
+    apiMock.getSnapshot.mockImplementation(async () => {
+      if (!accepted) {
+        return makeSnapshot('project-1', 'root')
+      }
+      return {
+        schema_version: 6,
+        project: {
+          id: 'project-1',
+          name: 'Project project-1',
+          root_goal: 'Goal project-1',
+          project_path: 'C:/workspace/project-1',
+          created_at: '2026-03-20T00:00:00Z',
+          updated_at: '2026-03-20T00:00:00Z',
+        },
+        tree_state: {
+          root_node_id: 'root',
+          active_node_id: 'child-2',
+          node_registry: [
+            {
+              node_id: 'root',
+              parent_id: null,
+              child_ids: ['child-1', 'child-2'],
+              title: 'Root',
+              description: 'Root node',
+              status: 'draft',
+              node_kind: 'root',
+              depth: 0,
+              display_order: 0,
+              hierarchical_number: '1',
+              is_superseded: false,
+              created_at: '2026-03-20T00:00:00Z',
+              workflow: {
+                frame_confirmed: false,
+                active_step: 'frame' as const,
+                spec_confirmed: false,
+              },
+            },
+            {
+              node_id: 'child-1',
+              parent_id: 'root',
+              child_ids: [],
+              title: 'Child',
+              description: 'Child node',
+              status: 'done',
+              node_kind: 'original',
+              depth: 1,
+              display_order: 0,
+              hierarchical_number: '1.1',
+              is_superseded: false,
+              created_at: '2026-03-20T00:00:00Z',
+              workflow: {
+                frame_confirmed: false,
+                active_step: 'frame' as const,
+                spec_confirmed: false,
+              },
+            },
+            {
+              node_id: 'child-2',
+              parent_id: 'root',
+              child_ids: [],
+              title: 'Child 2',
+              description: 'Next sibling',
+              status: 'ready',
+              node_kind: 'original',
+              depth: 1,
+              display_order: 1,
+              hierarchical_number: '1.2',
+              is_superseded: false,
+              created_at: '2026-03-20T00:00:00Z',
+              workflow: {
+                frame_confirmed: false,
+                active_step: 'frame' as const,
+                spec_confirmed: false,
+              },
+            },
+          ],
+        },
+        updated_at: '2026-03-20T00:00:00Z',
+      }
+    })
+    apiMock.getDetailState.mockImplementation(async (_projectId: string, currentNodeId: string) => {
+      if (currentNodeId === 'child-2') {
+        return makeDetailState({
+          node_id: 'child-2',
+          execution_started: false,
+          execution_completed: false,
+          shaping_frozen: false,
+          can_finish_task: false,
+          can_accept_local_review: false,
+          execution_status: null,
+          audit_writable: false,
+          package_audit_ready: false,
+        })
+      }
+      return makeDetailState({
+        can_accept_local_review: !accepted,
+        audit_writable: true,
+        execution_started: true,
+        execution_completed: true,
+        execution_status: accepted ? 'review_accepted' : 'review_pending',
+      })
+    })
+    apiMock.acceptLocalReview.mockImplementation(async () => {
+      accepted = true
+      return {
+        node_id: 'root',
+        status: 'review_accepted',
+        activated_sibling_id: 'child-2',
+      }
+    })
+
+    renderBreadcrumbChatView()
+
+    await screen.findByTestId('breadcrumb-node-detail-card')
+    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
+
+    const summaryInput = await screen.findByPlaceholderText('Review summary...')
+    fireEvent.change(summaryInput, { target: { value: 'Looks good overall' } })
+    fireEvent.click(screen.getByTestId('accept-review-button'))
+
+    await waitFor(() => {
+      expect(apiMock.acceptLocalReview).toHaveBeenCalledWith('project-1', 'root', 'Looks good overall')
+    })
+    await waitFor(() => {
+      expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'child-2', 'ask_planning')
+    })
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'child-2')
+    })
+    await waitFor(() => {
+      expect(useProjectStore.getState().selectedNodeId).toBe('child-2')
+    })
+    expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
   })
 })

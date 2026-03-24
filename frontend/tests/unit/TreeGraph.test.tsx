@@ -540,7 +540,8 @@ describe('TreeGraph', () => {
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
     expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
     expect(within(detailCard).queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
-    expect(within(detailCard).getByRole('button', { name: 'Finish Task' })).toBeDisabled()
+    expect(within(detailCard).getByText('Finish Task')).toBeInTheDocument()
+    expect(within(detailCard).queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()
 
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Clarify' }))
     expect(await within(detailCard).findByText(/What target platform/)).toBeInTheDocument()

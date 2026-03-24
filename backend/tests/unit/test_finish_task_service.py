@@ -47,6 +47,7 @@ class FakeExecutionCodexClient:
         thread_id = str(kwargs.get("thread_id") or "")
         cwd = kwargs.get("cwd")
         on_delta = kwargs.get("on_delta")
+        on_plan_delta = kwargs.get("on_plan_delta")
         on_tool_call = kwargs.get("on_tool_call")
         on_thread_status = kwargs.get("on_thread_status")
 
@@ -55,6 +56,8 @@ class FakeExecutionCodexClient:
 
         if on_thread_status:
             on_thread_status({"status": {"type": "running"}})
+        if on_plan_delta:
+            on_plan_delta("Inspect existing files", {"id": "plan-1"})
         if on_tool_call:
             on_tool_call("write_file", {"path": self.create_file_name})
         if on_delta:
@@ -284,12 +287,22 @@ def test_finish_task_background_completion_publishes_sse_and_head_sha(
     assert session["active_turn_id"] is None
     assert session["messages"][0]["status"] == "completed"
     assert session["messages"][0]["content"] == "Implemented the task."
+    part_types = [part["type"] for part in session["messages"][0].get("parts", [])]
+    assert "plan_item" in part_types
+    assert "tool_call" in part_types
+    assert "status_block" in part_types
     assert Path(storage.workspace_store.get_folder_path(project_id), "execution-output.txt").exists()
 
     assert any(
         item["thread_role"] == "execution"
         and isinstance(item["event"], dict)
         and item["event"].get("type") == "execution_completed"
+        for item in published
+    )
+    assert any(
+        item["thread_role"] == "execution"
+        and isinstance(item["event"], dict)
+        and item["event"].get("type") == "assistant_plan_delta"
         for item in published
     )
 

@@ -165,6 +165,7 @@ export interface DetailState {
   active_step: WorkflowStep
   workflow_notice: string | null
   generation_error?: string | null
+  frame_branch_ready?: boolean
   frame_needs_reconfirm: boolean
   frame_read_only: boolean
   clarify_read_only: boolean
@@ -297,6 +298,13 @@ export type MessageRole = 'user' | 'assistant' | 'system'
 
 export type MessagePart =
   | { type: 'assistant_text'; content: string; is_streaming: boolean }
+  | {
+      type: 'plan_item'
+      item_id: string
+      content: string
+      is_streaming: boolean
+      timestamp: string
+    }
   | {
       type: 'tool_call'
       tool_name: string

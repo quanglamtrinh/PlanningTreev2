@@ -1,0 +1,240 @@
+/*
+ * WorkflowStepper — horizontal flowchart
+ *
+ * 12 columns × 3 rows:
+ *
+ *   Col:  1     2    3      4       5        6         7      8    9      10    11     12
+ *  Row1:  .     .    .      .       .        .         .     [TJ]  csArr  spec  cfArr2  finish
+ *  Row2:  desc  a1  frame  cfArr  clarify  doneArr  frameUpd [TJ]  .      .     .       .
+ *  Row3:  .     .    .      .       .        .        .      [TJ]  spArr  spTask .      .
+ *
+ * [TJ] = T-junction, placed with grid-column:8; grid-row:1/4 via inline style.
+ */
+.grid {
+  display: grid;
+  grid-template-areas:
+    ".    .    .      .       .        .          .          .   csArr  spec   cfArr2  finish"
+    "desc a1  frame  cfArr  clarify  doneArr  frameUpd  .   .      .      .       ."
+    ".    .    .      .       .          .          .          .   spArr  spTask  .       .";
+  grid-template-columns: auto 14px auto auto auto auto auto 12px auto auto auto auto;
+  grid-template-rows: auto auto auto;
+  row-gap: 6px;
+  column-gap: 0;
+  align-items: center;
+  justify-items: center;
+  width: 100%;
+  padding: 8px 0 4px;
+  overflow-x: auto;
+
+  --conn: var(--color-border-strong);
+}
+
+/* ── Pill node (button) ─────────────────────────────────────────── */
+
+.node {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-panel, #fff);
+  font-family: var(--font-sans, sans-serif);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease,
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.nodeVisual {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-panel, #fff);
+  font-family: var(--font-sans, sans-serif);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+
+.node:focus {
+  outline: none;
+}
+
+.node:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.node:hover:not(.done) {
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+}
+
+/* Done — filled accent pill */
+.done {
+  background: var(--step-done-bg-fallback, #7a3a2c);
+  background: var(--step-done-bg);
+  color: var(--step-done-fg, #fff);
+  border-color: transparent;
+  font-weight: 700;
+}
+
+.done:hover {
+  filter: brightness(1.08);
+}
+
+/* Active (pending) — accent ring */
+.active:not(.done) {
+  color: var(--color-accent);
+  font-weight: 700;
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 5%, var(--color-bg-panel, #fff));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+
+/* Active + done — glow ring on top of done fill */
+.active.done {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 28%, transparent);
+}
+
+/* ── "Frame updated" — read-only state indicator ──────────────────── */
+
+.nodeInfo {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font-family: var(--font-sans, sans-serif);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  opacity: 0.8;
+  cursor: default;
+  user-select: none;
+}
+
+/* ── Short horizontal arrow (Describe → Frame, col 2) ─────────────── */
+
+/* Fill row height so the stroke sits on the row’s vertical center (matches pill centers). */
+.arrowShort {
+  justify-self: stretch;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.arrowShort::before {
+  content: '';
+  display: block;
+  width: 100%;
+  height: 1.5px;
+  background: var(--conn);
+}
+
+.arrowShort::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--conn);
+}
+
+/* ── Labeled arrow connector (most transitions) ────────────────────── */
+
+.arrowConn {
+  justify-self: stretch;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  min-width: 20px;
+  min-height: 0;
+}
+
+/* Horizontal line */
+.arrowLine {
+  width: 100%;
+  height: 1.5px;
+  background: var(--conn);
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* Arrowhead at the right end */
+.arrowLine::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--conn);
+}
+
+/* ── T-junction (vertical line + horizontal arm, spans all 3 rows) ─── */
+/*
+ * Placed in column 8 spanning rows 1-3 via inline style.
+ * Vertical stem sits on the RIGHT edge of this column so it lines up with the
+ * left edge of csArr / spArr (column 9). A centered stem (50%) was ~6px left of
+ * those arrows, so connectors looked shifted right.
+ *
+ * • ::before — vertical on the right edge; gradient fades at top/bottom.
+ * • ::after — full-width horizontal at row-2 height (Frame updated → junction).
+ */
+.tj {
+  align-self: stretch;
+  position: relative;
+  z-index: 0;
+}
+
+.tj::before {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 1.5px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--conn) 14%,
+    var(--conn) 86%,
+    transparent 100%
+  );
+}
+
+.tj::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1.5px;
+  transform: translateY(-50%);
+  background: var(--conn);
+}

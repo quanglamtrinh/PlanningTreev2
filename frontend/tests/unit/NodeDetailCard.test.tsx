@@ -58,6 +58,7 @@ const { apiMock, MockApiError } = vi.hoisted(() => ({
     updateClarify: vi.fn(),
     confirmClarify: vi.fn(),
     confirmSpec: vi.fn(),
+    finishTask: vi.fn(),
     generateFrame: vi.fn(),
     getFrameGenStatus: vi.fn().mockResolvedValue({
       status: 'idle',
@@ -80,6 +81,16 @@ const { apiMock, MockApiError } = vi.hoisted(() => ({
       job_id: null,
       started_at: null,
       completed_at: null,
+      error: null,
+    }),
+    splitNode: vi.fn(),
+    getSplitStatus: vi.fn().mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      node_id: null,
+      mode: null,
+      started_at: null,
+      completed_at: '2026-03-21T00:00:04Z',
       error: null,
     }),
     acceptRollupReview: vi.fn().mockResolvedValue({
@@ -120,6 +131,7 @@ import { NodeDetailCard } from '../../src/features/node/NodeDetailCard'
 import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useClarifyStore } from '../../src/stores/clarify-store'
+import { useProjectStore } from '../../src/stores/project-store'
 
 function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
   return {
@@ -181,6 +193,7 @@ describe('NodeDetailCard', () => {
     useNodeDocumentStore.getState().reset()
     useDetailStateStore.getState().reset()
     useClarifyStore.getState().reset()
+    useProjectStore.setState(useProjectStore.getInitialState())
     apiMock.getFrameGenStatus.mockResolvedValue({
       status: 'idle',
       job_id: null,
@@ -223,6 +236,15 @@ describe('NodeDetailCard', () => {
       job_id: null,
       started_at: null,
       completed_at: null,
+      error: null,
+    })
+    apiMock.getSplitStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      node_id: null,
+      mode: null,
+      started_at: null,
+      completed_at: '2026-03-21T00:00:04Z',
       error: null,
     })
     apiMock.getReviewState.mockResolvedValue({
@@ -618,7 +640,7 @@ describe('NodeDetailCard', () => {
     })
   })
 
-  it('shows generation error banner when spec generation did not start', async () => {
+  it('does not show a generation error banner when spec is no longer auto-started', async () => {
     apiMock.getDetailState.mockResolvedValue({
       node_id: 'root',
       frame_confirmed: true,
@@ -658,15 +680,9 @@ describe('NodeDetailCard', () => {
       />,
     )
 
-    await waitFor(() => {
-      expect(screen.getByTestId('generation-error-banner')).toBeInTheDocument()
-    })
-    expect(screen.getByTestId('generation-error-banner')).toHaveTextContent(
-      /Spec generation did not start/i,
-    )
-    expect(screen.getByTestId('generation-error-banner')).toHaveTextContent(
-      /retry from the Spec tab/i,
-    )
+    await screen.findByDisplayValue('# Spec')
+    expect(screen.queryByTestId('generation-error-banner')).not.toBeInTheDocument()
+    expect(screen.getByTestId('confirm-and-finish-task-button')).toBeInTheDocument()
   })
 
   it('loads the next node document when the selected node changes', async () => {
@@ -761,6 +777,22 @@ describe('NodeDetailCard', () => {
       spec_stale: false,
       spec_confirmed: true,
     })
+    apiMock.finishTask.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: true,
+      execution_status: 'executing',
+    })
 
     render(
       <NodeDetailCard
@@ -776,13 +808,106 @@ describe('NodeDetailCard', () => {
     fireEvent.click(specButton)
 
     await screen.findByDisplayValue('# Spec content')
-    const confirmBtn = screen.getByTestId('confirm-document-spec')
+    const confirmBtn = screen.getByTestId('confirm-and-finish-task-button')
     expect(confirmBtn).not.toBeDisabled()
 
     fireEvent.click(confirmBtn)
 
     await waitFor(() => {
       expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
+    })
+    await waitFor(() => {
+      expect(apiMock.finishTask).toHaveBeenCalledWith('project-1', 'root')
+    })
+  })
+
+  it('confirms the updated frame, opens Split tab, and submits the chosen split mode', async () => {
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      activeProjectId: 'project-1',
+    })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 2,
+      frame_revision: 3,
+      active_step: 'frame',
+      workflow_notice: 'Clarify decisions were applied to the frame. Review and confirm the updated frame.',
+      generation_error: null,
+      frame_branch_ready: true,
+      frame_needs_reconfirm: true,
+      frame_read_only: false,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Updated frame content',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+    apiMock.putNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Updated frame content',
+      updated_at: '2026-03-21T00:00:01Z',
+    })
+    apiMock.confirmFrame.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 3,
+      frame_revision: 3,
+      active_step: 'spec',
+      workflow_notice: null,
+      generation_error: null,
+      frame_branch_ready: true,
+      frame_needs_reconfirm: false,
+      frame_read_only: false,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+    apiMock.getSnapshot.mockResolvedValue({
+      schema_version: 1,
+      project: { id: 'project-1', name: 'Test' },
+      tree_state: { root_node_id: 'root', active_node_id: 'root', node_registry: [] },
+      updated_at: '2026-03-21T00:00:02Z',
+    })
+    apiMock.splitNode.mockResolvedValue({
+      status: 'accepted',
+      job_id: 'split-job-1',
+      node_id: 'root',
+      mode: 'phase_breakdown',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await screen.findByDisplayValue('# Updated frame content')
+    fireEvent.click(screen.getByTestId('confirm-and-split-button'))
+
+    await waitFor(() => {
+      expect(apiMock.confirmFrame).toHaveBeenCalledWith('project-1', 'root')
+    })
+
+    expect(await screen.findByRole('heading', { level: 3, name: /Choose how this task should be broken down/i })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('split-option-phase_breakdown'))
+    fireEvent.click(screen.getByTestId('confirm-split-button'))
+
+    await waitFor(() => {
+      expect(apiMock.splitNode).toHaveBeenCalledWith('project-1', 'root', 'phase_breakdown')
     })
   })
 

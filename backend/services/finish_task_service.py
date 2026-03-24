@@ -207,6 +207,20 @@ class FinishTaskService:
         accumulator = PartAccumulator()
         last_checkpoint_at = time.monotonic()
 
+        def persist_activity_snapshot() -> None:
+            self._persist_execution_message(
+                project_id=project_id,
+                node_id=node_id,
+                turn_id=turn_id,
+                assistant_message_id=assistant_message_id,
+                content=accumulator.content_projection(),
+                status="streaming",
+                error=None,
+                thread_id=thread_id,
+                clear_active_turn=False,
+                parts=accumulator.snapshot_parts(),
+            )
+
         def capture_delta(delta: str) -> None:
             nonlocal last_checkpoint_at
             checkpoint_content: str | None = None
@@ -259,6 +273,9 @@ class FinishTaskService:
                 thread_role="execution",
             )
 
+            with draft_lock:
+                persist_activity_snapshot()
+
         def capture_thread_status(payload: dict[str, Any]) -> None:
             with draft_lock:
                 accumulator.on_thread_status(payload)
@@ -278,6 +295,31 @@ class FinishTaskService:
                 thread_role="execution",
             )
 
+            with draft_lock:
+                persist_activity_snapshot()
+
+        def capture_plan_delta(delta: str, item: dict[str, Any]) -> None:
+            item_id = str(item.get("id") or "").strip()
+            if not item_id or not isinstance(delta, str) or not delta:
+                return
+
+            with draft_lock:
+                accumulator.on_plan_delta(delta, item)
+            self._chat_event_broker.publish(
+                project_id,
+                node_id,
+                {
+                    "type": "assistant_plan_delta",
+                    "message_id": assistant_message_id,
+                    "item_id": item_id,
+                    "delta": delta,
+                },
+                thread_role="execution",
+            )
+
+            with draft_lock:
+                persist_activity_snapshot()
+
         try:
             result = self._codex_client.run_turn_streaming(
                 prompt,
@@ -287,11 +329,27 @@ class FinishTaskService:
                 writable_roots=[workspace_root] if isinstance(workspace_root, str) and workspace_root.strip() else None,
                 on_delta=capture_delta,
                 on_tool_call=capture_tool_call,
+                on_plan_delta=capture_plan_delta,
                 on_thread_status=capture_thread_status,
             )
 
             with draft_lock:
-                accumulator.finalize()
+                final_plan_item = result.get("final_plan_item")
+                if isinstance(final_plan_item, dict):
+                    text = str(final_plan_item.get("text") or "")
+                    item_id = str(final_plan_item.get("id") or "")
+                    if text.strip() and item_id.strip():
+                        existing_plan_item = next(
+                            (
+                                part
+                                for part in accumulator.parts
+                                if part.get("type") == "plan_item" and part.get("item_id") == item_id
+                            ),
+                            None,
+                        )
+                        if existing_plan_item is None:
+                            accumulator.on_plan_delta(text, final_plan_item)
+                accumulator.finalize(keep_status_blocks=True)
                 final_parts = accumulator.snapshot_parts()
                 streamed_content = accumulator.content_projection()
             stdout = str(result.get("stdout", "") or "")

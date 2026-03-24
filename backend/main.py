@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
-from backend.config.app_config import build_app_paths, get_chat_timeout, get_clarify_gen_timeout, get_codex_cmd, get_frame_gen_timeout, get_max_chat_message_chars, get_port, get_spec_gen_timeout, get_split_timeout
+from backend.config.app_config import build_app_paths, get_chat_timeout, get_clarify_gen_timeout, get_codex_cmd, get_execution_timeout, get_frame_gen_timeout, get_max_chat_message_chars, get_port, get_spec_gen_timeout, get_split_timeout
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import bootstrap, chat, codex, nodes, projects, split
@@ -98,7 +98,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         node_detail_service=node_detail_service,
         codex_client=codex_client,
         chat_event_broker=chat_event_broker,
-        chat_timeout=get_chat_timeout(),
+        chat_timeout=get_execution_timeout(),
     )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service

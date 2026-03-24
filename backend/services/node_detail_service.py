@@ -133,6 +133,12 @@ def build_detail_state(
     frame_needs_reconfirm = workflow["frame_confirmed"] and frame_rev > frame_conf_rev
     clarify_confirmed_at = clarify.get("confirmed_at") if clarify else None
     active_step = workflow["active_step"]
+    spec_src_frame = spec_meta.get("source_frame_revision", 0)
+    frame_branch_ready = frame_needs_reconfirm or (
+        workflow["frame_confirmed"]
+        and clarify_confirmed_at is not None
+        and spec_src_frame < frame_conf_rev
+    )
 
     workflow_notice: str | None = None
     if frame_needs_reconfirm:
@@ -142,8 +148,7 @@ def build_detail_state(
         )
 
     spec_stale = False
-    if active_step == "spec":
-        spec_src_frame = spec_meta.get("source_frame_revision", 0)
+    if active_step == "spec" and not frame_branch_ready:
         spec_stale = spec_src_frame < frame_conf_rev
 
     # ── Execution-aware derived fields ─────────────────────────────
@@ -175,11 +180,12 @@ def build_detail_state(
         "active_step": active_step,
         "workflow_notice": workflow_notice,
         "generation_error": None,
+        "frame_branch_ready": frame_branch_ready,
         "frame_needs_reconfirm": frame_needs_reconfirm,
-        "frame_read_only": shaping_frozen or active_step != "frame",
+        "frame_read_only": shaping_frozen or (active_step != "frame" and not frame_branch_ready),
         "clarify_read_only": shaping_frozen or active_step != "clarify",
         "clarify_confirmed": clarify_confirmed_at is not None,
-        "spec_read_only": shaping_frozen or active_step != "spec",
+        "spec_read_only": shaping_frozen or active_step != "spec" or frame_branch_ready,
         "spec_stale": spec_stale,
         "spec_confirmed": workflow["spec_confirmed"],
         "initial_sha": exec_state.get("initial_sha") if exec_state else None,
@@ -219,6 +225,7 @@ def build_review_detail_state(
         "active_step": "frame",
         "workflow_notice": None,
         "generation_error": None,
+        "frame_branch_ready": False,
         "frame_needs_reconfirm": False,
         "frame_read_only": True,
         "clarify_read_only": True,

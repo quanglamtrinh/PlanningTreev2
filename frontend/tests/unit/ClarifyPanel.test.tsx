@@ -278,7 +278,7 @@ describe('ClarifyPanel', () => {
       expect(apiMock.confirmClarify).not.toHaveBeenCalled()
     })
 
-    it('flushes dirty drafts then applies to frame when user clicks Apply to Frame', async () => {
+    it('flushes dirty drafts then confirms clarify when user clicks Confirm', async () => {
       const answeredState: ClarifyState = {
         ...CLARIFY_STATE,
         questions: TWO_QUESTIONS.map((q) => ({
@@ -324,16 +324,16 @@ describe('ClarifyPanel', () => {
 
       expect(apiMock.updateClarify).toHaveBeenCalledTimes(1)
 
-      // Apply to Frame button should be enabled now
+      // Confirm button should be enabled now
       const applyBtn = screen.getByTestId('confirm-clarify')
       expect(applyBtn).not.toBeDisabled()
-      expect(applyBtn).toHaveTextContent('Apply to Frame')
+      expect(applyBtn).toHaveTextContent('Confirm')
 
       await act(async () => {
         fireEvent.click(applyBtn)
       })
 
-      // flushAnswers is called again (no-op since nothing dirty), then confirmClarify (apply)
+      // flushAnswers is called again (no-op since nothing dirty), then confirmClarify
       expect(apiMock.confirmClarify).toHaveBeenCalledWith('p1', 'root')
     })
   })

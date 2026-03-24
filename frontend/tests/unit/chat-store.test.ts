@@ -622,6 +622,52 @@ describe('applyChatEvent', () => {
     })
   })
 
+  it('assistant_plan_delta creates and extends plan items', () => {
+    const session = makeSession({
+      active_turn_id: 'turn-1',
+      thread_role: 'execution',
+      messages: [
+        {
+          message_id: 'msg-2',
+          role: 'assistant',
+          content: '',
+          status: 'pending',
+          error: null,
+          turn_id: 'turn-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    })
+
+    const after1 = applyChatEvent(session, {
+      type: 'assistant_plan_delta',
+      message_id: 'msg-2',
+      item_id: 'plan-1',
+      delta: 'Inspect ',
+    })
+    expect(after1.messages[0].parts).toHaveLength(1)
+    expect(after1.messages[0].parts![0]).toMatchObject({
+      type: 'plan_item',
+      item_id: 'plan-1',
+      content: 'Inspect ',
+      is_streaming: true,
+    })
+
+    const after2 = applyChatEvent(after1, {
+      type: 'assistant_plan_delta',
+      message_id: 'msg-2',
+      item_id: 'plan-1',
+      delta: 'workspace',
+    })
+    expect(after2.messages[0].parts).toHaveLength(1)
+    expect(after2.messages[0].parts![0]).toMatchObject({
+      type: 'plan_item',
+      content: 'Inspect workspace',
+      is_streaming: true,
+    })
+  })
+
   it('assistant_status adds or updates status pill', () => {
     const session = makeSession({
       active_turn_id: 'turn-1',
@@ -703,6 +749,46 @@ describe('applyChatEvent', () => {
     expect(result.messages[0].parts![1]).toMatchObject({
       type: 'tool_call',
       status: 'completed',
+    })
+  })
+
+  it('assistant_completed keeps execution status history and closes plan items', () => {
+    const session = makeSession({
+      thread_role: 'execution',
+      active_turn_id: 'turn-1',
+      messages: [
+        {
+          message_id: 'msg-2',
+          role: 'assistant',
+          content: '',
+          parts: [
+            { type: 'plan_item' as const, item_id: 'plan-1', content: 'Inspect workspace', is_streaming: true, timestamp: '2026-01-01T00:00:00Z' },
+            { type: 'status_block' as const, status_type: 'running', label: 'Working...', timestamp: '2026-01-01T00:00:00Z' },
+          ],
+          status: 'streaming',
+          error: null,
+          turn_id: 'turn-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    })
+
+    const result = applyChatEvent(session, {
+      type: 'assistant_completed',
+      message_id: 'msg-2',
+      content: 'Implemented the task.',
+      thread_id: 'thread-1',
+    })
+
+    expect(result.messages[0].parts).toHaveLength(2)
+    expect(result.messages[0].parts![0]).toMatchObject({
+      type: 'plan_item',
+      is_streaming: false,
+    })
+    expect(result.messages[0].parts![1]).toMatchObject({
+      type: 'status_block',
+      label: 'Working...',
     })
   })
 })

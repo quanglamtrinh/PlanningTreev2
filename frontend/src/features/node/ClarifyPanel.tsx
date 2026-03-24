@@ -140,7 +140,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
 
   const noQuestions = clarify !== undefined && questions.length === 0
 
-  const handleApplyToFrame = useCallback(async () => {
+  const handleConfirmClarify = useCallback(async () => {
     setIsConfirming(true)
     setConfirmError(null)
     try {
@@ -148,7 +148,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
       // Invalidate frame document cache so the editor reloads the patched frame.md
       invalidateFrameDoc(projectId, node.node_id, 'frame')
     } catch (error) {
-      setConfirmError(error instanceof Error ? error.message : 'Apply failed')
+      setConfirmError(error instanceof Error ? error.message : 'Confirm failed')
     } finally {
       setIsConfirming(false)
     }
@@ -222,21 +222,12 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
           <div className={detailStyles.tabConfirmRow}>
             <button
               type="button"
-              className={detailStyles.generateButton}
-              data-testid="generate-clarify-button"
-              disabled={isConfirming}
-              onClick={handleGenerate}
-            >
-              Generate Questions
-            </button>
-            <button
-              type="button"
               className={detailStyles.confirmButton}
               data-testid="confirm-clarify"
-              onClick={handleApplyToFrame}
+              onClick={handleConfirmClarify}
               disabled={isConfirming}
             >
-              {isConfirming ? <AgentSpinner words={SPINNER_WORDS_APPLYING} /> : 'Apply to Frame'}
+              {isConfirming ? <AgentSpinner words={SPINNER_WORDS_APPLYING} /> : 'Confirm'}
             </button>
           </div>
         ) : null}
@@ -359,9 +350,9 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
               className={detailStyles.confirmButton}
               data-testid="confirm-clarify"
               disabled={!canConfirm}
-              onClick={handleApplyToFrame}
+              onClick={handleConfirmClarify}
             >
-              {isConfirming ? <AgentSpinner words={SPINNER_WORDS_APPLYING} /> : 'Apply to Frame'}
+              {isConfirming ? <AgentSpinner words={SPINNER_WORDS_APPLYING} /> : 'Confirm'}
             </button>
           </>
         )}

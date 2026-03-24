@@ -21,7 +21,7 @@ type DetailStateStoreState = {
   confirmFrame: (projectId: string, nodeId: string) => Promise<DetailState>
   confirmSpec: (projectId: string, nodeId: string) => Promise<DetailState>
   finishTask: (projectId: string, nodeId: string) => Promise<void>
-  acceptLocalReview: (projectId: string, nodeId: string, summary: string) => Promise<void>
+  acceptLocalReview: (projectId: string, nodeId: string, summary: string) => Promise<string | null>
   acceptRollupReview: (projectId: string, reviewNodeId: string) => Promise<void>
   /** Stub until POST .../git/init exists */
   initGit: (projectId: string) => Promise<void>
@@ -208,6 +208,7 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
         errors: { ...s.errors, [key]: '' },
       }))
       await syncProjectSnapshot(projectId, response.activated_sibling_id)
+      return response.activated_sibling_id
     } catch (error) {
       throw error
     }
