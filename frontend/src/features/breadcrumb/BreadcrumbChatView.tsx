@@ -158,18 +158,30 @@ export function BreadcrumbChatView() {
 
   const [reviewSummaryDraft, setReviewSummaryDraft] = useState('')
   const [isAccepting, setIsAccepting] = useState(false)
+  const [acceptReviewError, setAcceptReviewError] = useState<string | null>(null)
   const reviewInputRef = useRef<HTMLInputElement>(null)
 
   const canAcceptLocalReview = nodeDetailState?.can_accept_local_review === true
   const showAcceptReview = threadTab === 'audit' && canAcceptLocalReview
 
+  useEffect(() => {
+    if (!showAcceptReview) {
+      setAcceptReviewError(null)
+    }
+  }, [showAcceptReview, nodeId, projectId])
+
   const handleAcceptReview = useCallback(async () => {
     const summary = reviewSummaryDraft.trim()
     if (!summary || !projectId || !nodeId) return
     setIsAccepting(true)
+    setAcceptReviewError(null)
     try {
       await acceptLocalReviewAction(projectId, nodeId, summary)
       setReviewSummaryDraft('')
+      setAcceptReviewError(null)
+    } catch (error) {
+      setAcceptReviewError(error instanceof Error ? error.message : String(error))
+      reviewInputRef.current?.focus()
     } finally {
       setIsAccepting(false)
     }
@@ -238,30 +250,49 @@ export function BreadcrumbChatView() {
               )}
               {showAcceptReview && (
                 <div className={styles.acceptReviewBar} data-testid="accept-review-bar">
-                  <input
-                    ref={reviewInputRef}
-                    type="text"
-                    className={styles.acceptReviewInput}
-                    placeholder="Review summary..."
-                    value={reviewSummaryDraft}
-                    onChange={(e) => setReviewSummaryDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        void handleAcceptReview()
-                      }
-                    }}
-                    disabled={isAccepting}
-                  />
-                  <button
-                    type="button"
-                    className={styles.acceptReviewButton}
-                    disabled={isAccepting || !reviewSummaryDraft.trim()}
-                    onClick={() => void handleAcceptReview()}
-                    data-testid="accept-review-button"
-                  >
-                    {isAccepting ? 'Accepting...' : 'Accept Review'}
-                  </button>
+                  {acceptReviewError ? (
+                    <div
+                      id="accept-review-error"
+                      className={styles.acceptReviewError}
+                      data-testid="accept-review-error"
+                      role="alert"
+                    >
+                      {acceptReviewError}
+                    </div>
+                  ) : null}
+                  <div className={styles.acceptReviewControls}>
+                    <input
+                      ref={reviewInputRef}
+                      type="text"
+                      className={styles.acceptReviewInput}
+                      placeholder="Review summary..."
+                      value={reviewSummaryDraft}
+                      aria-invalid={acceptReviewError ? 'true' : 'false'}
+                      aria-describedby={acceptReviewError ? 'accept-review-error' : undefined}
+                      onChange={(e) => {
+                        setReviewSummaryDraft(e.target.value)
+                        if (acceptReviewError) {
+                          setAcceptReviewError(null)
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          void handleAcceptReview()
+                        }
+                      }}
+                      disabled={isAccepting}
+                    />
+                    <button
+                      type="button"
+                      className={styles.acceptReviewButton}
+                      disabled={isAccepting || !reviewSummaryDraft.trim()}
+                      onClick={() => void handleAcceptReview()}
+                      data-testid="accept-review-button"
+                    >
+                      {isAccepting ? 'Accepting...' : 'Accept Review'}
+                    </button>
+                  </div>
                 </div>
               )}
               <ComposerBar

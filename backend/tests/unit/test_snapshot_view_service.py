@@ -143,3 +143,89 @@ def test_task_workflow_includes_execution_fields(storage, workspace_root, tree_s
     assert root["workflow"]["execution_completed"] is True
     assert root["workflow"]["shaping_frozen"] is True
     assert root["workflow"]["execution_status"] == "completed"
+
+
+def test_review_summary_includes_derived_sibling_manifest(storage, workspace_root):
+    snapshot = ProjectService(storage).attach_project_folder(str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    internal = storage.project_store.load_snapshot(project_id)
+    node_index = internal["tree_state"]["node_index"]
+    root = node_index[root_id]
+
+    child_id = "child-a"
+    review_id = "review-1"
+    root["child_ids"] = [child_id]
+    root["review_node_id"] = review_id
+    node_index[child_id] = _base_node(
+        child_id,
+        parent_id=root_id,
+        title="Subtask A",
+        description="Do part A",
+        depth=1,
+        display_order=0,
+        hierarchical_number="1.1",
+    )
+    node_index[review_id] = _base_node(
+        review_id,
+        parent_id=root_id,
+        node_kind="review",
+        title="Review",
+        depth=1,
+        display_order=99,
+        hierarchical_number="1.R",
+    )
+    storage.project_store.save_snapshot(project_id, internal)
+
+    storage.review_state_store.write_state(
+        project_id,
+        review_id,
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:init",
+                    "summary": None,
+                    "source_node_id": None,
+                    "accepted_at": "2026-01-01T00:00:00Z",
+                }
+            ],
+            "pending_siblings": [
+                {
+                    "index": 2,
+                    "title": "Subtask B",
+                    "objective": "Do part B",
+                    "materialized_node_id": None,
+                }
+            ],
+            "rollup": {"status": "pending"},
+        },
+    )
+
+    svc = SnapshotViewService(storage)
+    refreshed = storage.project_store.load_snapshot(project_id)
+    result = svc.to_public_snapshot(project_id, refreshed)
+    review = next(n for n in result["tree_state"]["node_registry"] if n["node_id"] == review_id)
+
+    summary = review["review_summary"]
+    assert summary is not None
+    assert summary["pending_sibling_count"] == 1
+    assert summary["sibling_manifest"] == [
+        {
+            "index": 1,
+            "title": "Subtask A",
+            "objective": "Do part A",
+            "materialized_node_id": "child-a",
+            "status": "active",
+            "checkpoint_label": None,
+        },
+        {
+            "index": 2,
+            "title": "Subtask B",
+            "objective": "Do part B",
+            "materialized_node_id": None,
+            "status": "pending",
+            "checkpoint_label": None,
+        },
+    ]

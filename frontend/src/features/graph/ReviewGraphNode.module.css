@@ -93,3 +93,55 @@
   color: var(--color-status-done);
   background: var(--color-status-done-bg);
 }
+
+/* ─── Sibling manifest ─── */
+.siblingManifest {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+
+.siblingRow {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.siblingIcon {
+  flex-shrink: 0;
+  width: 10px;
+  text-align: center;
+  font-size: 9px;
+}
+
+.siblingLabel {
+  flex-shrink: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.siblingTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sibling_completed {
+  color: var(--color-status-done);
+}
+
+.sibling_active {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+.sibling_pending {
+  color: var(--color-text-tertiary);
+}

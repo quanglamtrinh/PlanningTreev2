@@ -209,9 +209,6 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
       }))
       await syncProjectSnapshot(projectId, response.activated_sibling_id)
     } catch (error) {
-      set((s) => ({
-        errors: { ...s.errors, [key]: toErrorMessage(error) },
-      }))
       throw error
     }
   },

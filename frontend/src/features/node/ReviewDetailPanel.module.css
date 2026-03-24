@@ -86,6 +86,35 @@
   padding-left: 18px;
 }
 
+.manifestGroups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.manifestGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface-1) 92%, transparent);
+}
+
+.manifestGroupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.manifestGroupTitle {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+
 .listItem {
   display: flex;
   flex-direction: column;

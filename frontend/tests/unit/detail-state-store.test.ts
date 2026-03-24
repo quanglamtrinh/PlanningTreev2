@@ -273,6 +273,29 @@ describe('detail-state-store', () => {
     expect(useProjectStore.getState().selectedNodeId).toBe('child-2')
   })
 
+  it('acceptLocalReview rethrows mutation failures without overwriting detail-state load errors', async () => {
+    apiMock.acceptLocalReview.mockRejectedValue(new Error('Review conflict'))
+    useDetailStateStore.setState((state) => ({
+      errors: {
+        ...state.errors,
+        'project-1::root': 'existing load error',
+      },
+    }))
+
+    let caught: unknown
+    await act(async () => {
+      try {
+        await useDetailStateStore.getState().acceptLocalReview('project-1', 'root', 'Looks good')
+      } catch (error) {
+        caught = error
+      }
+    })
+
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toBe('Review conflict')
+    expect(useDetailStateStore.getState().errors['project-1::root']).toBe('existing load error')
+  })
+
   it('acceptRollupReview refreshes review and parent detail-state and clears stale errors', async () => {
     apiMock.acceptRollupReview.mockResolvedValue({
       review_node_id: 'review-1',

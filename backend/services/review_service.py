@@ -20,6 +20,7 @@ from backend.errors.app_errors import (
     ReviewNotAllowed,
 )
 from backend.services import planningtree_workspace
+from backend.services.review_sibling_manifest import derive_review_sibling_manifest
 from backend.services.thread_seed_service import ensure_thread_seeded_session
 from backend.services.tree_service import TreeService
 from backend.services.workspace_sha import compute_workspace_sha
@@ -79,8 +80,18 @@ class ReviewService:
 
             review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
             if review_state is None:
-                return self._storage.review_state_store.default_state()
-            return review_state
+                review_state = self._storage.review_state_store.default_state()
+
+            parent_id = str(review_node.get("parent_id") or "").strip()
+            parent_node = node_by_id.get(parent_id) if parent_id else None
+            sibling_manifest = (
+                derive_review_sibling_manifest(snapshot, parent_node, review_node, review_state)
+                if isinstance(parent_node, dict)
+                else []
+            )
+            public_state = dict(review_state)
+            public_state["sibling_manifest"] = sibling_manifest
+            return public_state
 
     def accept_local_review(
         self, project_id: str, node_id: str, summary: str

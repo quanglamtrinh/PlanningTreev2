@@ -61,10 +61,27 @@ export interface ProjectSummary {
   git_initialized?: boolean
 }
 
+export interface ReviewSiblingEntry {
+  index: number
+  title: string
+  materialized_node_id: string | null
+}
+
+export interface ReviewSiblingManifestEntry {
+  index: number
+  title: string
+  objective: string | null
+  materialized_node_id: string | null
+  status: 'completed' | 'active' | 'pending'
+  checkpoint_label: string | null
+}
+
 export interface ReviewSummary {
   checkpoint_count: number
   rollup_status: RollupStatus | null
   pending_sibling_count: number
+  pending_siblings?: ReviewSiblingEntry[]
+  sibling_manifest: ReviewSiblingManifestEntry[]
 }
 
 export interface NodeRecord {
@@ -361,6 +378,7 @@ export interface ReviewState {
   checkpoints: CheckpointRecord[]
   rollup: RollupState
   pending_siblings: PendingSibling[]
+  sibling_manifest: ReviewSiblingManifestEntry[]
 }
 
 export interface AcceptLocalReviewResponse {

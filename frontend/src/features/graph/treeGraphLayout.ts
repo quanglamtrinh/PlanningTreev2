@@ -40,6 +40,9 @@ export const GRAPH_NODE_MARGIN_BOTTOM_PX = 10
 /** Matches `ReviewGraphNode` card width (`ReviewGraphNode.module.css`). */
 export const REVIEW_NODE_WIDTH_PX = 220
 
+/** Matches `GhostGraphNode` card width (`GhostGraphNode.module.css`). */
+export const GHOST_NODE_WIDTH_PX = 200
+
 // Width of one horizontal "unit" in pixels. Subtree width is measured in these
 // units (same packing math as before, applied on X for siblings).
 const HORIZONTAL_UNIT_PX = 28
@@ -231,4 +234,56 @@ export function buildReviewOverlayPositions({
   }
 
   return reviewPositions
+}
+
+/**
+ * Position ghost/placeholder nodes for pending (unmaterialized) siblings
+ * to the right of the last real child under each parent.
+ */
+export function buildGhostSiblingPositions({
+  visibleChildrenById,
+  treePositions,
+  ghostSiblings,
+}: {
+  visibleChildrenById: Map<string, string[]>
+  treePositions: Map<string, { x: number; y: number }>
+  ghostSiblings: Map<string, { id: string; title: string; index: number }[]>
+}) {
+  const positions = new Map<string, { x: number; y: number }>()
+
+  for (const [parentId, siblings] of ghostSiblings) {
+    if (siblings.length === 0) continue
+
+    const parentPos = treePositions.get(parentId)
+    if (!parentPos) continue
+
+    // Ghost nodes sit at the same depth row as real children
+    const childY = parentPos.y + DEPTH_STEP_PX
+
+    // Find the rightmost real child X to place ghosts after it
+    const childIds = visibleChildrenById.get(parentId) ?? []
+    const childXs = childIds
+      .map((id) => treePositions.get(id)?.x)
+      .filter((x): x is number => typeof x === 'number')
+
+    let startX: number
+    if (childXs.length > 0) {
+      const rightmostX = Math.max(...childXs)
+      startX = rightmostX + GRAPH_NODE_WIDTH_PX + SIBLING_GAP_UNITS * HORIZONTAL_UNIT_PX
+    } else {
+      // No visible children yet — center first ghost under parent
+      startX = parentPos.x + (GRAPH_NODE_WIDTH_PX - GHOST_NODE_WIDTH_PX) / 2
+    }
+
+    const gap = SIBLING_GAP_UNITS * HORIZONTAL_UNIT_PX
+
+    for (let i = 0; i < siblings.length; i++) {
+      positions.set(siblings[i].id, {
+        x: startX + i * (GHOST_NODE_WIDTH_PX + gap),
+        y: childY,
+      })
+    }
+  }
+
+  return positions
 }

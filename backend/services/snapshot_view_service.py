@@ -7,6 +7,10 @@ from typing import Any
 from backend.services import planningtree_workspace
 from backend.services.node_detail_service import derive_workflow_summary_from_node_dir
 from backend.services.execution_gating import derive_execution_workflow_fields
+from backend.services.review_sibling_manifest import (
+    derive_review_sibling_manifest,
+    to_public_pending_siblings,
+)
 from backend.storage.storage import Storage
 
 
@@ -51,7 +55,7 @@ class SnapshotViewService:
             node["is_superseded"] = node_kind == "superseded"
             if node_kind == "review":
                 node["workflow"] = None
-                node["review_summary"] = self._review_summary(project_id, node_id)
+                node["review_summary"] = self._review_summary(project_id, snapshot, node)
             else:
                 node["workflow"] = self._workflow_summary(
                     project_id=project_id,
@@ -120,19 +124,33 @@ class SnapshotViewService:
             workflow.pop(field, None)
         return workflow
 
-    def _review_summary(self, project_id: str, review_node_id: str) -> dict[str, Any] | None:
+    def _review_summary(
+        self,
+        project_id: str,
+        snapshot: dict[str, Any],
+        review_node: dict[str, Any],
+    ) -> dict[str, Any] | None:
         if self._storage is None:
             return None
+        review_node_id = str(review_node.get("node_id") or "").strip()
         review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
         if not isinstance(review_state, dict):
             return None
         checkpoints = review_state.get("checkpoints", [])
-        pending = review_state.get("pending_siblings", [])
         rollup = review_state.get("rollup", {})
+        node_index = snapshot.get("tree_state", {}).get("node_index", {})
+        parent_id = str(review_node.get("parent_id") or "").strip()
+        parent_node = node_index.get(parent_id) if isinstance(node_index, dict) and parent_id else None
+        sibling_manifest = (
+            derive_review_sibling_manifest(snapshot, parent_node, review_node, review_state)
+            if isinstance(parent_node, dict)
+            else []
+        )
+        pending_siblings = to_public_pending_siblings(review_state)
         return {
             "checkpoint_count": len(checkpoints) if isinstance(checkpoints, list) else 0,
             "rollup_status": str(rollup.get("status")) if isinstance(rollup, dict) and rollup.get("status") else None,
-            "pending_sibling_count": sum(
-                1 for s in pending if isinstance(s, dict) and s.get("materialized_node_id") is None
-            ) if isinstance(pending, list) else 0,
+            "pending_sibling_count": sum(1 for sibling in sibling_manifest if sibling.get("status") == "pending"),
+            "pending_siblings": pending_siblings,
+            "sibling_manifest": sibling_manifest,
         }

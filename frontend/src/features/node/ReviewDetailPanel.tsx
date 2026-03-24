@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../../api/client'
 import type { NodeRecord, ReviewState, RollupStatus } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
+import {
+  formatReviewChainLabel,
+  parentHierarchicalNumberFromReviewNode,
+} from '../../utils/reviewSiblingLabels'
 import styles from './ReviewDetailPanel.module.css'
 
 type Props = {
@@ -52,8 +56,13 @@ export function ReviewDetailPanel({ projectId, node }: Props) {
 
   const rollup = reviewState?.rollup
   const draft = rollup?.draft
+  const parentHierarchicalNumber = parentHierarchicalNumberFromReviewNode(node.hierarchical_number)
   const canAcceptRollup =
     rollup?.status === 'ready' && !!draft?.summary && !!draft?.sha && !isAccepting
+  const siblingManifest = reviewState?.sibling_manifest ?? []
+  const completedSiblings = siblingManifest.filter((sibling) => sibling.status === 'completed')
+  const activeSibling = siblingManifest.find((sibling) => sibling.status === 'active') ?? null
+  const pendingSiblings = siblingManifest.filter((sibling) => sibling.status === 'pending')
 
   const rollupSummary = useMemo(() => {
     if (!rollup) {
@@ -162,34 +171,98 @@ export function ReviewDetailPanel({ projectId, node }: Props) {
         <div className={styles.sectionHeader}>
           <div>
             <p className={styles.sectionEyebrow}>Sibling Flow</p>
-            <h3 className={styles.sectionTitle}>Pending and Materialized Siblings</h3>
+            <h3 className={styles.sectionTitle}>Review Chain</h3>
           </div>
-          <span className={styles.metricPill}>{reviewState.pending_siblings.length} tracked</span>
+          <span className={styles.metricPill}>{siblingManifest.length} tracked</span>
         </div>
-        {reviewState.pending_siblings.length ? (
-          <ul className={styles.list}>
-            {reviewState.pending_siblings.map((sibling) => (
-              <li key={sibling.index} className={styles.listItem}>
-                <div className={styles.listRow}>
-                  <strong>
-                    Sibling {sibling.index + 1}: {sibling.title}
-                  </strong>
-                  <span className={styles.metaText}>
-                    {sibling.materialized_node_id ? 'Materialized' : 'Pending'}
-                  </span>
-                </div>
-                {sibling.objective ? <p className={styles.bodyText}>{sibling.objective}</p> : null}
-                <p className={styles.metaText}>
-                  {sibling.materialized_node_id
-                    ? `Node id: ${sibling.materialized_node_id}`
-                    : 'Waiting for the previous sibling review to be accepted.'}
-                </p>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <div className={styles.emptyState}>No additional sibling work is queued for this review node.</div>
-        )}
+        <div className={styles.manifestGroups}>
+          <div className={styles.manifestGroup}>
+            <div className={styles.manifestGroupHeader}>
+              <h4 className={styles.manifestGroupTitle}>Completed siblings</h4>
+              <span className={styles.metricPill}>{completedSiblings.length}</span>
+            </div>
+            {completedSiblings.length ? (
+              <ul className={styles.list}>
+                {completedSiblings.map((sibling) => (
+                  <li key={sibling.index} className={styles.listItem}>
+                    <div className={styles.listRow}>
+                      <strong>
+                        {formatReviewChainLabel(parentHierarchicalNumber, sibling.index)} {sibling.title}
+                      </strong>
+                      <span className={styles.metaText}>Completed</span>
+                    </div>
+                    {sibling.objective ? <p className={styles.bodyText}>{sibling.objective}</p> : null}
+                    <p className={styles.metaText}>
+                      Accepted as {sibling.checkpoint_label ?? 'checkpoint'}
+                      {sibling.materialized_node_id ? ` from ${sibling.materialized_node_id}` : ''}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className={styles.emptyState}>No child reviews have been accepted yet.</div>
+            )}
+          </div>
+
+          <div className={styles.manifestGroup}>
+            <div className={styles.manifestGroupHeader}>
+              <h4 className={styles.manifestGroupTitle}>Current active sibling</h4>
+              <span className={styles.metricPill}>{activeSibling ? 1 : 0}</span>
+            </div>
+            {activeSibling ? (
+              <ul className={styles.list}>
+                <li className={styles.listItem}>
+                  <div className={styles.listRow}>
+                    <strong>
+                      {formatReviewChainLabel(parentHierarchicalNumber, activeSibling.index)}{' '}
+                      {activeSibling.title}
+                    </strong>
+                    <span className={styles.metaText}>Active</span>
+                  </div>
+                  {activeSibling.objective ? (
+                    <p className={styles.bodyText}>{activeSibling.objective}</p>
+                  ) : null}
+                  <p className={styles.metaText}>
+                    {activeSibling.materialized_node_id
+                      ? `Materialized as ${activeSibling.materialized_node_id}`
+                      : 'Materialized sibling is active but node id is not available.'}
+                  </p>
+                </li>
+              </ul>
+            ) : (
+              <div className={styles.emptyState}>No active sibling is currently in progress.</div>
+            )}
+          </div>
+
+          <div className={styles.manifestGroup}>
+            <div className={styles.manifestGroupHeader}>
+              <h4 className={styles.manifestGroupTitle}>Remaining pending siblings</h4>
+              <span className={styles.metricPill}>{pendingSiblings.length}</span>
+            </div>
+            {pendingSiblings.length ? (
+              <ul className={styles.list}>
+                {pendingSiblings.map((sibling) => (
+                  <li key={sibling.index} className={styles.listItem}>
+                    <div className={styles.listRow}>
+                      <strong>
+                        {formatReviewChainLabel(parentHierarchicalNumber, sibling.index)} {sibling.title}
+                      </strong>
+                      <span className={styles.metaText}>Pending</span>
+                    </div>
+                    {sibling.objective ? <p className={styles.bodyText}>{sibling.objective}</p> : null}
+                    <p className={styles.metaText}>
+                      {sibling.index > 1
+                        ? `Waiting for ${formatReviewChainLabel(parentHierarchicalNumber, sibling.index - 1)} review.`
+                        : 'Waiting to be materialized.'}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className={styles.emptyState}>No remaining lazy siblings are queued.</div>
+            )}
+          </div>
+        </div>
       </section>
 
       <section className={styles.section}>

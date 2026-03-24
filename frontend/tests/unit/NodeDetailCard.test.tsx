@@ -28,6 +28,7 @@ const { apiMock, MockApiError } = vi.hoisted(() => ({
         },
       },
       pending_siblings: [],
+      sibling_manifest: [],
     }),
     getDetailState: vi.fn().mockResolvedValue({
       node_id: 'root',
@@ -238,6 +239,7 @@ describe('NodeDetailCard', () => {
         },
       },
       pending_siblings: [],
+      sibling_manifest: [],
     })
     apiMock.acceptRollupReview.mockResolvedValue({
       review_node_id: 'review-1',
@@ -1150,10 +1152,28 @@ describe('NodeDetailCard', () => {
         },
         pending_siblings: [
           {
-            index: 1,
+            index: 2,
             title: 'Child 2',
             objective: 'Finish follow-up work',
             materialized_node_id: 'child-2',
+          },
+        ],
+        sibling_manifest: [
+          {
+            index: 1,
+            title: 'Child 1',
+            objective: 'Ship base work',
+            materialized_node_id: 'child-1',
+            status: 'completed',
+            checkpoint_label: 'K1',
+          },
+          {
+            index: 2,
+            title: 'Child 2',
+            objective: 'Finish follow-up work',
+            materialized_node_id: 'child-2',
+            status: 'active',
+            checkpoint_label: null,
           },
         ],
       })
@@ -1180,10 +1200,28 @@ describe('NodeDetailCard', () => {
         },
         pending_siblings: [
           {
-            index: 1,
+            index: 2,
             title: 'Child 2',
             objective: 'Finish follow-up work',
             materialized_node_id: 'child-2',
+          },
+        ],
+        sibling_manifest: [
+          {
+            index: 1,
+            title: 'Child 1',
+            objective: 'Ship base work',
+            materialized_node_id: 'child-1',
+            status: 'completed',
+            checkpoint_label: 'K1',
+          },
+          {
+            index: 2,
+            title: 'Child 2',
+            objective: 'Finish follow-up work',
+            materialized_node_id: 'child-2',
+            status: 'active',
+            checkpoint_label: null,
           },
         ],
       })
@@ -1246,7 +1284,11 @@ describe('NodeDetailCard', () => {
 
     expect(await screen.findByTestId('review-detail-panel')).toBeInTheDocument()
     expect(screen.getByText('Child review accepted.')).toBeInTheDocument()
-    expect(screen.getByText('Sibling 2: Child 2')).toBeInTheDocument()
+    expect(screen.getByText('Completed siblings')).toBeInTheDocument()
+    expect(screen.getByText('1.A Child 1')).toBeInTheDocument()
+    expect(screen.getByText('Current active sibling')).toBeInTheDocument()
+    expect(screen.getByText('1.B Child 2')).toBeInTheDocument()
+    expect(screen.getByText('Remaining pending siblings')).toBeInTheDocument()
     expect(screen.getByText('Rollup draft summary')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('accept-rollup-button'))

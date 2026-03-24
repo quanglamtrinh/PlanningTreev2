@@ -3,6 +3,13 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { RollupStatus } from '../../api/types'
 import styles from './ReviewGraphNode.module.css'
 
+export type ReviewSiblingDisplay = {
+  index: number
+  title: string
+  letter: string
+  status: 'completed' | 'active' | 'pending'
+}
+
 export type ReviewGraphNodeData = {
   parentNodeId: string
   parentTitle: string
@@ -10,6 +17,7 @@ export type ReviewGraphNodeData = {
   checkpointCount: number
   rollupStatus: RollupStatus | null
   pendingSiblingCount: number
+  siblingEntries: ReviewSiblingDisplay[]
 }
 
 const ROLLUP_LABELS: Record<RollupStatus, string> = {
@@ -61,6 +69,25 @@ function ReviewGraphNodeComponent({ data }: NodeProps) {
             <span className={rollupClassName}>{rollupLabel}</span>
           )}
         </div>
+        {d.siblingEntries.length > 0 && (
+          <div className={styles.siblingManifest} data-testid="review-sibling-manifest">
+            {d.siblingEntries.map((s) => (
+              <div
+                key={s.index}
+                className={`${styles.siblingRow} ${styles[`sibling_${s.status}`] ?? ''}`}
+                data-testid={`sibling-${s.index}-${s.status}`}
+              >
+                <span className={styles.siblingIcon} aria-hidden="true">
+                  {s.status === 'completed' ? '\u2713' : s.status === 'active' ? '\u25CF' : '\u25CB'}
+                </span>
+                <span className={styles.siblingLabel}>
+                  {d.parentHierarchicalNumber}.{s.letter}
+                </span>
+                <span className={styles.siblingTitle}>{s.title}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <Handle
         className={styles.handle}

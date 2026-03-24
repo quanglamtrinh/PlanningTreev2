@@ -93,10 +93,25 @@
 
 .acceptReviewBar {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   padding: 10px 16px;
   border-top: 1px solid color-mix(in srgb, var(--color-text-tertiary) 16%, transparent);
   background: color-mix(in srgb, var(--color-status-done) 6%, var(--bg-surface));
+}
+
+.acceptReviewControls {
+  display: flex;
+  gap: 8px;
+}
+
+.acceptReviewError {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-surface));
+  color: var(--text-error, #dc2626);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .acceptReviewInput {
@@ -113,6 +128,10 @@
 
 .acceptReviewInput:focus {
   border-color: var(--color-accent);
+}
+
+.acceptReviewInput[aria-invalid='true'] {
+  border-color: color-mix(in srgb, var(--danger) 48%, transparent);
 }
 
 .acceptReviewInput:disabled {

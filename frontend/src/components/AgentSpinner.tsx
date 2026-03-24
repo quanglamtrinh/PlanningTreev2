@@ -25,7 +25,7 @@ export const SPINNER_WORDS_GENERATING: readonly string[] = [
 
 export const SPINNER_WORDS_APPLYING: readonly string[] = ['Applying', 'Working', 'Processing']
 
-const CYCLE_MS = 120
+const CYCLE_MS = 800
 
 type AgentSpinnerProps = {
   words?: readonly string[]

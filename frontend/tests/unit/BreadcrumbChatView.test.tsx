@@ -70,6 +70,7 @@ const { apiMock } = vi.hoisted(() => ({
       completed_at: null,
       error: null,
     }),
+    acceptLocalReview: vi.fn(),
   },
 }))
 
@@ -317,6 +318,11 @@ describe('BreadcrumbChatView', () => {
       completed_at: null,
       error: null,
     })
+    apiMock.acceptLocalReview.mockResolvedValue({
+      node_id: 'root',
+      status: 'review_accepted',
+      activated_sibling_id: null,
+    })
   })
 
   it('renders a 60/40 thread and detail layout for the route node', async () => {
@@ -469,5 +475,77 @@ describe('BreadcrumbChatView', () => {
     expect(
       within(detailCard).getByText('This node was not found in the current project snapshot.'),
     ).toBeInTheDocument()
+  })
+
+  it('keeps the review summary and shows an inline error when accept review fails', async () => {
+    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'root'))
+    apiMock.getDetailState.mockResolvedValue(
+      makeDetailState({
+        can_accept_local_review: true,
+        audit_writable: true,
+        execution_started: true,
+        execution_completed: true,
+        execution_status: 'review_pending',
+      }),
+    )
+    apiMock.acceptLocalReview.mockRejectedValue(new Error('Review conflict'))
+
+    renderBreadcrumbChatView()
+
+    await screen.findByTestId('breadcrumb-node-detail-card')
+    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
+
+    const summaryInput = await screen.findByPlaceholderText('Review summary...')
+    fireEvent.change(summaryInput, { target: { value: 'Looks good overall' } })
+    fireEvent.click(screen.getByTestId('accept-review-button'))
+
+    expect(await screen.findByTestId('accept-review-error')).toHaveTextContent('Review conflict')
+    expect(summaryInput).toHaveValue('Looks good overall')
+
+    fireEvent.change(summaryInput, { target: { value: 'Looks good with one follow-up' } })
+    await waitFor(() => {
+      expect(screen.queryByTestId('accept-review-error')).not.toBeInTheDocument()
+    })
+    expect(summaryInput).toHaveValue('Looks good with one follow-up')
+  })
+
+  it('clears the review summary only after accept review succeeds', async () => {
+    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'root'))
+    apiMock.getDetailState
+      .mockResolvedValueOnce(
+        makeDetailState({
+          can_accept_local_review: true,
+          audit_writable: true,
+          execution_started: true,
+          execution_completed: true,
+          execution_status: 'review_pending',
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeDetailState({
+          can_accept_local_review: false,
+          audit_writable: true,
+          execution_started: true,
+          execution_completed: true,
+          execution_status: 'review_accepted',
+        }),
+      )
+
+    renderBreadcrumbChatView()
+
+    await screen.findByTestId('breadcrumb-node-detail-card')
+    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
+
+    const summaryInput = await screen.findByPlaceholderText('Review summary...')
+    fireEvent.change(summaryInput, { target: { value: 'Looks good overall' } })
+    fireEvent.click(screen.getByTestId('accept-review-button'))
+
+    await waitFor(() => {
+      expect(apiMock.acceptLocalReview).toHaveBeenCalledWith('project-1', 'root', 'Looks good overall')
+    })
+    await waitFor(() => {
+      expect(screen.queryByTestId('accept-review-bar')).not.toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('accept-review-error')).not.toBeInTheDocument()
   })
 })

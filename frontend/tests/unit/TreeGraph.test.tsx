@@ -656,6 +656,100 @@ describe('TreeGraph', () => {
     expect(renderedEdges('review-return')).toHaveLength(0)
   })
 
+  it('renders a real review overlay and ghost siblings from sibling_manifest on lazy trees', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'child-1',
+        node_registry: [
+          buildNode({
+            node_id: 'root',
+            child_ids: ['child-1'],
+            review_node_id: 'review-1',
+          }),
+          buildNode({
+            node_id: 'child-1',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Prep',
+            description: 'First lazy step',
+            depth: 1,
+            display_order: 0,
+            hierarchical_number: '1.1',
+            status: 'ready',
+            node_kind: 'original',
+          }),
+          buildNode({
+            node_id: 'review-1',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Review',
+            description: 'Review node',
+            depth: 1,
+            display_order: 99,
+            hierarchical_number: '1.R',
+            status: 'ready',
+            node_kind: 'review',
+            workflow: null,
+            review_summary: {
+              checkpoint_count: 1,
+              rollup_status: 'pending',
+              pending_sibling_count: 2,
+              pending_siblings: [
+                { index: 2, title: 'Build', materialized_node_id: null },
+                { index: 3, title: 'Polish', materialized_node_id: null },
+              ],
+              sibling_manifest: [
+                {
+                  index: 1,
+                  title: 'Prep',
+                  objective: 'First lazy step',
+                  materialized_node_id: 'child-1',
+                  status: 'active',
+                  checkpoint_label: null,
+                },
+                {
+                  index: 2,
+                  title: 'Build',
+                  objective: 'Second lazy step',
+                  materialized_node_id: null,
+                  status: 'pending',
+                  checkpoint_label: null,
+                },
+                {
+                  index: 3,
+                  title: 'Polish',
+                  objective: 'Final lazy step',
+                  materialized_node_id: null,
+                  status: 'pending',
+                  checkpoint_label: null,
+                },
+              ],
+            },
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    expect(screen.getByTestId('rf-node-review-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('rf-node-review::root')).not.toBeInTheDocument()
+
+    const reviewCard = screen.getByTestId('graph-review-node-root')
+    expect(within(reviewCard).getByText('1.A')).toBeInTheDocument()
+    expect(within(reviewCard).getByText('1.B')).toBeInTheDocument()
+    expect(within(reviewCard).getByText('1.C')).toBeInTheDocument()
+
+    const ghostB = screen.getByTestId('graph-ghost-node-2')
+    expect(within(ghostB).getByText('1.B')).toBeInTheDocument()
+    expect(within(ghostB).getByText('Waiting for 1.A review')).toBeInTheDocument()
+
+    const ghostC = screen.getByTestId('graph-ghost-node-3')
+    expect(within(ghostC).getByText('1.C')).toBeInTheDocument()
+    expect(within(ghostC).getByText('Waiting for 1.B review')).toBeInTheDocument()
+  })
+
   it('removes the review overlay when a branch is collapsed', () => {
     const snapshot = buildSnapshot({
       tree_state: {

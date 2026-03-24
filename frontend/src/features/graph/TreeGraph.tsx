@@ -13,13 +13,16 @@ import {
 import '@xyflow/react/dist/style.css'
 import type { NodeRecord, Snapshot, SplitJobStatus, SplitMode } from '../../api/types'
 import { NodeDetailCard } from '../node/NodeDetailCard'
+import { indexToReviewLetter } from '../../utils/reviewSiblingLabels'
 import {
   GraphNodeActionsProvider,
   type GraphNodeActions,
 } from './graphNodeActionsContext'
 import { GraphNode, type GraphNodeData } from './GraphNode'
+import { GhostGraphNode, type GhostGraphNodeData } from './GhostGraphNode'
 import { ReviewGraphNode, type ReviewGraphNodeData } from './ReviewGraphNode'
 import {
+  buildGhostSiblingPositions,
   buildReviewOverlayPositions,
   buildTreeLayoutPositions,
   TREE_DEPTH_STEP_PX,
@@ -29,6 +32,7 @@ import styles from './TreeGraph.module.css'
 const nodeTypes = {
   graphNode: GraphNode,
   reviewNode: ReviewGraphNode,
+  ghostNode: GhostGraphNode,
 }
 
 const SYNTHETIC_REVIEW_PREFIX = 'review::'
@@ -555,6 +559,36 @@ export function TreeGraph({
     [layout, nodeById, visibleChildrenById],
   )
 
+  // Ghost siblings: unmaterialized pending siblings from review node manifests
+  const ghostSiblingMap = useMemo(() => {
+    const map = new Map<string, { id: string; title: string; index: number }[]>()
+    for (const node of snapshot.tree_state.node_registry) {
+      if (node.node_kind !== 'review' || !node.review_summary?.sibling_manifest) continue
+      if (!node.parent_id) continue
+      const pending = node.review_summary.sibling_manifest
+        .filter((s) => s.status === 'pending')
+        .map((s) => ({
+          id: `ghost::${node.parent_id}::${s.index}`,
+          title: s.title,
+          index: s.index,
+        }))
+      if (pending.length > 0) {
+        map.set(node.parent_id, pending)
+      }
+    }
+    return map
+  }, [snapshot.tree_state.node_registry])
+
+  const ghostPositions = useMemo(
+    () =>
+      buildGhostSiblingPositions({
+        visibleChildrenById,
+        treePositions: layout,
+        ghostSiblings: ghostSiblingMap,
+      }),
+    [layout, visibleChildrenById, ghostSiblingMap],
+  )
+
   const realFlowNodes = useMemo<Node<GraphNodeData>[]>(() => {
     return snapshot.tree_state.node_registry
       .filter((node) => visibleNodeIds.has(node.node_id) && node.node_kind !== 'review')
@@ -625,6 +659,15 @@ export function TreeGraph({
       }
       const realReviewNode = isSynthetic ? null : nodeById.get(reviewId)
       const summary = realReviewNode?.review_summary
+      const checkpointCount = summary?.checkpoint_count ?? 0
+
+      const siblingEntries = (summary?.sibling_manifest ?? []).map((sibling) => ({
+        index: sibling.index,
+        title: sibling.title,
+        letter: indexToReviewLetter(sibling.index),
+        status: sibling.status,
+      }))
+
       nodes.push({
         id: reviewId,
         type: 'reviewNode',
@@ -636,18 +679,46 @@ export function TreeGraph({
           parentNodeId: parent.node_id,
           parentTitle: parent.title,
           parentHierarchicalNumber: parent.hierarchical_number,
-          checkpointCount: summary?.checkpoint_count ?? 0,
+          checkpointCount,
           rollupStatus: summary?.rollup_status ?? null,
           pendingSiblingCount: summary?.pending_sibling_count ?? 0,
+          siblingEntries,
         },
       })
     }
     return nodes
   }, [nodeById, reviewOverlayPositions])
 
-  const flowNodes = useMemo<Array<Node<GraphNodeData | ReviewGraphNodeData>>>(
-    () => [...realFlowNodes, ...reviewFlowNodes],
-    [realFlowNodes, reviewFlowNodes],
+  const ghostFlowNodes = useMemo<Node<GhostGraphNodeData>[]>(() => {
+    const nodes: Node<GhostGraphNodeData>[] = []
+    for (const [parentId, siblings] of ghostSiblingMap) {
+      const parent = nodeById.get(parentId)
+      if (!parent) continue
+      for (const sibling of siblings) {
+        const position = ghostPositions.get(sibling.id)
+        if (!position) continue
+        nodes.push({
+          id: sibling.id,
+          type: 'ghostNode',
+          className: 'nopan',
+          position,
+          draggable: false,
+          selectable: false,
+          data: {
+            parentId,
+            title: sibling.title,
+            siblingIndex: sibling.index,
+            parentHierarchicalNumber: parent.hierarchical_number,
+          },
+        })
+      }
+    }
+    return nodes
+  }, [ghostSiblingMap, ghostPositions, nodeById])
+
+  const flowNodes = useMemo<Array<Node<GraphNodeData | ReviewGraphNodeData | GhostGraphNodeData>>>(
+    () => [...realFlowNodes, ...reviewFlowNodes, ...ghostFlowNodes],
+    [realFlowNodes, reviewFlowNodes, ghostFlowNodes],
   )
 
   const flowEdges = useMemo<Edge<FlowEdgeData>[]>(() => {
@@ -755,8 +826,38 @@ export function TreeGraph({
       return [...inboundEdges, returnEdge]
     })
 
-    return [...structuralEdges, ...reviewEdges]
-  }, [flowNodes, layout, reviewOverlayPositions, snapshot.tree_state.node_registry, visibleChildrenById])
+    // Dashed structural edges from parent to ghost (pending) siblings
+    const ghostEdges = []
+    for (const [parentId, siblings] of ghostSiblingMap) {
+      if (!visibleSet.has(parentId)) continue
+      for (const sibling of siblings) {
+        if (!ghostPositions.has(sibling.id)) continue
+        ghostEdges.push({
+          id: `ghost-edge-${parentId}-${sibling.id}`,
+          source: parentId,
+          target: sibling.id,
+          sourceHandle: 'out',
+          targetHandle: 'in',
+          data: {
+            kind: 'structural' as const,
+            parentId,
+          },
+          type: 'straight',
+          sourcePosition: Position.Bottom,
+          targetPosition: Position.Top,
+          style: {
+            stroke: 'var(--color-text-tertiary)',
+            strokeWidth: 'var(--graph-edge-width)',
+            strokeDasharray: '4 3',
+            strokeLinecap: 'round' as const,
+            opacity: 0.45,
+          },
+        })
+      }
+    }
+
+    return [...structuralEdges, ...reviewEdges, ...ghostEdges]
+  }, [flowNodes, ghostSiblingMap, ghostPositions, layout, reviewOverlayPositions, snapshot.tree_state.node_registry, visibleChildrenById])
 
   const fitKey = useMemo(
     () =>
