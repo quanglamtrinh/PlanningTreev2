@@ -322,13 +322,26 @@ function GraphNodeComponent({ data }: NodeProps) {
         }}
       >
         <div className={styles.header}>
-          <div className={styles.titleWrap}>
-            <p className={styles.title}>
-              <span className={styles.number}>{d.node.hierarchical_number}</span>
-              <span className={styles.separator}>/</span>
-              <span>{d.node.title}</span>
-            </p>
-            <div className={styles.badgeRow}>
+          <div className={styles.titleRow}>
+            <p className={styles.title}>{d.node.title}</p>
+            <div className={styles.titleRowActions}>
+              {d.node.child_ids.length > 0 ? (
+                <button
+                  type="button"
+                  className={`${styles.collapseToggle} ${CONTROL_CLASS_NAME}`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    actions.toggleCollapse(d.node.node_id)
+                  }}
+                  aria-label={d.isCollapsed ? 'Expand node' : 'Collapse node'}
+                  title={d.isCollapsed ? 'Expand node' : 'Collapse node'}
+                >
+                  {d.isCollapsed ? '+' : '-'}
+                  {d.isCollapsed && d.directHiddenChildrenCount > 0 ? (
+                    <span className={styles.hiddenCount}>{d.directHiddenChildrenCount}</span>
+                  ) : null}
+                </button>
+              ) : null}
               {d.node.status === 'locked' ? (
                 <span className={styles.lockIcon} title="Locked" aria-hidden="true">
                   <svg viewBox="0 0 20 20" fill="currentColor">
@@ -340,43 +353,29 @@ function GraphNodeComponent({ data }: NodeProps) {
                   </svg>
                 </span>
               ) : null}
-              <NodeStatusBadge status={d.node.status} />
-            </div>
-          </div>
-          <div className={styles.headerControls}>
-            {d.node.child_ids.length > 0 ? (
+              <NodeStatusBadge
+                status={d.node.status}
+                className={`${styles.graphStatusBadge} ${d.node.status === 'in_progress' ? styles.graphStatusInProgress : ''}`}
+              />
               <button
                 type="button"
-                className={`${styles.collapseToggle} ${CONTROL_CLASS_NAME}`}
+                className={`${styles.infoBtn} ${CONTROL_CLASS_NAME}`}
                 onClick={(event) => {
                   event.stopPropagation()
-                  actions.toggleCollapse(d.node.node_id)
+                  actions.infoClick(d.node.node_id)
                 }}
-                aria-label={d.isCollapsed ? 'Expand node' : 'Collapse node'}
-                title={d.isCollapsed ? 'Expand node' : 'Collapse node'}
+                aria-label="Node details"
+                title="View node details"
               >
-                {d.isCollapsed ? '+' : '-'}
-                {d.isCollapsed && d.directHiddenChildrenCount > 0 ? (
-                  <span className={styles.hiddenCount}>{d.directHiddenChildrenCount}</span>
-                ) : null}
+                i
               </button>
-            ) : null}
-            <button
-              type="button"
-              className={`${styles.infoBtn} ${CONTROL_CLASS_NAME}`}
-              onClick={(event) => {
-                event.stopPropagation()
-                actions.infoClick(d.node.node_id)
-              }}
-              aria-label="Node details"
-              title="View node details"
-            >
-              i
-            </button>
+            </div>
           </div>
+          {d.node.description.trim() ? (
+            <p className={styles.description}>{d.node.description.trim()}</p>
+          ) : null}
+          {d.isSplitting ? <p className={styles.activity}>AI split in progress...</p> : null}
         </div>
-
-        {d.isSplitting ? <p className={styles.activity}>AI split in progress...</p> : null}
       </div>
 
       <div className={`${styles.menuAnchor} ${CONTROL_CLASS_NAME}`} ref={menuRef}>

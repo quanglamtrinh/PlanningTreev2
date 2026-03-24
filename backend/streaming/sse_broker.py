@@ -16,12 +16,17 @@ class _Subscriber:
 
 class EventBroker:
     def __init__(self) -> None:
-        self._queues: dict[tuple[str, str], set[_Subscriber]] = defaultdict(set)
+        self._queues: dict[tuple[str, ...], set[_Subscriber]] = defaultdict(set)
         self._lock = threading.Lock()
 
-    def publish(self, project_id: str, node_id: str, event: dict[str, Any]) -> None:
+    def publish(self, project_id: str, node_id: str, event: dict[str, Any], thread_role: str = "") -> None:
+        keys: list[tuple[str, ...]] = [(project_id, node_id)]
+        if thread_role:
+            keys.append((project_id, node_id, thread_role))
         with self._lock:
-            subscribers = tuple(self._queues.get((project_id, node_id), set()))
+            subscribers: list[_Subscriber] = []
+            for key in keys:
+                subscribers.extend(self._queues.get(key, set()))
         if not subscribers:
             return
         for subscriber in subscribers:
@@ -31,13 +36,14 @@ class EventBroker:
                 copy.deepcopy(event),
             )
 
-    def subscribe(self, project_id: str, node_id: str) -> asyncio.Queue[dict[str, Any]]:
+    def subscribe(self, project_id: str, node_id: str, thread_role: str = "") -> asyncio.Queue[dict[str, Any]]:
         subscriber = _Subscriber(
             queue=asyncio.Queue(),
             loop=asyncio.get_running_loop(),
         )
+        key: tuple[str, ...] = (project_id, node_id, thread_role) if thread_role else (project_id, node_id)
         with self._lock:
-            self._queues[(project_id, node_id)].add(subscriber)
+            self._queues[key].add(subscriber)
         return subscriber.queue
 
     def unsubscribe(
@@ -45,8 +51,9 @@ class EventBroker:
         project_id: str,
         node_id: str,
         queue: asyncio.Queue[dict[str, Any]],
+        thread_role: str = "",
     ) -> None:
-        key = (project_id, node_id)
+        key: tuple[str, ...] = (project_id, node_id, thread_role) if thread_role else (project_id, node_id)
         with self._lock:
             subscribers = self._queues.get(key, set())
             target = next((item for item in subscribers if item.queue is queue), None)

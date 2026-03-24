@@ -1,7 +1,7 @@
 /* ─── Outer wrapper (ReactFlow node container) ─── */
 .wrapper {
   position: relative;
-  width: 220px;
+  width: 300px;
   /* overflow:visible so dropdown & badge can extend outside */
   overflow: visible;
 }
@@ -18,13 +18,13 @@
   opacity: 0;
 }
 
-/* ─── Card — borderless tonal lift (Methodical Canvas) ─── */
+/* ─── Card — single column (title + badge row, description) ─── */
 .card {
-  width: 220px;
+  width: 300px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: 12px 14px 14px;
+  padding: 14px 16px 16px;
+  overflow: visible;
   border: none;
   border-radius: var(--graph-node-radius);
   background: var(--surface-container-lowest);
@@ -43,6 +43,13 @@
   box-shadow:
     var(--graph-node-shadow),
     0 2px 6px rgba(26, 28, 27, 0.05);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }
 
 .card:focus-visible {
@@ -108,27 +115,21 @@
     var(--graph-node-shadow);
 }
 
-/* ─── Header row ─── */
-.header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 6px;
-}
-
-.titleWrap {
+.titleRow {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   min-width: 0;
 }
 
-.badgeRow {
+.titleRowActions {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  flex-shrink: 0;
   flex-wrap: wrap;
-  min-width: 0;
 }
 
 .lockIcon {
@@ -145,54 +146,64 @@
   height: 100%;
 }
 
-/* ─── Header controls (collapse + info) ─── */
-.headerControls {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
-}
-
-/* ─── Info button ─── */
+/* ─── Info (compact circle in title row) ─── */
 .infoBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-subtle);
-  background: transparent;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: color-mix(in srgb, var(--on-surface) 82%, transparent);
   font-size: 11px;
+  font-weight: 600;
+  font-style: italic;
   line-height: 1;
-  color: var(--color-text-tertiary);
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  color: var(--surface-container-lowest);
+  transition: background 0.12s ease, transform 0.12s ease;
   flex-shrink: 0;
 }
 
 .infoBtn:hover {
-  background: var(--color-accent-muted);
-  color: var(--color-accent);
+  background: color-mix(in srgb, var(--on-surface) 92%, transparent);
+  transform: scale(1.04);
 }
 
 .title {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   font-family: var(--font-display);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  line-height: var(--line-height-ui);
-  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  color: #1a1a1a;
   word-break: break-word;
 }
 
-.number {
-  color: var(--color-accent);
-  font-variant-numeric: tabular-nums;
+.graphStatusBadge {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  min-height: 22px;
+  padding: 0 8px;
 }
 
-.separator {
-  margin: 0 4px;
-  color: var(--color-border);
+.graphStatusBadge.graphStatusInProgress {
+  color: #703020;
+  background: #ffddcb;
+}
+
+.description {
+  margin: 0;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #4a4a4a;
+  word-break: break-word;
 }
 
 .activity {
@@ -273,8 +284,8 @@
 /* ─── Dropdown menu (position set inline via portal + fixed; avoids node overlap & RF transform) ─── */
 .dropdown {
   position: fixed;
-  width: 220px;
-  min-width: 220px;
+  width: 300px;
+  min-width: 300px;
   display: flex;
   flex-direction: column;
   gap: 6px;

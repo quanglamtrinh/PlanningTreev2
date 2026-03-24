@@ -45,17 +45,19 @@ function estimateTextLines(value: string, charsPerLine: number): number {
 }
 
 /**
- * Height of the graph card in layout (matches `GraphNode`: number/title line + badge row, padding).
- * Uses the same headline as the UI (`hierarchical_number / title`) so wrapped titles match DOM.
+ * Height of the graph card in layout (matches `GraphNode`: title row + optional description, padding).
+ * Title row shares width with status/actions (~140px); body text uses full card width.
  */
 export function estimateNodeHeight(node: NodeRecord): number {
-  const headline = `${node.hierarchical_number} / ${node.title}`.trim()
-  const titleLines = estimateTextLines(headline, 22)
-  const paddingY = 12 + 14
-  const titleLinePx = 20
-  const gapTitleToBadge = 5
-  const badgeRowPx = 24
-  return paddingY + titleLines * titleLinePx + gapTitleToBadge + badgeRowPx
+  const titleLines = estimateTextLines(node.title.trim(), 20)
+  const desc = node.description.trim()
+  const descLines = desc ? estimateTextLines(desc, 32) : 0
+  const paddingY = 14 + 16
+  const titleLinePx = 21
+  const titleRowPx = Math.max(titleLines * titleLinePx, 26)
+  const gapTitleToDesc = desc ? 8 : 0
+  const descLinePx = 18
+  return paddingY + titleRowPx + gapTitleToDesc + descLines * descLinePx
 }
 
 export function buildTreeLayoutPositions({

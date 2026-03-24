@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
-from backend.errors.app_errors import ConfirmationNotAllowed, InvalidRequest, NodeNotFound
+from backend.errors.app_errors import ConfirmationNotAllowed, InvalidRequest, NodeNotFound, ShapingFrozen
 from backend.services import planningtree_workspace
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import atomic_write_json, iso_now, load_json
@@ -106,7 +106,14 @@ def derive_workflow_summary_from_node_dir(node_dir: Path) -> Dict[str, Any]:
     return derive_workflow_summary_from_artifacts(frame_meta, clarify, spec_meta)
 
 
-def build_detail_state(node_id: str, node_dir: Path) -> Dict[str, Any]:
+def build_detail_state(
+    node_id: str,
+    node_dir: Path,
+    *,
+    exec_state: Dict[str, Any] | None = None,
+    node: Dict[str, Any] | None = None,
+    review_state: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     frame_meta = _load_frame_meta_from_node_dir(node_dir)
     clarify = _load_clarify_from_node_dir(node_dir)
     spec_meta = _load_spec_meta_from_node_dir(node_dir)
@@ -130,6 +137,42 @@ def build_detail_state(node_id: str, node_dir: Path) -> Dict[str, Any]:
         spec_src_frame = spec_meta.get("source_frame_revision", 0)
         spec_stale = spec_src_frame < frame_conf_rev
 
+    # ── Execution-aware derived fields ─────────────────────────────
+    shaping_frozen = exec_state is not None
+    exec_status = exec_state.get("status", "idle") if exec_state else None
+    execution_started = exec_state is not None and exec_status != "idle"
+    execution_completed = exec_status in ("completed", "review_pending", "review_accepted") if exec_status else False
+
+    # can_finish_task: spec confirmed AND leaf AND ready/in_progress AND no execution
+    node_status = (node.get("status") or "") if node else ""
+    child_ids = (node.get("child_ids") or []) if node else []
+    is_leaf = len(child_ids) == 0
+    can_finish_task = (
+        workflow["spec_confirmed"]
+        and is_leaf
+        and node_status in ("ready", "in_progress")
+        and not shaping_frozen
+    )
+
+    # audit_writable: local review (execution completed) OR package audit (rollup accepted)
+    audit_writable = False
+    if execution_completed:
+        audit_writable = True
+    else:
+        review_node_id = (node.get("review_node_id") or "") if node else ""
+        if review_node_id and review_state:
+            rollup = review_state.get("rollup", {})
+            if rollup.get("status") == "accepted":
+                audit_writable = True
+
+    package_audit_ready = audit_writable and not execution_completed
+
+    # review_status: for review nodes only
+    review_status: str | None = None
+    node_kind = (node.get("node_kind") or "") if node else ""
+    if node_kind == "review" and review_state:
+        review_status = review_state.get("rollup", {}).get("status")
+
     return {
         "node_id": node_id,
         "frame_confirmed": workflow["frame_confirmed"],
@@ -139,15 +182,23 @@ def build_detail_state(node_id: str, node_dir: Path) -> Dict[str, Any]:
         "workflow_notice": workflow_notice,
         "generation_error": None,
         "frame_needs_reconfirm": frame_needs_reconfirm,
-        "frame_read_only": active_step != "frame",
-        "clarify_read_only": active_step != "clarify",
+        "frame_read_only": shaping_frozen or active_step != "frame",
+        "clarify_read_only": shaping_frozen or active_step != "clarify",
         "clarify_confirmed": clarify_confirmed_at is not None,
-        "spec_read_only": active_step != "spec",
+        "spec_read_only": shaping_frozen or active_step != "spec",
         "spec_stale": spec_stale,
         "spec_confirmed": workflow["spec_confirmed"],
-        "initial_sha": None,
-        "head_sha": None,
+        "initial_sha": exec_state.get("initial_sha") if exec_state else None,
+        "head_sha": exec_state.get("head_sha") if exec_state else None,
         "changed_files": [],
+        "execution_started": execution_started,
+        "execution_completed": execution_completed,
+        "shaping_frozen": shaping_frozen,
+        "can_finish_task": can_finish_task,
+        "execution_status": exec_status,
+        "audit_writable": audit_writable,
+        "package_audit_ready": package_audit_ready,
+        "review_status": review_status,
     }
 
 
@@ -156,6 +207,12 @@ class NodeDetailService:
         self._storage = storage
         self._tree_service = tree_service
 
+    # ── Shaping freeze guard ─────────────────────────────────────
+
+    def _require_shaping_not_frozen(self, project_id: str, node_id: str, action: str) -> None:
+        if self._storage.execution_state_store.exists(project_id, node_id):
+            raise ShapingFrozen(action)
+
     # ── Detail state (derived from artifact metadata) ─────────────
 
     def get_detail_state(self, project_id: str, node_id: str) -> Dict[str, Any]:
@@ -163,16 +220,27 @@ class NodeDetailService:
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
             node_dir = self._resolve_node_dir(snapshot, node_id)
-            state = build_detail_state(node_id, node_dir)
-            exec_payload = self._storage.execution_state_store.read_state(project_id, node_id)
-            if exec_payload:
-                state["initial_sha"] = exec_payload.get("initial_sha")
-                state["head_sha"] = exec_payload.get("head_sha")
-            return state
+            node_index = snapshot.get("tree_state", {}).get("node_index", {})
+            node = node_index.get(node_id, {})
+            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            # Load review state if this node has a review_node_id or IS a review node
+            review_state = None
+            review_node_id = node.get("review_node_id")
+            if review_node_id:
+                review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
+            elif node.get("node_kind") == "review":
+                review_state = self._storage.review_state_store.read_state(project_id, node_id)
+            return build_detail_state(
+                node_id, node_dir,
+                exec_state=exec_state,
+                node=node,
+                review_state=review_state,
+            )
 
     # ── Confirm frame ─────────────────────────────────────────────
 
     def confirm_frame(self, project_id: str, node_id: str) -> Dict[str, Any]:
+        self._require_shaping_not_frozen(project_id, node_id, "confirm frame")
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
@@ -218,6 +286,7 @@ class NodeDetailService:
 
     def bump_frame_revision(self, project_id: str, node_id: str) -> None:
         """Increment frame revision when frame.md is saved. Called externally."""
+        self._require_shaping_not_frozen(project_id, node_id, "save frame")
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
@@ -247,6 +316,7 @@ class NodeDetailService:
 
     def seed_clarify(self, project_id: str, node_id: str) -> Dict[str, Any]:
         """Create or re-seed clarify.json from unresolved shaping fields in frame.md."""
+        self._require_shaping_not_frozen(project_id, node_id, "seed clarify")
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
@@ -265,6 +335,7 @@ class NodeDetailService:
         self, project_id: str, node_id: str, answers: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """Batch-update answers in clarify.json."""
+        self._require_shaping_not_frozen(project_id, node_id, "update clarify")
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
@@ -321,6 +392,7 @@ class NodeDetailService:
 
     def apply_clarify_to_frame(self, project_id: str, node_id: str) -> Dict[str, Any]:
         """Resolve clarify decisions back into frame.md and bump frame revision."""
+        self._require_shaping_not_frozen(project_id, node_id, "apply clarify")
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
@@ -381,6 +453,7 @@ class NodeDetailService:
     # ── Confirm spec ─────────────────────────────────────────────
 
     def confirm_spec(self, project_id: str, node_id: str) -> Dict[str, Any]:
+        self._require_shaping_not_frozen(project_id, node_id, "confirm spec")
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
