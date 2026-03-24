@@ -6,17 +6,21 @@ from typing import Any
 
 from backend.services import planningtree_workspace
 from backend.services.node_detail_service import derive_workflow_summary_from_node_dir
+from backend.services.execution_gating import derive_execution_workflow_fields
+from backend.storage.storage import Storage
 
 
 class SnapshotViewService:
     """Converts internal snapshots into public API payloads."""
+
+    def __init__(self, storage: Storage | None = None) -> None:
+        self._storage = storage
 
     def to_public_snapshot(
         self,
         project_id: str,
         snapshot: dict[str, Any],
     ) -> dict[str, Any]:
-        del project_id
         public_snapshot = copy.deepcopy(snapshot)
         project = public_snapshot.get("project", {})
         project_path = None
@@ -49,8 +53,10 @@ class SnapshotViewService:
                 node["workflow"] = None
             else:
                 node["workflow"] = self._workflow_summary(
+                    project_id=project_id,
                     project_path=project_path,
                     snapshot=public_snapshot,
+                    node=node,
                     node_id=node_id,
                 )
             registry.append(node)
@@ -60,8 +66,10 @@ class SnapshotViewService:
     def _workflow_summary(
         self,
         *,
+        project_id: str,
         project_path: Path | None,
         snapshot: dict[str, Any],
+        node: dict[str, Any],
         node_id: str,
     ) -> dict[str, Any]:
         if project_path is None or not node_id:
@@ -69,6 +77,11 @@ class SnapshotViewService:
                 "frame_confirmed": False,
                 "active_step": "frame",
                 "spec_confirmed": False,
+                "execution_started": False,
+                "execution_completed": False,
+                "shaping_frozen": False,
+                "can_finish_task": False,
+                "execution_status": None,
             }
         node_dir = planningtree_workspace.resolve_node_dir(project_path, snapshot, node_id)
         if node_dir is None:
@@ -76,5 +89,32 @@ class SnapshotViewService:
                 "frame_confirmed": False,
                 "active_step": "frame",
                 "spec_confirmed": False,
+                "execution_started": False,
+                "execution_completed": False,
+                "shaping_frozen": False,
+                "can_finish_task": False,
+                "execution_status": None,
             }
-        return derive_workflow_summary_from_node_dir(node_dir)
+        workflow = derive_workflow_summary_from_node_dir(node_dir)
+        if self._storage is None:
+            return workflow
+
+        review_state = None
+        review_node_id = str(node.get("review_node_id") or "").strip()
+        if review_node_id:
+            review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
+        exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+        workflow.update(
+            derive_execution_workflow_fields(
+                self._storage,
+                project_id,
+                node_id,
+                workflow=workflow,
+                node=node,
+                exec_state=exec_state,
+                review_state=review_state,
+            )
+        )
+        for field in ("audit_writable", "package_audit_ready", "review_status"):
+            workflow.pop(field, None)
+        return workflow

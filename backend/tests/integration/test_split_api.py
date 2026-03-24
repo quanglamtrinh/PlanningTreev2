@@ -151,11 +151,12 @@ def test_snapshot_includes_node_workflow_summary(client, tmp_path: Path) -> None
     payload = snapshot.json()
     root = next(node for node in payload["tree_state"]["node_registry"] if node["node_id"] == root_id)
 
-    assert root["workflow"] == {
-        "frame_confirmed": True,
-        "active_step": "spec",
-        "spec_confirmed": False,
-    }
+    assert root["workflow"]["frame_confirmed"] is True
+    assert root["workflow"]["active_step"] == "spec"
+    assert root["workflow"]["spec_confirmed"] is False
+    assert root["workflow"]["execution_started"] is False
+    assert root["workflow"]["execution_completed"] is False
+    assert root["workflow"]["shaping_frozen"] is False
 
 
 def test_legacy_planning_routes_remain_absent_after_split_rebuild(client, tmp_path: Path) -> None:

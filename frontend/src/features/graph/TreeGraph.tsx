@@ -168,6 +168,35 @@ function defaultCollapsedForStatus(status: NodeRecord['status']): boolean {
   return status === 'locked' || status === 'done'
 }
 
+/**
+ * 1-based index among visible siblings under the same parent (same "layer" in the graph).
+ * Top-level roots use `effectiveRootIds` order when the full forest is shown; subtree mode uses a single root.
+ */
+function siblingLayerIndex1Based(
+  nodeId: string,
+  visibleNodeIds: Set<string>,
+  parentById: Map<string, string | null>,
+  visibleChildrenById: Map<string, string[]>,
+  effectiveRootIds: string[],
+  graphViewRootId: string | null,
+): number {
+  const parentId = parentById.get(nodeId) ?? null
+  const parentVisible = parentId !== null && visibleNodeIds.has(parentId)
+
+  if (parentVisible) {
+    const siblings = visibleChildrenById.get(parentId) ?? []
+    const idx = siblings.indexOf(nodeId)
+    return idx >= 0 ? idx + 1 : 1
+  }
+
+  const roots =
+    graphViewRootId !== null && visibleNodeIds.has(graphViewRootId)
+      ? [graphViewRootId]
+      : effectiveRootIds.filter((id) => visibleNodeIds.has(id))
+  const idx = roots.indexOf(nodeId)
+  return idx >= 0 ? idx + 1 : 1
+}
+
 function findVisibleSelectionFallback(
   selectedNodeId: string | null,
   visibleNodeIds: Set<string>,
@@ -430,6 +459,30 @@ export function TreeGraph({
     visibleChildrenById,
   ])
 
+  const siblingLayerIndexByNodeId = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const id of visibleNodeIds) {
+      map.set(
+        id,
+        siblingLayerIndex1Based(
+          id,
+          visibleNodeIds,
+          parentById,
+          visibleChildrenById,
+          effectiveRootIds,
+          graphViewRootId,
+        ),
+      )
+    }
+    return map
+  }, [
+    effectiveRootIds,
+    graphViewRootId,
+    parentById,
+    visibleChildrenById,
+    visibleNodeIds,
+  ])
+
   const selectedNode = useMemo(() => {
     if (!rootNode) {
       return null
@@ -514,6 +567,7 @@ export function TreeGraph({
         selectable: false,
         data: {
           node,
+          siblingLayerIndex: siblingLayerIndexByNodeId.get(node.node_id) ?? 1,
           isCurrent: snapshot.tree_state.active_node_id === node.node_id,
           isSelected: selectedNode?.node_id === node.node_id,
           isCollapsed: collapsedById.get(node.node_id) ?? false,
@@ -546,6 +600,7 @@ export function TreeGraph({
     graphViewRootId,
     layout,
     selectedNode?.node_id,
+    siblingLayerIndexByNodeId,
     splitStatus,
     splittingNodeId,
     snapshot.tree_state.active_node_id,
@@ -631,28 +686,18 @@ export function TreeGraph({
       }
 
       const inboundEdges = childIds.map((childId) => {
-        const childPosition = layout.get(childId)
-        let sourcePosition = Position.Top
-        if (childPosition) {
-          if (childPosition.x < reviewPosition.x - 16) {
-            sourcePosition = Position.Right
-          } else if (childPosition.x > reviewPosition.x + 16) {
-            sourcePosition = Position.Left
-          }
-        }
-
         return {
           id: `review-child-${childId}-${parentId}`,
           source: childId,
           target: reviewId,
-          sourceHandle: 'out',
+          sourceHandle: 'to-review',
           targetHandle: 'in',
           data: {
             kind: 'review-child' as const,
             parentId,
           },
           type: 'straight',
-          sourcePosition,
+          sourcePosition: Position.Top,
           targetPosition: Position.Bottom,
           markerEnd: {
             type: MarkerType.ArrowClosed,

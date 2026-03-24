@@ -20,6 +20,7 @@ from backend.services.chat_service import ChatService
 from backend.services.codex_account_service import CodexAccountService
 from backend.services.clarify_generation_service import ClarifyGenerationService
 from backend.services.frame_generation_service import FrameGenerationService
+from backend.services.finish_task_service import FinishTaskService
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.spec_generation_service import SpecGenerationService
 from backend.services.node_document_service import NodeDocumentService
@@ -38,7 +39,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     paths = build_app_paths(data_root)
     storage = Storage(paths)
     tree_service = TreeService()
-    snapshot_view_service = SnapshotViewService()
+    snapshot_view_service = SnapshotViewService(storage)
     project_service = ProjectService(storage, snapshot_view_service, chat_service=None)
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
@@ -81,6 +82,14 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_event_broker=chat_event_broker,
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),
+    )
+    finish_task_service = FinishTaskService(
+        storage=storage,
+        tree_service=tree_service,
+        node_detail_service=node_detail_service,
+        codex_client=codex_client,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=get_chat_timeout(),
     )
     project_service._chat_service = chat_service
 
@@ -132,6 +141,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.spec_generation_service = spec_generation_service
     app.state.chat_service = chat_service
     app.state.chat_event_broker = chat_event_broker
+    app.state.finish_task_service = finish_task_service
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

@@ -15,6 +15,7 @@ from backend.errors.app_errors import (
     NodeNotFound,
     ThreadReadOnly,
 )
+from backend.services.execution_gating import audit_writable
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now, new_id
 from backend.storage.storage import Storage
@@ -42,7 +43,7 @@ class ChatService:
         self._chat_event_broker = chat_event_broker
         self._chat_timeout = int(chat_timeout)
         self._max_message_chars = max_message_chars
-        self._live_turns: set[tuple[str, str, str]] = set()
+        self._live_turns: set[tuple[str, str, str, str]] = set()
         self._live_turns_lock = threading.Lock()
 
     def get_session(
@@ -111,7 +112,7 @@ class ChatService:
             )
 
             with self._live_turns_lock:
-                self._live_turns.add((project_id, node_id, turn_id))
+                self._live_turns.add((project_id, node_id, thread_role, turn_id))
 
         self._chat_event_broker.publish(
             project_id,
@@ -148,6 +149,8 @@ class ChatService:
         self, project_id: str, node_id: str, thread_role: str = "ask_planning"
     ) -> dict[str, Any]:
         self._validate_node_exists(project_id, node_id)
+        if thread_role == "audit":
+            raise ThreadReadOnly("audit", "Audit history is immutable and cannot be reset.")
         self._check_thread_writable(project_id, node_id, thread_role)
         with self._storage.project_lock(project_id):
             session = self._storage.chat_state_store.read_session(
@@ -155,11 +158,7 @@ class ChatService:
             )
             if session.get("active_turn_id"):
                 with self._live_turns_lock:
-                    active = any(
-                        live_turn
-                        for live_turn in self._live_turns
-                        if live_turn[0] == project_id and live_turn[1] == node_id
-                    )
+                    active = (project_id, node_id, thread_role, str(session["active_turn_id"])) in self._live_turns
                 if active:
                     raise ChatTurnAlreadyActive()
             return self._storage.chat_state_store.clear_session(
@@ -355,7 +354,7 @@ class ChatService:
                 )
         finally:
             with self._live_turns_lock:
-                self._live_turns.discard((project_id, node_id, turn_id))
+                self._live_turns.discard((project_id, node_id, thread_role, turn_id))
 
     def _handle_delta(
         self,
@@ -421,22 +420,15 @@ class ChatService:
 
         if thread_role == "audit":
             exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
-            if exec_state is not None:
-                # Local review case: writable when execution completed or later
-                status = exec_state.get("status", "idle")
-                if status in ("completed", "review_pending", "review_accepted"):
-                    return
-            # Package audit case: check if parent's review node rollup is accepted
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_index = snapshot.get("tree_state", {}).get("node_index", {})
             node = node_index.get(node_id, {})
+            review_state = None
             review_node_id = node.get("review_node_id")
             if review_node_id:
                 review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
-                if review_state:
-                    rollup = review_state.get("rollup", {})
-                    if rollup.get("status") == "accepted":
-                        return
+            if audit_writable(self._storage, project_id, node, exec_state, review_state):
+                return
             raise ThreadReadOnly("audit", "Audit is not yet writable for this node.")
 
         if thread_role == "integration":
@@ -535,7 +527,7 @@ class ChatService:
         if not active_turn_id:
             return False
         with self._live_turns_lock:
-            if (project_id, node_id, str(active_turn_id)) in self._live_turns:
+            if (project_id, node_id, thread_role, str(active_turn_id)) in self._live_turns:
                 return False
 
         for message in reversed(session.get("messages", [])):

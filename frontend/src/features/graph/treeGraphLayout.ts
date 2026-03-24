@@ -2,23 +2,43 @@ import type { NodeRecord } from '../../api/types'
 
 // ─── Layout constants (vertical tree: root top → children below, siblings left–right) ───
 // Vertical distance between depth levels (parent row → child row).
-// Tuned for org-chart–like edges. Large enough that parent + fixed-gap review + review card
-// usually clears the child row (see buildReviewOverlayPositions).
-const DEPTH_STEP_PX = 340
+// Must be large enough that parent card (up to ~260px) + review card (96px) + 2×MIN_REVIEW_GAP
+// all fit comfortably. At 560px: even a 260px parent leaves 300px for review+gaps (102px each).
+const DEPTH_STEP_PX = 560
 
 /** Exported for TreeGraph position fallback when layout map misses a node. */
 export const TREE_DEPTH_STEP_PX = DEPTH_STEP_PX
 
 /**
- * Vertical gap from the **bottom** of the parent card to the **top** of the review card.
- * Review `y` is always `parentBottom + REVIEW_PARENT_GAP_PX` (no mixing with child-row clamps).
+ * @deprecated Kept for test compatibility — review Y is now computed as the midpoint between
+ * parent bottom and children top. This value is no longer used in the layout logic.
  */
-export const REVIEW_PARENT_GAP_PX = 48
+export const REVIEW_PARENT_GAP_PX = 0
 
 /**
- * @deprecated No longer used for review Y (parent→review gap is fixed). Kept for tests/docs tuning.
+ * @deprecated No longer used for review Y. Kept for tests/docs tuning.
  */
 export const REVIEW_CHILD_TOP_CLEARANCE_PX = 152
+
+/**
+ * Estimated height of the review card (eyebrow + title + subtitle + padding).
+ * Used to vertically center the review card in the gap between parent and children.
+ */
+const REVIEW_CARD_HEIGHT_PX = 96
+
+/**
+ * Minimum breathing room above and below the review card within the parent→children gap.
+ */
+const MIN_REVIEW_GAP_PX = 48
+
+/** Matches `GraphNode` card width (`GraphNode.module.css` `.card`). */
+export const GRAPH_NODE_WIDTH_PX = 270
+
+/** Matches `GraphNode` `.wrapper` `margin-bottom` (space below each node in the canvas). */
+export const GRAPH_NODE_MARGIN_BOTTOM_PX = 10
+
+/** Matches `ReviewGraphNode` card width (`ReviewGraphNode.module.css`). */
+export const REVIEW_NODE_WIDTH_PX = 220
 
 // Width of one horizontal "unit" in pixels. Subtree width is measured in these
 // units (same packing math as before, applied on X for siblings).
@@ -116,8 +136,9 @@ export function buildTreeLayoutPositions({
     }
 
     const nodeUnits = computeUnits(nodeId)
+    const centerX = (startUnit + nodeUnits / 2) * HORIZONTAL_UNIT_PX
     positions.set(nodeId, {
-      x: (startUnit + nodeUnits / 2) * HORIZONTAL_UNIT_PX,
+      x: centerX - GRAPH_NODE_WIDTH_PX / 2,
       y: Math.max(0, node.depth - baseDepth) * DEPTH_STEP_PX,
     })
 
@@ -187,14 +208,25 @@ export function buildReviewOverlayPositions({
     }
 
     const parentY = parentPosition.y
-    const parentBottom = parentY + estimateNodeHeight(parentRecord)
-    // Fixed gap from parent card bottom → review card top (REVIEW_PARENT_GAP_PX).
-    const reviewY = parentBottom + REVIEW_PARENT_GAP_PX
+    const parentBottom = parentY + estimateNodeHeight(parentRecord) + GRAPH_NODE_MARGIN_BOTTOM_PX
+
+    // Top edge of the children row (min Y across all visible direct children).
+    const childrenTop = Math.min(...directChildYs)
+
+    // Place review card vertically centered in the gap between parent bottom and children top,
+    // but always keep at least MIN_REVIEW_GAP_PX of breathing room on each side.
+    const midpoint = (parentBottom + childrenTop) / 2
+    const reviewY = Math.min(
+      Math.max(
+        midpoint - REVIEW_CARD_HEIGHT_PX / 2,
+        parentBottom + MIN_REVIEW_GAP_PX,
+      ),
+      childrenTop - REVIEW_CARD_HEIGHT_PX - MIN_REVIEW_GAP_PX,
+    )
 
     reviewPositions.set(`review::${parentId}`, {
-      // Tree layout centers the parent over its direct-child block, so the
-      // parent's x-coordinate is already the block center we want for review.
-      x: parentPosition.x,
+      // Center the narrower review card (220px) under the graph node (270px).
+      x: parentPosition.x + (GRAPH_NODE_WIDTH_PX - REVIEW_NODE_WIDTH_PX) / 2,
       y: reviewY,
     })
   }

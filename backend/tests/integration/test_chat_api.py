@@ -33,6 +33,30 @@ class SlowCheckpointCodexClient:
         return {"stdout": self.response_text, "thread_id": thread_id}
 
 
+class ExecutionCodexClient:
+    def __init__(self, *, response_text: str = "Execution complete") -> None:
+        self.response_text = response_text
+        self.started_threads: list[str] = []
+
+    def start_thread(self, **_: object) -> dict[str, str]:
+        thread_id = f"exec-thread-{len(self.started_threads) + 1}"
+        self.started_threads.append(thread_id)
+        return {"thread_id": thread_id}
+
+    def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        del prompt
+        thread_id = str(kwargs.get("thread_id", ""))
+        cwd = kwargs.get("cwd")
+        if isinstance(cwd, str) and cwd:
+            from pathlib import Path
+
+            Path(cwd, "integration-finish-task.txt").write_text("done\n", encoding="utf-8")
+        return {"stdout": self.response_text, "thread_id": thread_id}
+
+
 def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
     resp = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
     assert resp.status_code == 200
@@ -72,6 +96,16 @@ def test_reset_session(client: TestClient, workspace_root):
     assert resp.status_code == 200
     session = resp.json()
     assert session["messages"] == []
+
+
+def test_chat_session_honors_thread_role_query(client: TestClient, workspace_root):
+    project_id, root_id = _setup_project(client, workspace_root)
+    resp = client.get(
+        f"/v1/projects/{project_id}/nodes/{root_id}/chat/session",
+        params={"thread_role": "audit"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["thread_role"] == "audit"
 
 
 def test_reset_nonexistent_node(client: TestClient, workspace_root):
@@ -122,3 +156,57 @@ def test_get_session_returns_partial_content_mid_stream(client: TestClient, work
 
     assert completed_session is not None
     assert completed_session["messages"][1]["content"] == "Hello from AI"
+
+
+def test_finish_task_route_returns_detail_state_and_creates_execution_session(
+    client: TestClient,
+    workspace_root,
+):
+    client.app.state.finish_task_service._codex_client = ExecutionCodexClient()
+    project_id, root_id = _setup_project(client, workspace_root)
+
+    frame_resp = client.put(
+        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        json={"content": "# Task Title\nTask\n\n# Objective\nDo it\n"},
+    )
+    assert frame_resp.status_code == 200
+    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame").status_code == 200
+
+    spec_resp = client.put(
+        f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec",
+        json={"content": "# Spec\nImplement it\n"},
+    )
+    assert spec_resp.status_code == 200
+    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-spec").status_code == 200
+
+    snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
+    snapshot["tree_state"]["node_index"][root_id]["status"] = "ready"
+    client.app.state.storage.project_store.save_snapshot(project_id, snapshot)
+
+    detail_before = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/detail-state").json()
+    assert detail_before["can_finish_task"] is True
+
+    finish_resp = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
+    assert finish_resp.status_code == 200
+    payload = finish_resp.json()
+    assert payload["execution_started"] is True
+    assert payload["shaping_frozen"] is True
+
+    deadline = time.time() + 2.0
+    execution_session = None
+    while time.time() < deadline:
+        session_resp = client.get(
+            f"/v1/projects/{project_id}/nodes/{root_id}/chat/session",
+            params={"thread_role": "execution"},
+        )
+        assert session_resp.status_code == 200
+        session = session_resp.json()
+        if session["messages"]:
+            execution_session = session
+            if session["messages"][0]["status"] in {"completed", "error"}:
+                break
+        time.sleep(0.02)
+
+    assert execution_session is not None
+    assert execution_session["thread_role"] == "execution"
+    assert execution_session["messages"][0]["role"] == "assistant"

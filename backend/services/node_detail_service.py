@@ -5,7 +5,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
-from backend.errors.app_errors import ConfirmationNotAllowed, InvalidRequest, NodeNotFound, ShapingFrozen
+from backend.errors.app_errors import ConfirmationNotAllowed, InvalidRequest, NodeNotFound
+from backend.services.execution_gating import (
+    AUDIT_FRAME_RECORD_MESSAGE_ID,
+    AUDIT_SPEC_RECORD_MESSAGE_ID,
+    append_immutable_audit_record,
+    derive_execution_workflow_fields,
+    require_shaping_not_frozen,
+)
 from backend.services import planningtree_workspace
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import atomic_write_json, iso_now, load_json
@@ -107,6 +114,8 @@ def derive_workflow_summary_from_node_dir(node_dir: Path) -> Dict[str, Any]:
 
 
 def build_detail_state(
+    storage: Storage,
+    project_id: str,
     node_id: str,
     node_dir: Path,
     *,
@@ -138,40 +147,16 @@ def build_detail_state(
         spec_stale = spec_src_frame < frame_conf_rev
 
     # ── Execution-aware derived fields ─────────────────────────────
-    shaping_frozen = exec_state is not None
-    exec_status = exec_state.get("status", "idle") if exec_state else None
-    execution_started = exec_state is not None and exec_status != "idle"
-    execution_completed = exec_status in ("completed", "review_pending", "review_accepted") if exec_status else False
-
-    # can_finish_task: spec confirmed AND leaf AND ready/in_progress AND no execution
-    node_status = (node.get("status") or "") if node else ""
-    child_ids = (node.get("child_ids") or []) if node else []
-    is_leaf = len(child_ids) == 0
-    can_finish_task = (
-        workflow["spec_confirmed"]
-        and is_leaf
-        and node_status in ("ready", "in_progress")
-        and not shaping_frozen
+    execution_fields = derive_execution_workflow_fields(
+        storage,
+        project_id,
+        node_id,
+        workflow=workflow,
+        node=node,
+        exec_state=exec_state,
+        review_state=review_state,
     )
-
-    # audit_writable: local review (execution completed) OR package audit (rollup accepted)
-    audit_writable = False
-    if execution_completed:
-        audit_writable = True
-    else:
-        review_node_id = (node.get("review_node_id") or "") if node else ""
-        if review_node_id and review_state:
-            rollup = review_state.get("rollup", {})
-            if rollup.get("status") == "accepted":
-                audit_writable = True
-
-    package_audit_ready = audit_writable and not execution_completed
-
-    # review_status: for review nodes only
-    review_status: str | None = None
-    node_kind = (node.get("node_kind") or "") if node else ""
-    if node_kind == "review" and review_state:
-        review_status = review_state.get("rollup", {}).get("status")
+    shaping_frozen = bool(execution_fields["shaping_frozen"])
 
     return {
         "node_id": node_id,
@@ -191,14 +176,14 @@ def build_detail_state(
         "initial_sha": exec_state.get("initial_sha") if exec_state else None,
         "head_sha": exec_state.get("head_sha") if exec_state else None,
         "changed_files": [],
-        "execution_started": execution_started,
-        "execution_completed": execution_completed,
+        "execution_started": execution_fields["execution_started"],
+        "execution_completed": execution_fields["execution_completed"],
         "shaping_frozen": shaping_frozen,
-        "can_finish_task": can_finish_task,
-        "execution_status": exec_status,
-        "audit_writable": audit_writable,
-        "package_audit_ready": package_audit_ready,
-        "review_status": review_status,
+        "can_finish_task": execution_fields["can_finish_task"],
+        "execution_status": execution_fields["execution_status"],
+        "audit_writable": execution_fields["audit_writable"],
+        "package_audit_ready": execution_fields["package_audit_ready"],
+        "review_status": execution_fields["review_status"],
     }
 
 
@@ -210,8 +195,7 @@ class NodeDetailService:
     # ── Shaping freeze guard ─────────────────────────────────────
 
     def _require_shaping_not_frozen(self, project_id: str, node_id: str, action: str) -> None:
-        if self._storage.execution_state_store.exists(project_id, node_id):
-            raise ShapingFrozen(action)
+        require_shaping_not_frozen(self._storage, project_id, node_id, action)
 
     # ── Detail state (derived from artifact metadata) ─────────────
 
@@ -231,7 +215,10 @@ class NodeDetailService:
             elif node.get("node_kind") == "review":
                 review_state = self._storage.review_state_store.read_state(project_id, node_id)
             return build_detail_state(
-                node_id, node_dir,
+                self._storage,
+                project_id,
+                node_id,
+                node_dir,
                 exec_state=exec_state,
                 node=node,
                 review_state=review_state,
@@ -279,8 +266,14 @@ class NodeDetailService:
 
             # Seed clarify from unresolved shaping fields
             self._seed_clarify_internal(node_dir, content, frame_meta)
-
-            return self.get_detail_state(project_id, node_id)
+        append_immutable_audit_record(
+            self._storage,
+            project_id,
+            node_id,
+            message_id=AUDIT_FRAME_RECORD_MESSAGE_ID,
+            content=self._build_frame_audit_record(content),
+        )
+        return self.get_detail_state(project_id, node_id)
 
     # ── Bump revision on save (called by document service) ────────
 
@@ -478,8 +471,14 @@ class NodeDetailService:
             spec_meta["source_frame_revision"] = frame_meta.get("confirmed_revision", 0)
             spec_meta["confirmed_at"] = iso_now()
             self._save_spec_meta(node_dir, spec_meta)
-
-            return self.get_detail_state(project_id, node_id)
+        append_immutable_audit_record(
+            self._storage,
+            project_id,
+            node_id,
+            message_id=AUDIT_SPEC_RECORD_MESSAGE_ID,
+            content=self._build_spec_audit_record(content),
+        )
+        return self.get_detail_state(project_id, node_id)
 
     # ── Internal helpers ──────────────────────────────────────────
 
@@ -543,6 +542,14 @@ class NodeDetailService:
 
     def _save_clarify(self, node_dir: Path, clarify: Dict[str, Any]) -> None:
         atomic_write_json(node_dir / CLARIFY_FILE, clarify)
+
+    def _build_frame_audit_record(self, content: str) -> str:
+        body = content.strip() or "(empty confirmed frame)"
+        return "Canonical confirmed frame snapshot:\n\n```markdown\n" + body + "\n```"
+
+    def _build_spec_audit_record(self, content: str) -> str:
+        body = content.strip() or "(empty confirmed spec)"
+        return "Canonical confirmed spec snapshot:\n\n```markdown\n" + body + "\n```"
 
     def _seed_clarify_internal(
         self, node_dir: Path, frame_content: str, frame_meta: Dict[str, Any]

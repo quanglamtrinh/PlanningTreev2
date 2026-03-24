@@ -188,7 +188,10 @@ vi.mock('../../src/api/client', () => ({
 
 import type { NodeRecord, Snapshot } from '../../src/api/types'
 import { TreeGraph } from '../../src/features/graph/TreeGraph'
-import { estimateNodeHeight, REVIEW_PARENT_GAP_PX } from '../../src/features/graph/treeGraphLayout'
+import {
+  estimateNodeHeight,
+  GRAPH_NODE_MARGIN_BOTTOM_PX,
+} from '../../src/features/graph/treeGraphLayout'
 import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useClarifyStore } from '../../src/stores/clarify-store'
@@ -581,11 +584,11 @@ describe('TreeGraph', () => {
     expect(renderedEdges('review-return')).toHaveLength(1)
     expect(screen.getByTestId('rf-edge-review-child-child-1-root')).toHaveAttribute('data-edge-source', 'child-1')
     expect(screen.getByTestId('rf-edge-review-child-child-1-root')).toHaveAttribute('data-edge-target', 'review::root')
-    expect(screen.getByTestId('rf-edge-review-child-child-1-root')).toHaveAttribute('data-edge-source-position', 'right')
+    expect(screen.getByTestId('rf-edge-review-child-child-1-root')).toHaveAttribute('data-edge-source-position', 'top')
     expect(screen.getByTestId('rf-edge-review-child-child-1-root')).toHaveAttribute('data-edge-target-position', 'bottom')
     expect(screen.getByTestId('rf-edge-review-child-child-1-root')).toHaveAttribute('data-edge-dashed', 'false')
     expect(screen.getByTestId('rf-edge-review-child-child-2-root')).toHaveAttribute('data-edge-source-position', 'top')
-    expect(screen.getByTestId('rf-edge-review-child-child-3-root')).toHaveAttribute('data-edge-source-position', 'left')
+    expect(screen.getByTestId('rf-edge-review-child-child-3-root')).toHaveAttribute('data-edge-source-position', 'top')
     expect(screen.getByTestId('rf-edge-review-return-root')).toHaveAttribute('data-edge-source', 'review::root')
     expect(screen.getByTestId('rf-edge-review-return-root')).toHaveAttribute('data-edge-target', 'root')
     expect(screen.getByTestId('rf-edge-review-return-root')).toHaveAttribute('data-edge-source-position', 'top')
@@ -838,9 +841,11 @@ describe('TreeGraph', () => {
 
     const parentRecord = snapshot.tree_state.node_registry.find((n) => n.node_id === 'root')
     expect(parentRecord).toBeDefined()
-    expect(reviewY).toBe(parentY + estimateNodeHeight(parentRecord!) + REVIEW_PARENT_GAP_PX)
-    expect(reviewY).toBeGreaterThan(parentY)
+    const parentBottom = parentY + estimateNodeHeight(parentRecord!) + GRAPH_NODE_MARGIN_BOTTOM_PX
+    // Review is centered between parent bottom and the children row.
+    expect(reviewY).toBeGreaterThan(parentBottom)
     expect(reviewY).toBeLessThan(directChildY)
+    expect(reviewY).toBeGreaterThan(parentY)
     expect(grandchildY).toBeGreaterThan(directChildY)
   })
 })

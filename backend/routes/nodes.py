@@ -74,6 +74,11 @@ async def get_detail_state(request: Request, project_id: str, node_id: str) -> d
     return request.app.state.node_detail_service.get_detail_state(project_id, node_id)
 
 
+@router.post("/projects/{project_id}/nodes/{node_id}/finish-task")
+async def finish_task(request: Request, project_id: str, node_id: str) -> dict:
+    return request.app.state.finish_task_service.finish_task(project_id, node_id)
+
+
 @router.post("/projects/{project_id}/nodes/{node_id}/confirm-frame")
 async def confirm_frame(request: Request, project_id: str, node_id: str) -> dict:
     detail_state = request.app.state.node_detail_service.confirm_frame(project_id, node_id)

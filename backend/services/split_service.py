@@ -24,6 +24,7 @@ from backend.errors.app_errors import (
     SplitNotAllowed,
 )
 from backend.services import planningtree_workspace
+from backend.services.execution_gating import require_shaping_not_frozen
 from backend.services.node_detail_service import (
     _load_frame_meta_from_node_dir,
     derive_workflow_summary_from_node_dir,
@@ -59,6 +60,7 @@ class SplitService:
             node = node_by_id.get(node_id)
             if node is None:
                 raise NodeNotFound(node_id)
+            require_shaping_not_frozen(self._storage, project_id, node_id, "split")
             self._validate_split_eligibility(snapshot, node, node_by_id)
             split_state = self._reconcile_stale_job_locked(project_id, self._storage.split_state_store.read_state(project_id))
             if split_state.get("active_job"):

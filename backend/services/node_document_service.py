@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.errors.app_errors import InvalidRequest, NodeNotFound
+from backend.services.execution_gating import require_shaping_not_frozen
 from backend.services import planningtree_workspace
 from backend.storage.file_utils import atomic_write_text, load_text
 from backend.storage.storage import Storage
@@ -48,6 +49,12 @@ class NodeDocumentService:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             self._require_node(snapshot, node_id)
+            require_shaping_not_frozen(
+                self._storage,
+                project_id,
+                node_id,
+                f"save {document_kind}",
+            )
             project_path = self._project_path_from_snapshot(snapshot)
             node_dir = planningtree_workspace.resolve_node_dir(project_path, snapshot, node_id)
             if node_dir is None:

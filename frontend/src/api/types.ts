@@ -82,6 +82,11 @@ export interface NodeWorkflowSummary {
   frame_confirmed: boolean
   active_step: WorkflowStep
   spec_confirmed: boolean
+  execution_started?: boolean
+  execution_completed?: boolean
+  shaping_frozen?: boolean
+  can_finish_task?: boolean
+  execution_status?: ExecutionStatus | null
 }
 
 export interface ProjectRecord {
