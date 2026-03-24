@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { DetailState } from '../api/types'
+import type { DetailState, Snapshot } from '../api/types'
 import { api } from '../api/client'
 import { mergeMockDetailState } from '../dev/mockDetailState'
 import { useProjectStore } from './project-store'
@@ -21,6 +21,8 @@ type DetailStateStoreState = {
   confirmFrame: (projectId: string, nodeId: string) => Promise<DetailState>
   confirmSpec: (projectId: string, nodeId: string) => Promise<DetailState>
   finishTask: (projectId: string, nodeId: string) => Promise<void>
+  acceptLocalReview: (projectId: string, nodeId: string, summary: string) => Promise<void>
+  acceptRollupReview: (projectId: string, reviewNodeId: string) => Promise<void>
   /** Stub until POST .../git/init exists */
   initGit: (projectId: string) => Promise<void>
   /** Stub until POST .../reset-workspace exists */
@@ -37,13 +39,32 @@ function toErrorMessage(error: unknown): string {
   return String(error)
 }
 
-function syncProjectSnapshot(projectId: string) {
-  void api.getSnapshot(projectId).then((snapshot) => {
+function snapshotContainsNode(snapshot: Snapshot, nodeId: string | null | undefined): boolean {
+  if (!nodeId) {
+    return false
+  }
+  return snapshot.tree_state.node_registry.some((node) => node.node_id === nodeId)
+}
+
+async function syncProjectSnapshot(
+  projectId: string,
+  preferredSelectedNodeId?: string | null,
+): Promise<Snapshot | null> {
+  try {
+    const snapshot = await api.getSnapshot(projectId)
     useProjectStore.setState((prev) => ({
       snapshot,
-      selectedNodeId: prev.selectedNodeId,
+      selectedNodeId:
+        (preferredSelectedNodeId && snapshotContainsNode(snapshot, preferredSelectedNodeId))
+          ? preferredSelectedNodeId
+          : (prev.selectedNodeId && snapshotContainsNode(snapshot, prev.selectedNodeId))
+            ? prev.selectedNodeId
+            : snapshot.tree_state.active_node_id ?? snapshot.tree_state.root_node_id,
     }))
-  }).catch(() => undefined)
+    return snapshot
+  } catch {
+    return null
+  }
 }
 
 const executionPollTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
@@ -118,7 +139,7 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
         }, EXECUTION_POLL_INTERVAL_MS)
         executionPollTimers.set(key, timer)
       } else {
-        syncProjectSnapshot(projectId)
+        void syncProjectSnapshot(projectId)
       }
     } catch (error) {
       set((s) => ({
@@ -156,7 +177,7 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
         entries: { ...s.entries, [key]: state },
         errors: { ...s.errors, [key]: '' },
       }))
-      syncProjectSnapshot(projectId)
+      void syncProjectSnapshot(projectId)
       if (state.execution_status === 'executing') {
         stopExecutionPolling(key)
         const timer = globalThis.setTimeout(() => {
@@ -173,6 +194,57 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
       }))
     } finally {
       set((s) => ({ finishingTask: { ...s.finishingTask, [key]: false } }))
+    }
+  },
+
+  async acceptLocalReview(projectId: string, nodeId: string, summary: string) {
+    const key = stateKey(projectId, nodeId)
+    try {
+      const response = await api.acceptLocalReview(projectId, nodeId, summary)
+      const raw = await api.getDetailState(projectId, nodeId)
+      const state = mergeMockDetailState(raw)
+      set((s) => ({
+        entries: { ...s.entries, [key]: state },
+        errors: { ...s.errors, [key]: '' },
+      }))
+      await syncProjectSnapshot(projectId, response.activated_sibling_id)
+    } catch (error) {
+      set((s) => ({
+        errors: { ...s.errors, [key]: toErrorMessage(error) },
+      }))
+    }
+  },
+
+  async acceptRollupReview(projectId: string, reviewNodeId: string) {
+    const key = stateKey(projectId, reviewNodeId)
+    try {
+      await api.acceptRollupReview(projectId, reviewNodeId)
+
+      const reviewRaw = await api.getDetailState(projectId, reviewNodeId)
+      const reviewState = mergeMockDetailState(reviewRaw)
+      set((s) => ({
+        entries: { ...s.entries, [key]: reviewState },
+        errors: { ...s.errors, [key]: '' },
+      }))
+
+      const snapshot = await syncProjectSnapshot(projectId)
+      const parentNodeId = snapshot?.tree_state.node_registry.find(
+        (node) => node.review_node_id === reviewNodeId,
+      )?.node_id
+
+      if (parentNodeId) {
+        const parentKey = stateKey(projectId, parentNodeId)
+        const parentRaw = await api.getDetailState(projectId, parentNodeId)
+        const parentState = mergeMockDetailState(parentRaw)
+        set((s) => ({
+          entries: { ...s.entries, [parentKey]: parentState },
+          errors: { ...s.errors, [parentKey]: '' },
+        }))
+      }
+    } catch (error) {
+      set((s) => ({
+        errors: { ...s.errors, [key]: toErrorMessage(error) },
+      }))
     }
   },
 

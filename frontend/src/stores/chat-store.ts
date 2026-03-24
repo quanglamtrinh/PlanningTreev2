@@ -436,6 +436,9 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
           },
         }
       })
+      if (activeThreadRole === 'audit') {
+        void useDetailStateStore.getState().refreshExecutionState(activeProjectId, activeNodeId)
+      }
     } catch (err) {
       const state = get()
       if (!isCurrentGeneration(generation) || !isActiveTarget(state, activeProjectId, activeNodeId, activeThreadRole)) {

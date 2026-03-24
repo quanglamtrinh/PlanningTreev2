@@ -348,3 +348,16 @@ export interface ReviewState {
   rollup: RollupState
   pending_siblings: PendingSibling[]
 }
+
+export interface AcceptLocalReviewResponse {
+  node_id: string
+  status: 'review_accepted'
+  activated_sibling_id: string | null
+}
+
+export interface AcceptRollupReviewResponse {
+  review_node_id: string
+  rollup_status: 'accepted'
+  summary: string
+  sha: string
+}

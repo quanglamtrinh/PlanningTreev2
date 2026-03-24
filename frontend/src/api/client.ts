@@ -1,4 +1,6 @@
 import type {
+  AcceptLocalReviewResponse,
+  AcceptRollupReviewResponse,
   BootstrapStatus,
   ChatSession,
   ClarifyGenAcceptedResponse,
@@ -304,5 +306,25 @@ export const api = {
     return jsonFetch<DetailState>(`/v1/projects/${projectId}/nodes/${nodeId}/finish-task`, {
       method: 'POST',
     })
+  },
+  acceptLocalReview(
+    projectId: string,
+    nodeId: string,
+    summary: string,
+  ): Promise<AcceptLocalReviewResponse> {
+    return jsonFetch<AcceptLocalReviewResponse>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/accept-local-review`,
+      { method: 'POST' },
+      { summary },
+    )
+  },
+  acceptRollupReview(
+    projectId: string,
+    reviewNodeId: string,
+  ): Promise<AcceptRollupReviewResponse> {
+    return jsonFetch<AcceptRollupReviewResponse>(
+      `/v1/projects/${projectId}/nodes/${reviewNodeId}/accept-rollup-review`,
+      { method: 'POST' },
+    )
   },
 }

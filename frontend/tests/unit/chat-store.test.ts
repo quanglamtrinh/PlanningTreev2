@@ -78,6 +78,7 @@ vi.stubGlobal('EventSource', MockEventSource)
 
 import { useChatStore, applyChatEvent } from '../../src/stores/chat-store'
 import type { ChatSession } from '../../src/api/types'
+import { useDetailStateStore } from '../../src/stores/detail-state-store'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -106,6 +107,7 @@ describe('chat-store', () => {
     vi.useRealTimers()
     MockEventSource.reset()
     useChatStore.getState().disconnect()
+    useDetailStateStore.getState().reset()
     vi.clearAllMocks()
   })
 
@@ -183,6 +185,48 @@ describe('chat-store', () => {
     expect(state.session?.messages).toHaveLength(2)
     expect(state.session?.messages[0]).toEqual(userMsg)
     expect(state.session?.active_turn_id).toBe('turn-1')
+  })
+
+  it('refreshes detail-state after a successful audit send', async () => {
+    const refreshSpy = vi.spyOn(
+      useDetailStateStore.getState(),
+      'refreshExecutionState',
+    ).mockResolvedValue(undefined)
+
+    apiMock.getChatSession.mockResolvedValue(
+      makeSession({ thread_role: 'audit' }),
+    )
+    apiMock.sendChatMessage.mockResolvedValue({
+      user_message: {
+        message_id: 'msg-1',
+        role: 'user',
+        content: 'Review this change',
+        status: 'completed',
+        error: null,
+        turn_id: 'turn-1',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+      assistant_message: {
+        message_id: 'msg-2',
+        role: 'assistant',
+        content: '',
+        status: 'pending',
+        error: null,
+        turn_id: 'turn-1',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+      active_turn_id: 'turn-1',
+    })
+
+    await act(async () => {
+      await useChatStore.getState().loadSession('p1', 'n1', 'audit')
+      await useChatStore.getState().sendMessage('Review this change')
+    })
+
+    expect(refreshSpy).toHaveBeenCalledWith('p1', 'n1')
+    refreshSpy.mockRestore()
   })
 
   it('disconnect closes EventSource', async () => {

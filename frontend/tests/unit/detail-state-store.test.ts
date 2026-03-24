@@ -6,6 +6,8 @@ const { apiMock } = vi.hoisted(() => ({
     getDetailState: vi.fn(),
     finishTask: vi.fn(),
     getSnapshot: vi.fn(),
+    acceptLocalReview: vi.fn(),
+    acceptRollupReview: vi.fn(),
   },
 }))
 
@@ -68,7 +70,7 @@ function makeDetailState(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function makeSnapshot() {
+function makeSnapshot(overrides: Record<string, unknown> = {}) {
   return {
     schema_version: 6,
     project: {
@@ -110,6 +112,7 @@ function makeSnapshot() {
       ],
     },
     updated_at: '2026-03-20T00:00:00Z',
+    ...overrides,
   }
 }
 
@@ -179,5 +182,200 @@ describe('detail-state-store', () => {
     expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-1')
     expect(useDetailStateStore.getState().entries['project-1::root']?.execution_status).toBe('completed')
     expect(useProjectStore.getState().snapshot?.project.id).toBe('project-1')
+  })
+
+  it('acceptLocalReview refreshes detail-state and selects the activated sibling', async () => {
+    apiMock.acceptLocalReview.mockResolvedValue({
+      node_id: 'root',
+      status: 'review_accepted',
+      activated_sibling_id: 'child-2',
+    })
+    apiMock.getDetailState.mockResolvedValue(
+      makeDetailState({
+        execution_started: true,
+        execution_completed: true,
+        shaping_frozen: true,
+        can_finish_task: false,
+        can_accept_local_review: false,
+        execution_status: 'review_accepted',
+      }),
+    )
+    apiMock.getSnapshot.mockResolvedValue(
+      makeSnapshot({
+        tree_state: {
+          root_node_id: 'root',
+          active_node_id: 'child-2',
+          node_registry: [
+            {
+              node_id: 'root',
+              parent_id: null,
+              child_ids: ['child-2'],
+              title: 'Root',
+              description: 'Root node',
+              status: 'done' as const,
+              node_kind: 'root' as const,
+              depth: 0,
+              display_order: 0,
+              hierarchical_number: '1',
+              is_superseded: false,
+              created_at: '2026-03-20T00:00:00Z',
+              workflow: {
+                frame_confirmed: true,
+                active_step: 'spec' as const,
+                spec_confirmed: true,
+                execution_started: true,
+                execution_completed: true,
+                shaping_frozen: true,
+                can_finish_task: false,
+                can_accept_local_review: false,
+                execution_status: 'review_accepted' as const,
+              },
+            },
+            {
+              node_id: 'child-2',
+              parent_id: 'root',
+              child_ids: [],
+              title: 'Child 2',
+              description: 'Next sibling',
+              status: 'ready' as const,
+              node_kind: 'original' as const,
+              depth: 1,
+              display_order: 1,
+              hierarchical_number: '1.2',
+              is_superseded: false,
+              created_at: '2026-03-20T00:00:00Z',
+              workflow: {
+                frame_confirmed: true,
+                active_step: 'spec' as const,
+                spec_confirmed: true,
+                execution_started: false,
+                execution_completed: false,
+                shaping_frozen: false,
+                can_finish_task: true,
+                can_accept_local_review: false,
+                execution_status: null,
+              },
+            },
+          ],
+        },
+      }),
+    )
+    useProjectStore.setState({ selectedNodeId: 'root' })
+
+    await act(async () => {
+      await useDetailStateStore.getState().acceptLocalReview('project-1', 'root', 'Looks good')
+    })
+
+    expect(apiMock.acceptLocalReview).toHaveBeenCalledWith('project-1', 'root', 'Looks good')
+    expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
+    expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-1')
+    expect(useDetailStateStore.getState().entries['project-1::root']?.execution_status).toBe('review_accepted')
+    expect(useProjectStore.getState().selectedNodeId).toBe('child-2')
+  })
+
+  it('acceptRollupReview refreshes review and parent detail-state and clears stale errors', async () => {
+    apiMock.acceptRollupReview.mockResolvedValue({
+      review_node_id: 'review-1',
+      rollup_status: 'accepted',
+      summary: 'Package accepted',
+      sha: 'sha256:abc123',
+    })
+    apiMock.getDetailState
+      .mockResolvedValueOnce(
+        makeDetailState({
+          node_id: 'review-1',
+          workflow: null,
+          can_finish_task: false,
+          can_accept_local_review: false,
+          execution_status: null,
+          audit_writable: false,
+          package_audit_ready: false,
+          review_status: 'accepted',
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeDetailState({
+          node_id: 'parent-1',
+          execution_started: true,
+          execution_completed: true,
+          shaping_frozen: true,
+          can_finish_task: false,
+          can_accept_local_review: false,
+          execution_status: 'review_accepted',
+          audit_writable: true,
+          package_audit_ready: true,
+          review_status: 'accepted',
+        }),
+      )
+    apiMock.getSnapshot.mockResolvedValue(
+      makeSnapshot({
+        tree_state: {
+          root_node_id: 'parent-1',
+          active_node_id: 'parent-1',
+          node_registry: [
+            {
+              node_id: 'parent-1',
+              parent_id: null,
+              child_ids: [],
+              title: 'Parent',
+              description: 'Parent node',
+              status: 'done' as const,
+              node_kind: 'root' as const,
+              depth: 0,
+              display_order: 0,
+              hierarchical_number: '1',
+              is_superseded: false,
+              created_at: '2026-03-20T00:00:00Z',
+              workflow: {
+                frame_confirmed: true,
+                active_step: 'spec' as const,
+                spec_confirmed: true,
+                execution_started: true,
+                execution_completed: true,
+                shaping_frozen: true,
+                can_finish_task: false,
+                can_accept_local_review: false,
+                execution_status: 'review_accepted' as const,
+              },
+              review_node_id: 'review-1',
+            },
+            {
+              node_id: 'review-1',
+              parent_id: null,
+              child_ids: [],
+              title: 'Review',
+              description: 'Review node',
+              status: 'ready' as const,
+              node_kind: 'review' as const,
+              depth: 1,
+              display_order: 99,
+              hierarchical_number: 'R1',
+              is_superseded: false,
+              created_at: '2026-03-20T00:00:00Z',
+              workflow: null,
+            },
+          ],
+        },
+      }),
+    )
+    useDetailStateStore.setState((state) => ({
+      errors: {
+        ...state.errors,
+        'project-1::review-1': 'old review error',
+        'project-1::parent-1': 'old parent error',
+      },
+    }))
+
+    await act(async () => {
+      await useDetailStateStore.getState().acceptRollupReview('project-1', 'review-1')
+    })
+
+    expect(apiMock.acceptRollupReview).toHaveBeenCalledWith('project-1', 'review-1')
+    expect(apiMock.getDetailState).toHaveBeenNthCalledWith(1, 'project-1', 'review-1')
+    expect(apiMock.getDetailState).toHaveBeenNthCalledWith(2, 'project-1', 'parent-1')
+    expect(useDetailStateStore.getState().entries['project-1::review-1']?.review_status).toBe('accepted')
+    expect(useDetailStateStore.getState().entries['project-1::parent-1']?.package_audit_ready).toBe(true)
+    expect(useDetailStateStore.getState().errors['project-1::review-1']).toBe('')
+    expect(useDetailStateStore.getState().errors['project-1::parent-1']).toBe('')
   })
 })
