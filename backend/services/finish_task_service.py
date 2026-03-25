@@ -224,6 +224,7 @@ class FinishTaskService:
                 thread_id=thread_id,
                 clear_active_turn=False,
                 parts=accumulator.snapshot_parts(),
+                items=accumulator.snapshot_items(),
             )
 
         def capture_delta(delta: str) -> None:
@@ -243,6 +244,9 @@ class FinishTaskService:
                     "type": "assistant_delta",
                     "message_id": assistant_message_id,
                     "delta": delta,
+                    "item_id": "assistant_text",
+                    "item_type": "assistant_text",
+                    "phase": "delta",
                 },
                 thread_role="execution",
             )
@@ -263,7 +267,7 @@ class FinishTaskService:
 
         def capture_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
             with draft_lock:
-                accumulator.on_tool_call(tool_name, arguments)
+                item_id = accumulator.on_tool_call(tool_name, arguments)
                 part_index = len(accumulator.parts) - 1
             self._chat_event_broker.publish(
                 project_id,
@@ -274,6 +278,9 @@ class FinishTaskService:
                     "tool_name": tool_name,
                     "arguments": arguments,
                     "part_index": part_index,
+                    "item_id": item_id,
+                    "item_type": "tool_call",
+                    "phase": "started",
                 },
                 thread_role="execution",
             )
@@ -282,6 +289,8 @@ class FinishTaskService:
                 persist_activity_snapshot()
 
         def capture_item_event(phase: str, item: dict[str, Any]) -> None:
+            with draft_lock:
+                lifecycle_item_id = accumulator.on_item_event(phase, item)
             item_type = str(item.get("type") or "").strip()
             if item_type != "commandExecution":
                 return
@@ -296,7 +305,7 @@ class FinishTaskService:
 
             if phase == "started":
                 with draft_lock:
-                    accumulator.on_tool_call(tool_name, arguments, call_id=call_id)
+                    tool_item_id = accumulator.on_tool_call(tool_name, arguments, call_id=call_id)
                     part_index = len(accumulator.parts) - 1
                 self._chat_event_broker.publish(
                     project_id,
@@ -308,6 +317,22 @@ class FinishTaskService:
                         "arguments": arguments,
                         "call_id": call_id,
                         "part_index": part_index,
+                        "item_id": tool_item_id,
+                        "item_type": "tool_call",
+                        "phase": "started",
+                    },
+                    thread_role="execution",
+                )
+                self._chat_event_broker.publish(
+                    project_id,
+                    node_id,
+                    {
+                        "type": "assistant_item_lifecycle",
+                        "message_id": assistant_message_id,
+                        "item_id": lifecycle_item_id,
+                        "item_type": item_type,
+                        "phase": "started",
+                        "payload": item,
                     },
                     thread_role="execution",
                 )
@@ -323,7 +348,7 @@ class FinishTaskService:
             parsed_exit_code = int(exit_code) if isinstance(exit_code, int) else None
 
             with draft_lock:
-                accumulator.on_tool_result(
+                tool_item_id = accumulator.on_tool_result(
                     call_id,
                     status=status,
                     output=parsed_output,
@@ -339,6 +364,22 @@ class FinishTaskService:
                     "status": status,
                     "output": parsed_output,
                     "exit_code": parsed_exit_code,
+                    "item_id": tool_item_id,
+                    "item_type": "tool_call",
+                    "phase": "error" if status == "error" else "completed",
+                },
+                thread_role="execution",
+            )
+            self._chat_event_broker.publish(
+                project_id,
+                node_id,
+                {
+                    "type": "assistant_item_lifecycle",
+                    "message_id": assistant_message_id,
+                    "item_id": lifecycle_item_id,
+                    "item_type": item_type,
+                    "phase": "completed",
+                    "payload": item,
                 },
                 thread_role="execution",
             )
@@ -360,6 +401,9 @@ class FinishTaskService:
                     "message_id": assistant_message_id,
                     "status_type": status_type,
                     "label": _status_label(status_type),
+                    "item_id": "thread_status",
+                    "item_type": "thread_status",
+                    "phase": "delta",
                 },
                 thread_role="execution",
             )
@@ -382,6 +426,8 @@ class FinishTaskService:
                     "message_id": assistant_message_id,
                     "item_id": item_id,
                     "delta": delta,
+                    "item_type": "plan_item",
+                    "phase": "delta",
                 },
                 thread_role="execution",
             )
@@ -421,6 +467,7 @@ class FinishTaskService:
                             accumulator.on_plan_delta(text, final_plan_item)
                 accumulator.finalize(keep_status_blocks=True)
                 final_parts = accumulator.snapshot_parts()
+                final_items = accumulator.snapshot_items()
                 streamed_content = accumulator.content_projection()
             stdout = str(result.get("stdout", "") or "")
             final_content = stdout or streamed_content
@@ -435,6 +482,7 @@ class FinishTaskService:
                 thread_id=thread_id,
                 clear_active_turn=True,
                 parts=final_parts,
+                items=final_items,
             )
 
             if persisted:
@@ -477,6 +525,7 @@ class FinishTaskService:
                     thread_id=thread_id,
                     clear_active_turn=True,
                     parts=error_parts,
+                    items=accumulator.snapshot_items(),
                 )
             except Exception:
                 persisted = False
@@ -581,6 +630,7 @@ class FinishTaskService:
         thread_id: str | None,
         clear_active_turn: bool,
         parts: list[dict[str, Any]] | None = None,
+        items: list[dict[str, Any]] | None = None,
     ) -> bool:
         with self._storage.project_lock(project_id):
             session = self._storage.chat_state_store.read_session(
@@ -605,6 +655,8 @@ class FinishTaskService:
             message["updated_at"] = iso_now()
             if parts is not None:
                 message["parts"] = parts
+            if items is not None:
+                message["items"] = items
 
             if thread_id is not None:
                 session["thread_id"] = thread_id

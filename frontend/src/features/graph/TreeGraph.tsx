@@ -683,6 +683,8 @@ export function TreeGraph({
           rollupStatus: summary?.rollup_status ?? null,
           pendingSiblingCount: summary?.pending_sibling_count ?? 0,
           siblingEntries,
+          reviewNodeId: isSynthetic ? null : reviewId,
+          canOpenBreadcrumb: !isSynthetic && codexAvailable,
         },
       })
     }

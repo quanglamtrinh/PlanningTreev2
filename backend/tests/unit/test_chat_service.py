@@ -218,6 +218,10 @@ def test_background_turn_persists_parts(storage, workspace_root):
     assert tool_part["tool_name"] == "read_file"
     assert tool_part["status"] == "completed"
 
+    items = session["messages"][1].get("items", [])
+    assert any(item.get("item_type") == "assistant_text" for item in items)
+    assert any(item.get("item_type") == "tool_call" for item in items)
+
 
 def test_background_turn_fails_marks_error(storage, workspace_root):
     project_id, root_id = _create_project(storage, workspace_root)

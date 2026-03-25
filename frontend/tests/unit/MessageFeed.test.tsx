@@ -51,8 +51,8 @@ describe('MessageFeed', () => {
       />,
     )
 
-    expect(screen.queryByText('```css')).not.toBeInTheDocument()
-    expect(screen.getByText('css')).toBeInTheDocument()
+    expect(screen.getByText('Summary')).toBeInTheDocument()
+    expect(screen.getByText('```css', { exact: false })).toBeInTheDocument()
     expect(screen.getByText('--bg: #f7f3ee;', { exact: false }).closest('pre')).not.toBeNull()
   })
 
@@ -73,9 +73,9 @@ describe('MessageFeed', () => {
       />,
     )
 
-    expect(screen.queryByText('```ts')).not.toBeInTheDocument()
-    expect(screen.getByText('ts')).toBeInTheDocument()
-    expect(screen.getByText('const answer = 42').closest('pre')).not.toBeNull()
+    expect(screen.getByText('Summary')).toBeInTheDocument()
+    expect(screen.getByText('```ts', { exact: false })).toBeInTheDocument()
+    expect(screen.getByText('const answer = 42', { exact: false }).closest('pre')).not.toBeNull()
   })
 
   it('renders system messages as thread context blocks', () => {

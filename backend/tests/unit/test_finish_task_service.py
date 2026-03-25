@@ -319,6 +319,10 @@ def test_finish_task_background_completion_publishes_sse_and_head_sha(
     assert "plan_item" in part_types
     assert "tool_call" in part_types
     assert "status_block" in part_types
+    items = session["messages"][0].get("items", [])
+    assert any(item.get("item_type") == "plan_item" for item in items)
+    assert any(item.get("item_type") == "tool_call" for item in items)
+    assert any(item.get("item_type") == "commandExecution" for item in items)
     command_tool = next(
         part
         for part in session["messages"][0]["parts"]

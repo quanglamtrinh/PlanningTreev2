@@ -1,0 +1,182 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.summary {
+  border: 1px solid color-mix(in srgb, var(--border-default) 78%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 95%, transparent);
+  padding: 10px 12px;
+}
+
+.summaryText {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.linkButton {
+  margin-top: 6px;
+  border: none;
+  background: transparent;
+  color: var(--accent-primary);
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+}
+
+.plan {
+  border: 1px solid color-mix(in srgb, var(--border-default) 75%, transparent);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+}
+
+.planList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.planItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.planItemActive {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.planMarker {
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.planText {
+  white-space: pre-wrap;
+}
+
+.tool {
+  border: 1px solid color-mix(in srgb, var(--border-default) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+}
+
+.toolHeader {
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.toolName {
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.chevron {
+  color: var(--text-tertiary);
+}
+
+.target {
+  padding: 0 12px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.toolBody {
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.payload,
+.output {
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.exitCode {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.error {
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-surface));
+  padding: 10px 12px;
+}
+
+.errorTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-error, #dc2626);
+  margin-bottom: 8px;
+}
+
+.errorLine {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}

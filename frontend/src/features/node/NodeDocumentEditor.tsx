@@ -33,6 +33,8 @@ const EMPTY_ENTRY: EditorEntry = {
   hasLoaded: false,
 }
 
+export type FramePostUpdateBranch = 'none' | 'spec' | 'split'
+
 type Props = {
   projectId: string
   node: NodeRecord
@@ -41,6 +43,9 @@ type Props = {
   onWorkflowTabChange?: (tab: WorkflowTab) => void
   onConfirm?: 'workflow'
   readOnly?: boolean
+  /** Tracks spec vs split commitment after Frame updated (for mutual exclusivity). */
+  framePostUpdateBranch?: FramePostUpdateBranch
+  onFramePostUpdateCommit?: (branch: 'spec' | 'split') => void
 }
 
 function documentStatusText(entry: EditorEntry, isGenerating: boolean): string {
@@ -67,6 +72,8 @@ export function NodeDocumentEditor({
   onWorkflowTabChange,
   onConfirm,
   readOnly,
+  framePostUpdateBranch = 'none',
+  onFramePostUpdateCommit,
 }: Props) {
   const entryKey = `${projectId}::${node.node_id}::${kind}`
   const detailStateKey = `${projectId}::${node.node_id}`
@@ -93,6 +100,10 @@ export function NodeDocumentEditor({
   const isInitialFrameStep = kind === 'frame' && workflowTab !== 'frame_updated'
   const isUpdatedFrameStep = kind === 'frame' && workflowTab === 'frame_updated'
   const isSpecStep = kind === 'spec'
+
+  const confirmAndSplitDisabled =
+    framePostUpdateBranch === 'spec' || detailState?.active_step === 'spec'
+  const confirmAndCreateSpecDisabled = framePostUpdateBranch === 'split'
 
   useEffect(() => {
     void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
@@ -242,6 +253,7 @@ export function NodeDocumentEditor({
       }
 
       await loadDetailState(projectId, node.node_id)
+      onFramePostUpdateCommit?.('spec')
     } catch (error) {
       setConfirmError(error instanceof Error ? error.message : 'Create spec failed')
     } finally {
@@ -256,6 +268,7 @@ export function NodeDocumentEditor({
     invalidateDocument,
     loadDetailState,
     node.node_id,
+    onFramePostUpdateCommit,
     projectId,
   ])
 
@@ -266,6 +279,7 @@ export function NodeDocumentEditor({
 
     try {
       await handleConfirmFrame()
+      onFramePostUpdateCommit?.('split')
       onWorkflowTabChange?.('split')
     } catch (error) {
       setConfirmError(error instanceof Error ? error.message : 'Split prep failed')
@@ -273,7 +287,7 @@ export function NodeDocumentEditor({
       setPendingAction(null)
       setIsConfirming(false)
     }
-  }, [handleConfirmFrame, onWorkflowTabChange])
+  }, [handleConfirmFrame, onFramePostUpdateCommit, onWorkflowTabChange])
 
   const handleConfirmAndFinish = useCallback(async () => {
     setIsConfirming(true)
@@ -448,18 +462,28 @@ export function NodeDocumentEditor({
               <button
                 type="button"
                 className={styles.generateButton}
-                disabled={!canConfirm}
+                disabled={!canConfirm || confirmAndSplitDisabled}
                 data-testid="confirm-and-split-button"
                 onClick={handleConfirmAndSplit}
+                title={
+                  confirmAndSplitDisabled
+                    ? 'You already committed to Create Spec from Frame updated'
+                    : undefined
+                }
               >
                 {pendingAction === 'split' ? 'Preparing Split...' : 'Confirm and Split'}
               </button>
               <button
                 type="button"
                 className={styles.confirmButton}
-                disabled={!canConfirm}
+                disabled={!canConfirm || confirmAndCreateSpecDisabled}
                 data-testid="confirm-and-create-spec-button"
                 onClick={handleConfirmAndCreateSpec}
+                title={
+                  confirmAndCreateSpecDisabled
+                    ? 'You already committed to Split from Frame updated'
+                    : undefined
+                }
               >
                 {pendingAction === 'create_spec' ? 'Creating Spec...' : 'Confirm and Create Spec'}
               </button>

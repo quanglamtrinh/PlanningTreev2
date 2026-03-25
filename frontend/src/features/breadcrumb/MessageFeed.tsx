@@ -1,11 +1,10 @@
 import { memo, useEffect, useRef } from 'react'
 import type { ChatMessage, MessagePart } from '../../api/types'
 import { AgentSpinner } from '../../components/AgentSpinner'
-import { PlanItemBlock } from './PlanItemBlock'
-import { StatusPill } from './StatusPill'
-import { ToolCallBlock } from './ToolCallBlock'
 import styles from './BreadcrumbChatView.module.css'
 import feedStyles from './MessageFeed.module.css'
+import { SemanticBlocks } from './SemanticBlocks'
+import { mapMessageToSemanticBlocks } from './semanticMapper'
 
 function inlineFormat(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/)
@@ -150,59 +149,10 @@ function AssistantAvatar() {
   )
 }
 
-function renderPart(part: MessagePart, index: number) {
-  switch (part.type) {
-    case 'assistant_text':
-      return part.content ? (
-        <div key={`part-${index}`} className={styles.content}>{renderContent(part.content)}</div>
-      ) : null
-    case 'plan_item':
-      return (
-        <PlanItemBlock
-          key={`part-${index}`}
-          content={part.content}
-          isStreaming={part.is_streaming}
-        />
-      )
-    case 'tool_call':
-      return (
-        <ToolCallBlock
-          key={`part-${index}`}
-          toolName={part.tool_name}
-          arguments={part.arguments}
-          status={part.status}
-          output={part.output ?? null}
-          exitCode={part.exit_code ?? null}
-        />
-      )
-    case 'status_block':
-      return <StatusPill key={`part-${index}`} label={part.label} />
-    default:
-      return null
-  }
-}
-
-function projectedAssistantText(parts: MessagePart[] | undefined): string {
-  return (parts ?? [])
-    .filter((part): part is Extract<MessagePart, { type: 'assistant_text' }> => part.type === 'assistant_text')
-    .map((part) => part.content)
-    .join('')
-}
-
 function renderAssistantBody(msg: ChatMessage) {
-  const parts = msg.parts ?? []
-  const renderedParts = parts.map((part, i) => renderPart(part, i))
-  const shouldRenderFallbackContent = Boolean(msg.content) && projectedAssistantText(parts) !== msg.content
-
-  if (msg.parts && msg.parts.length > 0) {
-    return (
-      <>
-        {renderedParts}
-        {shouldRenderFallbackContent ? (
-          <div className={styles.content}>{renderContent(msg.content)}</div>
-        ) : null}
-      </>
-    )
+  const semanticBlocks = mapMessageToSemanticBlocks(msg)
+  if (semanticBlocks.length > 0) {
+    return <SemanticBlocks blocks={semanticBlocks} />
   }
   if (msg.content) {
     return <div className={styles.content}>{renderContent(msg.content)}</div>

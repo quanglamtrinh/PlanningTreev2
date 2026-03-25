@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { RollupStatus } from '../../api/types'
+import { useGraphNodeActions } from './graphNodeActionsContext'
 import styles from './ReviewGraphNode.module.css'
 
 export type ReviewSiblingDisplay = {
@@ -18,6 +19,9 @@ export type ReviewGraphNodeData = {
   rollupStatus: RollupStatus | null
   pendingSiblingCount: number
   siblingEntries: ReviewSiblingDisplay[]
+  /** Real review node ID; null for synthetic (placeholder) review overlays. */
+  reviewNodeId: string | null
+  canOpenBreadcrumb: boolean
 }
 
 const ROLLUP_LABELS: Record<RollupStatus, string> = {
@@ -28,6 +32,7 @@ const ROLLUP_LABELS: Record<RollupStatus, string> = {
 
 function ReviewGraphNodeComponent({ data }: NodeProps) {
   const d = data as ReviewGraphNodeData
+  const actions = useGraphNodeActions()
 
   const rollupLabel = d.rollupStatus ? ROLLUP_LABELS[d.rollupStatus] : null
   const rollupClassName = d.rollupStatus
@@ -86,6 +91,25 @@ function ReviewGraphNodeComponent({ data }: NodeProps) {
                 <span className={styles.siblingTitle}>{s.title}</span>
               </div>
             ))}
+          </div>
+        )}
+        {d.reviewNodeId !== null && (
+          <div className={styles.footer}>
+            <button
+              type="button"
+              className={`${styles.openBreadcrumbBtn} nodrag nopan`}
+              disabled={!d.canOpenBreadcrumb}
+              title={d.canOpenBreadcrumb ? 'Open integration thread' : 'Codex CLI is not installed.'}
+              data-testid={`review-open-breadcrumb-${d.parentNodeId}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (d.reviewNodeId) {
+                  actions.openBreadcrumb(d.reviewNodeId)
+                }
+              }}
+            >
+              Open in Breadcrumb
+            </button>
           </div>
         )}
       </div>

@@ -492,6 +492,9 @@ class ReviewService:
                     "type": "assistant_delta",
                     "message_id": assistant_message_id,
                     "delta": delta,
+                    "item_id": "assistant_text",
+                    "item_type": "assistant_text",
+                    "phase": "delta",
                 },
             )
 
@@ -507,11 +510,12 @@ class ReviewService:
                     thread_id=thread_id,
                     clear_active_turn=False,
                     parts=accumulator.snapshot_parts(),
+                    items=accumulator.snapshot_items(),
                 )
 
         def capture_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
             with draft_lock:
-                accumulator.on_tool_call(tool_name, arguments)
+                item_id = accumulator.on_tool_call(tool_name, arguments)
                 part_index = len(accumulator.parts) - 1
             self._publish_event(
                 project_id,
@@ -522,6 +526,9 @@ class ReviewService:
                     "tool_name": tool_name,
                     "arguments": arguments,
                     "part_index": part_index,
+                    "item_id": item_id,
+                    "item_type": "tool_call",
+                    "phase": "started",
                 },
             )
 
@@ -540,6 +547,9 @@ class ReviewService:
                     "message_id": assistant_message_id,
                     "status_type": status_type,
                     "label": _status_label(status_type),
+                    "item_id": "thread_status",
+                    "item_type": "thread_status",
+                    "phase": "delta",
                 },
             )
 
@@ -567,6 +577,7 @@ class ReviewService:
                 accumulator.finalize()
                 streamed_content = accumulator.content_projection()
                 final_parts = accumulator.snapshot_parts()
+                final_items = accumulator.snapshot_items()
 
             stdout = str(result.get("stdout", "") or "")
             summary = extract_integration_rollup_summary(stdout) or extract_integration_rollup_summary(
@@ -597,6 +608,7 @@ class ReviewService:
                 thread_id=str(result.get("thread_id") or thread_id or ""),
                 clear_active_turn=True,
                 parts=self._finalize_parts(final_parts, final_content),
+                items=final_items,
             )
 
             if persisted:
@@ -634,6 +646,7 @@ class ReviewService:
                     thread_id=thread_id,
                     clear_active_turn=True,
                     parts=error_parts,
+                    items=accumulator.snapshot_items(),
                 )
             except Exception:
                 persisted = False
@@ -722,6 +735,7 @@ class ReviewService:
         thread_id: str | None,
         clear_active_turn: bool,
         parts: list[dict[str, Any]] | None = None,
+        items: list[dict[str, Any]] | None = None,
     ) -> bool:
         with self._storage.project_lock(project_id):
             session = self._storage.chat_state_store.read_session(
@@ -739,6 +753,8 @@ class ReviewService:
             message["updated_at"] = iso_now()
             if parts is not None:
                 message["parts"] = parts
+            if items is not None:
+                message["items"] = items
 
             if thread_id is not None:
                 session["thread_id"] = thread_id

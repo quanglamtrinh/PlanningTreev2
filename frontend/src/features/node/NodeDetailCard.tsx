@@ -3,7 +3,7 @@ import type { NodeRecord } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { ClarifyPanel } from './ClarifyPanel'
 import { NodeDescribePanel } from './NodeDescribePanel'
-import { NodeDocumentEditor } from './NodeDocumentEditor'
+import { NodeDocumentEditor, type FramePostUpdateBranch } from './NodeDocumentEditor'
 import { SplitPanel } from './SplitPanel'
 import { ExecutionStatusBadge } from './ExecutionStatusBadge'
 import { NodeStatusBadge } from './NodeStatusBadge'
@@ -33,18 +33,18 @@ function deriveDetailTab(activeStep: 'frame' | 'clarify' | 'spec', frameBranchRe
   return activeStep
 }
 
-function resolveRequestedDetailTab(
-  requestedTab: DetailTab,
-  activeStep?: 'frame' | 'clarify' | 'spec',
-  frameBranchReady?: boolean,
-): DetailTab {
-  if (requestedTab !== 'frame_updated') {
-    return requestedTab
-  }
-  if (frameBranchReady) {
+function resolveRequestedDetailTab(requestedTab: DetailTab): DetailTab {
+  // "Frame updated" always maps to the frame document (frame.md), never to active_step (e.g. spec).
+  if (requestedTab === 'frame_updated') {
     return 'frame_updated'
   }
-  return deriveDetailTab(activeStep ?? 'frame', frameBranchReady)
+  return requestedTab
+}
+
+const FRAME_POST_UPDATE_STORAGE = 'planningtree:framePostUpdate:'
+
+function framePostUpdateStorageKey(projectId: string, nodeId: string) {
+  return `${FRAME_POST_UPDATE_STORAGE}${projectId}:${nodeId}`
 }
 
 export function NodeDetailCard({
@@ -57,6 +57,7 @@ export function NodeDetailCard({
   message = null,
 }: Props) {
   const [detailTab, setDetailTab] = useState<DetailTab>('frame')
+  const [framePostUpdateBranch, setFramePostUpdateBranch] = useState<FramePostUpdateBranch>('none')
   const isReviewNode = node?.node_kind === 'review'
 
   const detailStateKey = projectId && node ? `${projectId}::${node.node_id}` : ''
@@ -73,6 +74,28 @@ export function NodeDetailCard({
   }, [node?.node_id, state])
 
   useEffect(() => {
+    if (!projectId || !node) {
+      return
+    }
+    const raw = sessionStorage.getItem(framePostUpdateStorageKey(projectId, node.node_id))
+    if (raw === 'spec' || raw === 'split') {
+      setFramePostUpdateBranch(raw)
+    } else {
+      setFramePostUpdateBranch('none')
+    }
+  }, [projectId, node?.node_id])
+
+  useEffect(() => {
+    if (!detailState || !projectId || !node) {
+      return
+    }
+    if (detailState.active_step === 'spec') {
+      sessionStorage.setItem(framePostUpdateStorageKey(projectId, node.node_id), 'spec')
+      setFramePostUpdateBranch('spec')
+    }
+  }, [detailState?.active_step, projectId, node])
+
+  useEffect(() => {
     if (projectId && node && state === 'ready') {
       void loadDetailState(projectId, node.node_id)
     }
@@ -85,18 +108,51 @@ export function NodeDetailCard({
         if (currentTab === 'split' && (nextTab === 'frame_updated' || nextTab === 'spec')) {
           return currentTab
         }
+        // Stay on Frame updated (frame.md) while the workflow suggests Spec (spec.md).
+        if (currentTab === 'frame_updated' && nextTab === 'spec') {
+          return currentTab
+        }
         return nextTab
       })
     }
   }, [detailState?.active_step, detailState?.frame_branch_ready])
 
-  const handleTabChange = useCallback((nextTab: DetailTab) => {
-    setDetailTab(resolveRequestedDetailTab(
-      nextTab,
-      detailState?.active_step,
-      detailState?.frame_branch_ready,
-    ))
-  }, [detailState?.active_step, detailState?.frame_branch_ready])
+  const splitTabBlocked =
+    framePostUpdateBranch === 'spec' || detailState?.active_step === 'spec'
+  const specTabBlocked = framePostUpdateBranch === 'split'
+
+  const commitFramePostUpdate = useCallback(
+    (branch: 'spec' | 'split') => {
+      if (!projectId || !node) {
+        return
+      }
+      sessionStorage.setItem(framePostUpdateStorageKey(projectId, node.node_id), branch)
+      setFramePostUpdateBranch(branch)
+    },
+    [projectId, node],
+  )
+
+  const workflowTabDisabled = useMemo(
+    () => ({
+      split: splitTabBlocked,
+      spec: specTabBlocked,
+      finish: specTabBlocked,
+    }),
+    [specTabBlocked, splitTabBlocked],
+  )
+
+  const handleTabChange = useCallback(
+    (nextTab: DetailTab) => {
+      if (nextTab === 'split' && splitTabBlocked) {
+        return
+      }
+      if (nextTab === 'spec' && specTabBlocked) {
+        return
+      }
+      setDetailTab(resolveRequestedDetailTab(nextTab))
+    },
+    [specTabBlocked, splitTabBlocked],
+  )
 
   const rootClassName = useMemo(
     () =>
@@ -170,6 +226,7 @@ export function NodeDetailCard({
               detailTab={detailTab}
               detailState={detailState}
               onTabChange={handleTabChange}
+              tabDisabled={workflowTabDisabled}
             />
           </div>
         ) : null}
@@ -238,9 +295,11 @@ export function NodeDetailCard({
               node={node}
               kind="frame"
               workflowTab={detailTab}
-              onWorkflowTabChange={setDetailTab}
+              onWorkflowTabChange={handleTabChange}
               onConfirm="workflow"
               readOnly={detailState?.frame_read_only}
+              framePostUpdateBranch={framePostUpdateBranch}
+              onFramePostUpdateCommit={commitFramePostUpdate}
             />
           </div>
         ) : null}

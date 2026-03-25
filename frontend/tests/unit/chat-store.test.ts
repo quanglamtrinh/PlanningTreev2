@@ -569,6 +569,12 @@ describe('applyChatEvent', () => {
       content: 'Hello ',
       is_streaming: true,
     })
+    expect(after1.messages[0].items).toHaveLength(1)
+    expect(after1.messages[0].items![0]).toMatchObject({
+      item_id: 'assistant_text',
+      item_type: 'assistant_text',
+      status: 'streaming',
+    })
 
     const after2 = applyChatEvent(after1, {
       type: 'assistant_delta',
@@ -581,6 +587,8 @@ describe('applyChatEvent', () => {
       content: 'Hello world',
       is_streaming: true,
     })
+    expect(after2.messages[0].items).toHaveLength(1)
+    expect(after2.messages[0].items![0].lifecycle).toHaveLength(2)
   })
 
   it('assistant_tool_call closes text part and adds tool', () => {
@@ -619,6 +627,11 @@ describe('applyChatEvent', () => {
       type: 'tool_call',
       tool_name: 'read_file',
       status: 'running',
+    })
+    expect(result.messages[0].items).toHaveLength(1)
+    expect(result.messages[0].items![0]).toMatchObject({
+      item_type: 'tool_call',
+      status: 'started',
     })
   })
 
@@ -665,6 +678,11 @@ describe('applyChatEvent', () => {
       output: 'file-a\\nfile-b',
       exit_code: 0,
     })
+    expect(result.messages[0].items).toHaveLength(1)
+    expect(result.messages[0].items![0]).toMatchObject({
+      item_type: 'tool_call',
+      status: 'completed',
+    })
   })
 
   it('assistant_plan_delta creates and extends plan items', () => {
@@ -710,6 +728,11 @@ describe('applyChatEvent', () => {
       type: 'plan_item',
       content: 'Inspect workspace',
       is_streaming: true,
+    })
+    expect(after2.messages[0].items).toHaveLength(1)
+    expect(after2.messages[0].items![0]).toMatchObject({
+      item_type: 'plan_item',
+      status: 'streaming',
     })
   })
 
@@ -795,6 +818,7 @@ describe('applyChatEvent', () => {
       type: 'tool_call',
       status: 'completed',
     })
+    expect(result.messages[0].items ?? []).toHaveLength(0)
   })
 
   it('assistant_completed keeps execution status history and closes plan items', () => {
@@ -834,6 +858,47 @@ describe('applyChatEvent', () => {
     expect(result.messages[0].parts![1]).toMatchObject({
       type: 'status_block',
       label: 'Working...',
+    })
+    expect(result.messages[0].items ?? []).toHaveLength(0)
+  })
+
+  it('assistant_item_lifecycle upserts raw typed item events', () => {
+    const session = makeSession({
+      active_turn_id: 'turn-1',
+      messages: [
+        {
+          message_id: 'msg-2',
+          role: 'assistant',
+          content: '',
+          status: 'streaming',
+          error: null,
+          turn_id: 'turn-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    })
+    const started = applyChatEvent(session, {
+      type: 'assistant_item_lifecycle',
+      message_id: 'msg-2',
+      item_id: 'cmd-1',
+      item_type: 'commandExecution',
+      phase: 'started',
+      payload: { command: 'npm test' },
+    })
+    const completed = applyChatEvent(started, {
+      type: 'assistant_item_lifecycle',
+      message_id: 'msg-2',
+      item_id: 'cmd-1',
+      item_type: 'commandExecution',
+      phase: 'completed',
+      payload: { exit_code: 0 },
+    })
+    expect(completed.messages[0].items).toHaveLength(1)
+    expect(completed.messages[0].items![0]).toMatchObject({
+      item_id: 'cmd-1',
+      item_type: 'commandExecution',
+      status: 'completed',
     })
   })
 })

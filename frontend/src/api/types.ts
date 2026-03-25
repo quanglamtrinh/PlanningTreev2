@@ -316,11 +316,31 @@ export type MessagePart =
     }
   | { type: 'status_block'; status_type: string; label: string; timestamp: string }
 
+export type ItemLifecyclePhase = 'started' | 'delta' | 'completed' | 'error'
+
+export interface ItemLifecycleEntry {
+  phase: ItemLifecyclePhase
+  timestamp: string
+  payload?: Record<string, unknown> | null
+  text?: string | null
+}
+
+export interface MessageItem {
+  item_id: string
+  item_type: string
+  status: 'started' | 'streaming' | 'completed' | 'error'
+  started_at: string
+  completed_at: string | null
+  last_payload?: Record<string, unknown> | null
+  lifecycle: ItemLifecycleEntry[]
+}
+
 export interface ChatMessage {
   message_id: string
   role: MessageRole
   content: string
   parts?: MessagePart[]
+  items?: MessageItem[]
   status: MessageStatus
   error: string | null
   turn_id: string | null
@@ -332,6 +352,11 @@ export interface ChatSession {
   thread_id: string | null
   thread_role: ThreadRole
   active_turn_id: string | null
+  forked_from_thread_id?: string | null
+  forked_from_node_id?: string | null
+  forked_from_role?: string | null
+  fork_reason?: string | null
+  lineage_root_thread_id?: string | null
   messages: ChatMessage[]
   created_at: string
   updated_at: string

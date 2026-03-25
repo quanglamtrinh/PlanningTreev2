@@ -11,8 +11,18 @@ from backend.storage.file_utils import atomic_write_json, ensure_dir, iso_now, l
 from backend.storage.project_locks import ProjectLockRegistry
 from backend.storage.workspace_store import WorkspaceStore
 
-_VALID_THREAD_ROLES = {"audit", "ask_planning", "execution", "integration"}
+_VALID_THREAD_ROLES = {"audit", "ask_planning", "execution"}
+_COMPAT_THREAD_ROLE_ALIASES = {"integration": "audit"}
 _DEFAULT_THREAD_ROLE = "ask_planning"
+
+
+def _normalize_optional_string(value: Any) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _resolve_thread_role(thread_role: str) -> str:
+    aliased_role = _COMPAT_THREAD_ROLE_ALIASES.get(thread_role, thread_role)
+    return aliased_role if aliased_role in _VALID_THREAD_ROLES else _DEFAULT_THREAD_ROLE
 
 
 def _default_session(thread_role: str = _DEFAULT_THREAD_ROLE) -> dict[str, Any]:
@@ -21,6 +31,11 @@ def _default_session(thread_role: str = _DEFAULT_THREAD_ROLE) -> dict[str, Any]:
         "thread_id": None,
         "thread_role": thread_role,
         "active_turn_id": None,
+        "forked_from_thread_id": None,
+        "forked_from_node_id": None,
+        "forked_from_role": None,
+        "fork_reason": None,
+        "lineage_root_thread_id": None,
         "messages": [],
         "created_at": now,
         "updated_at": now,
@@ -59,7 +74,7 @@ class ChatStateStore:
 
     def path(self, project_id: str, node_id: str, thread_role: str = _DEFAULT_THREAD_ROLE) -> Path:
         """Public path accessor. Returns the role-based path."""
-        return self._role_path(project_id, node_id, thread_role)
+        return self._role_path(project_id, node_id, _resolve_thread_role(thread_role))
 
     def _maybe_migrate(self, project_id: str, node_id: str) -> None:
         """Lazy migration: move flat chat/{node_id}.json to chat/{node_id}/ask_planning.json.
@@ -91,12 +106,31 @@ class ChatStateStore:
         atomic_write_json(target, payload)
         flat.unlink(missing_ok=True)
 
+    def _maybe_migrate_integration_to_audit(self, project_id: str, node_id: str) -> None:
+        integration = self._role_dir(project_id, node_id) / "integration.json"
+        audit = self._role_path(project_id, node_id, "audit")
+        if not integration.exists() or audit.exists():
+            return
+
+        payload = load_json(integration, default=None)
+        if payload is None:
+            integration.unlink(missing_ok=True)
+            return
+
+        normalized = self._normalize_session(payload, "audit")
+        normalized["thread_role"] = "audit"
+        normalized["fork_reason"] = "review_bootstrap_legacy_migrated"
+        ensure_dir(audit.parent)
+        atomic_write_json(audit, normalized)
+        integration.unlink(missing_ok=True)
+
     def read_session(
         self, project_id: str, node_id: str, thread_role: str = _DEFAULT_THREAD_ROLE
     ) -> dict[str, Any]:
-        role = thread_role if thread_role in _VALID_THREAD_ROLES else _DEFAULT_THREAD_ROLE
+        role = _resolve_thread_role(thread_role)
         with self._lock_registry.for_project(project_id):
             self._maybe_migrate(project_id, node_id)
+            self._maybe_migrate_integration_to_audit(project_id, node_id)
             payload = load_json(self._role_path(project_id, node_id, role), default=None)
             return self._normalize_session(payload, role)
 
@@ -104,12 +138,13 @@ class ChatStateStore:
         self, project_id: str, node_id: str, session: dict[str, Any],
         thread_role: str = _DEFAULT_THREAD_ROLE,
     ) -> dict[str, Any]:
-        role = thread_role if thread_role in _VALID_THREAD_ROLES else _DEFAULT_THREAD_ROLE
+        role = _resolve_thread_role(thread_role)
         with self._lock_registry.for_project(project_id):
             project_dir = self._project_dir(project_id)
             if not project_dir.exists():
                 raise ProjectNotFound(project_id)
             self._maybe_migrate(project_id, node_id)
+            self._maybe_migrate_integration_to_audit(project_id, node_id)
             normalized = self._normalize_session(session, role)
             normalized["updated_at"] = iso_now()
             target = self._role_path(project_id, node_id, role)
@@ -120,7 +155,7 @@ class ChatStateStore:
     def clear_session(
         self, project_id: str, node_id: str, thread_role: str = _DEFAULT_THREAD_ROLE
     ) -> dict[str, Any]:
-        role = thread_role if thread_role in _VALID_THREAD_ROLES else _DEFAULT_THREAD_ROLE
+        role = _resolve_thread_role(thread_role)
         return self.write_session(project_id, node_id, _default_session(role), thread_role=role)
 
     def clear_all_sessions(self, project_id: str) -> None:
@@ -134,6 +169,11 @@ class ChatStateStore:
 
         thread_id = payload.get("thread_id")
         active_turn_id = payload.get("active_turn_id")
+        forked_from_thread_id = payload.get("forked_from_thread_id")
+        forked_from_node_id = payload.get("forked_from_node_id")
+        forked_from_role = payload.get("forked_from_role")
+        fork_reason = payload.get("fork_reason")
+        lineage_root_thread_id = payload.get("lineage_root_thread_id")
         raw_messages = payload.get("messages")
         created_at = payload.get("created_at")
         updated_at = payload.get("updated_at")
@@ -149,13 +189,14 @@ class ChatStateStore:
                     messages.append(msg)
 
         return {
-            "thread_id": thread_id.strip() if isinstance(thread_id, str) and thread_id.strip() else None,
+            "thread_id": _normalize_optional_string(thread_id),
             "thread_role": role,
-            "active_turn_id": (
-                active_turn_id.strip()
-                if isinstance(active_turn_id, str) and active_turn_id.strip()
-                else None
-            ),
+            "active_turn_id": _normalize_optional_string(active_turn_id),
+            "forked_from_thread_id": _normalize_optional_string(forked_from_thread_id),
+            "forked_from_node_id": _normalize_optional_string(forked_from_node_id),
+            "forked_from_role": _normalize_optional_string(forked_from_role),
+            "fork_reason": _normalize_optional_string(fork_reason),
+            "lineage_root_thread_id": _normalize_optional_string(lineage_root_thread_id),
             "messages": messages,
             "created_at": created_at if isinstance(created_at, str) and created_at.strip() else iso_now(),
             "updated_at": updated_at if isinstance(updated_at, str) and updated_at.strip() else iso_now(),
@@ -183,6 +224,26 @@ class ChatStateStore:
         if isinstance(parts, list):
             normalized_parts = [p for p in parts if isinstance(p, dict) and isinstance(p.get("type"), str)]
 
+        items = raw.get("items")
+        normalized_items: list[dict[str, Any]] | None = None
+        if isinstance(items, list):
+            normalized_items = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_id = item.get("item_id")
+                item_type = item.get("item_type")
+                lifecycle = item.get("lifecycle")
+                if (
+                    not isinstance(item_id, str)
+                    or not item_id.strip()
+                    or not isinstance(item_type, str)
+                    or not item_type.strip()
+                    or not isinstance(lifecycle, list)
+                ):
+                    continue
+                normalized_items.append(item)
+
         result: dict[str, Any] = {
             "message_id": message_id.strip(),
             "role": role,
@@ -195,4 +256,6 @@ class ChatStateStore:
         }
         if normalized_parts is not None:
             result["parts"] = normalized_parts
+        if normalized_items is not None:
+            result["items"] = normalized_items
         return result
