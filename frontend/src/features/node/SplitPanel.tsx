@@ -59,7 +59,7 @@ export function SplitPanel({ projectId, node, detailState }: Props) {
   }
 
   return (
-    <div className={styles.splitPanel}>
+    <div className={`${styles.splitPanel} ${styles.documentPanel}`}>
       <div className={styles.splitPanelIntro}>
         <p className={styles.eyebrow}>Split</p>
         <h3 className={styles.title}>Choose how this task should be broken down</h3>

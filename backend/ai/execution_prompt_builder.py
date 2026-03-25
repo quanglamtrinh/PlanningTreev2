@@ -15,7 +15,11 @@ Rules:
 2. Use the confirmed frame as supporting context when the spec leaves room for interpretation.
 3. Make concrete workspace changes when the spec calls for them.
 4. Keep the implementation aligned with the existing codebase instead of inventing a parallel architecture.
-5. When you finish, provide a concise summary of what you changed and any notable limitations.
+5. While you work, emit brief progress commentary instead of waiting until the end.
+6. Before each meaningful inspection step, command, or edit batch, send a short sentence about what you are about to do.
+7. After each meaningful result or verification step, send a short sentence about what happened.
+8. Keep progress commentary factual, short, and non-repetitive. Do not ask follow-up questions.
+9. When you finish, provide a concise summary of what you changed and any notable limitations.
 """
 
 _FRAME_CHAR_LIMIT = 12000
@@ -39,6 +43,7 @@ def build_execution_prompt(
         _format_confirmed_spec(spec_content),
         (
             "Implement the task in the workspace now. "
+            "While working, stream short progress updates about what you are checking, changing, and verifying. "
             "When complete, provide a brief summary of the concrete changes made."
         ),
     ]

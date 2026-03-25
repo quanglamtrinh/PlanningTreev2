@@ -20,6 +20,7 @@ def test_base_instructions_mentions_spec_generation() -> None:
     instructions = build_spec_base_instructions()
     assert "technical implementation spec" in instructions.lower()
     assert "emit_spec_content" in instructions
+    assert "do not inspect the workspace" in instructions.lower()
 
 
 def test_build_prompt_includes_confirmed_frame_content() -> None:

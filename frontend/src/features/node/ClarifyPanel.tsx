@@ -123,6 +123,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
   // ── Derived state ───────────────────────────────────────────
 
   const clarify = entry?.clarify
+  const hasLoaded = entry?.hasLoaded ?? false
   const isLoading = entry?.isLoading ?? false
   const loadError = entry?.loadError ?? ''
   const saveError = entry?.saveError ?? ''
@@ -138,7 +139,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
     [questions],
   )
 
-  const noQuestions = clarify !== undefined && questions.length === 0
+  const noQuestions = hasLoaded && questions.length === 0
 
   const handleConfirmClarify = useCallback(async () => {
     setIsConfirming(true)
@@ -180,7 +181,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
 
   // ── Loading state ───────────────────────────────────────────
 
-  if (isLoading && !clarify) {
+  if (isLoading && !hasLoaded) {
     return (
       <div className={detailStyles.documentPanel}>
         <p className={detailStyles.body}>Loading clarify questions...</p>

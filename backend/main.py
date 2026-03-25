@@ -99,6 +99,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         codex_client=codex_client,
         chat_event_broker=chat_event_broker,
         chat_timeout=get_execution_timeout(),
+        chat_service=chat_service,
     )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service

@@ -9,6 +9,7 @@ import pytest
 
 from backend.ai.codex_client import CodexTransportError
 from backend.errors.app_errors import FinishTaskNotAllowed
+from backend.services.chat_service import ChatService
 from backend.services.finish_task_service import FinishTaskService
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.project_service import ProjectService
@@ -50,6 +51,7 @@ class FakeExecutionCodexClient:
         on_plan_delta = kwargs.get("on_plan_delta")
         on_tool_call = kwargs.get("on_tool_call")
         on_thread_status = kwargs.get("on_thread_status")
+        on_item_event = kwargs.get("on_item_event")
 
         if self.barrier is not None:
             self.barrier.wait(timeout=5)
@@ -60,6 +62,18 @@ class FakeExecutionCodexClient:
             on_plan_delta("Inspect existing files", {"id": "plan-1"})
         if on_tool_call:
             on_tool_call("write_file", {"path": self.create_file_name})
+        if on_item_event:
+            on_item_event(
+                "started",
+                {
+                    "type": "commandExecution",
+                    "id": "cmd-1",
+                    "command": f"Write {self.create_file_name}",
+                    "cwd": cwd if isinstance(cwd, str) else None,
+                    "source": "agent",
+                    "status": "inProgress",
+                },
+            )
         if on_delta:
             on_delta("Working ")
             time.sleep(0.02)
@@ -70,6 +84,20 @@ class FakeExecutionCodexClient:
 
         if isinstance(cwd, str) and cwd:
             Path(cwd, self.create_file_name).write_text("updated by execution\n", encoding="utf-8")
+        if on_item_event:
+            on_item_event(
+                "completed",
+                {
+                    "type": "commandExecution",
+                    "id": "cmd-1",
+                    "command": f"Write {self.create_file_name}",
+                    "cwd": cwd if isinstance(cwd, str) else None,
+                    "source": "agent",
+                    "status": "completed",
+                    "aggregatedOutput": f"updated {self.create_file_name}",
+                    "exitCode": 0,
+                },
+            )
 
         return {"stdout": self.response_text, "thread_id": thread_id}
 
@@ -291,6 +319,14 @@ def test_finish_task_background_completion_publishes_sse_and_head_sha(
     assert "plan_item" in part_types
     assert "tool_call" in part_types
     assert "status_block" in part_types
+    command_tool = next(
+        part
+        for part in session["messages"][0]["parts"]
+        if part["type"] == "tool_call" and part.get("call_id") == "cmd-1"
+    )
+    assert command_tool["status"] == "completed"
+    assert command_tool["output"] == "updated execution-output.txt"
+    assert command_tool["exit_code"] == 0
     assert Path(storage.workspace_store.get_folder_path(project_id), "execution-output.txt").exists()
 
     assert any(
@@ -304,6 +340,61 @@ def test_finish_task_background_completion_publishes_sse_and_head_sha(
         and isinstance(item["event"], dict)
         and item["event"].get("type") == "assistant_plan_delta"
         for item in published
+    )
+    assert any(
+        item["thread_role"] == "execution"
+        and isinstance(item["event"], dict)
+        and item["event"].get("type") == "assistant_tool_result"
+        for item in published
+    )
+
+
+def test_execution_session_stays_live_while_background_turn_is_running(
+    storage,
+    tree_service,
+    detail_service,
+    chat_event_broker,
+    project_id,
+    root_node_id,
+):
+    _confirm_spec(storage, project_id, root_node_id)
+    barrier = threading.Event()
+    codex_client = FakeExecutionCodexClient(barrier=barrier)
+    chat_service = ChatService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+    finish_service = FinishTaskService(
+        storage,
+        tree_service,
+        detail_service,
+        codex_client,
+        chat_event_broker,
+        chat_timeout=5,
+        chat_service=chat_service,
+    )
+
+    finish_service.finish_task(project_id, root_node_id)
+
+    recovered = chat_service.get_session(project_id, root_node_id, thread_role="execution")
+    assert recovered["active_turn_id"] is not None
+    assert recovered["messages"][0]["status"] == "pending"
+    assert recovered["messages"][0]["error"] is None
+
+    barrier.set()
+    _wait_for_condition(
+        lambda: (
+            session := storage.chat_state_store.read_session(
+                project_id,
+                root_node_id,
+                thread_role="execution",
+            )
+        )
+        and session["active_turn_id"] is None
     )
 
 

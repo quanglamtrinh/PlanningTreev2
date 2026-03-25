@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.ai.execution_prompt_builder import (
@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 _DRAFT_FLUSH_INTERVAL_SEC = 0.5
 
+if TYPE_CHECKING:
+    from backend.services.chat_service import ChatService
+
 
 class FinishTaskService:
     def __init__(
@@ -39,6 +42,7 @@ class FinishTaskService:
         codex_client: CodexAppClient,
         chat_event_broker: ChatEventBroker,
         chat_timeout: int,
+        chat_service: ChatService | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -46,6 +50,7 @@ class FinishTaskService:
         self._codex_client = codex_client
         self._chat_event_broker = chat_event_broker
         self._chat_timeout = int(chat_timeout)
+        self._chat_service = chat_service
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}
 
@@ -276,6 +281,70 @@ class FinishTaskService:
             with draft_lock:
                 persist_activity_snapshot()
 
+        def capture_item_event(phase: str, item: dict[str, Any]) -> None:
+            item_type = str(item.get("type") or "").strip()
+            if item_type != "commandExecution":
+                return
+
+            call_id = str(item.get("id") or "").strip() or None
+            tool_name = "shell_command"
+            arguments = {
+                "command": item.get("command"),
+                "cwd": item.get("cwd"),
+                "source": item.get("source"),
+            }
+
+            if phase == "started":
+                with draft_lock:
+                    accumulator.on_tool_call(tool_name, arguments, call_id=call_id)
+                    part_index = len(accumulator.parts) - 1
+                self._chat_event_broker.publish(
+                    project_id,
+                    node_id,
+                    {
+                        "type": "assistant_tool_call",
+                        "message_id": assistant_message_id,
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                        "call_id": call_id,
+                        "part_index": part_index,
+                    },
+                    thread_role="execution",
+                )
+                with draft_lock:
+                    persist_activity_snapshot()
+                return
+
+            raw_status = str(item.get("status") or "").strip().lower()
+            status = "error" if raw_status in {"failed", "incomplete", "error"} else "completed"
+            output = item.get("aggregatedOutput")
+            exit_code = item.get("exitCode")
+            parsed_output = output if isinstance(output, str) and output else None
+            parsed_exit_code = int(exit_code) if isinstance(exit_code, int) else None
+
+            with draft_lock:
+                accumulator.on_tool_result(
+                    call_id,
+                    status=status,
+                    output=parsed_output,
+                    exit_code=parsed_exit_code,
+                )
+            self._chat_event_broker.publish(
+                project_id,
+                node_id,
+                {
+                    "type": "assistant_tool_result",
+                    "message_id": assistant_message_id,
+                    "call_id": call_id,
+                    "status": status,
+                    "output": parsed_output,
+                    "exit_code": parsed_exit_code,
+                },
+                thread_role="execution",
+            )
+            with draft_lock:
+                persist_activity_snapshot()
+
         def capture_thread_status(payload: dict[str, Any]) -> None:
             with draft_lock:
                 accumulator.on_thread_status(payload)
@@ -331,6 +400,7 @@ class FinishTaskService:
                 on_tool_call=capture_tool_call,
                 on_plan_delta=capture_plan_delta,
                 on_thread_status=capture_thread_status,
+                on_item_event=capture_item_event,
             )
 
             with draft_lock:
@@ -618,9 +688,23 @@ class FinishTaskService:
     def _mark_live_job(self, project_id: str, node_id: str, turn_id: str) -> None:
         with self._live_jobs_lock:
             self._live_jobs[self._job_key(project_id, node_id)] = turn_id
+        if self._chat_service is not None:
+            self._chat_service.register_external_live_turn(
+                project_id,
+                node_id,
+                "execution",
+                turn_id,
+            )
 
     def _clear_live_job(self, project_id: str, node_id: str, turn_id: str) -> None:
         with self._live_jobs_lock:
             key = self._job_key(project_id, node_id)
             if self._live_jobs.get(key) == turn_id:
                 self._live_jobs.pop(key, None)
+        if self._chat_service is not None:
+            self._chat_service.clear_external_live_turn(
+                project_id,
+                node_id,
+                "execution",
+                turn_id,
+            )

@@ -911,6 +911,94 @@ describe('NodeDetailCard', () => {
     })
   })
 
+  it('shows both updated-frame actions when the frame-updated branch is ready', async () => {
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 2,
+      frame_revision: 3,
+      active_step: 'frame',
+      workflow_notice: 'Clarify decisions were applied to the frame. Review and confirm the updated frame.',
+      generation_error: null,
+      frame_branch_ready: true,
+      frame_needs_reconfirm: true,
+      frame_read_only: false,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Updated frame content',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await screen.findByDisplayValue('# Updated frame content')
+    expect(screen.getByTestId('confirm-and-split-button')).toBeInTheDocument()
+    expect(screen.getByTestId('confirm-and-create-spec-button')).toBeInTheDocument()
+  })
+
+  it('routes Frame Updated back to the active workflow step when no updated-frame branch is pending', async () => {
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 2,
+      frame_revision: 2,
+      active_step: 'spec' as const,
+      workflow_notice: null,
+      generation_error: null,
+      frame_branch_ready: false,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame content',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec content',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await screen.findByDisplayValue('# Spec content')
+    fireEvent.click(screen.getByRole('button', { name: 'Frame Updated' }))
+
+    expect(screen.getByDisplayValue('# Spec content')).toBeInTheDocument()
+    expect(screen.queryByTestId('confirm-and-split-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('confirm-and-create-spec-button')).not.toBeInTheDocument()
+  })
+
   it('shows Generate from Chat button on frame tab', async () => {
     apiMock.getNodeDocument.mockResolvedValue({
       node_id: 'root',

@@ -65,7 +65,7 @@ class PartAccumulator:
         }
         self.parts.append(self._current_plan_part)
 
-    def on_tool_call(self, tool_name: str, arguments: dict) -> None:
+    def on_tool_call(self, tool_name: str, arguments: dict, *, call_id: str | None = None) -> None:
         """Tool call -> close current text part, add tool_call part."""
         self._close_text_part()
         self._close_plan_part()
@@ -73,9 +73,37 @@ class PartAccumulator:
             "type": "tool_call",
             "tool_name": tool_name,
             "arguments": arguments,
-            "call_id": None,
+            "call_id": call_id,
             "status": "running",
+            "output": None,
+            "exit_code": None,
         })
+
+    def on_tool_result(
+        self,
+        call_id: str | None,
+        *,
+        status: str,
+        output: str | None = None,
+        exit_code: int | None = None,
+    ) -> None:
+        """Tool completion -> update matching tool_call part with result details."""
+        target = None
+        if call_id:
+            for part in reversed(self.parts):
+                if part.get("type") == "tool_call" and part.get("call_id") == call_id:
+                    target = part
+                    break
+        if target is None:
+            for part in reversed(self.parts):
+                if part.get("type") == "tool_call" and part.get("status") == "running":
+                    target = part
+                    break
+        if target is None:
+            return
+        target["status"] = status
+        target["output"] = output
+        target["exit_code"] = exit_code
 
     def on_thread_status(self, payload: dict) -> None:
         """Thread status change -> add or update status_block part."""

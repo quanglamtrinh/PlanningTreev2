@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { NodeRecord } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { ClarifyPanel } from './ClarifyPanel'
@@ -31,6 +31,20 @@ function deriveDetailTab(activeStep: 'frame' | 'clarify' | 'spec', frameBranchRe
     return 'frame_updated'
   }
   return activeStep
+}
+
+function resolveRequestedDetailTab(
+  requestedTab: DetailTab,
+  activeStep?: 'frame' | 'clarify' | 'spec',
+  frameBranchReady?: boolean,
+): DetailTab {
+  if (requestedTab !== 'frame_updated') {
+    return requestedTab
+  }
+  if (frameBranchReady) {
+    return 'frame_updated'
+  }
+  return deriveDetailTab(activeStep ?? 'frame', frameBranchReady)
 }
 
 export function NodeDetailCard({
@@ -74,6 +88,14 @@ export function NodeDetailCard({
         return nextTab
       })
     }
+  }, [detailState?.active_step, detailState?.frame_branch_ready])
+
+  const handleTabChange = useCallback((nextTab: DetailTab) => {
+    setDetailTab(resolveRequestedDetailTab(
+      nextTab,
+      detailState?.active_step,
+      detailState?.frame_branch_ready,
+    ))
   }, [detailState?.active_step, detailState?.frame_branch_ready])
 
   const rootClassName = useMemo(
@@ -147,7 +169,7 @@ export function NodeDetailCard({
             <WorkflowStepper
               detailTab={detailTab}
               detailState={detailState}
-              onTabChange={setDetailTab}
+              onTabChange={handleTabChange}
             />
           </div>
         ) : null}

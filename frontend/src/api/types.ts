@@ -311,6 +311,8 @@ export type MessagePart =
       arguments: Record<string, unknown>
       call_id: string | null
       status: 'running' | 'completed' | 'error'
+      output?: string | null
+      exit_code?: number | null
     }
   | { type: 'status_block'; status_type: string; label: string; timestamp: string }
 

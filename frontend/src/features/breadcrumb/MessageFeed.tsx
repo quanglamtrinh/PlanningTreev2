@@ -171,6 +171,8 @@ function renderPart(part: MessagePart, index: number) {
           toolName={part.tool_name}
           arguments={part.arguments}
           status={part.status}
+          output={part.output ?? null}
+          exitCode={part.exit_code ?? null}
         />
       )
     case 'status_block':

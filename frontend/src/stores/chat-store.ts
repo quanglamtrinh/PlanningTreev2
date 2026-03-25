@@ -329,6 +329,7 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
       const messageId = event.message_id as string
       const toolName = event.tool_name as string
       const args = (event.arguments ?? {}) as Record<string, unknown>
+      const callId = (event.call_id as string | null | undefined) ?? null
       return {
         ...session,
         messages: session.messages.map((message) => {
@@ -341,9 +342,45 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
             type: 'tool_call',
             tool_name: toolName,
             arguments: args,
-            call_id: null,
+            call_id: callId,
             status: 'running',
+            output: null,
+            exit_code: null,
           })
+          return { ...message, parts }
+        }),
+      }
+    }
+
+    case 'assistant_tool_result': {
+      const messageId = event.message_id as string
+      const callId = (event.call_id as string | null | undefined) ?? null
+      const status = event.status as 'completed' | 'error'
+      const output = (event.output as string | null | undefined) ?? null
+      const exitCode = typeof event.exit_code === 'number' ? event.exit_code : null
+      return {
+        ...session,
+        messages: session.messages.map((message) => {
+          if (message.message_id !== messageId) {
+            return message
+          }
+          const parts: MessagePart[] = [...(message.parts ?? [])]
+          const targetIndex = parts.findLastIndex(
+            (part) => part.type === 'tool_call' && (callId ? part.call_id === callId : part.status === 'running'),
+          )
+          if (targetIndex === -1) {
+            return message
+          }
+          const target = parts[targetIndex]
+          if (target.type !== 'tool_call') {
+            return message
+          }
+          parts[targetIndex] = {
+            ...target,
+            status,
+            output,
+            exit_code: exitCode,
+          }
           return { ...message, parts }
         }),
       }

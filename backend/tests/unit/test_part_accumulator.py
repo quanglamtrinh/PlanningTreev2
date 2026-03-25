@@ -16,7 +16,7 @@ def test_on_delta_creates_assistant_text_part():
 def test_on_tool_call_closes_text_and_adds_tool():
     acc = PartAccumulator()
     acc.on_delta("Thinking...")
-    acc.on_tool_call("read_file", {"path": "/foo.py"})
+    acc.on_tool_call("read_file", {"path": "/foo.py"}, call_id="call-1")
     acc.on_delta("Done.")
     assert len(acc.parts) == 3
     assert acc.parts[0]["type"] == "assistant_text"
@@ -24,9 +24,25 @@ def test_on_tool_call_closes_text_and_adds_tool():
     assert acc.parts[1]["type"] == "tool_call"
     assert acc.parts[1]["tool_name"] == "read_file"
     assert acc.parts[1]["arguments"] == {"path": "/foo.py"}
+    assert acc.parts[1]["call_id"] == "call-1"
     assert acc.parts[1]["status"] == "running"
     assert acc.parts[2]["type"] == "assistant_text"
     assert acc.parts[2]["content"] == "Done."
+
+
+def test_on_tool_result_updates_matching_tool_call():
+    acc = PartAccumulator()
+    acc.on_tool_call("shell_command", {"command": "dir"}, call_id="call-1")
+    acc.on_tool_result(
+        "call-1",
+        status="completed",
+        output="file-a\nfile-b",
+        exit_code=0,
+    )
+
+    assert acc.parts[0]["status"] == "completed"
+    assert acc.parts[0]["output"] == "file-a\nfile-b"
+    assert acc.parts[0]["exit_code"] == 0
 
 
 def test_on_plan_delta_creates_and_updates_plan_item():

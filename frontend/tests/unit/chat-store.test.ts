@@ -622,6 +622,51 @@ describe('applyChatEvent', () => {
     })
   })
 
+  it('assistant_tool_result updates matching tool call with output', () => {
+    const session = makeSession({
+      active_turn_id: 'turn-1',
+      messages: [
+        {
+          message_id: 'msg-2',
+          role: 'assistant',
+          content: '',
+          parts: [
+            {
+              type: 'tool_call' as const,
+              tool_name: 'shell_command',
+              arguments: { command: 'dir' },
+              call_id: 'call-1',
+              status: 'running' as const,
+              output: null,
+              exit_code: null,
+            },
+          ],
+          status: 'streaming',
+          error: null,
+          turn_id: 'turn-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    })
+
+    const result = applyChatEvent(session, {
+      type: 'assistant_tool_result',
+      message_id: 'msg-2',
+      call_id: 'call-1',
+      status: 'completed',
+      output: 'file-a\\nfile-b',
+      exit_code: 0,
+    })
+
+    expect(result.messages[0].parts![0]).toMatchObject({
+      type: 'tool_call',
+      status: 'completed',
+      output: 'file-a\\nfile-b',
+      exit_code: 0,
+    })
+  })
+
   it('assistant_plan_delta creates and extends plan items', () => {
     const session = makeSession({
       active_turn_id: 'turn-1',
