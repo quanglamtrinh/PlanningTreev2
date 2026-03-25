@@ -16,6 +16,7 @@ class ReviewCodexClient:
     def __init__(self, *, response_text: str = "Execution complete") -> None:
         self.response_text = response_text
         self.started_threads: list[str] = []
+        self.prompts: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"review-thread-{len(self.started_threads) + 1}"
@@ -25,8 +26,12 @@ class ReviewCodexClient:
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
         return {"thread_id": thread_id}
 
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"review-fork-thread-{len(self.started_threads) + 1}"
+        return {"thread_id": thread_id}
+
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
-        del prompt
+        self.prompts.append(prompt)
         thread_id = str(kwargs.get("thread_id", ""))
         cwd = kwargs.get("cwd")
         if isinstance(cwd, str) and cwd:
@@ -151,6 +156,7 @@ def _setup_node_with_execution_completed(
     if codex_client is None:
         codex_client = ReviewCodexClient()
     client.app.state.finish_task_service._codex_client = codex_client
+    client.app.state.thread_lineage_service._codex_client = codex_client
 
     project_id, root_id = _setup_project(client, workspace_root)
 
@@ -396,6 +402,7 @@ def test_first_audit_write_triggers_start_local_review(client: TestClient, works
 
     # Swap codex for chat turns
     client.app.state.chat_service._codex_client = codex
+    client.app.state.thread_lineage_service._codex_client = codex
 
     # Send first audit message
     resp = client.post(
@@ -413,12 +420,62 @@ def test_first_audit_write_triggers_start_local_review(client: TestClient, works
     assert detail["can_accept_local_review"] is True
 
 
+def test_first_audit_write_injects_local_review_prompt_once(client: TestClient, workspace_root):
+    codex = ReviewCodexClient(response_text="Audit review complete")
+    project_id, node_id = _setup_node_with_execution_completed(
+        client, workspace_root, codex_client=codex,
+    )
+
+    client.app.state.chat_service._codex_client = codex
+    client.app.state.thread_lineage_service._codex_client = codex
+
+    first = client.post(
+        f"/v1/projects/{project_id}/nodes/{node_id}/chat/message",
+        params={"thread_role": "audit"},
+        json={"content": "Review the execution output."},
+    )
+    assert first.status_code == 200
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        session = client.app.state.storage.chat_state_store.read_session(
+            project_id, node_id, thread_role="audit"
+        )
+        if not session.get("active_turn_id"):
+            break
+        time.sleep(0.02)
+
+    assert "Confirmed frame" in codex.prompts[-1]
+    assert "Confirmed spec" in codex.prompts[-1]
+    assert "Head SHA:" in codex.prompts[-1]
+
+    second = client.post(
+        f"/v1/projects/{project_id}/nodes/{node_id}/chat/message",
+        params={"thread_role": "audit"},
+        json={"content": "Second audit follow-up."},
+    )
+    assert second.status_code == 200
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        session = client.app.state.storage.chat_state_store.read_session(
+            project_id, node_id, thread_role="audit"
+        )
+        if not session.get("active_turn_id"):
+            break
+        time.sleep(0.02)
+
+    assert "Confirmed frame" not in codex.prompts[-1]
+    assert "Confirmed spec" not in codex.prompts[-1]
+
+
 def test_second_audit_write_does_not_fail(client: TestClient, workspace_root):
     codex = ReviewCodexClient()
     project_id, node_id = _setup_node_with_execution_completed(
         client, workspace_root, codex_client=codex,
     )
     client.app.state.chat_service._codex_client = codex
+    client.app.state.thread_lineage_service._codex_client = codex
 
     # First audit write triggers review_pending
     resp1 = client.post(

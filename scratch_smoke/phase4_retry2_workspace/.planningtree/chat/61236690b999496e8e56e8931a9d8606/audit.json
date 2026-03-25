@@ -1,0 +1,78 @@
+{
+  "thread_id": "start-thread-1",
+  "thread_role": "audit",
+  "active_turn_id": null,
+  "forked_from_thread_id": null,
+  "forked_from_node_id": null,
+  "forked_from_role": null,
+  "fork_reason": "root_bootstrap",
+  "lineage_root_thread_id": "start-thread-1",
+  "messages": [
+    {
+      "message_id": "audit-record:frame",
+      "role": "system",
+      "content": "Canonical confirmed frame snapshot:\n\n```markdown\n# Task Title\nTask\n\n# Objective\nDo it\n```",
+      "status": "completed",
+      "error": null,
+      "turn_id": null,
+      "created_at": "2026-03-25T23:27:18.732758+00:00",
+      "updated_at": "2026-03-25T23:27:18.732758+00:00"
+    },
+    {
+      "message_id": "audit-record:spec",
+      "role": "system",
+      "content": "Canonical confirmed spec snapshot:\n\n```markdown\n# Spec\nImplement it\n```",
+      "status": "completed",
+      "error": null,
+      "turn_id": null,
+      "created_at": "2026-03-25T23:27:18.860542+00:00",
+      "updated_at": "2026-03-25T23:27:18.860542+00:00"
+    },
+    {
+      "message_id": "msg_a9f9115c5e",
+      "role": "user",
+      "content": "Please review this",
+      "status": "completed",
+      "error": null,
+      "turn_id": "turn_1953af42b0",
+      "created_at": "2026-03-25T23:27:19.194754+00:00",
+      "updated_at": "2026-03-25T23:27:19.194754+00:00"
+    },
+    {
+      "message_id": "msg_b044038a87",
+      "role": "assistant",
+      "content": "",
+      "status": "error",
+      "error": "simulated audit failure",
+      "turn_id": "turn_1953af42b0",
+      "created_at": "2026-03-25T23:27:19.194754+00:00",
+      "updated_at": "2026-03-25T23:27:19.357552+00:00",
+      "parts": [],
+      "items": []
+    },
+    {
+      "message_id": "msg_6c0edf7dbb",
+      "role": "user",
+      "content": "Retry review",
+      "status": "completed",
+      "error": null,
+      "turn_id": "turn_9ad51a8b1b",
+      "created_at": "2026-03-25T23:27:19.435081+00:00",
+      "updated_at": "2026-03-25T23:27:19.435081+00:00"
+    },
+    {
+      "message_id": "msg_36550a5626",
+      "role": "assistant",
+      "content": "ok",
+      "status": "completed",
+      "error": null,
+      "turn_id": "turn_9ad51a8b1b",
+      "created_at": "2026-03-25T23:27:19.435081+00:00",
+      "updated_at": "2026-03-25T23:27:19.561019+00:00",
+      "parts": [],
+      "items": []
+    }
+  ],
+  "created_at": "2026-03-25T23:27:18.732728+00:00",
+  "updated_at": "2026-03-25T23:27:19.565067+00:00"
+}

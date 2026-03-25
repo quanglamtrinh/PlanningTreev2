@@ -1,0 +1,132 @@
+{
+  "thread_id": "start-thread-1",
+  "thread_role": "audit",
+  "active_turn_id": null,
+  "forked_from_thread_id": null,
+  "forked_from_node_id": null,
+  "forked_from_role": null,
+  "fork_reason": "root_bootstrap",
+  "lineage_root_thread_id": "start-thread-1",
+  "messages": [
+    {
+      "message_id": "audit-record:frame",
+      "role": "system",
+      "content": "Canonical confirmed frame snapshot:\n\n```markdown\n# Task Title\nTask\n\n# Objective\nDo it\n```",
+      "status": "completed",
+      "error": null,
+      "turn_id": null,
+      "created_at": "2026-03-25T23:25:54.924380+00:00",
+      "updated_at": "2026-03-25T23:25:54.924380+00:00"
+    },
+    {
+      "message_id": "audit-record:spec",
+      "role": "system",
+      "content": "Canonical confirmed spec snapshot:\n\n```markdown\n# Spec\nImplement it\n```",
+      "status": "completed",
+      "error": null,
+      "turn_id": null,
+      "created_at": "2026-03-25T23:25:55.058516+00:00",
+      "updated_at": "2026-03-25T23:25:55.058516+00:00"
+    },
+    {
+      "message_id": "msg_bfca9855d7",
+      "role": "user",
+      "content": "Please review this",
+      "status": "completed",
+      "error": null,
+      "turn_id": "turn_2ad4175eef",
+      "created_at": "2026-03-25T23:25:55.426969+00:00",
+      "updated_at": "2026-03-25T23:25:55.426969+00:00"
+    },
+    {
+      "message_id": "msg_68444ebc60",
+      "role": "assistant",
+      "content": "ok",
+      "status": "completed",
+      "error": null,
+      "turn_id": "turn_2ad4175eef",
+      "created_at": "2026-03-25T23:25:55.426969+00:00",
+      "updated_at": "2026-03-25T23:25:55.597742+00:00",
+      "parts": [
+        {
+          "type": "assistant_text",
+          "content": "ok",
+          "is_streaming": false
+        }
+      ],
+      "items": [
+        {
+          "item_id": "assistant_text",
+          "item_type": "assistant_text",
+          "status": "completed",
+          "started_at": "2026-03-25T23:25:55.574063+00:00",
+          "completed_at": "2026-03-25T23:25:55.574101+00:00",
+          "last_payload": {
+            "length": 2
+          },
+          "lifecycle": [
+            {
+              "phase": "delta",
+              "timestamp": "2026-03-25T23:25:55.574063+00:00",
+              "payload": {
+                "length": 2
+              },
+              "text": "ok"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message_id": "msg_9ebdde5626",
+      "role": "user",
+      "content": "Second review pass",
+      "status": "completed",
+      "error": null,
+      "turn_id": "turn_1230c82ecf",
+      "created_at": "2026-03-25T23:25:55.692443+00:00",
+      "updated_at": "2026-03-25T23:25:55.692443+00:00"
+    },
+    {
+      "message_id": "msg_1eb6d7a34b",
+      "role": "assistant",
+      "content": "ok",
+      "status": "completed",
+      "error": null,
+      "turn_id": "turn_1230c82ecf",
+      "created_at": "2026-03-25T23:25:55.692443+00:00",
+      "updated_at": "2026-03-25T23:25:55.797214+00:00",
+      "parts": [
+        {
+          "type": "assistant_text",
+          "content": "ok",
+          "is_streaming": false
+        }
+      ],
+      "items": [
+        {
+          "item_id": "assistant_text",
+          "item_type": "assistant_text",
+          "status": "completed",
+          "started_at": "2026-03-25T23:25:55.770230+00:00",
+          "completed_at": "2026-03-25T23:25:55.770270+00:00",
+          "last_payload": {
+            "length": 2
+          },
+          "lifecycle": [
+            {
+              "phase": "delta",
+              "timestamp": "2026-03-25T23:25:55.770230+00:00",
+              "payload": {
+                "length": 2
+              },
+              "text": "ok"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "created_at": "2026-03-25T23:25:54.924362+00:00",
+  "updated_at": "2026-03-25T23:25:55.803595+00:00"
+}

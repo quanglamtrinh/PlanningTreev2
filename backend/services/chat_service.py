@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from backend.ai.ask_thread_config import build_ask_planning_thread_config
-from backend.ai.chat_prompt_builder import build_chat_prompt
+from backend.ai.chat_prompt_builder import build_chat_prompt, build_local_review_prompt
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.ai.part_accumulator import PartAccumulator
 from backend.errors.app_errors import (
@@ -339,7 +339,15 @@ class ChatService:
                 thread_role=thread_role,
             )
 
-            prompt = build_chat_prompt(snapshot, node, node_by_id, content)
+            prompt, used_local_review_prompt = self._build_prompt_for_turn(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                snapshot=snapshot,
+                node=node,
+                node_by_id=node_by_id,
+                user_content=content,
+            )
             result = self._codex_client.run_turn_streaming(
                 prompt,
                 thread_id=thread_id,
@@ -373,6 +381,8 @@ class ChatService:
             )
 
             if persisted:
+                if used_local_review_prompt and thread_role == "audit":
+                    self._mark_local_review_prompt_consumed(project_id, node_id)
                 self._chat_event_broker.publish(
                     project_id,
                     node_id,
@@ -565,6 +575,42 @@ class ChatService:
     def _workspace_root_for_project(self, project_id: str) -> str | None:
         snapshot = self._storage.project_store.load_snapshot(project_id)
         return self._workspace_root_from_snapshot(snapshot)
+
+    def _build_prompt_for_turn(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        snapshot: dict[str, Any],
+        node: dict[str, Any] | None,
+        node_by_id: dict[str, dict[str, Any]],
+        user_content: str,
+    ) -> tuple[str, bool]:
+        if thread_role == "audit" and self._local_review_prompt_is_open(project_id, node_id):
+            return build_local_review_prompt(self._storage, project_id, node_id, user_content), True
+        return build_chat_prompt(snapshot, node, node_by_id, user_content), False
+
+    def _local_review_prompt_is_open(self, project_id: str, node_id: str) -> bool:
+        exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+        if not isinstance(exec_state, dict):
+            return False
+        status = str(exec_state.get("status") or "").strip()
+        started_at = str(exec_state.get("local_review_started_at") or "").strip()
+        consumed_at = str(exec_state.get("local_review_prompt_consumed_at") or "").strip()
+        return status == "review_pending" and bool(started_at) and not consumed_at
+
+    def _mark_local_review_prompt_consumed(self, project_id: str, node_id: str) -> None:
+        with self._storage.project_lock(project_id):
+            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            if not isinstance(exec_state, dict):
+                return
+            if not str(exec_state.get("local_review_started_at") or "").strip():
+                return
+            if str(exec_state.get("local_review_prompt_consumed_at") or "").strip():
+                return
+            exec_state["local_review_prompt_consumed_at"] = iso_now()
+            self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
     def _check_thread_writable(self, project_id: str, node_id: str, thread_role: str) -> None:
         """Enforce read-only rules per thread-state-model.md."""

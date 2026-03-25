@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.ai.execution_prompt_builder import build_execution_base_instructions
 from backend.ai.codex_client import CodexTransportError
 from backend.errors.app_errors import FinishTaskNotAllowed
 from backend.services.chat_service import ChatService
@@ -33,15 +34,27 @@ class FakeExecutionCodexClient:
         self.create_file_name = create_file_name
         self.started_threads: list[str] = []
         self.resumed_threads: list[str] = []
+        self.forked_threads: list[dict[str, object]] = []
         self.prompts: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
-        thread_id = f"exec-thread-{len(self.started_threads) + 1}"
+        thread_id = f"exec-start-thread-{len(self.started_threads) + 1}"
         self.started_threads.append(thread_id)
         return {"thread_id": thread_id}
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
         self.resumed_threads.append(thread_id)
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **kwargs: object) -> dict[str, str]:
+        thread_id = f"exec-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(
+            {
+                "thread_id": thread_id,
+                "source_thread_id": source_thread_id,
+                **kwargs,
+            }
+        )
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
@@ -147,6 +160,7 @@ def finish_service(storage, tree_service, detail_service, codex_client, chat_eve
         tree_service=tree_service,
         node_detail_service=detail_service,
         codex_client=codex_client,
+        thread_lineage_service=ThreadLineageService(storage, codex_client, tree_service),
         chat_event_broker=chat_event_broker,
         chat_timeout=5,
     )
@@ -252,6 +266,7 @@ def test_finish_task_creates_execution_state_session_and_thread(
         tree_service,
         detail_service,
         codex_client,
+        ThreadLineageService(storage, codex_client, tree_service),
         chat_event_broker,
         chat_timeout=5,
     )
@@ -268,12 +283,21 @@ def test_finish_task_creates_execution_state_session_and_thread(
     assert result["shaping_frozen"] is True
 
     session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")
-    assert session["thread_id"] == "exec-thread-1"
+    assert session["thread_id"] == "exec-fork-thread-1"
+    assert session["fork_reason"] == "execution_bootstrap"
+    assert session["forked_from_role"] == "audit"
+    assert session["forked_from_thread_id"] is not None
+    assert session["lineage_root_thread_id"] is not None
     assert session["active_turn_id"] is not None
     assert len(session["messages"]) == 1
     assert session["messages"][0]["role"] == "assistant"
     assert session["messages"][0]["status"] == "pending"
     assert storage.chat_state_store.path(project_id, root_node_id, thread_role="execution").exists()
+    assert len(codex_client.started_threads) == 1
+    assert len(codex_client.forked_threads) == 1
+    assert codex_client.forked_threads[0]["base_instructions"] == build_execution_base_instructions()
+    assert codex_client.forked_threads[0]["dynamic_tools"] == []
+    assert codex_client.forked_threads[0]["writable_roots"] == [str(storage.workspace_store.get_folder_path(project_id))]
 
     barrier.set()
 
@@ -379,6 +403,7 @@ def test_execution_session_stays_live_while_background_turn_is_running(
         tree_service,
         detail_service,
         codex_client,
+        ThreadLineageService(storage, codex_client, tree_service),
         chat_event_broker,
         chat_timeout=5,
         chat_service=chat_service,
@@ -419,6 +444,7 @@ def test_finish_task_background_failure_marks_error_and_completes_without_head_s
         tree_service,
         detail_service,
         codex_client,
+        ThreadLineageService(storage, codex_client, tree_service),
         chat_event_broker,
         chat_timeout=5,
     )

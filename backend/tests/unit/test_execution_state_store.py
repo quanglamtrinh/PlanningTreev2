@@ -35,6 +35,8 @@ def test_write_and_read_round_trip(exec_store, project_id):
         "head_sha": None,
         "started_at": "2026-03-23T10:00:00Z",
         "completed_at": None,
+        "local_review_started_at": None,
+        "local_review_prompt_consumed_at": None,
     }
     exec_store.write_state(project_id, "node1", state)
 
@@ -45,6 +47,8 @@ def test_write_and_read_round_trip(exec_store, project_id):
     assert loaded["head_sha"] is None
     assert loaded["started_at"] == "2026-03-23T10:00:00Z"
     assert loaded["completed_at"] is None
+    assert loaded["local_review_started_at"] is None
+    assert loaded["local_review_prompt_consumed_at"] is None
 
 
 def test_exists_returns_true_after_write(exec_store, project_id):
@@ -93,6 +97,8 @@ def test_normalize_non_dict_returns_default(exec_store):
     assert result["head_sha"] is None
     assert result["started_at"] is None
     assert result["completed_at"] is None
+    assert result["local_review_started_at"] is None
+    assert result["local_review_prompt_consumed_at"] is None
 
 
 def test_normalize_strips_whitespace(exec_store):
@@ -102,11 +108,15 @@ def test_normalize_strips_whitespace(exec_store):
         "head_sha": "  sha256:def  ",
         "started_at": "  2026-03-23T10:00:00Z  ",
         "completed_at": "  2026-03-23T11:00:00Z  ",
+        "local_review_started_at": "  2026-03-23T11:05:00Z  ",
+        "local_review_prompt_consumed_at": "  2026-03-23T11:10:00Z  ",
     })
     assert result["initial_sha"] == "sha256:abc"
     assert result["head_sha"] == "sha256:def"
     assert result["started_at"] == "2026-03-23T10:00:00Z"
     assert result["completed_at"] == "2026-03-23T11:00:00Z"
+    assert result["local_review_started_at"] == "2026-03-23T11:05:00Z"
+    assert result["local_review_prompt_consumed_at"] == "2026-03-23T11:10:00Z"
 
 
 def test_normalize_empty_strings_become_none(exec_store):
@@ -116,11 +126,34 @@ def test_normalize_empty_strings_become_none(exec_store):
         "head_sha": "",
         "started_at": "",
         "completed_at": "  ",
+        "local_review_started_at": "  ",
+        "local_review_prompt_consumed_at": "",
     })
     assert result["initial_sha"] is None
     assert result["head_sha"] is None
     assert result["started_at"] is None
     assert result["completed_at"] is None
+    assert result["local_review_started_at"] is None
+    assert result["local_review_prompt_consumed_at"] is None
+
+
+def test_local_review_boundary_fields_round_trip(exec_store, project_id):
+    state = {
+        "status": "review_pending",
+        "initial_sha": "sha256:abc123",
+        "head_sha": "sha256:def456",
+        "started_at": "2026-03-23T10:00:00Z",
+        "completed_at": "2026-03-23T11:00:00Z",
+        "local_review_started_at": "2026-03-23T11:01:00Z",
+        "local_review_prompt_consumed_at": "2026-03-23T11:02:00Z",
+    }
+
+    exec_store.write_state(project_id, "node-local-review", state)
+
+    loaded = exec_store.read_state(project_id, "node-local-review")
+    assert loaded is not None
+    assert loaded["local_review_started_at"] == "2026-03-23T11:01:00Z"
+    assert loaded["local_review_prompt_consumed_at"] == "2026-03-23T11:02:00Z"
 
 
 def test_all_valid_statuses_accepted(exec_store):

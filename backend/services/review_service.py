@@ -66,6 +66,8 @@ class ReviewService:
                     f"Cannot start local review: execution status is '{exec_state['status']}', expected 'completed'."
                 )
             exec_state["status"] = "review_pending"
+            exec_state["local_review_started_at"] = iso_now()
+            exec_state["local_review_prompt_consumed_at"] = None
             return self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
     def get_review_state(self, project_id: str, review_node_id: str) -> dict[str, Any]:
@@ -115,6 +117,8 @@ class ReviewService:
             head_sha = exec_state.get("head_sha")
 
             exec_state["status"] = "review_accepted"
+            if not str(exec_state.get("local_review_prompt_consumed_at") or "").strip():
+                exec_state["local_review_prompt_consumed_at"] = iso_now()
             self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
             snapshot = self._storage.project_store.load_snapshot(project_id)

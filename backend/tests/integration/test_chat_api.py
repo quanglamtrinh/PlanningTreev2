@@ -56,6 +56,11 @@ class ExecutionCodexClient:
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
         return {"thread_id": thread_id}
 
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"exec-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
+        return {"thread_id": thread_id}
+
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
         del prompt
         thread_id = str(kwargs.get("thread_id", ""))
@@ -77,6 +82,11 @@ class IntegrationRollupCodexClient:
         return {"thread_id": thread_id}
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"exec-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
         return {"thread_id": thread_id}
 
     def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
@@ -104,6 +114,11 @@ def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
 
 def _set_chat_codex_client(client: TestClient, codex_client: object) -> None:
     client.app.state.chat_service._codex_client = codex_client
+    client.app.state.thread_lineage_service._codex_client = codex_client
+
+
+def _set_execution_codex_client(client: TestClient, codex_client: object) -> None:
+    client.app.state.finish_task_service._codex_client = codex_client
     client.app.state.thread_lineage_service._codex_client = codex_client
 
 
@@ -631,7 +646,8 @@ def test_finish_task_route_returns_detail_state_and_creates_execution_session(
     client: TestClient,
     workspace_root,
 ):
-    client.app.state.finish_task_service._codex_client = ExecutionCodexClient()
+    codex = ExecutionCodexClient()
+    _set_execution_codex_client(client, codex)
     project_id, root_id = _setup_project(client, workspace_root)
 
     frame_resp = client.put(
@@ -678,4 +694,7 @@ def test_finish_task_route_returns_detail_state_and_creates_execution_session(
 
     assert execution_session is not None
     assert execution_session["thread_role"] == "execution"
+    assert execution_session["fork_reason"] == "execution_bootstrap"
+    assert execution_session["forked_from_role"] == "audit"
     assert execution_session["messages"][0]["role"] == "assistant"
+    assert codex.forked_threads

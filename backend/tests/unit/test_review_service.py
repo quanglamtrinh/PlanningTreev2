@@ -305,11 +305,15 @@ def test_start_local_review_transitions_completed_to_review_pending(
 
     result = review_service.start_local_review(project_id, root_id)
     assert result["status"] == "review_pending"
+    assert result["local_review_started_at"] is not None
+    assert result["local_review_prompt_consumed_at"] is None
 
     # Verify persisted
     exec_state = storage.execution_state_store.read_state(project_id, root_id)
     assert exec_state is not None
     assert exec_state["status"] == "review_pending"
+    assert exec_state["local_review_started_at"] is not None
+    assert exec_state["local_review_prompt_consumed_at"] is None
 
 
 def test_start_local_review_rejects_non_completed_status(
@@ -355,6 +359,8 @@ def test_accept_local_review_transitions_to_review_accepted_and_marks_done(
     exec_state = storage.execution_state_store.read_state(project_id, root_id)
     assert exec_state is not None
     assert exec_state["status"] == "review_accepted"
+    assert exec_state["local_review_started_at"] is not None
+    assert exec_state["local_review_prompt_consumed_at"] is not None
 
     persisted = storage.project_store.load_snapshot(project_id)
     node = persisted["tree_state"]["node_index"][root_id]

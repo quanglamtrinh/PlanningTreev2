@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +17,7 @@ from backend.errors.app_errors import (
 from backend.main import create_app
 from backend.services import chat_service as chat_service_module
 from backend.services.chat_service import ChatService
+from backend.services import planningtree_workspace
 from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
 from backend.services.thread_lineage_service import ThreadLineageService
@@ -130,6 +133,16 @@ def _wait_for_turn(service, project_id, node_id, timeout=2.0):
     raise AssertionError("Turn did not complete in time")
 
 
+def _wait_for_turn_role(service, project_id, node_id, thread_role, timeout=2.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        session = service.get_session(project_id, node_id, thread_role=thread_role)
+        if not session.get("active_turn_id"):
+            return session
+        time.sleep(0.02)
+    raise AssertionError("Turn did not complete in time")
+
+
 def _wait_for_condition(predicate, timeout=2.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -138,6 +151,35 @@ def _wait_for_condition(predicate, timeout=2.0):
             return value
         time.sleep(0.02)
     raise AssertionError("Condition was not met in time")
+
+
+def _write_confirmed_frame_and_spec(storage, project_id: str, node_id: str) -> None:
+    snapshot = storage.project_store.load_snapshot(project_id)
+    project_path = Path(snapshot["project"]["project_path"])
+    node_dir = planningtree_workspace.resolve_node_dir(project_path, snapshot, node_id)
+    assert node_dir is not None
+
+    (node_dir / "frame.meta.json").write_text(
+        json.dumps(
+            {
+                "revision": 1,
+                "confirmed_revision": 1,
+                "confirmed_at": iso_now(),
+                "confirmed_content": "# Frame\nReview the execution carefully.\n",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (node_dir / "spec.meta.json").write_text(
+        json.dumps(
+            {
+                "source_frame_revision": 1,
+                "confirmed_at": iso_now(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (node_dir / "spec.md").write_text("# Spec\nShip the implementation safely.\n", encoding="utf-8")
 
 
 def test_get_session_returns_empty_for_new_node(storage, workspace_root):
@@ -339,6 +381,87 @@ def test_audit_message_fails_cleanly_when_local_review_start_errors(storage, wor
     session = storage.chat_state_store.read_session(project_id, root_id, thread_role="audit")
     assert session["messages"] == []
     assert session["active_turn_id"] is None
+
+
+def test_audit_first_local_review_turn_uses_local_review_prompt_once(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient(response_text="Audit review complete")
+    service = _make_service(storage, client)
+    service._review_service = ReviewService(storage, TreeService())
+    _write_confirmed_frame_and_spec(storage, project_id, root_id)
+    storage.execution_state_store.write_state(
+        project_id,
+        root_id,
+        {
+            "status": "completed",
+            "initial_sha": "sha256:init",
+            "head_sha": "sha256:head",
+            "started_at": iso_now(),
+            "completed_at": iso_now(),
+        },
+    )
+
+    service.create_message(project_id, root_id, "Please review the execution", thread_role="audit")
+    _wait_for_turn_role(service, project_id, root_id, "audit")
+
+    first_prompt = client.turns_run[-1]
+    assert "Confirmed frame" in first_prompt
+    assert "Confirmed spec" in first_prompt
+    assert "Head SHA: sha256:head" in first_prompt
+
+    exec_state = storage.execution_state_store.read_state(project_id, root_id)
+    assert exec_state is not None
+    assert exec_state["status"] == "review_pending"
+    assert exec_state["local_review_started_at"] is not None
+    assert exec_state["local_review_prompt_consumed_at"] is not None
+
+    service.create_message(project_id, root_id, "One more audit note", thread_role="audit")
+    _wait_for_turn_role(service, project_id, root_id, "audit")
+
+    second_prompt = client.turns_run[-1]
+    assert "Confirmed frame" not in second_prompt
+    assert "Confirmed spec" not in second_prompt
+    assert "Head SHA: sha256:head" not in second_prompt
+
+
+def test_failed_first_local_review_turn_keeps_boundary_open_for_retry(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient(fail=True)
+    service = _make_service(storage, client)
+    service._review_service = ReviewService(storage, TreeService())
+    _write_confirmed_frame_and_spec(storage, project_id, root_id)
+    storage.execution_state_store.write_state(
+        project_id,
+        root_id,
+        {
+            "status": "completed",
+            "initial_sha": "sha256:init",
+            "head_sha": "sha256:head",
+            "started_at": iso_now(),
+            "completed_at": iso_now(),
+        },
+    )
+
+    service.create_message(project_id, root_id, "Review attempt one", thread_role="audit")
+    failed_session = _wait_for_turn_role(service, project_id, root_id, "audit")
+    assert failed_session["messages"][1]["status"] == "error"
+    assert "Confirmed frame" in client.turns_run[-1]
+
+    exec_state = storage.execution_state_store.read_state(project_id, root_id)
+    assert exec_state is not None
+    assert exec_state["status"] == "review_pending"
+    assert exec_state["local_review_started_at"] is not None
+    assert exec_state["local_review_prompt_consumed_at"] is None
+
+    client.fail = False
+    client.response_text = "Retry succeeded"
+    service.create_message(project_id, root_id, "Review attempt two", thread_role="audit")
+    _wait_for_turn_role(service, project_id, root_id, "audit")
+
+    assert "Confirmed frame" in client.turns_run[-1]
+    exec_state = storage.execution_state_store.read_state(project_id, root_id)
+    assert exec_state is not None
+    assert exec_state["local_review_prompt_consumed_at"] is not None
 
 
 def test_background_turn_checkpoints_partial_content(storage, workspace_root, monkeypatch):

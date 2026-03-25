@@ -1,6 +1,24 @@
 # Phase 4 Handoff: Execution Fork Migration and Local Review Injection
 
-Status: ready for implementation on 2026-03-25. This is the active continuation brief for the Phase 4 implementation slice.
+Status: completed on 2026-03-25. This document now serves as the historical brief for the completed Phase 4 implementation slice.
+
+## What landed in Phase 4
+
+- `FinishTaskService` now bootstraps `execution` through `ThreadLineageService.ensure_forked_thread(...)` with `fork_reason="execution_bootstrap"`
+- execution session initialization now preserves `forked_from_*`, `fork_reason`, and `lineage_root_thread_id` instead of wiping them with `clear_session(...)`
+- `execution_state.json` now tracks `local_review_started_at` and `local_review_prompt_consumed_at`
+- `ReviewService.start_local_review(...)` opens the local-review boundary, and `accept_local_review(...)` closes it cleanly if no audit turn consumed it
+- task-node audit chat now uses `build_local_review_prompt(...)` only while the local-review boundary is open
+- first successful audit turn after execution consumes the local-review boundary; failed/stale turns do not
+
+## Verification performed
+
+- `python -m py_compile` passed for all touched backend files and updated test files
+- manual service-layer smoke passed for:
+  - execution forking from task audit with persisted lineage metadata
+  - first-turn-only local review prompt injection
+  - failed-first-turn retry retention of local review context
+- targeted pytest remains blocked on this workstation by temp-directory permission errors during tmp-path setup/cleanup, so no green pytest run is recorded for this slice
 
 ## What Phases 1 through 3 already completed
 
@@ -17,7 +35,7 @@ Status: ready for implementation on 2026-03-25. This is the active continuation 
 - frame/spec/clarify generation now reuse `ask_planning` instead of owning generation-specific Codex threads
 - temporary child ask seeding remains intentionally active through Phase 4
 
-Phase 4 should build on those guarantees and should not reopen Phase 3 scope unless a blocker is discovered.
+Phase 4 built on those guarantees without reopening Phase 3 scope.
 
 ## Phase 4 scope
 
@@ -29,7 +47,7 @@ In scope:
 - creation of new `execution` threads through `ensure_forked_thread(...)`
 - preserving execution prompt-builder behavior that already loads frame/spec from storage
 - wiring `build_local_review_prompt(...)` into audit chat for post-execution local review
-- adding a local-only first-turn boundary marker so execution artifacts are injected only at the opening of local review
+- adding local-only first-turn boundary markers in `execution_state.json` so execution artifacts are injected only while the local-review boundary remains open
 - backend unit coverage for execution fork behavior and first-turn-only local review injection
 
 Out of scope:
@@ -47,7 +65,7 @@ Out of scope:
 - Execution thread creation must go through `ThreadLineageService`; do not keep direct `start_thread()/resume_thread()` ownership in `FinishTaskService`.
 - Execution prompts continue to source canonical frame/spec artifacts from local storage; Phase 4 is not a prompt-builder rewrite for execution itself.
 - Local review prompt injection is boundary-scoped, not persistent session scaffolding.
-- The local-review marker is local-only metadata in session storage and must not be written into Codex thread history.
+- The local-review marker is local-only metadata in `execution_state.json` and is not written into Codex thread history.
 - Temporary ask seeding remains in place through this phase and is removed only in Phase 5 after child first-turn injection exists.
 - Split, review-node lineage, and `integration -> audit` cutover remain untouched in this PR.
 
@@ -77,35 +95,39 @@ Update the audit chat flow so:
 
 Practical rule:
 
-- execution completion opens a local-only local-review boundary marker
-- the first user-authored audit turn after that marker gets the injected local-review context
-- once that turn is consumed, later audit turns revert to the normal audit chat prompt path
+- `ReviewService.start_local_review(...)` opens the local-review boundary by setting markers in `execution_state.json`
+- the first successful audit turn while that boundary is open gets the injected local-review context
+- failed audit turns leave the boundary open; once a successful turn consumes it, later audit turns revert to the normal audit chat prompt path
 
 ### 3. Keep the rest of the workflow unchanged
 
-Do not change:
+Do not change beyond local-review marker transitions:
 
 - `SplitService`
-- `ReviewService`
+- `ReviewService` rollup / integration behavior
 - review-node `integration` semantics
 - package-review or child-activation prompt injection
 - ask seeding behavior
 
 Phase 4 is limited to execution lineage and local-review boundary injection.
 
-## Files expected in PR 4
+## Files touched in PR 4
 
 - `backend/services/finish_task_service.py`
 - `backend/services/chat_service.py`
-- `backend/ai/chat_prompt_builder.py`
-- `backend/main.py` only if constructor wiring changes are needed
+- `backend/services/review_service.py`
+- `backend/storage/execution_state_store.py`
+- `backend/main.py`
 - `backend/tests/unit/test_finish_task_service.py`
-- any focused audit-chat tests needed to prove first-turn-only local review injection
+- `backend/tests/unit/test_chat_service.py`
+- `backend/tests/unit/test_execution_state_store.py`
+- `backend/tests/unit/test_review_service.py`
+- `backend/tests/integration/test_chat_api.py`
+- `backend/tests/integration/test_review_api.py`
 
 Potentially touched support files if needed:
 
-- execution-related helpers if they currently hardcode direct thread lifecycle assumptions
-- a session-marker helper if the local-review boundary marker needs normalization logic
+- none beyond the files listed above
 
 ## Acceptance criteria
 

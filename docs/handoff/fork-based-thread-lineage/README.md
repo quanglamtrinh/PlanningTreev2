@@ -1,6 +1,6 @@
 # Fork-Based Thread Lineage Migration Plan
 
-Status: Phase 3 complete, Phase 4 ready. This document is the working implementation plan that translates the fork-based lineage specs into a seven-phase rollout that can be executed incrementally.
+Status: Phase 4 complete, Phase 5 next. This document is the working implementation plan that translates the fork-based lineage specs into a seven-phase rollout that can be executed incrementally.
 
 Primary specs:
 
@@ -12,9 +12,12 @@ Primary specs:
 - Phase 1 completed on 2026-03-25
 - Phase 2 completed on 2026-03-25
 - Phase 3 completed on 2026-03-25
-- Phase 4 / PR 4 is the next intended implementation slice
+- Phase 4 completed on 2026-03-25
+- Phase 5 / PR 5 is the next intended implementation slice
 - Phase 3 verification completed with targeted backend unit tests for ask bootstrap, ask seeding retention, generation reuse of `ask_planning`, plus targeted chat API smoke coverage
-- `docs/handoff/fork-based-thread-lineage/phase-4-handoff.md` is now the active continuation artifact for PR 4
+- Phase 4 verification completed with `py_compile` on touched backend/test files plus manual service-layer smoke for execution fork lineage, first-turn-only local review injection, and failed-first-turn retry retention; targeted pytest remains blocked on this workstation by temp-directory permission issues
+- Post-review cleanup aligned the execution integration-test fake with `fork_thread()` and corrected Phase 4 historical docs so they describe the boundary markers as living in `execution_state.json`
+- `docs/handoff/fork-based-thread-lineage/phase-4-handoff.md` now serves as the historical brief for the completed PR 4 slice
 - `docs/handoff/fork-based-thread-lineage/phase-3-handoff.md` now serves as the historical brief for the completed PR 3 slice
 
 ## Context
@@ -165,6 +168,13 @@ Rollback:
 
 ### Phase 4 / PR 4: Execution fork migration and local-review injection
 
+Status:
+
+- completed on 2026-03-25
+- execution now forks from task audit through `ThreadLineageService`
+- execution session resets preserve lineage metadata instead of wiping `forked_from_*`
+- local review now uses execution-state boundary markers and injects `build_local_review_prompt(...)` on the first relevant audit turn only
+
 Goal:
 
 - fork execution from task audit
@@ -175,7 +185,7 @@ Changes:
 - update `FinishTaskService` so execution uses `ensure_forked_thread(..., thread_role="execution", source_role="audit", fork_reason="execution_bootstrap", base_instructions=build_execution_base_instructions(), writable_roots=...)`
 - keep execution prompt builder contract unchanged: frame and spec still come from storage
 - wire `build_local_review_prompt(...)` into audit chat when local review first opens after execution completion
-- add a local-only boundary marker in the audit session and inject execution context only until the first user turn after that marker
+- add local-only boundary markers in `execution_state.json` and inject execution context only until the first successful audit turn consumes that boundary
 
 Tests:
 

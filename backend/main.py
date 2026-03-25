@@ -103,6 +103,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         tree_service=tree_service,
         node_detail_service=node_detail_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         chat_event_broker=chat_event_broker,
         chat_timeout=get_execution_timeout(),
         chat_service=chat_service,

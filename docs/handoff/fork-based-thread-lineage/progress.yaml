@@ -1,7 +1,7 @@
 migration_id: fork_based_thread_lineage
-status: phase_3_complete
+status: phase_4_complete
 current_phase: null
-next_phase: 4
+next_phase: 5
 
 references:
   specs:
@@ -118,7 +118,7 @@ phases:
   - phase: 4
     pr: 4
     name: execution_fork_and_local_review_boundary_injection
-    status: not_started
+    status: completed
     depends_on:
       - 3
     goals:
@@ -130,7 +130,24 @@ phases:
     verification:
       - finish task tests assert execution forks from audit
       - local review prompt tests assert first-turn-only injection
-    notes: ""
+    notes: >
+      Completed on 2026-03-25. FinishTaskService now creates execution threads
+      through ThreadLineageService.ensure_forked_thread(..., source_role="audit",
+      fork_reason="execution_bootstrap"), execution session initialization now
+      preserves lineage metadata instead of clearing it, and execution_state
+      gained local_review_started_at/local_review_prompt_consumed_at markers.
+      Audit chat now switches to build_local_review_prompt(...) only while the
+      local-review boundary is open and marks the boundary consumed only after a
+      successful audit turn, preserving retry behavior after failed turns.
+      Post-review cleanup also updated the finish-task integration fake to
+      implement fork_thread() and corrected historical docs so the local-review
+      marker is described accurately as execution-state metadata, not audit
+      session state.
+      Verification completed with python -m py_compile on touched backend/test
+      files plus manual service-layer smoke proving execution fork lineage,
+      first-turn-only local review injection, and failed-first-turn retry
+      retention. Targeted pytest remains blocked on this workstation by temp
+      directory permission errors during tmp-path setup/cleanup.
 
   - phase: 5
     pr: 5

@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from backend.ai.codex_client import CodexAppClient, CodexTransportError
+from backend.ai.codex_client import CodexAppClient
 from backend.ai.execution_prompt_builder import (
     build_execution_base_instructions,
     build_execution_prompt,
@@ -20,6 +20,7 @@ from backend.services.node_detail_service import (
     _DEFAULT_FRAME_META,
     _load_spec_meta_from_node_dir,
 )
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now, load_json, new_id
 from backend.storage.storage import Storage
@@ -40,6 +41,7 @@ class FinishTaskService:
         tree_service: TreeService,
         node_detail_service: NodeDetailService,
         codex_client: CodexAppClient,
+        thread_lineage_service: ThreadLineageService,
         chat_event_broker: ChatEventBroker,
         chat_timeout: int,
         chat_service: ChatService | None = None,
@@ -48,6 +50,7 @@ class FinishTaskService:
         self._tree_service = tree_service
         self._node_detail_service = node_detail_service
         self._codex_client = codex_client
+        self._thread_lineage_service = thread_lineage_service
         self._chat_event_broker = chat_event_broker
         self._chat_timeout = int(chat_timeout)
         self._chat_service = chat_service
@@ -67,14 +70,10 @@ class FinishTaskService:
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             frame_content = self._load_confirmed_frame_content(node_dir)
             task_context = build_split_context(snapshot, node, node_index)
-            execution_session = self._storage.chat_state_store.read_session(
-                project_id,
-                node_id,
-                thread_role="execution",
-            )
-            existing_thread_id = execution_session.get("thread_id")
-
-        thread_id = self._ensure_execution_thread(existing_thread_id, workspace_root)
+        execution_session = self._ensure_execution_thread(project_id, node_id, workspace_root)
+        thread_id = str(execution_session.get("thread_id") or "").strip()
+        if not thread_id:
+            raise FinishTaskNotAllowed("Execution bootstrap did not return a thread id.")
 
         turn_id = new_id("exec")
         assistant_message_id = new_id("msg")
@@ -112,6 +111,8 @@ class FinishTaskService:
                 "head_sha": None,
                 "started_at": now,
                 "completed_at": None,
+                "local_review_started_at": None,
+                "local_review_prompt_consumed_at": None,
             }
             self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
@@ -120,7 +121,7 @@ class FinishTaskService:
                 snapshot["updated_at"] = now
                 self._storage.project_store.save_snapshot(project_id, snapshot)
 
-            session = self._storage.chat_state_store.clear_session(
+            session = self._storage.chat_state_store.read_session(
                 project_id,
                 node_id,
                 thread_role="execution",
@@ -586,36 +587,28 @@ class FinishTaskService:
         del snapshot
         return spec_content
 
-    def _ensure_execution_thread(self, existing_thread_id: Any, workspace_root: str | None) -> str:
+    def _ensure_execution_thread(
+        self,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+    ) -> dict[str, Any]:
         writable_roots = [workspace_root] if isinstance(workspace_root, str) and workspace_root.strip() else None
-        if isinstance(existing_thread_id, str) and existing_thread_id.strip():
-            try:
-                self._codex_client.resume_thread(
-                    existing_thread_id,
-                    cwd=workspace_root,
-                    timeout_sec=15,
-                    writable_roots=writable_roots,
-                )
-                return existing_thread_id.strip()
-            except CodexTransportError as exc:
-                if not self._is_missing_thread_error(exc):
-                    raise FinishTaskNotAllowed(f"Execution backend unavailable: {exc}") from exc
-
         try:
-            response = self._codex_client.start_thread(
+            return self._thread_lineage_service.ensure_forked_thread(
+                project_id,
+                node_id,
+                "execution",
+                source_node_id=node_id,
+                source_role="audit",
+                fork_reason="execution_bootstrap",
+                workspace_root=workspace_root,
                 base_instructions=build_execution_base_instructions(),
                 dynamic_tools=[],
-                cwd=workspace_root,
-                timeout_sec=30,
                 writable_roots=writable_roots,
             )
-        except CodexTransportError as exc:
+        except Exception as exc:
             raise FinishTaskNotAllowed(f"Execution backend unavailable: {exc}") from exc
-
-        thread_id = str(response.get("thread_id") or "").strip()
-        if not thread_id:
-            raise FinishTaskNotAllowed("Execution thread start did not return a thread id.")
-        return thread_id
 
     def _persist_execution_message(
         self,
@@ -729,10 +722,6 @@ class FinishTaskService:
         if isinstance(workspace_root, str) and workspace_root.strip():
             return workspace_root
         return None
-
-    def _is_missing_thread_error(self, exc: Exception) -> bool:
-        message = str(exc).lower()
-        return "no rollout found for thread id" in message or "thread not found" in message
 
     def _job_key(self, project_id: str, node_id: str) -> str:
         return f"{project_id}::{node_id}"

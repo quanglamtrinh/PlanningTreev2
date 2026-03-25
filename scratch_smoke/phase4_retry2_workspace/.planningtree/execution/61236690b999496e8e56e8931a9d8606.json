@@ -1,0 +1,9 @@
+{
+  "status": "review_pending",
+  "initial_sha": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "head_sha": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "started_at": "2026-03-25T23:27:19.002760+00:00",
+  "completed_at": "2026-03-25T23:27:19.146210+00:00",
+  "local_review_started_at": "2026-03-25T23:27:19.221031+00:00",
+  "local_review_prompt_consumed_at": "2026-03-25T23:27:19.571155+00:00"
+}

@@ -1,0 +1,53 @@
+{
+  "thread_id": "fork-thread-1",
+  "thread_role": "execution",
+  "active_turn_id": null,
+  "forked_from_thread_id": "start-thread-1",
+  "forked_from_node_id": "a82e2a735bda4e08b98e31594894e8ba",
+  "forked_from_role": "audit",
+  "fork_reason": "execution_bootstrap",
+  "lineage_root_thread_id": "start-thread-1",
+  "messages": [
+    {
+      "message_id": "msg_019be55b5e",
+      "role": "assistant",
+      "content": "ok",
+      "status": "completed",
+      "error": null,
+      "turn_id": "exec_8064c01ba8",
+      "created_at": "2026-03-25T23:25:55.200828+00:00",
+      "updated_at": "2026-03-25T23:25:55.279025+00:00",
+      "parts": [
+        {
+          "type": "assistant_text",
+          "content": "ok",
+          "is_streaming": false
+        }
+      ],
+      "items": [
+        {
+          "item_id": "assistant_text",
+          "item_type": "assistant_text",
+          "status": "completed",
+          "started_at": "2026-03-25T23:25:55.261625+00:00",
+          "completed_at": "2026-03-25T23:25:55.261683+00:00",
+          "last_payload": {
+            "length": 2
+          },
+          "lifecycle": [
+            {
+              "phase": "delta",
+              "timestamp": "2026-03-25T23:25:55.261625+00:00",
+              "payload": {
+                "length": 2
+              },
+              "text": "ok"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "created_at": "2026-03-25T23:25:55.192309+00:00",
+  "updated_at": "2026-03-25T23:25:55.299208+00:00"
+}

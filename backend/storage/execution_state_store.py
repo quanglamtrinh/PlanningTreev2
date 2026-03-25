@@ -18,6 +18,8 @@ _DEFAULT_STATE: dict[str, Any] = {
     "head_sha": None,
     "started_at": None,
     "completed_at": None,
+    "local_review_started_at": None,
+    "local_review_prompt_consumed_at": None,
 }
 
 
@@ -76,6 +78,8 @@ class ExecutionStateStore:
         head_sha = payload.get("head_sha")
         started_at = payload.get("started_at")
         completed_at = payload.get("completed_at")
+        local_review_started_at = payload.get("local_review_started_at")
+        local_review_prompt_consumed_at = payload.get("local_review_prompt_consumed_at")
 
         return {
             "status": status if isinstance(status, str) and status in _VALID_STATUSES else "idle",
@@ -83,4 +87,15 @@ class ExecutionStateStore:
             "head_sha": head_sha.strip() if isinstance(head_sha, str) and head_sha.strip() else None,
             "started_at": started_at.strip() if isinstance(started_at, str) and started_at.strip() else None,
             "completed_at": completed_at.strip() if isinstance(completed_at, str) and completed_at.strip() else None,
+            "local_review_started_at": (
+                local_review_started_at.strip()
+                if isinstance(local_review_started_at, str) and local_review_started_at.strip()
+                else None
+            ),
+            "local_review_prompt_consumed_at": (
+                local_review_prompt_consumed_at.strip()
+                if isinstance(local_review_prompt_consumed_at, str)
+                and local_review_prompt_consumed_at.strip()
+                else None
+            ),
         }
