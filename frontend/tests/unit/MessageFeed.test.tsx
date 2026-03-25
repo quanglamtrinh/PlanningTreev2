@@ -17,6 +17,20 @@ function makeAssistantMessage(overrides: Partial<ChatMessage> = {}): ChatMessage
   }
 }
 
+function makeSystemMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    message_id: 'system-1',
+    role: 'system',
+    content: 'Canonical task context',
+    status: 'completed',
+    error: null,
+    turn_id: null,
+    created_at: '2026-03-20T00:00:00Z',
+    updated_at: '2026-03-20T00:00:00Z',
+    ...overrides,
+  }
+}
+
 describe('MessageFeed', () => {
   it('renders fenced code blocks from flat content fallback', () => {
     render(
@@ -62,5 +76,52 @@ describe('MessageFeed', () => {
     expect(screen.queryByText('```ts')).not.toBeInTheDocument()
     expect(screen.getByText('ts')).toBeInTheDocument()
     expect(screen.getByText('const answer = 42').closest('pre')).not.toBeNull()
+  })
+
+  it('renders system messages as thread context blocks', () => {
+    render(
+      <MessageFeed
+        messages={[
+          makeSystemMessage({
+            content: 'Checkpoint context:\n- SHA: `sha256:abc123`\n- Summary: Accepted',
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('Context')).toBeInTheDocument()
+    expect(screen.getByText('Checkpoint context:')).toBeInTheDocument()
+    expect(screen.getByText('sha256:abc123')).toBeInTheDocument()
+  })
+
+  it('renders plan items and still shows the final summary content', () => {
+    render(
+      <MessageFeed
+        messages={[
+          makeAssistantMessage({
+            content: 'Implemented the task.',
+            parts: [
+              {
+                type: 'plan_item',
+                item_id: 'plan-1',
+                content: 'Inspect workspace',
+                is_streaming: false,
+                timestamp: '2026-03-20T00:00:00Z',
+              },
+              {
+                type: 'tool_call',
+                tool_name: 'write_file',
+                arguments: { path: 'main.js' },
+                call_id: null,
+                status: 'completed',
+              },
+            ],
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('Inspect workspace')).toBeInTheDocument()
+    expect(screen.getByText('Implemented the task.')).toBeInTheDocument()
   })
 })

@@ -1,0 +1,216 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-bg-panel) 96%, transparent);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sectionEyebrow {
+  margin: 0 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  color: var(--color-text-primary);
+}
+
+.metricPill,
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.metricPill {
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-bg-panel) 94%, transparent);
+}
+
+.statusBadge {
+  border: 1px solid transparent;
+}
+
+.statusPending {
+  color: color-mix(in srgb, var(--warning) 78%, black);
+  background: color-mix(in srgb, var(--warning) 16%, var(--color-bg-panel));
+  border-color: color-mix(in srgb, var(--warning) 24%, transparent);
+}
+
+.statusReady {
+  color: color-mix(in srgb, var(--primary) 75%, black);
+  background: color-mix(in srgb, var(--primary) 14%, var(--color-bg-panel));
+  border-color: color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+.statusAccepted {
+  color: color-mix(in srgb, var(--success) 76%, black);
+  background: color-mix(in srgb, var(--success) 14%, var(--color-bg-panel));
+  border-color: color-mix(in srgb, var(--success) 20%, transparent);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.manifestGroups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.manifestGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface-1) 92%, transparent);
+}
+
+.manifestGroupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.manifestGroupTitle {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+
+.listItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.listRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.bodyText,
+.metaText,
+.emptyState,
+.summaryHeading {
+  margin: 0;
+}
+
+.bodyText {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text-primary);
+}
+
+.metaText {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+  word-break: break-word;
+}
+
+.summaryHeading {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary);
+}
+
+.summaryCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface-1) 92%, transparent);
+}
+
+.acceptButton,
+.retryButton {
+  border: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease,
+    filter 0.14s ease;
+}
+
+.acceptButton {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--on-primary);
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-container) 100%);
+}
+
+.acceptButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.retryButton {
+  align-self: flex-start;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
+}
+
+.emptyState {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.errorBanner {
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--danger) 10%, var(--color-bg-panel));
+  color: var(--color-text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}

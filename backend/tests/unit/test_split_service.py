@@ -133,13 +133,33 @@ def test_split_service_creates_children_and_reuses_project_thread(
     project_dir = storage.project_store.project_dir(project_id)
     root_dir = project_dir / planningtree_workspace.ROOT_SEGMENT / "1 workspace"
     first_child_dir = root_dir / "1.1 Prep"
-    second_child_dir = root_dir / "1.2 Finish"
-    assert len(root["child_ids"]) == 2
+
+    # Lazy sibling: only first child in child_ids, second is pending in review_state
+    assert len(root["child_ids"]) == 1
+    assert root["child_ids"][0] == first_child_id
+
+    # Review node created and linked via review_node_id (NOT in child_ids)
+    review_node_id = root.get("review_node_id")
+    assert review_node_id is not None
+    review_node = persisted["tree_state"]["node_index"][review_node_id]
+    assert review_node["node_kind"] == "review"
+    assert review_node["title"] == "Review"
+    assert review_node_id not in root["child_ids"]
+
+    # Review state has K0 checkpoint and pending sibling manifest
+    review_state = storage.review_state_store.read_state(project_id, review_node_id)
+    assert review_state is not None
+    assert len(review_state["checkpoints"]) == 1
+    assert review_state["checkpoints"][0]["label"] == "K0"
+    assert review_state["checkpoints"][0]["sha"].startswith("sha256:")
+    assert len(review_state["pending_siblings"]) == 1
+    assert review_state["pending_siblings"][0]["title"] == "Finish"
+    assert review_state["pending_siblings"][0]["materialized_node_id"] is None
+    assert review_state["rollup"]["status"] == "pending"
+
     assert storage.split_state_store.path(project_id).exists()
     assert first_child_dir.is_dir()
-    assert second_child_dir.is_dir()
     assert (first_child_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == ""
-    assert (second_child_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
     first_thread_id = storage.split_state_store.read_state(project_id)["thread_id"]
 
     make_node_split_ready(storage, tree_service, project_id, first_child_id)

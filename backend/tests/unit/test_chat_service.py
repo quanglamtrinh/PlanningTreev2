@@ -16,7 +16,9 @@ from backend.main import create_app
 from backend.services import chat_service as chat_service_module
 from backend.services.chat_service import ChatService
 from backend.services.project_service import ProjectService
+from backend.services.review_service import ReviewService
 from backend.services.tree_service import TreeService
+from backend.storage.file_utils import iso_now
 from backend.streaming.sse_broker import ChatEventBroker
 
 
@@ -227,6 +229,90 @@ def test_background_turn_fails_marks_error(storage, workspace_root):
     assert session["active_turn_id"] is None
     assert session["messages"][1]["status"] == "error"
     assert session["messages"][1]["error"] is not None
+
+
+def test_audit_message_auto_starts_local_review_when_execution_completed(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+    service._review_service = ReviewService(storage, TreeService())
+    storage.execution_state_store.write_state(
+        project_id,
+        root_id,
+        {
+            "status": "completed",
+            "initial_sha": "sha256:initial000",
+            "head_sha": "sha256:head000",
+            "started_at": iso_now(),
+            "completed_at": iso_now(),
+        },
+    )
+
+    service.create_message(project_id, root_id, "Please review this", thread_role="audit")
+
+    exec_state = storage.execution_state_store.read_state(project_id, root_id)
+    assert exec_state is not None
+    assert exec_state["status"] == "review_pending"
+
+
+def test_audit_message_does_not_restart_local_review_when_already_pending(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+
+    class TrackingReviewService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def start_local_review(self, project_id: str, node_id: str) -> None:
+            del project_id, node_id
+            self.calls += 1
+
+    tracker = TrackingReviewService()
+    service._review_service = tracker
+    storage.execution_state_store.write_state(
+        project_id,
+        root_id,
+        {
+            "status": "review_pending",
+            "initial_sha": "sha256:initial000",
+            "head_sha": "sha256:head000",
+            "started_at": iso_now(),
+            "completed_at": iso_now(),
+        },
+    )
+
+    service.create_message(project_id, root_id, "Second review note", thread_role="audit")
+
+    assert tracker.calls == 0
+
+
+def test_audit_message_fails_cleanly_when_local_review_start_errors(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+
+    class ExplodingReviewService:
+        def start_local_review(self, project_id: str, node_id: str) -> None:
+            del project_id, node_id
+            raise RuntimeError("boom")
+
+    service._review_service = ExplodingReviewService()
+    storage.execution_state_store.write_state(
+        project_id,
+        root_id,
+        {
+            "status": "completed",
+            "initial_sha": "sha256:initial000",
+            "head_sha": "sha256:head000",
+            "started_at": iso_now(),
+            "completed_at": iso_now(),
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        service.create_message(project_id, root_id, "Please review this", thread_role="audit")
+
+    session = storage.chat_state_store.read_session(project_id, root_id, thread_role="audit")
+    assert session["messages"] == []
+    assert session["active_turn_id"] is None
 
 
 def test_background_turn_checkpoints_partial_content(storage, workspace_root, monkeypatch):

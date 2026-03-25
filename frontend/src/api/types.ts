@@ -61,6 +61,29 @@ export interface ProjectSummary {
   git_initialized?: boolean
 }
 
+export interface ReviewSiblingEntry {
+  index: number
+  title: string
+  materialized_node_id: string | null
+}
+
+export interface ReviewSiblingManifestEntry {
+  index: number
+  title: string
+  objective: string | null
+  materialized_node_id: string | null
+  status: 'completed' | 'active' | 'pending'
+  checkpoint_label: string | null
+}
+
+export interface ReviewSummary {
+  checkpoint_count: number
+  rollup_status: RollupStatus | null
+  pending_sibling_count: number
+  pending_siblings?: ReviewSiblingEntry[]
+  sibling_manifest: ReviewSiblingManifestEntry[]
+}
+
 export interface NodeRecord {
   node_id: string
   parent_id: string | null
@@ -76,12 +99,19 @@ export interface NodeRecord {
   is_superseded: boolean
   workflow: NodeWorkflowSummary | null
   review_node_id?: string | null
+  review_summary?: ReviewSummary | null
 }
 
 export interface NodeWorkflowSummary {
   frame_confirmed: boolean
   active_step: WorkflowStep
   spec_confirmed: boolean
+  execution_started?: boolean
+  execution_completed?: boolean
+  shaping_frozen?: boolean
+  can_finish_task?: boolean
+  can_accept_local_review?: boolean
+  execution_status?: ExecutionStatus | null
 }
 
 export interface ProjectRecord {
@@ -128,12 +158,14 @@ export interface ChangedFileRecord {
 
 export interface DetailState {
   node_id: string
+  workflow: NodeWorkflowSummary | null
   frame_confirmed: boolean
   frame_confirmed_revision: number
   frame_revision: number
   active_step: WorkflowStep
   workflow_notice: string | null
   generation_error?: string | null
+  frame_branch_ready?: boolean
   frame_needs_reconfirm: boolean
   frame_read_only: boolean
   clarify_read_only: boolean
@@ -145,6 +177,7 @@ export interface DetailState {
   execution_completed?: boolean
   shaping_frozen?: boolean
   can_finish_task?: boolean
+  can_accept_local_review?: boolean
   execution_status?: ExecutionStatus | null
   audit_writable?: boolean
   package_audit_ready?: boolean
@@ -261,16 +294,25 @@ export interface SplitStatusResponse {
 // ── Chat types ──────────────────────────────────────────────────────
 
 export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'error'
-export type MessageRole = 'user' | 'assistant'
+export type MessageRole = 'user' | 'assistant' | 'system'
 
 export type MessagePart =
   | { type: 'assistant_text'; content: string; is_streaming: boolean }
+  | {
+      type: 'plan_item'
+      item_id: string
+      content: string
+      is_streaming: boolean
+      timestamp: string
+    }
   | {
       type: 'tool_call'
       tool_name: string
       arguments: Record<string, unknown>
       call_id: string | null
       status: 'running' | 'completed' | 'error'
+      output?: string | null
+      exit_code?: number | null
     }
   | { type: 'status_block'; status_type: string; label: string; timestamp: string }
 
@@ -326,6 +368,13 @@ export interface RollupState {
   summary: string | null
   sha: string | null
   accepted_at: string | null
+  draft: RollupDraft
+}
+
+export interface RollupDraft {
+  summary: string | null
+  sha: string | null
+  generated_at: string | null
 }
 
 export interface PendingSibling {
@@ -339,4 +388,18 @@ export interface ReviewState {
   checkpoints: CheckpointRecord[]
   rollup: RollupState
   pending_siblings: PendingSibling[]
+  sibling_manifest: ReviewSiblingManifestEntry[]
+}
+
+export interface AcceptLocalReviewResponse {
+  node_id: string
+  status: 'review_accepted'
+  activated_sibling_id: string | null
+}
+
+export interface AcceptRollupReviewResponse {
+  review_node_id: string
+  rollup_status: 'accepted'
+  summary: string
+  sha: string
 }

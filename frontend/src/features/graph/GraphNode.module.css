@@ -1,7 +1,8 @@
 /* ─── Outer wrapper (ReactFlow node container) ─── */
 .wrapper {
   position: relative;
-  width: 220px;
+  width: 270px;
+  margin-bottom: 10px;
   /* overflow:visible so dropdown & badge can extend outside */
   overflow: visible;
 }
@@ -18,13 +19,14 @@
   opacity: 0;
 }
 
-/* ─── Card — borderless tonal lift (Methodical Canvas) ─── */
+/* ─── Card — left rail + main column ─── */
 .card {
-  width: 220px;
+  width: 270px;
   display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: 12px 14px 14px;
+  flex-direction: row;
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
   border: none;
   border-radius: var(--graph-node-radius);
   background: var(--surface-container-lowest);
@@ -38,11 +40,79 @@
     outline-color 0.14s ease;
 }
 
+/* Left rail — light strip + brown ink (editorial / clean reference) */
+.nodeRail {
+  --rail-ink: #5d4037;
+  --rail-ink-hover: #4a332c;
+  --rail-surface: #f7f7f7;
+  --rail-on-ink: #faf8f5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 44px;
+  flex-shrink: 0;
+  padding: 12px 0 14px;
+  box-sizing: border-box;
+  background: var(--rail-surface);
+  border-top-left-radius: var(--graph-node-radius);
+  border-bottom-left-radius: var(--graph-node-radius);
+}
+
+.railLayerIndex {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--rail-ink);
+  flex-shrink: 0;
+  user-select: none;
+  opacity: 0.92;
+  margin: 10px;
+}
+
+.railMidSpacer {
+  flex: 1;
+  min-height: 4px;
+  width: 100%;
+}
+
+.railMidSpacer {
+  min-height: 12px;
+}
+
+.nodeMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 22px;
+}
+
 .card:hover {
   background: var(--color-bg-hover);
   box-shadow:
     var(--graph-node-shadow),
     0 2px 6px rgba(26, 28, 27, 0.05);
+}
+
+.card:hover .nodeRail {
+  background: var(--rail-surface);
+}
+
+.locked .nodeRail {
+  background: color-mix(in srgb, var(--color-status-locked-bg) 22%, #f7f7f7);
+}
+
+.locked:hover .nodeRail {
+  background: color-mix(in srgb, var(--color-status-locked-bg) 30%, #f7f7f7);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }
 
 .card:focus-visible {
@@ -108,27 +178,21 @@
     var(--graph-node-shadow);
 }
 
-/* ─── Header row ─── */
-.header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 6px;
-}
-
-.titleWrap {
+.titleRow {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   min-width: 0;
 }
 
-.badgeRow {
+.titleRowActions {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  flex-shrink: 0;
   flex-wrap: wrap;
-  min-width: 0;
 }
 
 .lockIcon {
@@ -145,54 +209,114 @@
   height: 100%;
 }
 
-/* ─── Header controls (collapse + info) ─── */
-.headerControls {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
-}
-
-/* ─── Info button ─── */
+/* ─── Info (left rail) — solid ink disc + light “i” ─── */
 .infoBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-subtle);
-  background: transparent;
-  font-size: 11px;
+  margin-top: 15px;
+  border-radius: 50%;
+  border: none;
+  background: var(--rail-ink);
+  font-size: 10px;
+  font-weight: 600;
+  font-style: normal;
   line-height: 1;
-  color: var(--color-text-tertiary);
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  color: var(--rail-on-ink);
+  transition:
+    background 0.14s ease,
+    transform 0.14s ease;
   flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(93, 64, 55, 0.12);
 }
 
 .infoBtn:hover {
-  background: var(--color-accent-muted);
-  color: var(--color-accent);
+  background: var(--rail-ink-hover);
+  transform: scale(1.03);
+}
+
+/* ─── Description expand/collapse (rail) — chevron in rail ink ─── */
+.descToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--rail-ink);
+  flex-shrink: 0;
+  opacity: 0.9;
+  transition:
+    background 0.14s ease,
+    color 0.14s ease,
+    opacity 0.14s ease;
+}
+
+.descToggle:hover {
+  background: color-mix(in srgb, var(--rail-ink) 8%, transparent);
+  color: var(--rail-ink-hover);
+  opacity: 1;
+}
+
+.descToggleIcon {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.descTogglePlaceholder {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
 }
 
 .title {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   font-family: var(--font-display);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  line-height: var(--line-height-ui);
-  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  color: #1a1a1a;
   word-break: break-word;
 }
 
-.number {
-  color: var(--color-accent);
-  font-variant-numeric: tabular-nums;
+.graphStatusBadge {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  min-height: 22px;
+  padding: 0 8px;
 }
 
-.separator {
-  margin: 0 4px;
-  color: var(--color-border);
+.graphStatusBadge.graphStatusInProgress {
+  color: #703020;
+  background: #ffddcb;
+}
+
+.graphExecutionBadge {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  min-height: 22px;
+  padding: 0 8px;
+}
+
+.description {
+  margin: 0;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #4a4a4a;
+  word-break: break-word;
 }
 
 .activity {
@@ -234,17 +358,17 @@
   color: var(--color-text-tertiary);
 }
 
-/* ─── Action badge (⚡ button) ─── */
+/* ─── Action badge (⚡ button) — anchored bottom-right of node ─── */
 .menuAnchor {
   position: absolute;
-  right: -12px;
-  bottom: -12px;
+  right: -14px;
+  bottom: -14px;
   z-index: 12;
 }
 
 .badge {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   border: none;
   border-radius: 50%;
   background: linear-gradient(180deg, var(--primary) 0%, var(--primary-container) 100%);
@@ -266,15 +390,15 @@
 }
 
 .badgeIcon {
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
 }
 
 /* ─── Dropdown menu (position set inline via portal + fixed; avoids node overlap & RF transform) ─── */
 .dropdown {
   position: fixed;
-  width: 220px;
-  min-width: 220px;
+  width: 270px;
+  min-width: 270px;
   display: flex;
   flex-direction: column;
   gap: 6px;

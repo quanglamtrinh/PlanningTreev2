@@ -21,6 +21,11 @@ _DEFAULT_ROLLUP: dict[str, Any] = {
     "summary": None,
     "sha": None,
     "accepted_at": None,
+    "draft": {
+        "summary": None,
+        "sha": None,
+        "generated_at": None,
+    },
 }
 
 _DEFAULT_STATE: dict[str, Any] = {
@@ -72,6 +77,9 @@ class ReviewStateStore:
             ensure_dir(target.parent)
             atomic_write_json(target, normalized)
             return copy.deepcopy(normalized)
+
+    def default_state(self) -> dict[str, Any]:
+        return copy.deepcopy(_DEFAULT_STATE)
 
     def add_checkpoint(
         self,
@@ -138,6 +146,7 @@ class ReviewStateStore:
                 rollup["summary"] = summary.strip()
                 rollup["sha"] = sha.strip()
                 rollup["accepted_at"] = iso_now()
+                rollup["draft"] = copy.deepcopy(_DEFAULT_ROLLUP["draft"])
             else:
                 if summary is not None:
                     rollup["summary"] = summary
@@ -145,6 +154,40 @@ class ReviewStateStore:
                     rollup["sha"] = sha
 
             rollup["status"] = status
+            state["rollup"] = rollup
+            return self._write_unlocked(project_id, review_node_id, state)
+
+    def set_rollup_draft(
+        self,
+        project_id: str,
+        review_node_id: str,
+        *,
+        summary: str,
+        sha: str,
+        generated_at: str | None = None,
+    ) -> dict[str, Any]:
+        with self._lock_registry.for_project(project_id):
+            state = self._read_unlocked(project_id, review_node_id)
+            rollup = state.get("rollup", copy.deepcopy(_DEFAULT_ROLLUP))
+            if rollup.get("status") != "ready":
+                raise InvalidRequest("Rollup draft can only be stored while rollup status is 'ready'.")
+
+            cleaned_summary = (summary or "").strip()
+            cleaned_sha = (sha or "").strip()
+            if not cleaned_summary:
+                raise InvalidRequest("Rollup draft requires a non-empty summary.")
+            if not cleaned_sha:
+                raise InvalidRequest("Rollup draft requires a non-empty sha.")
+
+            rollup["draft"] = {
+                "summary": cleaned_summary,
+                "sha": cleaned_sha,
+                "generated_at": (
+                    generated_at.strip()
+                    if isinstance(generated_at, str) and generated_at.strip()
+                    else iso_now()
+                ),
+            }
             state["rollup"] = rollup
             return self._write_unlocked(project_id, review_node_id, state)
 
@@ -253,12 +296,32 @@ class ReviewStateStore:
         summary = raw.get("summary")
         sha = raw.get("sha")
         accepted_at = raw.get("accepted_at")
+        draft = raw.get("draft")
 
         return {
             "status": status if isinstance(status, str) and status in _VALID_ROLLUP_STATUSES else "pending",
             "summary": summary.strip() if isinstance(summary, str) and summary.strip() else None,
             "sha": sha.strip() if isinstance(sha, str) and sha.strip() else None,
             "accepted_at": accepted_at.strip() if isinstance(accepted_at, str) and accepted_at.strip() else None,
+            "draft": self._normalize_rollup_draft(draft),
+        }
+
+    def _normalize_rollup_draft(self, raw: Any) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            return copy.deepcopy(_DEFAULT_ROLLUP["draft"])
+
+        summary = raw.get("summary")
+        sha = raw.get("sha")
+        generated_at = raw.get("generated_at")
+
+        return {
+            "summary": summary.strip() if isinstance(summary, str) and summary.strip() else None,
+            "sha": sha.strip() if isinstance(sha, str) and sha.strip() else None,
+            "generated_at": (
+                generated_at.strip()
+                if isinstance(generated_at, str) and generated_at.strip()
+                else None
+            ),
         }
 
     def _normalize_pending_sibling(self, raw: Any) -> dict[str, Any] | None:

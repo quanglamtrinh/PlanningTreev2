@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
-from backend.config.app_config import build_app_paths, get_chat_timeout, get_clarify_gen_timeout, get_codex_cmd, get_frame_gen_timeout, get_max_chat_message_chars, get_port, get_spec_gen_timeout, get_split_timeout
+from backend.config.app_config import build_app_paths, get_chat_timeout, get_clarify_gen_timeout, get_codex_cmd, get_execution_timeout, get_frame_gen_timeout, get_max_chat_message_chars, get_port, get_spec_gen_timeout, get_split_timeout
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import bootstrap, chat, codex, nodes, projects, split
@@ -20,11 +20,13 @@ from backend.services.chat_service import ChatService
 from backend.services.codex_account_service import CodexAccountService
 from backend.services.clarify_generation_service import ClarifyGenerationService
 from backend.services.frame_generation_service import FrameGenerationService
+from backend.services.finish_task_service import FinishTaskService
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.spec_generation_service import SpecGenerationService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
+from backend.services.review_service import ReviewService
 from backend.services.snapshot_view_service import SnapshotViewService
 from backend.services.split_service import SplitService
 from backend.services.tree_service import TreeService
@@ -38,7 +40,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     paths = build_app_paths(data_root)
     storage = Storage(paths)
     tree_service = TreeService()
-    snapshot_view_service = SnapshotViewService()
+    snapshot_view_service = SnapshotViewService(storage)
     project_service = ProjectService(storage, snapshot_view_service, chat_service=None)
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
@@ -82,7 +84,25 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),
     )
+    review_service = ReviewService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=get_chat_timeout(),
+        chat_service=chat_service,
+    )
+    finish_task_service = FinishTaskService(
+        storage=storage,
+        tree_service=tree_service,
+        node_detail_service=node_detail_service,
+        codex_client=codex_client,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=get_execution_timeout(),
+        chat_service=chat_service,
+    )
     project_service._chat_service = chat_service
+    chat_service._review_service = review_service
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -132,6 +152,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.spec_generation_service = spec_generation_service
     app.state.chat_service = chat_service
     app.state.chat_event_broker = chat_event_broker
+    app.state.review_service = review_service
+    app.state.finish_task_service = finish_task_service
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

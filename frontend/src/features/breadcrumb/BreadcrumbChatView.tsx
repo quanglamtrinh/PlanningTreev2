@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
+import type { ThreadRole } from '../../api/types'
 import { useChatStore } from '../../stores/chat-store'
+import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
 import { NodeDetailCard } from '../node/NodeDetailCard'
 import { ComposerBar } from './ComposerBar'
@@ -10,9 +12,32 @@ import styles from './BreadcrumbChatView.module.css'
 
 type ThreadTab = 'ask' | 'execution' | 'audit'
 
+function isThreadComposerReadOnly(
+  threadRole: ThreadRole,
+  shapingFrozen: boolean,
+  auditWritable: boolean,
+): boolean {
+  switch (threadRole) {
+    case 'ask_planning':
+      return shapingFrozen
+    case 'execution':
+      return true
+    case 'audit':
+      return !auditWritable
+    case 'integration':
+      return true
+    default:
+      return true
+  }
+}
+
 export function BreadcrumbChatView() {
+  const navigate = useNavigate()
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
   const [threadTab, setThreadTab] = useState<ThreadTab>('ask')
+  const threadRole: ThreadRole = threadTab === 'ask' ? 'ask_planning' : threadTab
+  const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
+  const lastRouteSelectionSyncRef = useRef<string | null>(null)
 
   const { session, isLoading, isSending, error, loadSession, sendMessage, disconnect } = useChatStore(
     useShallow((s) => ({
@@ -45,15 +70,21 @@ export function BreadcrumbChatView() {
       selectNode: state.selectNode,
     })),
   )
+  const nodeDetailState = useDetailStateStore((state) =>
+    detailStateKey ? state.entries[detailStateKey] : undefined,
+  )
+  const loadDetailState = useDetailStateStore((state) => state.loadDetailState)
+  const acceptLocalReviewAction = useDetailStateStore((state) => state.acceptLocalReview)
 
   useEffect(() => {
     if (projectId && nodeId) {
-      void loadSession(projectId, nodeId)
+      void loadSession(projectId, nodeId, threadRole)
     }
-    return () => {
-      disconnect()
-    }
-  }, [projectId, nodeId, loadSession, disconnect])
+  }, [projectId, nodeId, threadRole, loadSession])
+
+  useEffect(() => () => {
+    disconnect()
+  }, [disconnect])
 
   useEffect(() => {
     if (!projectId) {
@@ -82,13 +113,26 @@ export function BreadcrumbChatView() {
     if (!projectId || !nodeId || !detailNode || !snapshot || snapshot.project.id !== projectId) {
       return
     }
+    const routeKey = `${projectId}::${nodeId}`
     if (selectedNodeId === nodeId) {
+      lastRouteSelectionSyncRef.current = routeKey
       return
     }
+    if (lastRouteSelectionSyncRef.current === routeKey) {
+      return
+    }
+    lastRouteSelectionSyncRef.current = routeKey
     void selectNode(nodeId, false).catch(() => undefined)
   }, [projectId, nodeId, detailNode, snapshot, selectedNodeId, selectNode])
 
-  const detailState = useMemo(() => {
+  useEffect(() => {
+    if (!projectId || !nodeId || !detailNode || !snapshot || snapshot.project.id !== projectId) {
+      return
+    }
+    void loadDetailState(projectId, nodeId).catch(() => undefined)
+  }, [projectId, nodeId, detailNode, snapshot, loadDetailState])
+
+  const detailCardState = useMemo(() => {
     if (!projectId || !nodeId) {
       return 'unavailable' as const
     }
@@ -108,7 +152,7 @@ export function BreadcrumbChatView() {
     if (!projectId || !nodeId) {
       return 'This breadcrumb route is missing its project or node id.'
     }
-    if (detailState === 'loading') {
+    if (detailCardState === 'loading') {
       return 'The node snapshot is loading for this breadcrumb route.'
     }
     if (projectError && activeProjectId === projectId) {
@@ -118,10 +162,51 @@ export function BreadcrumbChatView() {
       return 'This node was not found in the current project snapshot.'
     }
     return 'Node details are unavailable for this breadcrumb route.'
-  }, [projectId, nodeId, detailState, projectError, activeProjectId, snapshot, detailNode])
+  }, [projectId, nodeId, detailCardState, projectError, activeProjectId, snapshot, detailNode])
+
+  const [reviewSummaryDraft, setReviewSummaryDraft] = useState('')
+  const [isAccepting, setIsAccepting] = useState(false)
+  const [acceptReviewError, setAcceptReviewError] = useState<string | null>(null)
+  const reviewInputRef = useRef<HTMLInputElement>(null)
+
+  const canAcceptLocalReview = nodeDetailState?.can_accept_local_review === true
+  const showAcceptReview = threadTab === 'audit' && canAcceptLocalReview
+
+  useEffect(() => {
+    if (!showAcceptReview) {
+      setAcceptReviewError(null)
+    }
+  }, [showAcceptReview, nodeId, projectId])
+
+  const handleAcceptReview = useCallback(async () => {
+    const summary = reviewSummaryDraft.trim()
+    if (!summary || !projectId || !nodeId) return
+    setIsAccepting(true)
+    setAcceptReviewError(null)
+    try {
+      const activatedSiblingId = await acceptLocalReviewAction(projectId, nodeId, summary)
+      setReviewSummaryDraft('')
+      setAcceptReviewError(null)
+      if (activatedSiblingId) {
+        setThreadTab('ask')
+        void navigate(`/projects/${projectId}/nodes/${activatedSiblingId}/chat`)
+      }
+    } catch (error) {
+      setAcceptReviewError(error instanceof Error ? error.message : String(error))
+      reviewInputRef.current?.focus()
+    } finally {
+      setIsAccepting(false)
+    }
+  }, [reviewSummaryDraft, projectId, nodeId, acceptLocalReviewAction, navigate])
 
   const isActiveTurn = !!session?.active_turn_id
-  const composerDisabledAsk = isActiveTurn || isSending || isLoading || !session
+  const shapingFrozen = nodeDetailState?.shaping_frozen ?? (detailNode?.workflow?.shaping_frozen === true)
+  const auditWritable = nodeDetailState?.audit_writable === true
+  const threadReadOnly = useMemo(
+    () => isThreadComposerReadOnly(threadRole, shapingFrozen, auditWritable),
+    [threadRole, shapingFrozen, auditWritable],
+  )
+  const composerDisabled = threadReadOnly || isActiveTurn || isSending || isLoading || !session
 
   return (
     <div className={styles.root}>
@@ -161,32 +246,72 @@ export function BreadcrumbChatView() {
           </nav>
 
           <div className={styles.threadTabBody}>
-            {threadTab === 'ask' ? (
-              <>
-                {isLoading && (
-                  <div className={styles.loadingState}>
-                    Loading...
+            <>
+              {isLoading && (
+                <div className={styles.loadingState}>
+                  Loading...
+                </div>
+              )}
+              {error && (
+                <div className={styles.errorBanner}>
+                  {error}
+                </div>
+              )}
+              {!isLoading && session && (
+                <MessageFeed messages={session.messages} />
+              )}
+              {showAcceptReview && (
+                <div className={styles.acceptReviewBar} data-testid="accept-review-bar">
+                  {acceptReviewError ? (
+                    <div
+                      id="accept-review-error"
+                      className={styles.acceptReviewError}
+                      data-testid="accept-review-error"
+                      role="alert"
+                    >
+                      {acceptReviewError}
+                    </div>
+                  ) : null}
+                  <div className={styles.acceptReviewControls}>
+                    <input
+                      ref={reviewInputRef}
+                      type="text"
+                      className={styles.acceptReviewInput}
+                      placeholder="Review summary..."
+                      value={reviewSummaryDraft}
+                      aria-invalid={acceptReviewError ? 'true' : 'false'}
+                      aria-describedby={acceptReviewError ? 'accept-review-error' : undefined}
+                      onChange={(e) => {
+                        setReviewSummaryDraft(e.target.value)
+                        if (acceptReviewError) {
+                          setAcceptReviewError(null)
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          void handleAcceptReview()
+                        }
+                      }}
+                      disabled={isAccepting}
+                    />
+                    <button
+                      type="button"
+                      className={styles.acceptReviewButton}
+                      disabled={isAccepting || !reviewSummaryDraft.trim()}
+                      onClick={() => void handleAcceptReview()}
+                      data-testid="accept-review-button"
+                    >
+                      {isAccepting ? 'Accepting...' : 'Accept Review'}
+                    </button>
                   </div>
-                )}
-                {error && (
-                  <div className={styles.errorBanner}>
-                    {error}
-                  </div>
-                )}
-                {!isLoading && session && (
-                  <MessageFeed messages={session.messages} />
-                )}
-                <ComposerBar
-                  onSend={sendMessage}
-                  disabled={composerDisabledAsk}
-                />
-              </>
-            ) : (
-              <>
-                <MessageFeed messages={[]} />
-                <ComposerBar onSend={sendMessage} disabled />
-              </>
-            )}
+                </div>
+              )}
+              <ComposerBar
+                onSend={sendMessage}
+                disabled={composerDisabled}
+              />
+            </>
           </div>
         </div>
       </div>
@@ -198,7 +323,7 @@ export function BreadcrumbChatView() {
             node={detailNode}
             variant="breadcrumb"
             showClose={false}
-            state={detailState}
+            state={detailCardState}
             message={detailMessage}
           />
         </div>

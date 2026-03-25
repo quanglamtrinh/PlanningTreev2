@@ -73,6 +73,7 @@ class _TurnState:
     on_request_user_input: Callable[[dict[str, Any]], None] | None = None
     on_request_resolved: Callable[[dict[str, Any]], None] | None = None
     on_thread_status: Callable[[dict[str, Any]], None] | None = None
+    on_item_event: Callable[[str, dict[str, Any]], None] | None = None
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     runtime_request_ids: list[str] = field(default_factory=list)
 
@@ -138,6 +139,7 @@ class CodexTransport(ABC):
         on_plan_delta: Callable[[str, dict[str, Any]], None] | None = None,
         on_request_user_input: Callable[[dict[str, Any]], None] | None = None,
         on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
+        on_item_event: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Send a prompt and stream deltas when available."""
 
@@ -262,6 +264,7 @@ class StdioTransport(CodexTransport):
         on_plan_delta: Callable[[str, dict[str, Any]], None] | None = None,
         on_request_user_input: Callable[[dict[str, Any]], None] | None = None,
         on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
+        on_item_event: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
             raise CodexTransportNotFound("StdioTransport process is not alive")
@@ -276,6 +279,7 @@ class StdioTransport(CodexTransport):
             on_plan_delta=on_plan_delta,
             on_request_user_input=on_request_user_input,
             on_request_resolved=on_request_resolved,
+            on_item_event=on_item_event,
         )
 
     def start_thread(
@@ -295,7 +299,7 @@ class StdioTransport(CodexTransport):
             "cwd": cwd or None,
             "approvalPolicy": "never",
             "sandbox": self._thread_sandbox_mode(writable_roots),
-            "experimentalRawEvents": False,
+            "experimentalRawEvents": True,
             "persistExtendedHistory": bool(persist_extended_history),
         }
         if base_instructions:
@@ -317,16 +321,12 @@ class StdioTransport(CodexTransport):
         if not self.is_alive():
             raise CodexTransportNotFound("StdioTransport process is not alive")
         self._initialize_session(timeout_sec)
-        return self._rpc(
-            "thread/resume",
-            {
-                "threadId": thread_id,
-                "cwd": cwd or None,
-                "approvalPolicy": "never",
-                "sandbox": self._thread_sandbox_mode(writable_roots),
-                "persistExtendedHistory": False,
-            },
-            timeout=min(30, timeout_sec),
+        return self._resume_thread_rpc(
+            thread_id,
+            cwd=cwd,
+            timeout_sec=timeout_sec,
+            writable_roots=writable_roots,
+            enable_raw_events=True,
         )
 
     def fork_thread(
@@ -372,6 +372,7 @@ class StdioTransport(CodexTransport):
         on_request_user_input: Callable[[dict[str, Any]], None] | None = None,
         on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
         on_thread_status: Callable[[dict[str, Any]], None] | None = None,
+        on_item_event: Callable[[str, dict[str, Any]], None] | None = None,
         output_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
@@ -388,6 +389,7 @@ class StdioTransport(CodexTransport):
             on_request_user_input=on_request_user_input,
             on_request_resolved=on_request_resolved,
             on_thread_status=on_thread_status,
+            on_item_event=on_item_event,
             output_schema=output_schema,
             initialize_session=True,
         )
@@ -470,20 +472,17 @@ class StdioTransport(CodexTransport):
         on_plan_delta: Callable[[str, dict[str, Any]], None] | None,
         on_request_user_input: Callable[[dict[str, Any]], None] | None,
         on_request_resolved: Callable[[dict[str, Any]], None] | None,
+        on_item_event: Callable[[str, dict[str, Any]], None] | None,
     ) -> dict[str, Any]:
         self._initialize_session(timeout_sec)
         resolved_thread_id = thread_id
         if resolved_thread_id:
-            self._rpc(
-                "thread/resume",
-                {
-                    "threadId": resolved_thread_id,
-                    "cwd": cwd or None,
-                    "approvalPolicy": "never",
-                    "sandbox": self._thread_sandbox_mode(writable_roots),
-                    "persistExtendedHistory": False,
-                },
-                timeout=min(10, timeout_sec),
+            self._resume_thread_rpc(
+                resolved_thread_id,
+                cwd=cwd,
+                timeout_sec=min(10, timeout_sec),
+                writable_roots=writable_roots,
+                enable_raw_events=True,
             )
         else:
             response = self._rpc(
@@ -492,7 +491,7 @@ class StdioTransport(CodexTransport):
                     "cwd": cwd or None,
                     "approvalPolicy": "never",
                     "sandbox": self._thread_sandbox_mode(writable_roots),
-                    "experimentalRawEvents": False,
+                    "experimentalRawEvents": True,
                     "persistExtendedHistory": False,
                 },
                 timeout=min(10, timeout_sec),
@@ -510,6 +509,7 @@ class StdioTransport(CodexTransport):
             on_request_user_input=on_request_user_input,
             on_request_resolved=on_request_resolved,
             on_thread_status=None,
+            on_item_event=on_item_event,
             output_schema=None,
             initialize_session=False,
         )
@@ -528,6 +528,7 @@ class StdioTransport(CodexTransport):
         on_request_user_input: Callable[[dict[str, Any]], None] | None,
         on_request_resolved: Callable[[dict[str, Any]], None] | None,
         on_thread_status: Callable[[dict[str, Any]], None] | None,
+        on_item_event: Callable[[str, dict[str, Any]], None] | None,
         output_schema: dict[str, Any] | None,
         initialize_session: bool,
     ) -> dict[str, Any]:
@@ -556,12 +557,20 @@ class StdioTransport(CodexTransport):
         if not isinstance(turn_id, str) or not turn_id.strip():
             raise CodexTransportError("turn/start did not return a turn id", "rpc_error")
         state = self._get_turn_state(turn_id)
-        state.event.clear()
-        state.stdout_parts = []
-        state.final_text = None
-        state.final_plan_item = None
-        state.error_message = None
-        state.turn_status = None
+        completed_early = (
+            state.event.is_set()
+            or state.turn_status is not None
+            or state.error_message is not None
+        )
+        if not completed_early:
+            state.event.clear()
+            state.stdout_parts = []
+            state.final_text = None
+            state.final_plan_item = None
+            state.error_message = None
+            state.turn_status = None
+            state.tool_calls = []
+            state.runtime_request_ids = []
         state.thread_id = thread_id
         state.on_delta = on_delta
         state.on_tool_call = on_tool_call
@@ -569,7 +578,7 @@ class StdioTransport(CodexTransport):
         state.on_request_user_input = on_request_user_input
         state.on_request_resolved = on_request_resolved
         state.on_thread_status = on_thread_status
-        state.runtime_request_ids = []
+        state.on_item_event = on_item_event
         if on_delta is not None and state.stdout_parts:
             for chunk in list(state.stdout_parts):
                 self._emit_delta(state, chunk)
@@ -855,6 +864,15 @@ class StdioTransport(CodexTransport):
         except Exception:
             logger.debug("StdioTransport thread status callback failed", exc_info=True)
 
+    def _emit_item_event(self, state: _TurnState, phase: str, item: dict[str, Any]) -> None:
+        callback = state.on_item_event
+        if callback is None:
+            return
+        try:
+            callback(phase, copy.deepcopy(item))
+        except Exception:
+            logger.debug("StdioTransport item callback failed", exc_info=True)
+
     def _emit_global_notification_callbacks(
         self,
         callbacks: tuple[Callable[[dict[str, Any]], None], ...],
@@ -941,6 +959,15 @@ class StdioTransport(CodexTransport):
                 )
             return
 
+        if method == "item/started":
+            turn_id = params.get("turnId")
+            item = params.get("item", {})
+            if not isinstance(turn_id, str) or not isinstance(item, dict):
+                return
+            state = self._get_turn_state(turn_id)
+            self._emit_item_event(state, "started", item)
+            return
+
         if method == "item/completed":
             turn_id = params.get("turnId")
             thread_id = params.get("threadId")
@@ -948,6 +975,7 @@ class StdioTransport(CodexTransport):
             if not isinstance(turn_id, str) or not isinstance(thread_id, str) or not isinstance(item, dict):
                 return
             state = self._get_turn_state(turn_id)
+            self._emit_item_event(state, "completed", item)
             item_type = item.get("type")
             if item_type == "agentMessage":
                 text = item.get("text")
@@ -1122,6 +1150,47 @@ class StdioTransport(CodexTransport):
         except Exception:
             logger.debug("Failed to respond to dynamic tool request", exc_info=True)
 
+    def _resume_thread_rpc(
+        self,
+        thread_id: str,
+        *,
+        cwd: str | None,
+        timeout_sec: int,
+        writable_roots: list[str] | None,
+        enable_raw_events: bool,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "threadId": thread_id,
+            "cwd": cwd or None,
+            "approvalPolicy": "never",
+            "sandbox": self._thread_sandbox_mode(writable_roots),
+            "persistExtendedHistory": False,
+        }
+        if enable_raw_events:
+            params["experimentalRawEvents"] = True
+        try:
+            return self._rpc(
+                "thread/resume",
+                params,
+                timeout=min(30, timeout_sec),
+            )
+        except CodexTransportError as exc:
+            if not enable_raw_events or not self._resume_raw_events_unsupported(exc):
+                raise
+            params.pop("experimentalRawEvents", None)
+            return self._rpc(
+                "thread/resume",
+                params,
+                timeout=min(30, timeout_sec),
+            )
+
+    @staticmethod
+    def _resume_raw_events_unsupported(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "experimentalrawevents" in message and (
+            "unknown field" in message or "invalid request" in message
+        )
+
     def _read_loop(self) -> None:
         proc = self._process
         if proc is None or proc.stdout is None:
@@ -1265,6 +1334,7 @@ class CodexAppClient:
         on_plan_delta: Callable[[str, dict[str, Any]], None] | None = None,
         on_request_user_input: Callable[[dict[str, Any]], None] | None = None,
         on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
+        on_item_event: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
             self.start()
@@ -1277,6 +1347,7 @@ class CodexAppClient:
             "on_plan_delta": on_plan_delta,
             "on_request_user_input": on_request_user_input,
             "on_request_resolved": on_request_resolved,
+            "on_item_event": on_item_event,
         }
         if writable_roots is not None:
             transport_kwargs["writable_roots"] = writable_roots
@@ -1375,6 +1446,7 @@ class CodexAppClient:
         on_request_user_input: Callable[[dict[str, Any]], None] | None = None,
         on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
         on_thread_status: Callable[[dict[str, Any]], None] | None = None,
+        on_item_event: Callable[[str, dict[str, Any]], None] | None = None,
         output_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
@@ -1392,6 +1464,7 @@ class CodexAppClient:
             on_request_user_input=on_request_user_input,
             on_request_resolved=on_request_resolved,
             on_thread_status=on_thread_status,
+            on_item_event=on_item_event,
             output_schema=output_schema,
         )
 

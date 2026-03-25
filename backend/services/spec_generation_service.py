@@ -20,6 +20,7 @@ from backend.errors.app_errors import (
     SpecGenerationBackendUnavailable,
     SpecGenerationNotAllowed,
 )
+from backend.services.execution_gating import require_shaping_not_frozen
 from backend.services import planningtree_workspace
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import atomic_write_json, iso_now, load_json, new_id
@@ -67,6 +68,7 @@ class SpecGenerationService:
             node = node_by_id.get(node_id)
             if node is None:
                 raise NodeNotFound(node_id)
+            require_shaping_not_frozen(self._storage, project_id, node_id, "generate spec")
 
             node_dir = self._resolve_node_dir(snapshot, node_id)
             gen_state = self._reconcile_stale_job(project_id, node_id, node_dir)
@@ -128,6 +130,14 @@ class SpecGenerationService:
             }
             gen_state["last_error"] = None
             self._save_gen_state(node_dir, gen_state)
+            spec_meta_path = node_dir / planningtree_workspace.SPEC_META_FILE_NAME
+            atomic_write_json(
+                spec_meta_path,
+                {
+                    "source_frame_revision": source_frame_revision,
+                    "confirmed_at": None,
+                },
+            )
             self._mark_live_job(project_id, node_id, job_id)
 
         threading.Thread(

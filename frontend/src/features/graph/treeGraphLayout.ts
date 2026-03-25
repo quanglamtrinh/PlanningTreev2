@@ -2,23 +2,46 @@ import type { NodeRecord } from '../../api/types'
 
 // ─── Layout constants (vertical tree: root top → children below, siblings left–right) ───
 // Vertical distance between depth levels (parent row → child row).
-// Tuned for org-chart–like edges. Large enough that parent + fixed-gap review + review card
-// usually clears the child row (see buildReviewOverlayPositions).
-const DEPTH_STEP_PX = 340
+// Must be large enough that parent card (up to ~260px) + review card (96px) + 2×MIN_REVIEW_GAP
+// all fit comfortably. At 560px: even a 260px parent leaves 300px for review+gaps (102px each).
+const DEPTH_STEP_PX = 560
 
 /** Exported for TreeGraph position fallback when layout map misses a node. */
 export const TREE_DEPTH_STEP_PX = DEPTH_STEP_PX
 
 /**
- * Vertical gap from the **bottom** of the parent card to the **top** of the review card.
- * Review `y` is always `parentBottom + REVIEW_PARENT_GAP_PX` (no mixing with child-row clamps).
+ * @deprecated Kept for test compatibility — review Y is now computed as the midpoint between
+ * parent bottom and children top. This value is no longer used in the layout logic.
  */
-export const REVIEW_PARENT_GAP_PX = 48
+export const REVIEW_PARENT_GAP_PX = 0
 
 /**
- * @deprecated No longer used for review Y (parent→review gap is fixed). Kept for tests/docs tuning.
+ * @deprecated No longer used for review Y. Kept for tests/docs tuning.
  */
 export const REVIEW_CHILD_TOP_CLEARANCE_PX = 152
+
+/**
+ * Estimated height of the review card (eyebrow + title + subtitle + padding).
+ * Used to vertically center the review card in the gap between parent and children.
+ */
+const REVIEW_CARD_HEIGHT_PX = 96
+
+/**
+ * Minimum breathing room above and below the review card within the parent→children gap.
+ */
+const MIN_REVIEW_GAP_PX = 48
+
+/** Matches `GraphNode` card width (`GraphNode.module.css` `.card`). */
+export const GRAPH_NODE_WIDTH_PX = 270
+
+/** Matches `GraphNode` `.wrapper` `margin-bottom` (space below each node in the canvas). */
+export const GRAPH_NODE_MARGIN_BOTTOM_PX = 10
+
+/** Matches `ReviewGraphNode` card width (`ReviewGraphNode.module.css`). */
+export const REVIEW_NODE_WIDTH_PX = 220
+
+/** Matches `GhostGraphNode` card width (`GhostGraphNode.module.css`). */
+export const GHOST_NODE_WIDTH_PX = 200
 
 // Width of one horizontal "unit" in pixels. Subtree width is measured in these
 // units (same packing math as before, applied on X for siblings).
@@ -45,17 +68,19 @@ function estimateTextLines(value: string, charsPerLine: number): number {
 }
 
 /**
- * Height of the graph card in layout (matches `GraphNode`: number/title line + badge row, padding).
- * Uses the same headline as the UI (`hierarchical_number / title`) so wrapped titles match DOM.
+ * Height of the graph card in layout (matches `GraphNode`: title row + optional description, padding).
+ * Title row shares width with status/actions (~140px); body text uses full card width.
  */
 export function estimateNodeHeight(node: NodeRecord): number {
-  const headline = `${node.hierarchical_number} / ${node.title}`.trim()
-  const titleLines = estimateTextLines(headline, 22)
-  const paddingY = 12 + 14
-  const titleLinePx = 20
-  const gapTitleToBadge = 5
-  const badgeRowPx = 24
-  return paddingY + titleLines * titleLinePx + gapTitleToBadge + badgeRowPx
+  const titleLines = estimateTextLines(node.title.trim(), 20)
+  const desc = node.description.trim()
+  const descLines = desc ? estimateTextLines(desc, 32) : 0
+  const paddingY = 14 + 16
+  const titleLinePx = 21
+  const titleRowPx = Math.max(titleLines * titleLinePx, 26)
+  const gapTitleToDesc = desc ? 8 : 0
+  const descLinePx = 18
+  return paddingY + titleRowPx + gapTitleToDesc + descLines * descLinePx
 }
 
 export function buildTreeLayoutPositions({
@@ -76,10 +101,22 @@ export function buildTreeLayoutPositions({
   const subtreeUnits = new Map<string, number>()
   const positions = new Map<string, { x: number; y: number }>()
 
+  /** Equal width for every sibling column under a parent (max of each child's subtree width). */
+  function siblingSlotUnits(childIds: string[]): number {
+    if (childIds.length === 0) {
+      return MIN_NODE_SPAN_UNITS
+    }
+    let maxW = MIN_NODE_SPAN_UNITS
+    for (const id of childIds) {
+      maxW = Math.max(maxW, computeUnits(id))
+    }
+    return maxW
+  }
+
   // Compute how many stack units a subtree rooted at nodeId needs (sibling axis).
   // For leaf nodes this equals the node's own height (in units).
-  // For parents it equals the sum of all children's subtree units
-  // PLUS gaps between siblings.
+  // For parents: siblings share equal horizontal slots (widest child's subtree width) so
+  // adding siblings or changing one child's text does not collapse the row toward one edge.
   const computeUnits = (nodeId: string): number => {
     const cached = subtreeUnits.get(nodeId)
     if (cached !== undefined) {
@@ -99,9 +136,9 @@ export function buildTreeLayoutPositions({
       return ownUnits
     }
 
-    // Sum child subtrees + gaps between siblings
-    const childSubtreeSum = children.reduce((sum, childId) => sum + computeUnits(childId), 0)
+    const slot = siblingSlotUnits(children)
     const totalGaps = SIBLING_GAP_UNITS * (children.length - 1)
+    const childSubtreeSum = slot * children.length
     const total = Math.max(ownUnits, childSubtreeSum + totalGaps)
     subtreeUnits.set(nodeId, total)
     return total
@@ -114,8 +151,9 @@ export function buildTreeLayoutPositions({
     }
 
     const nodeUnits = computeUnits(nodeId)
+    const centerX = (startUnit + nodeUnits / 2) * HORIZONTAL_UNIT_PX
     positions.set(nodeId, {
-      x: (startUnit + nodeUnits / 2) * HORIZONTAL_UNIT_PX,
+      x: centerX - GRAPH_NODE_WIDTH_PX / 2,
       y: Math.max(0, node.depth - baseDepth) * DEPTH_STEP_PX,
     })
 
@@ -124,16 +162,16 @@ export function buildTreeLayoutPositions({
       return
     }
 
-    // Total space children + gaps actually occupy
-    const childSubtreeSum = children.reduce((sum, childId) => sum + computeUnits(childId), 0)
+    const slot = siblingSlotUnits(children)
     const totalGaps = SIBLING_GAP_UNITS * (children.length - 1)
-    const childrenBlock = childSubtreeSum + totalGaps
+    const childrenBlock = slot * children.length + totalGaps
 
     // Center the children block relative to the parent's allocated space
     let cursor = startUnit + Math.max(0, (nodeUnits - childrenBlock) / 2)
     for (const childId of children) {
-      assign(childId, cursor)
-      cursor += computeUnits(childId) + SIBLING_GAP_UNITS
+      const childUnits = computeUnits(childId)
+      assign(childId, cursor + Math.max(0, (slot - childUnits) / 2))
+      cursor += slot + SIBLING_GAP_UNITS
     }
   }
 
@@ -159,43 +197,105 @@ export function buildReviewOverlayPositions({
   const reviewPositions = new Map<string, { x: number; y: number }>()
 
   for (const [parentId, childIds] of visibleChildrenById) {
-    if (childIds.length < 2) {
+    if (childIds.length === 0) {
+      continue
+    }
+
+    const parentRecord = nodeById.get(parentId)
+    if (!parentRecord) {
+      continue
+    }
+
+    // Use real review_node_id if the parent has one; fall back to synthetic for legacy 2+ child trees.
+    const reviewNodeId = parentRecord.review_node_id
+    const useSynthetic = !reviewNodeId && childIds.length >= 2
+    if (!reviewNodeId && !useSynthetic) {
       continue
     }
 
     const parentPosition = treePositions.get(parentId)
-    const parentRecord = nodeById.get(parentId)
-    if (!parentPosition || !parentRecord) {
-      continue
-    }
-
-    const visibleChildCount = childIds.reduce(
-      (count, childId) => count + (treePositions.has(childId) ? 1 : 0),
-      0,
-    )
-    if (visibleChildCount < 2) {
+    if (!parentPosition) {
       continue
     }
 
     const directChildYs = childIds
       .map((childId) => treePositions.get(childId)?.y)
       .filter((value): value is number => typeof value === 'number')
-    if (directChildYs.length < 2) {
+    if (directChildYs.length === 0) {
       continue
     }
 
     const parentY = parentPosition.y
-    const parentBottom = parentY + estimateNodeHeight(parentRecord)
-    // Fixed gap from parent card bottom → review card top (REVIEW_PARENT_GAP_PX).
-    const reviewY = parentBottom + REVIEW_PARENT_GAP_PX
+    const parentBottom = parentY + estimateNodeHeight(parentRecord) + GRAPH_NODE_MARGIN_BOTTOM_PX
+    const childrenTop = Math.min(...directChildYs)
 
-    reviewPositions.set(`review::${parentId}`, {
-      // Tree layout centers the parent over its direct-child block, so the
-      // parent's x-coordinate is already the block center we want for review.
-      x: parentPosition.x,
+    const midpoint = (parentBottom + childrenTop) / 2
+    const reviewY = Math.min(
+      Math.max(
+        midpoint - REVIEW_CARD_HEIGHT_PX / 2,
+        parentBottom + MIN_REVIEW_GAP_PX,
+      ),
+      childrenTop - REVIEW_CARD_HEIGHT_PX - MIN_REVIEW_GAP_PX,
+    )
+
+    const id = reviewNodeId ?? `review::${parentId}`
+    reviewPositions.set(id, {
+      x: parentPosition.x + (GRAPH_NODE_WIDTH_PX - REVIEW_NODE_WIDTH_PX) / 2,
       y: reviewY,
     })
   }
 
   return reviewPositions
+}
+
+/**
+ * Position ghost/placeholder nodes for pending (unmaterialized) siblings
+ * to the right of the last real child under each parent.
+ */
+export function buildGhostSiblingPositions({
+  visibleChildrenById,
+  treePositions,
+  ghostSiblings,
+}: {
+  visibleChildrenById: Map<string, string[]>
+  treePositions: Map<string, { x: number; y: number }>
+  ghostSiblings: Map<string, { id: string; title: string; index: number }[]>
+}) {
+  const positions = new Map<string, { x: number; y: number }>()
+
+  for (const [parentId, siblings] of ghostSiblings) {
+    if (siblings.length === 0) continue
+
+    const parentPos = treePositions.get(parentId)
+    if (!parentPos) continue
+
+    // Ghost nodes sit at the same depth row as real children
+    const childY = parentPos.y + DEPTH_STEP_PX
+
+    // Find the rightmost real child X to place ghosts after it
+    const childIds = visibleChildrenById.get(parentId) ?? []
+    const childXs = childIds
+      .map((id) => treePositions.get(id)?.x)
+      .filter((x): x is number => typeof x === 'number')
+
+    let startX: number
+    if (childXs.length > 0) {
+      const rightmostX = Math.max(...childXs)
+      startX = rightmostX + GRAPH_NODE_WIDTH_PX + SIBLING_GAP_UNITS * HORIZONTAL_UNIT_PX
+    } else {
+      // No visible children yet — center first ghost under parent
+      startX = parentPos.x + (GRAPH_NODE_WIDTH_PX - GHOST_NODE_WIDTH_PX) / 2
+    }
+
+    const gap = SIBLING_GAP_UNITS * HORIZONTAL_UNIT_PX
+
+    for (let i = 0; i < siblings.length; i++) {
+      positions.set(siblings[i].id, {
+        x: startX + i * (GHOST_NODE_WIDTH_PX + gap),
+        y: childY,
+      })
+    }
+  }
+
+  return positions
 }

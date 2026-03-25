@@ -91,6 +91,15 @@ def get_chat_timeout() -> int:
     return max(10, min(600, timeout))
 
 
+def get_execution_timeout() -> int:
+    raw = os.environ.get("PLANNINGTREE_EXECUTION_TIMEOUT_SEC", "1200")
+    try:
+        timeout = int(raw)
+    except (TypeError, ValueError):
+        timeout = 1200
+    return max(10, min(3600, timeout))
+
+
 def get_max_chat_message_chars() -> int:
     raw = os.environ.get("PLANNINGTREE_MAX_CHAT_MESSAGE_CHARS", "10000")
     try:

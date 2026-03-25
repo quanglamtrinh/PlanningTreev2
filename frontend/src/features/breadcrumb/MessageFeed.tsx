@@ -1,5 +1,7 @@
 import { memo, useEffect, useRef } from 'react'
 import type { ChatMessage, MessagePart } from '../../api/types'
+import { AgentSpinner } from '../../components/AgentSpinner'
+import { PlanItemBlock } from './PlanItemBlock'
 import { StatusPill } from './StatusPill'
 import { ToolCallBlock } from './ToolCallBlock'
 import styles from './BreadcrumbChatView.module.css'
@@ -154,6 +156,14 @@ function renderPart(part: MessagePart, index: number) {
       return part.content ? (
         <div key={`part-${index}`} className={styles.content}>{renderContent(part.content)}</div>
       ) : null
+    case 'plan_item':
+      return (
+        <PlanItemBlock
+          key={`part-${index}`}
+          content={part.content}
+          isStreaming={part.is_streaming}
+        />
+      )
     case 'tool_call':
       return (
         <ToolCallBlock
@@ -161,6 +171,8 @@ function renderPart(part: MessagePart, index: number) {
           toolName={part.tool_name}
           arguments={part.arguments}
           status={part.status}
+          output={part.output ?? null}
+          exitCode={part.exit_code ?? null}
         />
       )
     case 'status_block':
@@ -170,9 +182,27 @@ function renderPart(part: MessagePart, index: number) {
   }
 }
 
+function projectedAssistantText(parts: MessagePart[] | undefined): string {
+  return (parts ?? [])
+    .filter((part): part is Extract<MessagePart, { type: 'assistant_text' }> => part.type === 'assistant_text')
+    .map((part) => part.content)
+    .join('')
+}
+
 function renderAssistantBody(msg: ChatMessage) {
+  const parts = msg.parts ?? []
+  const renderedParts = parts.map((part, i) => renderPart(part, i))
+  const shouldRenderFallbackContent = Boolean(msg.content) && projectedAssistantText(parts) !== msg.content
+
   if (msg.parts && msg.parts.length > 0) {
-    return msg.parts.map((part, i) => renderPart(part, i))
+    return (
+      <>
+        {renderedParts}
+        {shouldRenderFallbackContent ? (
+          <div className={styles.content}>{renderContent(msg.content)}</div>
+        ) : null}
+      </>
+    )
   }
   if (msg.content) {
     return <div className={styles.content}>{renderContent(msg.content)}</div>
@@ -192,6 +222,21 @@ function partsEqual(a: MessagePart[] | undefined, b: MessagePart[] | undefined):
 
 const MessageFeedRow = memo(
   function MessageFeedRow({ msg }: { msg: ChatMessage }) {
+    if (msg.role === 'system') {
+      return (
+        <div className={`${styles.row} ${styles.rowSystem}`}>
+          <div className={styles.systemCard} role="note" aria-label="Thread context">
+            <p className={styles.systemEyebrow}>Context</p>
+            {msg.content ? (
+              <div className={`${styles.content} ${styles.systemContent}`}>
+                {renderContent(msg.content)}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div
         className={`${styles.row} ${msg.role === 'user' ? styles.rowUser : styles.rowAssistant}`}
@@ -200,8 +245,7 @@ const MessageFeedRow = memo(
         <div className={styles.bubble}>
           {msg.role === 'assistant' && msg.status === 'pending' && !msg.parts?.length && (
             <div className={styles.thinking}>
-              <span className={styles.thinkingDot} />
-              Thinking...
+              <AgentSpinner />
             </div>
           )}
           {msg.role === 'assistant' && msg.status === 'error' && msg.error && (

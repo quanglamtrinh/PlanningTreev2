@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from backend.ai.chat_prompt_builder import build_chat_prompt
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
@@ -13,16 +13,25 @@ from backend.errors.app_errors import (
     ChatTurnAlreadyActive,
     InvalidRequest,
     NodeNotFound,
+    ThreadReadOnly,
 )
+from backend.services.execution_gating import audit_writable
+from backend.services.thread_seed_service import ensure_thread_seeded_session
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now, new_id
 from backend.storage.storage import Storage
 from backend.streaming.sse_broker import ChatEventBroker
 
+if TYPE_CHECKING:
+    from backend.services.review_service import ReviewService
+
 logger = logging.getLogger(__name__)
 
 _STALE_TURN_MESSAGE = "Session interrupted - server restarted before response completed."
 _DRAFT_FLUSH_INTERVAL_SEC = 0.5
+_TASK_THREAD_ROLES = {"ask_planning", "audit", "execution"}
+_REVIEW_THREAD_ROLES = {"integration"}
+_VALID_THREAD_ROLES = _TASK_THREAD_ROLES | _REVIEW_THREAD_ROLES
 
 
 class ChatService:
@@ -41,19 +50,33 @@ class ChatService:
         self._chat_event_broker = chat_event_broker
         self._chat_timeout = int(chat_timeout)
         self._max_message_chars = max_message_chars
-        self._live_turns: set[tuple[str, str, str]] = set()
+        self._live_turns: set[tuple[str, str, str, str]] = set()
         self._live_turns_lock = threading.Lock()
+        self._review_service: ReviewService | None = None
 
-    def get_session(self, project_id: str, node_id: str) -> dict[str, Any]:
-        self._validate_node_exists(project_id, node_id)
+    def get_session(
+        self, project_id: str, node_id: str, thread_role: str = "ask_planning"
+    ) -> dict[str, Any]:
+        thread_role = str(thread_role or "").strip()
+        self._validate_thread_access(project_id, node_id, thread_role)
         with self._storage.project_lock(project_id):
-            session = self._storage.chat_state_store.read_session(project_id, node_id)
-            if self._recover_stale_turn(project_id, node_id, session):
-                session = self._storage.chat_state_store.write_session(project_id, node_id, session)
+            snapshot = self._storage.project_store.load_snapshot(project_id)
+            node = self._require_node_from_snapshot(snapshot, node_id)
+            session = self._load_session_locked(
+                project_id,
+                node_id,
+                thread_role=thread_role,
+                snapshot=snapshot,
+                node=node,
+            )
             return session
 
-    def create_message(self, project_id: str, node_id: str, content: str) -> dict[str, Any]:
-        self._validate_node_exists(project_id, node_id)
+    def create_message(
+        self, project_id: str, node_id: str, content: str, thread_role: str = "ask_planning"
+    ) -> dict[str, Any]:
+        thread_role = str(thread_role or "").strip()
+        self._validate_thread_access(project_id, node_id, thread_role)
+        self._check_thread_writable(project_id, node_id, thread_role)
         cleaned = content.strip()
         if not cleaned:
             raise InvalidRequest("Message content is required.")
@@ -86,18 +109,29 @@ class ChatService:
         }
 
         with self._storage.project_lock(project_id):
-            session = self._storage.chat_state_store.read_session(project_id, node_id)
-            self._recover_stale_turn(project_id, node_id, session)
+            snapshot = self._storage.project_store.load_snapshot(project_id)
+            node = self._require_node_from_snapshot(snapshot, node_id)
+            session = self._load_session_locked(
+                project_id,
+                node_id,
+                thread_role=thread_role,
+                snapshot=snapshot,
+                node=node,
+            )
             if session.get("active_turn_id"):
                 raise ChatTurnAlreadyActive()
+            if thread_role == "audit":
+                self._maybe_start_local_review_for_audit_write(project_id, node_id)
 
             session["messages"].append(user_message)
             session["messages"].append(assistant_message)
             session["active_turn_id"] = turn_id
-            self._storage.chat_state_store.write_session(project_id, node_id, session)
+            self._storage.chat_state_store.write_session(
+                project_id, node_id, session, thread_role=thread_role
+            )
 
             with self._live_turns_lock:
-                self._live_turns.add((project_id, node_id, turn_id))
+                self._live_turns.add((project_id, node_id, thread_role, turn_id))
 
         self._chat_event_broker.publish(
             project_id,
@@ -108,6 +142,7 @@ class ChatService:
                 "assistant_message": assistant_message,
                 "active_turn_id": turn_id,
             },
+            thread_role=thread_role,
         )
 
         threading.Thread(
@@ -118,6 +153,7 @@ class ChatService:
                 "turn_id": turn_id,
                 "content": cleaned,
                 "assistant_message_id": assistant_message["message_id"],
+                "thread_role": thread_role,
             },
             daemon=True,
         ).start()
@@ -128,24 +164,63 @@ class ChatService:
             "active_turn_id": turn_id,
         }
 
-    def reset_session(self, project_id: str, node_id: str) -> dict[str, Any]:
-        self._validate_node_exists(project_id, node_id)
+    def _maybe_start_local_review_for_audit_write(
+        self,
+        project_id: str,
+        node_id: str,
+    ) -> None:
+        exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+        status = str(exec_state.get("status") or "").strip() if isinstance(exec_state, dict) else ""
+        if status != "completed":
+            return
+        if self._review_service is None:
+            raise RuntimeError(
+                "ChatService review service is not configured for audit-triggered local review."
+            )
+        self._review_service.start_local_review(project_id, node_id)
+
+    def reset_session(
+        self, project_id: str, node_id: str, thread_role: str = "ask_planning"
+    ) -> dict[str, Any]:
+        thread_role = str(thread_role or "").strip()
+        self._validate_thread_access(project_id, node_id, thread_role)
+        if thread_role == "audit":
+            raise ThreadReadOnly("audit", "Audit history is immutable and cannot be reset.")
+        self._check_thread_writable(project_id, node_id, thread_role)
         with self._storage.project_lock(project_id):
-            session = self._storage.chat_state_store.read_session(project_id, node_id)
+            snapshot = self._storage.project_store.load_snapshot(project_id)
+            node = self._require_node_from_snapshot(snapshot, node_id)
+            session = self._load_session_locked(
+                project_id,
+                node_id,
+                thread_role=thread_role,
+                snapshot=snapshot,
+                node=node,
+            )
             if session.get("active_turn_id"):
                 with self._live_turns_lock:
-                    active = any(
-                        live_turn
-                        for live_turn in self._live_turns
-                        if live_turn[0] == project_id and live_turn[1] == node_id
-                    )
+                    active = (project_id, node_id, thread_role, str(session["active_turn_id"])) in self._live_turns
                 if active:
                     raise ChatTurnAlreadyActive()
-            return self._storage.chat_state_store.clear_session(project_id, node_id)
+            return self._storage.chat_state_store.clear_session(
+                project_id, node_id, thread_role=thread_role
+            )
 
     def has_live_turns_for_project(self, project_id: str) -> bool:
         with self._live_turns_lock:
             return any(turn[0] == project_id for turn in self._live_turns)
+
+    def register_external_live_turn(
+        self, project_id: str, node_id: str, thread_role: str, turn_id: str
+    ) -> None:
+        with self._live_turns_lock:
+            self._live_turns.add((project_id, node_id, thread_role, turn_id))
+
+    def clear_external_live_turn(
+        self, project_id: str, node_id: str, thread_role: str, turn_id: str
+    ) -> None:
+        with self._live_turns_lock:
+            self._live_turns.discard((project_id, node_id, thread_role, turn_id))
 
     def _run_background_turn(
         self,
@@ -155,6 +230,7 @@ class ChatService:
         turn_id: str,
         content: str,
         assistant_message_id: str,
+        thread_role: str = "ask_planning",
     ) -> None:
         thread_id: str | None = None
         draft_lock = threading.Lock()
@@ -171,7 +247,7 @@ class ChatService:
                     checkpoint_content = accumulator.content_projection()
                     last_checkpoint_at = now
 
-            self._handle_delta(project_id, node_id, turn_id, assistant_message_id, delta)
+            self._handle_delta(project_id, node_id, turn_id, assistant_message_id, delta, thread_role=thread_role)
 
             if checkpoint_content is not None:
                 self._persist_assistant_message(
@@ -185,6 +261,7 @@ class ChatService:
                     thread_id=thread_id,
                     clear_active_turn=False,
                     parts=accumulator.snapshot_parts(),
+                    thread_role=thread_role,
                 )
 
         def capture_tool_call(tool_name: str, arguments: dict) -> None:
@@ -201,6 +278,7 @@ class ChatService:
                     "arguments": arguments,
                     "part_index": part_index,
                 },
+                thread_role=thread_role,
             )
 
         def capture_thread_status(payload: dict) -> None:
@@ -218,11 +296,14 @@ class ChatService:
                     "status_type": status_type,
                     "label": _status_label(status_type),
                 },
+                thread_role=thread_role,
             )
 
         try:
             with self._storage.project_lock(project_id):
-                session = self._storage.chat_state_store.read_session(project_id, node_id)
+                session = self._storage.chat_state_store.read_session(
+                    project_id, node_id, thread_role=thread_role
+                )
                 snapshot = self._storage.project_store.load_snapshot(project_id)
 
             node_by_id = self._tree_service.node_index(snapshot)
@@ -237,6 +318,7 @@ class ChatService:
                 turn_id=turn_id,
                 assistant_message_id=assistant_message_id,
                 thread_id=thread_id,
+                thread_role=thread_role,
             )
 
             prompt = build_chat_prompt(snapshot, node, node_by_id, content)
@@ -267,6 +349,7 @@ class ChatService:
                 thread_id=thread_id,
                 clear_active_turn=True,
                 parts=final_parts,
+                thread_role=thread_role,
             )
 
             if persisted:
@@ -279,6 +362,7 @@ class ChatService:
                         "content": final_content,
                         "thread_id": thread_id,
                     },
+                    thread_role=thread_role,
                 )
         except Exception as exc:
             logger.debug(
@@ -304,6 +388,7 @@ class ChatService:
                     thread_id=thread_id,
                     clear_active_turn=True,
                     parts=error_parts,
+                    thread_role=thread_role,
                 )
             except Exception:
                 persisted = False
@@ -318,10 +403,11 @@ class ChatService:
                         "message_id": assistant_message_id,
                         "error": str(exc),
                     },
+                    thread_role=thread_role,
                 )
         finally:
             with self._live_turns_lock:
-                self._live_turns.discard((project_id, node_id, turn_id))
+                self._live_turns.discard((project_id, node_id, thread_role, turn_id))
 
     def _handle_delta(
         self,
@@ -330,6 +416,8 @@ class ChatService:
         turn_id: str,
         assistant_message_id: str,
         delta: str,
+        *,
+        thread_role: str = "ask_planning",
     ) -> None:
         del turn_id
         self._chat_event_broker.publish(
@@ -340,6 +428,7 @@ class ChatService:
                 "message_id": assistant_message_id,
                 "delta": delta,
             },
+            thread_role=thread_role,
         )
 
     def _ensure_chat_thread(self, existing_thread_id: Any, workspace_root: str | None) -> str:
@@ -373,13 +462,106 @@ class ChatService:
             raise ChatBackendUnavailable("Chat thread start did not return a thread id.")
         return thread_id
 
+    def _check_thread_writable(self, project_id: str, node_id: str, thread_role: str) -> None:
+        """Enforce read-only rules per thread-state-model.md."""
+        if thread_role == "execution":
+            raise ThreadReadOnly("execution", "Execution thread is automated; user cannot send messages.")
+
+        if thread_role == "ask_planning":
+            if self._storage.execution_state_store.exists(project_id, node_id):
+                raise ThreadReadOnly("ask_planning", "Shaping is frozen after Finish Task.")
+
+        if thread_role == "audit":
+            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            snapshot = self._storage.project_store.load_snapshot(project_id)
+            node_index = snapshot.get("tree_state", {}).get("node_index", {})
+            node = node_index.get(node_id, {})
+            review_state = None
+            review_node_id = node.get("review_node_id")
+            if review_node_id:
+                review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
+            if audit_writable(self._storage, project_id, node, exec_state, review_state):
+                return
+            raise ThreadReadOnly("audit", "Audit is not yet writable for this node.")
+
+        if thread_role == "integration":
+            # Integration thread: only Codex writes during rollup review
+            raise ThreadReadOnly("integration", "Integration thread is automated.")
+
     def _validate_node_exists(self, project_id: str, node_id: str) -> dict[str, Any]:
         snapshot = self._storage.project_store.load_snapshot(project_id)
+        return self._require_node_from_snapshot(snapshot, node_id)
+
+    def _validate_thread_access(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+    ) -> dict[str, Any]:
+        normalized_role = str(thread_role or "").strip()
+        if normalized_role not in _VALID_THREAD_ROLES:
+            allowed = ", ".join(sorted(_VALID_THREAD_ROLES))
+            raise InvalidRequest(
+                f"Invalid thread_role {normalized_role!r}. Must be one of: {allowed}."
+            )
+
+        node = self._validate_node_exists(project_id, node_id)
+        node_kind = str(node.get("node_kind") or "").strip()
+        allowed_roles = _REVIEW_THREAD_ROLES if node_kind == "review" else _TASK_THREAD_ROLES
+        if normalized_role not in allowed_roles:
+            allowed = ", ".join(sorted(allowed_roles))
+            raise InvalidRequest(
+                f"Thread role {normalized_role!r} is not valid for node_kind {node_kind!r}. "
+                f"Allowed roles: {allowed}."
+            )
+        return node
+
+    def _require_node_from_snapshot(
+        self,
+        snapshot: dict[str, Any],
+        node_id: str,
+    ) -> dict[str, Any]:
         node_by_id = self._tree_service.node_index(snapshot)
         node = node_by_id.get(node_id)
         if node is None:
             raise NodeNotFound(node_id)
         return node
+
+    def _load_session_locked(
+        self,
+        project_id: str,
+        node_id: str,
+        *,
+        thread_role: str,
+        snapshot: dict[str, Any],
+        node: dict[str, Any],
+    ) -> dict[str, Any]:
+        session = self._storage.chat_state_store.read_session(
+            project_id,
+            node_id,
+            thread_role=thread_role,
+        )
+        changed = False
+        session, seeded = ensure_thread_seeded_session(
+            self._storage,
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            snapshot=snapshot,
+            node=node,
+            session=session,
+        )
+        changed = changed or seeded
+        if self._recover_stale_turn(project_id, node_id, session, thread_role=thread_role):
+            changed = True
+        if changed:
+            session = self._storage.chat_state_store.write_session(
+                project_id,
+                node_id,
+                session,
+                thread_role=thread_role,
+            )
+        return session
 
     def _persist_thread_id(
         self,
@@ -389,15 +571,20 @@ class ChatService:
         turn_id: str,
         assistant_message_id: str,
         thread_id: str,
+        thread_role: str = "ask_planning",
     ) -> bool:
         with self._storage.project_lock(project_id):
-            session = self._storage.chat_state_store.read_session(project_id, node_id)
+            session = self._storage.chat_state_store.read_session(
+                project_id, node_id, thread_role=thread_role
+            )
             if str(session.get("active_turn_id") or "") != turn_id:
                 return False
             if self._find_message(session, assistant_message_id) is None:
                 return False
             session["thread_id"] = thread_id
-            self._storage.chat_state_store.write_session(project_id, node_id, session)
+            self._storage.chat_state_store.write_session(
+                project_id, node_id, session, thread_role=thread_role
+            )
             return True
 
     def _persist_assistant_message(
@@ -413,9 +600,12 @@ class ChatService:
         thread_id: str | None,
         clear_active_turn: bool,
         parts: list[dict] | None = None,
+        thread_role: str = "ask_planning",
     ) -> bool:
         with self._storage.project_lock(project_id):
-            session = self._storage.chat_state_store.read_session(project_id, node_id)
+            session = self._storage.chat_state_store.read_session(
+                project_id, node_id, thread_role=thread_role
+            )
             if str(session.get("active_turn_id") or "") != turn_id:
                 return False
             message = self._find_message(session, assistant_message_id)
@@ -434,7 +624,9 @@ class ChatService:
             if clear_active_turn:
                 session["active_turn_id"] = None
 
-            self._storage.chat_state_store.write_session(project_id, node_id, session)
+            self._storage.chat_state_store.write_session(
+                project_id, node_id, session, thread_role=thread_role
+            )
             return True
 
     def _find_message(
@@ -447,12 +639,15 @@ class ChatService:
                 return message
         return None
 
-    def _recover_stale_turn(self, project_id: str, node_id: str, session: dict[str, Any]) -> bool:
+    def _recover_stale_turn(
+        self, project_id: str, node_id: str, session: dict[str, Any],
+        *, thread_role: str = "ask_planning",
+    ) -> bool:
         active_turn_id = session.get("active_turn_id")
         if not active_turn_id:
             return False
         with self._live_turns_lock:
-            if (project_id, node_id, str(active_turn_id)) in self._live_turns:
+            if (project_id, node_id, thread_role, str(active_turn_id)) in self._live_turns:
                 return False
 
         for message in reversed(session.get("messages", [])):

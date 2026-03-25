@@ -26,9 +26,11 @@ class PartAccumulator:
     def __init__(self) -> None:
         self.parts: list[dict] = []
         self._current_text_part: dict | None = None
+        self._current_plan_part: dict | None = None
 
     def on_delta(self, delta: str) -> None:
         """Text delta -> append to current assistant_text part, or create new one."""
+        self._close_plan_part()
         if self._current_text_part is None:
             self._current_text_part = {
                 "type": "assistant_text",
@@ -38,16 +40,70 @@ class PartAccumulator:
             self.parts.append(self._current_text_part)
         self._current_text_part["content"] += delta
 
-    def on_tool_call(self, tool_name: str, arguments: dict) -> None:
+    def on_plan_delta(self, delta: str, item: dict) -> None:
+        """Plan delta -> append to current plan_item part, or create a new one."""
+        item_id = str(item.get("id") or "").strip()
+        if not item_id or not isinstance(delta, str) or not delta:
+            return
+
+        if (
+            self._current_plan_part is not None
+            and self._current_plan_part.get("item_id") == item_id
+        ):
+            self._current_plan_part["content"] += delta
+            self._current_plan_part["timestamp"] = iso_now()
+            return
+
+        self._close_text_part()
+        self._close_plan_part()
+        self._current_plan_part = {
+            "type": "plan_item",
+            "item_id": item_id,
+            "content": delta,
+            "is_streaming": True,
+            "timestamp": iso_now(),
+        }
+        self.parts.append(self._current_plan_part)
+
+    def on_tool_call(self, tool_name: str, arguments: dict, *, call_id: str | None = None) -> None:
         """Tool call -> close current text part, add tool_call part."""
         self._close_text_part()
+        self._close_plan_part()
         self.parts.append({
             "type": "tool_call",
             "tool_name": tool_name,
             "arguments": arguments,
-            "call_id": None,
+            "call_id": call_id,
             "status": "running",
+            "output": None,
+            "exit_code": None,
         })
+
+    def on_tool_result(
+        self,
+        call_id: str | None,
+        *,
+        status: str,
+        output: str | None = None,
+        exit_code: int | None = None,
+    ) -> None:
+        """Tool completion -> update matching tool_call part with result details."""
+        target = None
+        if call_id:
+            for part in reversed(self.parts):
+                if part.get("type") == "tool_call" and part.get("call_id") == call_id:
+                    target = part
+                    break
+        if target is None:
+            for part in reversed(self.parts):
+                if part.get("type") == "tool_call" and part.get("status") == "running":
+                    target = part
+                    break
+        if target is None:
+            return
+        target["status"] = status
+        target["output"] = output
+        target["exit_code"] = exit_code
 
     def on_thread_status(self, payload: dict) -> None:
         """Thread status change -> add or update status_block part."""
@@ -64,6 +120,7 @@ class PartAccumulator:
             return
 
         self._close_text_part()
+        self._close_plan_part()
         self.parts.append({
             "type": "status_block",
             "status_type": status_type,
@@ -71,18 +128,20 @@ class PartAccumulator:
             "timestamp": iso_now(),
         })
 
-    def finalize(self) -> None:
+    def finalize(self, *, keep_status_blocks: bool = False) -> None:
         """Called on turn completion. Close open parts, mark tool calls completed,
         remove trailing status pills."""
         self._close_text_part()
+        self._close_plan_part()
 
         for part in self.parts:
             if part.get("type") == "tool_call" and part.get("status") == "running":
                 part["status"] = "completed"
 
-        # Remove trailing status blocks — they are transient.
-        while self.parts and self.parts[-1].get("type") == "status_block":
-            self.parts.pop()
+        if not keep_status_blocks:
+            # Remove trailing status blocks — they are transient by default.
+            while self.parts and self.parts[-1].get("type") == "status_block":
+                self.parts.pop()
 
     def content_projection(self) -> str:
         """Concatenate all assistant_text content into a single string."""
@@ -100,3 +159,8 @@ class PartAccumulator:
         if self._current_text_part is not None:
             self._current_text_part["is_streaming"] = False
             self._current_text_part = None
+
+    def _close_plan_part(self) -> None:
+        if self._current_plan_part is not None:
+            self._current_plan_part["is_streaming"] = False
+            self._current_plan_part = None

@@ -223,7 +223,7 @@ def test_generate_spec_overwrites_existing_spec_and_resets_confirmation(
     assert meta["confirmed_at"] is None
 
 
-def test_confirm_frame_route_starts_spec_generation_after_apply_and_reconfirm(
+def test_confirm_frame_route_does_not_start_spec_generation_after_apply_and_reconfirm(
     client, workspace_root: Path
 ) -> None:
     app = client.app
@@ -259,4 +259,4 @@ def test_confirm_frame_route_starts_spec_generation_after_apply_and_reconfirm(
     assert response.status_code == 200
     payload = response.json()
     assert payload["active_step"] == "spec"
-    generate_spec_mock.assert_called_once_with(project_id, root_id)
+    generate_spec_mock.assert_not_called()

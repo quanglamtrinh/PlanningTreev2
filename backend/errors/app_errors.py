@@ -294,3 +294,37 @@ class AskThreadReadOnly(AppError):
             "Ask thread is read-only because this node is no longer mutable.",
             409,
         )
+
+
+class ShapingFrozen(AppError):
+    def __init__(self, action: str = "shaping action") -> None:
+        super().__init__(
+            "shaping_frozen",
+            f"Cannot perform {action}: shaping is frozen after Finish Task.",
+            409,
+        )
+
+
+class ThreadReadOnly(AppError):
+    def __init__(self, thread_role: str, reason: str = "") -> None:
+        detail = f" {reason}" if reason else ""
+        super().__init__(
+            "thread_read_only",
+            f"Thread '{thread_role}' is read-only.{detail}",
+            409,
+        )
+
+
+class FinishTaskNotAllowed(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("finish_task_not_allowed", reason, 400)
+
+
+class ReviewNotAllowed(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("review_not_allowed", reason, 400)
+
+
+class SiblingActivationNotAllowed(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("sibling_activation_not_allowed", reason, 400)

@@ -271,7 +271,7 @@ export function Sidebar() {
                 onClickNode={handleNodeClick}
                 onDoubleClickNode={handleOpenBreadcrumb}
                 onRemoveProject={handleRemoveProject}
-                showGitInit={showGitInitCta(project)}
+                showGitInit={isActive && showGitInitCta(project)}
                 onInitGit={() => void initGit(project.id).then(() => refreshProjects())}
               />
             )

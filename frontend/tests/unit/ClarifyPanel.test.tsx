@@ -58,6 +58,16 @@ import { ClarifyPanel } from '../../src/features/node/ClarifyPanel'
 import { useClarifyStore } from '../../src/stores/clarify-store'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
 function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
   return {
     node_id: 'root',
@@ -278,7 +288,7 @@ describe('ClarifyPanel', () => {
       expect(apiMock.confirmClarify).not.toHaveBeenCalled()
     })
 
-    it('flushes dirty drafts then applies to frame when user clicks Apply to Frame', async () => {
+    it('flushes dirty drafts then confirms clarify when user clicks Confirm', async () => {
       const answeredState: ClarifyState = {
         ...CLARIFY_STATE,
         questions: TWO_QUESTIONS.map((q) => ({
@@ -324,16 +334,16 @@ describe('ClarifyPanel', () => {
 
       expect(apiMock.updateClarify).toHaveBeenCalledTimes(1)
 
-      // Apply to Frame button should be enabled now
+      // Confirm button should be enabled now
       const applyBtn = screen.getByTestId('confirm-clarify')
       expect(applyBtn).not.toBeDisabled()
-      expect(applyBtn).toHaveTextContent('Apply to Frame')
+      expect(applyBtn).toHaveTextContent('Confirm')
 
       await act(async () => {
         fireEvent.click(applyBtn)
       })
 
-      // flushAnswers is called again (no-op since nothing dirty), then confirmClarify (apply)
+      // flushAnswers is called again (no-op since nothing dirty), then confirmClarify
       expect(apiMock.confirmClarify).toHaveBeenCalledWith('p1', 'root')
     })
   })
@@ -362,5 +372,85 @@ describe('ClarifyPanel', () => {
     await waitFor(() => {
       expect(screen.getByTestId('confirm-error-clarify')).toHaveTextContent('Server error')
     })
+  })
+
+  it('refreshes clarify questions in place after generation completes', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const staleLoad = deferred<ClarifyState>()
+      const freshLoad = deferred<ClarifyState>()
+      const staleQuestion = 'Old seeded clarify question'
+      const freshQuestion = 'Fresh AI clarify question'
+
+      apiMock.getClarify
+        .mockImplementationOnce(() => staleLoad.promise)
+        .mockImplementationOnce(() => freshLoad.promise)
+
+      apiMock.getClarifyGenStatus
+        .mockResolvedValueOnce({
+          status: 'active',
+          job_id: 'job-1',
+          started_at: '2026-03-21T00:00:00Z',
+          completed_at: null,
+          error: null,
+        })
+        .mockResolvedValueOnce({
+          status: 'idle',
+          job_id: 'job-1',
+          started_at: '2026-03-21T00:00:00Z',
+          completed_at: '2026-03-21T00:00:02Z',
+          error: null,
+        })
+
+      render(<ClarifyPanel projectId="p1" node={makeNode()} />)
+
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      expect(apiMock.getClarify).toHaveBeenCalledTimes(1)
+      expect(apiMock.getClarifyGenStatus).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000)
+        await Promise.resolve()
+      })
+
+      expect(apiMock.getClarify).toHaveBeenCalledTimes(2)
+
+      await act(async () => {
+        freshLoad.resolve({
+          ...CLARIFY_STATE,
+          questions: [
+            {
+              ...TWO_QUESTIONS[0],
+              question: freshQuestion,
+            },
+          ],
+        })
+        await Promise.resolve()
+      })
+
+      expect(screen.getByText(freshQuestion)).toBeInTheDocument()
+
+      await act(async () => {
+        staleLoad.resolve({
+          ...CLARIFY_STATE,
+          questions: [
+            {
+              ...TWO_QUESTIONS[0],
+              question: staleQuestion,
+            },
+          ],
+        })
+        await Promise.resolve()
+      })
+
+      expect(screen.getByText(freshQuestion)).toBeInTheDocument()
+      expect(screen.queryByText(staleQuestion)).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -32,6 +32,7 @@
   font-size: 12px;
 }
 
+/* Legacy .spinner kept for safety; AgentSpinner now used via .runningSpinner */
 .spinner {
   width: 12px;
   height: 12px;
@@ -43,6 +44,12 @@
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* Wrapper for AgentSpinner inside the icon slot */
+.runningSpinner {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .name {
@@ -57,6 +64,16 @@
   color: var(--text-tertiary);
 }
 
+.summary {
+  padding: 0 10px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .args {
   padding: 8px 10px;
   margin: 0;
@@ -69,4 +86,25 @@
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.output {
+  padding: 8px 10px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent-primary) 5%, transparent);
+  border-top: 1px solid var(--border-default);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.exitCode {
+  padding: 6px 10px 10px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  border-top: 1px solid var(--border-default);
 }

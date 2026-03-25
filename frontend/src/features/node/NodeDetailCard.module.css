@@ -39,7 +39,7 @@
 
 .cardHeaderTop {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
@@ -94,12 +94,35 @@
   flex-shrink: 0;
 }
 
+.packageAuditReadyBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--success) 10%, var(--color-bg-panel));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--success) 18%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
 .nodeTitleBlock {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
   flex: 1;
+}
+
+.nodeMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .nodeEyebrow {
@@ -120,6 +143,10 @@
   min-width: 0;
 }
 
+.executionStatusBadge {
+  flex-shrink: 0;
+}
+
 .nodeHier {
   flex-shrink: 0;
   font-size: 12px;
@@ -130,10 +157,9 @@
 
 .nodeHeading {
   margin: 0;
-  flex: 1;
   min-width: 0;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.35;
   color: var(--color-text-primary);
 }
@@ -149,191 +175,6 @@
   margin: 0;
   font-size: 11px;
   line-height: 1.45;
-  color: var(--color-text-tertiary);
-}
-
-.stepper {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  flex: 1;
-  min-width: 0;
-}
-
-.stepButton {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
-  border: none;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.4;
-  color: var(--color-text-tertiary);
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    color 0.12s ease,
-    background 0.12s ease,
-    opacity 0.12s ease;
-  position: relative;
-}
-
-.stepButton:focus {
-  outline: none;
-}
-
-.stepButton:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
-.stepButton::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 10px;
-  right: 10px;
-  height: 2px;
-  border-radius: 2px;
-  background: transparent;
-  transition: background 0.14s ease;
-}
-
-.stepButton:hover:not(.stepButtonActive):not(.stepButtonDone):not(.stepButtonDescribe) {
-  color: var(--color-text-secondary);
-  background: var(--color-bg-hover);
-}
-
-/* Active tab: accent + underline — not for filled pills (Describe / done steps) */
-.stepButtonActive:not(.stepButtonDone):not(.stepButtonDescribe) {
-  color: var(--color-accent);
-  font-weight: 700;
-}
-
-/* Describe: cùng pill đỏ nâu + chữ trắng như bước đã hoàn thành (bước vào luồng) */
-.stepButton.stepButtonDescribe {
-  font-weight: 700;
-  color: #ffffff;
-  color: var(--step-done-fg);
-  background: var(--step-done-bg-fallback);
-  background: var(--step-done-bg);
-  border: 1px solid color-mix(in srgb, var(--step-done-bg-fallback) 50%, #000000);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 42%, #0c0604);
-}
-
-.stepButton.stepButtonDescribe::after {
-  display: none;
-}
-
-.stepButton.stepButtonDescribe:not(.stepButtonActive) {
-  opacity: 0.72;
-}
-
-.stepButton.stepButtonDescribe.stepButtonActive {
-  color: #ffffff;
-  color: var(--step-done-fg);
-  opacity: 1;
-  background: var(--step-done-bg-fallback);
-  background: var(--step-done-bg);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 38%, transparent);
-}
-
-.stepButton.stepButtonDescribe:hover:not(.stepButtonActive) {
-  color: #ffffff;
-  background: var(--step-done-bg-fallback);
-  background: var(--step-done-bg);
-  opacity: 0.82;
-  filter: brightness(1.06);
-}
-
-.stepButton.stepButtonDescribe.stepButtonActive:hover {
-  color: #ffffff;
-  background: var(--step-done-bg-fallback);
-  background: var(--step-done-bg);
-  filter: brightness(1.05);
-}
-
-/* Confirmed frame / clarify / spec: nền đỏ nâu (accent), chữ trắng — specificity + fallback so globals/active don’t win */
-.stepButton.stepButtonDone {
-  font-weight: 700;
-  color: #ffffff;
-  color: var(--step-done-fg);
-  background: var(--step-done-bg-fallback);
-  background: var(--step-done-bg);
-  border: 1px solid color-mix(in srgb, var(--step-done-bg-fallback) 50%, #000000);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 42%, #0c0604);
-}
-
-.stepButton.stepButtonDone::after {
-  display: none;
-}
-
-.stepButton.stepButtonDone:not(.stepButtonActive) {
-  opacity: 0.72;
-}
-
-.stepButton.stepButtonDone.stepButtonActive {
-  color: #ffffff;
-  color: var(--step-done-fg);
-  opacity: 1;
-  background: var(--step-done-bg-fallback);
-  background: var(--step-done-bg);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 38%, transparent);
-}
-
-.stepButton.stepButtonDone:hover:not(.stepButtonActive) {
-  color: #ffffff;
-  background: var(--step-done-bg-fallback);
-  background: var(--step-done-bg);
-  opacity: 0.82;
-  filter: brightness(1.06);
-}
-
-.stepButton.stepButtonDone.stepButtonActive:hover {
-  color: #ffffff;
-  background: var(--step-done-bg-fallback);
-  background: var(--step-done-bg);
-  filter: brightness(1.05);
-}
-
-.stepButton .stepDoneTick {
-  flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1;
-  color: rgba(255, 255, 255, 0.95);
-}
-
-.stepButtonLocked {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.stepButtonLocked:hover {
-  color: var(--color-text-tertiary);
-  background: transparent;
-}
-
-.stepButtonActive:not(.stepButtonDone):not(.stepButtonDescribe)::after {
-  background: var(--color-accent);
-}
-
-.stepArrow {
-  flex-shrink: 0;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-border);
-  line-height: 1;
-  pointer-events: none;
-  user-select: none;
-}
-
-/* Arrows from Describe up to (and including) the segment before the active tab */
-.stepArrowBold {
-  font-weight: 700;
   color: var(--color-text-tertiary);
 }
 
@@ -1162,6 +1003,102 @@
 .confirmButton:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.splitPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 2px 0 6px;
+}
+
+.splitPanelIntro {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.splitHintPanel {
+  padding: 12px 14px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-bg-hover) 72%, transparent);
+}
+
+.splitOptionsGroup {
+  display: grid;
+  gap: 10px;
+}
+
+.splitOptionCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-bg-panel) 96%, transparent);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    background 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.splitOptionCard:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg-panel));
+}
+
+.splitOptionCard:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.splitOptionCardSelected {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 16%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-panel));
+}
+
+.splitOptionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.splitOptionTitle {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+}
+
+.splitOptionBadge {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  color: var(--color-accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.splitOptionDescription {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.splitSelectionSummary {
+  display: flex;
+  align-items: center;
+  min-height: 22px;
 }
 
 .eyebrow,

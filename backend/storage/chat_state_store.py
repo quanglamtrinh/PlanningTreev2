@@ -168,7 +168,7 @@ class ChatStateStore:
         role = raw.get("role")
         if not isinstance(message_id, str) or not message_id.strip():
             return None
-        if role not in ("user", "assistant"):
+        if role not in ("user", "assistant", "system"):
             return None
 
         content = raw.get("content")

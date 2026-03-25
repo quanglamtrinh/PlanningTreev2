@@ -1,7 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Handle, Position, useStore, type NodeProps } from '@xyflow/react'
+import type { ExecutionStatus } from '../../api/types'
 import { NodeStatusBadge } from '../node/NodeStatusBadge'
+import { ExecutionStatusBadge } from '../node/ExecutionStatusBadge'
+import { AgentSpinner, SPINNER_WORDS_SPLITTING } from '../../components/AgentSpinner'
 import { useGraphNodeActions } from './graphNodeActionsContext'
 import { GRAPH_SPLIT_OPTIONS } from './splitModes'
 import styles from './GraphNode.module.css'
@@ -252,7 +255,10 @@ export type GraphNodeData = {
   canOpenBreadcrumb: boolean
   isSplitting: boolean
   isSplitDisabled: boolean
+  executionStatus: ExecutionStatus | null
   graphViewRootId: string | null
+  /** 1-based order among siblings on the same layer (not hierarchical). */
+  siblingLayerIndex: number
 }
 
 function childIdsEqual(a: string[], b: string[]): boolean {
@@ -278,6 +284,8 @@ function graphNodePropsAreEqual(prev: NodeProps, next: NodeProps): boolean {
     a.canOpenBreadcrumb === b.canOpenBreadcrumb &&
     a.isSplitting === b.isSplitting &&
     a.isSplitDisabled === b.isSplitDisabled &&
+    a.executionStatus === b.executionStatus &&
+    a.siblingLayerIndex === b.siblingLayerIndex &&
     a.node.node_id === b.node.node_id &&
     a.node.title === b.node.title &&
     a.node.description === b.node.description &&
@@ -292,9 +300,12 @@ function graphNodePropsAreEqual(prev: NodeProps, next: NodeProps): boolean {
 function GraphNodeComponent({ data }: NodeProps) {
   const actions = useGraphNodeActions()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [descriptionExpanded, setDescriptionExpanded] = useState(true)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const closeMenu = useCallback(() => setMenuOpen(false), [])
   const d = data as GraphNodeData
+  const descriptionText = d.node.description.trim()
+  const hasDescription = descriptionText.length > 0
 
   return (
     <div className={styles.wrapper}>
@@ -304,6 +315,15 @@ function GraphNodeComponent({ data }: NodeProps) {
         position={Position.Top}
         id="in"
         isConnectable={false}
+      />
+      {/* Outgoing to review overlay (child → review); top edge so the edge runs upward from the child head. */}
+      <Handle
+        className={styles.handle}
+        type="source"
+        position={Position.Top}
+        id="to-review"
+        isConnectable={false}
+        style={{ left: '50%' }}
       />
       <div
         role="button"
@@ -321,62 +341,104 @@ function GraphNodeComponent({ data }: NodeProps) {
           }
         }}
       >
-        <div className={styles.header}>
-          <div className={styles.titleWrap}>
-            <p className={styles.title}>
-              <span className={styles.number}>{d.node.hierarchical_number}</span>
-              <span className={styles.separator}>/</span>
-              <span>{d.node.title}</span>
-            </p>
-            <div className={styles.badgeRow}>
-              {d.node.status === 'locked' ? (
-                <span className={styles.lockIcon} title="Locked" aria-hidden="true">
-                  <svg viewBox="0 0 20 20" fill="currentColor">
-                    <path
-                      fillRule="evenodd"
-                      d="M5 9V7a5 5 0 0110 0v2h1a1 1 0 011 1v7a2 2 0 01-2 2H6a2 2 0 01-2-2v-7a1 1 0 011-1h1zm2-2a3 3 0 016 0v2H7V7z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </span>
-              ) : null}
-              <NodeStatusBadge status={d.node.status} />
-            </div>
-          </div>
-          <div className={styles.headerControls}>
-            {d.node.child_ids.length > 0 ? (
-              <button
-                type="button"
-                className={`${styles.collapseToggle} ${CONTROL_CLASS_NAME}`}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  actions.toggleCollapse(d.node.node_id)
-                }}
-                aria-label={d.isCollapsed ? 'Expand node' : 'Collapse node'}
-                title={d.isCollapsed ? 'Expand node' : 'Collapse node'}
-              >
-                {d.isCollapsed ? '+' : '-'}
-                {d.isCollapsed && d.directHiddenChildrenCount > 0 ? (
-                  <span className={styles.hiddenCount}>{d.directHiddenChildrenCount}</span>
-                ) : null}
-              </button>
-            ) : null}
+        <aside className={styles.nodeRail} aria-label="Node controls">
+          <span className={styles.railLayerIndex} aria-hidden="true">
+            {d.siblingLayerIndex}
+          </span>
+          <button
+            type="button"
+            className={`${styles.infoBtn} ${CONTROL_CLASS_NAME}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              actions.infoClick(d.node.node_id)
+            }}
+            aria-label="Node details"
+            title="View node details"
+          >
+            i
+          </button>
+          <div className={styles.railMidSpacer} aria-hidden="true" />
+          {hasDescription ? (
             <button
               type="button"
-              className={`${styles.infoBtn} ${CONTROL_CLASS_NAME}`}
+              className={`${styles.descToggle} ${CONTROL_CLASS_NAME}`}
               onClick={(event) => {
                 event.stopPropagation()
-                actions.infoClick(d.node.node_id)
+                setDescriptionExpanded((v) => !v)
               }}
-              aria-label="Node details"
-              title="View node details"
+              aria-expanded={descriptionExpanded}
+              aria-label={descriptionExpanded ? 'Collapse description' : 'Expand description'}
+              title={descriptionExpanded ? 'Collapse description' : 'Expand description'}
             >
-              i
+              <svg viewBox="0 0 20 20" className={styles.descToggleIcon} aria-hidden="true">
+                {descriptionExpanded ? (
+                  <path
+                    fill="currentColor"
+                    d="M5.23 12.77a.75.75 0 0 1 0-1.06L9.47 7.47a.75.75 0 0 1 1.06 0l4.24 4.24a.75.75 0 1 1-1.06 1.06L10 9.06l-3.71 3.71a.75.75 0 0 1-1.06 0Z"
+                  />
+                ) : (
+                  <path
+                    fill="currentColor"
+                    d="M5.23 7.23a.75.75 0 0 1 1.06 0L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.25a.75.75 0 0 1-1.06 0L5.23 8.29a.75.75 0 0 1 0-1.06Z"
+                  />
+                )}
+              </svg>
             </button>
+          ) : (
+            <div className={styles.descTogglePlaceholder} aria-hidden="true" />
+          )}
+        </aside>
+        <div className={styles.nodeMain}>
+          <div className={styles.header}>
+            <div className={styles.titleRow}>
+              <p className={styles.title}>{d.node.title}</p>
+              <div className={styles.titleRowActions}>
+                {d.node.child_ids.length > 0 ? (
+                  <button
+                    type="button"
+                    className={`${styles.collapseToggle} ${CONTROL_CLASS_NAME}`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      actions.toggleCollapse(d.node.node_id)
+                    }}
+                    aria-label={d.isCollapsed ? 'Expand node' : 'Collapse node'}
+                    title={d.isCollapsed ? 'Expand node' : 'Collapse node'}
+                  >
+                    {d.isCollapsed ? '+' : '-'}
+                    {d.isCollapsed && d.directHiddenChildrenCount > 0 ? (
+                      <span className={styles.hiddenCount}>{d.directHiddenChildrenCount}</span>
+                    ) : null}
+                  </button>
+                ) : null}
+                {d.node.status === 'locked' ? (
+                  <span className={styles.lockIcon} title="Locked" aria-hidden="true">
+                    <svg viewBox="0 0 20 20" fill="currentColor">
+                      <path
+                        fillRule="evenodd"
+                        d="M5 9V7a5 5 0 0110 0v2h1a1 1 0 011 1v7a2 2 0 01-2 2H6a2 2 0 01-2-2v-7a1 1 0 011-1h1zm2-2a3 3 0 016 0v2H7V7z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </span>
+                ) : null}
+                <NodeStatusBadge
+                  status={d.node.status}
+                  className={`${styles.graphStatusBadge} ${d.node.status === 'in_progress' ? styles.graphStatusInProgress : ''}`}
+                />
+                <ExecutionStatusBadge
+                  status={d.executionStatus === 'review_accepted' ? null : d.executionStatus}
+                  className={styles.graphExecutionBadge}
+                />
+              </div>
+            </div>
+            {hasDescription && descriptionExpanded ? (
+              <p className={styles.description}>{descriptionText}</p>
+            ) : null}
+            {d.isSplitting ? (
+              <AgentSpinner className={styles.activity} words={SPINNER_WORDS_SPLITTING} />
+            ) : null}
           </div>
         </div>
-
-        {d.isSplitting ? <p className={styles.activity}>AI split in progress...</p> : null}
       </div>
 
       <div className={`${styles.menuAnchor} ${CONTROL_CLASS_NAME}`} ref={menuRef}>

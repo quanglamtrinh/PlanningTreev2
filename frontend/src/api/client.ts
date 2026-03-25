@@ -1,4 +1,6 @@
 import type {
+  AcceptLocalReviewResponse,
+  AcceptRollupReviewResponse,
   BootstrapStatus,
   ChatSession,
   ClarifyGenAcceptedResponse,
@@ -11,6 +13,7 @@ import type {
   NodeDocument,
   NodeDocumentKind,
   ProjectSummary,
+  ReviewState,
   SendMessageResponse,
   Snapshot,
   SpecGenAcceptedResponse,
@@ -18,6 +21,7 @@ import type {
   SplitAcceptedResponse,
   SplitMode,
   SplitStatusResponse,
+  ThreadRole,
 } from './types'
 
 type JsonBody = Record<string, unknown> | undefined
@@ -28,6 +32,20 @@ interface ErrorPayload {
 }
 
 const DEFAULT_TIMEOUT_MS = 300_000
+
+function withThreadRole(path: string, threadRole?: ThreadRole): string {
+  if (!threadRole) return path
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}thread_role=${encodeURIComponent(threadRole)}`
+}
+
+export function buildChatEventsUrl(
+  projectId: string,
+  nodeId: string,
+  threadRole?: ThreadRole,
+): string {
+  return withThreadRole(`/v1/projects/${projectId}/nodes/${nodeId}/chat/events`, threadRole)
+}
 
 let _cachedAuthToken: string | null = null
 
@@ -197,6 +215,9 @@ export const api = {
   getDetailState(projectId: string, nodeId: string): Promise<DetailState> {
     return jsonFetch<DetailState>(`/v1/projects/${projectId}/nodes/${nodeId}/detail-state`)
   },
+  getReviewState(projectId: string, nodeId: string): Promise<ReviewState> {
+    return jsonFetch<ReviewState>(`/v1/projects/${projectId}/nodes/${nodeId}/review-state`)
+  },
   confirmFrame(projectId: string, nodeId: string): Promise<DetailState> {
     return jsonFetch<DetailState>(
       `/v1/projects/${projectId}/nodes/${nodeId}/confirm-frame`,
@@ -262,19 +283,51 @@ export const api = {
       `/v1/projects/${projectId}/nodes/${nodeId}/spec-generation-status`,
     )
   },
-  getChatSession(projectId: string, nodeId: string): Promise<ChatSession> {
-    return jsonFetch<ChatSession>(`/v1/projects/${projectId}/nodes/${nodeId}/chat/session`)
+  getChatSession(projectId: string, nodeId: string, threadRole?: ThreadRole): Promise<ChatSession> {
+    return jsonFetch<ChatSession>(
+      withThreadRole(`/v1/projects/${projectId}/nodes/${nodeId}/chat/session`, threadRole),
+    )
   },
-  sendChatMessage(projectId: string, nodeId: string, content: string): Promise<SendMessageResponse> {
+  sendChatMessage(
+    projectId: string,
+    nodeId: string,
+    content: string,
+    threadRole?: ThreadRole,
+  ): Promise<SendMessageResponse> {
     return jsonFetch<SendMessageResponse>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/chat/message`,
+      withThreadRole(`/v1/projects/${projectId}/nodes/${nodeId}/chat/message`, threadRole),
       { method: 'POST' },
       { content },
     )
   },
-  resetChatSession(projectId: string, nodeId: string): Promise<ChatSession> {
+  resetChatSession(projectId: string, nodeId: string, threadRole?: ThreadRole): Promise<ChatSession> {
     return jsonFetch<ChatSession>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/chat/reset`,
+      withThreadRole(`/v1/projects/${projectId}/nodes/${nodeId}/chat/reset`, threadRole),
+      { method: 'POST' },
+    )
+  },
+  finishTask(projectId: string, nodeId: string): Promise<DetailState> {
+    return jsonFetch<DetailState>(`/v1/projects/${projectId}/nodes/${nodeId}/finish-task`, {
+      method: 'POST',
+    })
+  },
+  acceptLocalReview(
+    projectId: string,
+    nodeId: string,
+    summary: string,
+  ): Promise<AcceptLocalReviewResponse> {
+    return jsonFetch<AcceptLocalReviewResponse>(
+      `/v1/projects/${projectId}/nodes/${nodeId}/accept-local-review`,
+      { method: 'POST' },
+      { summary },
+    )
+  },
+  acceptRollupReview(
+    projectId: string,
+    reviewNodeId: string,
+  ): Promise<AcceptRollupReviewResponse> {
+    return jsonFetch<AcceptRollupReviewResponse>(
+      `/v1/projects/${projectId}/nodes/${reviewNodeId}/accept-rollup-review`,
       { method: 'POST' },
     )
   },

@@ -65,6 +65,7 @@ function toErrorMessage(error: unknown): string {
 
 const pendingTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
 const pendingSaves = new Map<string, Promise<void>>()
+const loadRequestVersions = new Map<string, number>()
 
 function clearPendingTimer(key: string) {
   const timer = pendingTimers.get(key)
@@ -72,6 +73,16 @@ function clearPendingTimer(key: string) {
     globalThis.clearTimeout(timer)
     pendingTimers.delete(key)
   }
+}
+
+function nextLoadRequestVersion(key: string): number {
+  const version = (loadRequestVersions.get(key) ?? 0) + 1
+  loadRequestVersions.set(key, version)
+  return version
+}
+
+function invalidateLoadRequests(key: string) {
+  loadRequestVersions.set(key, (loadRequestVersions.get(key) ?? 0) + 1)
 }
 
 export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
@@ -200,6 +211,7 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
       const key = stateKey(projectId, nodeId)
       const existing = get().entries[key]
       if (existing?.hasLoaded || existing?.isLoading) return
+      const requestVersion = nextLoadRequestVersion(key)
       set((s) => ({
         entries: {
           ...s.entries,
@@ -212,6 +224,9 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
       }))
       try {
         const state = await api.getClarify(projectId, nodeId)
+        if (loadRequestVersions.get(key) !== requestVersion) {
+          return
+        }
         set((s) => ({
           entries: {
             ...s.entries,
@@ -226,6 +241,9 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
           },
         }))
       } catch (error) {
+        if (loadRequestVersions.get(key) !== requestVersion) {
+          return
+        }
         set((s) => ({
           entries: {
             ...s.entries,
@@ -339,6 +357,7 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
       const key = stateKey(projectId, nodeId)
       clearPendingTimer(key)
       pendingSaves.delete(key)
+      invalidateLoadRequests(key)
       set((s) => {
         const { [key]: _, ...rest } = s.entries
         return { entries: rest }
@@ -350,6 +369,7 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
         clearPendingTimer(key)
       }
       pendingSaves.clear()
+      loadRequestVersions.clear()
       set({ entries: {} })
     },
   }

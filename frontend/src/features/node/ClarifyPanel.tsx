@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GenJobStatus, NodeRecord } from '../../api/types'
+import { AgentSpinner, SPINNER_WORDS_APPLYING, SPINNER_WORDS_GENERATING } from '../../components/AgentSpinner'
 import { api, ApiError } from '../../api/client'
 import { useClarifyStore } from '../../stores/clarify-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
@@ -122,6 +123,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
   // ── Derived state ───────────────────────────────────────────
 
   const clarify = entry?.clarify
+  const hasLoaded = entry?.hasLoaded ?? false
   const isLoading = entry?.isLoading ?? false
   const loadError = entry?.loadError ?? ''
   const saveError = entry?.saveError ?? ''
@@ -137,9 +139,9 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
     [questions],
   )
 
-  const noQuestions = clarify !== undefined && questions.length === 0
+  const noQuestions = hasLoaded && questions.length === 0
 
-  const handleApplyToFrame = useCallback(async () => {
+  const handleConfirmClarify = useCallback(async () => {
     setIsConfirming(true)
     setConfirmError(null)
     try {
@@ -147,7 +149,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
       // Invalidate frame document cache so the editor reloads the patched frame.md
       invalidateFrameDoc(projectId, node.node_id, 'frame')
     } catch (error) {
-      setConfirmError(error instanceof Error ? error.message : 'Apply failed')
+      setConfirmError(error instanceof Error ? error.message : 'Confirm failed')
     } finally {
       setIsConfirming(false)
     }
@@ -171,7 +173,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
     return (
       <div className={detailStyles.documentPanel}>
         <p className={detailStyles.body} data-testid="clarify-generating">
-          Generating clarify questions...
+          <AgentSpinner words={SPINNER_WORDS_GENERATING} />
         </p>
       </div>
     )
@@ -179,7 +181,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
 
   // ── Loading state ───────────────────────────────────────────
 
-  if (isLoading && !clarify) {
+  if (isLoading && !hasLoaded) {
     return (
       <div className={detailStyles.documentPanel}>
         <p className={detailStyles.body}>Loading clarify questions...</p>
@@ -221,21 +223,12 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
           <div className={detailStyles.tabConfirmRow}>
             <button
               type="button"
-              className={detailStyles.generateButton}
-              data-testid="generate-clarify-button"
-              disabled={isConfirming}
-              onClick={handleGenerate}
-            >
-              Generate Questions
-            </button>
-            <button
-              type="button"
               className={detailStyles.confirmButton}
               data-testid="confirm-clarify"
-              onClick={handleApplyToFrame}
+              onClick={handleConfirmClarify}
               disabled={isConfirming}
             >
-              {isConfirming ? 'Applying...' : 'Apply to Frame'}
+              {isConfirming ? <AgentSpinner words={SPINNER_WORDS_APPLYING} /> : 'Confirm'}
             </button>
           </div>
         ) : null}
@@ -358,9 +351,9 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
               className={detailStyles.confirmButton}
               data-testid="confirm-clarify"
               disabled={!canConfirm}
-              onClick={handleApplyToFrame}
+              onClick={handleConfirmClarify}
             >
-              {isConfirming ? 'Applying...' : 'Apply to Frame'}
+              {isConfirming ? <AgentSpinner words={SPINNER_WORDS_APPLYING} /> : 'Confirm'}
             </button>
           </>
         )}

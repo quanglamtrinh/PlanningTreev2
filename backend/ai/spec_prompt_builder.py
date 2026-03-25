@@ -32,6 +32,8 @@ Rules:
 5. Use markdown formatting with headers for each section.
 6. Call emit_spec_content exactly once with the full spec as a markdown string.
 7. After the tool call, write a brief summary (do not repeat the spec).
+8. You already have the required context in this prompt. Do not inspect the workspace,
+   run commands, or call any tools other than emit_spec_content.
 """
 
 _FRAME_CHAR_LIMIT = 6000

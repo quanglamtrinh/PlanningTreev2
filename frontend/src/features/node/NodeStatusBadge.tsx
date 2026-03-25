@@ -11,9 +11,11 @@ const LABELS: Record<NodeStatus, string> = {
 
 type Props = {
   status: NodeStatus
+  /** Merged after base badge styles (e.g. graph card density). */
+  className?: string
 }
 
-export function NodeStatusBadge({ status }: Props) {
-  const className = `${styles.badge} ${styles[status]}`
+export function NodeStatusBadge({ status, className: extraClassName }: Props) {
+  const className = [styles.badge, styles[status], extraClassName].filter(Boolean).join(' ')
   return <span className={className}>{LABELS[status]}</span>
 }

@@ -44,6 +44,11 @@ def test_write_and_read_round_trip(review_store, project_id):
     assert len(loaded["checkpoints"]) == 1
     assert loaded["checkpoints"][0]["label"] == "K0"
     assert loaded["rollup"]["status"] == "pending"
+    assert loaded["rollup"]["draft"] == {
+        "summary": None,
+        "sha": None,
+        "generated_at": None,
+    }
     assert len(loaded["pending_siblings"]) == 1
     assert loaded["pending_siblings"][0]["title"] == "Sibling B"
 
@@ -113,7 +118,17 @@ def test_set_rollup_to_ready(review_store, project_id):
 def test_set_rollup_to_accepted(review_store, project_id):
     state = {
         "checkpoints": [],
-        "rollup": {"status": "ready", "summary": None, "sha": None, "accepted_at": None},
+        "rollup": {
+            "status": "ready",
+            "summary": None,
+            "sha": None,
+            "accepted_at": None,
+            "draft": {
+                "summary": "Draft summary",
+                "sha": "sha256:draft",
+                "generated_at": "2026-03-24T12:00:00Z",
+            },
+        },
         "pending_siblings": [],
     }
     review_store.write_state(project_id, "review1", state)
@@ -128,6 +143,34 @@ def test_set_rollup_to_accepted(review_store, project_id):
     assert updated["rollup"]["summary"] == "All good"
     assert updated["rollup"]["sha"] == "sha256:final"
     assert isinstance(updated["rollup"]["accepted_at"], str)
+    assert updated["rollup"]["draft"] == {
+        "summary": None,
+        "sha": None,
+        "generated_at": None,
+    }
+
+
+def test_set_rollup_draft(review_store, project_id):
+    state = {
+        "checkpoints": [],
+        "rollup": {"status": "ready", "summary": None, "sha": None, "accepted_at": None},
+        "pending_siblings": [],
+    }
+    review_store.write_state(project_id, "review1", state)
+
+    updated = review_store.set_rollup_draft(
+        project_id,
+        "review1",
+        summary="Integration draft",
+        sha="sha256:draft",
+        generated_at="2026-03-24T12:00:00Z",
+    )
+
+    assert updated["rollup"]["draft"] == {
+        "summary": "Integration draft",
+        "sha": "sha256:draft",
+        "generated_at": "2026-03-24T12:00:00Z",
+    }
 
 
 # ── Sibling operations ───────────────────────────────────────────
@@ -207,6 +250,22 @@ def test_normalize_non_dict_returns_default(review_store):
 def test_normalize_invalid_rollup_status(review_store):
     result = review_store._normalize_rollup({"status": "bogus"})
     assert result["status"] == "pending"
+    assert result["draft"] == {"summary": None, "sha": None, "generated_at": None}
+
+
+def test_normalize_review_state_without_draft_backfills_default(review_store):
+    result = review_store._normalize_state(
+        {
+            "checkpoints": [],
+            "rollup": {"status": "ready", "summary": None, "sha": None, "accepted_at": None},
+            "pending_siblings": [],
+        }
+    )
+    assert result["rollup"]["draft"] == {
+        "summary": None,
+        "sha": None,
+        "generated_at": None,
+    }
 
 
 def test_normalize_drops_invalid_checkpoints(review_store):

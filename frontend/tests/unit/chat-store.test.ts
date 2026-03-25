@@ -35,6 +35,8 @@ vi.mock('../../src/api/client', () => ({
       this.code = payload?.code ?? null
     }
   },
+  buildChatEventsUrl: (projectId: string, nodeId: string, threadRole = 'ask_planning') =>
+    `/v1/projects/${projectId}/nodes/${nodeId}/chat/events?thread_role=${threadRole}`,
   appendAuthToken: (url: string) => url,
 }))
 
@@ -76,6 +78,7 @@ vi.stubGlobal('EventSource', MockEventSource)
 
 import { useChatStore, applyChatEvent } from '../../src/stores/chat-store'
 import type { ChatSession } from '../../src/api/types'
+import { useDetailStateStore } from '../../src/stores/detail-state-store'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -90,6 +93,7 @@ function deferred<T>() {
 function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
   return {
     thread_id: null,
+    thread_role: 'ask_planning',
     active_turn_id: null,
     messages: [],
     created_at: '2026-01-01T00:00:00Z',
@@ -103,6 +107,7 @@ describe('chat-store', () => {
     vi.useRealTimers()
     MockEventSource.reset()
     useChatStore.getState().disconnect()
+    useDetailStateStore.getState().reset()
     vi.clearAllMocks()
   })
 
@@ -118,7 +123,23 @@ describe('chat-store', () => {
     expect(state.session).toEqual(session)
     expect(state.activeProjectId).toBe('p1')
     expect(state.activeNodeId).toBe('n1')
+    expect(state.activeThreadRole).toBe('ask_planning')
     expect(state.isLoading).toBe(false)
+    expect(apiMock.getChatSession).toHaveBeenCalledWith('p1', 'n1', 'ask_planning')
+  })
+
+  it('loads role-specific sessions and opens a role-scoped event stream', async () => {
+    apiMock.getChatSession.mockResolvedValue(
+      makeSession({ thread_role: 'audit' }),
+    )
+
+    await act(async () => {
+      await useChatStore.getState().loadSession('p1', 'n1', 'audit')
+    })
+
+    expect(useChatStore.getState().activeThreadRole).toBe('audit')
+    expect(apiMock.getChatSession).toHaveBeenCalledWith('p1', 'n1', 'audit')
+    expect(MockEventSource.instances[0]?.url).toContain('thread_role=audit')
   })
 
   it('sendMessage uses server-returned canonical messages', async () => {
@@ -166,6 +187,48 @@ describe('chat-store', () => {
     expect(state.session?.active_turn_id).toBe('turn-1')
   })
 
+  it('refreshes detail-state after a successful audit send', async () => {
+    const refreshSpy = vi.spyOn(
+      useDetailStateStore.getState(),
+      'refreshExecutionState',
+    ).mockResolvedValue(undefined)
+
+    apiMock.getChatSession.mockResolvedValue(
+      makeSession({ thread_role: 'audit' }),
+    )
+    apiMock.sendChatMessage.mockResolvedValue({
+      user_message: {
+        message_id: 'msg-1',
+        role: 'user',
+        content: 'Review this change',
+        status: 'completed',
+        error: null,
+        turn_id: 'turn-1',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+      assistant_message: {
+        message_id: 'msg-2',
+        role: 'assistant',
+        content: '',
+        status: 'pending',
+        error: null,
+        turn_id: 'turn-1',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+      active_turn_id: 'turn-1',
+    })
+
+    await act(async () => {
+      await useChatStore.getState().loadSession('p1', 'n1', 'audit')
+      await useChatStore.getState().sendMessage('Review this change')
+    })
+
+    expect(refreshSpy).toHaveBeenCalledWith('p1', 'n1')
+    refreshSpy.mockRestore()
+  })
+
   it('disconnect closes EventSource', async () => {
     apiMock.getChatSession.mockResolvedValue(makeSession())
 
@@ -208,7 +271,7 @@ describe('chat-store', () => {
     expect(state.activeNodeId).toBe('n2')
     expect(state.session?.created_at).toBe('session-2')
     expect(MockEventSource.instances).toHaveLength(1)
-    expect(MockEventSource.instances[0]?.url).toContain('/nodes/n2/chat/events')
+    expect(MockEventSource.instances[0]?.url).toContain('/nodes/n2/chat/events?thread_role=ask_planning')
   })
 
   it('ignores stale sendMessage results after navigating to another node', async () => {
@@ -559,6 +622,97 @@ describe('applyChatEvent', () => {
     })
   })
 
+  it('assistant_tool_result updates matching tool call with output', () => {
+    const session = makeSession({
+      active_turn_id: 'turn-1',
+      messages: [
+        {
+          message_id: 'msg-2',
+          role: 'assistant',
+          content: '',
+          parts: [
+            {
+              type: 'tool_call' as const,
+              tool_name: 'shell_command',
+              arguments: { command: 'dir' },
+              call_id: 'call-1',
+              status: 'running' as const,
+              output: null,
+              exit_code: null,
+            },
+          ],
+          status: 'streaming',
+          error: null,
+          turn_id: 'turn-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    })
+
+    const result = applyChatEvent(session, {
+      type: 'assistant_tool_result',
+      message_id: 'msg-2',
+      call_id: 'call-1',
+      status: 'completed',
+      output: 'file-a\\nfile-b',
+      exit_code: 0,
+    })
+
+    expect(result.messages[0].parts![0]).toMatchObject({
+      type: 'tool_call',
+      status: 'completed',
+      output: 'file-a\\nfile-b',
+      exit_code: 0,
+    })
+  })
+
+  it('assistant_plan_delta creates and extends plan items', () => {
+    const session = makeSession({
+      active_turn_id: 'turn-1',
+      thread_role: 'execution',
+      messages: [
+        {
+          message_id: 'msg-2',
+          role: 'assistant',
+          content: '',
+          status: 'pending',
+          error: null,
+          turn_id: 'turn-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    })
+
+    const after1 = applyChatEvent(session, {
+      type: 'assistant_plan_delta',
+      message_id: 'msg-2',
+      item_id: 'plan-1',
+      delta: 'Inspect ',
+    })
+    expect(after1.messages[0].parts).toHaveLength(1)
+    expect(after1.messages[0].parts![0]).toMatchObject({
+      type: 'plan_item',
+      item_id: 'plan-1',
+      content: 'Inspect ',
+      is_streaming: true,
+    })
+
+    const after2 = applyChatEvent(after1, {
+      type: 'assistant_plan_delta',
+      message_id: 'msg-2',
+      item_id: 'plan-1',
+      delta: 'workspace',
+    })
+    expect(after2.messages[0].parts).toHaveLength(1)
+    expect(after2.messages[0].parts![0]).toMatchObject({
+      type: 'plan_item',
+      content: 'Inspect workspace',
+      is_streaming: true,
+    })
+  })
+
   it('assistant_status adds or updates status pill', () => {
     const session = makeSession({
       active_turn_id: 'turn-1',
@@ -640,6 +794,46 @@ describe('applyChatEvent', () => {
     expect(result.messages[0].parts![1]).toMatchObject({
       type: 'tool_call',
       status: 'completed',
+    })
+  })
+
+  it('assistant_completed keeps execution status history and closes plan items', () => {
+    const session = makeSession({
+      thread_role: 'execution',
+      active_turn_id: 'turn-1',
+      messages: [
+        {
+          message_id: 'msg-2',
+          role: 'assistant',
+          content: '',
+          parts: [
+            { type: 'plan_item' as const, item_id: 'plan-1', content: 'Inspect workspace', is_streaming: true, timestamp: '2026-01-01T00:00:00Z' },
+            { type: 'status_block' as const, status_type: 'running', label: 'Working...', timestamp: '2026-01-01T00:00:00Z' },
+          ],
+          status: 'streaming',
+          error: null,
+          turn_id: 'turn-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    })
+
+    const result = applyChatEvent(session, {
+      type: 'assistant_completed',
+      message_id: 'msg-2',
+      content: 'Implemented the task.',
+      thread_id: 'thread-1',
+    })
+
+    expect(result.messages[0].parts).toHaveLength(2)
+    expect(result.messages[0].parts![0]).toMatchObject({
+      type: 'plan_item',
+      is_streaming: false,
+    })
+    expect(result.messages[0].parts![1]).toMatchObject({
+      type: 'status_block',
+      label: 'Working...',
     })
   })
 })
