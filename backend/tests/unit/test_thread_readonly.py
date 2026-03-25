@@ -7,7 +7,28 @@ from backend.errors.app_errors import InvalidRequest, ThreadReadOnly
 from backend.services.chat_service import ChatService
 from backend.services.execution_gating import AUDIT_ROLLUP_PACKAGE_MESSAGE_ID
 from backend.services.project_service import ProjectService
+from backend.services.thread_lineage_service import ThreadLineageService
+from backend.services.tree_service import TreeService
 from backend.streaming.sse_broker import ChatEventBroker
+
+
+class FakeReadonlyCodexClient:
+    def __init__(self) -> None:
+        self.started_threads: list[str] = []
+        self.forked_threads: list[str] = []
+
+    def start_thread(self, **_: object) -> dict[str, str]:
+        thread_id = f"audit-thread-{len(self.started_threads) + 1}"
+        self.started_threads.append(thread_id)
+        return {"thread_id": thread_id}
+
+    def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"ask-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
+        return {"thread_id": thread_id}
 
 
 @pytest.fixture
@@ -46,10 +67,12 @@ def review_node_id(storage, project_id, root_node_id):
 
 @pytest.fixture
 def chat_service(storage, tree_service):
+    codex_client = FakeReadonlyCodexClient()
     return ChatService(
         storage=storage,
         tree_service=tree_service,
-        codex_client=None,
+        codex_client=codex_client,
+        thread_lineage_service=ThreadLineageService(storage, codex_client, TreeService()),
         chat_event_broker=ChatEventBroker(),
         chat_timeout=30,
     )
@@ -78,7 +101,7 @@ def test_review_node_rejects_task_thread_roles(chat_service, project_id, review_
 
 def test_review_node_allows_integration_session(chat_service, project_id, review_node_id):
     session = chat_service.get_session(project_id, review_node_id, thread_role="integration")
-    assert session["thread_role"] == "integration"
+    assert session["thread_role"] == "audit"
 
 
 def test_unknown_thread_role_is_rejected(chat_service, project_id, root_node_id):

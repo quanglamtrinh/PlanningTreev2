@@ -123,7 +123,13 @@ def test_put_spec_document_blocked_when_frozen(storage, project_id, root_node_id
 
 def test_generate_frame_blocked_when_frozen(storage, tree_service, project_id, root_node_id):
     _freeze_node(storage, project_id, root_node_id)
-    service = FrameGenerationService(storage, tree_service, MagicMock(), frame_gen_timeout=5)
+    service = FrameGenerationService(
+        storage,
+        tree_service,
+        MagicMock(),
+        thread_lineage_service=MagicMock(),
+        frame_gen_timeout=5,
+    )
 
     with pytest.raises(ShapingFrozen, match="generate frame"):
         service.generate_frame(project_id, root_node_id)
@@ -131,7 +137,13 @@ def test_generate_frame_blocked_when_frozen(storage, tree_service, project_id, r
 
 def test_generate_clarify_blocked_when_frozen(storage, tree_service, project_id, root_node_id):
     _freeze_node(storage, project_id, root_node_id)
-    service = ClarifyGenerationService(storage, tree_service, MagicMock(), clarify_gen_timeout=5)
+    service = ClarifyGenerationService(
+        storage,
+        tree_service,
+        MagicMock(),
+        thread_lineage_service=MagicMock(),
+        clarify_gen_timeout=5,
+    )
 
     with pytest.raises(ShapingFrozen, match="generate clarify"):
         service.generate_clarify(project_id, root_node_id)
@@ -139,7 +151,13 @@ def test_generate_clarify_blocked_when_frozen(storage, tree_service, project_id,
 
 def test_generate_spec_blocked_when_frozen(storage, tree_service, project_id, root_node_id):
     _freeze_node(storage, project_id, root_node_id)
-    service = SpecGenerationService(storage, tree_service, MagicMock(), spec_gen_timeout=5)
+    service = SpecGenerationService(
+        storage,
+        tree_service,
+        MagicMock(),
+        thread_lineage_service=MagicMock(),
+        spec_gen_timeout=5,
+    )
 
     with pytest.raises(ShapingFrozen, match="generate spec"):
         service.generate_spec(project_id, root_node_id)

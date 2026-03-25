@@ -17,6 +17,7 @@ from backend.services import chat_service as chat_service_module
 from backend.services.chat_service import ChatService
 from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now
 from backend.streaming.sse_broker import ChatEventBroker
@@ -28,6 +29,7 @@ class FakeChatCodexClient:
         self.fail = fail
         self.started_threads: list[str] = []
         self.resumed_threads: list[str] = []
+        self.forked_threads: list[dict[str, object]] = []
         self.fail_resume = False
         self.turns_run: list[str] = []
 
@@ -40,6 +42,17 @@ class FakeChatCodexClient:
         self.resumed_threads.append(thread_id)
         if self.fail_resume:
             raise CodexTransportError("thread not found", "not_found")
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **kwargs: object) -> dict[str, str]:
+        thread_id = f"chat-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(
+            {
+                "thread_id": thread_id,
+                "source_thread_id": source_thread_id,
+                **kwargs,
+            }
+        )
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict:
@@ -93,10 +106,14 @@ def _create_project(storage, workspace_root):
 
 
 def _make_service(storage, codex_client=None):
+    codex = codex_client or FakeChatCodexClient()
+    tree_service = TreeService()
+    thread_lineage_service = ThreadLineageService(storage, codex, tree_service)
     return ChatService(
         storage=storage,
-        tree_service=TreeService(),
-        codex_client=codex_client or FakeChatCodexClient(),
+        tree_service=tree_service,
+        codex_client=codex,
+        thread_lineage_service=thread_lineage_service,
         chat_event_broker=ChatEventBroker(),
         chat_timeout=5,
         max_message_chars=10000,
@@ -127,7 +144,9 @@ def test_get_session_returns_empty_for_new_node(storage, workspace_root):
     project_id, root_id = _create_project(storage, workspace_root)
     service = _make_service(storage)
     session = service.get_session(project_id, root_id)
-    assert session["thread_id"] is None
+    assert session["thread_id"] is not None
+    assert session["fork_reason"] == "ask_bootstrap"
+    assert session["forked_from_role"] == "audit"
     assert session["active_turn_id"] is None
     assert session["messages"] == []
 
@@ -160,10 +179,13 @@ def test_create_message_rejects_empty_content(storage, workspace_root):
 
 def test_create_message_rejects_over_limit_content(storage, workspace_root):
     project_id, root_id = _create_project(storage, workspace_root)
+    codex_client = FakeChatCodexClient()
+    tree_service = TreeService()
     service = ChatService(
         storage=storage,
-        tree_service=TreeService(),
-        codex_client=FakeChatCodexClient(),
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=ThreadLineageService(storage, codex_client, tree_service),
         chat_event_broker=ChatEventBroker(),
         chat_timeout=5,
         max_message_chars=10,
@@ -463,9 +485,10 @@ def test_thread_recreated_when_resume_fails(storage, workspace_root):
     service.create_message(project_id, root_id, "Second")
     session = _wait_for_turn(service, project_id, root_id)
     second_thread = session["thread_id"]
-    # Should have started a new thread
+    # Missing-thread recovery reboots root audit and then re-forks ask.
     assert second_thread != first_thread
-    assert len(client.started_threads) == 2
+    assert len(client.started_threads) >= 2
+    assert len(client.forked_threads) >= 2
 
 
 def test_project_reset_rejected_when_live_turn(storage, workspace_root):
@@ -477,10 +500,13 @@ def test_project_reset_rejected_when_live_turn(storage, workspace_root):
             time.sleep(1)
             return super().run_turn_streaming(prompt, **kwargs)
 
+    codex_client = SlowCodexClient()
+    tree_service = TreeService()
     chat_service = ChatService(
         storage=storage,
-        tree_service=TreeService(),
-        codex_client=SlowCodexClient(),
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=ThreadLineageService(storage, codex_client, tree_service),
         chat_event_broker=ChatEventBroker(),
         chat_timeout=5,
     )
@@ -501,10 +527,13 @@ def test_project_delete_rejected_when_live_turn(storage, workspace_root):
             time.sleep(1)
             return super().run_turn_streaming(prompt, **kwargs)
 
+    codex_client = SlowCodexClient()
+    tree_service = TreeService()
     chat_service = ChatService(
         storage=storage,
-        tree_service=TreeService(),
-        codex_client=SlowCodexClient(),
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=ThreadLineageService(storage, codex_client, tree_service),
         chat_event_broker=ChatEventBroker(),
         chat_timeout=5,
     )

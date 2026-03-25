@@ -5,6 +5,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from backend.ai.ask_thread_config import build_ask_planning_thread_config
 from backend.ai.chat_prompt_builder import build_chat_prompt
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.ai.part_accumulator import PartAccumulator
@@ -17,6 +18,7 @@ from backend.errors.app_errors import (
 )
 from backend.services.execution_gating import audit_writable
 from backend.services.thread_seed_service import ensure_thread_seeded_session
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now, new_id
 from backend.storage.storage import Storage
@@ -40,6 +42,7 @@ class ChatService:
         storage: Storage,
         tree_service: TreeService,
         codex_client: CodexAppClient,
+        thread_lineage_service: ThreadLineageService,
         chat_event_broker: ChatEventBroker,
         chat_timeout: int,
         max_message_chars: int = 10000,
@@ -47,6 +50,7 @@ class ChatService:
         self._storage = storage
         self._tree_service = tree_service
         self._codex_client = codex_client
+        self._thread_lineage_service = thread_lineage_service
         self._chat_event_broker = chat_event_broker
         self._chat_timeout = int(chat_timeout)
         self._max_message_chars = max_message_chars
@@ -58,7 +62,8 @@ class ChatService:
         self, project_id: str, node_id: str, thread_role: str = "ask_planning"
     ) -> dict[str, Any]:
         thread_role = str(thread_role or "").strip()
-        self._validate_thread_access(project_id, node_id, thread_role)
+        node = self._validate_thread_access(project_id, node_id, thread_role)
+        self._bootstrap_task_session_on_read(project_id, node_id, node, thread_role)
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node = self._require_node_from_snapshot(snapshot, node_id)
@@ -318,7 +323,13 @@ class ChatService:
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             existing_thread_id = session.get("thread_id")
 
-            thread_id = self._ensure_chat_thread(existing_thread_id, workspace_root)
+            thread_id = self._ensure_chat_thread(
+                project_id,
+                node_id,
+                thread_role,
+                existing_thread_id,
+                workspace_root,
+            )
             self._persist_thread_id(
                 project_id=project_id,
                 node_id=node_id,
@@ -444,7 +455,19 @@ class ChatService:
             thread_role=thread_role,
         )
 
-    def _ensure_chat_thread(self, existing_thread_id: Any, workspace_root: str | None) -> str:
+    def _ensure_chat_thread(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        existing_thread_id: Any,
+        workspace_root: str | None,
+    ) -> str:
+        if thread_role == "ask_planning":
+            return self._ensure_ask_planning_thread(project_id, node_id, workspace_root)
+        if thread_role == "audit":
+            return self._ensure_audit_thread(project_id, node_id, workspace_root)
+
         if isinstance(existing_thread_id, str) and existing_thread_id.strip():
             try:
                 self._codex_client.resume_thread(
@@ -474,6 +497,74 @@ class ChatService:
         if not thread_id:
             raise ChatBackendUnavailable("Chat thread start did not return a thread id.")
         return thread_id
+
+    def _bootstrap_task_session_on_read(
+        self,
+        project_id: str,
+        node_id: str,
+        node: dict[str, Any],
+        thread_role: str,
+    ) -> None:
+        if str(node.get("node_kind") or "").strip() == "review":
+            return
+        if thread_role not in {"ask_planning", "audit"}:
+            return
+
+        workspace_root = self._workspace_root_for_project(project_id)
+        if thread_role == "ask_planning":
+            self._ensure_ask_planning_thread(project_id, node_id, workspace_root)
+            return
+        self._ensure_audit_thread(project_id, node_id, workspace_root)
+
+    def _ensure_ask_planning_thread(
+        self,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+    ) -> str:
+        base_instructions, dynamic_tools = build_ask_planning_thread_config()
+        try:
+            session = self._thread_lineage_service.ensure_forked_thread(
+                project_id,
+                node_id,
+                "ask_planning",
+                source_node_id=node_id,
+                source_role="audit",
+                fork_reason="ask_bootstrap",
+                workspace_root=workspace_root,
+                base_instructions=base_instructions,
+                dynamic_tools=dynamic_tools,
+            )
+        except CodexTransportError as exc:
+            raise ChatBackendUnavailable(str(exc)) from exc
+        thread_id = str(session.get("thread_id") or "").strip()
+        if not thread_id:
+            raise ChatBackendUnavailable("Ask thread bootstrap did not return a thread id.")
+        return thread_id
+
+    def _ensure_audit_thread(
+        self,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+    ) -> str:
+        try:
+            session = self._thread_lineage_service.resume_or_rebuild_session(
+                project_id,
+                node_id,
+                "audit",
+                workspace_root,
+            )
+        except CodexTransportError as exc:
+            raise ChatBackendUnavailable(str(exc)) from exc
+        thread_id = str(session.get("thread_id") or "").strip()
+        if not thread_id:
+            raise ChatBackendUnavailable("Audit thread bootstrap did not return a thread id.")
+        return thread_id
+
+    def _workspace_root_for_project(self, project_id: str) -> str | None:
+        snapshot = self._storage.project_store.load_snapshot(project_id)
+        return self._workspace_root_from_snapshot(snapshot)
 
     def _check_thread_writable(self, project_id: str, node_id: str, thread_role: str) -> None:
         """Enforce read-only rules per thread-state-model.md."""

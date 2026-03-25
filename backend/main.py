@@ -63,18 +63,21 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         frame_gen_timeout=get_frame_gen_timeout(),
     )
     clarify_generation_service = ClarifyGenerationService(
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         clarify_gen_timeout=get_clarify_gen_timeout(),
     )
     spec_generation_service = SpecGenerationService(
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         spec_gen_timeout=get_spec_gen_timeout(),
     )
     chat_event_broker = ChatEventBroker()
@@ -82,6 +85,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         chat_event_broker=chat_event_broker,
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),

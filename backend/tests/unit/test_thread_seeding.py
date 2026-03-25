@@ -9,6 +9,7 @@ from backend.services import planningtree_workspace
 from backend.services.chat_service import ChatService
 from backend.services.execution_gating import AUDIT_FRAME_RECORD_MESSAGE_ID
 from backend.services.project_service import ProjectService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.thread_seed_service import (
     ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
     ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
@@ -25,6 +26,25 @@ from backend.services.tree_service import TreeService
 from backend.streaming.sse_broker import ChatEventBroker
 
 
+class FakeSeedCodexClient:
+    def __init__(self) -> None:
+        self.started_threads: list[str] = []
+        self.forked_threads: list[str] = []
+
+    def start_thread(self, **_: object) -> dict[str, str]:
+        thread_id = f"seed-audit-thread-{len(self.started_threads) + 1}"
+        self.started_threads.append(thread_id)
+        return {"thread_id": thread_id}
+
+    def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"seed-ask-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
+        return {"thread_id": thread_id}
+
+
 @pytest.fixture
 def project_id(storage, workspace_root):
     snap = ProjectService(storage).attach_project_folder(str(workspace_root))
@@ -39,10 +59,12 @@ def root_node_id(storage, project_id):
 
 @pytest.fixture
 def chat_service(storage, tree_service):
+    codex_client = FakeSeedCodexClient()
     return ChatService(
         storage=storage,
         tree_service=tree_service,
-        codex_client=None,
+        codex_client=codex_client,
+        thread_lineage_service=ThreadLineageService(storage, codex_client, tree_service),
         chat_event_broker=ChatEventBroker(),
         chat_timeout=30,
     )

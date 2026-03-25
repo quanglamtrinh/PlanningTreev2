@@ -15,6 +15,7 @@ class SlowCheckpointCodexClient:
     def __init__(self, *, response_text: str = "Hello from AI") -> None:
         self.response_text = response_text
         self.started_threads: list[str] = []
+        self.forked_threads: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"chat-thread-{len(self.started_threads) + 1}"
@@ -22,7 +23,12 @@ class SlowCheckpointCodexClient:
         return {"thread_id": thread_id}
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
-        raise CodexTransportError("thread not found", "not_found")
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"chat-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
+        return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
         del prompt
@@ -40,6 +46,7 @@ class ExecutionCodexClient:
     def __init__(self, *, response_text: str = "Execution complete") -> None:
         self.response_text = response_text
         self.started_threads: list[str] = []
+        self.forked_threads: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"exec-thread-{len(self.started_threads) + 1}"
@@ -62,6 +69,7 @@ class IntegrationRollupCodexClient:
     def __init__(self, *, summary: str = "Integration complete") -> None:
         self.summary = summary
         self.started_threads: list[str] = []
+        self.forked_threads: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"integration-thread-{len(self.started_threads) + 1}"
@@ -69,6 +77,11 @@ class IntegrationRollupCodexClient:
         return {"thread_id": thread_id}
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"integration-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
@@ -87,6 +100,11 @@ def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
     project_id = snap["project"]["id"]
     root_id = snap["tree_state"]["root_node_id"]
     return project_id, root_id
+
+
+def _set_chat_codex_client(client: TestClient, codex_client: object) -> None:
+    client.app.state.chat_service._codex_client = codex_client
+    client.app.state.thread_lineage_service._codex_client = codex_client
 
 
 def _add_review_node(client: TestClient, project_id: str, parent_id: str) -> str:
@@ -185,11 +203,14 @@ def _wait_for_integration_completion(
 
 
 def test_get_session_empty(client: TestClient, workspace_root):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     resp = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/chat/session")
     assert resp.status_code == 200
     session = resp.json()
-    assert session["thread_id"] is None
+    assert session["thread_id"] is not None
+    assert session["fork_reason"] == "ask_bootstrap"
+    assert session["forked_from_role"] == "audit"
     assert session["messages"] == []
 
 
@@ -462,6 +483,7 @@ def test_ask_planning_session_returns_checkpoint_handoff_for_child_node(
     client: TestClient,
     workspace_root,
 ):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][root_id]["title"] = "Build auth package"
@@ -569,7 +591,7 @@ def test_chat_events_nonexistent_node_returns_404(client: TestClient, workspace_
 
 def test_get_session_returns_partial_content_mid_stream(client: TestClient, workspace_root, monkeypatch):
     monkeypatch.setattr(chat_service_module, "_DRAFT_FLUSH_INTERVAL_SEC", 0.01)
-    client.app.state.chat_service._codex_client = SlowCheckpointCodexClient()
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
 
     project_id, root_id = _setup_project(client, workspace_root)
     response = client.post(

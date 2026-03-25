@@ -12,7 +12,8 @@ from backend.errors.app_errors import NodeNotFound, SpecGenerationNotAllowed
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
-from backend.services.spec_generation_service import SpecGenerationService
+from backend.services.spec_generation_service import SPEC_GEN_STATE_FILE, SpecGenerationService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import atomic_write_json, load_json
 from backend.storage.storage import Storage
@@ -25,8 +26,9 @@ def _create_project(storage: Storage, workspace_root: str) -> dict:
 
 def _make_codex_mock(spec_content: str = "# Overview\nGenerated spec") -> MagicMock:
     mock = MagicMock()
-    mock.start_thread.return_value = {"thread_id": "test-thread-spec-123"}
-    mock.resume_thread.return_value = {"thread_id": "test-thread-spec-123"}
+    mock.start_thread.return_value = {"thread_id": "audit-thread-spec-123"}
+    mock.resume_thread.return_value = {"thread_id": "audit-thread-spec-123"}
+    mock.fork_thread.return_value = {"thread_id": "ask-thread-spec-123"}
     mock.run_turn_streaming.return_value = {
         "tool_calls": [
             {
@@ -37,6 +39,16 @@ def _make_codex_mock(spec_content: str = "# Overview\nGenerated spec") -> MagicM
         "stdout": "",
     }
     return mock
+
+
+def _make_service(storage: Storage, tree_service: TreeService, codex_mock: MagicMock) -> SpecGenerationService:
+    return SpecGenerationService(
+        storage,
+        tree_service,
+        codex_mock,
+        thread_lineage_service=ThreadLineageService(storage, codex_mock, tree_service),
+        spec_gen_timeout=30,
+    )
 
 
 def _setup_confirmed_frame(
@@ -68,12 +80,18 @@ def test_generate_spec_returns_accepted(
         storage, workspace_root, tree_service
     )
     codex_mock = _make_codex_mock()
-    service = SpecGenerationService(storage, tree_service, codex_mock, spec_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     result = service.generate_spec(project_id, root_id)
     assert result["status"] == "accepted"
     assert result["node_id"] == root_id
     assert "job_id" in result
+    ask_session = storage.chat_state_store.read_session(project_id, root_id, thread_role="ask_planning")
+    assert ask_session["thread_id"] == "ask-thread-spec-123"
+    assert ask_session["fork_reason"] == "ask_bootstrap"
+    state = load_json(workspace_root / ".planningtree" / "tasks" / root_id / SPEC_GEN_STATE_FILE, default={})
+    assert "thread_id" not in state
+    codex_mock.fork_thread.assert_called_once()
 
 
 def test_generate_spec_rejects_double_start(
@@ -98,7 +116,7 @@ def test_generate_spec_rejects_double_start(
         }
 
     codex_mock.run_turn_streaming.side_effect = slow_run
-    service = SpecGenerationService(storage, tree_service, codex_mock, spec_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     service.generate_spec(project_id, root_id)
 
@@ -116,7 +134,7 @@ def test_generate_spec_requires_confirmed_frame(
     root_id = snapshot["tree_state"]["root_node_id"]
 
     codex_mock = _make_codex_mock()
-    service = SpecGenerationService(storage, tree_service, codex_mock, spec_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     with pytest.raises(SpecGenerationNotAllowed, match="Frame must be confirmed"):
         service.generate_spec(project_id, root_id)
@@ -129,7 +147,7 @@ def test_generate_spec_writes_spec_md(
         storage, workspace_root, tree_service
     )
     codex_mock = _make_codex_mock("# Overview\nGenerated login spec")
-    service = SpecGenerationService(storage, tree_service, codex_mock, spec_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     service.generate_spec(project_id, root_id)
     time.sleep(1)
@@ -145,7 +163,7 @@ def test_generate_spec_status_lifecycle(
         storage, workspace_root, tree_service
     )
     codex_mock = _make_codex_mock()
-    service = SpecGenerationService(storage, tree_service, codex_mock, spec_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     status = service.get_generation_status(project_id, root_id)
     assert status["status"] == "idle"
@@ -164,7 +182,7 @@ def test_generate_spec_invalid_node(
     project_id = snapshot["project"]["id"]
 
     codex_mock = _make_codex_mock()
-    service = SpecGenerationService(storage, tree_service, codex_mock, spec_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     with pytest.raises(NodeNotFound):
         service.generate_spec(project_id, "nonexistent_node")
@@ -177,7 +195,7 @@ def test_write_spec_content_skips_when_source_frame_revision_is_stale(
         storage, workspace_root, tree_service
     )
     codex_mock = _make_codex_mock()
-    service = SpecGenerationService(storage, tree_service, codex_mock, spec_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     doc_service.put_document(project_id, root_id, "spec", "# Existing spec")
     snapshot = storage.project_store.load_snapshot(project_id)
@@ -203,7 +221,7 @@ def test_generate_spec_overwrites_existing_spec_and_resets_confirmation(
         storage, workspace_root, tree_service
     )
     codex_mock = _make_codex_mock("# Overview\nFresh generated spec")
-    service = SpecGenerationService(storage, tree_service, codex_mock, spec_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     doc_service.put_document(project_id, root_id, "spec", "# Old spec\nKeep me?")
     snapshot = storage.project_store.load_snapshot(project_id)

@@ -1419,6 +1419,7 @@ class CodexAppClient:
         base_instructions: str | None = None,
         dynamic_tools: list[dict[str, Any]] | None = None,
         timeout_sec: int = 30,
+        writable_roots: list[str] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
             self.start()
@@ -1429,6 +1430,7 @@ class CodexAppClient:
             timeout_sec=timeout_sec,
             base_instructions=base_instructions,
             dynamic_tools=dynamic_tools,
+            writable_roots=writable_roots,
         )
         return {"thread_id": transport._extract_thread_id(response)}
 

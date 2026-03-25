@@ -1,6 +1,27 @@
 # Phase 3 Handoff: Ask Lineage, Lazy Audit Bootstrap, and Generation Consolidation
 
-Status: ready for implementation on 2026-03-25. This is the active continuation brief for the Phase 3 implementation slice.
+Status: completed on 2026-03-25. This document now serves as the historical implementation brief for the completed Phase 3 slice.
+
+## Implementation outcome
+
+Phase 3 landed the intended thread-lifecycle changes without pulling in later-phase workflow scope.
+
+Completed outcomes:
+
+- `ChatService` now bootstraps task `ask_planning` and `audit` sessions through `ThreadLineageService` on both session read and message-send paths
+- newly created `ask_planning` sessions now use the shared ask-thread config with superset shaping tools:
+  - `emit_frame_content`
+  - `emit_spec_content`
+  - `emit_clarify_questions`
+- frame/spec/clarify generation services now reuse the node `ask_planning` thread instead of owning generation-specific Codex threads
+- `frame_gen.json`, `spec_gen.json`, and `clarify_gen.json` no longer persist `thread_id`
+- temporary child ask seeding remains in place for split/checkpoint handoff safety through Phase 4
+- `ProjectService`, `SplitService`, `ReviewService`, and execution lifecycle ownership were left unchanged, as planned
+
+Recorded verification for the completed slice:
+
+- targeted backend unit coverage for ask fork behavior, lazy audit bootstrap, ask seeding retention, and generation reuse of `ask_planning`
+- targeted backend integration smoke for bootstrap-on-read, partial-session polling, and child ask handoff visibility
 
 ## What Phases 1 and 2 already completed
 

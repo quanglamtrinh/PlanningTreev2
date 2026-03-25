@@ -13,6 +13,7 @@ from backend.services.chat_service import ChatService
 from backend.services.finish_task_service import FinishTaskService
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.project_service import ProjectService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.streaming.sse_broker import ChatEventBroker
 
@@ -368,6 +369,7 @@ def test_execution_session_stays_live_while_background_turn_is_running(
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=ThreadLineageService(storage, codex_client, tree_service),
         chat_event_broker=chat_event_broker,
         chat_timeout=5,
         max_message_chars=10000,

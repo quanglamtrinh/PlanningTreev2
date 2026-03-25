@@ -1,7 +1,7 @@
 migration_id: fork_based_thread_lineage
-status: phase_3_ready
+status: phase_3_complete
 current_phase: null
-next_phase: 3
+next_phase: 4
 
 references:
   specs:
@@ -82,7 +82,7 @@ phases:
   - phase: 3
     pr: 3
     name: ask_lineage_lazy_audit_bootstrap_and_generation_consolidation
-    status: not_started
+    status: completed
     depends_on:
       - 2
     goals:
@@ -97,12 +97,23 @@ phases:
       - ask tests prove fork behavior and lazy audit bootstrap
       - generation tests prove reuse of ask_planning thread
     notes: >
-      Ready to start. Use docs/handoff/fork-based-thread-lineage/phase-3-handoff.md
-      as the active implementation brief. Locked Phase 3 decisions: create new
-      ask_planning sessions with superset shaping tools, keep temporary child ask
-      seeding through Phase 4, and migrate frame/spec/clarify generation off
-      service-owned threads onto ask_planning without changing execution, split,
-      or review workflow ownership in this PR.
+      Completed on 2026-03-25. ChatService now bootstraps task ask/audit sessions
+      through ThreadLineageService on read and send, new ask_planning sessions use
+      shared superset shaping tools, and frame/spec/clarify generation now reuses
+      ask_planning instead of service-owned threads. Generation state files no
+      longer persist thread_id, temporary child ask seeding remains in place for
+      Phase 5 replacement, and verification passed with:
+      python -m pytest backend/tests/unit/test_chat_service.py
+      backend/tests/unit/test_thread_seeding.py
+      backend/tests/unit/test_thread_readonly.py
+      backend/tests/unit/test_frame_generation_service.py
+      backend/tests/unit/test_spec_generation_service.py
+      backend/tests/unit/test_clarify_generation_service.py
+      backend/tests/unit/test_shaping_freeze.py
+      backend/tests/unit/test_finish_task_service.py
+      backend/tests/unit/test_thread_lineage_service.py -q
+      plus targeted integration smoke for backend/tests/integration/test_chat_api.py
+      covering bootstrap-on-read, child ask seeding, and partial-session polling.
 
   - phase: 4
     pr: 4

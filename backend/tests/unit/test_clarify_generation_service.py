@@ -13,6 +13,7 @@ from backend.services.clarify_generation_service import CLARIFY_GEN_STATE_FILE, 
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import atomic_write_json, load_json
 from backend.storage.storage import Storage
@@ -52,8 +53,9 @@ def _make_codex_mock(
             },
         ]
     mock = MagicMock()
-    mock.start_thread.return_value = {"thread_id": "test-thread-456"}
-    mock.resume_thread.return_value = {"thread_id": "test-thread-456"}
+    mock.start_thread.return_value = {"thread_id": "audit-thread-456"}
+    mock.resume_thread.return_value = {"thread_id": "audit-thread-456"}
+    mock.fork_thread.return_value = {"thread_id": "ask-thread-456"}
     mock.run_turn_streaming.return_value = {
         "tool_calls": [
             {
@@ -66,6 +68,20 @@ def _make_codex_mock(
     return mock
 
 
+def _make_service(
+    storage: Storage,
+    tree_service: TreeService,
+    codex_mock: MagicMock,
+) -> ClarifyGenerationService:
+    return ClarifyGenerationService(
+        storage,
+        tree_service,
+        codex_mock,
+        thread_lineage_service=ThreadLineageService(storage, codex_mock, tree_service),
+        clarify_gen_timeout=30,
+    )
+
+
 def test_generate_clarify_returns_accepted(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
@@ -74,12 +90,18 @@ def test_generate_clarify_returns_accepted(
     root_id = snapshot["tree_state"]["root_node_id"]
 
     codex_mock = _make_codex_mock()
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     result = service.generate_clarify(project_id, root_id)
     assert result["status"] == "accepted"
     assert result["node_id"] == root_id
     assert "job_id" in result
+    ask_session = storage.chat_state_store.read_session(project_id, root_id, thread_role="ask_planning")
+    assert ask_session["thread_id"] == "ask-thread-456"
+    assert ask_session["fork_reason"] == "ask_bootstrap"
+    state = load_json(workspace_root / ".planningtree" / "tasks" / root_id / CLARIFY_GEN_STATE_FILE, default={})
+    assert "thread_id" not in state
+    codex_mock.fork_thread.assert_called_once()
 
 
 def test_generate_clarify_rejects_double_start(
@@ -111,7 +133,7 @@ def test_generate_clarify_rejects_double_start(
         }
 
     codex_mock.run_turn_streaming.side_effect = slow_run
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     service.generate_clarify(project_id, root_id)
 
@@ -151,7 +173,7 @@ def test_generate_clarify_writes_clarify_json(
         },
     ]
     codex_mock = _make_codex_mock(expected_questions)
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     service.generate_clarify(project_id, root_id)
     time.sleep(1)
@@ -177,7 +199,7 @@ def test_generate_clarify_status_lifecycle(
     root_id = snapshot["tree_state"]["root_node_id"]
 
     codex_mock = _make_codex_mock()
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     # Before generation — idle
     status = service.get_generation_status(project_id, root_id)
@@ -200,7 +222,7 @@ def test_generate_clarify_failed_status(
 
     codex_mock = _make_codex_mock()
     codex_mock.run_turn_streaming.return_value = {"tool_calls": [], "stdout": ""}
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     service.generate_clarify(project_id, root_id)
     time.sleep(1)
@@ -217,7 +239,7 @@ def test_generate_clarify_invalid_node(
     project_id = snapshot["project"]["id"]
 
     codex_mock = _make_codex_mock()
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     with pytest.raises(NodeNotFound):
         service.generate_clarify(project_id, "nonexistent_node")
@@ -236,7 +258,7 @@ def test_generate_clarify_stdout_fallback(
         "tool_calls": [],
         "stdout": '[{"field_name": "fallback_q", "question": "Fallback question?"}]',
     }
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     service.generate_clarify(project_id, root_id)
     time.sleep(1)
@@ -264,7 +286,7 @@ def test_generate_clarify_zero_questions_auto_confirms(
     detail_service.confirm_frame(project_id, root_id)
 
     codex_mock = _make_codex_mock(questions=[])
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     service.generate_clarify(project_id, root_id)
     time.sleep(1)
@@ -316,7 +338,7 @@ def test_generate_clarify_uses_confirmed_content_not_draft(
         }
 
     codex_mock.run_turn_streaming.side_effect = capture_run
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     service.generate_clarify(project_id, root_id)
     time.sleep(1)
@@ -353,7 +375,7 @@ def test_generate_clarify_preserves_custom_answer_on_regenerate(
             ],
         },
     ])
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     service.generate_clarify(project_id, root_id)
     time.sleep(1)
@@ -402,7 +424,7 @@ def test_generate_clarify_preserves_selected_option_when_still_available(
         },
     ]
     codex_mock = _make_codex_mock(first_questions)
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     service.generate_clarify(project_id, root_id)
     time.sleep(1)
@@ -475,7 +497,7 @@ def test_write_clarify_skips_when_disk_already_confirmed(
         }
 
     codex_mock.run_turn_streaming.side_effect = slow_run
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
     service.generate_clarify(project_id, root_id)
 
     # Let the job complete
@@ -524,7 +546,7 @@ def test_write_clarify_skips_when_frame_revision_advanced(
         }
 
     codex_mock.run_turn_streaming.side_effect = slow_run
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     # Start generation (captures frame_revision_at_start = 1)
     service.generate_clarify(project_id, root_id)
@@ -577,7 +599,7 @@ def test_stale_job_does_not_overwrite_newer_clarify(
         }
 
     codex_mock.run_turn_streaming.side_effect = slow_run
-    service = ClarifyGenerationService(storage, tree_service, codex_mock, clarify_gen_timeout=30)
+    service = _make_service(storage, tree_service, codex_mock)
 
     # Start generation (captures source_frame_revision = 1)
     service.generate_clarify(project_id, root_id)
