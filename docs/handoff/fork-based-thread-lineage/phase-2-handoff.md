@@ -1,6 +1,6 @@
 # Phase 2 Handoff: Thread Lineage Helper and Prompt-Builder Prep
 
-Status: ready for implementation after Phase 1 completion.
+Status: completed on 2026-03-25. Historical handoff for the Phase 2 implementation slice.
 
 ## What Phase 1 already completed
 

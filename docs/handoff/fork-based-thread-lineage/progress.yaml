@@ -1,7 +1,7 @@
 migration_id: fork_based_thread_lineage
-status: phase_2_ready
+status: phase_3_ready
 current_phase: null
-next_phase: 2
+next_phase: 3
 
 references:
   specs:
@@ -57,7 +57,7 @@ phases:
   - phase: 2
     pr: 2
     name: thread_lineage_helper_and_prompt_builder_prep
-    status: not_started
+    status: completed
     depends_on:
       - 1
     goals:
@@ -70,9 +70,14 @@ phases:
     verification:
       - lineage helper unit tests cover bootstrap, fork, resume, legacy backfill, and rebuild
     notes: >
-      Phase 2 is ready to begin. Continue from
-      docs/handoff/fork-based-thread-lineage/phase-2-handoff.md. Scope stays helper
-      and prompt-builder prep only; do not migrate workflow callers in this PR.
+      Completed on 2026-03-25. Added backend/services/thread_lineage_service.py,
+      exposed it via app.state.thread_lineage_service, added storage-backed prompt
+      builder prep helpers, and kept workflow callers unchanged. Verified with
+      python -m pytest backend/tests/unit/test_chat_state_store_multithread.py
+      backend/tests/unit/test_thread_lineage_service.py
+      backend/tests/unit/test_phase2_prompt_builders.py -q. Follow-up review fixed
+      the legacy root audit source-path backfill gap so descendant forks inherit
+      lineage_root_thread_id correctly from legacy root sessions.
 
   - phase: 3
     pr: 3
@@ -91,7 +96,13 @@ phases:
     verification:
       - ask tests prove fork behavior and lazy audit bootstrap
       - generation tests prove reuse of ask_planning thread
-    notes: ""
+    notes: >
+      Ready to start. Use docs/handoff/fork-based-thread-lineage/phase-3-handoff.md
+      as the active implementation brief. Locked Phase 3 decisions: create new
+      ask_planning sessions with superset shaping tools, keep temporary child ask
+      seeding through Phase 4, and migrate frame/spec/clarify generation off
+      service-owned threads onto ask_planning without changing execution, split,
+      or review workflow ownership in this PR.
 
   - phase: 4
     pr: 4

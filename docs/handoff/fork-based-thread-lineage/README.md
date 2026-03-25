@@ -1,6 +1,6 @@
 # Fork-Based Thread Lineage Migration Plan
 
-Status: Phase 1 complete, Phase 2 ready. This document is the working implementation plan that translates the fork-based lineage specs into a seven-phase rollout that can be executed incrementally.
+Status: Phase 2 complete, Phase 3 ready. This document is the working implementation plan that translates the fork-based lineage specs into a seven-phase rollout that can be executed incrementally.
 
 Primary specs:
 
@@ -10,9 +10,11 @@ Primary specs:
 ## Current Handoff State
 
 - Phase 1 completed on 2026-03-25
-- Phase 2 / PR 2 is the next intended implementation slice
-- Phase 1 verification completed with backend chat-state-store unit tests and frontend TypeScript typecheck
-- Use `docs/handoff/fork-based-thread-lineage/phase-2-handoff.md` as the concrete continuation brief for the next PR
+- Phase 2 completed on 2026-03-25
+- Phase 3 / PR 3 is the next intended implementation slice
+- Phase 2 verification completed with targeted backend unit tests for the lineage helper, prompt builders, chat-state-store regression coverage, and the legacy-root-source lineage backfill fix
+- `docs/handoff/fork-based-thread-lineage/phase-3-handoff.md` is now the active continuation artifact for PR 3
+- `docs/handoff/fork-based-thread-lineage/phase-2-handoff.md` now serves as the historical brief for the completed PR 2 slice
 
 ## Context
 
@@ -315,4 +317,4 @@ After each phase:
 
 Use `docs/handoff/fork-based-thread-lineage/progress.yaml` as the implementation tracker for phase status, notes, blockers, and acceptance progress. Update it at the start and end of each phase PR.
 
-Use `docs/handoff/fork-based-thread-lineage/phase-2-handoff.md` as the continuation artifact for the next implementation slice after Phase 1.
+Use `docs/handoff/fork-based-thread-lineage/phase-3-handoff.md` as the active continuation artifact for the next implementation slice. Keep older phase handoff docs as historical implementation records.

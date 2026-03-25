@@ -29,6 +29,7 @@ from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
 from backend.services.snapshot_view_service import SnapshotViewService
 from backend.services.split_service import SplitService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
 from backend.streaming.sse_broker import ChatEventBroker, GlobalEventBroker
@@ -46,6 +47,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     node_document_service = NodeDocumentService(storage)
     node_detail_service = NodeDetailService(storage, tree_service)
     codex_client = CodexAppClient(StdioTransport(codex_cmd=get_codex_cmd() or "codex"))
+    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
     codex_event_broker = GlobalEventBroker()
     codex_account_service = CodexAccountService(
         codex_client=codex_client,
@@ -144,6 +146,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.node_detail_service = node_detail_service
     app.state.snapshot_view_service = snapshot_view_service
     app.state.codex_client = codex_client
+    app.state.thread_lineage_service = thread_lineage_service
     app.state.codex_event_broker = codex_event_broker
     app.state.codex_account_service = codex_account_service
     app.state.split_service = split_service
