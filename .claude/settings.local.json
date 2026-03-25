@@ -30,7 +30,8 @@
       "Bash(.venv/Scripts/pip.exe install:*)",
       "Bash(npm ls:*)",
       "Bash(.venv/Scripts/python.exe -m pytest backend/tests/ -q)",
-      "Bash(xargs wc:*)"
+      "Bash(xargs wc:*)",
+      "Bash(find C:UsersThongPlanningTreePlanningTreeCodexfrontend -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))"
     ]
   }
 }

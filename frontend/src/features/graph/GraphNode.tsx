@@ -426,7 +426,7 @@ function GraphNodeComponent({ data }: NodeProps) {
                   className={`${styles.graphStatusBadge} ${d.node.status === 'in_progress' ? styles.graphStatusInProgress : ''}`}
                 />
                 <ExecutionStatusBadge
-                  status={d.executionStatus}
+                  status={d.executionStatus === 'review_accepted' ? null : d.executionStatus}
                   className={styles.graphExecutionBadge}
                 />
               </div>

@@ -101,10 +101,22 @@ export function buildTreeLayoutPositions({
   const subtreeUnits = new Map<string, number>()
   const positions = new Map<string, { x: number; y: number }>()
 
+  /** Equal width for every sibling column under a parent (max of each child's subtree width). */
+  function siblingSlotUnits(childIds: string[]): number {
+    if (childIds.length === 0) {
+      return MIN_NODE_SPAN_UNITS
+    }
+    let maxW = MIN_NODE_SPAN_UNITS
+    for (const id of childIds) {
+      maxW = Math.max(maxW, computeUnits(id))
+    }
+    return maxW
+  }
+
   // Compute how many stack units a subtree rooted at nodeId needs (sibling axis).
   // For leaf nodes this equals the node's own height (in units).
-  // For parents it equals the sum of all children's subtree units
-  // PLUS gaps between siblings.
+  // For parents: siblings share equal horizontal slots (widest child's subtree width) so
+  // adding siblings or changing one child's text does not collapse the row toward one edge.
   const computeUnits = (nodeId: string): number => {
     const cached = subtreeUnits.get(nodeId)
     if (cached !== undefined) {
@@ -124,9 +136,9 @@ export function buildTreeLayoutPositions({
       return ownUnits
     }
 
-    // Sum child subtrees + gaps between siblings
-    const childSubtreeSum = children.reduce((sum, childId) => sum + computeUnits(childId), 0)
+    const slot = siblingSlotUnits(children)
     const totalGaps = SIBLING_GAP_UNITS * (children.length - 1)
+    const childSubtreeSum = slot * children.length
     const total = Math.max(ownUnits, childSubtreeSum + totalGaps)
     subtreeUnits.set(nodeId, total)
     return total
@@ -150,16 +162,16 @@ export function buildTreeLayoutPositions({
       return
     }
 
-    // Total space children + gaps actually occupy
-    const childSubtreeSum = children.reduce((sum, childId) => sum + computeUnits(childId), 0)
+    const slot = siblingSlotUnits(children)
     const totalGaps = SIBLING_GAP_UNITS * (children.length - 1)
-    const childrenBlock = childSubtreeSum + totalGaps
+    const childrenBlock = slot * children.length + totalGaps
 
     // Center the children block relative to the parent's allocated space
     let cursor = startUnit + Math.max(0, (nodeUnits - childrenBlock) / 2)
     for (const childId of children) {
-      assign(childId, cursor)
-      cursor += computeUnits(childId) + SIBLING_GAP_UNITS
+      const childUnits = computeUnits(childId)
+      assign(childId, cursor + Math.max(0, (slot - childUnits) / 2))
+      cursor += slot + SIBLING_GAP_UNITS
     }
   }
 
