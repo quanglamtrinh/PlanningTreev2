@@ -22,6 +22,7 @@ from backend.errors.app_errors import (
 from backend.services import planningtree_workspace
 from backend.services.review_sibling_manifest import derive_review_sibling_manifest
 from backend.services.thread_seed_service import ensure_thread_seeded_session
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.services.workspace_sha import compute_workspace_sha
 from backend.storage.file_utils import iso_now, new_id
@@ -43,6 +44,7 @@ class ReviewService:
         storage: Storage,
         tree_service: TreeService,
         codex_client: CodexAppClient | None = None,
+        thread_lineage_service: ThreadLineageService | None = None,
         chat_event_broker: ChatEventBroker | None = None,
         chat_timeout: int = 30,
         chat_service: ChatService | None = None,
@@ -50,6 +52,7 @@ class ReviewService:
         self._storage = storage
         self._tree_service = tree_service
         self._codex_client = codex_client
+        self._thread_lineage_service = thread_lineage_service
         self._chat_event_broker = chat_event_broker
         self._chat_timeout = int(chat_timeout)
         self._chat_service = chat_service
@@ -104,6 +107,8 @@ class ReviewService:
 
         activated_sibling_id: str | None = None
         rollup_ready_review_node_id: str | None = None
+        activated_review_node_id: str | None = None
+        activated_workspace_root: str | None = None
 
         with self._storage.project_lock(project_id):
             exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
@@ -147,6 +152,9 @@ class ReviewService:
                 ) = self._try_activate_next_sibling(
                     project_id, parent, review_node_id, snapshot, node_by_id
                 )
+                if activated_sibling_id:
+                    activated_review_node_id = review_node_id
+                    activated_workspace_root = self._workspace_root_from_snapshot(snapshot)
             elif parent:
                 unlocked_id = self._tree_service.unlock_next_sibling(node, node_by_id)
                 if unlocked_id:
@@ -168,6 +176,14 @@ class ReviewService:
                     rollup_ready_review_node_id,
                     exc_info=True,
                 )
+
+        if activated_sibling_id and activated_review_node_id and activated_workspace_root:
+            self._bootstrap_child_audit_best_effort(
+                project_id,
+                activated_review_node_id,
+                activated_sibling_id,
+                activated_workspace_root,
+            )
 
         return {
             "node_id": node_id,
@@ -352,6 +368,7 @@ class ReviewService:
                     message_id=AUDIT_ROLLUP_PACKAGE_MESSAGE_ID,
                     content=package_content,
                 )
+                self._storage.review_state_store.open_package_review(project_id, review_node_id)
 
             return {
                 "review_node_id": review_node_id,
@@ -829,6 +846,34 @@ class ReviewService:
         if workspace_root:
             return compute_workspace_sha(Path(workspace_root))
         return _ZERO_SHA
+
+    def _bootstrap_child_audit_best_effort(
+        self,
+        project_id: str,
+        review_node_id: str,
+        child_node_id: str,
+        workspace_root: str,
+    ) -> None:
+        if self._thread_lineage_service is None:
+            return
+        try:
+            self._thread_lineage_service.ensure_forked_thread(
+                project_id,
+                child_node_id,
+                "audit",
+                source_node_id=review_node_id,
+                source_role="audit",
+                fork_reason="child_activation",
+                workspace_root=workspace_root,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to eager-bootstrap child audit for %s/%s via %s",
+                project_id,
+                child_node_id,
+                review_node_id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _is_missing_thread_error(exc: Exception) -> bool:

@@ -1,7 +1,7 @@
 migration_id: fork_based_thread_lineage
-status: phase_4_complete
+status: phase_5_complete
 current_phase: null
-next_phase: 5
+next_phase: 6
 
 references:
   specs:
@@ -152,7 +152,7 @@ phases:
   - phase: 5
     pr: 5
     name: split_migration_true_review_and_child_forks
-    status: not_started
+    status: completed
     depends_on:
       - 2
       - 3
@@ -167,7 +167,33 @@ phases:
     verification:
       - split and review tests assert review.audit and child.audit fork behavior
       - child/package prompt tests assert first-turn-only injection
-    notes: ""
+    notes: >
+      Completed on 2026-03-25. SplitService now resolves parent.audit through
+      ThreadLineageService, no longer persists project-level split_state.thread_id,
+      and accepts either emit_render_data tool output or raw JSON stdout fallback
+      from legacy audit threads. Post-persist split bootstrap now eagerly forks
+      review.audit from parent.audit and child.audit from review.audit, while
+      ReviewService eagerly forks newly activated sibling audits best-effort
+      without rolling back accepted checkpoints if bootstrap fails. Review rollup
+      state now tracks package_review_started_at and
+      package_review_prompt_consumed_at, ChatService now injects package-review
+      and child-activation context on the first relevant successful turns only,
+      and temporary ask_planning seeding has been removed. A follow-up fix moved
+      local/package boundary consumption ahead of active_turn clearing to avoid a
+      race that could double-inject prompt context on fast retries. Verified with
+      python -m py_compile on touched backend/test files and a combined pytest
+      pass covering:
+      backend/tests/unit/test_split_service.py
+      backend/tests/unit/test_review_service.py
+      backend/tests/unit/test_chat_service.py
+      backend/tests/unit/test_review_state_store.py
+      backend/tests/unit/test_thread_seeding.py
+      backend/tests/unit/test_node_document_service.py
+      backend/tests/unit/test_shaping_freeze.py
+      backend/tests/integration/test_split_api.py
+      backend/tests/integration/test_node_documents_api.py
+      backend/tests/integration/test_chat_api.py
+      -> 135 passed.
 
   - phase: 6
     pr: 6

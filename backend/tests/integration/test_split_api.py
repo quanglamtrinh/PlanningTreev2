@@ -5,11 +5,13 @@ from pathlib import Path
 
 from backend.services import planningtree_workspace
 from backend.services.split_service import SplitService
+from backend.services.thread_lineage_service import ThreadLineageService
 
 
 class FakeCodexClient:
     def __init__(self) -> None:
         self.started_threads: list[str] = []
+        self.forked_threads: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"thread-{len(self.started_threads) + 1}"
@@ -17,6 +19,11 @@ class FakeCodexClient:
         return {"thread_id": thread_id}
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, *_: object, **__: object) -> dict:
@@ -79,10 +86,16 @@ def test_split_api_accepts_jobs_and_updates_snapshot(client, tmp_path: Path) -> 
     root_id = created.json()["tree_state"]["root_node_id"]
     make_node_split_ready(client, project_id, root_id, title=workspace_root.name)
 
+    codex_client = FakeCodexClient()
     client.app.state.split_service = SplitService(
         storage=client.app.state.storage,
         tree_service=client.app.state.tree_service,
-        codex_client=FakeCodexClient(),
+        codex_client=codex_client,
+        thread_lineage_service=ThreadLineageService(
+            client.app.state.storage,
+            codex_client,
+            client.app.state.tree_service,
+        ),
         split_timeout=5,
     )
 
@@ -103,12 +116,12 @@ def test_split_api_accepts_jobs_and_updates_snapshot(client, tmp_path: Path) -> 
     root = next(node for node in payload["tree_state"]["node_registry"] if node["node_id"] == root_id)
     root_dir = project_dir / planningtree_workspace.ROOT_SEGMENT / "1 workspace"
     first_child_dir = root_dir / "1.1 Prep"
-    second_child_dir = root_dir / "1.2 Finish"
-    assert len(root["child_ids"]) == 2
+    assert len(root["child_ids"]) == 1
     assert first_child_dir.is_dir()
-    assert second_child_dir.is_dir()
     assert (first_child_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == ""
-    assert (second_child_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
+    review_node_id = root["review_node_id"]
+    review_node = next(node for node in payload["tree_state"]["node_registry"] if node["node_id"] == review_node_id)
+    assert review_node["node_kind"] == "review"
 
 
 def test_split_api_rejects_nodes_that_are_not_workflow_ready(client, tmp_path: Path) -> None:
@@ -120,10 +133,16 @@ def test_split_api_rejects_nodes_that_are_not_workflow_ready(client, tmp_path: P
     project_id = created.json()["project"]["id"]
     root_id = created.json()["tree_state"]["root_node_id"]
 
+    codex_client = FakeCodexClient()
     client.app.state.split_service = SplitService(
         storage=client.app.state.storage,
         tree_service=client.app.state.tree_service,
-        codex_client=FakeCodexClient(),
+        codex_client=codex_client,
+        thread_lineage_service=ThreadLineageService(
+            client.app.state.storage,
+            codex_client,
+            client.app.state.tree_service,
+        ),
         split_timeout=5,
     )
 

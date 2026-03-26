@@ -57,6 +57,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         split_timeout=get_split_timeout(),
     )
     frame_generation_service = FrameGenerationService(
@@ -94,6 +95,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         chat_event_broker=chat_event_broker,
         chat_timeout=get_chat_timeout(),
         chat_service=chat_service,

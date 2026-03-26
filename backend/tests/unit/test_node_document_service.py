@@ -9,8 +9,13 @@ from backend.services.node_document_service import NodeDocumentService
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
 from backend.services.split_service import SplitService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
-from backend.tests.unit.test_split_service import FakeCodexClient, wait_for_terminal_status
+from backend.tests.unit.test_split_service import (
+    FakeCodexClient,
+    make_node_split_ready,
+    wait_for_terminal_status,
+)
 
 
 def create_project(project_service: ProjectService, workspace_root: str) -> dict:
@@ -141,24 +146,28 @@ def test_split_created_child_documents_are_available(
     project_service = ProjectService(storage)
     snapshot = create_project(project_service, str(workspace_root))
     service = NodeDocumentService(storage)
+    tree_service = TreeService()
+    codex_client = FakeCodexClient(
+        payloads=[
+            {
+                "subtasks": [
+                    {"id": "S1", "title": "Prep", "objective": "Prepare the flow.", "why_now": "It starts."},
+                    {"id": "S2", "title": "Finish", "objective": "Finish the flow.", "why_now": "It follows."},
+                ]
+            }
+        ]
+    )
     split_service = SplitService(
         storage,
-        TreeService(),
-        FakeCodexClient(
-            payloads=[
-                {
-                    "subtasks": [
-                        {"id": "S1", "title": "Prep", "objective": "Prepare the flow.", "why_now": "It starts."},
-                        {"id": "S2", "title": "Finish", "objective": "Finish the flow.", "why_now": "It follows."},
-                    ]
-                }
-            ]
-        ),
+        tree_service,
+        codex_client,
+        ThreadLineageService(storage, codex_client, tree_service),
         split_timeout=5,
     )
 
     project_id = snapshot["project"]["id"]
     root_id = snapshot["tree_state"]["root_node_id"]
+    make_node_split_ready(storage, tree_service, project_id, root_id)
     split_service.split_node(project_id, root_id, "workflow")
     wait_for_terminal_status(split_service, project_id)
     persisted = storage.project_store.load_snapshot(project_id)

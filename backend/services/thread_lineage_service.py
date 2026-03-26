@@ -325,6 +325,24 @@ class ThreadLineageService:
                 )
             return session
 
+        if str(node.get("node_kind") or "").strip() == "review":
+            parent_id = self._normalize_optional_string(node.get("parent_id"))
+            if not parent_id:
+                raise ValueError(f"Review node {node_id!r} is missing a parent.")
+            self._ensure_audit_exists(project_id, parent_id, workspace_root)
+            return self._fork_target_from_source_locked(
+                project_id,
+                node_id,
+                "audit",
+                source_node_id=parent_id,
+                source_role="audit",
+                fork_reason="review_bootstrap",
+                workspace_root=workspace_root,
+                base_instructions=None,
+                dynamic_tools=None,
+                writable_roots=None,
+            )
+
         root_id = self._root_node_id(snapshot)
         if not root_id:
             raise ValueError(f"Project {project_id!r} is missing a root node.")

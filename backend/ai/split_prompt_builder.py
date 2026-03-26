@@ -161,6 +161,7 @@ def build_split_base_instructions(mode: CanonicalSplitModeId | None = None) -> s
         "For split turns, produce structured UI data with emit_render_data(kind='split_result', payload=...).",
         "The split payload must use exactly one top-level key: subtasks.",
         "Each subtask item must use exactly: id, title, objective, why_now.",
+        "If emit_render_data is unavailable on the current thread, return only raw JSON using that exact payload shape.",
         "If a task frame is provided, treat its shaping decisions as constraints for relevant subtasks.",
         "If you can produce a valid split, call emit_render_data before writing a short summary for the user.",
         "Do not duplicate the structured payload in the summary text.",
@@ -315,7 +316,8 @@ def _structured_output_contract(mode: CanonicalSplitModeId) -> str:
     return "\n".join(
         [
             "Output contract:",
-            "- First call emit_render_data(kind='split_result', payload=...).",
+            "- Preferred: first call emit_render_data(kind='split_result', payload=...).",
+            "- Fallback when the tool is unavailable: respond with ONLY raw JSON using the same payload shape.",
             "- The payload must be valid JSON in this exact shape:",
             schema,
             "Hard output rules:",
@@ -332,6 +334,7 @@ def _structured_output_contract(mode: CanonicalSplitModeId) -> str:
             "- Subtasks must be sequential, non-overlapping, and suitable for child-node creation.",
             "- Do not include implementation details, architecture plans, code suggestions, clarification questions, assumptions lists, done criteria, scope breakdown, rationale bullets, or internal notes.",
             "- After the tool call, write a brief user-facing summary without repeating the payload.",
+            "- If you used the raw-JSON fallback, do not add any summary text before or after the JSON.",
         ]
     )
 

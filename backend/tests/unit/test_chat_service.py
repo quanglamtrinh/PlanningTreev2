@@ -22,6 +22,11 @@ from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
 from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
+from backend.services.execution_gating import (
+    AUDIT_FRAME_RECORD_MESSAGE_ID,
+    AUDIT_ROLLUP_PACKAGE_MESSAGE_ID,
+    append_immutable_audit_record,
+)
 from backend.storage.file_utils import iso_now
 from backend.streaming.sse_broker import ChatEventBroker
 
@@ -180,6 +185,58 @@ def _write_confirmed_frame_and_spec(storage, project_id: str, node_id: str) -> N
         encoding="utf-8",
     )
     (node_dir / "spec.md").write_text("# Spec\nShip the implementation safely.\n", encoding="utf-8")
+
+
+def _add_child(
+    storage,
+    project_id: str,
+    parent_id: str,
+    *,
+    node_id: str,
+    title: str,
+    description: str,
+    status: str = "ready",
+) -> None:
+    snap = storage.project_store.load_snapshot(project_id)
+    node_index = snap["tree_state"]["node_index"]
+    parent = node_index[parent_id]
+    child_ids = [*parent.get("child_ids", []), node_id]
+    parent["child_ids"] = child_ids
+    node_index[node_id] = {
+        "node_id": node_id,
+        "parent_id": parent_id,
+        "child_ids": [],
+        "title": title,
+        "description": description,
+        "status": status,
+        "node_kind": "original",
+        "depth": int(parent.get("depth", 0) or 0) + 1,
+        "display_order": len(child_ids) - 1,
+        "hierarchical_number": f"{parent.get('hierarchical_number', '1')}.{len(child_ids)}",
+        "created_at": iso_now(),
+    }
+    storage.project_store.save_snapshot(project_id, snap)
+
+
+def _add_review_node(storage, project_id: str, parent_id: str, review_id: str) -> None:
+    snap = storage.project_store.load_snapshot(project_id)
+    node_index = snap["tree_state"]["node_index"]
+    parent = node_index[parent_id]
+    node_index[review_id] = {
+        "node_id": review_id,
+        "parent_id": parent_id,
+        "child_ids": [],
+        "title": "Review",
+        "description": "",
+        "status": "ready",
+        "node_kind": "review",
+        "depth": int(parent.get("depth", 0) or 0) + 1,
+        "display_order": 99,
+        "hierarchical_number": f"{parent.get('hierarchical_number', '1')}.R",
+        "created_at": iso_now(),
+    }
+    parent["review_node_id"] = review_id
+    storage.project_store.save_snapshot(project_id, snap)
 
 
 def test_get_session_returns_empty_for_new_node(storage, workspace_root):
@@ -462,6 +519,225 @@ def test_failed_first_local_review_turn_keeps_boundary_open_for_retry(storage, w
     exec_state = storage.execution_state_store.read_state(project_id, root_id)
     assert exec_state is not None
     assert exec_state["local_review_prompt_consumed_at"] is not None
+
+
+def test_audit_first_package_review_turn_uses_package_review_prompt_once(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient(response_text="Package audit complete")
+    service = _make_service(storage, client)
+    _write_confirmed_frame_and_spec(storage, project_id, root_id)
+    _add_child(
+        storage,
+        project_id,
+        root_id,
+        node_id="child-package",
+        title="Package child",
+        description="Ship the child slice.",
+        status="done",
+    )
+    _add_review_node(storage, project_id, root_id, "review-package")
+    storage.review_state_store.write_state(
+        project_id,
+        "review-package",
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:baseline",
+                    "summary": None,
+                    "source_node_id": None,
+                    "accepted_at": iso_now(),
+                },
+                {
+                    "label": "K1",
+                    "sha": "sha256:child",
+                    "summary": "Package child completed successfully.",
+                    "source_node_id": "child-package",
+                    "accepted_at": iso_now(),
+                },
+            ],
+            "rollup": {
+                "status": "accepted",
+                "summary": "Package is coherent and ready.",
+                "sha": "sha256:rollup",
+                "accepted_at": iso_now(),
+            },
+            "pending_siblings": [],
+        },
+    )
+    append_immutable_audit_record(
+        storage,
+        project_id,
+        root_id,
+        message_id=AUDIT_ROLLUP_PACKAGE_MESSAGE_ID,
+        content="## Rollup Package\n\n**Summary:** Package is coherent and ready.\n",
+    )
+    storage.review_state_store.open_package_review(project_id, "review-package")
+
+    service.create_message(project_id, root_id, "Review the package", thread_role="audit")
+    _wait_for_turn_role(service, project_id, root_id, "audit")
+
+    first_prompt = client.turns_run[-1]
+    assert "Confirmed parent frame" in first_prompt
+    assert "Split package:" in first_prompt
+    assert "Package is coherent and ready." in first_prompt
+
+    review_state = storage.review_state_store.read_state(project_id, "review-package")
+    assert review_state is not None
+    assert review_state["rollup"]["package_review_started_at"] is not None
+    assert review_state["rollup"]["package_review_prompt_consumed_at"] is not None
+
+    service.create_message(project_id, root_id, "One more package note", thread_role="audit")
+    _wait_for_turn_role(service, project_id, root_id, "audit")
+
+    second_prompt = client.turns_run[-1]
+    assert "Confirmed parent frame" not in second_prompt
+    assert "Split package:" not in second_prompt
+    assert "Package is coherent and ready." not in second_prompt
+
+
+def test_failed_first_package_review_turn_keeps_boundary_open_for_retry(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient(fail=True)
+    service = _make_service(storage, client)
+    _write_confirmed_frame_and_spec(storage, project_id, root_id)
+    _add_child(
+        storage,
+        project_id,
+        root_id,
+        node_id="child-package",
+        title="Package child",
+        description="Ship the child slice.",
+        status="done",
+    )
+    _add_review_node(storage, project_id, root_id, "review-package")
+    storage.review_state_store.write_state(
+        project_id,
+        "review-package",
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:baseline",
+                    "summary": None,
+                    "source_node_id": None,
+                    "accepted_at": iso_now(),
+                },
+                {
+                    "label": "K1",
+                    "sha": "sha256:child",
+                    "summary": "Package child completed successfully.",
+                    "source_node_id": "child-package",
+                    "accepted_at": iso_now(),
+                },
+            ],
+            "rollup": {
+                "status": "accepted",
+                "summary": "Package is coherent and ready.",
+                "sha": "sha256:rollup",
+                "accepted_at": iso_now(),
+            },
+            "pending_siblings": [],
+        },
+    )
+    append_immutable_audit_record(
+        storage,
+        project_id,
+        root_id,
+        message_id=AUDIT_ROLLUP_PACKAGE_MESSAGE_ID,
+        content="## Rollup Package\n\n**Summary:** Package is coherent and ready.\n",
+    )
+    storage.review_state_store.open_package_review(project_id, "review-package")
+
+    service.create_message(project_id, root_id, "Review package attempt one", thread_role="audit")
+    failed_session = _wait_for_turn_role(service, project_id, root_id, "audit")
+    failed_assistant = next(
+        message
+        for message in reversed(failed_session["messages"])
+        if message.get("role") == "assistant"
+    )
+    assert failed_assistant["status"] == "error"
+    assert "Split package:" in client.turns_run[-1]
+
+    review_state = storage.review_state_store.read_state(project_id, "review-package")
+    assert review_state is not None
+    assert review_state["rollup"]["package_review_prompt_consumed_at"] is None
+
+    client.fail = False
+    client.response_text = "Retry package success"
+    service.create_message(project_id, root_id, "Review package attempt two", thread_role="audit")
+    _wait_for_turn_role(service, project_id, root_id, "audit")
+
+    assert "Split package:" in client.turns_run[-1]
+    review_state = storage.review_state_store.read_state(project_id, "review-package")
+    assert review_state is not None
+    assert review_state["rollup"]["package_review_prompt_consumed_at"] is not None
+
+
+def test_first_child_ask_turn_uses_child_activation_prompt_once(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient(response_text="Ask response")
+    service = _make_service(storage, client)
+    _add_child(
+        storage,
+        project_id,
+        root_id,
+        node_id="child-a",
+        title="Child A",
+        description="Finish the first slice.",
+        status="done",
+    )
+    _add_child(
+        storage,
+        project_id,
+        root_id,
+        node_id="child-b",
+        title="Child B",
+        description="Finish the second slice.",
+        status="ready",
+    )
+    _add_review_node(storage, project_id, root_id, "review-child")
+    storage.review_state_store.write_state(
+        project_id,
+        "review-child",
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:baseline",
+                    "summary": None,
+                    "source_node_id": None,
+                    "accepted_at": iso_now(),
+                },
+                {
+                    "label": "K1",
+                    "sha": "sha256:child-a",
+                    "summary": "Child A delivered the first milestone.",
+                    "source_node_id": "child-a",
+                    "accepted_at": iso_now(),
+                },
+            ],
+            "rollup": {"status": "pending", "summary": None, "sha": None, "accepted_at": None},
+            "pending_siblings": [],
+        },
+    )
+
+    service.create_message(project_id, "child-b", "Start shaping this child", thread_role="ask_planning")
+    _wait_for_turn_role(service, project_id, "child-b", "ask_planning")
+
+    first_prompt = client.turns_run[-1]
+    assert "Child activation context:" in first_prompt
+    assert "- Assignment: Child B" in first_prompt
+    assert "- Objective: Finish the second slice." in first_prompt
+    assert "Prior accepted checkpoints:" in first_prompt
+    assert "Child A delivered the first milestone." in first_prompt
+
+    service.create_message(project_id, "child-b", "Another ask turn", thread_role="ask_planning")
+    _wait_for_turn_role(service, project_id, "child-b", "ask_planning")
+
+    second_prompt = client.turns_run[-1]
+    assert "Child activation context:" not in second_prompt
+    assert "Prior accepted checkpoints:" not in second_prompt
 
 
 def test_background_turn_checkpoints_partial_content(storage, workspace_root, monkeypatch):

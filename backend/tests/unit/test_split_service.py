@@ -12,17 +12,20 @@ from backend.services.node_detail_service import NodeDetailService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
 from backend.services.split_service import SplitService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
 
 
 class FakeCodexClient:
-    def __init__(self, payloads: list[dict] | None = None) -> None:
+    def __init__(self, payloads: list[dict] | None = None, *, raw_json_only: bool = False) -> None:
         self.payloads = list(payloads or [])
         self.started_threads: list[str] = []
         self.resumed_threads: list[str] = []
+        self.forked_threads: list[dict[str, object]] = []
         self.turns_run: list[str] = []
         self.fail_resume = False
+        self.raw_json_only = raw_json_only
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"thread-{len(self.started_threads) + 1}"
@@ -35,10 +38,28 @@ class FakeCodexClient:
             raise CodexTransportError("thread not found", "not_found")
         return {"thread_id": thread_id}
 
+    def fork_thread(self, source_thread_id: str, **kwargs: object) -> dict[str, str]:
+        thread_id = f"fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(
+            {
+                "thread_id": thread_id,
+                "source_thread_id": source_thread_id,
+                **kwargs,
+            }
+        )
+        return {"thread_id": thread_id}
+
     def run_turn_streaming(self, *_: object, **__: object) -> dict:
         if _:
             self.turns_run.append(str(_[0]))
         payload = self.payloads.pop(0)
+        if self.raw_json_only:
+            import json
+
+            return {
+                "stdout": json.dumps(payload),
+                "tool_calls": [],
+            }
         return {
             "stdout": "ok",
             "tool_calls": [
@@ -94,7 +115,21 @@ def wait_for_terminal_status(service: SplitService, project_id: str, timeout_sec
     raise AssertionError("split job did not finish in time")
 
 
-def test_split_service_creates_children_and_reuses_project_thread(
+def make_split_service(
+    storage: Storage,
+    tree_service: TreeService,
+    codex_client: FakeCodexClient,
+) -> SplitService:
+    return SplitService(
+        storage,
+        tree_service,
+        codex_client,
+        ThreadLineageService(storage, codex_client, tree_service),
+        split_timeout=5,
+    )
+
+
+def test_split_service_creates_children_and_reuses_parent_audit_thread(
     storage: Storage,
     workspace_root,
 ) -> None:
@@ -120,7 +155,7 @@ def test_split_service_creates_children_and_reuses_project_thread(
             },
         ]
     )
-    service = SplitService(storage, tree_service, fake_client, split_timeout=5)
+    service = make_split_service(storage, tree_service, fake_client)
 
     accepted = service.split_node(project_id, root_id, "workflow")
     assert accepted["status"] == "accepted"
@@ -157,20 +192,43 @@ def test_split_service_creates_children_and_reuses_project_thread(
     assert review_state["pending_siblings"][0]["materialized_node_id"] is None
     assert review_state["rollup"]["status"] == "pending"
 
-    assert storage.split_state_store.path(project_id).exists()
+    split_state = storage.split_state_store.read_state(project_id)
+    assert "thread_id" not in split_state
+    assert split_state["active_job"] is None
+    assert split_state["last_error"] is None
     assert first_child_dir.is_dir()
     assert (first_child_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == ""
-    first_thread_id = storage.split_state_store.read_state(project_id)["thread_id"]
+
+    root_audit_session = storage.chat_state_store.read_session(project_id, root_id, thread_role="audit")
+    review_audit_session = storage.chat_state_store.read_session(project_id, review_node_id, thread_role="audit")
+    first_child_audit_session = storage.chat_state_store.read_session(
+        project_id,
+        first_child_id,
+        thread_role="audit",
+    )
+    root_audit_thread_id = root_audit_session["thread_id"]
+    first_child_audit_thread_id = first_child_audit_session["thread_id"]
+
+    assert root_audit_thread_id is not None
+    assert review_audit_session["fork_reason"] == "review_bootstrap"
+    assert review_audit_session["forked_from_node_id"] == root_id
+    assert first_child_audit_session["fork_reason"] == "child_activation"
+    assert first_child_audit_session["forked_from_node_id"] == review_node_id
 
     make_node_split_ready(storage, tree_service, project_id, first_child_id)
     accepted_second = service.split_node(project_id, first_child_id, "phase_breakdown")
     assert accepted_second["status"] == "accepted"
     second_terminal = wait_for_terminal_status(service, project_id)
     assert second_terminal["status"] == "idle"
-    second_thread_id = storage.split_state_store.read_state(project_id)["thread_id"]
 
-    assert first_thread_id == second_thread_id
-    assert fake_client.resumed_threads == [first_thread_id]
+    second_root_audit_session = storage.chat_state_store.read_session(
+        project_id,
+        first_child_id,
+        thread_role="audit",
+    )
+    assert second_root_audit_session["thread_id"] == first_child_audit_thread_id
+    assert root_audit_thread_id in fake_client.resumed_threads
+    assert first_child_audit_thread_id in fake_client.resumed_threads
 
 
 def test_split_service_rejects_nodes_with_existing_children(
@@ -193,7 +251,7 @@ def test_split_service_rejects_nodes_with_existing_children(
             }
         ]
     )
-    service = SplitService(storage, tree_service, fake_client, split_timeout=5)
+    service = make_split_service(storage, tree_service, fake_client)
 
     service.split_node(project_id, root_id, "workflow")
     terminal = wait_for_terminal_status(service, project_id)
@@ -229,22 +287,31 @@ def test_split_service_recreates_thread_when_resume_fails(
             },
         ]
     )
-    service = SplitService(storage, tree_service, fake_client, split_timeout=5)
+    service = make_split_service(storage, tree_service, fake_client)
 
     service.split_node(project_id, root_id, "workflow")
     wait_for_terminal_status(service, project_id)
-    first_thread_id = storage.split_state_store.read_state(project_id)["thread_id"]
+    first_child_id = storage.project_store.load_snapshot(project_id)["tree_state"]["active_node_id"]
+    first_child_audit = storage.chat_state_store.read_session(
+        project_id,
+        first_child_id,
+        thread_role="audit",
+    )
+    first_thread_id = first_child_audit["thread_id"]
 
     fake_client.fail_resume = True
-    current_snapshot = storage.project_store.load_snapshot(project_id)
-    first_child_id = current_snapshot["tree_state"]["active_node_id"]
     make_node_split_ready(storage, tree_service, project_id, first_child_id)
     service.split_node(project_id, first_child_id, "workflow")
     wait_for_terminal_status(service, project_id)
-    second_thread_id = storage.split_state_store.read_state(project_id)["thread_id"]
+    second_child_audit = storage.chat_state_store.read_session(
+        project_id,
+        first_child_id,
+        thread_role="audit",
+    )
+    second_thread_id = second_child_audit["thread_id"]
 
     assert first_thread_id != second_thread_id
-    assert fake_client.started_threads == ["thread-1", "thread-2"]
+    assert len(fake_client.forked_threads) >= 3
 
 
 def test_split_service_uses_frame_context_not_spec_context(
@@ -283,7 +350,7 @@ def test_split_service_uses_frame_context_not_spec_context(
             }
         ]
     )
-    service = SplitService(storage, tree_service, fake_client, split_timeout=5)
+    service = make_split_service(storage, tree_service, fake_client)
 
     service.split_node(project_id, root_id, "workflow")
     wait_for_terminal_status(service, project_id)
@@ -303,7 +370,7 @@ def test_split_service_rejects_when_frame_is_not_confirmed(
     snapshot = create_project(project_service, str(workspace_root))
     project_id = snapshot["project"]["id"]
     root_id = snapshot["tree_state"]["root_node_id"]
-    service = SplitService(storage, TreeService(), FakeCodexClient(payloads=[]), split_timeout=5)
+    service = make_split_service(storage, TreeService(), FakeCodexClient(payloads=[]))
 
     with pytest.raises(SplitNotAllowed, match="frame is confirmed"):
         service.split_node(project_id, root_id, "workflow")
@@ -330,7 +397,7 @@ def test_split_service_rejects_when_clarify_questions_remain(
     detail_service.bump_frame_revision(project_id, root_id)
     state = detail_service.confirm_frame(project_id, root_id)
     assert state["active_step"] == "clarify"
-    service = SplitService(storage, tree_service, FakeCodexClient(payloads=[]), split_timeout=5)
+    service = make_split_service(storage, tree_service, FakeCodexClient(payloads=[]))
 
     with pytest.raises(SplitNotAllowed, match="no remaining clarify questions"):
         service.split_node(project_id, root_id, "workflow")
@@ -364,7 +431,7 @@ def test_split_service_rejects_when_frame_needs_reconfirm(
     state = detail_service.apply_clarify_to_frame(project_id, root_id)
     assert state["active_step"] == "frame"
     assert state["frame_needs_reconfirm"] is True
-    service = SplitService(storage, tree_service, FakeCodexClient(payloads=[]), split_timeout=5)
+    service = make_split_service(storage, tree_service, FakeCodexClient(payloads=[]))
 
     with pytest.raises(SplitNotAllowed, match="re-confirmed"):
         service.split_node(project_id, root_id, "workflow")
@@ -378,12 +445,11 @@ def test_split_status_marks_stale_jobs_as_failed(
     snapshot = create_project(project_service, str(workspace_root))
     project_id = snapshot["project"]["id"]
     root_id = snapshot["tree_state"]["root_node_id"]
-    service = SplitService(storage, TreeService(), FakeCodexClient(), split_timeout=5)
+    service = make_split_service(storage, TreeService(), FakeCodexClient())
 
     storage.split_state_store.write_state(
         project_id,
         {
-            "thread_id": "thread-1",
             "active_job": {
                 "job_id": "split_stale",
                 "node_id": root_id,
@@ -398,3 +464,35 @@ def test_split_status_marks_stale_jobs_as_failed(
 
     assert status["status"] == "failed"
     assert "server restarted" in str(status["error"]).lower()
+
+
+def test_split_service_accepts_raw_json_stdout_fallback_on_legacy_audit_threads(
+    storage: Storage,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    make_node_split_ready(storage, tree_service, project_id, root_id)
+    fake_client = FakeCodexClient(
+        payloads=[
+            {
+                "subtasks": [
+                    {"id": "S1", "title": "Prep", "objective": "Prepare the flow.", "why_now": "It starts the work."},
+                    {"id": "S2", "title": "Finish", "objective": "Complete the flow.", "why_now": "It depends on prep."},
+                ]
+            }
+        ],
+        raw_json_only=True,
+    )
+    service = make_split_service(storage, tree_service, fake_client)
+
+    service.split_node(project_id, root_id, "workflow")
+    terminal = wait_for_terminal_status(service, project_id)
+
+    assert terminal["status"] == "idle"
+    persisted = storage.project_store.load_snapshot(project_id)
+    root = persisted["tree_state"]["node_index"][root_id]
+    assert len(root["child_ids"]) == 1

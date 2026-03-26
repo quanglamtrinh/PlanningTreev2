@@ -6,7 +6,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from backend.ai.ask_thread_config import build_ask_planning_thread_config
-from backend.ai.chat_prompt_builder import build_chat_prompt, build_local_review_prompt
+from backend.ai.chat_prompt_builder import (
+    build_chat_prompt,
+    build_child_activation_prompt,
+    build_local_review_prompt,
+    build_package_review_prompt,
+)
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.ai.part_accumulator import PartAccumulator
 from backend.errors.app_errors import (
@@ -16,7 +21,7 @@ from backend.errors.app_errors import (
     NodeNotFound,
     ThreadReadOnly,
 )
-from backend.services.execution_gating import audit_writable
+from backend.services.execution_gating import audit_writable, package_audit_ready
 from backend.services.thread_seed_service import ensure_thread_seeded_session
 from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
@@ -339,9 +344,10 @@ class ChatService:
                 thread_role=thread_role,
             )
 
-            prompt, used_local_review_prompt = self._build_prompt_for_turn(
+            prompt, boundary_prompt_kind = self._build_prompt_for_turn(
                 project_id=project_id,
                 node_id=node_id,
+                turn_id=turn_id,
                 thread_role=thread_role,
                 snapshot=snapshot,
                 node=node,
@@ -374,15 +380,29 @@ class ChatService:
                 status="completed",
                 error=None,
                 thread_id=thread_id,
-                clear_active_turn=True,
+                clear_active_turn=False,
                 parts=final_parts,
                 items=final_items,
                 thread_role=thread_role,
             )
 
             if persisted:
-                if used_local_review_prompt and thread_role == "audit":
-                    self._mark_local_review_prompt_consumed(project_id, node_id)
+                if boundary_prompt_kind == "local_review" and thread_role == "audit":
+                    try:
+                        self._mark_local_review_prompt_consumed(project_id, node_id)
+                    except Exception:
+                        logger.debug("Failed to consume local review prompt marker", exc_info=True)
+                elif boundary_prompt_kind == "package_review" and thread_role == "audit":
+                    try:
+                        self._mark_package_review_prompt_consumed(project_id, node_id)
+                    except Exception:
+                        logger.debug("Failed to consume package review prompt marker", exc_info=True)
+                self._clear_active_turn(
+                    project_id,
+                    node_id,
+                    turn_id,
+                    thread_role=thread_role,
+                )
                 self._chat_event_broker.publish(
                     project_id,
                     node_id,
@@ -581,15 +601,35 @@ class ChatService:
         *,
         project_id: str,
         node_id: str,
+        turn_id: str,
         thread_role: str,
         snapshot: dict[str, Any],
         node: dict[str, Any] | None,
         node_by_id: dict[str, dict[str, Any]],
         user_content: str,
-    ) -> tuple[str, bool]:
-        if thread_role == "audit" and self._local_review_prompt_is_open(project_id, node_id):
-            return build_local_review_prompt(self._storage, project_id, node_id, user_content), True
-        return build_chat_prompt(snapshot, node, node_by_id, user_content), False
+    ) -> tuple[str, str | None]:
+        if thread_role == "audit":
+            if self._package_review_prompt_is_open(project_id, node_id, node):
+                return build_package_review_prompt(
+                    self._storage,
+                    project_id,
+                    node_id,
+                    user_content,
+                ), "package_review"
+            if self._local_review_prompt_is_open(project_id, node_id):
+                return build_local_review_prompt(self._storage, project_id, node_id, user_content), "local_review"
+        if thread_role == "ask_planning":
+            child_activation_prompt = self._build_child_activation_prompt_if_needed(
+                project_id=project_id,
+                node_id=node_id,
+                turn_id=turn_id,
+                node=node,
+                node_by_id=node_by_id,
+                user_content=user_content,
+            )
+            if child_activation_prompt is not None:
+                return child_activation_prompt, "child_activation"
+        return build_chat_prompt(snapshot, node, node_by_id, user_content), None
 
     def _local_review_prompt_is_open(self, project_id: str, node_id: str) -> bool:
         exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
@@ -611,6 +651,92 @@ class ChatService:
                 return
             exec_state["local_review_prompt_consumed_at"] = iso_now()
             self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
+
+    def _package_review_prompt_is_open(
+        self,
+        project_id: str,
+        node_id: str,
+        node: dict[str, Any] | None,
+    ) -> bool:
+        if not isinstance(node, dict):
+            return False
+        review_node_id = str(node.get("review_node_id") or "").strip()
+        if not review_node_id:
+            return False
+        review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
+        if not isinstance(review_state, dict):
+            return False
+        if not package_audit_ready(self._storage, project_id, node, review_state):
+            return False
+        rollup = review_state.get("rollup", {})
+        if not isinstance(rollup, dict):
+            return False
+        started_at = str(rollup.get("package_review_started_at") or "").strip()
+        consumed_at = str(rollup.get("package_review_prompt_consumed_at") or "").strip()
+        return rollup.get("status") == "accepted" and bool(started_at) and not consumed_at
+
+    def _mark_package_review_prompt_consumed(self, project_id: str, node_id: str) -> None:
+        with self._storage.project_lock(project_id):
+            snapshot = self._storage.project_store.load_snapshot(project_id)
+            node = self._require_node_from_snapshot(snapshot, node_id)
+            review_node_id = str(node.get("review_node_id") or "").strip()
+            if not review_node_id:
+                return
+            self._storage.review_state_store.mark_package_review_prompt_consumed(
+                project_id,
+                review_node_id,
+            )
+
+    def _build_child_activation_prompt_if_needed(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        turn_id: str,
+        node: dict[str, Any] | None,
+        node_by_id: dict[str, dict[str, Any]],
+        user_content: str,
+    ) -> str | None:
+        if not isinstance(node, dict):
+            return None
+        parent_id = str(node.get("parent_id") or "").strip()
+        if not parent_id:
+            return None
+        parent = node_by_id.get(parent_id)
+        if not isinstance(parent, dict):
+            return None
+        review_node_id = str(parent.get("review_node_id") or "").strip()
+        if not review_node_id:
+            return None
+        session = self._storage.chat_state_store.read_session(
+            project_id,
+            node_id,
+            thread_role="ask_planning",
+        )
+        if not self._ask_session_is_first_user_turn(session, turn_id):
+            return None
+        return build_child_activation_prompt(
+            self._storage,
+            project_id,
+            node_id,
+            review_node_id,
+            user_content,
+        )
+
+    def _ask_session_is_first_user_turn(
+        self,
+        session: dict[str, Any],
+        current_turn_id: str,
+    ) -> bool:
+        for message in session.get("messages", []):
+            if not isinstance(message, dict):
+                continue
+            if str(message.get("role") or "").strip() == "system":
+                continue
+            if str(message.get("turn_id") or "").strip() == current_turn_id:
+                continue
+            return False
+        return True
 
     def _check_thread_writable(self, project_id: str, node_id: str, thread_role: str) -> None:
         """Enforce read-only rules per thread-state-model.md."""
@@ -777,6 +903,26 @@ class ChatService:
             if clear_active_turn:
                 session["active_turn_id"] = None
 
+            self._storage.chat_state_store.write_session(
+                project_id, node_id, session, thread_role=thread_role
+            )
+            return True
+
+    def _clear_active_turn(
+        self,
+        project_id: str,
+        node_id: str,
+        turn_id: str,
+        *,
+        thread_role: str = "ask_planning",
+    ) -> bool:
+        with self._storage.project_lock(project_id):
+            session = self._storage.chat_state_store.read_session(
+                project_id, node_id, thread_role=thread_role
+            )
+            if str(session.get("active_turn_id") or "") != turn_id:
+                return False
+            session["active_turn_id"] = None
             self._storage.chat_state_store.write_session(
                 project_id, node_id, session, thread_role=thread_role
             )

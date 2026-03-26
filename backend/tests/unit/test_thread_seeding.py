@@ -200,7 +200,7 @@ def test_audit_session_seeds_system_context_for_ready_child(
     assert "Authentication" in session["messages"][2]["content"]
 
 
-def test_ask_planning_session_seeds_checkpoint_handoff_and_reseeds_after_reset(
+def test_ask_planning_session_starts_empty_and_stays_empty_after_reset(
     chat_service,
     storage,
     project_id,
@@ -248,24 +248,13 @@ def test_ask_planning_session_seeds_checkpoint_handoff_and_reseeds_after_reset(
 
     session = chat_service.get_session(project_id, "child-planning", thread_role="ask_planning")
 
-    assert [message["message_id"] for message in session["messages"]] == [
-        ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
-        ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
-    ]
-    assert all(message["role"] == "system" for message in session["messages"])
-    assert "Implement auth guard" in session["messages"][0]["content"]
-    assert "K1" in session["messages"][1]["content"]
-    assert "sha256:child-a" in session["messages"][1]["content"]
-    assert "Auth base completed" in session["messages"][1]["content"]
+    assert session["messages"] == []
 
     reset = chat_service.reset_session(project_id, "child-planning", thread_role="ask_planning")
     assert reset["messages"] == []
 
     reseeded = chat_service.get_session(project_id, "child-planning", thread_role="ask_planning")
-    assert [message["message_id"] for message in reseeded["messages"]] == [
-        ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
-        ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
-    ]
+    assert reseeded["messages"] == []
 
 
 def test_audit_session_does_not_seed_locked_child_before_turn(

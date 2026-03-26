@@ -12,6 +12,7 @@ from backend.services.node_detail_service import NodeDetailService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now
 from backend.storage.storage import Storage
@@ -19,10 +20,18 @@ from backend.streaming.sse_broker import ChatEventBroker
 
 
 class FakeIntegrationCodexClient:
-    def __init__(self, *, summary: str = "Integration draft summary", fail: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        summary: str = "Integration draft summary",
+        fail: bool = False,
+        fail_fork: bool = False,
+    ) -> None:
         self.summary = summary
         self.fail = fail
+        self.fail_fork = fail_fork
         self.started_threads: list[str] = []
+        self.forked_threads: list[dict[str, str]] = []
         self.prompts: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
@@ -31,6 +40,18 @@ class FakeIntegrationCodexClient:
         return {"thread_id": thread_id}
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        if self.fail_fork:
+            raise RuntimeError("fork failed")
+        thread_id = f"review-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(
+            {
+                "thread_id": thread_id,
+                "source_thread_id": source_thread_id,
+            }
+        )
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
@@ -126,10 +147,14 @@ def make_review_service(
     *,
     codex_client: FakeIntegrationCodexClient | None = None,
 ) -> ReviewService:
+    thread_lineage_service = None
+    if codex_client is not None:
+        thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
     return ReviewService(
         storage,
         tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         chat_event_broker=ChatEventBroker(),
         chat_timeout=5,
     )
@@ -486,6 +511,88 @@ def test_accept_local_review_activates_next_sibling(
     assert materialized[0]["materialized_node_id"] == activated_id
 
 
+def test_accept_local_review_eager_forks_child_audit_from_review_audit(
+    storage: Storage,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    codex_client = FakeIntegrationCodexClient()
+    review_service = make_review_service(storage, tree_service, codex_client=codex_client)
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=3)
+    first_child_id = split_result["first_child_id"]
+    review_node_id = split_result["review_node_id"]
+
+    simulate_execution_completed(storage, project_id, first_child_id, "sha256:child1_done")
+    review_service.start_local_review(project_id, first_child_id)
+    result = review_service.accept_local_review(project_id, first_child_id, "Child 1 done.")
+
+    activated_id = result["activated_sibling_id"]
+    assert activated_id is not None
+
+    review_audit_session = storage.chat_state_store.read_session(
+        project_id,
+        review_node_id,
+        thread_role="audit",
+    )
+    child_audit_session = storage.chat_state_store.read_session(
+        project_id,
+        activated_id,
+        thread_role="audit",
+    )
+
+    assert review_audit_session["thread_id"] is not None
+    assert review_audit_session["fork_reason"] == "review_bootstrap"
+    assert child_audit_session["thread_id"] is not None
+    assert child_audit_session["fork_reason"] == "child_activation"
+    assert child_audit_session["forked_from_node_id"] == review_node_id
+    assert len(codex_client.forked_threads) >= 2
+
+
+def test_accept_local_review_keeps_checkpoint_when_child_bootstrap_fails(
+    storage: Storage,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    review_service = make_review_service(
+        storage,
+        tree_service,
+        codex_client=FakeIntegrationCodexClient(fail_fork=True),
+    )
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=3)
+    first_child_id = split_result["first_child_id"]
+    review_node_id = split_result["review_node_id"]
+
+    simulate_execution_completed(storage, project_id, first_child_id, "sha256:child1_done")
+    review_service.start_local_review(project_id, first_child_id)
+    result = review_service.accept_local_review(project_id, first_child_id, "Child 1 done.")
+
+    activated_id = result["activated_sibling_id"]
+    assert activated_id is not None
+
+    review_state = storage.review_state_store.read_state(project_id, review_node_id)
+    assert review_state is not None
+    assert review_state["checkpoints"][-1]["summary"] == "Child 1 done."
+
+    persisted = storage.project_store.load_snapshot(project_id)
+    assert persisted["tree_state"]["active_node_id"] == activated_id
+    child_audit_session = storage.chat_state_store.read_session(
+        project_id,
+        activated_id,
+        thread_role="audit",
+    )
+    assert child_audit_session["thread_id"] is None
+
+
 # ── Tests: legacy eager path ─────────────────────────────────────
 
 
@@ -740,6 +847,8 @@ def test_accept_rollup_review_sets_accepted_and_appends_to_parent_audit(
     assert review_state["rollup"]["status"] == "accepted"
     assert review_state["rollup"]["summary"] == "Integration looks good."
     assert review_state["rollup"]["sha"] == draft_sha
+    assert review_state["rollup"]["package_review_started_at"] is not None
+    assert review_state["rollup"]["package_review_prompt_consumed_at"] is None
     assert review_state["rollup"]["draft"] == {
         "summary": None,
         "sha": None,

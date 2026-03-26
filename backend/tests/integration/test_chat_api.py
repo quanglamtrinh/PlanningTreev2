@@ -263,6 +263,7 @@ def test_chat_session_honors_thread_role_query(client: TestClient, workspace_roo
 
 
 def test_audit_session_returns_system_seed_messages_for_ready_child(client: TestClient, workspace_root):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][root_id]["title"] = "Parent Task"
@@ -327,6 +328,7 @@ def test_task_node_rejects_invalid_thread_role_pair(client: TestClient, workspac
 
 
 def test_review_node_accepts_integration_thread_role(client: TestClient, workspace_root):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     review_id = _add_review_node(client, project_id, root_id)
     resp = client.get(
@@ -334,13 +336,14 @@ def test_review_node_accepts_integration_thread_role(client: TestClient, workspa
         params={"thread_role": "integration"},
     )
     assert resp.status_code == 200
-    assert resp.json()["thread_role"] == "integration"
+    assert resp.json()["thread_role"] == "audit"
 
 
 def test_integration_session_returns_system_seed_messages_when_rollup_ready(
     client: TestClient,
     workspace_root,
 ):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][root_id]["title"] = "Build auth package"
@@ -406,7 +409,7 @@ def test_integration_session_returns_system_seed_messages_when_rollup_ready(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["thread_role"] == "integration"
+    assert payload["thread_role"] == "audit"
     assert [message["role"] for message in payload["messages"]] == [
         "system",
         "system",
@@ -424,6 +427,7 @@ def test_integration_session_includes_assistant_output_after_auto_start(
     client: TestClient,
     workspace_root,
 ):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][root_id]["title"] = "Build auth package"
@@ -481,7 +485,7 @@ def test_integration_session_includes_assistant_output_after_auto_start(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["thread_role"] == "integration"
+    assert payload["thread_role"] == "audit"
     assert payload["active_turn_id"] is None
     assert payload["messages"][-1]["role"] == "assistant"
     assert payload["messages"][-1]["status"] == "completed"
@@ -494,7 +498,7 @@ def test_integration_session_includes_assistant_output_after_auto_start(
     assert review_state["rollup"]["draft"]["sha"].startswith("sha256:")
 
 
-def test_ask_planning_session_returns_checkpoint_handoff_for_child_node(
+def test_ask_planning_session_starts_empty_for_child_node(
     client: TestClient,
     workspace_root,
 ):
@@ -548,11 +552,7 @@ def test_ask_planning_session_returns_checkpoint_handoff_for_child_node(
     assert response.status_code == 200
     payload = response.json()
     assert payload["thread_role"] == "ask_planning"
-    assert [message["role"] for message in payload["messages"]] == ["system", "system"]
-    assert "Auth guard follow-up" in payload["messages"][0]["content"]
-    assert "K1" in payload["messages"][1]["content"]
-    assert "sha256:k1" in payload["messages"][1]["content"]
-    assert "Auth middleware accepted" in payload["messages"][1]["content"]
+    assert payload["messages"] == []
 
 
 def test_review_node_rejects_task_thread_role_pair(client: TestClient, workspace_root):

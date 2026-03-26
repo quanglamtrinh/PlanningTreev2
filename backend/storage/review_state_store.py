@@ -21,6 +21,8 @@ _DEFAULT_ROLLUP: dict[str, Any] = {
     "summary": None,
     "sha": None,
     "accepted_at": None,
+    "package_review_started_at": None,
+    "package_review_prompt_consumed_at": None,
     "draft": {
         "summary": None,
         "sha": None,
@@ -191,6 +193,37 @@ class ReviewStateStore:
             state["rollup"] = rollup
             return self._write_unlocked(project_id, review_node_id, state)
 
+    def open_package_review(
+        self,
+        project_id: str,
+        review_node_id: str,
+    ) -> dict[str, Any]:
+        with self._lock_registry.for_project(project_id):
+            state = self._read_unlocked(project_id, review_node_id)
+            rollup = state.get("rollup", copy.deepcopy(_DEFAULT_ROLLUP))
+            rollup["package_review_started_at"] = iso_now()
+            rollup["package_review_prompt_consumed_at"] = None
+            state["rollup"] = rollup
+            return self._write_unlocked(project_id, review_node_id, state)
+
+    def mark_package_review_prompt_consumed(
+        self,
+        project_id: str,
+        review_node_id: str,
+    ) -> dict[str, Any] | None:
+        with self._lock_registry.for_project(project_id):
+            state = self._read_unlocked(project_id, review_node_id)
+            rollup = state.get("rollup", copy.deepcopy(_DEFAULT_ROLLUP))
+            started_at = rollup.get("package_review_started_at")
+            if not isinstance(started_at, str) or not started_at.strip():
+                return None
+            consumed_at = rollup.get("package_review_prompt_consumed_at")
+            if isinstance(consumed_at, str) and consumed_at.strip():
+                return state
+            rollup["package_review_prompt_consumed_at"] = iso_now()
+            state["rollup"] = rollup
+            return self._write_unlocked(project_id, review_node_id, state)
+
     def get_next_pending_sibling(
         self, project_id: str, review_node_id: str
     ) -> dict[str, Any] | None:
@@ -296,6 +329,8 @@ class ReviewStateStore:
         summary = raw.get("summary")
         sha = raw.get("sha")
         accepted_at = raw.get("accepted_at")
+        package_review_started_at = raw.get("package_review_started_at")
+        package_review_prompt_consumed_at = raw.get("package_review_prompt_consumed_at")
         draft = raw.get("draft")
 
         return {
@@ -303,6 +338,17 @@ class ReviewStateStore:
             "summary": summary.strip() if isinstance(summary, str) and summary.strip() else None,
             "sha": sha.strip() if isinstance(sha, str) and sha.strip() else None,
             "accepted_at": accepted_at.strip() if isinstance(accepted_at, str) and accepted_at.strip() else None,
+            "package_review_started_at": (
+                package_review_started_at.strip()
+                if isinstance(package_review_started_at, str) and package_review_started_at.strip()
+                else None
+            ),
+            "package_review_prompt_consumed_at": (
+                package_review_prompt_consumed_at.strip()
+                if isinstance(package_review_prompt_consumed_at, str)
+                and package_review_prompt_consumed_at.strip()
+                else None
+            ),
             "draft": self._normalize_rollup_draft(draft),
         }
 

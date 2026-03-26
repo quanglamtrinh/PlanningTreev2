@@ -128,8 +128,6 @@ def build_thread_seed_messages(
     if not isinstance(node_index, dict):
         node_index = {}
 
-    if thread_role == "ask_planning":
-        return _build_ask_planning_seed_messages(storage, project_id, node_index, node)
     if thread_role == "audit":
         return _build_audit_seed_messages(storage, project_id, snapshot, node_index, node)
     if thread_role == "integration":
@@ -152,8 +150,6 @@ def build_system_message(message_id: str, content: str) -> dict[str, Any]:
 
 
 def _immutable_ids_for_role(thread_role: str) -> frozenset[str]:
-    if thread_role == "ask_planning":
-        return ASK_PLANNING_IMMUTABLE_MESSAGE_IDS
     if thread_role == "audit":
         return AUDIT_IMMUTABLE_MESSAGE_IDS
     if thread_role == "integration":

@@ -13,6 +13,7 @@ from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
 from backend.services.spec_generation_service import SpecGenerationService
 from backend.services.split_service import SplitService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.streaming.sse_broker import ChatEventBroker
 
 
@@ -165,7 +166,14 @@ def test_generate_spec_blocked_when_frozen(storage, tree_service, project_id, ro
 
 def test_split_blocked_when_frozen(storage, tree_service, project_id, root_node_id):
     _freeze_node(storage, project_id, root_node_id)
-    service = SplitService(storage, tree_service, MagicMock(), split_timeout=5)
+    codex_client = MagicMock()
+    service = SplitService(
+        storage,
+        tree_service,
+        codex_client,
+        ThreadLineageService(storage, codex_client, tree_service),
+        split_timeout=5,
+    )
 
     with pytest.raises(ShapingFrozen, match="split"):
         service.split_node(project_id, root_node_id, "workflow")

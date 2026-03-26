@@ -1,6 +1,6 @@
 # Fork-Based Thread Lineage Migration Plan
 
-Status: Phase 4 complete, Phase 5 next. This document is the working implementation plan that translates the fork-based lineage specs into a seven-phase rollout that can be executed incrementally.
+Status: Phase 5 complete, Phase 6 next. This document is the working implementation plan that translates the fork-based lineage specs into a seven-phase rollout that can be executed incrementally.
 
 Primary specs:
 
@@ -13,10 +13,13 @@ Primary specs:
 - Phase 2 completed on 2026-03-25
 - Phase 3 completed on 2026-03-25
 - Phase 4 completed on 2026-03-25
-- Phase 5 / PR 5 is the next intended implementation slice
+- Phase 5 completed on 2026-03-25
+- Phase 6 / PR 6 is the next intended implementation slice
 - Phase 3 verification completed with targeted backend unit tests for ask bootstrap, ask seeding retention, generation reuse of `ask_planning`, plus targeted chat API smoke coverage
-- Phase 4 verification completed with `py_compile` on touched backend/test files plus manual service-layer smoke for execution fork lineage, first-turn-only local review injection, and failed-first-turn retry retention; targeted pytest remains blocked on this workstation by temp-directory permission issues
+- Phase 4 verification completed with `py_compile` on touched backend/test files plus manual service-layer smoke for execution fork lineage, first-turn-only local review injection, and failed-first-turn retry retention
+- Phase 5 verification completed with `py_compile` plus combined unit/integration pytest coverage across split/review/chat touched areas: `135 passed`
 - Post-review cleanup aligned the execution integration-test fake with `fork_thread()` and corrected Phase 4 historical docs so they describe the boundary markers as living in `execution_state.json`
+- `docs/handoff/fork-based-thread-lineage/phase-5-handoff.md` now serves as the historical brief for the completed PR 5 slice
 - `docs/handoff/fork-based-thread-lineage/phase-4-handoff.md` now serves as the historical brief for the completed PR 4 slice
 - `docs/handoff/fork-based-thread-lineage/phase-3-handoff.md` now serves as the historical brief for the completed PR 3 slice
 
@@ -198,6 +201,14 @@ Rollback:
 
 ### Phase 5 / PR 5: Split migration, true review/child forks, and child/package first-turn injection
 
+Status:
+
+- completed on 2026-03-25
+- split now resolves `parent.audit` through `ThreadLineageService`
+- split/review now eagerly bootstrap review/child audit lineage best-effort after persistence
+- package-review and child-activation prompts now inject only on the first relevant successful turn
+- temporary ask seeding has been removed
+
 Goal:
 
 - move split execution onto `parent.audit`
@@ -328,4 +339,4 @@ After each phase:
 
 Use `docs/handoff/fork-based-thread-lineage/progress.yaml` as the implementation tracker for phase status, notes, blockers, and acceptance progress. Update it at the start and end of each phase PR.
 
-Use `docs/handoff/fork-based-thread-lineage/phase-4-handoff.md` as the active continuation artifact for the next implementation slice. Keep older phase handoff docs as historical implementation records.
+Use `docs/handoff/fork-based-thread-lineage/phase-5-handoff.md` as the active continuation artifact for the next implementation slice. Keep older phase handoff docs as historical implementation records.
