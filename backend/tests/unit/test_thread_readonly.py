@@ -83,24 +83,25 @@ def test_execution_thread_always_readonly(chat_service, project_id, root_node_id
         chat_service.create_message(project_id, root_node_id, "test", thread_role="execution")
 
 
-def test_integration_thread_always_readonly(chat_service, project_id, review_node_id):
-    with pytest.raises(ThreadReadOnly, match="integration"):
-        chat_service.create_message(project_id, review_node_id, "test", thread_role="integration")
+def test_review_audit_thread_always_readonly(chat_service, project_id, review_node_id):
+    with pytest.raises(ThreadReadOnly, match="audit"):
+        chat_service.create_message(project_id, review_node_id, "test", thread_role="audit")
 
 
 def test_task_node_rejects_integration_thread_role(chat_service, project_id, root_node_id):
-    with pytest.raises(InvalidRequest, match="not valid for node_kind"):
+    with pytest.raises(InvalidRequest, match="Invalid thread_role"):
         chat_service.get_session(project_id, root_node_id, thread_role="integration")
 
 
-@pytest.mark.parametrize("thread_role", ["ask_planning", "audit", "execution"])
-def test_review_node_rejects_task_thread_roles(chat_service, project_id, review_node_id, thread_role):
-    with pytest.raises(InvalidRequest, match="not valid for node_kind"):
+@pytest.mark.parametrize("thread_role", ["ask_planning", "execution", "integration"])
+def test_review_node_rejects_non_audit_thread_roles(chat_service, project_id, review_node_id, thread_role):
+    match = "Invalid thread_role" if thread_role == "integration" else "not valid for node_kind"
+    with pytest.raises(InvalidRequest, match=match):
         chat_service.get_session(project_id, review_node_id, thread_role=thread_role)
 
 
-def test_review_node_allows_integration_session(chat_service, project_id, review_node_id):
-    session = chat_service.get_session(project_id, review_node_id, thread_role="integration")
+def test_review_node_allows_audit_session(chat_service, project_id, review_node_id):
+    session = chat_service.get_session(project_id, review_node_id, thread_role="audit")
     assert session["thread_role"] == "audit"
 
 

@@ -11,16 +11,9 @@ from backend.services.execution_gating import AUDIT_FRAME_RECORD_MESSAGE_ID
 from backend.services.project_service import ProjectService
 from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.thread_seed_service import (
-    ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
-    ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
     AUDIT_SEED_CHECKPOINT_MESSAGE_ID,
     AUDIT_SEED_PARENT_CONTEXT_MESSAGE_ID,
     AUDIT_SEED_SPLIT_ITEM_MESSAGE_ID,
-    INTEGRATION_SEED_CHECKPOINTS_MESSAGE_ID,
-    INTEGRATION_SEED_CHILD_REVIEWS_MESSAGE_ID,
-    INTEGRATION_SEED_GOAL_MESSAGE_ID,
-    INTEGRATION_SEED_PARENT_FRAME_MESSAGE_ID,
-    INTEGRATION_SEED_SPLIT_PACKAGE_MESSAGE_ID,
 )
 from backend.services.tree_service import TreeService
 from backend.streaming.sse_broker import ChatEventBroker
@@ -355,7 +348,7 @@ def test_audit_session_prepends_seed_messages_and_migrates_canonical_records_to_
     assert session["messages"][4]["message_id"] == "user-review"
 
 
-def test_integration_session_seeds_system_context_when_rollup_ready(
+def test_review_audit_session_stays_empty_when_rollup_ready(
     chat_service,
     storage,
     project_id,
@@ -423,23 +416,12 @@ def test_integration_session_seeds_system_context_when_rollup_ready(
         "# Parent Frame\nShip the authentication package.\n",
     )
 
-    session = chat_service.get_session(project_id, "review-ready", thread_role="integration")
+    session = chat_service.get_session(project_id, "review-ready", thread_role="audit")
 
-    assert [message["message_id"] for message in session["messages"]] == [
-        INTEGRATION_SEED_PARENT_FRAME_MESSAGE_ID,
-        INTEGRATION_SEED_SPLIT_PACKAGE_MESSAGE_ID,
-        INTEGRATION_SEED_CHECKPOINTS_MESSAGE_ID,
-        INTEGRATION_SEED_CHILD_REVIEWS_MESSAGE_ID,
-        INTEGRATION_SEED_GOAL_MESSAGE_ID,
-    ]
-    assert all(message["role"] == "system" for message in session["messages"])
-    assert "Ship the authentication package" in session["messages"][0]["content"]
-    assert "Auth guard" in session["messages"][1]["content"]
-    assert "K2" in session["messages"][2]["content"]
-    assert "Session parser accepted" in session["messages"][3]["content"]
+    assert session["messages"] == []
 
 
-def test_integration_session_stays_empty_before_rollup_ready(
+def test_review_audit_session_stays_empty_before_rollup_ready(
     chat_service,
     storage,
     project_id,
@@ -456,6 +438,6 @@ def test_integration_session_stays_empty_before_rollup_ready(
         },
     )
 
-    session = chat_service.get_session(project_id, "review-pending", thread_role="integration")
+    session = chat_service.get_session(project_id, "review-pending", thread_role="audit")
 
     assert session["messages"] == []

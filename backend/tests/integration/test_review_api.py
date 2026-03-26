@@ -54,6 +54,12 @@ class IntegrationRollupCodexClient:
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
         return {"thread_id": thread_id}
 
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        del source_thread_id
+        thread_id = f"integration-thread-{len(self.started_threads) + 1}"
+        self.started_threads.append(thread_id)
+        return {"thread_id": thread_id}
+
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
         del prompt
         payload = json.dumps({"summary": self.summary})
@@ -207,7 +213,7 @@ def _wait_for_integration_terminal(
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         session = client.app.state.storage.chat_state_store.read_session(
-            project_id, review_node_id, thread_role="integration"
+            project_id, review_node_id, thread_role="audit"
         )
         if not session.get("active_turn_id"):
             messages = session.get("messages", [])
@@ -545,6 +551,7 @@ def test_accept_rollup_review_route_happy_path(client: TestClient, workspace_roo
 
     # Wire rollup codex and start integration
     client.app.state.review_service._codex_client = rollup_codex
+    client.app.state.thread_lineage_service._codex_client = rollup_codex
     client.app.state.review_service.start_integration_rollup(project_id, review_id)
 
     # Wait for integration to finish and produce a draft

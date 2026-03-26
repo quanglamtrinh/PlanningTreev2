@@ -24,8 +24,6 @@ function isThreadComposerReadOnly(
       return true
     case 'audit':
       return !auditWritable
-    case 'integration':
-      return true
     default:
       return true
   }
@@ -33,7 +31,7 @@ function isThreadComposerReadOnly(
 
 function resolveThreadRole(isReviewNode: boolean, threadTab: ThreadTab): ThreadRole {
   if (isReviewNode) {
-    return 'integration'
+    return 'audit'
   }
   return threadTab === 'ask' ? 'ask_planning' : threadTab
 }
@@ -229,9 +227,9 @@ export function BreadcrumbChatView() {
       <div className={styles.threadPane} data-testid="breadcrumb-thread-pane">
         <div className={styles.threadSurface}>
           {isReviewNode ? (
-            <div className={styles.threadTabBar} data-testid="breadcrumb-integration-header">
-              <span className={`${styles.threadTab} ${styles.threadTabActive}`} data-testid="breadcrumb-thread-tab-integration">
-                Integration
+            <div className={styles.threadTabBar} data-testid="breadcrumb-review-audit-header">
+              <span className={`${styles.threadTab} ${styles.threadTabActive}`} data-testid="breadcrumb-thread-tab-review-audit">
+                Review Audit
               </span>
             </div>
           ) : (

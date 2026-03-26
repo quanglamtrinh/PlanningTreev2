@@ -9,8 +9,7 @@ from uuid import uuid4
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.ai.integration_rollup_prompt_builder import (
-    build_integration_rollup_base_instructions,
-    build_integration_rollup_prompt,
+    build_rollup_prompt_from_storage,
     extract_integration_rollup_summary,
     render_integration_rollup_message,
 )
@@ -21,7 +20,6 @@ from backend.errors.app_errors import (
 )
 from backend.services import planningtree_workspace
 from backend.services.review_sibling_manifest import derive_review_sibling_manifest
-from backend.services.thread_seed_service import ensure_thread_seeded_session
 from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.services.workspace_sha import compute_workspace_sha
@@ -218,7 +216,6 @@ class ReviewService:
 
         workspace_root: str | None
         prompt: str
-        existing_thread_id: str | None
 
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
@@ -244,27 +241,16 @@ class ReviewService:
             session = self._storage.chat_state_store.read_session(
                 project_id,
                 review_node_id,
-                thread_role="integration",
-            )
-            session, _ = ensure_thread_seeded_session(
-                self._storage,
-                project_id=project_id,
-                node_id=review_node_id,
-                thread_role="integration",
-                snapshot=snapshot,
-                node=review_node,
-                session=session,
+                thread_role="audit",
             )
             if session.get("active_turn_id"):
                 return False
 
-            system_messages = [
-                message
-                for message in session.get("messages", [])
-                if isinstance(message, dict) and message.get("role") == "system"
-            ]
-            prompt = build_integration_rollup_prompt(system_messages)
-            existing_thread_id = str(session.get("thread_id") or "").strip() or None
+            prompt = build_rollup_prompt_from_storage(
+                self._storage,
+                project_id,
+                review_node_id,
+            )
             workspace_root = self._workspace_root_from_snapshot(snapshot)
 
             session["active_turn_id"] = turn_id
@@ -273,7 +259,7 @@ class ReviewService:
                 project_id,
                 review_node_id,
                 session,
-                thread_role="integration",
+                thread_role="audit",
             )
 
         self._register_live_turn(project_id, review_node_id, turn_id)
@@ -285,7 +271,7 @@ class ReviewService:
                 "assistant_message": assistant_message,
                 "active_turn_id": turn_id,
             },
-            thread_role="integration",
+            thread_role="audit",
         )
 
         threading.Thread(
@@ -295,7 +281,6 @@ class ReviewService:
                 "review_node_id": review_node_id,
                 "turn_id": turn_id,
                 "assistant_message_id": assistant_message_id,
-                "existing_thread_id": existing_thread_id,
                 "prompt": prompt,
                 "workspace_root": workspace_root,
             },
@@ -320,7 +305,7 @@ class ReviewService:
             session = self._storage.chat_state_store.read_session(
                 project_id,
                 review_node_id,
-                thread_role="integration",
+                thread_role="audit",
             )
             if session.get("active_turn_id"):
                 raise ReviewNotAllowed(
@@ -487,11 +472,10 @@ class ReviewService:
         review_node_id: str,
         turn_id: str,
         assistant_message_id: str,
-        existing_thread_id: str | None,
         prompt: str,
         workspace_root: str | None,
     ) -> None:
-        thread_id = existing_thread_id
+        thread_id: str | None = None
         draft_lock = threading.Lock()
         accumulator = PartAccumulator()
         last_checkpoint_at = time.monotonic()
@@ -575,7 +559,11 @@ class ReviewService:
             )
 
         try:
-            thread_id = self._ensure_integration_thread(existing_thread_id, workspace_root)
+            thread_id = self._ensure_integration_thread(
+                project_id,
+                review_node_id,
+                workspace_root,
+            )
             self._persist_thread_id(
                 project_id=project_id,
                 node_id=review_node_id,
@@ -689,31 +677,24 @@ class ReviewService:
     # -- Persistence Helpers -----------------------------------------
 
     def _ensure_integration_thread(
-        self, existing_thread_id: str | None, workspace_root: str | None
+        self,
+        project_id: str,
+        review_node_id: str,
+        workspace_root: str | None,
     ) -> str:
-        if isinstance(existing_thread_id, str) and existing_thread_id.strip():
-            try:
-                self._codex_client.resume_thread(
-                    existing_thread_id,
-                    cwd=workspace_root,
-                    timeout_sec=15,
-                )
-                return existing_thread_id.strip()
-            except CodexTransportError as exc:
-                if not self._is_missing_thread_error(exc):
-                    raise ReviewNotAllowed(f"Integration backend unavailable: {exc}") from exc
-
+        if self._thread_lineage_service is None:
+            raise ReviewNotAllowed("Review audit lineage service is unavailable.")
         try:
-            response = self._codex_client.start_thread(
-                base_instructions=build_integration_rollup_base_instructions(),
-                dynamic_tools=[],
-                cwd=workspace_root,
-                timeout_sec=30,
+            session = self._thread_lineage_service.resume_or_rebuild_session(
+                project_id,
+                review_node_id,
+                "audit",
+                workspace_root,
             )
-        except CodexTransportError as exc:
+        except (CodexTransportError, ValueError) as exc:
             raise ReviewNotAllowed(f"Integration backend unavailable: {exc}") from exc
 
-        thread_id = str(response.get("thread_id") or "").strip()
+        thread_id = str(session.get("thread_id") or "").strip()
         if not thread_id:
             raise ReviewNotAllowed(
                 "Integration thread start did not return a thread id."
@@ -731,7 +712,7 @@ class ReviewService:
     ) -> bool:
         with self._storage.project_lock(project_id):
             session = self._storage.chat_state_store.read_session(
-                project_id, node_id, thread_role="integration"
+                project_id, node_id, thread_role="audit"
             )
             if str(session.get("active_turn_id") or "") != turn_id:
                 return False
@@ -739,7 +720,7 @@ class ReviewService:
                 return False
             session["thread_id"] = thread_id
             self._storage.chat_state_store.write_session(
-                project_id, node_id, session, thread_role="integration"
+                project_id, node_id, session, thread_role="audit"
             )
             return True
 
@@ -760,7 +741,7 @@ class ReviewService:
     ) -> bool:
         with self._storage.project_lock(project_id):
             session = self._storage.chat_state_store.read_session(
-                project_id, node_id, thread_role="integration"
+                project_id, node_id, thread_role="audit"
             )
             if str(session.get("active_turn_id") or "") != turn_id:
                 return False
@@ -783,7 +764,7 @@ class ReviewService:
                 session["active_turn_id"] = None
 
             self._storage.chat_state_store.write_session(
-                project_id, node_id, session, thread_role="integration"
+                project_id, node_id, session, thread_role="audit"
             )
             return True
 
@@ -816,21 +797,21 @@ class ReviewService:
             project_id,
             node_id,
             event,
-            thread_role="integration",
+            thread_role="audit",
         )
 
     def _register_live_turn(self, project_id: str, node_id: str, turn_id: str) -> None:
         if self._chat_service is None:
             return
         self._chat_service.register_external_live_turn(
-            project_id, node_id, "integration", turn_id
+            project_id, node_id, "audit", turn_id
         )
 
     def _clear_live_turn(self, project_id: str, node_id: str, turn_id: str) -> None:
         if self._chat_service is None:
             return
         self._chat_service.clear_external_live_turn(
-            project_id, node_id, "integration", turn_id
+            project_id, node_id, "audit", turn_id
         )
 
     def _workspace_root_from_snapshot(self, snapshot: dict[str, Any]) -> str | None:

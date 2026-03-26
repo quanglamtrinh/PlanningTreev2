@@ -117,9 +117,9 @@ def test_normalize_defaults_missing_lineage_fields(chat_store, project_id):
     assert loaded["lineage_root_thread_id"] is None
 
 
-def test_invalid_thread_role_falls_back_to_default(chat_store, project_id):
-    session = chat_store.read_session(project_id, "node1", thread_role="invalid_role")
-    assert session["thread_role"] == "ask_planning"
+def test_invalid_thread_role_is_rejected(chat_store, project_id):
+    with pytest.raises(ValueError, match="Invalid thread role"):
+        chat_store.read_session(project_id, "node1", thread_role="invalid_role")
 
 
 def test_flat_file_migration(chat_store, project_id):
@@ -231,44 +231,15 @@ def test_integration_to_audit_migration(chat_store, project_id):
     assert json.loads(audit_path.read_text(encoding="utf-8"))["thread_role"] == "audit"
 
 
-def test_integration_alias_resolves_to_audit(chat_store, project_id):
-    session = chat_store.read_session(project_id, "review-alias", thread_role="audit")
-    session["thread_id"] = "audit-thread"
-    chat_store.write_session(project_id, "review-alias", session, thread_role="audit")
+def test_explicit_integration_role_is_rejected(chat_store, project_id):
+    with pytest.raises(ValueError, match="Invalid thread role"):
+        chat_store.read_session(project_id, "review-alias", thread_role="integration")
 
-    loaded = chat_store.read_session(project_id, "review-alias", thread_role="integration")
-    assert loaded["thread_id"] == "audit-thread"
-    assert loaded["thread_role"] == "audit"
+    with pytest.raises(ValueError, match="Invalid thread role"):
+        chat_store.write_session(project_id, "review-write", {}, thread_role="integration")
 
-
-def test_integration_write_alias(chat_store, project_id):
-    session = chat_store.read_session(project_id, "review-write", thread_role="integration")
-    session["thread_id"] = "audit-via-alias"
-    saved = chat_store.write_session(project_id, "review-write", session, thread_role="integration")
-
-    audit_path = chat_store.path(project_id, "review-write", "audit")
-    integration_path = chat_store._role_dir(project_id, "review-write") / "integration.json"
-
-    assert saved["thread_role"] == "audit"
-    assert audit_path.exists()
-    assert not integration_path.exists()
-    assert json.loads(audit_path.read_text(encoding="utf-8"))["thread_id"] == "audit-via-alias"
-
-
-def test_integration_clear_alias(chat_store, project_id):
-    session = chat_store.read_session(project_id, "review-clear", thread_role="audit")
-    session["thread_id"] = "audit-thread"
-    chat_store.write_session(project_id, "review-clear", session, thread_role="audit")
-
-    cleared = chat_store.clear_session(project_id, "review-clear", thread_role="integration")
-    audit_path = chat_store.path(project_id, "review-clear", "audit")
-    integration_path = chat_store._role_dir(project_id, "review-clear") / "integration.json"
-
-    assert cleared["thread_role"] == "audit"
-    assert cleared["thread_id"] is None
-    assert audit_path.exists()
-    assert not integration_path.exists()
-    assert json.loads(audit_path.read_text(encoding="utf-8"))["thread_id"] is None
+    with pytest.raises(ValueError, match="Invalid thread role"):
+        chat_store.clear_session(project_id, "review-clear", thread_role="integration")
 
 
 def test_migration_idempotent_when_audit_exists(chat_store, project_id):
@@ -303,7 +274,7 @@ def test_migration_idempotent_when_audit_exists(chat_store, project_id):
         encoding="utf-8",
     )
 
-    loaded = chat_store.read_session(project_id, "review-both", thread_role="integration")
+    loaded = chat_store.read_session(project_id, "review-both", thread_role="audit")
     assert loaded["thread_id"] == "audit-wins-thread"
     assert loaded["thread_role"] == "audit"
     assert integration_path.exists()

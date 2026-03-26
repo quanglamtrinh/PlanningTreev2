@@ -199,7 +199,7 @@ def _wait_for_integration_completion(
         session = client.app.state.storage.chat_state_store.read_session(
             project_id,
             review_node_id,
-            thread_role="integration",
+            thread_role="audit",
         )
         if not session.get("active_turn_id"):
             messages = session.get("messages", [])
@@ -327,19 +327,30 @@ def test_task_node_rejects_invalid_thread_role_pair(client: TestClient, workspac
     assert resp.json()["code"] == "invalid_request"
 
 
-def test_review_node_accepts_integration_thread_role(client: TestClient, workspace_root):
+def test_review_node_accepts_audit_thread_role(client: TestClient, workspace_root):
     _set_chat_codex_client(client, SlowCheckpointCodexClient())
+    project_id, root_id = _setup_project(client, workspace_root)
+    review_id = _add_review_node(client, project_id, root_id)
+    resp = client.get(
+        f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
+        params={"thread_role": "audit"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["thread_role"] == "audit"
+
+
+def test_review_node_rejects_integration_thread_role(client: TestClient, workspace_root):
     project_id, root_id = _setup_project(client, workspace_root)
     review_id = _add_review_node(client, project_id, root_id)
     resp = client.get(
         f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
         params={"thread_role": "integration"},
     )
-    assert resp.status_code == 200
-    assert resp.json()["thread_role"] == "audit"
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "invalid_request"
 
 
-def test_integration_session_returns_system_seed_messages_when_rollup_ready(
+def test_review_audit_session_stays_empty_when_rollup_ready(
     client: TestClient,
     workspace_root,
 ):
@@ -404,26 +415,16 @@ def test_integration_session_returns_system_seed_messages_when_rollup_ready(
 
     response = client.get(
         f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
-        params={"thread_role": "integration"},
+        params={"thread_role": "audit"},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["thread_role"] == "audit"
-    assert [message["role"] for message in payload["messages"]] == [
-        "system",
-        "system",
-        "system",
-        "system",
-        "system",
-    ]
-    assert "Ship auth package" in payload["messages"][0]["content"]
-    assert "Auth guard" in payload["messages"][1]["content"]
-    assert "K2" in payload["messages"][2]["content"]
-    assert "Parser accepted" in payload["messages"][3]["content"]
+    assert payload["messages"] == []
 
 
-def test_integration_session_includes_assistant_output_after_auto_start(
+def test_review_audit_session_includes_assistant_output_after_auto_start(
     client: TestClient,
     workspace_root,
 ):
@@ -480,7 +481,7 @@ def test_integration_session_includes_assistant_output_after_auto_start(
 
     response = client.get(
         f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
-        params={"thread_role": "integration"},
+        params={"thread_role": "audit"},
     )
 
     assert response.status_code == 200

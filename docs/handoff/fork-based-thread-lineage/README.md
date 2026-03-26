@@ -1,6 +1,6 @@
 # Fork-Based Thread Lineage Migration Plan
 
-Status: Phase 5 complete, Phase 6 next. This document is the working implementation plan that translates the fork-based lineage specs into a seven-phase rollout that can be executed incrementally.
+Status: Phase 6 complete, Phase 7 next. This document is the working implementation plan that translates the fork-based lineage specs into a seven-phase rollout that can be executed incrementally.
 
 Primary specs:
 
@@ -14,11 +14,15 @@ Primary specs:
 - Phase 3 completed on 2026-03-25
 - Phase 4 completed on 2026-03-25
 - Phase 5 completed on 2026-03-25
-- Phase 6 / PR 6 is the next intended implementation slice
+- Phase 6 completed on 2026-03-25
+- Phase 7 / PR 7 is the next intended implementation slice
 - Phase 3 verification completed with targeted backend unit tests for ask bootstrap, ask seeding retention, generation reuse of `ask_planning`, plus targeted chat API smoke coverage
 - Phase 4 verification completed with `py_compile` on touched backend/test files plus manual service-layer smoke for execution fork lineage, first-turn-only local review injection, and failed-first-turn retry retention
 - Phase 5 verification completed with `py_compile` plus combined unit/integration pytest coverage across split/review/chat touched areas: `135 passed`
+- Phase 6 verification completed with targeted backend unit + integration pytest coverage plus frontend breadcrumb Vitest coverage: `58 unit passed`, `34 integration passed`, `10 frontend passed`
 - Post-review cleanup aligned the execution integration-test fake with `fork_thread()` and corrected Phase 4 historical docs so they describe the boundary markers as living in `execution_state.json`
+- Phase 6 closed the public `integration` compatibility window, switched review-node chat semantics to `audit`, removed review integration seeds, and updated active contract docs/UI labels to `Review Audit`
+- `docs/handoff/fork-based-thread-lineage/phase-6-handoff.md` now serves as the historical brief for the completed PR 6 slice
 - `docs/handoff/fork-based-thread-lineage/phase-5-handoff.md` now serves as the historical brief for the completed PR 5 slice
 - `docs/handoff/fork-based-thread-lineage/phase-4-handoff.md` now serves as the historical brief for the completed PR 4 slice
 - `docs/handoff/fork-based-thread-lineage/phase-3-handoff.md` now serves as the historical brief for the completed PR 3 slice
@@ -247,6 +251,13 @@ Rollback:
 
 ### Phase 6 / PR 6: Review-node cutover from `integration` to `audit`
 
+Status:
+
+- completed on 2026-03-25
+- review-node chat now uses `audit` end-to-end in backend storage, service semantics, SSE streams, and frontend route resolution
+- rollup prompting now loads checkpoint/package context from storage via `build_rollup_prompt_from_storage(...)`
+- public `thread_role=integration` compatibility is closed; legacy `integration.json` data still migrates lazily into `audit.json`
+
 Goal:
 
 - complete the review-node semantic switch from `integration` to `audit`
@@ -339,4 +350,4 @@ After each phase:
 
 Use `docs/handoff/fork-based-thread-lineage/progress.yaml` as the implementation tracker for phase status, notes, blockers, and acceptance progress. Update it at the start and end of each phase PR.
 
-Use `docs/handoff/fork-based-thread-lineage/phase-5-handoff.md` as the active continuation artifact for the next implementation slice. Keep older phase handoff docs as historical implementation records.
+Use `docs/handoff/fork-based-thread-lineage/phase-6-handoff.md` as the active continuation artifact for the next implementation slice. Keep older phase handoff docs as historical implementation records.

@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 _STALE_TURN_MESSAGE = "Session interrupted - server restarted before response completed."
 _DRAFT_FLUSH_INTERVAL_SEC = 0.5
 _TASK_THREAD_ROLES = {"ask_planning", "audit", "execution"}
-_REVIEW_THREAD_ROLES = {"integration"}
+_REVIEW_THREAD_ROLES = {"audit"}
 _VALID_THREAD_ROLES = _TASK_THREAD_ROLES | _REVIEW_THREAD_ROLES
 
 
@@ -750,10 +750,12 @@ class ChatService:
                 raise ThreadReadOnly("ask_planning", "Shaping is frozen after Finish Task.")
 
         if thread_role == "audit":
-            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_index = snapshot.get("tree_state", {}).get("node_index", {})
             node = node_index.get(node_id, {})
+            if str(node.get("node_kind") or "").strip() == "review":
+                raise ThreadReadOnly("audit", "Review audit is automated.")
+            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
             review_state = None
             review_node_id = node.get("review_node_id")
             if review_node_id:
@@ -761,10 +763,6 @@ class ChatService:
             if audit_writable(self._storage, project_id, node, exec_state, review_state):
                 return
             raise ThreadReadOnly("audit", "Audit is not yet writable for this node.")
-
-        if thread_role == "integration":
-            # Integration thread: only Codex writes during rollup review
-            raise ThreadReadOnly("integration", "Integration thread is automated.")
 
     def _validate_node_exists(self, project_id: str, node_id: str) -> dict[str, Any]:
         snapshot = self._storage.project_store.load_snapshot(project_id)

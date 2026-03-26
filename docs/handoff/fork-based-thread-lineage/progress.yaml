@@ -1,7 +1,7 @@
 migration_id: fork_based_thread_lineage
-status: phase_5_complete
+status: phase_6_complete
 current_phase: null
-next_phase: 6
+next_phase: 7
 
 references:
   specs:
@@ -203,7 +203,7 @@ phases:
   - phase: 6
     pr: 6
     name: review_node_cutover_to_audit
-    status: not_started
+    status: completed
     depends_on:
       - 5
     goals:
@@ -216,7 +216,34 @@ phases:
     verification:
       - backend tests stop using integration thread role
       - frontend tests assert Review Audit labels and audit routing
-    notes: ""
+    notes: >
+      Completed on 2026-03-25. Review-node chat semantics now use `audit`
+      end-to-end: ChatService only allows review-node audit, review audit is
+      read-only for users, ReviewService now persists rollup messages/events/live
+      turns in `audit`, and rollup prompt assembly now loads checkpoint/package
+      context from storage via build_rollup_prompt_from_storage(...) instead of
+      integration seed messages. ChatStateStore no longer accepts the public
+      `integration -> audit` alias and now rejects explicit unknown roles rather
+      than silently falling back to ask_planning, while still keeping lazy
+      integration.json -> audit.json migration for historical data. Frontend
+      ThreadRole removed `integration`, review breadcrumbs now resolve to
+      `audit`, and UI labels/tooltips now say `Review Audit` / `Open review audit`.
+      Active contract docs were updated to match the new review.audit model.
+      Verified with:
+      .\.venv\Scripts\python.exe -m pytest -p no:cacheprovider
+      backend/tests/unit/test_chat_state_store_multithread.py
+      backend/tests/unit/test_thread_readonly.py
+      backend/tests/unit/test_thread_seeding.py
+      backend/tests/unit/test_review_service.py -q
+      -> 58 passed
+      .\.venv\Scripts\python.exe -m pytest -p no:cacheprovider
+      backend/tests/integration/test_chat_api.py
+      backend/tests/integration/test_review_api.py
+      backend/tests/integration/test_lifecycle_e2e.py -q
+      -> 34 passed
+      npx vitest run tests/unit/BreadcrumbChatView.test.tsx
+      from frontend/
+      -> 10 passed.
 
   - phase: 7
     pr: 7

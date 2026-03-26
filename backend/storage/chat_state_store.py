@@ -12,7 +12,6 @@ from backend.storage.project_locks import ProjectLockRegistry
 from backend.storage.workspace_store import WorkspaceStore
 
 _VALID_THREAD_ROLES = {"audit", "ask_planning", "execution"}
-_COMPAT_THREAD_ROLE_ALIASES = {"integration": "audit"}
 _DEFAULT_THREAD_ROLE = "ask_planning"
 
 
@@ -21,8 +20,14 @@ def _normalize_optional_string(value: Any) -> str | None:
 
 
 def _resolve_thread_role(thread_role: str) -> str:
-    aliased_role = _COMPAT_THREAD_ROLE_ALIASES.get(thread_role, thread_role)
-    return aliased_role if aliased_role in _VALID_THREAD_ROLES else _DEFAULT_THREAD_ROLE
+    if not isinstance(thread_role, str):
+        return _DEFAULT_THREAD_ROLE
+    normalized = thread_role.strip()
+    if not normalized:
+        return _DEFAULT_THREAD_ROLE
+    if normalized in _VALID_THREAD_ROLES:
+        return normalized
+    raise ValueError(f"Invalid thread role: {thread_role!r}")
 
 
 def _default_session(thread_role: str = _DEFAULT_THREAD_ROLE) -> dict[str, Any]:

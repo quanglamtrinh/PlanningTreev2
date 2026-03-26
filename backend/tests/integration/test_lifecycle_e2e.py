@@ -38,6 +38,12 @@ class _FakeCodex:
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
         return {"thread_id": thread_id}
 
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        del source_thread_id
+        tid = f"fake-thread-{len(self.started_threads) + 1}"
+        self.started_threads.append(tid)
+        return {"thread_id": tid}
+
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
         del prompt
         thread_id = str(kwargs.get("thread_id", ""))
@@ -61,6 +67,12 @@ class _IntegrationCodex:
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
         return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        del source_thread_id
+        tid = f"integration-{len(self.started_threads) + 1}"
+        self.started_threads.append(tid)
+        return {"thread_id": tid}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
         del prompt
@@ -169,7 +181,7 @@ def _wait_integration_done(client: TestClient, project_id: str, review_node_id: 
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline:
         session = client.app.state.storage.chat_state_store.read_session(
-            project_id, review_node_id, thread_role="integration"
+            project_id, review_node_id, thread_role="audit"
         )
         if not session.get("active_turn_id"):
             msgs = session.get("messages", [])
@@ -197,6 +209,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
     codex = _FakeCodex()
     client.app.state.finish_task_service._codex_client = codex
     client.app.state.chat_service._codex_client = codex
+    client.app.state.thread_lineage_service._codex_client = codex
 
     project_id, root_id = _setup_project(client, workspace_root)
 
@@ -354,6 +367,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
     # --- Integration rollup ---
     integration_codex = _IntegrationCodex(summary="Both subtasks integrated successfully")
     client.app.state.review_service._codex_client = integration_codex
+    client.app.state.thread_lineage_service._codex_client = integration_codex
     client.app.state.review_service.start_integration_rollup(project_id, review_id)
     _wait_integration_done(client, project_id, review_id)
 
@@ -418,6 +432,7 @@ def test_legacy_eager_lifecycle(client: TestClient, workspace_root):
     codex = _FakeCodex()
     client.app.state.finish_task_service._codex_client = codex
     client.app.state.chat_service._codex_client = codex
+    client.app.state.thread_lineage_service._codex_client = codex
 
     project_id, root_id = _setup_project(client, workspace_root)
 
@@ -508,6 +523,7 @@ def test_package_audit_lifecycle(client: TestClient, workspace_root):
 
     # Start integration rollup
     client.app.state.review_service._codex_client = integration_codex
+    client.app.state.thread_lineage_service._codex_client = integration_codex
     client.app.state.review_service.start_integration_rollup(project_id, review_id)
     _wait_integration_done(client, project_id, review_id)
 

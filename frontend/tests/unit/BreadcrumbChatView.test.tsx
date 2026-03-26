@@ -396,6 +396,47 @@ describe('BreadcrumbChatView', () => {
     expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'root', 'audit')
   })
 
+  it('renders review nodes on the Review Audit thread', async () => {
+    const snapshot = makeSnapshot('project-1', 'review-1')
+    apiMock.getSnapshot.mockResolvedValue({
+      ...snapshot,
+      tree_state: {
+        ...snapshot.tree_state,
+        node_registry: [
+          ...snapshot.tree_state.node_registry,
+          {
+            node_id: 'review-1',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'Review',
+            description: '',
+            status: 'ready',
+            node_kind: 'review' as const,
+            depth: 1,
+            display_order: 99,
+            hierarchical_number: '1.R',
+            is_superseded: false,
+            created_at: '2026-03-20T00:00:00Z',
+            workflow: null,
+          },
+        ],
+      },
+    })
+    apiMock.getChatSession.mockResolvedValue(
+      makeSession({
+        thread_role: 'audit',
+      }),
+    )
+
+    renderBreadcrumbChatView('/projects/project-1/nodes/review-1/chat')
+
+    await screen.findByTestId('breadcrumb-node-detail-card')
+    expect(screen.getByTestId('breadcrumb-review-audit-header')).toBeInTheDocument()
+    expect(screen.getByTestId('breadcrumb-thread-tab-review-audit')).toHaveTextContent('Review Audit')
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
+    expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'review-1', 'audit')
+  })
+
   it('disables ask_planning when shaping is frozen', async () => {
     apiMock.getSnapshot.mockResolvedValue(
       makeSnapshot('project-1', 'root'),

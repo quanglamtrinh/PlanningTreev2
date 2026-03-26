@@ -22,12 +22,6 @@ AUDIT_SEED_SPLIT_ITEM_MESSAGE_ID = "seed:audit:split-item"
 AUDIT_SEED_CHECKPOINT_MESSAGE_ID = "seed:audit:checkpoint"
 AUDIT_SEED_PARENT_CONTEXT_MESSAGE_ID = "seed:audit:parent-context"
 
-INTEGRATION_SEED_PARENT_FRAME_MESSAGE_ID = "seed:integration:parent-frame"
-INTEGRATION_SEED_SPLIT_PACKAGE_MESSAGE_ID = "seed:integration:split-package"
-INTEGRATION_SEED_CHECKPOINTS_MESSAGE_ID = "seed:integration:checkpoints"
-INTEGRATION_SEED_CHILD_REVIEWS_MESSAGE_ID = "seed:integration:child-reviews"
-INTEGRATION_SEED_GOAL_MESSAGE_ID = "seed:integration:goal"
-
 ASK_PLANNING_IMMUTABLE_MESSAGE_IDS = frozenset(
     {
         ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
@@ -43,16 +37,6 @@ AUDIT_IMMUTABLE_MESSAGE_IDS = frozenset(
         AUDIT_FRAME_RECORD_MESSAGE_ID,
         AUDIT_SPEC_RECORD_MESSAGE_ID,
         AUDIT_ROLLUP_PACKAGE_MESSAGE_ID,
-    }
-)
-
-INTEGRATION_IMMUTABLE_MESSAGE_IDS = frozenset(
-    {
-        INTEGRATION_SEED_PARENT_FRAME_MESSAGE_ID,
-        INTEGRATION_SEED_SPLIT_PACKAGE_MESSAGE_ID,
-        INTEGRATION_SEED_CHECKPOINTS_MESSAGE_ID,
-        INTEGRATION_SEED_CHILD_REVIEWS_MESSAGE_ID,
-        INTEGRATION_SEED_GOAL_MESSAGE_ID,
     }
 )
 
@@ -78,6 +62,9 @@ def ensure_thread_seeded_session(
     Seeds are write-once and ordered ahead of later chat discussion. Missing seeds are
     inserted without disturbing existing user/assistant messages.
     """
+
+    if thread_role == "audit" and str(node.get("node_kind") or "").strip() == "review":
+        return session, False
 
     immutable_ids = _immutable_ids_for_role(thread_role)
     seed_messages = build_thread_seed_messages(
@@ -130,8 +117,6 @@ def build_thread_seed_messages(
 
     if thread_role == "audit":
         return _build_audit_seed_messages(storage, project_id, snapshot, node_index, node)
-    if thread_role == "integration":
-        return _build_integration_seed_messages(storage, project_id, snapshot, node_index, node_id, node)
     return []
 
 
@@ -152,8 +137,6 @@ def build_system_message(message_id: str, content: str) -> dict[str, Any]:
 def _immutable_ids_for_role(thread_role: str) -> frozenset[str]:
     if thread_role == "audit":
         return AUDIT_IMMUTABLE_MESSAGE_IDS
-    if thread_role == "integration":
-        return INTEGRATION_IMMUTABLE_MESSAGE_IDS
     return frozenset()
 
 
@@ -347,173 +330,6 @@ def _build_audit_parent_context_content(
     lines = ["Parent chain context:"]
     for ancestor in ancestors:
         lines.append(f"- {ancestor}")
-    return "\n".join(lines)
-
-
-def _build_integration_seed_messages(
-    storage: Storage,
-    project_id: str,
-    snapshot: dict[str, Any],
-    node_index: dict[str, Any],
-    review_node_id: str,
-    review_node: dict[str, Any],
-) -> list[dict[str, Any]]:
-    review_state = storage.review_state_store.read_state(project_id, review_node_id)
-    if not isinstance(review_state, dict):
-        return []
-
-    rollup = review_state.get("rollup", {})
-    if not isinstance(rollup, dict):
-        return []
-    rollup_status = str(rollup.get("status") or "").strip()
-    if rollup_status not in {"ready", "accepted"}:
-        return []
-
-    parent_id = str(review_node.get("parent_id") or "").strip()
-    parent = node_index.get(parent_id) if parent_id else None
-    if not isinstance(parent, dict):
-        return []
-
-    messages: list[dict[str, Any]] = []
-
-    parent_frame = _build_integration_parent_frame_content(snapshot, parent)
-    if parent_frame:
-        messages.append(
-            build_system_message(INTEGRATION_SEED_PARENT_FRAME_MESSAGE_ID, parent_frame)
-        )
-
-    split_package = _build_integration_split_package_content(node_index, parent)
-    if split_package:
-        messages.append(
-            build_system_message(INTEGRATION_SEED_SPLIT_PACKAGE_MESSAGE_ID, split_package)
-        )
-
-    checkpoints = _build_integration_checkpoint_content(review_state)
-    if checkpoints:
-        messages.append(
-            build_system_message(INTEGRATION_SEED_CHECKPOINTS_MESSAGE_ID, checkpoints)
-        )
-
-    child_reviews = _build_integration_child_reviews_content(node_index, review_state)
-    if child_reviews:
-        messages.append(
-            build_system_message(INTEGRATION_SEED_CHILD_REVIEWS_MESSAGE_ID, child_reviews)
-        )
-
-    messages.append(
-        build_system_message(
-            INTEGRATION_SEED_GOAL_MESSAGE_ID,
-            (
-                "Integration rollup goal:\n"
-                "- Detect conflicts between child outputs.\n"
-                "- Identify overlap, missing glue, or cross-child mismatches.\n"
-                "- Produce a rollup summary and final subtree SHA."
-            ),
-        )
-    )
-
-    return messages
-
-
-def _build_integration_parent_frame_content(
-    snapshot: dict[str, Any],
-    parent: dict[str, Any],
-) -> str | None:
-    frame_content = _load_confirmed_frame_content(snapshot, str(parent.get("node_id") or ""))
-    if not frame_content:
-        return None
-
-    title = str(parent.get("title") or "").strip()
-    prefix = "Parent confirmed frame:"
-    if title:
-        prefix = f"Parent confirmed frame for '{title}':"
-    return prefix + "\n\n```markdown\n" + frame_content.strip() + "\n```"
-
-
-def _build_integration_split_package_content(
-    node_index: dict[str, Any],
-    parent: dict[str, Any],
-) -> str | None:
-    child_ids = parent.get("child_ids", [])
-    if not isinstance(child_ids, list):
-        return None
-
-    lines = ["Split package overview:"]
-    found = False
-    for child_id in child_ids:
-        if not isinstance(child_id, str):
-            continue
-        child = node_index.get(child_id)
-        if not isinstance(child, dict):
-            continue
-        title = str(child.get("title") or "").strip() or child_id
-        objective, why_now = _parse_split_item_from_node(child)
-        lines.append(f"- {title}")
-        if objective:
-            lines.append(f"  Objective: {objective}")
-        if why_now:
-            lines.append(f"  Why now: {why_now}")
-        found = True
-    if not found:
-        return None
-    return "\n".join(lines)
-
-
-def _build_integration_checkpoint_content(review_state: dict[str, Any]) -> str | None:
-    checkpoints = review_state.get("checkpoints", [])
-    if not isinstance(checkpoints, list) or not checkpoints:
-        return None
-
-    lines = ["Checkpoint records:"]
-    found = False
-    for checkpoint in checkpoints:
-        if not isinstance(checkpoint, dict):
-            continue
-        label = str(checkpoint.get("label") or "").strip()
-        sha = str(checkpoint.get("sha") or "").strip()
-        if not label or not sha:
-            continue
-        summary = str(checkpoint.get("summary") or "").strip() or "(split baseline)"
-        source_node_id = str(checkpoint.get("source_node_id") or "").strip() or "baseline"
-        lines.append(f"- {label}: {sha}")
-        lines.append(f"  Source: {source_node_id}")
-        lines.append(f"  Summary: {summary}")
-        found = True
-    if not found:
-        return None
-    return "\n".join(lines)
-
-
-def _build_integration_child_reviews_content(
-    node_index: dict[str, Any],
-    review_state: dict[str, Any],
-) -> str | None:
-    checkpoints = review_state.get("checkpoints", [])
-    if not isinstance(checkpoints, list):
-        return None
-
-    lines = ["Accepted local review summaries:"]
-    found = False
-    for checkpoint in checkpoints:
-        if not isinstance(checkpoint, dict):
-            continue
-        summary = str(checkpoint.get("summary") or "").strip()
-        source_node_id = str(checkpoint.get("source_node_id") or "").strip()
-        sha = str(checkpoint.get("sha") or "").strip()
-        if not summary or not source_node_id:
-            continue
-        source_node = node_index.get(source_node_id)
-        source_title = (
-            str(source_node.get("title") or "").strip()
-            if isinstance(source_node, dict)
-            else source_node_id
-        ) or source_node_id
-        lines.append(f"- {source_title} ({source_node_id})")
-        lines.append(f"  Accepted SHA: {sha}")
-        lines.append(f"  Summary: {summary}")
-        found = True
-    if not found:
-        return None
     return "\n".join(lines)
 
 

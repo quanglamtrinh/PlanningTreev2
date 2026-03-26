@@ -1,6 +1,6 @@
 # Type Contracts v2
 
-Status: spec (Phase 1 artifact). Defines all new and modified types for the thread/review model.
+Status: spec (updated through Phase 6). Defines all new and modified types for the thread/review model.
 
 ## New Enums and Unions
 
@@ -8,18 +8,18 @@ Status: spec (Phase 1 artifact). Defines all new and modified types for the thre
 
 ```typescript
 // TypeScript
-type ThreadRole = 'audit' | 'ask_planning' | 'execution' | 'integration'
+type ThreadRole = 'audit' | 'ask_planning' | 'execution'
 ```
 
-- Persisted storage roles are `audit`, `ask_planning`, and `execution`
-- `integration` remains a compatibility alias during migration; callers may still pass it, but backend storage resolves it to `audit`
+- Persisted and public thread roles are `audit`, `ask_planning`, and `execution`
+- Review nodes use `audit` for automated rollup analysis and read-only breadcrumb viewing
 
 ```python
-# Python (public API compatibility during migration)
-ThreadRole = Literal["audit", "ask_planning", "execution", "integration"]
+# Python
+ThreadRole = Literal["audit", "ask_planning", "execution"]
 ```
 
-Note: the backend chat-state store no longer persists `"integration"` as a storage role in Phase 1. Legacy `integration.json` files are lazily migrated to `audit.json`.
+Note: legacy `integration.json` files are still lazily migrated to `audit.json` for old data, but `integration` is no longer an accepted public thread role after Phase 6.
 
 ### Extended NodeKind
 
@@ -223,7 +223,7 @@ interface ChatSession {
 
 Notes:
 - Backend storage persists the five lineage fields above and defaults them to `null` when reading legacy session payloads that do not include them.
-- During the Phase 1 compatibility window, `thread_role="integration"` is accepted as an input alias but reads and writes `audit.json`; normalized sessions come back with `thread_role: "audit"`.
+- Review-node chat sessions now use `thread_role: "audit"` directly. Legacy `integration.json` is migrated forward lazily, but new callers must not send `thread_role="integration"`.
 
 ### ReviewGraphNodeData (updated)
 

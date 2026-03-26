@@ -188,7 +188,7 @@ def wait_for_integration_terminal(
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         session = storage.chat_state_store.read_session(
-            project_id, review_node_id, thread_role="integration"
+            project_id, review_node_id, thread_role="audit"
         )
         if not session.get("active_turn_id"):
             messages = session.get("messages", [])
@@ -922,7 +922,7 @@ def test_accept_rollup_review_rejects_while_integration_turn_is_active(
     session = storage.chat_state_store.clear_session(
         project_id,
         review_node_id,
-        thread_role="integration",
+        thread_role="audit",
     )
     session["active_turn_id"] = "rollup-turn-1"
     session["messages"].append(
@@ -941,7 +941,7 @@ def test_accept_rollup_review_rejects_while_integration_turn_is_active(
         project_id,
         review_node_id,
         session,
-        thread_role="integration",
+        thread_role="audit",
     )
 
     with pytest.raises(ReviewNotAllowed, match="still running"):
