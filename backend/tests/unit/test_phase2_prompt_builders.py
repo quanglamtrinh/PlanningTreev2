@@ -218,6 +218,18 @@ def test_build_rollup_prompt_from_storage_uses_checkpoint_summaries_and_json_con
     review_id = _add_review_node(snapshot, root_id)
     _save_snapshot(storage, project_id, snapshot, workspace_root)
 
+    root_dir = planningtree_workspace.resolve_node_dir(workspace_root, snapshot, root_id)
+    assert root_dir is not None
+    _write_json(
+        root_dir / FRAME_META_FILE,
+        {
+            "revision": 1,
+            "confirmed_revision": 1,
+            "confirmed_at": "2026-03-25T00:00:00Z",
+            "confirmed_content": "# Frame\nShip the integrated package safely.",
+        },
+    )
+
     storage.review_state_store.write_state(
         project_id,
         review_id,
@@ -263,6 +275,11 @@ def test_build_rollup_prompt_from_storage_uses_checkpoint_summaries_and_json_con
     prompt = build_rollup_prompt_from_storage(storage, project_id, review_id)
 
     assert "Integration rollup context:" in prompt
+    assert "Confirmed parent frame" in prompt
+    assert "Ship the integrated package safely." in prompt
+    assert "Split package:" in prompt
+    assert "[1] Child one (completed): Finish the first slice [K1]" in prompt
+    assert "[2] Child two (completed): Finish the second slice [K2]" in prompt
     assert "Child one completed the first milestone." in prompt
     assert "Child two completed the second milestone." in prompt
     assert "sha256:baseline" not in prompt

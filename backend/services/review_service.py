@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.ai.integration_rollup_prompt_builder import (
+    build_integration_rollup_base_instructions,
+    build_integration_rollup_output_schema,
     build_rollup_prompt_from_storage,
     extract_integration_rollup_summary,
     render_integration_rollup_message,
@@ -577,9 +579,12 @@ class ReviewService:
                 thread_id=thread_id,
                 timeout_sec=self._chat_timeout,
                 cwd=workspace_root,
+                writable_roots=None,
+                sandbox_profile="read_only",
                 on_delta=capture_delta,
                 on_tool_call=capture_tool_call,
                 on_thread_status=capture_thread_status,
+                output_schema=build_integration_rollup_output_schema(),
             )
 
             with draft_lock:
@@ -690,6 +695,7 @@ class ReviewService:
                 review_node_id,
                 "audit",
                 workspace_root,
+                base_instructions=build_integration_rollup_base_instructions(),
             )
         except (CodexTransportError, ValueError) as exc:
             raise ReviewNotAllowed(f"Integration backend unavailable: {exc}") from exc

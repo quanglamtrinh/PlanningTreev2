@@ -3,12 +3,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from backend.ai.review_prompt_sections import (
+    load_confirmed_frame_content,
+    render_confirmed_parent_frame_section,
+    render_markdown_section,
+    render_parent_task_summary,
+    render_split_package_section,
+    resolve_node_dir,
+    truncate,
+)
 from backend.ai.split_context_builder import (
     _build_parent_chain_prompts,
     _build_prior_node_summaries_compact,
 )
 from backend.services import planningtree_workspace
-from backend.services.node_detail_service import _load_frame_meta_from_node_dir, _load_spec_meta_from_node_dir
+from backend.services.node_detail_service import _load_spec_meta_from_node_dir
 from backend.services.review_sibling_manifest import derive_review_sibling_manifest
 from backend.storage.storage import Storage
 
@@ -24,9 +33,7 @@ _CHECKPOINT_CHAR_LIMIT = 800
 
 
 def _truncate(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
+    return truncate(text, limit)
 
 
 def build_chat_prompt(
@@ -89,7 +96,7 @@ def build_local_review_prompt(
 ) -> str:
     with storage.project_lock(project_id):
         snapshot, node, _ = _load_snapshot_and_node_locked(storage, project_id, node_id)
-        node_dir = _resolve_node_dir(snapshot, node_id)
+        node_dir = resolve_node_dir(snapshot, node_id)
         execution_state = storage.execution_state_store.read_state(project_id, node_id)
 
     sections: list[str] = []
@@ -103,13 +110,13 @@ def build_local_review_prompt(
             lines.append(f"Description: {description}")
         sections.append("\n".join(lines))
 
-    frame_content = _load_confirmed_frame_content(node_dir)
+    frame_content = load_confirmed_frame_content(node_dir)
     if frame_content:
-        sections.append(_render_markdown_section("Confirmed frame", frame_content, _FRAME_CHAR_LIMIT))
+        sections.append(render_markdown_section("Confirmed frame", frame_content, _FRAME_CHAR_LIMIT))
 
     spec_content = _load_confirmed_spec_content(node_dir)
     if spec_content:
-        sections.append(_render_markdown_section("Confirmed spec", spec_content, _SPEC_CHAR_LIMIT))
+        sections.append(render_markdown_section("Confirmed spec", spec_content, _SPEC_CHAR_LIMIT))
 
     if isinstance(execution_state, dict):
         status = str(execution_state.get("status") or "").strip()
@@ -151,38 +158,23 @@ def build_package_review_prompt(
             if isinstance(review_node, dict)
             else []
         )
-        node_dir = _resolve_node_dir(snapshot, node_id)
+        node_dir = resolve_node_dir(snapshot, node_id)
 
     sections: list[str] = []
-    title = str(node.get("title") or "").strip()
-    description = str(node.get("description") or "").strip()
-    if title or description:
-        lines = []
-        if title:
-            lines.append(f"Parent task: {title}")
-        if description:
-            lines.append(f"Description: {description}")
-        sections.append("\n".join(lines))
+    parent_summary = render_parent_task_summary(
+        str(node.get("title") or ""),
+        str(node.get("description") or ""),
+    )
+    if parent_summary:
+        sections.append(parent_summary)
 
-    frame_content = _load_confirmed_frame_content(node_dir)
-    if frame_content:
-        sections.append(_render_markdown_section("Confirmed parent frame", frame_content, _FRAME_CHAR_LIMIT))
+    parent_frame = render_confirmed_parent_frame_section(node_dir)
+    if parent_frame:
+        sections.append(parent_frame)
 
-    if manifest:
-        lines = ["Split package:"]
-        for item in manifest:
-            index = item.get("index")
-            status = str(item.get("status") or "").strip() or "unknown"
-            child_title = str(item.get("title") or "").strip() or "Untitled"
-            objective = str(item.get("objective") or "").strip()
-            checkpoint_label = str(item.get("checkpoint_label") or "").strip()
-            summary = f"- [{index}] {child_title} ({status})"
-            if objective:
-                summary = f"{summary}: {objective}"
-            if checkpoint_label:
-                summary = f"{summary} [{checkpoint_label}]"
-            lines.append(summary)
-        sections.append("\n".join(lines))
+    split_package = render_split_package_section(manifest)
+    if split_package:
+        sections.append(split_package)
 
     if isinstance(review_state, dict):
         rollup = review_state.get("rollup", {})
@@ -300,30 +292,6 @@ def _load_snapshot_and_node_locked(
     return snapshot, node, node_by_id
 
 
-def _resolve_node_dir(snapshot: dict[str, Any], node_id: str) -> Path | None:
-    project = snapshot.get("project", {})
-    workspace_root = str(project.get("project_path") or "").strip()
-    if not workspace_root:
-        return None
-    return planningtree_workspace.resolve_node_dir(Path(workspace_root), snapshot, node_id)
-
-
-def _load_confirmed_frame_content(node_dir: Path | None) -> str:
-    if node_dir is None:
-        return ""
-    frame_meta = _load_frame_meta_from_node_dir(node_dir)
-    confirmed_revision = int(frame_meta.get("confirmed_revision", 0) or 0)
-    if confirmed_revision < 1:
-        return ""
-    confirmed_content = str(frame_meta.get("confirmed_content") or "").strip()
-    if confirmed_content:
-        return confirmed_content
-    frame_path = node_dir / planningtree_workspace.FRAME_FILE_NAME
-    if not frame_path.exists():
-        return ""
-    return frame_path.read_text(encoding="utf-8").strip()
-
-
 def _load_confirmed_spec_content(node_dir: Path | None) -> str:
     if node_dir is None:
         return ""
@@ -334,10 +302,6 @@ def _load_confirmed_spec_content(node_dir: Path | None) -> str:
     if not spec_path.exists():
         return ""
     return spec_path.read_text(encoding="utf-8").strip()
-
-
-def _render_markdown_section(label: str, content: str, limit: int) -> str:
-    return f"{label}:\n```markdown\n{_truncate(content, limit)}\n```"
 
 
 def _compose_hidden_context_prompt(sections: list[str], user_content: str) -> str:

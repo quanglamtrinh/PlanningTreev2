@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
+from backend.ai.integration_rollup_prompt_builder import build_integration_rollup_base_instructions
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
 
@@ -260,7 +261,10 @@ class ThreadLineageService:
                     source_role="audit",
                     fork_reason="review_bootstrap",
                     workspace_root=workspace_root,
-                    base_instructions=base_instructions,
+                    base_instructions=self._review_audit_base_instructions(
+                        node,
+                        base_instructions,
+                    ),
                     dynamic_tools=dynamic_tools,
                     writable_roots=writable_roots,
                 )
@@ -322,7 +326,7 @@ class ThreadLineageService:
                 source_role="audit",
                 fork_reason="review_bootstrap",
                 workspace_root=workspace_root,
-                base_instructions=None,
+                base_instructions=self._review_audit_base_instructions(node, None),
                 dynamic_tools=None,
                 writable_roots=None,
             )
@@ -450,6 +454,17 @@ class ThreadLineageService:
             ]
         )
         return "\n".join(lines)
+
+    def _review_audit_base_instructions(
+        self,
+        node: dict[str, Any],
+        base_instructions: str | None,
+    ) -> str | None:
+        if base_instructions is not None:
+            return base_instructions
+        if self._normalize_optional_string(node.get("node_kind")) == "review":
+            return build_integration_rollup_base_instructions()
+        return None
 
     def _persist_session_locked(
         self,

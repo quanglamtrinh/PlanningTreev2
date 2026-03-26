@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from backend.ai.codex_client import CodexTransportError
+from backend.ai.integration_rollup_prompt_builder import build_integration_rollup_output_schema
 from backend.errors.app_errors import ReviewNotAllowed
 from backend.services import planningtree_workspace
 from backend.services.node_detail_service import NodeDetailService
@@ -67,6 +69,31 @@ class FakeIntegrationCodexClient:
             "stdout": payload,
             "thread_id": str(kwargs.get("thread_id") or ""),
         }
+
+
+class StrictIntegrationCodexClient(FakeIntegrationCodexClient):
+    def __init__(self, *, summary: str = "Integration draft summary") -> None:
+        super().__init__(summary=summary)
+        self.run_kwargs: list[dict[str, object]] = []
+
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        self.run_kwargs.append(dict(kwargs))
+        expected_schema = build_integration_rollup_output_schema()
+        if kwargs.get("sandbox_profile") != "read_only":
+            raise RuntimeError("missing read_only sandbox_profile")
+        if kwargs.get("writable_roots") is not None:
+            raise RuntimeError("review rollup must not set writable_roots")
+        if kwargs.get("output_schema") != expected_schema:
+            raise RuntimeError("review rollup must pass the expected output_schema")
+        return super().run_turn_streaming(prompt, **kwargs)
+
+
+class ReadOnlyRejectingIntegrationCodexClient(FakeIntegrationCodexClient):
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        del prompt
+        if kwargs.get("sandbox_profile") == "read_only":
+            raise CodexTransportError("read_only sandbox rejected", "invalid_sandbox_policy")
+        raise RuntimeError("missing read_only sandbox_profile")
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -709,6 +736,77 @@ def test_rollup_becomes_ready_when_all_siblings_accepted(
     )
     assert assistant["status"] == "completed"
     assert "Integrated successfully." in assistant["content"]
+
+
+def test_integration_rollup_uses_read_only_sandbox_and_output_schema(
+    storage: Storage, workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    codex_client = StrictIntegrationCodexClient(summary="Read-only integration summary.")
+    review_service = make_review_service(storage, tree_service, codex_client=codex_client)
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=1)
+    first_child_id = split_result["first_child_id"]
+    review_node_id = split_result["review_node_id"]
+
+    simulate_execution_completed(storage, project_id, first_child_id, "sha256:only-child")
+    review_service.start_local_review(project_id, first_child_id)
+    review_service.accept_local_review(project_id, first_child_id, "Only child done.")
+
+    wait_for_rollup_draft(storage, project_id, review_node_id)
+    session = wait_for_integration_terminal(storage, project_id, review_node_id)
+    assistant = next(
+        message for message in reversed(session["messages"]) if message.get("role") == "assistant"
+    )
+
+    assert assistant["status"] == "completed"
+    assert len(codex_client.run_kwargs) == 1
+    assert codex_client.run_kwargs[0]["sandbox_profile"] == "read_only"
+    assert codex_client.run_kwargs[0]["writable_roots"] is None
+    assert codex_client.run_kwargs[0]["output_schema"] == build_integration_rollup_output_schema()
+
+
+def test_integration_rollup_read_only_sandbox_error_marks_session_failed(
+    storage: Storage, workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    review_service = make_review_service(
+        storage,
+        tree_service,
+        codex_client=ReadOnlyRejectingIntegrationCodexClient(),
+    )
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=1)
+    first_child_id = split_result["first_child_id"]
+    review_node_id = split_result["review_node_id"]
+
+    simulate_execution_completed(storage, project_id, first_child_id, "sha256:only-child")
+    review_service.start_local_review(project_id, first_child_id)
+    review_service.accept_local_review(project_id, first_child_id, "Only child done.")
+
+    session = wait_for_integration_terminal(storage, project_id, review_node_id)
+    assistant = next(
+        message for message in reversed(session["messages"]) if message.get("role") == "assistant"
+    )
+
+    assert assistant["status"] == "error"
+    assert assistant["error"] == "read_only sandbox rejected"
+    assert session.get("active_turn_id") is None
+    review_state = storage.review_state_store.read_state(project_id, review_node_id)
+    assert review_state is not None
+    assert review_state["rollup"]["draft"] == {
+        "summary": None,
+        "sha": None,
+        "generated_at": None,
+    }
 
 
 def test_integration_rollup_failure_keeps_ready_without_draft_and_marks_session_error(

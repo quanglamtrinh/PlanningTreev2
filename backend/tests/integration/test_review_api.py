@@ -46,6 +46,7 @@ class IntegrationRollupCodexClient:
     def __init__(self, *, summary: str = "Integration complete") -> None:
         self.summary = summary
         self.started_threads: list[str] = []
+        self.run_kwargs: list[dict[str, object]] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"integration-thread-{len(self.started_threads) + 1}"
@@ -63,11 +64,24 @@ class IntegrationRollupCodexClient:
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
         del prompt
+        self.run_kwargs.append(dict(kwargs))
         payload = json.dumps({"summary": self.summary})
         on_delta = kwargs.get("on_delta")
         if callable(on_delta):
             on_delta(payload)
         return {"stdout": payload, "thread_id": str(kwargs.get("thread_id") or "")}
+
+
+class StrictIntegrationRollupCodexClient(IntegrationRollupCodexClient):
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        output_schema = kwargs.get("output_schema")
+        if kwargs.get("sandbox_profile") != "read_only":
+            raise RuntimeError("missing read_only sandbox_profile")
+        if kwargs.get("writable_roots") is not None:
+            raise RuntimeError("review rollup must not set writable_roots")
+        if not isinstance(output_schema, dict) or output_schema.get("required") != ["summary"]:
+            raise RuntimeError("review rollup must set summary-only output schema")
+        return super().run_turn_streaming(prompt, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +537,9 @@ def test_second_audit_write_does_not_fail(client: TestClient, workspace_root):
 
 
 def test_accept_rollup_review_route_happy_path(client: TestClient, workspace_root):
-    rollup_codex = IntegrationRollupCodexClient(summary="All subtasks integrated successfully")
+    rollup_codex = StrictIntegrationRollupCodexClient(
+        summary="All subtasks integrated successfully"
+    )
     project_id, root_id = _setup_project(client, workspace_root)
 
     # Create parent with one child + review node
@@ -560,6 +576,10 @@ def test_accept_rollup_review_route_happy_path(client: TestClient, workspace_roo
 
     # Wait for integration to finish and produce a draft
     _wait_for_integration_terminal(client, project_id, review_id)
+    assert len(rollup_codex.run_kwargs) == 1
+    assert rollup_codex.run_kwargs[0]["sandbox_profile"] == "read_only"
+    assert rollup_codex.run_kwargs[0]["writable_roots"] is None
+    assert rollup_codex.run_kwargs[0]["output_schema"]["required"] == ["summary"]
 
     # Verify draft is populated
     review_state = client.app.state.storage.review_state_store.read_state(project_id, review_id)

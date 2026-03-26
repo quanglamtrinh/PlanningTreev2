@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
+from backend.ai.integration_rollup_prompt_builder import build_integration_rollup_base_instructions
 from backend.ai.split_context_builder import build_split_context
 from backend.ai.split_prompt_builder import (
     build_hidden_retry_feedback,
@@ -537,6 +538,7 @@ class SplitService:
                 source_role="audit",
                 fork_reason="review_bootstrap",
                 workspace_root=workspace_root,
+                base_instructions=build_integration_rollup_base_instructions(),
             )
             self._thread_lineage_service.ensure_forked_thread(
                 project_id,

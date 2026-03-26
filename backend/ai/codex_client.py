@@ -366,6 +366,7 @@ class StdioTransport(CodexTransport):
         timeout_sec: int = 120,
         cwd: str | None = None,
         writable_roots: list[str] | None = None,
+        sandbox_profile: str | None = None,
         on_delta: Callable[[str], None] | None = None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
         on_plan_delta: Callable[[str, dict[str, Any]], None] | None = None,
@@ -383,6 +384,7 @@ class StdioTransport(CodexTransport):
             timeout_sec=timeout_sec,
             cwd=cwd,
             writable_roots=writable_roots,
+            sandbox_profile=sandbox_profile,
             on_delta=on_delta,
             on_tool_call=on_tool_call,
             on_plan_delta=on_plan_delta,
@@ -522,6 +524,7 @@ class StdioTransport(CodexTransport):
         timeout_sec: int,
         cwd: str | None,
         writable_roots: list[str] | None,
+        sandbox_profile: str | None,
         on_delta: Callable[[str], None] | None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None,
         on_plan_delta: Callable[[str, dict[str, Any]], None] | None,
@@ -538,7 +541,11 @@ class StdioTransport(CodexTransport):
             "threadId": thread_id,
             "cwd": cwd or None,
             "approvalPolicy": "never",
-            "sandboxPolicy": self._turn_sandbox_policy(cwd, writable_roots),
+            "sandboxPolicy": self._turn_sandbox_policy(
+                cwd,
+                writable_roots,
+                sandbox_profile=sandbox_profile,
+            ),
             "input": [
                 {
                     "type": "text",
@@ -610,7 +617,19 @@ class StdioTransport(CodexTransport):
         self,
         cwd: str | None,
         writable_roots: list[str] | None,
+        *,
+        sandbox_profile: str | None = None,
     ) -> dict[str, Any]:
+        profile = self._normalize_sandbox_profile(sandbox_profile)
+        if profile == "read_only":
+            policy = self._read_only_sandbox_policy(cwd)
+            if str(policy.get("type") or "").strip() == "dangerFullAccess":
+                raise CodexTransportError(
+                    "read_only sandbox profile resolved to dangerFullAccess",
+                    "invalid_sandbox_policy",
+                )
+            return policy
+
         normalized_roots = self._normalize_writable_roots(writable_roots)
         if not normalized_roots:
             return {"type": "dangerFullAccess"}
@@ -633,6 +652,37 @@ class StdioTransport(CodexTransport):
             "excludeTmpdirEnvVar": False,
             "excludeSlashTmp": False,
         }
+
+    def _read_only_sandbox_policy(self, cwd: str | None) -> dict[str, Any]:
+        readable_roots: list[str] = []
+        if isinstance(cwd, str) and cwd.strip():
+            readable_roots.append(cwd.strip())
+        readable_roots = self._dedupe_preserve_order(readable_roots)
+        return {
+            "type": "workspaceWrite",
+            "writableRoots": [],
+            "readOnlyAccess": {
+                "type": "fullAccess",
+                "includePlatformDefaults": True,
+                "readableRoots": readable_roots,
+            },
+            "networkAccess": False,
+            "excludeTmpdirEnvVar": False,
+            "excludeSlashTmp": False,
+        }
+
+    def _normalize_sandbox_profile(self, sandbox_profile: str | None) -> str:
+        if sandbox_profile is None:
+            return "default"
+        normalized = str(sandbox_profile).strip().lower()
+        if not normalized:
+            return "default"
+        if normalized in {"default", "read_only"}:
+            return normalized
+        raise CodexTransportError(
+            f"Unsupported sandbox profile: {sandbox_profile!r}",
+            "invalid_sandbox_profile",
+        )
 
     def _normalize_writable_roots(self, writable_roots: list[str] | None) -> list[str]:
         if not isinstance(writable_roots, list):
@@ -1442,6 +1492,7 @@ class CodexAppClient:
         timeout_sec: int = 120,
         cwd: str | None = None,
         writable_roots: list[str] | None = None,
+        sandbox_profile: str | None = None,
         on_delta: Callable[[str], None] | None = None,
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
         on_plan_delta: Callable[[str, dict[str, Any]], None] | None = None,
@@ -1460,6 +1511,7 @@ class CodexAppClient:
             timeout_sec=timeout_sec,
             cwd=cwd,
             writable_roots=writable_roots,
+            sandbox_profile=sandbox_profile,
             on_delta=on_delta,
             on_tool_call=on_tool_call,
             on_plan_delta=on_plan_delta,
