@@ -250,11 +250,56 @@ def test_get_session_returns_empty_for_new_node(storage, workspace_root):
     assert session["messages"] == []
 
 
+def test_get_session_does_not_inject_or_normalize_legacy_audit_messages(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+
+    audit_session = storage.chat_state_store.read_session(project_id, root_id, thread_role="audit")
+    audit_session["messages"] = [
+        {
+            "message_id": AUDIT_FRAME_RECORD_MESSAGE_ID,
+            "role": "assistant",
+            "content": "Legacy frame snapshot",
+            "status": "completed",
+            "error": None,
+            "turn_id": "legacy-turn",
+            "created_at": iso_now(),
+            "updated_at": iso_now(),
+        }
+    ]
+    storage.chat_state_store.write_session(project_id, root_id, audit_session, thread_role="audit")
+
+    session = service.get_session(project_id, root_id, thread_role="audit")
+
+    assert [message["message_id"] for message in session["messages"]] == [AUDIT_FRAME_RECORD_MESSAGE_ID]
+    assert session["messages"][0]["role"] == "assistant"
+    assert session["messages"][0]["turn_id"] == "legacy-turn"
+
+
+def test_review_audit_session_stays_empty_without_seed_replay(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    _add_review_node(storage, project_id, root_id, "review-phase7")
+    service = _make_service(storage)
+
+    session = service.get_session(project_id, "review-phase7", thread_role="audit")
+
+    assert session["thread_role"] == "audit"
+    assert session["messages"] == []
+
+
 def test_get_session_raises_for_nonexistent_node(storage, workspace_root):
     project_id, _ = _create_project(storage, workspace_root)
     service = _make_service(storage)
     with pytest.raises(NodeNotFound):
         service.get_session(project_id, "nonexistent")
+
+
+def test_ensure_chat_thread_rejects_unsupported_interactive_role(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    service = _make_service(storage)
+
+    with pytest.raises(ValueError, match="Unsupported interactive thread role"):
+        service._ensure_chat_thread(project_id, root_id, "execution", None, str(workspace_root))
 
 
 def test_create_message_creates_user_and_assistant(storage, workspace_root):

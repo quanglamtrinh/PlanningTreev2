@@ -1,58 +1,56 @@
 # Thread State Model
 
-Status: spec (updated through Phase 6). Defines the multi-thread architecture for node lifecycle.
+Status: active spec (updated through Phase 7). Defines the shipped multi-thread architecture and lifecycle rules for task and review nodes.
 
 ## Thread Roles
 
-Each task node can have up to three threads. Thread role is the primary key alongside `(project_id, node_id)`.
+Each session is keyed by `(project_id, node_id, thread_role)`.
 
-| Role | Purpose | Created when |
-|------|---------|-------------|
-| `ask_planning` | Working discussion for shaping (frame, clarify, spec) | When node reaches its turn |
-| `execution` | Automated Codex code generation from confirmed spec | On Finish Task |
-| `audit` | Official record (two-phase: seed context at creation, canonical artifacts after shaping); local review chat post-execution; package audit after rollup; automated rollup analysis for review nodes | When node reaches its turn |
+| Role | Node kinds | Purpose | Creation source |
+|------|------------|---------|-----------------|
+| `audit` | task, review | Canonical lineage source for the node; local review chat; package audit; automated review rollup | Root task: `start_thread()`; review node: `fork(parent.audit)`; child task: `fork(review.audit)` when review ancestry exists |
+| `ask_planning` | task only | Working shaping discussion for frame, clarify, and spec | `fork(task.audit)` |
+| `execution` | task only | Automated implementation run from a confirmed spec | `fork(task.audit)` |
 
-Review nodes (`node_kind: review`) use a single canonical `audit` thread for automated integration rollup review. They do not use `ask_planning` or `execution`. See `review-node-checkpoint.md`.
+Review nodes use only `audit`. They never expose `ask_planning` or `execution`.
 
 ## Thread Role Enum
 
-```
-ThreadRole = "audit" | "ask_planning" | "execution"
+```ts
+type ThreadRole = "audit" | "ask_planning" | "execution"
 ```
 
-- `audit`, `ask_planning`, `execution`: used by task nodes
-- `audit`: also used by review nodes for agent-based rollup review and read-only breadcrumb access
-
-Python: literal string union. TypeScript: `type ThreadRole = 'audit' | 'ask_planning' | 'execution'`.
+Python uses the same literal string set.
 
 ## Storage Layout
 
-### Current (single thread per node)
-
-```
-.planningtree/chat/{node_id}.json
-```
-
-### Target (one file per thread role)
-
 Task nodes:
-```
+
+```text
 .planningtree/chat/{node_id}/audit.json
 .planningtree/chat/{node_id}/ask_planning.json
 .planningtree/chat/{node_id}/execution.json
 ```
 
 Review nodes:
-```
+
+```text
 .planningtree/chat/{review_node_id}/audit.json
 ```
 
-Each file follows the existing `ChatSession` schema with an added `thread_role` field:
+Legacy single-file task sessions still migrate lazily to `ask_planning.json` on first read. Legacy review-node `integration.json` still migrates lazily to `audit.json` for historical data only.
+
+### Session Schema
 
 ```json
 {
   "thread_id": "codex-thread-id-or-null",
-  "thread_role": "ask_planning",
+  "thread_role": "audit",
+  "forked_from_thread_id": "upstream-thread-id-or-null",
+  "forked_from_node_id": "upstream-node-id-or-null",
+  "forked_from_role": "audit-or-null",
+  "fork_reason": "root_bootstrap | ask_bootstrap | execution_bootstrap | review_bootstrap | child_activation | audit_lazy_bootstrap | legacy_resumed",
+  "lineage_root_thread_id": "root-audit-thread-id-or-null",
   "active_turn_id": null,
   "messages": [],
   "created_at": "ISO",
@@ -60,167 +58,122 @@ Each file follows the existing `ChatSession` schema with an added `thread_role` 
 }
 ```
 
-### Migration Rule
+`messages` are local session history for UI/state tracking. They are not replayed into Codex threads and do not participate in fork inheritance.
 
-On first read of `chat/{node_id}`:
+## Lineage Model
 
-1. If flat file `chat/{node_id}.json` exists AND directory `chat/{node_id}/` does not exist:
-   - Create directory `chat/{node_id}/`
-   - Move `chat/{node_id}.json` to `chat/{node_id}/ask_planning.json`
-   - Add `"thread_role": "ask_planning"` to the migrated session
-2. If both exist (partial migration), prefer the directory version.
-3. If neither exists, return default empty session for the requested role.
+### Root task audit
 
-Migration is lazy (on first access), not eager (no startup scan).
+- `root.audit` is the only canonical task thread created with `start_thread()`.
+- It is bootstrapped lazily on first access through `ThreadLineageService`.
 
-## Thread Creation Timing
+### Task ask/planning
 
-### ask_planning
+- `ask_planning` is created lazily on the first ask interaction.
+- It is always `fork(task.audit)`.
+- New `ask_planning` threads carry the superset shaping tool set needed for frame/spec/clarify generation.
 
-Created when the node "reaches its turn":
-- **First child after split**: immediately (node gets `status: ready`)
-- **Later sequential siblings**: lazily, after previous sibling's local review is accepted and checkpoint K(N) is written (see `lazy-sibling-creation.md`)
+### Execution
 
-`ask_planning` is the default thread. All existing chat behavior (BreadcrumbChatView "Ask" tab) maps to this role.
+- `execution` is created only when Finish Task starts.
+- It is always `fork(task.audit)`.
+- Execution remains automated and user read-only.
 
-### audit
+### Review audit
 
-Created at the same time as `ask_planning` (when node reaches its turn).
+- `review.audit` is the canonical review thread in v1.
+- It is created from `fork(parent.audit)` after split persistence or rebuilt from that ancestor later if the app-server thread is missing.
 
-Audit is a **two-phase thread**:
+### Child task audit
 
-**Phase 1 — Creation seed (when node reaches its turn):**
+- When a child has review ancestry, `child.audit` is created from `fork(review.audit)`.
+- If a node predates full lineage or has no review ancestry yet, `ThreadLineageService` may preserve or create truthful legacy/bootstrap sessions such as `legacy_resumed` or `audit_lazy_bootstrap` rather than inventing fake ancestry.
 
-At creation time, audit receives only the context that exists at that moment:
-- Split item for this node (title + objective from parent's split payload)
-- Checkpoint context: latest accepted summary + SHA from review node
-- Parent context needed for the node to begin shaping
+## Workflow-Boundary Context Injection
 
-At this point, the node's own confirmed frame and spec **do not exist yet** (the node hasn't been shaped). Audit does not contain them.
+Canonical artifacts live in local storage and are injected only at workflow boundaries. They are not synthesized into chat sessions as seed messages.
 
-**Phase 2 — Canonical artifact snapshots (after shaping completes):**
+### Ask planning
 
-When `confirm_frame()` succeeds in `ask_planning`, a snapshot of the confirmed frame is **appended** to audit as a canonical record message.
+- Normal shaping chat uses `build_chat_prompt(...)`.
+- For newly activated child tasks, child assignment and prior checkpoint context are injected from storage on the first successful `ask_planning` turn while the activation boundary is open.
 
-When `confirm_spec()` succeeds, a snapshot of the confirmed spec is **appended** to audit as a canonical record message.
+### Execution
 
-These appends happen via service-level side effects (not user action). They are write-once: each artifact snapshot is appended exactly once.
+- Execution prompt assembly loads the confirmed frame and spec from storage.
+- Execution never depends on synthetic session messages for canonical artifact delivery.
 
-**Phase 3 — Local review (after execution completes):**
+### Local review
 
-Audit opens for user + agent chat to perform local review. This applies to nodes that went through execution (leaf task nodes).
+- After execution completes, the first successful task-audit turn while local review is open uses `build_local_review_prompt(...)`.
+- Boundary markers live in `execution_state.json`.
 
-**Phase 4 — Package audit (after rollup review from review node):**
+### Review rollup
 
-If this node is a parent that was split, after its review node completes integration rollup, the accepted rollup package (summary + SHA) is written to this node's audit. Audit then opens for user + agent chat so the parent can review whether the package satisfies its own frame and split rationale. This applies even if the parent never executed (split parents typically don't execute).
+- When rollup starts in `review.audit`, `build_rollup_prompt_from_storage(...)` injects parent context, split package context, and accepted checkpoints from storage.
+- Review-node audit is automated and read-only to users.
 
-For review nodes, `audit` is always read-only to the user. Codex writes rollup analysis output there automatically.
+### Package audit
 
-Audit is **read-only** except in these two writability windows. See Read-Only Rules below.
+- After an accepted rollup package is written to the parent audit, the first successful parent-audit turn while package review is open uses `build_package_review_prompt(...)`.
+- Boundary markers live in `review_state.json`.
 
-### execution
+## Local Session Annotations
 
-Created only when user clicks **Finish Task** (see `execution-state-model.md`).
+Some local-only audit messages remain valid and are not part of the retired seed mechanism:
 
-Execution thread uses an automated Codex prompt (not interactive chat). The thread runs a background job that generates code from the confirmed spec. User monitors output in read-only mode.
+- confirmed frame audit record
+- confirmed spec audit record
+- accepted rollup package record
+
+These records exist for UI visibility and gating. They do not drive fork inheritance and are never replayed into Codex threads.
 
 ## Read-Only Rules
 
-| Thread Role | Read-only when | Writable when |
-|-------------|---------------|---------------|
-| `ask_planning` | `execution_state` exists on node (Finish Task was clicked) | Before Finish Task |
-| `execution` | `execution_state.status == completed` | During execution (`status == executing`) — but only Codex writes, not user |
-| `audit` | Neither writability condition is met (see below) | **Exactly two task-node cases** (see below) |
+| Thread role | User write access |
+|-------------|-------------------|
+| `ask_planning` | Writable until Finish Task freezes shaping |
+| `execution` | Never writable by user |
+| `audit` on task nodes | Writable only during local review or package audit |
+| `audit` on review nodes | Never writable by user |
 
-**Audit is writable in exactly two cases:**
+Task-node audit becomes writable in exactly two cases:
 
-1. **Local review**: after this node's own execution completes (`execution_state.status >= completed`). Applies to leaf task nodes that went through Finish Task.
+1. Local review: this node's own execution completed.
+2. Package audit: this node's review node has an accepted rollup package and that package record exists in the parent audit session.
 
-2. **Package audit**: after this node's review node has produced an accepted rollup package AND that package has been appended to this node's audit. Applies to parent nodes that were split. Condition: `node.review_node_id` is set AND the review node's `rollup.status == accepted` AND the rollup package message exists in audit.
+## Recovery Rules
 
-These two cases are mutually exclusive in practice: a leaf node executes (case 1), a split parent receives a rollup package (case 2). A node that both executes and later splits would use case 1 first, then case 2 after its children complete.
+`ThreadLineageService` is the only owner of rebuild/recovery behavior.
 
-"Read-only" means:
-- `create_message()` raises `ThreadReadOnly` error
-- UI disables ComposerBar
-- Existing messages remain visible
+- Lost `ask_planning` and `execution` threads rebuild by re-forking from the current node audit.
+- Lost `review.audit` rebuilds by re-forking from `parent.audit`.
+- Lost `child.audit` rebuilds by re-forking from `review.audit`.
+- Lost `root.audit` reboots with `start_thread()`.
+- Recovery never replays seed messages. It relies on lineage plus storage-backed prompt injection at the next workflow boundary.
 
-For `execution` thread specifically: user never writes directly. Codex writes during execution. After completion, the thread is read-only for everyone.
+## SSE and API Surface
 
-## Thread Seeding Context
+Each thread role has its own SSE stream key: `(project_id, node_id, thread_role)`.
 
-### ask_planning seed
+Chat endpoints accept `thread_role`:
 
-System prompt includes:
-- Project name and root goal
-- Parent chain prompts (ancestor context)
-- Node title and description
-- Current node prompt (compact format)
-- Prior sibling summaries (if any, from checkpoint)
-
-This matches the existing `build_chat_prompt()` pattern in `chat_prompt_builder.py`.
-
-### audit seed (two-phase)
-
-**At creation time** (seed messages with `role: system`):
-- Split item for this node (title + objective from parent's split payload)
-- Checkpoint context: latest accepted summary + SHA from review node
-- Parent chain context (ancestor prompts)
-
-These are written once at creation and are immutable.
-
-**After shaping** (canonical record messages, appended by service-level side effects):
-- Confirmed frame content — appended when `confirm_frame()` succeeds
-- Confirmed spec content — appended when `confirm_spec()` succeeds
-
-Each canonical artifact is appended exactly once. They are also immutable after being written.
-
-**After rollup** (for parent nodes that were split):
-- Accepted rollup package (summary + SHA) from the review node — appended when `accept_rollup_review()` completes
-
-### review audit rollup context (review nodes only)
-
-Review nodes do not receive seed messages. When rollup starts, the rollup prompt builder injects storage-backed context into the review node's `audit` thread:
-- Parent task context
-- Accepted checkpoint summaries and SHAs (K0, K1, ...)
-- Rollup goal and JSON output shape
-
-### execution seed
-
-System prompt for automated Codex execution:
-- "You are executing a confirmed task spec. Implement the following spec."
-- Full confirmed spec content
-- Confirmed frame content for context
-- Project workspace root as `cwd`
-- No interactive tools — Codex works autonomously
-
-## SSE Broker Key
-
-Current: `(project_id, node_id)`
-Target: `(project_id, node_id, thread_role)`
-
-Each thread role gets its own SSE event stream. The frontend subscribes to the active tab's stream.
-
-## API Surface Changes
-
-All chat endpoints gain `thread_role` query parameter:
-
-```
+```text
 GET  /v1/projects/{pid}/nodes/{nid}/chat/session?thread_role=ask_planning
 POST /v1/projects/{pid}/nodes/{nid}/chat/message?thread_role=ask_planning
 GET  /v1/projects/{pid}/nodes/{nid}/chat/events?thread_role=ask_planning
 POST /v1/projects/{pid}/nodes/{nid}/chat/reset?thread_role=ask_planning
 ```
 
-Default value: `ask_planning` (backward compatible with existing callers).
+Default remains `ask_planning`.
 
 ## Invariants
 
-1. A node has at most one session per thread role.
-2. Thread role is immutable once set on a session.
-3. `ask_planning` always exists if the node has reached its turn.
-4. `execution` only exists after Finish Task.
-5. `audit` creation seed messages are immutable. Canonical artifact snapshots (frame, spec) are appended once each after shaping. Post-execution chat messages are appended during local review.
-6. Read-only enforcement is checked at service level (`ChatService`), not storage level.
-7. Review nodes have only the `audit` thread role. They do not use `ask_planning` or `execution`.
-8. `review.audit` is typically forked from `parent.audit` after split persistence and may be rebuilt lazily from lineage if missing later.
+1. `root.audit` is the only task audit created with `start_thread()`.
+2. New `ask_planning` and `execution` sessions are created by forking the node's `audit`.
+3. Review nodes use `audit` rather than a dedicated `integration` thread.
+4. Child tasks with review ancestry fork from `review.audit`.
+5. Canonical artifacts are persisted to local storage before the downstream workflow boundary that consumes them.
+6. Prompt builders, not seed insertion, deliver canonical storage-backed context at workflow boundaries.
+7. No production service outside `ThreadLineageService` owns raw thread start/resume recovery logic.
+8. Lost app-server threads rebuild from lineage and storage; canonical state is never recovered from Codex thread history.

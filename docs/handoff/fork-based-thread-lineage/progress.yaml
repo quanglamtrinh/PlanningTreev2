@@ -1,7 +1,7 @@
 migration_id: fork_based_thread_lineage
-status: phase_6_complete
+status: phase_7_complete
 current_phase: null
-next_phase: 7
+next_phase: null
 
 references:
   specs:
@@ -248,7 +248,7 @@ phases:
   - phase: 7
     pr: 7
     name: recovery_hardening_and_cleanup
-    status: not_started
+    status: completed
     depends_on:
       - 6
     goals:
@@ -262,7 +262,30 @@ phases:
     verification:
       - rebuild-path tests pass
       - seed-service imports are fully removed
-    notes: ""
+    notes: >
+      Completed on 2026-03-25. ChatService no longer imports or runs
+      thread_seed_service on session load, backend/services/thread_seed_service.py
+      and backend/tests/unit/test_thread_seeding.py were deleted, and
+      ThreadLineageService is now the sole production owner of start/fork/resume/
+      rebuild behavior. ChatService._ensure_chat_thread() no longer falls back
+      to generic raw thread bootstrap for non-interactive roles. Internal
+      integration-themed rollup helpers/modules were renamed to review_rollup_*,
+      with review-service callers updated to start_review_rollup() and
+      _ensure_review_audit_thread(). Active specs were refreshed to describe the
+      shipped fork-based model instead of the old seeded model. Verified with:
+      .\.venv\Scripts\python.exe -m pytest -p no:cacheprovider
+      backend/tests/unit/test_chat_service.py
+      backend/tests/unit/test_thread_readonly.py
+      backend/tests/unit/test_review_service.py
+      backend/tests/unit/test_split_service.py
+      backend/tests/unit/test_thread_lineage_service.py
+      backend/tests/unit/test_phase2_prompt_builders.py -q
+      -> 102 passed
+      .\.venv\Scripts\python.exe -m pytest -p no:cacheprovider
+      backend/tests/integration/test_chat_api.py
+      backend/tests/integration/test_review_api.py
+      backend/tests/integration/test_lifecycle_e2e.py -q
+      -> 34 passed.
 
 deferred_cleanup:
   - id: gating_decoupling

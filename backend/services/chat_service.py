@@ -22,7 +22,6 @@ from backend.errors.app_errors import (
     ThreadReadOnly,
 )
 from backend.services.execution_gating import audit_writable, package_audit_ready
-from backend.services.thread_seed_service import ensure_thread_seeded_session
 from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now, new_id
@@ -76,8 +75,6 @@ class ChatService:
                 project_id,
                 node_id,
                 thread_role=thread_role,
-                snapshot=snapshot,
-                node=node,
             )
             return session
 
@@ -125,8 +122,6 @@ class ChatService:
                 project_id,
                 node_id,
                 thread_role=thread_role,
-                snapshot=snapshot,
-                node=node,
             )
             if session.get("active_turn_id"):
                 raise ChatTurnAlreadyActive()
@@ -204,8 +199,6 @@ class ChatService:
                 project_id,
                 node_id,
                 thread_role=thread_role,
-                snapshot=snapshot,
-                node=node,
             )
             if session.get("active_turn_id"):
                 with self._live_turns_lock:
@@ -493,40 +486,12 @@ class ChatService:
         existing_thread_id: Any,
         workspace_root: str | None,
     ) -> str:
+        del existing_thread_id
         if thread_role == "ask_planning":
             return self._ensure_ask_planning_thread(project_id, node_id, workspace_root)
         if thread_role == "audit":
             return self._ensure_audit_thread(project_id, node_id, workspace_root)
-
-        if isinstance(existing_thread_id, str) and existing_thread_id.strip():
-            try:
-                self._codex_client.resume_thread(
-                    existing_thread_id,
-                    cwd=workspace_root,
-                    timeout_sec=15,
-                )
-                return existing_thread_id.strip()
-            except CodexTransportError as exc:
-                if not self._is_missing_thread_error(exc):
-                    raise ChatBackendUnavailable(str(exc)) from exc
-
-        try:
-            response = self._codex_client.start_thread(
-                base_instructions=(
-                    "You are a helpful assistant for the PlanningTree project planning tool. "
-                    "Help the user with their task by providing clear, actionable guidance."
-                ),
-                dynamic_tools=[],
-                cwd=workspace_root,
-                timeout_sec=30,
-            )
-        except CodexTransportError as exc:
-            raise ChatBackendUnavailable(str(exc)) from exc
-
-        thread_id = str(response.get("thread_id") or "").strip()
-        if not thread_id:
-            raise ChatBackendUnavailable("Chat thread start did not return a thread id.")
-        return thread_id
+        raise ValueError(f"Unsupported interactive thread role: {thread_role!r}")
 
     def _bootstrap_task_session_on_read(
         self,
@@ -809,8 +774,6 @@ class ChatService:
         node_id: str,
         *,
         thread_role: str,
-        snapshot: dict[str, Any],
-        node: dict[str, Any],
     ) -> dict[str, Any]:
         session = self._storage.chat_state_store.read_session(
             project_id,
@@ -818,16 +781,6 @@ class ChatService:
             thread_role=thread_role,
         )
         changed = False
-        session, seeded = ensure_thread_seeded_session(
-            self._storage,
-            project_id=project_id,
-            node_id=node_id,
-            thread_role=thread_role,
-            snapshot=snapshot,
-            node=node,
-            session=session,
-        )
-        changed = changed or seeded
         if self._recover_stale_turn(project_id, node_id, session, thread_role=thread_role):
             changed = True
         if changed:

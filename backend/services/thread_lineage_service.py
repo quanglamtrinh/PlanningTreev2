@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
-from backend.ai.integration_rollup_prompt_builder import build_integration_rollup_base_instructions
+from backend.ai.review_rollup_prompt_builder import build_review_rollup_base_instructions
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
 
@@ -463,7 +463,7 @@ class ThreadLineageService:
         if base_instructions is not None:
             return base_instructions
         if self._normalize_optional_string(node.get("node_kind")) == "review":
-            return build_integration_rollup_base_instructions()
+            return build_review_rollup_base_instructions()
         return None
 
     def _persist_session_locked(

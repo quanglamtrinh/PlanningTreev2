@@ -1,6 +1,6 @@
 # Fork-Based Thread Lineage Migration Plan
 
-Status: Phase 6 complete, Phase 7 next. This document is the working implementation plan that translates the fork-based lineage specs into a seven-phase rollout that can be executed incrementally.
+Status: Phase 7 complete. This document is now the final migration summary for the seven-phase fork-based thread lineage rollout.
 
 Primary specs:
 
@@ -15,13 +15,16 @@ Primary specs:
 - Phase 4 completed on 2026-03-25
 - Phase 5 completed on 2026-03-25
 - Phase 6 completed on 2026-03-25
-- Phase 7 / PR 7 is the next intended implementation slice
+- Phase 7 completed on 2026-03-25
 - Phase 3 verification completed with targeted backend unit tests for ask bootstrap, ask seeding retention, generation reuse of `ask_planning`, plus targeted chat API smoke coverage
 - Phase 4 verification completed with `py_compile` on touched backend/test files plus manual service-layer smoke for execution fork lineage, first-turn-only local review injection, and failed-first-turn retry retention
 - Phase 5 verification completed with `py_compile` plus combined unit/integration pytest coverage across split/review/chat touched areas: `135 passed`
 - Phase 6 verification completed with targeted backend unit + integration pytest coverage plus frontend breadcrumb Vitest coverage: `58 unit passed`, `34 integration passed`, `10 frontend passed`
+- Phase 7 verification completed with targeted backend unit + integration pytest coverage focused on recovery ownership, seed retirement, and review-rollup symbol cleanup: `102 unit passed`, `34 integration passed`
 - Post-review cleanup aligned the execution integration-test fake with `fork_thread()` and corrected Phase 4 historical docs so they describe the boundary markers as living in `execution_state.json`
 - Phase 6 closed the public `integration` compatibility window, switched review-node chat semantics to `audit`, removed review integration seeds, and updated active contract docs/UI labels to `Review Audit`
+- Phase 7 deleted `thread_seed_service.py`, removed seed replay from session load, made `ThreadLineageService` the sole production lifecycle owner, renamed internal rollup helpers to `review_rollup_*`, and refreshed active specs to the shipped fork-based model
+- `docs/handoff/fork-based-thread-lineage/phase-7-handoff.md` now serves as the historical brief for the completed PR 7 slice
 - `docs/handoff/fork-based-thread-lineage/phase-6-handoff.md` now serves as the historical brief for the completed PR 6 slice
 - `docs/handoff/fork-based-thread-lineage/phase-5-handoff.md` now serves as the historical brief for the completed PR 5 slice
 - `docs/handoff/fork-based-thread-lineage/phase-4-handoff.md` now serves as the historical brief for the completed PR 4 slice
@@ -29,11 +32,11 @@ Primary specs:
 
 ## Context
 
-The current thread model creates threads through `start_thread()` and `resume_thread()` and reconstructs inheritance with seed messages from `thread_seed_service.py`. That model does not mirror task lineage and makes recovery fragile.
+The legacy thread model created threads through `start_thread()` and `resume_thread()` and reconstructed inheritance with seed messages from `thread_seed_service.py`. That model did not mirror task lineage and made recovery fragile.
 
 The target model uses `fork_thread()` so thread inheritance mirrors task inheritance. Canonical artifacts such as frame, spec, execution state, split packages, checkpoints, and rollup results remain in local storage and are injected into prompts at workflow boundaries. Codex threads hold conversation context only.
 
-An additional current-state gap is that frame, spec, and clarify generation each maintain their own Codex thread in generation state files. In the target model, those generation flows run on `ask_planning` instead of owning separate threads.
+This migration closes the earlier generation-thread gap as well: frame, spec, and clarify generation now run on `ask_planning` instead of owning separate Codex threads.
 
 ## Resolved Blockers
 
@@ -292,6 +295,14 @@ Rollback:
 
 ### Phase 7 / PR 7: Recovery hardening and cleanup
 
+Status:
+
+- completed on 2026-03-25
+- `ThreadLineageService` is now the sole production owner of start/fork/resume/rebuild logic
+- `thread_seed_service.py` and the old seeding test suite are deleted
+- internal rollup helpers/modules now use `review_rollup_*` naming
+- active specs now describe the shipped fork-based model rather than the old seeded model
+
 Goal:
 
 - finish recovery behavior
@@ -302,9 +313,10 @@ Changes:
 
 - route all remaining thread recovery through `ThreadLineageService`
 - delete `thread_seed_service.py`
-- remove seed-insertion calls from chat and review paths
+- remove seed-insertion calls from chat session load paths
 - rename integration-specific rollup helpers to review-audit terminology
 - keep `integration.json -> audit.json` migration for historical data
+- update active specs and handoff artifacts to the final post-migration baseline
 
 Deferred cleanup:
 
@@ -314,8 +326,9 @@ Deferred cleanup:
 
 Tests:
 
-- rebuild paths by node kind and thread role
-- removal of seed-service imports and usage
+- targeted backend unit coverage for chat/review/split/lineage/prompt-builder areas: `102 passed`
+- targeted backend integration coverage for chat/review/lifecycle flows: `34 passed`
+- explicit coverage now asserts no seed replay on task/review session reads and keeps rebuild paths on lineage-owned recovery
 
 Rollback:
 
@@ -348,6 +361,6 @@ After each phase:
 
 ## Companion Tracking Artifact
 
-Use `docs/handoff/fork-based-thread-lineage/progress.yaml` as the implementation tracker for phase status, notes, blockers, and acceptance progress. Update it at the start and end of each phase PR.
+Use `docs/handoff/fork-based-thread-lineage/progress.yaml` as the final implementation tracker for phase status, notes, blockers, and verification history.
 
-Use `docs/handoff/fork-based-thread-lineage/phase-6-handoff.md` as the active continuation artifact for the next implementation slice. Keep older phase handoff docs as historical implementation records.
+Use `docs/handoff/fork-based-thread-lineage/phase-7-handoff.md` as the final historical brief for the completed migration. Keep older phase handoff docs as historical implementation records.

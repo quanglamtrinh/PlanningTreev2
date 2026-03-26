@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from backend.ai.integration_rollup_prompt_builder import build_integration_rollup_base_instructions
+from backend.ai.review_rollup_prompt_builder import build_review_rollup_base_instructions
 from backend.ai.codex_client import CodexTransportError
 from backend.main import create_app
 from backend.services import planningtree_workspace
@@ -189,7 +189,7 @@ def test_ensure_audit_exists_child_with_review_ancestry_forks_from_review_audit(
     assert session["forked_from_thread_id"] == review_session["thread_id"]
     assert session["fork_reason"] != "audit_lazy_bootstrap"
     assert len(codex_client.forked_threads) == 2
-    assert codex_client.forked_threads[0]["base_instructions"] == build_integration_rollup_base_instructions()
+    assert codex_client.forked_threads[0]["base_instructions"] == build_review_rollup_base_instructions()
 
 
 def test_ensure_audit_exists_lazy_creates_review_audit_with_rollup_base_instructions(
@@ -209,7 +209,7 @@ def test_ensure_audit_exists_lazy_creates_review_audit_with_rollup_base_instruct
     assert session["thread_role"] == "audit"
     assert session["fork_reason"] == "review_bootstrap"
     assert session["forked_from_node_id"] == root_id
-    assert codex_client.forked_threads[-1]["base_instructions"] == build_integration_rollup_base_instructions()
+    assert codex_client.forked_threads[-1]["base_instructions"] == build_review_rollup_base_instructions()
 
 
 def test_ensure_forked_thread_creates_fresh_fork_and_persists_lineage(
@@ -485,7 +485,7 @@ def test_resume_or_rebuild_session_rebuilds_review_audit_from_parent_audit(
     assert session["fork_reason"] == "review_bootstrap"
     assert session["forked_from_node_id"] == root_id
     assert codex_client.forked_threads[-1]["source_thread_id"] == root_session["thread_id"]
-    assert codex_client.forked_threads[-1]["base_instructions"] == build_integration_rollup_base_instructions()
+    assert codex_client.forked_threads[-1]["base_instructions"] == build_review_rollup_base_instructions()
 
 
 def test_resume_or_rebuild_session_keeps_existing_review_audit_without_thread_level_retrofit(
@@ -521,7 +521,7 @@ def test_resume_or_rebuild_session_keeps_existing_review_audit_without_thread_le
         review_id,
         "audit",
         str(workspace_root),
-        base_instructions=build_integration_rollup_base_instructions(),
+        base_instructions=build_review_rollup_base_instructions(),
     )
 
     assert session["thread_id"] == "existing-review-thread"

@@ -372,7 +372,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
     integration_codex = _IntegrationCodex(summary="Both subtasks integrated successfully")
     client.app.state.review_service._codex_client = integration_codex
     client.app.state.thread_lineage_service._codex_client = integration_codex
-    client.app.state.review_service.start_integration_rollup(project_id, review_id)
+    client.app.state.review_service.start_review_rollup(project_id, review_id)
     _wait_integration_done(client, project_id, review_id)
 
     # Verify draft populated
@@ -531,7 +531,7 @@ def test_package_audit_lifecycle(client: TestClient, workspace_root):
     # Start integration rollup
     client.app.state.review_service._codex_client = integration_codex
     client.app.state.thread_lineage_service._codex_client = integration_codex
-    client.app.state.review_service.start_integration_rollup(project_id, review_id)
+    client.app.state.review_service.start_review_rollup(project_id, review_id)
     _wait_integration_done(client, project_id, review_id)
 
     # Verify draft is ready
