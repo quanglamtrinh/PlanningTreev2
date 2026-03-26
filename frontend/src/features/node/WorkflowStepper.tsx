@@ -7,6 +7,8 @@ type WorkflowStepperProps = {
   detailTab: WorkflowTab
   detailState: DetailState | undefined
   onTabChange: (tab: WorkflowTab) => void
+  /** After Frame updated: spec path disables Split; split path disables Spec + Finish Task. */
+  tabDisabled?: { spec?: boolean; split?: boolean; finish?: boolean }
 }
 
 function TickIcon() {
@@ -40,12 +42,21 @@ function ArrowConn({ gridArea }: { gridArea: string }) {
   )
 }
 
-export function WorkflowStepper({ detailTab, detailState, onTabChange }: WorkflowStepperProps) {
+export function WorkflowStepper({
+  detailTab,
+  detailState,
+  onTabChange,
+  tabDisabled,
+}: WorkflowStepperProps) {
   const frameConfirmed = detailState?.frame_confirmed ?? false
   const clarifyConfirmed = detailState?.clarify_confirmed ?? false
   const specConfirmed = detailState?.spec_confirmed ?? false
   const frameBranchReady = detailState?.frame_branch_ready ?? false
   const frameUpdatedDone = frameBranchReady || detailState?.active_step === 'spec'
+
+  const specDisabled = tabDisabled?.spec === true
+  const splitDisabled = tabDisabled?.split === true
+  const finishDisabled = tabDisabled?.finish === true
 
   const nodeClass = (id: WorkflowTab, doneOverride = false): string => {
     const done =
@@ -67,6 +78,15 @@ export function WorkflowStepper({ detailTab, detailState, onTabChange }: Workflo
       .join(' ')
   }
 
+  const nodeClassDisabled = (
+    id: WorkflowTab,
+    doneOverride = false,
+    disabled?: boolean,
+  ): string => {
+    const base = nodeClass(id, doneOverride)
+    return disabled ? `${base} ${styles.nodeDisabled}` : base
+  }
+
   return (
     <nav className={styles.grid} aria-label="Task workflow steps">
       <span
@@ -79,10 +99,15 @@ export function WorkflowStepper({ detailTab, detailState, onTabChange }: Workflo
 
       <button
         type="button"
-        className={nodeClass('spec')}
+        className={nodeClassDisabled('spec', false, specDisabled)}
         style={{ gridArea: 'spec' }}
-        onClick={() => onTabChange('spec')}
+        disabled={specDisabled}
+        onClick={() => {
+          if (!specDisabled) onTabChange('spec')
+        }}
         aria-current={detailTab === 'spec' ? 'step' : undefined}
+        aria-disabled={specDisabled}
+        title={specDisabled ? 'Unavailable after choosing Split from Frame updated' : undefined}
       >
         <span>Spec</span>
         {specConfirmed ? <TickIcon /> : null}
@@ -91,9 +116,17 @@ export function WorkflowStepper({ detailTab, detailState, onTabChange }: Workflo
       <ArrowConn gridArea="cfArr2" />
 
       <span
-        className={[styles.nodeVisual, specConfirmed ? styles.done : ''].filter(Boolean).join(' ')}
+        className={[
+          styles.nodeVisual,
+          specConfirmed ? styles.done : '',
+          finishDisabled ? styles.nodeDisabled : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
         style={{ gridArea: 'finish' }}
         aria-hidden="true"
+        aria-disabled={finishDisabled}
+        title={finishDisabled ? 'Unavailable after choosing Split from Frame updated' : undefined}
       >
         <span>Finish Task</span>
         {specConfirmed ? <TickIcon /> : null}
@@ -153,10 +186,15 @@ export function WorkflowStepper({ detailTab, detailState, onTabChange }: Workflo
 
       <button
         type="button"
-        className={nodeClass('split')}
+        className={nodeClassDisabled('split', false, splitDisabled)}
         style={{ gridArea: 'spTask' }}
-        onClick={() => onTabChange('split')}
+        disabled={splitDisabled}
+        onClick={() => {
+          if (!splitDisabled) onTabChange('split')
+        }}
         aria-current={detailTab === 'split' ? 'step' : undefined}
+        aria-disabled={splitDisabled}
+        title={splitDisabled ? 'Unavailable after choosing Create Spec from Frame updated' : undefined}
       >
         <span>Split</span>
       </button>

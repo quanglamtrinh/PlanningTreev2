@@ -31,8 +31,15 @@ def execution_completed(exec_state: dict[str, Any] | None) -> bool:
     return status in _LOCAL_REVIEW_EXECUTION_STATUSES
 
 
+_FROZEN_STATUSES = {"executing", "completed", "review_pending", "review_accepted"}
+
+
 def is_shaping_frozen(storage: Storage, project_id: str, node_id: str) -> bool:
-    return storage.execution_state_store.exists(project_id, node_id)
+    exec_state = storage.execution_state_store.read_state(project_id, node_id)
+    if exec_state is None:
+        return False
+    status = exec_state.get("status")
+    return isinstance(status, str) and status in _FROZEN_STATUSES
 
 
 def require_shaping_not_frozen(
@@ -99,6 +106,7 @@ def derive_execution_workflow_fields(
     node: dict[str, Any] | None,
     exec_state: dict[str, Any] | None,
     review_state: dict[str, Any] | None,
+    git_ready: bool | None = None,
 ) -> dict[str, Any]:
     shaping_frozen = is_shaping_frozen(storage, project_id, node_id)
     exec_status = execution_status(exec_state)
@@ -116,6 +124,7 @@ def derive_execution_workflow_fields(
         and is_leaf
         and node_status in {"ready", "in_progress"}
         and not shaping_frozen
+        and git_ready is not False
     )
 
     package_ready = package_audit_ready(storage, project_id, node, review_state)

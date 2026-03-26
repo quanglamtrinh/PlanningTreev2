@@ -11,7 +11,6 @@ from backend.storage.project_locks import ProjectLockRegistry
 from backend.storage.workspace_store import WorkspaceStore
 
 _DEFAULT_STATE = {
-    "thread_id": None,
     "active_job": None,
     "last_error": None,
 }
@@ -56,12 +55,10 @@ class SplitStateStore:
         if not isinstance(payload, dict):
             return copy.deepcopy(_DEFAULT_STATE)
 
-        thread_id = payload.get("thread_id")
         active_job = payload.get("active_job")
         last_error = payload.get("last_error")
 
         return {
-            "thread_id": thread_id.strip() if isinstance(thread_id, str) and thread_id.strip() else None,
             "active_job": self._normalize_active_job(active_job),
             "last_error": self._normalize_last_error(last_error),
         }

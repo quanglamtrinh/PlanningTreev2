@@ -10,7 +10,8 @@ from uuid import uuid4
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.ai.integration_rollup_prompt_builder import (
     build_integration_rollup_base_instructions,
-    build_integration_rollup_prompt,
+    build_integration_rollup_output_schema,
+    build_rollup_prompt_from_storage,
     extract_integration_rollup_summary,
     render_integration_rollup_message,
 )
@@ -21,7 +22,7 @@ from backend.errors.app_errors import (
 )
 from backend.services import planningtree_workspace
 from backend.services.review_sibling_manifest import derive_review_sibling_manifest
-from backend.services.thread_seed_service import ensure_thread_seeded_session
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.services.workspace_sha import compute_workspace_sha
 from backend.storage.file_utils import iso_now, new_id
@@ -43,6 +44,7 @@ class ReviewService:
         storage: Storage,
         tree_service: TreeService,
         codex_client: CodexAppClient | None = None,
+        thread_lineage_service: ThreadLineageService | None = None,
         chat_event_broker: ChatEventBroker | None = None,
         chat_timeout: int = 30,
         chat_service: ChatService | None = None,
@@ -50,6 +52,7 @@ class ReviewService:
         self._storage = storage
         self._tree_service = tree_service
         self._codex_client = codex_client
+        self._thread_lineage_service = thread_lineage_service
         self._chat_event_broker = chat_event_broker
         self._chat_timeout = int(chat_timeout)
         self._chat_service = chat_service
@@ -66,6 +69,8 @@ class ReviewService:
                     f"Cannot start local review: execution status is '{exec_state['status']}', expected 'completed'."
                 )
             exec_state["status"] = "review_pending"
+            exec_state["local_review_started_at"] = iso_now()
+            exec_state["local_review_prompt_consumed_at"] = None
             return self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
     def get_review_state(self, project_id: str, review_node_id: str) -> dict[str, Any]:
@@ -102,6 +107,8 @@ class ReviewService:
 
         activated_sibling_id: str | None = None
         rollup_ready_review_node_id: str | None = None
+        activated_review_node_id: str | None = None
+        activated_workspace_root: str | None = None
 
         with self._storage.project_lock(project_id):
             exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
@@ -115,6 +122,8 @@ class ReviewService:
             head_sha = exec_state.get("head_sha")
 
             exec_state["status"] = "review_accepted"
+            if not str(exec_state.get("local_review_prompt_consumed_at") or "").strip():
+                exec_state["local_review_prompt_consumed_at"] = iso_now()
             self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
             snapshot = self._storage.project_store.load_snapshot(project_id)
@@ -143,6 +152,9 @@ class ReviewService:
                 ) = self._try_activate_next_sibling(
                     project_id, parent, review_node_id, snapshot, node_by_id
                 )
+                if activated_sibling_id:
+                    activated_review_node_id = review_node_id
+                    activated_workspace_root = self._workspace_root_from_snapshot(snapshot)
             elif parent:
                 unlocked_id = self._tree_service.unlock_next_sibling(node, node_by_id)
                 if unlocked_id:
@@ -164,6 +176,14 @@ class ReviewService:
                     rollup_ready_review_node_id,
                     exc_info=True,
                 )
+
+        if activated_sibling_id and activated_review_node_id and activated_workspace_root:
+            self._bootstrap_child_audit_best_effort(
+                project_id,
+                activated_review_node_id,
+                activated_sibling_id,
+                activated_workspace_root,
+            )
 
         return {
             "node_id": node_id,
@@ -198,7 +218,6 @@ class ReviewService:
 
         workspace_root: str | None
         prompt: str
-        existing_thread_id: str | None
 
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
@@ -224,27 +243,16 @@ class ReviewService:
             session = self._storage.chat_state_store.read_session(
                 project_id,
                 review_node_id,
-                thread_role="integration",
-            )
-            session, _ = ensure_thread_seeded_session(
-                self._storage,
-                project_id=project_id,
-                node_id=review_node_id,
-                thread_role="integration",
-                snapshot=snapshot,
-                node=review_node,
-                session=session,
+                thread_role="audit",
             )
             if session.get("active_turn_id"):
                 return False
 
-            system_messages = [
-                message
-                for message in session.get("messages", [])
-                if isinstance(message, dict) and message.get("role") == "system"
-            ]
-            prompt = build_integration_rollup_prompt(system_messages)
-            existing_thread_id = str(session.get("thread_id") or "").strip() or None
+            prompt = build_rollup_prompt_from_storage(
+                self._storage,
+                project_id,
+                review_node_id,
+            )
             workspace_root = self._workspace_root_from_snapshot(snapshot)
 
             session["active_turn_id"] = turn_id
@@ -253,7 +261,7 @@ class ReviewService:
                 project_id,
                 review_node_id,
                 session,
-                thread_role="integration",
+                thread_role="audit",
             )
 
         self._register_live_turn(project_id, review_node_id, turn_id)
@@ -265,7 +273,7 @@ class ReviewService:
                 "assistant_message": assistant_message,
                 "active_turn_id": turn_id,
             },
-            thread_role="integration",
+            thread_role="audit",
         )
 
         threading.Thread(
@@ -275,7 +283,6 @@ class ReviewService:
                 "review_node_id": review_node_id,
                 "turn_id": turn_id,
                 "assistant_message_id": assistant_message_id,
-                "existing_thread_id": existing_thread_id,
                 "prompt": prompt,
                 "workspace_root": workspace_root,
             },
@@ -300,7 +307,7 @@ class ReviewService:
             session = self._storage.chat_state_store.read_session(
                 project_id,
                 review_node_id,
-                thread_role="integration",
+                thread_role="audit",
             )
             if session.get("active_turn_id"):
                 raise ReviewNotAllowed(
@@ -348,6 +355,7 @@ class ReviewService:
                     message_id=AUDIT_ROLLUP_PACKAGE_MESSAGE_ID,
                     content=package_content,
                 )
+                self._storage.review_state_store.open_package_review(project_id, review_node_id)
 
             return {
                 "review_node_id": review_node_id,
@@ -466,11 +474,10 @@ class ReviewService:
         review_node_id: str,
         turn_id: str,
         assistant_message_id: str,
-        existing_thread_id: str | None,
         prompt: str,
         workspace_root: str | None,
     ) -> None:
-        thread_id = existing_thread_id
+        thread_id: str | None = None
         draft_lock = threading.Lock()
         accumulator = PartAccumulator()
         last_checkpoint_at = time.monotonic()
@@ -492,6 +499,9 @@ class ReviewService:
                     "type": "assistant_delta",
                     "message_id": assistant_message_id,
                     "delta": delta,
+                    "item_id": "assistant_text",
+                    "item_type": "assistant_text",
+                    "phase": "delta",
                 },
             )
 
@@ -507,11 +517,12 @@ class ReviewService:
                     thread_id=thread_id,
                     clear_active_turn=False,
                     parts=accumulator.snapshot_parts(),
+                    items=accumulator.snapshot_items(),
                 )
 
         def capture_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
             with draft_lock:
-                accumulator.on_tool_call(tool_name, arguments)
+                item_id = accumulator.on_tool_call(tool_name, arguments)
                 part_index = len(accumulator.parts) - 1
             self._publish_event(
                 project_id,
@@ -522,6 +533,9 @@ class ReviewService:
                     "tool_name": tool_name,
                     "arguments": arguments,
                     "part_index": part_index,
+                    "item_id": item_id,
+                    "item_type": "tool_call",
+                    "phase": "started",
                 },
             )
 
@@ -540,11 +554,18 @@ class ReviewService:
                     "message_id": assistant_message_id,
                     "status_type": status_type,
                     "label": _status_label(status_type),
+                    "item_id": "thread_status",
+                    "item_type": "thread_status",
+                    "phase": "delta",
                 },
             )
 
         try:
-            thread_id = self._ensure_integration_thread(existing_thread_id, workspace_root)
+            thread_id = self._ensure_integration_thread(
+                project_id,
+                review_node_id,
+                workspace_root,
+            )
             self._persist_thread_id(
                 project_id=project_id,
                 node_id=review_node_id,
@@ -558,15 +579,19 @@ class ReviewService:
                 thread_id=thread_id,
                 timeout_sec=self._chat_timeout,
                 cwd=workspace_root,
+                writable_roots=None,
+                sandbox_profile="read_only",
                 on_delta=capture_delta,
                 on_tool_call=capture_tool_call,
                 on_thread_status=capture_thread_status,
+                output_schema=build_integration_rollup_output_schema(),
             )
 
             with draft_lock:
                 accumulator.finalize()
                 streamed_content = accumulator.content_projection()
                 final_parts = accumulator.snapshot_parts()
+                final_items = accumulator.snapshot_items()
 
             stdout = str(result.get("stdout", "") or "")
             summary = extract_integration_rollup_summary(stdout) or extract_integration_rollup_summary(
@@ -597,6 +622,7 @@ class ReviewService:
                 thread_id=str(result.get("thread_id") or thread_id or ""),
                 clear_active_turn=True,
                 parts=self._finalize_parts(final_parts, final_content),
+                items=final_items,
             )
 
             if persisted:
@@ -634,6 +660,7 @@ class ReviewService:
                     thread_id=thread_id,
                     clear_active_turn=True,
                     parts=error_parts,
+                    items=accumulator.snapshot_items(),
                 )
             except Exception:
                 persisted = False
@@ -655,31 +682,25 @@ class ReviewService:
     # -- Persistence Helpers -----------------------------------------
 
     def _ensure_integration_thread(
-        self, existing_thread_id: str | None, workspace_root: str | None
+        self,
+        project_id: str,
+        review_node_id: str,
+        workspace_root: str | None,
     ) -> str:
-        if isinstance(existing_thread_id, str) and existing_thread_id.strip():
-            try:
-                self._codex_client.resume_thread(
-                    existing_thread_id,
-                    cwd=workspace_root,
-                    timeout_sec=15,
-                )
-                return existing_thread_id.strip()
-            except CodexTransportError as exc:
-                if not self._is_missing_thread_error(exc):
-                    raise ReviewNotAllowed(f"Integration backend unavailable: {exc}") from exc
-
+        if self._thread_lineage_service is None:
+            raise ReviewNotAllowed("Review audit lineage service is unavailable.")
         try:
-            response = self._codex_client.start_thread(
+            session = self._thread_lineage_service.resume_or_rebuild_session(
+                project_id,
+                review_node_id,
+                "audit",
+                workspace_root,
                 base_instructions=build_integration_rollup_base_instructions(),
-                dynamic_tools=[],
-                cwd=workspace_root,
-                timeout_sec=30,
             )
-        except CodexTransportError as exc:
+        except (CodexTransportError, ValueError) as exc:
             raise ReviewNotAllowed(f"Integration backend unavailable: {exc}") from exc
 
-        thread_id = str(response.get("thread_id") or "").strip()
+        thread_id = str(session.get("thread_id") or "").strip()
         if not thread_id:
             raise ReviewNotAllowed(
                 "Integration thread start did not return a thread id."
@@ -697,7 +718,7 @@ class ReviewService:
     ) -> bool:
         with self._storage.project_lock(project_id):
             session = self._storage.chat_state_store.read_session(
-                project_id, node_id, thread_role="integration"
+                project_id, node_id, thread_role="audit"
             )
             if str(session.get("active_turn_id") or "") != turn_id:
                 return False
@@ -705,7 +726,7 @@ class ReviewService:
                 return False
             session["thread_id"] = thread_id
             self._storage.chat_state_store.write_session(
-                project_id, node_id, session, thread_role="integration"
+                project_id, node_id, session, thread_role="audit"
             )
             return True
 
@@ -722,10 +743,11 @@ class ReviewService:
         thread_id: str | None,
         clear_active_turn: bool,
         parts: list[dict[str, Any]] | None = None,
+        items: list[dict[str, Any]] | None = None,
     ) -> bool:
         with self._storage.project_lock(project_id):
             session = self._storage.chat_state_store.read_session(
-                project_id, node_id, thread_role="integration"
+                project_id, node_id, thread_role="audit"
             )
             if str(session.get("active_turn_id") or "") != turn_id:
                 return False
@@ -739,6 +761,8 @@ class ReviewService:
             message["updated_at"] = iso_now()
             if parts is not None:
                 message["parts"] = parts
+            if items is not None:
+                message["items"] = items
 
             if thread_id is not None:
                 session["thread_id"] = thread_id
@@ -746,7 +770,7 @@ class ReviewService:
                 session["active_turn_id"] = None
 
             self._storage.chat_state_store.write_session(
-                project_id, node_id, session, thread_role="integration"
+                project_id, node_id, session, thread_role="audit"
             )
             return True
 
@@ -779,21 +803,21 @@ class ReviewService:
             project_id,
             node_id,
             event,
-            thread_role="integration",
+            thread_role="audit",
         )
 
     def _register_live_turn(self, project_id: str, node_id: str, turn_id: str) -> None:
         if self._chat_service is None:
             return
         self._chat_service.register_external_live_turn(
-            project_id, node_id, "integration", turn_id
+            project_id, node_id, "audit", turn_id
         )
 
     def _clear_live_turn(self, project_id: str, node_id: str, turn_id: str) -> None:
         if self._chat_service is None:
             return
         self._chat_service.clear_external_live_turn(
-            project_id, node_id, "integration", turn_id
+            project_id, node_id, "audit", turn_id
         )
 
     def _workspace_root_from_snapshot(self, snapshot: dict[str, Any]) -> str | None:
@@ -809,6 +833,34 @@ class ReviewService:
         if workspace_root:
             return compute_workspace_sha(Path(workspace_root))
         return _ZERO_SHA
+
+    def _bootstrap_child_audit_best_effort(
+        self,
+        project_id: str,
+        review_node_id: str,
+        child_node_id: str,
+        workspace_root: str,
+    ) -> None:
+        if self._thread_lineage_service is None:
+            return
+        try:
+            self._thread_lineage_service.ensure_forked_thread(
+                project_id,
+                child_node_id,
+                "audit",
+                source_node_id=review_node_id,
+                source_role="audit",
+                fork_reason="child_activation",
+                workspace_root=workspace_root,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to eager-bootstrap child audit for %s/%s via %s",
+                project_id,
+                child_node_id,
+                review_node_id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _is_missing_thread_error(exc: Exception) -> bool:

@@ -1,6 +1,13 @@
 import { create } from 'zustand'
 import { api, appendAuthToken, buildChatEventsUrl } from '../api/client'
-import type { ChatMessage, ChatSession, MessagePart, ThreadRole } from '../api/types'
+import type {
+  ChatMessage,
+  ChatSession,
+  ItemLifecycleEntry,
+  MessageItem,
+  MessagePart,
+  ThreadRole,
+} from '../api/types'
 import { useDetailStateStore } from './detail-state-store'
 
 const SSE_RECONNECT_RETRY_MS = 1000
@@ -109,6 +116,97 @@ function finalizeParts(parts: MessagePart[] | undefined, threadRole: ThreadRole)
   }
 
   return finalizedParts
+}
+
+function phaseToStatus(phase: ItemLifecycleEntry['phase']): MessageItem['status'] {
+  if (phase === 'started') return 'started'
+  if (phase === 'delta') return 'streaming'
+  if (phase === 'completed') return 'completed'
+  return 'error'
+}
+
+function appendItemLifecycle(
+  items: MessageItem[] | undefined,
+  event: Record<string, unknown>,
+  fallback: {
+    itemId: string
+    itemType: string
+    phase: ItemLifecycleEntry['phase']
+    payload?: Record<string, unknown> | null
+    text?: string | null
+  },
+): MessageItem[] {
+  const itemId =
+    (typeof event.item_id === 'string' && event.item_id.trim()) ? event.item_id : fallback.itemId
+  const itemType =
+    (typeof event.item_type === 'string' && event.item_type.trim()) ? event.item_type : fallback.itemType
+  const rawPhase = event.phase
+  const phase: ItemLifecycleEntry['phase'] =
+    rawPhase === 'started' || rawPhase === 'delta' || rawPhase === 'completed' || rawPhase === 'error'
+      ? rawPhase
+      : fallback.phase
+
+  const payloadCandidate = event.payload
+  const payload =
+    payloadCandidate && typeof payloadCandidate === 'object'
+      ? (payloadCandidate as Record<string, unknown>)
+      : (fallback.payload ?? null)
+  const textCandidate = event.delta
+  const text =
+    typeof textCandidate === 'string'
+      ? textCandidate
+      : (typeof fallback.text === 'string' ? fallback.text : null)
+
+  const lifecycleEntry: ItemLifecycleEntry = {
+    phase,
+    timestamp: new Date().toISOString(),
+    payload,
+    text,
+  }
+
+  const source = [...(items ?? [])]
+  const existingIndex = source.findIndex((item) => item.item_id === itemId)
+  if (existingIndex >= 0) {
+    const current = source[existingIndex]
+    const status = phaseToStatus(phase)
+    source[existingIndex] = {
+      ...current,
+      item_type: itemType,
+      status,
+      completed_at: status === 'completed' || status === 'error'
+        ? new Date().toISOString()
+        : current.completed_at,
+      last_payload: payload,
+      lifecycle: [...current.lifecycle, lifecycleEntry],
+    }
+    return source
+  }
+
+  return [
+    ...source,
+    {
+      item_id: itemId,
+      item_type: itemType,
+      status: phaseToStatus(phase),
+      started_at: new Date().toISOString(),
+      completed_at: phase === 'completed' || phase === 'error' ? new Date().toISOString() : null,
+      last_payload: payload,
+      lifecycle: [lifecycleEntry],
+    },
+  ]
+}
+
+function finalizeItems(items: MessageItem[] | undefined): MessageItem[] {
+  return [...(items ?? [])].map((item) => {
+    if (item.status === 'completed' || item.status === 'error') {
+      return item
+    }
+    return {
+      ...item,
+      status: 'completed',
+      completed_at: item.completed_at ?? new Date().toISOString(),
+    }
+  })
 }
 
 function scheduleStreamReopen(
@@ -281,6 +379,13 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
             ...message,
             content: message.content + delta,
             parts,
+            items: appendItemLifecycle(message.items, event, {
+              itemId: 'assistant_text',
+              itemType: 'assistant_text',
+              phase: 'delta',
+              payload: { length: delta.length },
+              text: delta,
+            }),
             status: 'streaming' as const,
           }
         }),
@@ -319,6 +424,13 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
           return {
             ...message,
             parts,
+            items: appendItemLifecycle(message.items, event, {
+              itemId,
+              itemType: 'plan_item',
+              phase: 'delta',
+              payload: { item_id: itemId },
+              text: delta,
+            }),
             status: 'streaming' as const,
           }
         }),
@@ -347,7 +459,16 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
             output: null,
             exit_code: null,
           })
-          return { ...message, parts }
+          return {
+            ...message,
+            parts,
+            items: appendItemLifecycle(message.items, event, {
+              itemId: callId ? `tool:${callId}` : `tool:${toolName}:${parts.length - 1}`,
+              itemType: 'tool_call',
+              phase: 'started',
+              payload: { tool_name: toolName, arguments: args, call_id: callId },
+            }),
+          }
         }),
       }
     }
@@ -365,9 +486,17 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
             return message
           }
           const parts: MessagePart[] = [...(message.parts ?? [])]
-          const targetIndex = parts.findLastIndex(
-            (part) => part.type === 'tool_call' && (callId ? part.call_id === callId : part.status === 'running'),
-          )
+          let targetIndex = -1
+          for (let index = parts.length - 1; index >= 0; index -= 1) {
+            const candidate = parts[index]
+            if (
+              candidate.type === 'tool_call' &&
+              (callId ? candidate.call_id === callId : candidate.status === 'running')
+            ) {
+              targetIndex = index
+              break
+            }
+          }
           if (targetIndex === -1) {
             return message
           }
@@ -381,7 +510,16 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
             output,
             exit_code: exitCode,
           }
-          return { ...message, parts }
+          return {
+            ...message,
+            parts,
+            items: appendItemLifecycle(message.items, event, {
+              itemId: callId ? `tool:${callId}` : `tool:${target.tool_name}:${targetIndex}`,
+              itemType: 'tool_call',
+              phase: status === 'error' ? 'error' : 'completed',
+              payload: { status, output, exit_code: exitCode, call_id: callId },
+            }),
+          }
         }),
       }
     }
@@ -410,7 +548,36 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
           } else {
             parts.push(statusPart)
           }
-          return { ...message, parts }
+          return {
+            ...message,
+            parts,
+            items: appendItemLifecycle(message.items, event, {
+              itemId: 'thread_status',
+              itemType: 'thread_status',
+              phase: 'delta',
+              payload: { status_type: statusType, label },
+            }),
+          }
+        }),
+      }
+    }
+
+    case 'assistant_item_lifecycle': {
+      const messageId = event.message_id as string
+      return {
+        ...session,
+        messages: session.messages.map((message) => {
+          if (message.message_id !== messageId) {
+            return message
+          }
+          return {
+            ...message,
+            items: appendItemLifecycle(message.items, event, {
+              itemId: 'item:unknown',
+              itemType: 'unknown',
+              phase: 'delta',
+            }),
+          }
         }),
       }
     }
@@ -428,7 +595,8 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
             return message
           }
           const parts = finalizeParts(message.parts, session.thread_role)
-          return { ...message, content, parts, status: 'completed' as const }
+          const items = finalizeItems(message.items)
+          return { ...message, content, parts, items, status: 'completed' as const }
         }),
       }
     }
@@ -443,7 +611,17 @@ function applyChatEvent(session: ChatSession, event: Record<string, unknown>): C
           if (message.message_id !== messageId) {
             return message
           }
-          return { ...message, status: 'error' as const, error }
+          return {
+            ...message,
+            items: appendItemLifecycle(message.items, event, {
+              itemId: 'assistant_error',
+              itemType: 'error_blocker',
+              phase: 'error',
+              payload: { error },
+            }),
+            status: 'error' as const,
+            error,
+          }
         }),
       }
     }

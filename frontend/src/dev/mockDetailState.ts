@@ -11,9 +11,9 @@ const overlayFull: Partial<DetailState> = {
   git_blocker_message: null,
   can_finish_task: true,
   spec_confirmed: true,
-  initial_sha: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-  head_sha: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-  current_head_sha: 'sha256:cccccccccccccccccccccccccccccccccccccccc',
+  initial_sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  head_sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  current_head_sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
   commit_message: 'pt(1.1): implement auth guard',
   task_present_in_current_workspace: true,
   changed_files: [
@@ -39,7 +39,7 @@ const overlayBlocked: Partial<DetailState> = {
 const overlayNotPresent: Partial<DetailState> = {
   ...overlayFull,
   task_present_in_current_workspace: false,
-  current_head_sha: 'sha256:dddddddddddddddddddddddddddddddddddddddd',
+  current_head_sha: 'dddddddddddddddddddddddddddddddddddddddd',
 }
 
 function scenarioOverlay(): Partial<DetailState> {

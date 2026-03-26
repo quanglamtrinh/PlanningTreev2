@@ -30,3 +30,8 @@
   color: var(--color-status-done);
   background: var(--color-status-done-bg);
 }
+
+.failed {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}

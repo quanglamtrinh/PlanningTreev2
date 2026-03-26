@@ -148,6 +148,8 @@ def test_set_rollup_to_accepted(review_store, project_id):
         "sha": None,
         "generated_at": None,
     }
+    assert updated["rollup"]["package_review_started_at"] is None
+    assert updated["rollup"]["package_review_prompt_consumed_at"] is None
 
 
 def test_set_rollup_draft(review_store, project_id):
@@ -171,6 +173,52 @@ def test_set_rollup_draft(review_store, project_id):
         "sha": "sha256:draft",
         "generated_at": "2026-03-24T12:00:00Z",
     }
+
+
+def test_open_package_review_sets_boundary_markers(review_store, project_id):
+    review_store.write_state(
+        project_id,
+        "review1",
+        {
+            "checkpoints": [],
+            "rollup": {
+                "status": "accepted",
+                "summary": "Accepted",
+                "sha": "sha256:accepted",
+                "accepted_at": "2026-03-24T12:30:00Z",
+                "package_review_prompt_consumed_at": "2026-03-24T12:31:00Z",
+            },
+            "pending_siblings": [],
+        },
+    )
+
+    updated = review_store.open_package_review(project_id, "review1")
+
+    assert updated["rollup"]["package_review_started_at"] is not None
+    assert updated["rollup"]["package_review_prompt_consumed_at"] is None
+
+
+def test_mark_package_review_prompt_consumed_persists_timestamp(review_store, project_id):
+    review_store.write_state(
+        project_id,
+        "review1",
+        {
+            "checkpoints": [],
+            "rollup": {
+                "status": "accepted",
+                "summary": "Accepted",
+                "sha": "sha256:accepted",
+                "accepted_at": "2026-03-24T12:30:00Z",
+                "package_review_started_at": "2026-03-24T12:31:00Z",
+            },
+            "pending_siblings": [],
+        },
+    )
+
+    updated = review_store.mark_package_review_prompt_consumed(project_id, "review1")
+
+    assert updated["rollup"]["package_review_started_at"] == "2026-03-24T12:31:00Z"
+    assert updated["rollup"]["package_review_prompt_consumed_at"] is not None
 
 
 # ── Sibling operations ───────────────────────────────────────────
@@ -266,6 +314,28 @@ def test_normalize_review_state_without_draft_backfills_default(review_store):
         "sha": None,
         "generated_at": None,
     }
+    assert result["rollup"]["package_review_started_at"] is None
+    assert result["rollup"]["package_review_prompt_consumed_at"] is None
+
+
+def test_normalize_review_state_preserves_package_review_markers(review_store):
+    result = review_store._normalize_state(
+        {
+            "checkpoints": [],
+            "rollup": {
+                "status": "accepted",
+                "summary": "Accepted",
+                "sha": "sha256:accepted",
+                "accepted_at": "2026-03-24T12:30:00Z",
+                "package_review_started_at": "2026-03-24T12:31:00Z",
+                "package_review_prompt_consumed_at": "2026-03-24T12:32:00Z",
+            },
+            "pending_siblings": [],
+        }
+    )
+
+    assert result["rollup"]["package_review_started_at"] == "2026-03-24T12:31:00Z"
+    assert result["rollup"]["package_review_prompt_consumed_at"] == "2026-03-24T12:32:00Z"
 
 
 def test_normalize_drops_invalid_checkpoints(review_store):

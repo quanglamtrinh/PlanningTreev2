@@ -10,7 +10,7 @@ from backend.storage.file_utils import atomic_write_json, ensure_dir, load_json
 from backend.storage.project_locks import ProjectLockRegistry
 from backend.storage.workspace_store import WorkspaceStore
 
-_VALID_STATUSES = {"idle", "executing", "completed", "review_pending", "review_accepted"}
+_VALID_STATUSES = {"idle", "executing", "completed", "failed", "review_pending", "review_accepted"}
 
 _DEFAULT_STATE: dict[str, Any] = {
     "status": "idle",
@@ -18,6 +18,11 @@ _DEFAULT_STATE: dict[str, Any] = {
     "head_sha": None,
     "started_at": None,
     "completed_at": None,
+    "local_review_started_at": None,
+    "local_review_prompt_consumed_at": None,
+    "commit_message": None,
+    "changed_files": [],
+    "error_message": None,
 }
 
 
@@ -76,6 +81,11 @@ class ExecutionStateStore:
         head_sha = payload.get("head_sha")
         started_at = payload.get("started_at")
         completed_at = payload.get("completed_at")
+        local_review_started_at = payload.get("local_review_started_at")
+        local_review_prompt_consumed_at = payload.get("local_review_prompt_consumed_at")
+        commit_message = payload.get("commit_message")
+        changed_files = payload.get("changed_files")
+        error_message = payload.get("error_message")
 
         return {
             "status": status if isinstance(status, str) and status in _VALID_STATUSES else "idle",
@@ -83,4 +93,26 @@ class ExecutionStateStore:
             "head_sha": head_sha.strip() if isinstance(head_sha, str) and head_sha.strip() else None,
             "started_at": started_at.strip() if isinstance(started_at, str) and started_at.strip() else None,
             "completed_at": completed_at.strip() if isinstance(completed_at, str) and completed_at.strip() else None,
+            "local_review_started_at": (
+                local_review_started_at.strip()
+                if isinstance(local_review_started_at, str) and local_review_started_at.strip()
+                else None
+            ),
+            "local_review_prompt_consumed_at": (
+                local_review_prompt_consumed_at.strip()
+                if isinstance(local_review_prompt_consumed_at, str)
+                and local_review_prompt_consumed_at.strip()
+                else None
+            ),
+            "commit_message": (
+                commit_message.strip()
+                if isinstance(commit_message, str) and commit_message.strip()
+                else None
+            ),
+            "changed_files": changed_files if isinstance(changed_files, list) else [],
+            "error_message": (
+                error_message.strip()
+                if isinstance(error_message, str) and error_message.strip()
+                else None
+            ),
         }

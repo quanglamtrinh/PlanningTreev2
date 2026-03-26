@@ -5,10 +5,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from backend.ai.ask_thread_config import build_ask_planning_thread_config
 from backend.ai.clarify_prompt_builder import (
-    build_clarify_base_instructions,
     build_clarify_generation_prompt,
-    clarify_render_tool,
     extract_clarify_questions,
     extract_clarify_questions_from_text,
 )
@@ -20,8 +19,9 @@ from backend.errors.app_errors import (
     NodeNotFound,
     ProjectNotFound,
 )
-from backend.services.execution_gating import require_shaping_not_frozen
 from backend.services import planningtree_workspace
+from backend.services.execution_gating import require_shaping_not_frozen
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import atomic_write_json, iso_now, load_json, new_id
 from backend.storage.storage import Storage
@@ -37,7 +37,6 @@ _STALE_JOB_MESSAGE = (
 
 def _default_gen_state() -> dict[str, Any]:
     return {
-        "thread_id": None,
         "active_job": None,
         "last_error": None,
         "last_completed_at": None,
@@ -50,11 +49,13 @@ class ClarifyGenerationService:
         storage: Storage,
         tree_service: TreeService,
         codex_client: CodexAppClient,
+        thread_lineage_service: ThreadLineageService,
         clarify_gen_timeout: int,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
         self._codex_client = codex_client
+        self._thread_lineage_service = thread_lineage_service
         self._timeout = int(clarify_gen_timeout)
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}
@@ -81,9 +82,7 @@ class ClarifyGenerationService:
             workspace_root = self._workspace_root_from_snapshot(snapshot)
 
         # Ensure generation thread (outside project lock — may do network I/O)
-        gen_state = self._load_gen_state(node_dir)
-        existing_thread_id = gen_state.get("thread_id")
-        thread_id = self._ensure_gen_thread(existing_thread_id, workspace_root)
+        thread_id = self._ensure_ask_thread(project_id, node_id, workspace_root)
 
         job_id = new_id("cgen")
         started_at = iso_now()
@@ -116,7 +115,6 @@ class ClarifyGenerationService:
             source_frame_revision = frame_meta.get("confirmed_revision", 0)
             frame_revision_at_start = frame_meta.get("revision", 0)
 
-            gen_state["thread_id"] = thread_id
             gen_state["active_job"] = {
                 "job_id": job_id,
                 "started_at": started_at,
@@ -130,6 +128,7 @@ class ClarifyGenerationService:
             kwargs={
                 "project_id": project_id,
                 "node_id": node_id,
+                "thread_id": thread_id,
                 "job_id": job_id,
                 "started_at": started_at,
                 "frame_content": frame_content,
@@ -162,6 +161,7 @@ class ClarifyGenerationService:
         *,
         project_id: str,
         node_id: str,
+        thread_id: str,
         job_id: str,
         started_at: str,
         frame_content: str,
@@ -169,7 +169,12 @@ class ClarifyGenerationService:
         frame_revision_at_start: int = 0,
     ) -> None:
         try:
-            questions = self._generate_clarify_questions(project_id, node_id, frame_content)
+            questions = self._generate_clarify_questions(
+                project_id,
+                node_id,
+                thread_id,
+                frame_content,
+            )
             self._write_clarify_content(
                 project_id, node_id, questions, source_frame_revision, frame_revision_at_start
             )
@@ -187,7 +192,11 @@ class ClarifyGenerationService:
             self._mark_job_failed(project_id, node_id, job_id, started_at, str(exc))
 
     def _generate_clarify_questions(
-        self, project_id: str, node_id: str, frame_content: str
+        self,
+        project_id: str,
+        node_id: str,
+        thread_id: str,
+        frame_content: str,
     ) -> list[dict[str, Any]]:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
@@ -195,14 +204,6 @@ class ClarifyGenerationService:
             node = node_by_id.get(node_id)
             if node is None:
                 raise NodeNotFound(node_id)
-
-            node_dir = self._resolve_node_dir(snapshot, node_id)
-            gen_state = self._load_gen_state(node_dir)
-            thread_id = str(gen_state.get("thread_id") or "").strip()
-            if not thread_id:
-                raise ClarifyGenerationBackendUnavailable(
-                    "Generation thread is unavailable. Retry the generation."
-                )
 
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             task_context = build_split_context(snapshot, node, node_by_id)
@@ -329,35 +330,27 @@ class ClarifyGenerationService:
 
     # ── Thread management ──────────────────────────────────────────
 
-    def _ensure_gen_thread(
-        self, existing_thread_id: Any, workspace_root: str | None
-    ) -> str:
-        if isinstance(existing_thread_id, str) and existing_thread_id.strip():
-            try:
-                self._codex_client.resume_thread(
-                    existing_thread_id,
-                    cwd=workspace_root,
-                    timeout_sec=15,
-                )
-                return existing_thread_id.strip()
-            except CodexTransportError as exc:
-                if not self._is_missing_thread_error(exc):
-                    raise ClarifyGenerationBackendUnavailable(str(exc)) from exc
-
+    def _ensure_ask_thread(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
+        base_instructions, dynamic_tools = build_ask_planning_thread_config()
         try:
-            response = self._codex_client.start_thread(
-                base_instructions=build_clarify_base_instructions(),
-                dynamic_tools=[clarify_render_tool()],
-                cwd=workspace_root,
-                timeout_sec=30,
+            session = self._thread_lineage_service.ensure_forked_thread(
+                project_id,
+                node_id,
+                "ask_planning",
+                source_node_id=node_id,
+                source_role="audit",
+                fork_reason="ask_bootstrap",
+                workspace_root=workspace_root,
+                base_instructions=base_instructions,
+                dynamic_tools=dynamic_tools,
             )
         except CodexTransportError as exc:
             raise ClarifyGenerationBackendUnavailable(str(exc)) from exc
 
-        thread_id = str(response.get("thread_id") or "").strip()
+        thread_id = str(session.get("thread_id") or "").strip()
         if not thread_id:
             raise ClarifyGenerationBackendUnavailable(
-                "Generation thread start did not return a thread id."
+                "Ask thread bootstrap did not return a thread id."
             )
         return thread_id
 
@@ -368,7 +361,11 @@ class ClarifyGenerationService:
         payload = load_json(path, default=None)
         if not isinstance(payload, dict):
             return _default_gen_state()
-        return payload
+        return {
+            "active_job": payload.get("active_job"),
+            "last_error": payload.get("last_error"),
+            "last_completed_at": payload.get("last_completed_at"),
+        }
 
     def _save_gen_state(self, node_dir: Path, state: dict[str, Any]) -> None:
         path = node_dir / CLARIFY_GEN_STATE_FILE
@@ -522,10 +519,3 @@ class ClarifyGenerationService:
         if isinstance(workspace_root, str) and workspace_root.strip():
             return workspace_root
         return None
-
-    def _is_missing_thread_error(self, exc: Exception) -> bool:
-        message = str(exc).lower()
-        return (
-            "no rollout found for thread id" in message
-            or "thread not found" in message
-        )

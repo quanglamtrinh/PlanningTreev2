@@ -9,12 +9,14 @@ from fastapi.testclient import TestClient
 from backend.ai.codex_client import CodexTransportError
 from backend.services import planningtree_workspace
 from backend.services import chat_service as chat_service_module
+from backend.tests.conftest import init_git_repo
 
 
 class SlowCheckpointCodexClient:
     def __init__(self, *, response_text: str = "Hello from AI") -> None:
         self.response_text = response_text
         self.started_threads: list[str] = []
+        self.forked_threads: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"chat-thread-{len(self.started_threads) + 1}"
@@ -22,7 +24,12 @@ class SlowCheckpointCodexClient:
         return {"thread_id": thread_id}
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
-        raise CodexTransportError("thread not found", "not_found")
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"chat-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
+        return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
         del prompt
@@ -40,6 +47,7 @@ class ExecutionCodexClient:
     def __init__(self, *, response_text: str = "Execution complete") -> None:
         self.response_text = response_text
         self.started_threads: list[str] = []
+        self.forked_threads: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"exec-thread-{len(self.started_threads) + 1}"
@@ -47,6 +55,11 @@ class ExecutionCodexClient:
         return {"thread_id": thread_id}
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"exec-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
@@ -62,6 +75,7 @@ class IntegrationRollupCodexClient:
     def __init__(self, *, summary: str = "Integration complete") -> None:
         self.summary = summary
         self.started_threads: list[str] = []
+        self.forked_threads: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"integration-thread-{len(self.started_threads) + 1}"
@@ -69,6 +83,16 @@ class IntegrationRollupCodexClient:
         return {"thread_id": thread_id}
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"exec-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"integration-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
@@ -87,6 +111,16 @@ def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
     project_id = snap["project"]["id"]
     root_id = snap["tree_state"]["root_node_id"]
     return project_id, root_id
+
+
+def _set_chat_codex_client(client: TestClient, codex_client: object) -> None:
+    client.app.state.chat_service._codex_client = codex_client
+    client.app.state.thread_lineage_service._codex_client = codex_client
+
+
+def _set_execution_codex_client(client: TestClient, codex_client: object) -> None:
+    client.app.state.finish_task_service._codex_client = codex_client
+    client.app.state.thread_lineage_service._codex_client = codex_client
 
 
 def _add_review_node(client: TestClient, project_id: str, parent_id: str) -> str:
@@ -166,7 +200,7 @@ def _wait_for_integration_completion(
         session = client.app.state.storage.chat_state_store.read_session(
             project_id,
             review_node_id,
-            thread_role="integration",
+            thread_role="audit",
         )
         if not session.get("active_turn_id"):
             messages = session.get("messages", [])
@@ -185,11 +219,14 @@ def _wait_for_integration_completion(
 
 
 def test_get_session_empty(client: TestClient, workspace_root):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     resp = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/chat/session")
     assert resp.status_code == 200
     session = resp.json()
-    assert session["thread_id"] is None
+    assert session["thread_id"] is not None
+    assert session["fork_reason"] == "ask_bootstrap"
+    assert session["forked_from_role"] == "audit"
     assert session["messages"] == []
 
 
@@ -227,6 +264,7 @@ def test_chat_session_honors_thread_role_query(client: TestClient, workspace_roo
 
 
 def test_audit_session_returns_system_seed_messages_for_ready_child(client: TestClient, workspace_root):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][root_id]["title"] = "Parent Task"
@@ -290,21 +328,34 @@ def test_task_node_rejects_invalid_thread_role_pair(client: TestClient, workspac
     assert resp.json()["code"] == "invalid_request"
 
 
-def test_review_node_accepts_integration_thread_role(client: TestClient, workspace_root):
+def test_review_node_accepts_audit_thread_role(client: TestClient, workspace_root):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
+    project_id, root_id = _setup_project(client, workspace_root)
+    review_id = _add_review_node(client, project_id, root_id)
+    resp = client.get(
+        f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
+        params={"thread_role": "audit"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["thread_role"] == "audit"
+
+
+def test_review_node_rejects_integration_thread_role(client: TestClient, workspace_root):
     project_id, root_id = _setup_project(client, workspace_root)
     review_id = _add_review_node(client, project_id, root_id)
     resp = client.get(
         f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
         params={"thread_role": "integration"},
     )
-    assert resp.status_code == 200
-    assert resp.json()["thread_role"] == "integration"
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "invalid_request"
 
 
-def test_integration_session_returns_system_seed_messages_when_rollup_ready(
+def test_review_audit_session_stays_empty_when_rollup_ready(
     client: TestClient,
     workspace_root,
 ):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][root_id]["title"] = "Build auth package"
@@ -365,29 +416,20 @@ def test_integration_session_returns_system_seed_messages_when_rollup_ready(
 
     response = client.get(
         f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
-        params={"thread_role": "integration"},
+        params={"thread_role": "audit"},
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["thread_role"] == "integration"
-    assert [message["role"] for message in payload["messages"]] == [
-        "system",
-        "system",
-        "system",
-        "system",
-        "system",
-    ]
-    assert "Ship auth package" in payload["messages"][0]["content"]
-    assert "Auth guard" in payload["messages"][1]["content"]
-    assert "K2" in payload["messages"][2]["content"]
-    assert "Parser accepted" in payload["messages"][3]["content"]
+    assert payload["thread_role"] == "audit"
+    assert payload["messages"] == []
 
 
-def test_integration_session_includes_assistant_output_after_auto_start(
+def test_review_audit_session_includes_assistant_output_after_auto_start(
     client: TestClient,
     workspace_root,
 ):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][root_id]["title"] = "Build auth package"
@@ -440,12 +482,12 @@ def test_integration_session_includes_assistant_output_after_auto_start(
 
     response = client.get(
         f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
-        params={"thread_role": "integration"},
+        params={"thread_role": "audit"},
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["thread_role"] == "integration"
+    assert payload["thread_role"] == "audit"
     assert payload["active_turn_id"] is None
     assert payload["messages"][-1]["role"] == "assistant"
     assert payload["messages"][-1]["status"] == "completed"
@@ -458,10 +500,11 @@ def test_integration_session_includes_assistant_output_after_auto_start(
     assert review_state["rollup"]["draft"]["sha"].startswith("sha256:")
 
 
-def test_ask_planning_session_returns_checkpoint_handoff_for_child_node(
+def test_ask_planning_session_starts_empty_for_child_node(
     client: TestClient,
     workspace_root,
 ):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][root_id]["title"] = "Build auth package"
@@ -511,11 +554,7 @@ def test_ask_planning_session_returns_checkpoint_handoff_for_child_node(
     assert response.status_code == 200
     payload = response.json()
     assert payload["thread_role"] == "ask_planning"
-    assert [message["role"] for message in payload["messages"]] == ["system", "system"]
-    assert "Auth guard follow-up" in payload["messages"][0]["content"]
-    assert "K1" in payload["messages"][1]["content"]
-    assert "sha256:k1" in payload["messages"][1]["content"]
-    assert "Auth middleware accepted" in payload["messages"][1]["content"]
+    assert payload["messages"] == []
 
 
 def test_review_node_rejects_task_thread_role_pair(client: TestClient, workspace_root):
@@ -569,7 +608,7 @@ def test_chat_events_nonexistent_node_returns_404(client: TestClient, workspace_
 
 def test_get_session_returns_partial_content_mid_stream(client: TestClient, workspace_root, monkeypatch):
     monkeypatch.setattr(chat_service_module, "_DRAFT_FLUSH_INTERVAL_SEC", 0.01)
-    client.app.state.chat_service._codex_client = SlowCheckpointCodexClient()
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
 
     project_id, root_id = _setup_project(client, workspace_root)
     response = client.post(
@@ -609,7 +648,12 @@ def test_finish_task_route_returns_detail_state_and_creates_execution_session(
     client: TestClient,
     workspace_root,
 ):
-    client.app.state.finish_task_service._codex_client = ExecutionCodexClient()
+    codex = ExecutionCodexClient()
+    _set_execution_codex_client(client, codex)
+
+    # Initialize git repo so git guardrails pass (can_finish_task gated on git_ready)
+    init_git_repo(workspace_root)
+
     project_id, root_id = _setup_project(client, workspace_root)
 
     frame_resp = client.put(
@@ -656,4 +700,7 @@ def test_finish_task_route_returns_detail_state_and_creates_execution_session(
 
     assert execution_session is not None
     assert execution_session["thread_role"] == "execution"
+    assert execution_session["fork_reason"] == "execution_bootstrap"
+    assert execution_session["forked_from_role"] == "audit"
     assert execution_session["messages"][0]["role"] == "assistant"
+    assert codex.forked_threads

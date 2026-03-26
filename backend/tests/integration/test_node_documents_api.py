@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from backend.services.split_service import SplitService
+from backend.services.thread_lineage_service import ThreadLineageService
 
 
 class FakeCodexClient:
@@ -13,6 +14,9 @@ class FakeCodexClient:
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
         return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": f"fork-{source_thread_id}"}
 
     def run_turn_streaming(self, *_: object, **__: object) -> dict:
         return {
@@ -110,11 +114,18 @@ def test_split_created_child_document_endpoints_work(client, tmp_path: Path) -> 
     attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
     project_id = attached.json()["project"]["id"]
     root_id = attached.json()["tree_state"]["root_node_id"]
+    _prepare_finishable_task(client, project_id, root_id)
 
+    codex_client = FakeCodexClient()
     client.app.state.split_service = SplitService(
         storage=client.app.state.storage,
         tree_service=client.app.state.tree_service,
-        codex_client=FakeCodexClient(),
+        codex_client=codex_client,
+        thread_lineage_service=ThreadLineageService(
+            client.app.state.storage,
+            codex_client,
+            client.app.state.tree_service,
+        ),
         split_timeout=5,
     )
 
@@ -223,7 +234,9 @@ def test_frame_save_is_atomic_against_concurrent_finish_task(client, tmp_path: P
     project_id = payload["project"]["id"]
     root_id = payload["tree_state"]["root_node_id"]
     _prepare_finishable_task(client, project_id, root_id)
-    client.app.state.finish_task_service._codex_client = FinishTaskCodexClient()
+    finish_codex_client = FinishTaskCodexClient()
+    client.app.state.finish_task_service._codex_client = finish_codex_client
+    client.app.state.thread_lineage_service._codex_client = finish_codex_client
 
     original_bump = client.app.state.node_detail_service.bump_frame_revision
     entered_bump = threading.Event()
@@ -266,7 +279,7 @@ def test_frame_save_is_atomic_against_concurrent_finish_task(client, tmp_path: P
     assert "response" in put_result
     assert "response" in finish_result
     assert put_result["response"].status_code == 200
-    assert finish_result["response"].status_code == 200
+    assert finish_result["response"].status_code == 400
 
     frame_resp = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame")
     assert frame_resp.status_code == 200
@@ -276,4 +289,4 @@ def test_frame_save_is_atomic_against_concurrent_finish_task(client, tmp_path: P
     assert detail_resp.status_code == 200
     detail = detail_resp.json()
     assert detail["frame_revision"] >= 2
-    assert detail["execution_started"] is True
+    assert detail["execution_started"] is False

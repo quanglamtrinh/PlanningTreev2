@@ -6,12 +6,15 @@ from pathlib import Path
 
 import pytest
 
+from backend.ai.codex_client import CodexTransportError
+from backend.ai.integration_rollup_prompt_builder import build_integration_rollup_output_schema
 from backend.errors.app_errors import ReviewNotAllowed
 from backend.services import planningtree_workspace
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now
 from backend.storage.storage import Storage
@@ -19,10 +22,18 @@ from backend.streaming.sse_broker import ChatEventBroker
 
 
 class FakeIntegrationCodexClient:
-    def __init__(self, *, summary: str = "Integration draft summary", fail: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        summary: str = "Integration draft summary",
+        fail: bool = False,
+        fail_fork: bool = False,
+    ) -> None:
         self.summary = summary
         self.fail = fail
+        self.fail_fork = fail_fork
         self.started_threads: list[str] = []
+        self.forked_threads: list[dict[str, str]] = []
         self.prompts: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
@@ -31,6 +42,18 @@ class FakeIntegrationCodexClient:
         return {"thread_id": thread_id}
 
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        if self.fail_fork:
+            raise RuntimeError("fork failed")
+        thread_id = f"review-fork-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(
+            {
+                "thread_id": thread_id,
+                "source_thread_id": source_thread_id,
+            }
+        )
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
@@ -46,6 +69,31 @@ class FakeIntegrationCodexClient:
             "stdout": payload,
             "thread_id": str(kwargs.get("thread_id") or ""),
         }
+
+
+class StrictIntegrationCodexClient(FakeIntegrationCodexClient):
+    def __init__(self, *, summary: str = "Integration draft summary") -> None:
+        super().__init__(summary=summary)
+        self.run_kwargs: list[dict[str, object]] = []
+
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        self.run_kwargs.append(dict(kwargs))
+        expected_schema = build_integration_rollup_output_schema()
+        if kwargs.get("sandbox_profile") != "read_only":
+            raise RuntimeError("missing read_only sandbox_profile")
+        if kwargs.get("writable_roots") is not None:
+            raise RuntimeError("review rollup must not set writable_roots")
+        if kwargs.get("output_schema") != expected_schema:
+            raise RuntimeError("review rollup must pass the expected output_schema")
+        return super().run_turn_streaming(prompt, **kwargs)
+
+
+class ReadOnlyRejectingIntegrationCodexClient(FakeIntegrationCodexClient):
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        del prompt
+        if kwargs.get("sandbox_profile") == "read_only":
+            raise CodexTransportError("read_only sandbox rejected", "invalid_sandbox_policy")
+        raise RuntimeError("missing read_only sandbox_profile")
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -126,10 +174,14 @@ def make_review_service(
     *,
     codex_client: FakeIntegrationCodexClient | None = None,
 ) -> ReviewService:
+    thread_lineage_service = None
+    if codex_client is not None:
+        thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
     return ReviewService(
         storage,
         tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         chat_event_broker=ChatEventBroker(),
         chat_timeout=5,
     )
@@ -163,7 +215,7 @@ def wait_for_integration_terminal(
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         session = storage.chat_state_store.read_session(
-            project_id, review_node_id, thread_role="integration"
+            project_id, review_node_id, thread_role="audit"
         )
         if not session.get("active_turn_id"):
             messages = session.get("messages", [])
@@ -305,11 +357,15 @@ def test_start_local_review_transitions_completed_to_review_pending(
 
     result = review_service.start_local_review(project_id, root_id)
     assert result["status"] == "review_pending"
+    assert result["local_review_started_at"] is not None
+    assert result["local_review_prompt_consumed_at"] is None
 
     # Verify persisted
     exec_state = storage.execution_state_store.read_state(project_id, root_id)
     assert exec_state is not None
     assert exec_state["status"] == "review_pending"
+    assert exec_state["local_review_started_at"] is not None
+    assert exec_state["local_review_prompt_consumed_at"] is None
 
 
 def test_start_local_review_rejects_non_completed_status(
@@ -355,6 +411,8 @@ def test_accept_local_review_transitions_to_review_accepted_and_marks_done(
     exec_state = storage.execution_state_store.read_state(project_id, root_id)
     assert exec_state is not None
     assert exec_state["status"] == "review_accepted"
+    assert exec_state["local_review_started_at"] is not None
+    assert exec_state["local_review_prompt_consumed_at"] is not None
 
     persisted = storage.project_store.load_snapshot(project_id)
     node = persisted["tree_state"]["node_index"][root_id]
@@ -480,6 +538,88 @@ def test_accept_local_review_activates_next_sibling(
     assert materialized[0]["materialized_node_id"] == activated_id
 
 
+def test_accept_local_review_eager_forks_child_audit_from_review_audit(
+    storage: Storage,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    codex_client = FakeIntegrationCodexClient()
+    review_service = make_review_service(storage, tree_service, codex_client=codex_client)
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=3)
+    first_child_id = split_result["first_child_id"]
+    review_node_id = split_result["review_node_id"]
+
+    simulate_execution_completed(storage, project_id, first_child_id, "sha256:child1_done")
+    review_service.start_local_review(project_id, first_child_id)
+    result = review_service.accept_local_review(project_id, first_child_id, "Child 1 done.")
+
+    activated_id = result["activated_sibling_id"]
+    assert activated_id is not None
+
+    review_audit_session = storage.chat_state_store.read_session(
+        project_id,
+        review_node_id,
+        thread_role="audit",
+    )
+    child_audit_session = storage.chat_state_store.read_session(
+        project_id,
+        activated_id,
+        thread_role="audit",
+    )
+
+    assert review_audit_session["thread_id"] is not None
+    assert review_audit_session["fork_reason"] == "review_bootstrap"
+    assert child_audit_session["thread_id"] is not None
+    assert child_audit_session["fork_reason"] == "child_activation"
+    assert child_audit_session["forked_from_node_id"] == review_node_id
+    assert len(codex_client.forked_threads) >= 2
+
+
+def test_accept_local_review_keeps_checkpoint_when_child_bootstrap_fails(
+    storage: Storage,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    review_service = make_review_service(
+        storage,
+        tree_service,
+        codex_client=FakeIntegrationCodexClient(fail_fork=True),
+    )
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=3)
+    first_child_id = split_result["first_child_id"]
+    review_node_id = split_result["review_node_id"]
+
+    simulate_execution_completed(storage, project_id, first_child_id, "sha256:child1_done")
+    review_service.start_local_review(project_id, first_child_id)
+    result = review_service.accept_local_review(project_id, first_child_id, "Child 1 done.")
+
+    activated_id = result["activated_sibling_id"]
+    assert activated_id is not None
+
+    review_state = storage.review_state_store.read_state(project_id, review_node_id)
+    assert review_state is not None
+    assert review_state["checkpoints"][-1]["summary"] == "Child 1 done."
+
+    persisted = storage.project_store.load_snapshot(project_id)
+    assert persisted["tree_state"]["active_node_id"] == activated_id
+    child_audit_session = storage.chat_state_store.read_session(
+        project_id,
+        activated_id,
+        thread_role="audit",
+    )
+    assert child_audit_session["thread_id"] is None
+
+
 # ── Tests: legacy eager path ─────────────────────────────────────
 
 
@@ -596,6 +736,77 @@ def test_rollup_becomes_ready_when_all_siblings_accepted(
     )
     assert assistant["status"] == "completed"
     assert "Integrated successfully." in assistant["content"]
+
+
+def test_integration_rollup_uses_read_only_sandbox_and_output_schema(
+    storage: Storage, workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    codex_client = StrictIntegrationCodexClient(summary="Read-only integration summary.")
+    review_service = make_review_service(storage, tree_service, codex_client=codex_client)
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=1)
+    first_child_id = split_result["first_child_id"]
+    review_node_id = split_result["review_node_id"]
+
+    simulate_execution_completed(storage, project_id, first_child_id, "sha256:only-child")
+    review_service.start_local_review(project_id, first_child_id)
+    review_service.accept_local_review(project_id, first_child_id, "Only child done.")
+
+    wait_for_rollup_draft(storage, project_id, review_node_id)
+    session = wait_for_integration_terminal(storage, project_id, review_node_id)
+    assistant = next(
+        message for message in reversed(session["messages"]) if message.get("role") == "assistant"
+    )
+
+    assert assistant["status"] == "completed"
+    assert len(codex_client.run_kwargs) == 1
+    assert codex_client.run_kwargs[0]["sandbox_profile"] == "read_only"
+    assert codex_client.run_kwargs[0]["writable_roots"] is None
+    assert codex_client.run_kwargs[0]["output_schema"] == build_integration_rollup_output_schema()
+
+
+def test_integration_rollup_read_only_sandbox_error_marks_session_failed(
+    storage: Storage, workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    review_service = make_review_service(
+        storage,
+        tree_service,
+        codex_client=ReadOnlyRejectingIntegrationCodexClient(),
+    )
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=1)
+    first_child_id = split_result["first_child_id"]
+    review_node_id = split_result["review_node_id"]
+
+    simulate_execution_completed(storage, project_id, first_child_id, "sha256:only-child")
+    review_service.start_local_review(project_id, first_child_id)
+    review_service.accept_local_review(project_id, first_child_id, "Only child done.")
+
+    session = wait_for_integration_terminal(storage, project_id, review_node_id)
+    assistant = next(
+        message for message in reversed(session["messages"]) if message.get("role") == "assistant"
+    )
+
+    assert assistant["status"] == "error"
+    assert assistant["error"] == "read_only sandbox rejected"
+    assert session.get("active_turn_id") is None
+    review_state = storage.review_state_store.read_state(project_id, review_node_id)
+    assert review_state is not None
+    assert review_state["rollup"]["draft"] == {
+        "summary": None,
+        "sha": None,
+        "generated_at": None,
+    }
 
 
 def test_integration_rollup_failure_keeps_ready_without_draft_and_marks_session_error(
@@ -734,6 +945,8 @@ def test_accept_rollup_review_sets_accepted_and_appends_to_parent_audit(
     assert review_state["rollup"]["status"] == "accepted"
     assert review_state["rollup"]["summary"] == "Integration looks good."
     assert review_state["rollup"]["sha"] == draft_sha
+    assert review_state["rollup"]["package_review_started_at"] is not None
+    assert review_state["rollup"]["package_review_prompt_consumed_at"] is None
     assert review_state["rollup"]["draft"] == {
         "summary": None,
         "sha": None,
@@ -807,7 +1020,7 @@ def test_accept_rollup_review_rejects_while_integration_turn_is_active(
     session = storage.chat_state_store.clear_session(
         project_id,
         review_node_id,
-        thread_role="integration",
+        thread_role="audit",
     )
     session["active_turn_id"] = "rollup-turn-1"
     session["messages"].append(
@@ -826,7 +1039,7 @@ def test_accept_rollup_review_rejects_while_integration_turn_is_active(
         project_id,
         review_node_id,
         session,
-        thread_role="integration",
+        thread_role="audit",
     )
 
     with pytest.raises(ReviewNotAllowed, match="still running"):

@@ -1,0 +1,26 @@
+{
+  "thread_id": "fork-thread-1",
+  "thread_role": "execution",
+  "active_turn_id": null,
+  "forked_from_thread_id": "start-thread-1",
+  "forked_from_node_id": "61236690b999496e8e56e8931a9d8606",
+  "forked_from_role": "audit",
+  "fork_reason": "execution_bootstrap",
+  "lineage_root_thread_id": "start-thread-1",
+  "messages": [
+    {
+      "message_id": "msg_f0ff70cb42",
+      "role": "assistant",
+      "content": "ok",
+      "status": "completed",
+      "error": null,
+      "turn_id": "exec_a31f98ecc9",
+      "created_at": "2026-03-25T23:27:19.002760+00:00",
+      "updated_at": "2026-03-25T23:27:19.090980+00:00",
+      "parts": [],
+      "items": []
+    }
+  ],
+  "created_at": "2026-03-25T23:27:18.993757+00:00",
+  "updated_at": "2026-03-25T23:27:19.095298+00:00"
+}

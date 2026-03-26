@@ -68,9 +68,58 @@ def test_clear_session_with_role(chat_store, project_id):
     assert cleared["thread_role"] == "audit"
 
 
-def test_invalid_thread_role_falls_back_to_default(chat_store, project_id):
-    session = chat_store.read_session(project_id, "node1", thread_role="invalid_role")
-    assert session["thread_role"] == "ask_planning"
+def test_normalize_preserves_lineage_fields(chat_store, project_id):
+    session = chat_store.read_session(project_id, "node-lineage", thread_role="audit")
+    session.update(
+        {
+            "thread_id": "audit-thread-1",
+            "forked_from_thread_id": "root-thread-1",
+            "forked_from_node_id": "root-node",
+            "forked_from_role": "audit",
+            "fork_reason": "review_bootstrap",
+            "lineage_root_thread_id": "root-thread-1",
+        }
+    )
+    chat_store.write_session(project_id, "node-lineage", session, thread_role="audit")
+
+    loaded = chat_store.read_session(project_id, "node-lineage", thread_role="audit")
+    assert loaded["thread_id"] == "audit-thread-1"
+    assert loaded["forked_from_thread_id"] == "root-thread-1"
+    assert loaded["forked_from_node_id"] == "root-node"
+    assert loaded["forked_from_role"] == "audit"
+    assert loaded["fork_reason"] == "review_bootstrap"
+    assert loaded["lineage_root_thread_id"] == "root-thread-1"
+
+
+def test_normalize_defaults_missing_lineage_fields(chat_store, project_id):
+    path = chat_store.path(project_id, "legacy-node", "audit")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "thread_id": "legacy-thread",
+                "thread_role": "audit",
+                "active_turn_id": None,
+                "messages": [],
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = chat_store.read_session(project_id, "legacy-node", thread_role="audit")
+    assert loaded["thread_id"] == "legacy-thread"
+    assert loaded["forked_from_thread_id"] is None
+    assert loaded["forked_from_node_id"] is None
+    assert loaded["forked_from_role"] is None
+    assert loaded["fork_reason"] is None
+    assert loaded["lineage_root_thread_id"] is None
+
+
+def test_invalid_thread_role_is_rejected(chat_store, project_id):
+    with pytest.raises(ValueError, match="Invalid thread role"):
+        chat_store.read_session(project_id, "node1", thread_role="invalid_role")
 
 
 def test_flat_file_migration(chat_store, project_id):
@@ -151,3 +200,118 @@ def test_role_path_structure(chat_store, project_id):
     path = chat_store.path(project_id, "node1", "audit")
     assert path.name == "audit.json"
     assert path.parent.name == "node1"
+
+
+def test_integration_to_audit_migration(chat_store, project_id):
+    role_dir = chat_store._role_dir(project_id, "review-node")
+    role_dir.mkdir(parents=True, exist_ok=True)
+    integration_path = role_dir / "integration.json"
+    integration_path.write_text(
+        json.dumps(
+            {
+                "thread_id": "legacy-review-thread",
+                "thread_role": "integration",
+                "active_turn_id": None,
+                "messages": [],
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = chat_store.read_session(project_id, "review-node", thread_role="audit")
+    audit_path = chat_store.path(project_id, "review-node", "audit")
+
+    assert loaded["thread_id"] == "legacy-review-thread"
+    assert loaded["thread_role"] == "audit"
+    assert loaded["fork_reason"] == "review_bootstrap_legacy_migrated"
+    assert audit_path.exists()
+    assert not integration_path.exists()
+    assert json.loads(audit_path.read_text(encoding="utf-8"))["thread_role"] == "audit"
+
+
+def test_explicit_integration_role_is_rejected(chat_store, project_id):
+    with pytest.raises(ValueError, match="Invalid thread role"):
+        chat_store.read_session(project_id, "review-alias", thread_role="integration")
+
+    with pytest.raises(ValueError, match="Invalid thread role"):
+        chat_store.write_session(project_id, "review-write", {}, thread_role="integration")
+
+    with pytest.raises(ValueError, match="Invalid thread role"):
+        chat_store.clear_session(project_id, "review-clear", thread_role="integration")
+
+
+def test_migration_idempotent_when_audit_exists(chat_store, project_id):
+    role_dir = chat_store._role_dir(project_id, "review-both")
+    role_dir.mkdir(parents=True, exist_ok=True)
+    integration_path = role_dir / "integration.json"
+    audit_path = role_dir / "audit.json"
+    integration_path.write_text(
+        json.dumps(
+            {
+                "thread_id": "legacy-integration-thread",
+                "thread_role": "integration",
+                "active_turn_id": None,
+                "messages": [],
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    audit_path.write_text(
+        json.dumps(
+            {
+                "thread_id": "audit-wins-thread",
+                "thread_role": "audit",
+                "active_turn_id": None,
+                "messages": [],
+                "created_at": "2026-02-01T00:00:00Z",
+                "updated_at": "2026-02-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = chat_store.read_session(project_id, "review-both", thread_role="audit")
+    assert loaded["thread_id"] == "audit-wins-thread"
+    assert loaded["thread_role"] == "audit"
+    assert integration_path.exists()
+    assert audit_path.exists()
+    assert json.loads(audit_path.read_text(encoding="utf-8"))["thread_id"] == "audit-wins-thread"
+
+
+def test_message_items_round_trip(chat_store, project_id):
+    session = chat_store.read_session(project_id, "node-items", thread_role="audit")
+    session["messages"] = [
+        {
+            "message_id": "msg-1",
+            "role": "assistant",
+            "content": "done",
+            "status": "completed",
+            "error": None,
+            "turn_id": "turn-1",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "items": [
+                {
+                    "item_id": "assistant_text",
+                    "item_type": "assistant_text",
+                    "status": "completed",
+                    "started_at": "2026-01-01T00:00:00Z",
+                    "completed_at": "2026-01-01T00:00:01Z",
+                    "lifecycle": [
+                        {
+                            "phase": "delta",
+                            "timestamp": "2026-01-01T00:00:00Z",
+                            "text": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+    chat_store.write_session(project_id, "node-items", session, thread_role="audit")
+    loaded = chat_store.read_session(project_id, "node-items", thread_role="audit")
+    assert loaded["messages"][0]["items"][0]["item_type"] == "assistant_text"

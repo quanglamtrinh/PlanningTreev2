@@ -122,6 +122,8 @@ def build_detail_state(
     exec_state: Dict[str, Any] | None = None,
     node: Dict[str, Any] | None = None,
     review_state: Dict[str, Any] | None = None,
+    git_checkpoint_service: Any = None,
+    project_path: Path | None = None,
 ) -> Dict[str, Any]:
     frame_meta = _load_frame_meta_from_node_dir(node_dir)
     clarify = _load_clarify_from_node_dir(node_dir)
@@ -151,6 +153,30 @@ def build_detail_state(
     if active_step == "spec" and not frame_branch_ready:
         spec_stale = spec_src_frame < frame_conf_rev
 
+    # ── Git-aware fields ────────────────────────────────────────────
+    git_ready: bool | None = None
+    git_blocker_message: str | None = None
+    current_head_sha: str | None = None
+    task_present_in_current_workspace: bool | None = None
+    if git_checkpoint_service is not None and project_path is not None:
+        try:
+            blockers = git_checkpoint_service.validate_guardrails(project_path)
+            git_ready = len(blockers) == 0
+            git_blocker_message = blockers[0] if blockers else None
+            current_head_sha = git_checkpoint_service.get_head_sha(project_path)
+        except Exception:
+            pass  # git fields stay None
+        if current_head_sha and exec_state:
+            head_sha = exec_state.get("head_sha")
+            if head_sha:
+                try:
+                    task_present_in_current_workspace = (
+                        git_checkpoint_service.is_ancestor(project_path, head_sha, current_head_sha)
+                        or current_head_sha == head_sha
+                    )
+                except Exception:
+                    pass
+
     # ── Execution-aware derived fields ─────────────────────────────
     execution_fields = derive_execution_workflow_fields(
         storage,
@@ -160,6 +186,7 @@ def build_detail_state(
         node=node,
         exec_state=exec_state,
         review_state=review_state,
+        git_ready=git_ready,
     )
     shaping_frozen = bool(execution_fields["shaping_frozen"])
     workflow_summary = {
@@ -190,7 +217,12 @@ def build_detail_state(
         "spec_confirmed": workflow["spec_confirmed"],
         "initial_sha": exec_state.get("initial_sha") if exec_state else None,
         "head_sha": exec_state.get("head_sha") if exec_state else None,
-        "changed_files": [],
+        "commit_message": exec_state.get("commit_message") if exec_state else None,
+        "current_head_sha": current_head_sha,
+        "task_present_in_current_workspace": task_present_in_current_workspace,
+        "git_ready": git_ready,
+        "git_blocker_message": git_blocker_message,
+        "changed_files": exec_state.get("changed_files", []) if exec_state else [],
         "execution_started": execution_fields["execution_started"],
         "execution_completed": execution_fields["execution_completed"],
         "shaping_frozen": shaping_frozen,
@@ -249,9 +281,15 @@ def build_review_detail_state(
 
 
 class NodeDetailService:
-    def __init__(self, storage: Storage, tree_service: TreeService) -> None:
+    def __init__(
+        self,
+        storage: Storage,
+        tree_service: TreeService,
+        git_checkpoint_service: Any = None,
+    ) -> None:
         self._storage = storage
         self._tree_service = tree_service
+        self._git_checkpoint_service = git_checkpoint_service
 
     # ── Shaping freeze guard ─────────────────────────────────────
 
@@ -280,6 +318,9 @@ class NodeDetailService:
 
             node_dir = self._resolve_node_dir(snapshot, node_id)
             exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            project = snapshot.get("project", {})
+            raw_project_path = str(project.get("project_path") or "").strip()
+            pp = Path(raw_project_path) if raw_project_path else None
             return build_detail_state(
                 self._storage,
                 project_id,
@@ -288,6 +329,8 @@ class NodeDetailService:
                 exec_state=exec_state,
                 node=node,
                 review_state=review_state,
+                git_checkpoint_service=self._git_checkpoint_service,
+                project_path=pp,
             )
 
     # ── Confirm frame ─────────────────────────────────────────────

@@ -80,9 +80,21 @@
   outline-offset: 2px;
 }
 
-.node:hover:not(.done) {
+.node:hover:not(.done):not(:disabled) {
   background: var(--color-bg-hover);
   color: var(--color-text-secondary);
+}
+
+.node:disabled,
+.nodeDisabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.nodeVisual.nodeDisabled {
+  opacity: 0.45;
+  filter: grayscale(0.12);
 }
 
 /* Done — filled accent pill */

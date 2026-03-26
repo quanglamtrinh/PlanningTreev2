@@ -21,6 +21,7 @@ from backend.services.codex_account_service import CodexAccountService
 from backend.services.clarify_generation_service import ClarifyGenerationService
 from backend.services.frame_generation_service import FrameGenerationService
 from backend.services.finish_task_service import FinishTaskService
+from backend.services.git_checkpoint_service import GitCheckpointService
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.spec_generation_service import SpecGenerationService
 from backend.services.node_document_service import NodeDocumentService
@@ -29,6 +30,7 @@ from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
 from backend.services.snapshot_view_service import SnapshotViewService
 from backend.services.split_service import SplitService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
 from backend.streaming.sse_broker import ChatEventBroker, GlobalEventBroker
@@ -40,12 +42,17 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     paths = build_app_paths(data_root)
     storage = Storage(paths)
     tree_service = TreeService()
-    snapshot_view_service = SnapshotViewService(storage)
-    project_service = ProjectService(storage, snapshot_view_service, chat_service=None)
+    git_checkpoint_service = GitCheckpointService()
+    snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
+    project_service = ProjectService(
+        storage, snapshot_view_service, chat_service=None,
+        git_checkpoint_service=git_checkpoint_service,
+    )
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
-    node_detail_service = NodeDetailService(storage, tree_service)
+    node_detail_service = NodeDetailService(storage, tree_service, git_checkpoint_service=git_checkpoint_service)
     codex_client = CodexAppClient(StdioTransport(codex_cmd=get_codex_cmd() or "codex"))
+    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
     codex_event_broker = GlobalEventBroker()
     codex_account_service = CodexAccountService(
         codex_client=codex_client,
@@ -55,24 +62,29 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         split_timeout=get_split_timeout(),
+        git_checkpoint_service=git_checkpoint_service,
     )
     frame_generation_service = FrameGenerationService(
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         frame_gen_timeout=get_frame_gen_timeout(),
     )
     clarify_generation_service = ClarifyGenerationService(
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         clarify_gen_timeout=get_clarify_gen_timeout(),
     )
     spec_generation_service = SpecGenerationService(
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         spec_gen_timeout=get_spec_gen_timeout(),
     )
     chat_event_broker = ChatEventBroker()
@@ -80,6 +92,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         chat_event_broker=chat_event_broker,
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),
@@ -88,6 +101,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         chat_event_broker=chat_event_broker,
         chat_timeout=get_chat_timeout(),
         chat_service=chat_service,
@@ -97,9 +111,11 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         tree_service=tree_service,
         node_detail_service=node_detail_service,
         codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
         chat_event_broker=chat_event_broker,
         chat_timeout=get_execution_timeout(),
         chat_service=chat_service,
+        git_checkpoint_service=git_checkpoint_service,
     )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service
@@ -137,6 +153,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
 
     app.state.paths = paths
     app.state.storage = storage
+    app.state.git_checkpoint_service = git_checkpoint_service
     app.state.tree_service = tree_service
     app.state.project_service = project_service
     app.state.node_service = node_service
@@ -144,6 +161,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.node_detail_service = node_detail_service
     app.state.snapshot_view_service = snapshot_view_service
     app.state.codex_client = codex_client
+    app.state.thread_lineage_service = thread_lineage_service
     app.state.codex_event_broker = codex_event_broker
     app.state.codex_account_service = codex_account_service
     app.state.split_service = split_service

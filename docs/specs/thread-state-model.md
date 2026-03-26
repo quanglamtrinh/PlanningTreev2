@@ -1,6 +1,6 @@
 # Thread State Model
 
-Status: spec (Phase 1 artifact). Defines the multi-thread architecture for node lifecycle.
+Status: spec (updated through Phase 6). Defines the multi-thread architecture for node lifecycle.
 
 ## Thread Roles
 
@@ -10,20 +10,20 @@ Each task node can have up to three threads. Thread role is the primary key alon
 |------|---------|-------------|
 | `ask_planning` | Working discussion for shaping (frame, clarify, spec) | When node reaches its turn |
 | `execution` | Automated Codex code generation from confirmed spec | On Finish Task |
-| `audit` | Official record (two-phase: seed context at creation, canonical artifacts after shaping); local review chat post-execution; package audit after rollup | When node reaches its turn |
+| `audit` | Official record (two-phase: seed context at creation, canonical artifacts after shaping); local review chat post-execution; package audit after rollup; automated rollup analysis for review nodes | When node reaches its turn |
 
-Review nodes (`node_kind: review`) have a dedicated `integration` thread for agent-based integration rollup review. They do not use the standard three-role model. See `review-node-checkpoint.md`.
+Review nodes (`node_kind: review`) use a single canonical `audit` thread for automated integration rollup review. They do not use `ask_planning` or `execution`. See `review-node-checkpoint.md`.
 
 ## Thread Role Enum
 
 ```
-ThreadRole = "audit" | "ask_planning" | "execution" | "integration"
+ThreadRole = "audit" | "ask_planning" | "execution"
 ```
 
 - `audit`, `ask_planning`, `execution`: used by task nodes
-- `integration`: used by review nodes only (for agent-based rollup review)
+- `audit`: also used by review nodes for agent-based rollup review and read-only breadcrumb access
 
-Python: literal string union. TypeScript: `type ThreadRole = 'audit' | 'ask_planning' | 'execution' | 'integration'`.
+Python: literal string union. TypeScript: `type ThreadRole = 'audit' | 'ask_planning' | 'execution'`.
 
 ## Storage Layout
 
@@ -44,7 +44,7 @@ Task nodes:
 
 Review nodes:
 ```
-.planningtree/chat/{review_node_id}/integration.json
+.planningtree/chat/{review_node_id}/audit.json
 ```
 
 Each file follows the existing `ChatSession` schema with an added `thread_role` field:
@@ -114,6 +114,8 @@ Audit opens for user + agent chat to perform local review. This applies to nodes
 
 If this node is a parent that was split, after its review node completes integration rollup, the accepted rollup package (summary + SHA) is written to this node's audit. Audit then opens for user + agent chat so the parent can review whether the package satisfies its own frame and split rationale. This applies even if the parent never executed (split parents typically don't execute).
 
+For review nodes, `audit` is always read-only to the user. Codex writes rollup analysis output there automatically.
+
 Audit is **read-only** except in these two writability windows. See Read-Only Rules below.
 
 ### execution
@@ -128,7 +130,7 @@ Execution thread uses an automated Codex prompt (not interactive chat). The thre
 |-------------|---------------|---------------|
 | `ask_planning` | `execution_state` exists on node (Finish Task was clicked) | Before Finish Task |
 | `execution` | `execution_state.status == completed` | During execution (`status == executing`) — but only Codex writes, not user |
-| `audit` | Neither writability condition is met (see below) | **Exactly two cases** (see below) |
+| `audit` | Neither writability condition is met (see below) | **Exactly two task-node cases** (see below) |
 
 **Audit is writable in exactly two cases:**
 
@@ -176,14 +178,12 @@ Each canonical artifact is appended exactly once. They are also immutable after 
 **After rollup** (for parent nodes that were split):
 - Accepted rollup package (summary + SHA) from the review node — appended when `accept_rollup_review()` completes
 
-### integration seed (review nodes only)
+### review audit rollup context (review nodes only)
 
-System prompt for the review node's integration thread:
-- Parent's confirmed frame and split rationale
-- All checkpoint summaries and SHAs (K0, K1, ...)
-- All accepted local review summaries from child nodes
-- Goal: detect integration gaps, conflicts, cross-child mismatches
-- Output: rollup summary + final subtree SHA
+Review nodes do not receive seed messages. When rollup starts, the rollup prompt builder injects storage-backed context into the review node's `audit` thread:
+- Parent task context
+- Accepted checkpoint summaries and SHAs (K0, K1, ...)
+- Rollup goal and JSON output shape
 
 ### execution seed
 
@@ -222,5 +222,5 @@ Default value: `ask_planning` (backward compatible with existing callers).
 4. `execution` only exists after Finish Task.
 5. `audit` creation seed messages are immutable. Canonical artifact snapshots (frame, spec) are appended once each after shaping. Post-execution chat messages are appended during local review.
 6. Read-only enforcement is checked at service level (`ChatService`), not storage level.
-7. Review nodes have only the `integration` thread role. They do not use `audit`, `ask_planning`, or `execution`.
-8. `integration` thread is created lazily when rollup review begins (all siblings accepted).
+7. Review nodes have only the `audit` thread role. They do not use `ask_planning` or `execution`.
+8. `review.audit` is typically forked from `parent.audit` after split persistence and may be rebuilt lazily from lineage if missing later.

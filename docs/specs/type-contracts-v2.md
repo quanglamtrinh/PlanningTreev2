@@ -1,6 +1,6 @@
 # Type Contracts v2
 
-Status: spec (Phase 1 artifact). Defines all new and modified types for the thread/review model.
+Status: spec (updated through Phase 6). Defines all new and modified types for the thread/review model.
 
 ## New Enums and Unions
 
@@ -8,16 +8,18 @@ Status: spec (Phase 1 artifact). Defines all new and modified types for the thre
 
 ```typescript
 // TypeScript
-type ThreadRole = 'audit' | 'ask_planning' | 'execution' | 'integration'
+type ThreadRole = 'audit' | 'ask_planning' | 'execution'
 ```
 
-- `audit`, `ask_planning`, `execution`: used by task nodes
-- `integration`: used by review nodes only (for agent-based integration rollup)
+- Persisted and public thread roles are `audit`, `ask_planning`, and `execution`
+- Review nodes use `audit` for automated rollup analysis and read-only breadcrumb viewing
 
 ```python
-# Python (typing)
-ThreadRole = Literal["audit", "ask_planning", "execution", "integration"]
+# Python
+ThreadRole = Literal["audit", "ask_planning", "execution"]
 ```
+
+Note: legacy `integration.json` files are still lazily migrated to `audit.json` for old data, but `integration` is no longer an accepted public thread role after Phase 6.
 
 ### Extended NodeKind
 
@@ -208,11 +210,20 @@ interface ChatSession {
   thread_id: string | null
   thread_role: ThreadRole       // NEW
   active_turn_id: string | null
+  forked_from_thread_id?: string | null
+  forked_from_node_id?: string | null
+  forked_from_role?: string | null
+  fork_reason?: string | null
+  lineage_root_thread_id?: string | null
   messages: ChatMessage[]
   created_at: string
   updated_at: string
 }
 ```
+
+Notes:
+- Backend storage persists the five lineage fields above and defaults them to `null` when reading legacy session payloads that do not include them.
+- Review-node chat sessions now use `thread_role: "audit"` directly. Legacy `integration.json` is migrated forward lazily, but new callers must not send `thread_role="integration"`.
 
 ### ReviewGraphNodeData (updated)
 

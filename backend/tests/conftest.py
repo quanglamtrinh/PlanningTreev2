@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,20 @@ from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
+
+
+def init_git_repo(workspace: Path) -> None:
+    """Initialize a git repo in *workspace* with an initial commit.
+
+    This is needed by tests that exercise finish-task, since git guardrails
+    require a clean git repo.
+    """
+    subprocess.run(["git", "init", "-b", "main"], cwd=str(workspace), check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(workspace), check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(workspace), check=True, capture_output=True)
+    (workspace / ".gitignore").write_text(".planningtree/\n")
+    subprocess.run(["git", "add", "-A"], cwd=str(workspace), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(workspace), check=True, capture_output=True)
 
 
 @pytest.fixture

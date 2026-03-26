@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from backend.ai.codex_client import CodexAppClient, CodexTransportError
+from backend.ai.codex_client import CodexAppClient
 from backend.ai.execution_prompt_builder import (
     build_execution_base_instructions,
     build_execution_prompt,
@@ -20,6 +20,7 @@ from backend.services.node_detail_service import (
     _DEFAULT_FRAME_META,
     _load_spec_meta_from_node_dir,
 )
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now, load_json, new_id
 from backend.storage.storage import Storage
@@ -40,17 +41,21 @@ class FinishTaskService:
         tree_service: TreeService,
         node_detail_service: NodeDetailService,
         codex_client: CodexAppClient,
+        thread_lineage_service: ThreadLineageService,
         chat_event_broker: ChatEventBroker,
         chat_timeout: int,
         chat_service: ChatService | None = None,
+        git_checkpoint_service: Any = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
         self._node_detail_service = node_detail_service
         self._codex_client = codex_client
+        self._thread_lineage_service = thread_lineage_service
         self._chat_event_broker = chat_event_broker
         self._chat_timeout = int(chat_timeout)
         self._chat_service = chat_service
+        self._git_checkpoint_service = git_checkpoint_service
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}
 
@@ -67,14 +72,10 @@ class FinishTaskService:
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             frame_content = self._load_confirmed_frame_content(node_dir)
             task_context = build_split_context(snapshot, node, node_index)
-            execution_session = self._storage.chat_state_store.read_session(
-                project_id,
-                node_id,
-                thread_role="execution",
-            )
-            existing_thread_id = execution_session.get("thread_id")
-
-        thread_id = self._ensure_execution_thread(existing_thread_id, workspace_root)
+        execution_session = self._ensure_execution_thread(project_id, node_id, workspace_root)
+        thread_id = str(execution_session.get("thread_id") or "").strip()
+        if not thread_id:
+            raise FinishTaskNotAllowed("Execution bootstrap did not return a thread id.")
 
         turn_id = new_id("exec")
         assistant_message_id = new_id("msg")
@@ -112,6 +113,8 @@ class FinishTaskService:
                 "head_sha": None,
                 "started_at": now,
                 "completed_at": None,
+                "local_review_started_at": None,
+                "local_review_prompt_consumed_at": None,
             }
             self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
@@ -120,7 +123,7 @@ class FinishTaskService:
                 snapshot["updated_at"] = now
                 self._storage.project_store.save_snapshot(project_id, snapshot)
 
-            session = self._storage.chat_state_store.clear_session(
+            session = self._storage.chat_state_store.read_session(
                 project_id,
                 node_id,
                 thread_role="execution",
@@ -147,6 +150,10 @@ class FinishTaskService:
             thread_role="execution",
         )
 
+        # Resolve hierarchical_number and title for commit message
+        h_number = str(node.get("hierarchical_number") or "")
+        title = str(node.get("title") or "")
+
         threading.Thread(
             target=self._run_background_execution,
             kwargs={
@@ -157,6 +164,9 @@ class FinishTaskService:
                 "thread_id": thread_id,
                 "prompt": prompt,
                 "workspace_root": workspace_root,
+                "initial_sha": initial_sha,
+                "hierarchical_number": h_number,
+                "title": title,
             },
             daemon=True,
         ).start()
@@ -168,6 +178,8 @@ class FinishTaskService:
         project_id: str,
         node_id: str,
         head_sha: str | None = None,
+        commit_message: str | None = None,
+        changed_files: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
@@ -181,6 +193,10 @@ class FinishTaskService:
             exec_state["status"] = "completed"
             exec_state["head_sha"] = head_sha
             exec_state["completed_at"] = iso_now()
+            if commit_message is not None:
+                exec_state["commit_message"] = commit_message
+            if changed_files is not None:
+                exec_state["changed_files"] = changed_files
             self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
         detail_state = self._node_detail_service.get_detail_state(project_id, node_id)
@@ -197,6 +213,22 @@ class FinishTaskService:
         )
         return detail_state
 
+    def fail_execution(
+        self,
+        project_id: str,
+        node_id: str,
+        error_message: str,
+    ) -> None:
+        """Persist execution as failed. Allows retry."""
+        with self._storage.project_lock(project_id):
+            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            if exec_state is None:
+                return
+            exec_state["status"] = "failed"
+            exec_state["completed_at"] = iso_now()
+            exec_state["error_message"] = error_message
+            self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
+
     def _run_background_execution(
         self,
         *,
@@ -207,6 +239,9 @@ class FinishTaskService:
         thread_id: str,
         prompt: str,
         workspace_root: str | None,
+        initial_sha: str = "",
+        hierarchical_number: str = "",
+        title: str = "",
     ) -> None:
         draft_lock = threading.Lock()
         accumulator = PartAccumulator()
@@ -224,6 +259,7 @@ class FinishTaskService:
                 thread_id=thread_id,
                 clear_active_turn=False,
                 parts=accumulator.snapshot_parts(),
+                items=accumulator.snapshot_items(),
             )
 
         def capture_delta(delta: str) -> None:
@@ -243,6 +279,9 @@ class FinishTaskService:
                     "type": "assistant_delta",
                     "message_id": assistant_message_id,
                     "delta": delta,
+                    "item_id": "assistant_text",
+                    "item_type": "assistant_text",
+                    "phase": "delta",
                 },
                 thread_role="execution",
             )
@@ -263,7 +302,7 @@ class FinishTaskService:
 
         def capture_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
             with draft_lock:
-                accumulator.on_tool_call(tool_name, arguments)
+                item_id = accumulator.on_tool_call(tool_name, arguments)
                 part_index = len(accumulator.parts) - 1
             self._chat_event_broker.publish(
                 project_id,
@@ -274,6 +313,9 @@ class FinishTaskService:
                     "tool_name": tool_name,
                     "arguments": arguments,
                     "part_index": part_index,
+                    "item_id": item_id,
+                    "item_type": "tool_call",
+                    "phase": "started",
                 },
                 thread_role="execution",
             )
@@ -282,6 +324,8 @@ class FinishTaskService:
                 persist_activity_snapshot()
 
         def capture_item_event(phase: str, item: dict[str, Any]) -> None:
+            with draft_lock:
+                lifecycle_item_id = accumulator.on_item_event(phase, item)
             item_type = str(item.get("type") or "").strip()
             if item_type != "commandExecution":
                 return
@@ -296,7 +340,7 @@ class FinishTaskService:
 
             if phase == "started":
                 with draft_lock:
-                    accumulator.on_tool_call(tool_name, arguments, call_id=call_id)
+                    tool_item_id = accumulator.on_tool_call(tool_name, arguments, call_id=call_id)
                     part_index = len(accumulator.parts) - 1
                 self._chat_event_broker.publish(
                     project_id,
@@ -308,6 +352,22 @@ class FinishTaskService:
                         "arguments": arguments,
                         "call_id": call_id,
                         "part_index": part_index,
+                        "item_id": tool_item_id,
+                        "item_type": "tool_call",
+                        "phase": "started",
+                    },
+                    thread_role="execution",
+                )
+                self._chat_event_broker.publish(
+                    project_id,
+                    node_id,
+                    {
+                        "type": "assistant_item_lifecycle",
+                        "message_id": assistant_message_id,
+                        "item_id": lifecycle_item_id,
+                        "item_type": item_type,
+                        "phase": "started",
+                        "payload": item,
                     },
                     thread_role="execution",
                 )
@@ -323,7 +383,7 @@ class FinishTaskService:
             parsed_exit_code = int(exit_code) if isinstance(exit_code, int) else None
 
             with draft_lock:
-                accumulator.on_tool_result(
+                tool_item_id = accumulator.on_tool_result(
                     call_id,
                     status=status,
                     output=parsed_output,
@@ -339,6 +399,22 @@ class FinishTaskService:
                     "status": status,
                     "output": parsed_output,
                     "exit_code": parsed_exit_code,
+                    "item_id": tool_item_id,
+                    "item_type": "tool_call",
+                    "phase": "error" if status == "error" else "completed",
+                },
+                thread_role="execution",
+            )
+            self._chat_event_broker.publish(
+                project_id,
+                node_id,
+                {
+                    "type": "assistant_item_lifecycle",
+                    "message_id": assistant_message_id,
+                    "item_id": lifecycle_item_id,
+                    "item_type": item_type,
+                    "phase": "completed",
+                    "payload": item,
                 },
                 thread_role="execution",
             )
@@ -360,6 +436,9 @@ class FinishTaskService:
                     "message_id": assistant_message_id,
                     "status_type": status_type,
                     "label": _status_label(status_type),
+                    "item_id": "thread_status",
+                    "item_type": "thread_status",
+                    "phase": "delta",
                 },
                 thread_role="execution",
             )
@@ -382,6 +461,8 @@ class FinishTaskService:
                     "message_id": assistant_message_id,
                     "item_id": item_id,
                     "delta": delta,
+                    "item_type": "plan_item",
+                    "phase": "delta",
                 },
                 thread_role="execution",
             )
@@ -421,38 +502,83 @@ class FinishTaskService:
                             accumulator.on_plan_delta(text, final_plan_item)
                 accumulator.finalize(keep_status_blocks=True)
                 final_parts = accumulator.snapshot_parts()
+                final_items = accumulator.snapshot_items()
                 streamed_content = accumulator.content_projection()
             stdout = str(result.get("stdout", "") or "")
             final_content = stdout or streamed_content
-            persisted = self._persist_execution_message(
-                project_id=project_id,
-                node_id=node_id,
-                turn_id=turn_id,
-                assistant_message_id=assistant_message_id,
-                content=final_content,
-                status="completed",
-                error=None,
-                thread_id=thread_id,
-                clear_active_turn=True,
-                parts=final_parts,
+
+            # 1. CRITICAL: git commit. Failure → fail_execution()
+            head_sha: str | None = None
+            commit_msg: str | None = None
+            changed: list[dict[str, Any]] = []
+            if self._git_checkpoint_service is not None and workspace_root:
+                commit_msg = self._git_checkpoint_service.build_commit_message(
+                    hierarchical_number, title
+                )
+                new_sha = self._git_checkpoint_service.commit_if_changed(
+                    Path(workspace_root), commit_msg
+                )
+                head_sha = new_sha if new_sha else initial_sha
+
+                # 2. BEST-EFFORT: changed files metadata
+                if new_sha:
+                    try:
+                        from backend.errors.app_errors import GitCheckpointError
+                        changed = self._git_checkpoint_service.get_changed_files(
+                            Path(workspace_root), initial_sha, head_sha
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to collect changed files for %s/%s",
+                            project_id, node_id,
+                        )
+                        changed = []
+                else:
+                    commit_msg = None  # No diff → no commit message
+            else:
+                from backend.services.workspace_sha import compute_workspace_sha
+                head_sha = compute_workspace_sha(Path(workspace_root)) if workspace_root else None
+
+            # 3. CRITICAL: execution state → completed
+            self.complete_execution(
+                project_id, node_id,
+                head_sha=head_sha,
+                commit_message=commit_msg,
+                changed_files=changed,
             )
 
-            if persisted:
-                self._chat_event_broker.publish(
-                    project_id,
-                    node_id,
-                    {
-                        "type": "assistant_completed",
-                        "message_id": assistant_message_id,
-                        "content": final_content,
-                        "thread_id": thread_id,
-                    },
-                    thread_role="execution",
-                )
+            # === POINT OF NO RETURN: execution state is "completed" ===
+            # Errors below are best-effort only — do NOT call fail_execution()
 
-            from backend.services.workspace_sha import compute_workspace_sha
-            head_sha = compute_workspace_sha(Path(workspace_root)) if workspace_root else None
-            self.complete_execution(project_id, node_id, head_sha=head_sha)
+            # 4. BEST-EFFORT: chat message + event
+            try:
+                persisted = self._persist_execution_message(
+                    project_id=project_id,
+                    node_id=node_id,
+                    turn_id=turn_id,
+                    assistant_message_id=assistant_message_id,
+                    content=final_content,
+                    status="completed",
+                    error=None,
+                    thread_id=thread_id,
+                    clear_active_turn=True,
+                    parts=final_parts,
+                    items=final_items,
+                )
+                if persisted:
+                    self._chat_event_broker.publish(
+                        project_id,
+                        node_id,
+                        {
+                            "type": "assistant_completed",
+                            "message_id": assistant_message_id,
+                            "content": final_content,
+                            "thread_id": thread_id,
+                        },
+                        thread_role="execution",
+                    )
+            except Exception:
+                logger.warning("Failed to persist/publish completed message for %s/%s", project_id, node_id)
         except Exception as exc:
             logger.debug(
                 "Execution turn failed for %s/%s: %s",
@@ -477,6 +603,7 @@ class FinishTaskService:
                     thread_id=thread_id,
                     clear_active_turn=True,
                     parts=error_parts,
+                    items=accumulator.snapshot_items(),
                 )
             except Exception:
                 persisted = False
@@ -495,9 +622,9 @@ class FinishTaskService:
                 )
 
             try:
-                self.complete_execution(project_id, node_id, head_sha=None)
+                self.fail_execution(project_id, node_id, error_message=str(exc))
             except Exception:
-                logger.debug("Failed to complete errored execution", exc_info=True)
+                logger.debug("Failed to persist failed execution state", exc_info=True)
         finally:
             self._clear_live_job(project_id, node_id, turn_id)
 
@@ -526,47 +653,56 @@ class FinishTaskService:
                 f"Node status must be 'ready' or 'in_progress', got '{node_status}'."
             )
 
-        if self._storage.execution_state_store.exists(project_id, node_id):
-            raise FinishTaskNotAllowed("Execution has already been started for this node.")
+        exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+        if exec_state is not None:
+            status = exec_state.get("status")
+            if status == "executing":
+                raise FinishTaskNotAllowed("Execution is already in progress for this node.")
+            if status == "failed":
+                pass  # Allow retry from failed
+            elif status is not None and status != "idle":
+                raise FinishTaskNotAllowed("Execution has already been started for this node.")
 
         spec_path = node_dir / planningtree_workspace.SPEC_FILE_NAME
         spec_content = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
         if not spec_content.strip():
             raise FinishTaskNotAllowed("Spec must be non-empty before Finish Task.")
 
-        del snapshot
+        # Git guardrails
+        if self._git_checkpoint_service is not None:
+            workspace_root = self._workspace_root_from_snapshot(snapshot)
+            if workspace_root:
+                expected_head = self._resolve_expected_baseline_sha(project_id, node_id, snapshot)
+                blockers = self._git_checkpoint_service.validate_guardrails(
+                    Path(workspace_root), expected_head=expected_head
+                )
+                if blockers:
+                    raise FinishTaskNotAllowed(blockers[0])
+
         return spec_content
 
-    def _ensure_execution_thread(self, existing_thread_id: Any, workspace_root: str | None) -> str:
+    def _ensure_execution_thread(
+        self,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+    ) -> dict[str, Any]:
         writable_roots = [workspace_root] if isinstance(workspace_root, str) and workspace_root.strip() else None
-        if isinstance(existing_thread_id, str) and existing_thread_id.strip():
-            try:
-                self._codex_client.resume_thread(
-                    existing_thread_id,
-                    cwd=workspace_root,
-                    timeout_sec=15,
-                    writable_roots=writable_roots,
-                )
-                return existing_thread_id.strip()
-            except CodexTransportError as exc:
-                if not self._is_missing_thread_error(exc):
-                    raise FinishTaskNotAllowed(f"Execution backend unavailable: {exc}") from exc
-
         try:
-            response = self._codex_client.start_thread(
+            return self._thread_lineage_service.ensure_forked_thread(
+                project_id,
+                node_id,
+                "execution",
+                source_node_id=node_id,
+                source_role="audit",
+                fork_reason="execution_bootstrap",
+                workspace_root=workspace_root,
                 base_instructions=build_execution_base_instructions(),
                 dynamic_tools=[],
-                cwd=workspace_root,
-                timeout_sec=30,
                 writable_roots=writable_roots,
             )
-        except CodexTransportError as exc:
+        except Exception as exc:
             raise FinishTaskNotAllowed(f"Execution backend unavailable: {exc}") from exc
-
-        thread_id = str(response.get("thread_id") or "").strip()
-        if not thread_id:
-            raise FinishTaskNotAllowed("Execution thread start did not return a thread id.")
-        return thread_id
 
     def _persist_execution_message(
         self,
@@ -581,6 +717,7 @@ class FinishTaskService:
         thread_id: str | None,
         clear_active_turn: bool,
         parts: list[dict[str, Any]] | None = None,
+        items: list[dict[str, Any]] | None = None,
     ) -> bool:
         with self._storage.project_lock(project_id):
             session = self._storage.chat_state_store.read_session(
@@ -605,6 +742,8 @@ class FinishTaskService:
             message["updated_at"] = iso_now()
             if parts is not None:
                 message["parts"] = parts
+            if items is not None:
+                message["items"] = items
 
             if thread_id is not None:
                 session["thread_id"] = thread_id
@@ -619,25 +758,59 @@ class FinishTaskService:
             )
             return True
 
+    def _resolve_expected_baseline_sha(
+        self,
+        project_id: str,
+        node_id: str,
+        snapshot: dict[str, Any],
+    ) -> str | None:
+        """Resolve the expected git HEAD from the checkpoint chain.
+
+        Returns a git commit SHA (40-char hex) for guardrail check 7,
+        or None if no baseline can be determined (root node, split before git init).
+        """
+        node_index = snapshot.get("tree_state", {}).get("node_index", {})
+        node = node_index.get(node_id, {})
+        parent_id = node.get("parent_id")
+
+        if not parent_id:
+            return None
+
+        parent = node_index.get(parent_id, {})
+        review_node_id = parent.get("review_node_id")
+        if not review_node_id:
+            return None
+
+        review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
+        if not review_state:
+            return None
+
+        checkpoints = review_state.get("checkpoints", [])
+        if not checkpoints:
+            return None
+
+        latest_sha = checkpoints[-1].get("sha", "")
+        if self._git_checkpoint_service is not None:
+            if self._git_checkpoint_service.is_git_commit_sha(latest_sha):
+                return latest_sha
+            # K0 uses sha256: format — fall back to k0_git_head_sha
+            k0_git_head = review_state.get("k0_git_head_sha")
+            if self._git_checkpoint_service.is_git_commit_sha(k0_git_head):
+                return k0_git_head
+
+        return None
+
     def _compute_initial_sha(
         self,
         project_id: str,
         node_id: str,
         snapshot: dict[str, Any],
     ) -> str:
-        node_index = snapshot.get("tree_state", {}).get("node_index", {})
-        node = node_index.get(node_id, {})
-        parent_id = node.get("parent_id")
-
-        if parent_id:
-            parent = node_index.get(parent_id, {})
-            review_node_id = parent.get("review_node_id")
-            if review_node_id:
-                review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
-                if review_state:
-                    checkpoints = review_state.get("checkpoints", [])
-                    if checkpoints:
-                        return checkpoints[-1]["sha"]
+        """Capture initial SHA for execution. Uses git if available, falls back to workspace SHA."""
+        if self._git_checkpoint_service is not None:
+            workspace_root = self._workspace_root_from_snapshot(snapshot)
+            if workspace_root:
+                return self._git_checkpoint_service.capture_head_sha(Path(workspace_root))
 
         workspace_root = self._workspace_root_from_snapshot(snapshot)
         if workspace_root is None:
@@ -677,10 +850,6 @@ class FinishTaskService:
         if isinstance(workspace_root, str) and workspace_root.strip():
             return workspace_root
         return None
-
-    def _is_missing_thread_error(self, exc: Exception) -> bool:
-        message = str(exc).lower()
-        return "no rollout found for thread id" in message or "thread not found" in message
 
     def _job_key(self, project_id: str, node_id: str) -> str:
         return f"{project_id}::{node_id}"

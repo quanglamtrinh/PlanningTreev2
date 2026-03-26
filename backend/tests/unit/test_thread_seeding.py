@@ -9,20 +9,33 @@ from backend.services import planningtree_workspace
 from backend.services.chat_service import ChatService
 from backend.services.execution_gating import AUDIT_FRAME_RECORD_MESSAGE_ID
 from backend.services.project_service import ProjectService
+from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.thread_seed_service import (
-    ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
-    ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
     AUDIT_SEED_CHECKPOINT_MESSAGE_ID,
     AUDIT_SEED_PARENT_CONTEXT_MESSAGE_ID,
     AUDIT_SEED_SPLIT_ITEM_MESSAGE_ID,
-    INTEGRATION_SEED_CHECKPOINTS_MESSAGE_ID,
-    INTEGRATION_SEED_CHILD_REVIEWS_MESSAGE_ID,
-    INTEGRATION_SEED_GOAL_MESSAGE_ID,
-    INTEGRATION_SEED_PARENT_FRAME_MESSAGE_ID,
-    INTEGRATION_SEED_SPLIT_PACKAGE_MESSAGE_ID,
 )
 from backend.services.tree_service import TreeService
 from backend.streaming.sse_broker import ChatEventBroker
+
+
+class FakeSeedCodexClient:
+    def __init__(self) -> None:
+        self.started_threads: list[str] = []
+        self.forked_threads: list[str] = []
+
+    def start_thread(self, **_: object) -> dict[str, str]:
+        thread_id = f"seed-audit-thread-{len(self.started_threads) + 1}"
+        self.started_threads.append(thread_id)
+        return {"thread_id": thread_id}
+
+    def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"seed-ask-thread-{len(self.forked_threads) + 1}"
+        self.forked_threads.append(source_thread_id)
+        return {"thread_id": thread_id}
 
 
 @pytest.fixture
@@ -39,10 +52,12 @@ def root_node_id(storage, project_id):
 
 @pytest.fixture
 def chat_service(storage, tree_service):
+    codex_client = FakeSeedCodexClient()
     return ChatService(
         storage=storage,
         tree_service=tree_service,
-        codex_client=None,
+        codex_client=codex_client,
+        thread_lineage_service=ThreadLineageService(storage, codex_client, tree_service),
         chat_event_broker=ChatEventBroker(),
         chat_timeout=30,
     )
@@ -178,7 +193,7 @@ def test_audit_session_seeds_system_context_for_ready_child(
     assert "Authentication" in session["messages"][2]["content"]
 
 
-def test_ask_planning_session_seeds_checkpoint_handoff_and_reseeds_after_reset(
+def test_ask_planning_session_starts_empty_and_stays_empty_after_reset(
     chat_service,
     storage,
     project_id,
@@ -226,24 +241,13 @@ def test_ask_planning_session_seeds_checkpoint_handoff_and_reseeds_after_reset(
 
     session = chat_service.get_session(project_id, "child-planning", thread_role="ask_planning")
 
-    assert [message["message_id"] for message in session["messages"]] == [
-        ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
-        ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
-    ]
-    assert all(message["role"] == "system" for message in session["messages"])
-    assert "Implement auth guard" in session["messages"][0]["content"]
-    assert "K1" in session["messages"][1]["content"]
-    assert "sha256:child-a" in session["messages"][1]["content"]
-    assert "Auth base completed" in session["messages"][1]["content"]
+    assert session["messages"] == []
 
     reset = chat_service.reset_session(project_id, "child-planning", thread_role="ask_planning")
     assert reset["messages"] == []
 
     reseeded = chat_service.get_session(project_id, "child-planning", thread_role="ask_planning")
-    assert [message["message_id"] for message in reseeded["messages"]] == [
-        ASK_PLANNING_SEED_SPLIT_ITEM_MESSAGE_ID,
-        ASK_PLANNING_SEED_CHECKPOINT_MESSAGE_ID,
-    ]
+    assert reseeded["messages"] == []
 
 
 def test_audit_session_does_not_seed_locked_child_before_turn(
@@ -344,7 +348,7 @@ def test_audit_session_prepends_seed_messages_and_migrates_canonical_records_to_
     assert session["messages"][4]["message_id"] == "user-review"
 
 
-def test_integration_session_seeds_system_context_when_rollup_ready(
+def test_review_audit_session_stays_empty_when_rollup_ready(
     chat_service,
     storage,
     project_id,
@@ -412,23 +416,12 @@ def test_integration_session_seeds_system_context_when_rollup_ready(
         "# Parent Frame\nShip the authentication package.\n",
     )
 
-    session = chat_service.get_session(project_id, "review-ready", thread_role="integration")
+    session = chat_service.get_session(project_id, "review-ready", thread_role="audit")
 
-    assert [message["message_id"] for message in session["messages"]] == [
-        INTEGRATION_SEED_PARENT_FRAME_MESSAGE_ID,
-        INTEGRATION_SEED_SPLIT_PACKAGE_MESSAGE_ID,
-        INTEGRATION_SEED_CHECKPOINTS_MESSAGE_ID,
-        INTEGRATION_SEED_CHILD_REVIEWS_MESSAGE_ID,
-        INTEGRATION_SEED_GOAL_MESSAGE_ID,
-    ]
-    assert all(message["role"] == "system" for message in session["messages"])
-    assert "Ship the authentication package" in session["messages"][0]["content"]
-    assert "Auth guard" in session["messages"][1]["content"]
-    assert "K2" in session["messages"][2]["content"]
-    assert "Session parser accepted" in session["messages"][3]["content"]
+    assert session["messages"] == []
 
 
-def test_integration_session_stays_empty_before_rollup_ready(
+def test_review_audit_session_stays_empty_before_rollup_ready(
     chat_service,
     storage,
     project_id,
@@ -445,6 +438,6 @@ def test_integration_session_stays_empty_before_rollup_ready(
         },
     )
 
-    session = chat_service.get_session(project_id, "review-pending", thread_role="integration")
+    session = chat_service.get_session(project_id, "review-pending", thread_role="audit")
 
     assert session["messages"] == []

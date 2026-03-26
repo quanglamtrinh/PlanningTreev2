@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.ai.codex_client import CodexTransportError
 from backend.services import planningtree_workspace
+from backend.tests.conftest import init_git_repo
 
 
 class ReviewCodexClient:
@@ -16,6 +17,7 @@ class ReviewCodexClient:
     def __init__(self, *, response_text: str = "Execution complete") -> None:
         self.response_text = response_text
         self.started_threads: list[str] = []
+        self.prompts: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"review-thread-{len(self.started_threads) + 1}"
@@ -25,8 +27,12 @@ class ReviewCodexClient:
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
         return {"thread_id": thread_id}
 
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        thread_id = f"review-fork-thread-{len(self.started_threads) + 1}"
+        return {"thread_id": thread_id}
+
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
-        del prompt
+        self.prompts.append(prompt)
         thread_id = str(kwargs.get("thread_id", ""))
         cwd = kwargs.get("cwd")
         if isinstance(cwd, str) and cwd:
@@ -40,6 +46,7 @@ class IntegrationRollupCodexClient:
     def __init__(self, *, summary: str = "Integration complete") -> None:
         self.summary = summary
         self.started_threads: list[str] = []
+        self.run_kwargs: list[dict[str, object]] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
         thread_id = f"integration-thread-{len(self.started_threads) + 1}"
@@ -49,13 +56,32 @@ class IntegrationRollupCodexClient:
     def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
         return {"thread_id": thread_id}
 
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        del source_thread_id
+        thread_id = f"integration-thread-{len(self.started_threads) + 1}"
+        self.started_threads.append(thread_id)
+        return {"thread_id": thread_id}
+
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
         del prompt
+        self.run_kwargs.append(dict(kwargs))
         payload = json.dumps({"summary": self.summary})
         on_delta = kwargs.get("on_delta")
         if callable(on_delta):
             on_delta(payload)
         return {"stdout": payload, "thread_id": str(kwargs.get("thread_id") or "")}
+
+
+class StrictIntegrationRollupCodexClient(IntegrationRollupCodexClient):
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        output_schema = kwargs.get("output_schema")
+        if kwargs.get("sandbox_profile") != "read_only":
+            raise RuntimeError("missing read_only sandbox_profile")
+        if kwargs.get("writable_roots") is not None:
+            raise RuntimeError("review rollup must not set writable_roots")
+        if not isinstance(output_schema, dict) or output_schema.get("required") != ["summary"]:
+            raise RuntimeError("review rollup must set summary-only output schema")
+        return super().run_turn_streaming(prompt, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +177,10 @@ def _setup_node_with_execution_completed(
     if codex_client is None:
         codex_client = ReviewCodexClient()
     client.app.state.finish_task_service._codex_client = codex_client
+    client.app.state.thread_lineage_service._codex_client = codex_client
+
+    # Initialize git repo so git guardrails pass
+    init_git_repo(workspace_root)
 
     project_id, root_id = _setup_project(client, workspace_root)
 
@@ -201,7 +231,7 @@ def _wait_for_integration_terminal(
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         session = client.app.state.storage.chat_state_store.read_session(
-            project_id, review_node_id, thread_role="integration"
+            project_id, review_node_id, thread_role="audit"
         )
         if not session.get("active_turn_id"):
             messages = session.get("messages", [])
@@ -396,6 +426,7 @@ def test_first_audit_write_triggers_start_local_review(client: TestClient, works
 
     # Swap codex for chat turns
     client.app.state.chat_service._codex_client = codex
+    client.app.state.thread_lineage_service._codex_client = codex
 
     # Send first audit message
     resp = client.post(
@@ -413,12 +444,62 @@ def test_first_audit_write_triggers_start_local_review(client: TestClient, works
     assert detail["can_accept_local_review"] is True
 
 
+def test_first_audit_write_injects_local_review_prompt_once(client: TestClient, workspace_root):
+    codex = ReviewCodexClient(response_text="Audit review complete")
+    project_id, node_id = _setup_node_with_execution_completed(
+        client, workspace_root, codex_client=codex,
+    )
+
+    client.app.state.chat_service._codex_client = codex
+    client.app.state.thread_lineage_service._codex_client = codex
+
+    first = client.post(
+        f"/v1/projects/{project_id}/nodes/{node_id}/chat/message",
+        params={"thread_role": "audit"},
+        json={"content": "Review the execution output."},
+    )
+    assert first.status_code == 200
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        session = client.app.state.storage.chat_state_store.read_session(
+            project_id, node_id, thread_role="audit"
+        )
+        if not session.get("active_turn_id"):
+            break
+        time.sleep(0.02)
+
+    assert "Confirmed frame" in codex.prompts[-1]
+    assert "Confirmed spec" in codex.prompts[-1]
+    assert "Head SHA:" in codex.prompts[-1]
+
+    second = client.post(
+        f"/v1/projects/{project_id}/nodes/{node_id}/chat/message",
+        params={"thread_role": "audit"},
+        json={"content": "Second audit follow-up."},
+    )
+    assert second.status_code == 200
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        session = client.app.state.storage.chat_state_store.read_session(
+            project_id, node_id, thread_role="audit"
+        )
+        if not session.get("active_turn_id"):
+            break
+        time.sleep(0.02)
+
+    assert "Confirmed frame" not in codex.prompts[-1]
+    assert "Confirmed spec" not in codex.prompts[-1]
+
+
 def test_second_audit_write_does_not_fail(client: TestClient, workspace_root):
     codex = ReviewCodexClient()
     project_id, node_id = _setup_node_with_execution_completed(
         client, workspace_root, codex_client=codex,
     )
     client.app.state.chat_service._codex_client = codex
+    client.app.state.thread_lineage_service._codex_client = codex
 
     # First audit write triggers review_pending
     resp1 = client.post(
@@ -456,7 +537,9 @@ def test_second_audit_write_does_not_fail(client: TestClient, workspace_root):
 
 
 def test_accept_rollup_review_route_happy_path(client: TestClient, workspace_root):
-    rollup_codex = IntegrationRollupCodexClient(summary="All subtasks integrated successfully")
+    rollup_codex = StrictIntegrationRollupCodexClient(
+        summary="All subtasks integrated successfully"
+    )
     project_id, root_id = _setup_project(client, workspace_root)
 
     # Create parent with one child + review node
@@ -488,10 +571,15 @@ def test_accept_rollup_review_route_happy_path(client: TestClient, workspace_roo
 
     # Wire rollup codex and start integration
     client.app.state.review_service._codex_client = rollup_codex
+    client.app.state.thread_lineage_service._codex_client = rollup_codex
     client.app.state.review_service.start_integration_rollup(project_id, review_id)
 
     # Wait for integration to finish and produce a draft
     _wait_for_integration_terminal(client, project_id, review_id)
+    assert len(rollup_codex.run_kwargs) == 1
+    assert rollup_codex.run_kwargs[0]["sandbox_profile"] == "read_only"
+    assert rollup_codex.run_kwargs[0]["writable_roots"] is None
+    assert rollup_codex.run_kwargs[0]["output_schema"]["required"] == ["summary"]
 
     # Verify draft is populated
     review_state = client.app.state.storage.review_state_store.read_state(project_id, review_id)

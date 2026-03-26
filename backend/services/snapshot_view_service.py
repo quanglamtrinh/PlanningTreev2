@@ -17,8 +17,9 @@ from backend.storage.storage import Storage
 class SnapshotViewService:
     """Converts internal snapshots into public API payloads."""
 
-    def __init__(self, storage: Storage | None = None) -> None:
+    def __init__(self, storage: Storage | None = None, git_checkpoint_service: Any = None) -> None:
         self._storage = storage
+        self._git_checkpoint_service = git_checkpoint_service
 
     def to_public_snapshot(
         self,
@@ -32,6 +33,13 @@ class SnapshotViewService:
             raw_project_path = str(project.get("project_path") or "").strip()
             if raw_project_path:
                 project_path = Path(raw_project_path)
+            if self._git_checkpoint_service is not None and project_path is not None:
+                try:
+                    project["git_initialized"] = self._git_checkpoint_service.probe_git_initialized(
+                        project_path
+                    )
+                except Exception:
+                    project["git_initialized"] = False
         tree_state = public_snapshot.get("tree_state", {})
         if not isinstance(tree_state, dict):
             return public_snapshot
@@ -109,6 +117,13 @@ class SnapshotViewService:
         if review_node_id:
             review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
         exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+        git_ready: bool | None = None
+        if self._git_checkpoint_service is not None and project_path is not None:
+            try:
+                blockers = self._git_checkpoint_service.validate_guardrails(project_path)
+                git_ready = len(blockers) == 0
+            except Exception:
+                pass
         workflow.update(
             derive_execution_workflow_fields(
                 self._storage,
@@ -118,6 +133,7 @@ class SnapshotViewService:
                 node=node,
                 exec_state=exec_state,
                 review_state=review_state,
+                git_ready=git_ready,
             )
         )
         for field in ("audit_writable", "package_audit_ready", "review_status"):

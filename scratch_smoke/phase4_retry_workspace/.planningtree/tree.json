@@ -1,0 +1,31 @@
+{
+  "schema_version": 6,
+  "project": {
+    "created_at": "2026-03-25T23:26:45.898479+00:00",
+    "root_goal": "phase4_retry_workspace",
+    "id": "07c3a7c6d2404da9b8a357811249ac4c",
+    "updated_at": "2026-03-25T23:26:45.898479+00:00",
+    "name": "phase4_retry_workspace"
+  },
+  "tree_state": {
+    "root_node_id": "0fa9933d4a3d47a690802527d9cab1c1",
+    "active_node_id": "0fa9933d4a3d47a690802527d9cab1c1",
+    "node_index": {
+      "0fa9933d4a3d47a690802527d9cab1c1": {
+        "node_id": "0fa9933d4a3d47a690802527d9cab1c1",
+        "parent_id": null,
+        "child_ids": [],
+        "title": "Task",
+        "description": "",
+        "status": "in_progress",
+        "node_kind": "root",
+        "depth": 0,
+        "display_order": 0,
+        "hierarchical_number": "1",
+        "created_at": "2026-03-25T23:26:45.898479+00:00",
+        "review_node_id": null
+      }
+    }
+  },
+  "updated_at": "2026-03-25T23:26:46.395463+00:00"
+}

@@ -1,6 +1,6 @@
 # Review Node and Checkpoint Model
 
-Status: spec (Phase 1 artifact). Defines review node identity, checkpoint chain, and rollup review.
+Status: spec (updated through Phase 6). Defines review node identity, checkpoint chain, and rollup review.
 
 ## Review Node
 
@@ -34,7 +34,7 @@ A review node is created during `_materialize_split_payload` in `split_service.p
 
 Review nodes do not go through the frame/clarify/spec workflow. They have no `frame.md`, `clarify.json`, or `spec.md`. The `workflow` summary for a review node is null/empty.
 
-Review nodes DO have a dedicated `integration` thread for agent-based rollup analysis (see Integration Thread section below).
+Review nodes DO have a canonical `audit` thread for agent-based rollup analysis (see Review Audit Thread section below).
 
 The UI shows a dedicated checkpoint/rollup view for review nodes instead of the shaping NodeDetailCard.
 
@@ -134,14 +134,14 @@ Review happens at three distinct layers. Each layer has a different scope and pu
 
 ### Layer 2: Integration Rollup (review node)
 
-- **Where**: in the review node's dedicated `integration` thread
+- **Where**: in the review node's `audit` thread
 - **Scope**: review how all children fit together as a whole
 - **Input**: all checkpoint summaries + SHAs (K0 through K(N)), all accepted local review summaries
 - **Agent role**: detect conflicts between subtasks, overlap, missing glue, integration mismatches, ordering issues
 - **Outcome**: rollup summary + final subtree SHA
 - **Purpose**: "Do these pieces work together correctly?"
 
-The review node has its own Codex thread (`integration` role — see `thread-state-model.md`) specifically for this agent-based analysis. This is NOT a standard ask/planning or execution thread. It is a specialized thread where the agent reasons across the set of child SHAs and summaries.
+The review node has its own Codex thread (`audit` role — see `thread-state-model.md`) specifically for this agent-based analysis. This is NOT a standard ask/planning or execution thread. It is a specialized audit thread where the agent reasons across the set of child SHAs and summaries.
 
 ### Layer 3: Package Audit (parent audit)
 
@@ -159,23 +159,23 @@ To avoid confusion between "review" at different layers:
 | Layer | Name | Location |
 |-------|------|----------|
 | Layer 1 | **Local review** | child audit thread |
-| Layer 2 | **Integration rollup** | review node (integration thread) |
+| Layer 2 | **Integration rollup** | review node (audit thread) |
 | Layer 3 | **Package audit** | parent audit thread |
 
-## Integration Thread
+## Review Audit Thread
 
-Review nodes have a dedicated `integration` thread (stored at `chat/{review_node_id}/integration.json`).
+Review nodes use a canonical `audit` thread (stored at `chat/{review_node_id}/audit.json`).
 
 This thread is:
-- Created lazily when rollup status transitions to `ready` (all siblings accepted)
+- Usually forked from `parent.audit` after split persistence and rebuilt lazily from lineage if missing later
 - Used by a Codex agent to perform integration analysis
 - NOT interactive chat — agent runs analysis, user reviews the output
 - Read-only after rollup is accepted
 
-The integration thread receives:
-- Parent's confirmed frame and split rationale
-- All checkpoint records (K0 through final)
-- All accepted local review summaries from child nodes
+The review audit thread receives rollup context via prompt-builder injection at rollup start:
+- Parent task context
+- Accepted checkpoint records (K0 through final)
+- Split package context and accepted local review summaries from child nodes
 - Workspace/subtree state at each checkpoint
 
 The agent's job:
@@ -217,9 +217,9 @@ This check runs inside `accept_local_review()` after updating the checkpoint. No
 
 When rollup is `ready`:
 
-1. Create the `integration` thread for the review node (`chat/{review_node_id}/integration.json`)
+1. Ensure the review node's `audit` thread exists (`chat/{review_node_id}/audit.json`)
 2. Seed the thread with parent frame, split rationale, all checkpoint records, all accepted local review summaries
-3. Run Codex agent in the integration thread — agent performs automated analysis:
+3. Run Codex agent in the review audit thread — agent performs automated analysis:
    - Detect conflicts, overlap, missing glue, integration mismatches
    - Compare realized subtree against parent's split rationale
 4. Agent produces a rollup summary + final subtree SHA
@@ -291,5 +291,5 @@ Review nodes appear in `node_registry` (the public snapshot response) with `node
 6. Review node `status` is always `ready` (it does not go through locked/draft/in_progress/done).
 7. `pending_siblings` entries are ordered by `index` and processed sequentially.
 8. All SHAs in checkpoints and rollup are workspace/subtree state SHAs (same type as `execution_state` SHAs).
-9. The `integration` thread is created lazily when rollup transitions to `ready`, not at split time.
-10. Review at three layers: local review (child audit) -> integration rollup (review node) -> package audit (parent audit).
+9. The review node uses `audit` rather than a dedicated `integration` thread.
+10. Review at three layers: local review (child audit) -> integration rollup (review audit) -> package audit (parent audit).

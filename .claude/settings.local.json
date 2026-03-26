@@ -31,7 +31,17 @@
       "Bash(npm ls:*)",
       "Bash(.venv/Scripts/python.exe -m pytest backend/tests/ -q)",
       "Bash(xargs wc:*)",
-      "Bash(find C:UsersThongPlanningTreePlanningTreeCodexfrontend -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))"
+      "Bash(find C:UsersThongPlanningTreePlanningTreeCodexfrontend -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
+      "Bash(.venv/Scripts/python.exe -c \"from backend.services.git_checkpoint_service import GitCheckpointService; print\\('OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -m pytest backend/tests/unit/test_git_checkpoint_service.py -q 2>&1)",
+      "Bash(.venv/Scripts/python.exe -m pytest backend/tests/unit/test_execution_state_store.py backend/tests/unit/test_shaping_freeze.py backend/tests/unit/test_finish_task_service.py -q 2>&1)",
+      "Bash(.venv/Scripts/python.exe -m pytest backend/tests/unit/test_review_state_store.py backend/tests/unit/test_node_document_service.py -q 2>&1)",
+      "Bash(.venv/Scripts/python.exe -m pytest backend/tests/unit/ -q 2>&1)",
+      "Bash(.venv\\\\\\\\Scripts\\\\\\\\python.exe -m pytest backend/tests/unit/ -q 2>&1)",
+      "Bash(.venv/Scripts/python.exe -m pytest backend/tests/unit/ -q)",
+      "Bash(.venv/Scripts/python.exe -c \"from backend.main import create_app; print\\('OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -m pytest backend/tests/unit/test_finish_task_service.py backend/tests/unit/test_shaping_freeze.py backend/tests/unit/test_split_service.py -q 2>&1)",
+      "Bash(npx --prefix frontend tsc --noEmit --project frontend/tsconfig.app.json)"
     ]
   }
 }

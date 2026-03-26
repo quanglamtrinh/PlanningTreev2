@@ -24,18 +24,22 @@ function isThreadComposerReadOnly(
       return true
     case 'audit':
       return !auditWritable
-    case 'integration':
-      return true
     default:
       return true
   }
+}
+
+function resolveThreadRole(isReviewNode: boolean, threadTab: ThreadTab): ThreadRole {
+  if (isReviewNode) {
+    return 'audit'
+  }
+  return threadTab === 'ask' ? 'ask_planning' : threadTab
 }
 
 export function BreadcrumbChatView() {
   const navigate = useNavigate()
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
   const [threadTab, setThreadTab] = useState<ThreadTab>('ask')
-  const threadRole: ThreadRole = threadTab === 'ask' ? 'ask_planning' : threadTab
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
 
@@ -75,6 +79,16 @@ export function BreadcrumbChatView() {
   )
   const loadDetailState = useDetailStateStore((state) => state.loadDetailState)
   const acceptLocalReviewAction = useDetailStateStore((state) => state.acceptLocalReview)
+
+  const isReviewNode = useMemo(() => {
+    if (!projectId || !nodeId || !snapshot || snapshot.project.id !== projectId) {
+      return false
+    }
+    const node = snapshot.tree_state.node_registry.find((n) => n.node_id === nodeId)
+    return node?.node_kind === 'review'
+  }, [projectId, nodeId, snapshot])
+
+  const threadRole: ThreadRole = resolveThreadRole(isReviewNode, threadTab)
 
   useEffect(() => {
     if (projectId && nodeId) {
@@ -212,38 +226,46 @@ export function BreadcrumbChatView() {
     <div className={styles.root}>
       <div className={styles.threadPane} data-testid="breadcrumb-thread-pane">
         <div className={styles.threadSurface}>
-          <nav className={styles.threadTabBar} role="tablist" aria-label="Thread mode">
-            <button
-              type="button"
-              role="tab"
-              className={`${styles.threadTab} ${threadTab === 'ask' ? styles.threadTabActive : ''}`}
-              data-testid="breadcrumb-thread-tab-ask"
-              aria-selected={threadTab === 'ask'}
-              onClick={() => setThreadTab('ask')}
-            >
-              Ask
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className={`${styles.threadTab} ${threadTab === 'execution' ? styles.threadTabActive : ''}`}
-              data-testid="breadcrumb-thread-tab-execution"
-              aria-selected={threadTab === 'execution'}
-              onClick={() => setThreadTab('execution')}
-            >
-              Execution
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className={`${styles.threadTab} ${threadTab === 'audit' ? styles.threadTabActive : ''}`}
-              data-testid="breadcrumb-thread-tab-audit"
-              aria-selected={threadTab === 'audit'}
-              onClick={() => setThreadTab('audit')}
-            >
-              Audit
-            </button>
-          </nav>
+          {isReviewNode ? (
+            <div className={styles.threadTabBar} data-testid="breadcrumb-review-audit-header">
+              <span className={`${styles.threadTab} ${styles.threadTabActive}`} data-testid="breadcrumb-thread-tab-review-audit">
+                Review Audit
+              </span>
+            </div>
+          ) : (
+            <nav className={styles.threadTabBar} role="tablist" aria-label="Thread mode">
+              <button
+                type="button"
+                role="tab"
+                className={`${styles.threadTab} ${threadTab === 'ask' ? styles.threadTabActive : ''}`}
+                data-testid="breadcrumb-thread-tab-ask"
+                aria-selected={threadTab === 'ask'}
+                onClick={() => setThreadTab('ask')}
+              >
+                Ask
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className={`${styles.threadTab} ${threadTab === 'execution' ? styles.threadTabActive : ''}`}
+                data-testid="breadcrumb-thread-tab-execution"
+                aria-selected={threadTab === 'execution'}
+                onClick={() => setThreadTab('execution')}
+              >
+                Execution
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className={`${styles.threadTab} ${threadTab === 'audit' ? styles.threadTabActive : ''}`}
+                data-testid="breadcrumb-thread-tab-audit"
+                aria-selected={threadTab === 'audit'}
+                onClick={() => setThreadTab('audit')}
+              >
+                Audit
+              </button>
+            </nav>
+          )}
 
           <div className={styles.threadTabBody}>
             <>
@@ -316,18 +338,20 @@ export function BreadcrumbChatView() {
         </div>
       </div>
 
-      <aside className={styles.detailPane} data-testid="breadcrumb-detail-pane">
-        <div className={styles.detailRail}>
-          <NodeDetailCard
-            projectId={projectId ?? null}
-            node={detailNode}
-            variant="breadcrumb"
-            showClose={false}
-            state={detailCardState}
-            message={detailMessage}
-          />
-        </div>
-      </aside>
+      {!isReviewNode && (
+        <aside className={styles.detailPane} data-testid="breadcrumb-detail-pane">
+          <div className={styles.detailRail}>
+            <NodeDetailCard
+              projectId={projectId ?? null}
+              node={detailNode}
+              variant="breadcrumb"
+              showClose={false}
+              state={detailCardState}
+              message={detailMessage}
+            />
+          </div>
+        </aside>
+      )}
     </div>
   )
 }
