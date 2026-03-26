@@ -20,9 +20,10 @@ Status: completed on 2026-03-25. This document now serves as the historical brie
   - package review boundary
   - local review boundary
   - normal audit chat prompt
-- `ChatService` now injects child activation context on the first `ask_planning` turn for a child task using storage-backed manifest/checkpoint data
+- `ChatService` now injects child activation context as a successful-turn boundary for child `ask_planning`, so failed first turns still retry with the same storage-backed manifest/checkpoint context
 - temporary `ask_planning` seeding has been removed
 - local-review and package-review boundary markers are now consumed before `active_turn_id` is cleared, eliminating a race that could otherwise double-inject first-turn context on fast retries
+- later healing of a missing `child.audit` now preserves review-based lineage from `review.audit` whenever review ancestry exists; only non-review-ancestry children still use `audit_lazy_bootstrap`
 
 ## Verification performed
 
@@ -50,7 +51,7 @@ In scope:
 - removal of `split_state_store.thread_id`
 - post-persist eager bootstrap of `review.audit` and initial `child.audit`
 - sibling activation eager bootstrap in `ReviewService`
-- first-turn-only `build_package_review_prompt(...)` and `build_child_activation_prompt(...)` wiring in `ChatService`
+- successful-turn-boundary `build_package_review_prompt(...)` and `build_child_activation_prompt(...)` wiring in `ChatService`
 - removal of temporary ask seeding after child first-turn injection exists
 - tests for package/child boundary behavior and lineage bootstrap
 
@@ -67,9 +68,10 @@ Out of scope:
 - Split must never read or reuse a raw stored project-level split thread id.
 - Parent split execution must always go through the lineage helper.
 - Persisted tree/review state remains canonical; eager lineage bootstrap is best-effort and must not roll back persisted split/review progress if Codex bootstrap fails.
-- Child activation prompt injection replaces ask seeding and is gated by first-turn detection in the ask session itself.
+- Child activation prompt injection replaces ask seeding and is consumed by the first successful child ask turn rather than raw first-turn detection.
 - Package review prompt injection is boundary-scoped and must consume its marker only after a successful audit turn.
 - Compatibility for review-node `thread_role=integration` remains open in this phase even though the underlying stored session is `audit`.
+- The stricter lineage rule applies only to later healing-on-access in `ThreadLineageService`; post-persist eager bootstrap in split/review remains best-effort.
 
 ## Files touched in PR 5
 
@@ -98,7 +100,7 @@ Out of scope:
 - split no longer depends on a project-level split thread
 - `review.audit` and `child.audit` lineage is created through the lineage helper
 - newly activated sibling audits fork from `review.audit`
-- child activation and package review prompt injection both behave as first-turn-only boundaries
+- child activation and package review prompt injection both behave as successful-turn boundaries with retry safety
 - temporary ask seeding is removed
 - legacy/compatibility flows continue working through the `integration -> audit` storage alias during the Phase 5 window
 

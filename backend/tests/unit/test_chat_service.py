@@ -740,6 +740,171 @@ def test_first_child_ask_turn_uses_child_activation_prompt_once(storage, workspa
     assert "Prior accepted checkpoints:" not in second_prompt
 
 
+def test_failed_first_child_ask_turn_keeps_child_activation_open_for_retry_and_heals_child_audit(
+    storage,
+    workspace_root,
+):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient(response_text="Retry success")
+    service = _make_service(storage, client)
+    _add_child(
+        storage,
+        project_id,
+        root_id,
+        node_id="child-a",
+        title="Child A",
+        description="Finish the first slice.",
+        status="done",
+    )
+    _add_child(
+        storage,
+        project_id,
+        root_id,
+        node_id="child-b",
+        title="Child B",
+        description="Finish the second slice.",
+        status="ready",
+    )
+    _add_review_node(storage, project_id, root_id, "review-child")
+    storage.review_state_store.write_state(
+        project_id,
+        "review-child",
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:baseline",
+                    "summary": None,
+                    "source_node_id": None,
+                    "accepted_at": iso_now(),
+                },
+                {
+                    "label": "K1",
+                    "sha": "sha256:child-a",
+                    "summary": "Child A delivered the first milestone.",
+                    "source_node_id": "child-a",
+                    "accepted_at": iso_now(),
+                },
+            ],
+            "rollup": {"status": "pending", "summary": None, "sha": None, "accepted_at": None},
+            "pending_siblings": [],
+        },
+    )
+
+    workspace_root_str = str(workspace_root)
+    service._thread_lineage_service.ensure_root_audit_thread(project_id, root_id, workspace_root_str)
+    service._thread_lineage_service.ensure_forked_thread(
+        project_id,
+        "review-child",
+        "audit",
+        source_node_id=root_id,
+        source_role="audit",
+        fork_reason="review_bootstrap",
+        workspace_root=workspace_root_str,
+    )
+    missing_child_audit = storage.chat_state_store.read_session(
+        project_id,
+        "child-b",
+        thread_role="audit",
+    )
+    assert missing_child_audit["thread_id"] is None
+
+    client.fail = True
+    service.create_message(project_id, "child-b", "Start shaping this child", thread_role="ask_planning")
+    failed_session = _wait_for_turn_role(service, project_id, "child-b", "ask_planning")
+    failed_assistant = next(
+        message
+        for message in reversed(failed_session["messages"])
+        if message.get("role") == "assistant"
+    )
+    assert failed_assistant["status"] == "error"
+    assert "Child activation context:" in client.turns_run[-1]
+
+    child_audit_session = storage.chat_state_store.read_session(
+        project_id,
+        "child-b",
+        thread_role="audit",
+    )
+    assert child_audit_session["thread_id"] is not None
+    assert child_audit_session["fork_reason"] == "child_activation"
+    assert child_audit_session["forked_from_node_id"] == "review-child"
+
+    client.fail = False
+    service.create_message(project_id, "child-b", "Retry shaping this child", thread_role="ask_planning")
+    _wait_for_turn_role(service, project_id, "child-b", "ask_planning")
+
+    retry_prompt = client.turns_run[-1]
+    assert "Child activation context:" in retry_prompt
+    assert "Prior accepted checkpoints:" in retry_prompt
+
+    service.create_message(project_id, "child-b", "Third ask turn", thread_role="ask_planning")
+    _wait_for_turn_role(service, project_id, "child-b", "ask_planning")
+
+    third_prompt = client.turns_run[-1]
+    assert "Child activation context:" not in third_prompt
+    assert "Prior accepted checkpoints:" not in third_prompt
+
+
+def test_reset_child_ask_session_reopens_child_activation_prompt(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient(response_text="Ask response")
+    service = _make_service(storage, client)
+    _add_child(
+        storage,
+        project_id,
+        root_id,
+        node_id="child-a",
+        title="Child A",
+        description="Finish the first slice.",
+        status="done",
+    )
+    _add_child(
+        storage,
+        project_id,
+        root_id,
+        node_id="child-b",
+        title="Child B",
+        description="Finish the second slice.",
+        status="ready",
+    )
+    _add_review_node(storage, project_id, root_id, "review-child")
+    storage.review_state_store.write_state(
+        project_id,
+        "review-child",
+        {
+            "checkpoints": [
+                {
+                    "label": "K0",
+                    "sha": "sha256:baseline",
+                    "summary": None,
+                    "source_node_id": None,
+                    "accepted_at": iso_now(),
+                },
+                {
+                    "label": "K1",
+                    "sha": "sha256:child-a",
+                    "summary": "Child A delivered the first milestone.",
+                    "source_node_id": "child-a",
+                    "accepted_at": iso_now(),
+                },
+            ],
+            "rollup": {"status": "pending", "summary": None, "sha": None, "accepted_at": None},
+            "pending_siblings": [],
+        },
+    )
+
+    service.create_message(project_id, "child-b", "Start shaping this child", thread_role="ask_planning")
+    _wait_for_turn_role(service, project_id, "child-b", "ask_planning")
+    assert "Child activation context:" in client.turns_run[-1]
+
+    reset_session = service.reset_session(project_id, "child-b", thread_role="ask_planning")
+    assert reset_session["messages"] == []
+
+    service.create_message(project_id, "child-b", "Restart shaping this child", thread_role="ask_planning")
+    _wait_for_turn_role(service, project_id, "child-b", "ask_planning")
+    assert "Child activation context:" in client.turns_run[-1]
+
+
 def test_background_turn_checkpoints_partial_content(storage, workspace_root, monkeypatch):
     monkeypatch.setattr(chat_service_module, "_DRAFT_FLUSH_INTERVAL_SEC", 0.01)
     project_id, root_id = _create_project(storage, workspace_root)

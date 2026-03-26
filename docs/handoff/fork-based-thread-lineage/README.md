@@ -225,7 +225,7 @@ Changes:
   - fork `child.audit` from `review.audit`
 - sibling activation in `ReviewService` must fork every newly materialized child audit from `review.audit`
 - remove `thread_id` from `split_state_store`
-- wire `build_child_activation_prompt(...)` into the first `ask_planning` turn for a child node, gated by there being no prior non-system ask messages
+- wire `build_child_activation_prompt(...)` into child `ask_planning` as a successful-turn boundary, so failed first turns still retry with the same child activation context
 - wire `build_package_review_prompt(...)` into the parent audit package-review boundary using a local-only first-turn marker
 - remove temporary ask seeding after first-turn child injection is active
 
@@ -239,7 +239,7 @@ Tests:
 - split runs on parent audit
 - review audit and first child audit are forked correctly
 - sibling activation forks next child audit from review audit
-- child activation and package review prompts inject the right artifacts on first turn only
+- child activation and package review prompts inject the right artifacts until the first successful relevant turn consumes them
 
 Rollback:
 

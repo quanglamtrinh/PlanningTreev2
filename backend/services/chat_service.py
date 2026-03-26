@@ -713,7 +713,7 @@ class ChatService:
             node_id,
             thread_role="ask_planning",
         )
-        if not self._ask_session_is_first_user_turn(session, turn_id):
+        if self._ask_session_has_prior_successful_assistant_turn(session, turn_id):
             return None
         return build_child_activation_prompt(
             self._storage,
@@ -723,7 +723,7 @@ class ChatService:
             user_content,
         )
 
-    def _ask_session_is_first_user_turn(
+    def _ask_session_has_prior_successful_assistant_turn(
         self,
         session: dict[str, Any],
         current_turn_id: str,
@@ -731,12 +731,14 @@ class ChatService:
         for message in session.get("messages", []):
             if not isinstance(message, dict):
                 continue
-            if str(message.get("role") or "").strip() == "system":
+            if str(message.get("role") or "").strip() != "assistant":
                 continue
             if str(message.get("turn_id") or "").strip() == current_turn_id:
                 continue
-            return False
-        return True
+            if str(message.get("status") or "").strip() != "completed":
+                continue
+            return True
+        return False
 
     def _check_thread_writable(self, project_id: str, node_id: str, thread_role: str) -> None:
         """Enforce read-only rules per thread-state-model.md."""

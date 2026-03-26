@@ -142,7 +142,7 @@ def test_root_audit_rebootstrap_when_resume_missing(
     assert len(codex_client.started_threads) == 1
 
 
-def test_ensure_audit_exists_lazy_bootstrap_for_non_root(
+def test_ensure_audit_exists_lazy_bootstrap_for_non_root_without_review_ancestry(
     storage,
     workspace_root: Path,
     thread_lineage_service: ThreadLineageService,
@@ -162,6 +162,32 @@ def test_ensure_audit_exists_lazy_bootstrap_for_non_root(
     assert session["forked_from_thread_id"] is None
     assert session["lineage_root_thread_id"] == root_session["thread_id"]
     assert len(codex_client.started_threads) == 2
+
+
+def test_ensure_audit_exists_child_with_review_ancestry_forks_from_review_audit(
+    storage,
+    workspace_root: Path,
+    thread_lineage_service: ThreadLineageService,
+    codex_client: FakeThreadLineageCodexClient,
+) -> None:
+    snapshot = ProjectService(storage).attach_project_folder(str(workspace_root))
+    project_id = str(snapshot["project"]["id"])
+    root_id = str(snapshot["tree_state"]["root_node_id"])
+    child_id = _add_task_child(snapshot, root_id, "Child task", "Do the child work")
+    review_id = _add_review_node(snapshot, root_id)
+    _save_snapshot(storage, project_id, snapshot, workspace_root)
+
+    session = thread_lineage_service._ensure_audit_exists(project_id, child_id, str(workspace_root))
+
+    review_session = storage.chat_state_store.read_session(project_id, review_id, thread_role="audit")
+    assert review_session["thread_id"] is not None
+    assert review_session["fork_reason"] == "review_bootstrap"
+    assert session["thread_role"] == "audit"
+    assert session["fork_reason"] == "child_activation"
+    assert session["forked_from_node_id"] == review_id
+    assert session["forked_from_thread_id"] == review_session["thread_id"]
+    assert session["fork_reason"] != "audit_lazy_bootstrap"
+    assert len(codex_client.forked_threads) == 2
 
 
 def test_ensure_forked_thread_creates_fresh_fork_and_persists_lineage(

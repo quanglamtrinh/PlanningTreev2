@@ -159,14 +159,14 @@ phases:
     goals:
       - move split onto parent.audit
       - fork review.audit and child.audit from true upstream threads
-      - replace temporary child ask seeding with first-turn injection
+      - replace temporary child ask seeding with successful-turn child activation injection
     exit_criteria:
       - split no longer stores a project-level thread_id
       - review and child audits are forked through the lineage helper
-      - temporary ask seeding is removed after child first-turn injection lands
+      - temporary ask seeding is removed after child activation retries and reset semantics are preserved
     verification:
       - split and review tests assert review.audit and child.audit fork behavior
-      - child/package prompt tests assert first-turn-only injection
+      - child/package prompt tests assert success-based boundary consumption and retry behavior
     notes: >
       Completed on 2026-03-25. SplitService now resolves parent.audit through
       ThreadLineageService, no longer persists project-level split_state.thread_id,
@@ -177,12 +177,17 @@ phases:
       without rolling back accepted checkpoints if bootstrap fails. Review rollup
       state now tracks package_review_started_at and
       package_review_prompt_consumed_at, ChatService now injects package-review
-      and child-activation context on the first relevant successful turns only,
-      and temporary ask_planning seeding has been removed. A follow-up fix moved
-      local/package boundary consumption ahead of active_turn clearing to avoid a
-      race that could double-inject prompt context on fast retries. Verified with
-      python -m py_compile on touched backend/test files and a combined pytest
-      pass covering:
+      and child-activation context on the first relevant successful turns only.
+      Temporary ask_planning seeding has been removed, child activation now
+      stays open across failed first ask turns and reopens after ask reset, and
+      later healing of missing child.audit now preserves review-based lineage
+      instead of falling back to audit_lazy_bootstrap when review ancestry
+      exists. Split/review eager bootstrap remains best-effort; the stricter
+      behavior applies only to later healing-on-access in ThreadLineageService.
+      A follow-up fix moved local/package boundary consumption ahead of
+      active_turn clearing to avoid a race that could double-inject prompt
+      context on fast retries. Verified with python -m py_compile on touched
+      backend/test files and a combined pytest pass covering:
       backend/tests/unit/test_split_service.py
       backend/tests/unit/test_review_service.py
       backend/tests/unit/test_chat_service.py

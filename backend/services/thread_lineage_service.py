@@ -266,29 +266,13 @@ class ThreadLineageService:
                 )
 
             if thread_role == "audit":
-                parent_id = self._normalize_optional_string(node.get("parent_id"))
-                parent = node_by_id.get(parent_id) if parent_id else None
-                review_node_id = (
-                    self._normalize_optional_string(parent.get("review_node_id"))
-                    if isinstance(parent, dict)
-                    else None
-                )
+                review_node_id = self._review_node_id_for_child(node, node_by_id)
                 if review_node_id:
-                    self.resume_or_rebuild_session(
-                        project_id,
-                        review_node_id,
-                        "audit",
-                        workspace_root,
-                        writable_roots=writable_roots,
-                    )
-                    return self._fork_target_from_source_locked(
+                    return self._ensure_child_audit_from_review_locked(
                         project_id,
                         node_id,
-                        "audit",
-                        source_node_id=review_node_id,
-                        source_role="audit",
-                        fork_reason="child_activation",
-                        workspace_root=workspace_root,
+                        review_node_id,
+                        workspace_root,
                         base_instructions=base_instructions,
                         dynamic_tools=dynamic_tools,
                         writable_roots=writable_roots,
@@ -303,7 +287,7 @@ class ThreadLineageService:
         node_id: str,
         workspace_root: str | None,
     ) -> dict[str, Any]:
-        snapshot, node, _ = self._load_snapshot_and_node_locked(project_id, node_id)
+        snapshot, node, node_by_id = self._load_snapshot_and_node_locked(project_id, node_id)
         session = self._storage.chat_state_store.read_session(project_id, node_id, thread_role="audit")
         thread_id = self._normalize_thread_id(session)
 
@@ -343,6 +327,18 @@ class ThreadLineageService:
                 writable_roots=None,
             )
 
+        review_node_id = self._review_node_id_for_child(node, node_by_id)
+        if review_node_id:
+            return self._ensure_child_audit_from_review_locked(
+                project_id,
+                node_id,
+                review_node_id,
+                workspace_root,
+                base_instructions=None,
+                dynamic_tools=None,
+                writable_roots=None,
+            )
+
         root_id = self._root_node_id(snapshot)
         if not root_id:
             raise ValueError(f"Project {project_id!r} is missing a root node.")
@@ -368,6 +364,48 @@ class ThreadLineageService:
             forked_from_role=None,
             fork_reason="audit_lazy_bootstrap",
             lineage_root_thread_id=root_thread_id,
+        )
+
+    def _review_node_id_for_child(
+        self,
+        node: dict[str, Any],
+        node_by_id: dict[str, dict[str, Any]],
+    ) -> str | None:
+        parent_id = self._normalize_optional_string(node.get("parent_id"))
+        parent = node_by_id.get(parent_id) if parent_id else None
+        if not isinstance(parent, dict):
+            return None
+        return self._normalize_optional_string(parent.get("review_node_id"))
+
+    def _ensure_child_audit_from_review_locked(
+        self,
+        project_id: str,
+        node_id: str,
+        review_node_id: str,
+        workspace_root: str | None,
+        *,
+        base_instructions: str | None,
+        dynamic_tools: list[dict[str, Any]] | None,
+        writable_roots: list[str] | None,
+    ) -> dict[str, Any]:
+        self.resume_or_rebuild_session(
+            project_id,
+            review_node_id,
+            "audit",
+            workspace_root,
+            writable_roots=writable_roots,
+        )
+        return self._fork_target_from_source_locked(
+            project_id,
+            node_id,
+            "audit",
+            source_node_id=review_node_id,
+            source_role="audit",
+            fork_reason="child_activation",
+            workspace_root=workspace_root,
+            base_instructions=base_instructions,
+            dynamic_tools=dynamic_tools,
+            writable_roots=writable_roots,
         )
 
     def _load_snapshot_and_node_locked(
