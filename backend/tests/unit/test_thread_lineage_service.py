@@ -18,21 +18,36 @@ class FakeThreadLineageCodexClient:
         self.started_threads: list[dict[str, object]] = []
         self.resumed_threads: list[dict[str, object]] = []
         self.forked_threads: list[dict[str, object]] = []
+        self.turns_run: list[dict[str, object]] = []
         self.missing_thread_ids: set[str] = set()
+        self._unmaterialized_thread_ids: set[str] = set()
         self._counter = 0
 
     def start_thread(self, **kwargs: object) -> dict[str, str]:
         thread_id = self._new_thread_id("start")
         self.started_threads.append({"thread_id": thread_id, **kwargs})
+        self._unmaterialized_thread_ids.add(thread_id)
         return {"thread_id": thread_id}
 
     def resume_thread(self, thread_id: str, **kwargs: object) -> dict[str, str]:
         self.resumed_threads.append({"thread_id": thread_id, **kwargs})
         if thread_id in self.missing_thread_ids:
             raise CodexTransportError("thread not found", "not_found")
+        if thread_id in self._unmaterialized_thread_ids:
+            raise CodexTransportError(
+                f"no rollout found for thread id {thread_id}",
+                "not_found",
+            )
         return {"thread_id": thread_id}
 
     def fork_thread(self, source_thread_id: str, **kwargs: object) -> dict[str, str]:
+        if source_thread_id in self.missing_thread_ids:
+            raise CodexTransportError("thread not found", "not_found")
+        if source_thread_id in self._unmaterialized_thread_ids:
+            raise CodexTransportError(
+                f"no rollout found for thread id {source_thread_id}",
+                "not_found",
+            )
         thread_id = self._new_thread_id("fork")
         self.forked_threads.append(
             {
@@ -42,6 +57,23 @@ class FakeThreadLineageCodexClient:
             }
         )
         return {"thread_id": thread_id}
+
+    def run_turn_streaming(
+        self,
+        input_text: str,
+        *,
+        thread_id: str,
+        **kwargs: object,
+    ) -> dict[str, str]:
+        self.turns_run.append(
+            {
+                "thread_id": thread_id,
+                "input_text": input_text,
+                **kwargs,
+            }
+        )
+        self._unmaterialized_thread_ids.discard(thread_id)
+        return {"thread_id": thread_id, "stdout": "READY", "tool_calls": []}
 
     def _new_thread_id(self, prefix: str) -> str:
         self._counter += 1
@@ -80,6 +112,7 @@ def test_root_audit_bootstrap_from_empty_session(
     assert session["lineage_root_thread_id"] == session["thread_id"]
     assert session["forked_from_thread_id"] is None
     assert len(codex_client.started_threads) == 1
+    assert [item["thread_id"] for item in codex_client.turns_run] == [session["thread_id"]]
     assert "canonical audit assistant" in str(codex_client.started_threads[0]["base_instructions"]).lower()
 
 
@@ -141,6 +174,7 @@ def test_root_audit_rebootstrap_when_resume_missing(
     assert session["fork_reason"] == "root_bootstrap"
     assert session["lineage_root_thread_id"] == session["thread_id"]
     assert len(codex_client.started_threads) == 1
+    assert [item["thread_id"] for item in codex_client.turns_run] == [session["thread_id"]]
 
 
 def test_ensure_audit_exists_lazy_bootstrap_for_non_root_without_review_ancestry(
@@ -163,6 +197,7 @@ def test_ensure_audit_exists_lazy_bootstrap_for_non_root_without_review_ancestry
     assert session["forked_from_thread_id"] is None
     assert session["lineage_root_thread_id"] == root_session["thread_id"]
     assert len(codex_client.started_threads) == 2
+    assert codex_client.turns_run[-1]["thread_id"] == session["thread_id"]
 
 
 def test_ensure_audit_exists_child_with_review_ancestry_forks_from_review_audit(
@@ -395,6 +430,44 @@ def test_ensure_forked_thread_backfills_root_legacy_source_lineage_before_fork(
     assert ask_session["lineage_root_thread_id"] == "legacy-root-thread"
 
 
+def test_ensure_forked_thread_materializes_existing_empty_root_audit_before_fork(
+    storage,
+    workspace_root: Path,
+    thread_lineage_service: ThreadLineageService,
+    codex_client: FakeThreadLineageCodexClient,
+) -> None:
+    snapshot = ProjectService(storage).attach_project_folder(str(workspace_root))
+    project_id = str(snapshot["project"]["id"])
+    root_id = str(snapshot["tree_state"]["root_node_id"])
+    storage.chat_state_store.write_session(
+        project_id,
+        root_id,
+        {
+            "thread_id": "empty-root-thread",
+            "thread_role": "audit",
+            "fork_reason": "root_bootstrap",
+            "lineage_root_thread_id": "empty-root-thread",
+            "messages": [],
+        },
+        thread_role="audit",
+    )
+    codex_client._unmaterialized_thread_ids.add("empty-root-thread")
+
+    ask_session = thread_lineage_service.ensure_forked_thread(
+        project_id,
+        root_id,
+        "ask_planning",
+        source_node_id=root_id,
+        source_role="audit",
+        fork_reason="ask_bootstrap",
+        workspace_root=str(workspace_root),
+    )
+
+    assert codex_client.turns_run[-1]["thread_id"] == "empty-root-thread"
+    assert codex_client.forked_threads[-1]["source_thread_id"] == "empty-root-thread"
+    assert ask_session["forked_from_thread_id"] == "empty-root-thread"
+
+
 @pytest.mark.parametrize(
     ("thread_role", "fork_reason"),
     [
@@ -574,6 +647,48 @@ def test_resume_or_rebuild_session_rebuilds_child_audit_from_review_audit(
     assert session["forked_from_node_id"] == review_id
     assert session["forked_from_thread_id"] == review_session["thread_id"]
     assert codex_client.forked_threads[-1]["source_thread_id"] == review_session["thread_id"]
+
+
+def test_resume_or_rebuild_session_restarts_non_review_task_audit_when_thread_missing(
+    storage,
+    workspace_root: Path,
+    thread_lineage_service: ThreadLineageService,
+    codex_client: FakeThreadLineageCodexClient,
+) -> None:
+    snapshot = ProjectService(storage).attach_project_folder(str(workspace_root))
+    project_id = str(snapshot["project"]["id"])
+    root_id = str(snapshot["tree_state"]["root_node_id"])
+    child_id = _add_task_child(snapshot, root_id, "Child task", "Do child work")
+    _save_snapshot(storage, project_id, snapshot, workspace_root)
+
+    root_session = thread_lineage_service.ensure_root_audit_thread(project_id, root_id, str(workspace_root))
+    storage.chat_state_store.write_session(
+        project_id,
+        child_id,
+        {
+            "thread_id": "missing-child-audit-thread",
+            "thread_role": "audit",
+            "fork_reason": "audit_lazy_bootstrap",
+            "lineage_root_thread_id": root_session["lineage_root_thread_id"],
+            "messages": [],
+        },
+        thread_role="audit",
+    )
+    codex_client.missing_thread_ids.add("missing-child-audit-thread")
+
+    session = thread_lineage_service.resume_or_rebuild_session(
+        project_id,
+        child_id,
+        "audit",
+        str(workspace_root),
+    )
+
+    assert session["thread_role"] == "audit"
+    assert session["thread_id"] != "missing-child-audit-thread"
+    assert session["fork_reason"] == "audit_lazy_bootstrap"
+    assert session["forked_from_thread_id"] is None
+    assert session["lineage_root_thread_id"] == root_session["lineage_root_thread_id"]
+    assert codex_client.started_threads[-1]["thread_id"] == session["thread_id"]
 
 
 def _save_snapshot(storage, project_id: str, snapshot: dict[str, object], workspace_root: Path) -> None:
