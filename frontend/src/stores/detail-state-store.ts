@@ -23,9 +23,7 @@ type DetailStateStoreState = {
   finishTask: (projectId: string, nodeId: string) => Promise<void>
   acceptLocalReview: (projectId: string, nodeId: string, summary: string) => Promise<string | null>
   acceptRollupReview: (projectId: string, reviewNodeId: string) => Promise<void>
-  /** Stub until POST .../git/init exists */
   initGit: (projectId: string) => Promise<void>
-  /** Stub until POST .../reset-workspace exists */
   resetWorkspace: (projectId: string, nodeId: string, target: 'initial' | 'head') => Promise<void>
   reset: () => void
 }
@@ -192,6 +190,8 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
       set((s) => ({
         errors: { ...s.errors, [key]: toErrorMessage(error) },
       }))
+      // Reload detail-state so git_blocker_message banner shows structured blocker
+      void get().loadDetailState(projectId, nodeId)
     } finally {
       set((s) => ({ finishingTask: { ...s.finishingTask, [key]: false } }))
     }
@@ -248,18 +248,17 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
   },
 
   async initGit(projectId: string) {
-    void projectId
-    // await api.initGit(projectId) when API exists
-    await Promise.resolve()
+    await api.initGit(projectId)
+    await useProjectStore.getState().refreshProjects()
   },
 
   async resetWorkspace(projectId: string, nodeId: string, target: 'initial' | 'head') {
     const key = stateKey(projectId, nodeId)
     set((s) => ({ resettingWorkspace: { ...s.resettingWorkspace, [key]: true } }))
     try {
-      void target
-      // await api.resetWorkspace(projectId, nodeId, { target }) when API exists
-      await Promise.resolve()
+      await api.resetWorkspace(projectId, nodeId, target)
+      await get().loadDetailState(projectId, nodeId)
+      void syncProjectSnapshot(projectId)
     } finally {
       set((s) => ({ resettingWorkspace: { ...s.resettingWorkspace, [key]: false } }))
     }

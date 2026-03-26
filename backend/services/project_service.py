@@ -19,10 +19,12 @@ class ProjectService:
         storage: Storage,
         snapshot_view_service: SnapshotViewService | None = None,
         chat_service: Any = None,
+        git_checkpoint_service: Any = None,
     ) -> None:
         self.storage = storage
         self._snapshot_view_service = snapshot_view_service
         self._chat_service = chat_service
+        self._git_checkpoint_service = git_checkpoint_service
 
     def bootstrap_status(self) -> dict[str, Any]:
         codex_path = get_codex_cmd()
@@ -34,7 +36,20 @@ class ProjectService:
         }
 
     def list_projects(self) -> list[dict[str, Any]]:
-        return self.storage.project_store.list_projects()
+        projects = self.storage.project_store.list_projects()
+        if self._git_checkpoint_service is not None:
+            for p in projects:
+                project_path = p.get("project_path")
+                if project_path:
+                    try:
+                        p["git_initialized"] = self._git_checkpoint_service.probe_git_initialized(
+                            Path(project_path)
+                        )
+                    except Exception:
+                        p["git_initialized"] = False
+                else:
+                    p["git_initialized"] = False
+        return projects
 
     def attach_project_folder(self, folder_path: str) -> dict[str, Any]:
         resolved_folder = self.validate_project_folder(folder_path)

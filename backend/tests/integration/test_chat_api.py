@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from backend.ai.codex_client import CodexTransportError
 from backend.services import planningtree_workspace
 from backend.services import chat_service as chat_service_module
+from backend.tests.conftest import init_git_repo
 
 
 class SlowCheckpointCodexClient:
@@ -649,6 +650,10 @@ def test_finish_task_route_returns_detail_state_and_creates_execution_session(
 ):
     codex = ExecutionCodexClient()
     _set_execution_codex_client(client, codex)
+
+    # Initialize git repo so git guardrails pass (can_finish_task gated on git_ready)
+    init_git_repo(workspace_root)
+
     project_id, root_id = _setup_project(client, workspace_root)
 
     frame_resp = client.put(

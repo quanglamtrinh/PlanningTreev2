@@ -331,4 +331,14 @@ export const api = {
       { method: 'POST' },
     )
   },
+  initGit(projectId: string): Promise<{ status: string; head_sha: string; message: string }> {
+    return jsonFetch(`/v1/projects/${projectId}/git/init`, { method: 'POST' })
+  },
+  resetWorkspace(
+    projectId: string,
+    nodeId: string,
+    target: 'initial' | 'head',
+  ): Promise<{ status: string; target_sha: string; current_head_sha: string; task_present_in_current_workspace: boolean; detail_state: DetailState }> {
+    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/reset-workspace`, { method: 'POST' }, { target })
+  },
 }

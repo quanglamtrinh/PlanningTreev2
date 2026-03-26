@@ -246,7 +246,7 @@ def test_finish_task_fails_already_executing(finish_service, storage, project_id
         },
     )
 
-    with pytest.raises(FinishTaskNotAllowed, match="already been started"):
+    with pytest.raises(FinishTaskNotAllowed, match="already in progress"):
         finish_service.finish_task(project_id, root_node_id)
 
 
@@ -455,12 +455,13 @@ def test_finish_task_background_failure_marks_error_and_completes_without_head_s
         lambda: (
             state := storage.execution_state_store.read_state(project_id, root_node_id)
         )
-        and state["status"] == "completed"
+        and state["status"] == "failed"
         and state["completed_at"] is not None
     )
 
     exec_state = storage.execution_state_store.read_state(project_id, root_node_id)
     assert exec_state["head_sha"] is None
+    assert exec_state["error_message"] is not None
 
     session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")
     assert session["messages"][0]["status"] == "error"

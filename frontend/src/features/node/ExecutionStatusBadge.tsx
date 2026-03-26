@@ -4,6 +4,7 @@ import styles from './ExecutionStatusBadge.module.css'
 const LABELS: Record<Exclude<ExecutionStatus, 'idle'>, string> = {
   executing: 'Executing',
   completed: 'Execution Complete',
+  failed: 'Failed',
   review_pending: 'In Review',
   review_accepted: 'Accepted',
 }

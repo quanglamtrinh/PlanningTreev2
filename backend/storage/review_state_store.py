@@ -289,11 +289,19 @@ class ReviewStateStore:
                 if normalized is not None:
                     siblings.append(normalized)
 
-        return {
+        k0_git_head_sha = payload.get("k0_git_head_sha")
+
+        result: dict[str, Any] = {
             "checkpoints": checkpoints,
             "rollup": self._normalize_rollup(raw_rollup),
             "pending_siblings": siblings,
         }
+        result["k0_git_head_sha"] = (
+            k0_git_head_sha.strip()
+            if isinstance(k0_git_head_sha, str) and k0_git_head_sha.strip()
+            else None
+        )
+        return result
 
     def _normalize_checkpoint(self, raw: Any) -> dict[str, Any] | None:
         if not isinstance(raw, dict):

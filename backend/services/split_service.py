@@ -47,12 +47,14 @@ class SplitService:
         codex_client: CodexAppClient,
         thread_lineage_service: ThreadLineageService,
         split_timeout: int,
+        git_checkpoint_service: Any = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
         self._codex_client = codex_client
         self._thread_lineage_service = thread_lineage_service
         self._split_timeout = int(split_timeout)
+        self._git_checkpoint_service = git_checkpoint_service
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}
 
@@ -274,8 +276,19 @@ class SplitService:
                     "materialized_node_id": None,
                 })
 
+            # ── Capture git HEAD for first-sibling baseline ─────────
+            k0_git_head_sha: str | None = None
+            if self._git_checkpoint_service is not None and workspace_root:
+                try:
+                    if self._git_checkpoint_service.probe_git_initialized(Path(workspace_root)):
+                        k0_git_head_sha = self._git_checkpoint_service.capture_head_sha(
+                            Path(workspace_root)
+                        )
+                except Exception:
+                    logger.warning("Failed to capture k0_git_head_sha at split time")
+
             # ── Write review_state.json ──────────────────────────────
-            review_state = {
+            review_state: dict[str, Any] = {
                 "checkpoints": [
                     {
                         "label": "K0",
@@ -292,6 +305,7 @@ class SplitService:
                     "accepted_at": None,
                 },
                 "pending_siblings": pending_siblings,
+                "k0_git_head_sha": k0_git_head_sha,
             }
             self._storage.review_state_store.write_state(
                 project_id, review_node_id, review_state

@@ -21,6 +21,7 @@ from backend.services.codex_account_service import CodexAccountService
 from backend.services.clarify_generation_service import ClarifyGenerationService
 from backend.services.frame_generation_service import FrameGenerationService
 from backend.services.finish_task_service import FinishTaskService
+from backend.services.git_checkpoint_service import GitCheckpointService
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.spec_generation_service import SpecGenerationService
 from backend.services.node_document_service import NodeDocumentService
@@ -41,11 +42,15 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     paths = build_app_paths(data_root)
     storage = Storage(paths)
     tree_service = TreeService()
-    snapshot_view_service = SnapshotViewService(storage)
-    project_service = ProjectService(storage, snapshot_view_service, chat_service=None)
+    git_checkpoint_service = GitCheckpointService()
+    snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
+    project_service = ProjectService(
+        storage, snapshot_view_service, chat_service=None,
+        git_checkpoint_service=git_checkpoint_service,
+    )
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
-    node_detail_service = NodeDetailService(storage, tree_service)
+    node_detail_service = NodeDetailService(storage, tree_service, git_checkpoint_service=git_checkpoint_service)
     codex_client = CodexAppClient(StdioTransport(codex_cmd=get_codex_cmd() or "codex"))
     thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
     codex_event_broker = GlobalEventBroker()
@@ -59,6 +64,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         codex_client=codex_client,
         thread_lineage_service=thread_lineage_service,
         split_timeout=get_split_timeout(),
+        git_checkpoint_service=git_checkpoint_service,
     )
     frame_generation_service = FrameGenerationService(
         storage=storage,
@@ -109,6 +115,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_event_broker=chat_event_broker,
         chat_timeout=get_execution_timeout(),
         chat_service=chat_service,
+        git_checkpoint_service=git_checkpoint_service,
     )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service
@@ -146,6 +153,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
 
     app.state.paths = paths
     app.state.storage = storage
+    app.state.git_checkpoint_service = git_checkpoint_service
     app.state.tree_service = tree_service
     app.state.project_service = project_service
     app.state.node_service = node_service

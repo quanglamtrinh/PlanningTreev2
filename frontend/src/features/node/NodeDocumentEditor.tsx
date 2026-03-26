@@ -359,7 +359,7 @@ export function NodeDocumentEditor({
     !isConfirming &&
     !isGenerating &&
     !entry.isSaving
-  const canFinishTask = canConfirm && !isFinishingTask && detailState?.git_ready !== false
+  const canFinishTask = canConfirm && !isFinishingTask && detailState?.can_finish_task !== false
 
   return (
     <div className={styles.documentPanel}>

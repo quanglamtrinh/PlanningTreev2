@@ -45,6 +45,7 @@ class FinishTaskService:
         chat_event_broker: ChatEventBroker,
         chat_timeout: int,
         chat_service: ChatService | None = None,
+        git_checkpoint_service: Any = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -54,6 +55,7 @@ class FinishTaskService:
         self._chat_event_broker = chat_event_broker
         self._chat_timeout = int(chat_timeout)
         self._chat_service = chat_service
+        self._git_checkpoint_service = git_checkpoint_service
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}
 
@@ -148,6 +150,10 @@ class FinishTaskService:
             thread_role="execution",
         )
 
+        # Resolve hierarchical_number and title for commit message
+        h_number = str(node.get("hierarchical_number") or "")
+        title = str(node.get("title") or "")
+
         threading.Thread(
             target=self._run_background_execution,
             kwargs={
@@ -158,6 +164,9 @@ class FinishTaskService:
                 "thread_id": thread_id,
                 "prompt": prompt,
                 "workspace_root": workspace_root,
+                "initial_sha": initial_sha,
+                "hierarchical_number": h_number,
+                "title": title,
             },
             daemon=True,
         ).start()
@@ -169,6 +178,8 @@ class FinishTaskService:
         project_id: str,
         node_id: str,
         head_sha: str | None = None,
+        commit_message: str | None = None,
+        changed_files: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
@@ -182,6 +193,10 @@ class FinishTaskService:
             exec_state["status"] = "completed"
             exec_state["head_sha"] = head_sha
             exec_state["completed_at"] = iso_now()
+            if commit_message is not None:
+                exec_state["commit_message"] = commit_message
+            if changed_files is not None:
+                exec_state["changed_files"] = changed_files
             self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
         detail_state = self._node_detail_service.get_detail_state(project_id, node_id)
@@ -198,6 +213,22 @@ class FinishTaskService:
         )
         return detail_state
 
+    def fail_execution(
+        self,
+        project_id: str,
+        node_id: str,
+        error_message: str,
+    ) -> None:
+        """Persist execution as failed. Allows retry."""
+        with self._storage.project_lock(project_id):
+            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            if exec_state is None:
+                return
+            exec_state["status"] = "failed"
+            exec_state["completed_at"] = iso_now()
+            exec_state["error_message"] = error_message
+            self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
+
     def _run_background_execution(
         self,
         *,
@@ -208,6 +239,9 @@ class FinishTaskService:
         thread_id: str,
         prompt: str,
         workspace_root: str | None,
+        initial_sha: str = "",
+        hierarchical_number: str = "",
+        title: str = "",
     ) -> None:
         draft_lock = threading.Lock()
         accumulator = PartAccumulator()
@@ -472,36 +506,79 @@ class FinishTaskService:
                 streamed_content = accumulator.content_projection()
             stdout = str(result.get("stdout", "") or "")
             final_content = stdout or streamed_content
-            persisted = self._persist_execution_message(
-                project_id=project_id,
-                node_id=node_id,
-                turn_id=turn_id,
-                assistant_message_id=assistant_message_id,
-                content=final_content,
-                status="completed",
-                error=None,
-                thread_id=thread_id,
-                clear_active_turn=True,
-                parts=final_parts,
-                items=final_items,
+
+            # 1. CRITICAL: git commit. Failure → fail_execution()
+            head_sha: str | None = None
+            commit_msg: str | None = None
+            changed: list[dict[str, Any]] = []
+            if self._git_checkpoint_service is not None and workspace_root:
+                commit_msg = self._git_checkpoint_service.build_commit_message(
+                    hierarchical_number, title
+                )
+                new_sha = self._git_checkpoint_service.commit_if_changed(
+                    Path(workspace_root), commit_msg
+                )
+                head_sha = new_sha if new_sha else initial_sha
+
+                # 2. BEST-EFFORT: changed files metadata
+                if new_sha:
+                    try:
+                        from backend.errors.app_errors import GitCheckpointError
+                        changed = self._git_checkpoint_service.get_changed_files(
+                            Path(workspace_root), initial_sha, head_sha
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to collect changed files for %s/%s",
+                            project_id, node_id,
+                        )
+                        changed = []
+                else:
+                    commit_msg = None  # No diff → no commit message
+            else:
+                from backend.services.workspace_sha import compute_workspace_sha
+                head_sha = compute_workspace_sha(Path(workspace_root)) if workspace_root else None
+
+            # 3. CRITICAL: execution state → completed
+            self.complete_execution(
+                project_id, node_id,
+                head_sha=head_sha,
+                commit_message=commit_msg,
+                changed_files=changed,
             )
 
-            if persisted:
-                self._chat_event_broker.publish(
-                    project_id,
-                    node_id,
-                    {
-                        "type": "assistant_completed",
-                        "message_id": assistant_message_id,
-                        "content": final_content,
-                        "thread_id": thread_id,
-                    },
-                    thread_role="execution",
-                )
+            # === POINT OF NO RETURN: execution state is "completed" ===
+            # Errors below are best-effort only — do NOT call fail_execution()
 
-            from backend.services.workspace_sha import compute_workspace_sha
-            head_sha = compute_workspace_sha(Path(workspace_root)) if workspace_root else None
-            self.complete_execution(project_id, node_id, head_sha=head_sha)
+            # 4. BEST-EFFORT: chat message + event
+            try:
+                persisted = self._persist_execution_message(
+                    project_id=project_id,
+                    node_id=node_id,
+                    turn_id=turn_id,
+                    assistant_message_id=assistant_message_id,
+                    content=final_content,
+                    status="completed",
+                    error=None,
+                    thread_id=thread_id,
+                    clear_active_turn=True,
+                    parts=final_parts,
+                    items=final_items,
+                )
+                if persisted:
+                    self._chat_event_broker.publish(
+                        project_id,
+                        node_id,
+                        {
+                            "type": "assistant_completed",
+                            "message_id": assistant_message_id,
+                            "content": final_content,
+                            "thread_id": thread_id,
+                        },
+                        thread_role="execution",
+                    )
+            except Exception:
+                logger.warning("Failed to persist/publish completed message for %s/%s", project_id, node_id)
         except Exception as exc:
             logger.debug(
                 "Execution turn failed for %s/%s: %s",
@@ -545,9 +622,9 @@ class FinishTaskService:
                 )
 
             try:
-                self.complete_execution(project_id, node_id, head_sha=None)
+                self.fail_execution(project_id, node_id, error_message=str(exc))
             except Exception:
-                logger.debug("Failed to complete errored execution", exc_info=True)
+                logger.debug("Failed to persist failed execution state", exc_info=True)
         finally:
             self._clear_live_job(project_id, node_id, turn_id)
 
@@ -576,15 +653,32 @@ class FinishTaskService:
                 f"Node status must be 'ready' or 'in_progress', got '{node_status}'."
             )
 
-        if self._storage.execution_state_store.exists(project_id, node_id):
-            raise FinishTaskNotAllowed("Execution has already been started for this node.")
+        exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+        if exec_state is not None:
+            status = exec_state.get("status")
+            if status == "executing":
+                raise FinishTaskNotAllowed("Execution is already in progress for this node.")
+            if status == "failed":
+                pass  # Allow retry from failed
+            elif status is not None and status != "idle":
+                raise FinishTaskNotAllowed("Execution has already been started for this node.")
 
         spec_path = node_dir / planningtree_workspace.SPEC_FILE_NAME
         spec_content = spec_path.read_text(encoding="utf-8") if spec_path.exists() else ""
         if not spec_content.strip():
             raise FinishTaskNotAllowed("Spec must be non-empty before Finish Task.")
 
-        del snapshot
+        # Git guardrails
+        if self._git_checkpoint_service is not None:
+            workspace_root = self._workspace_root_from_snapshot(snapshot)
+            if workspace_root:
+                expected_head = self._resolve_expected_baseline_sha(project_id, node_id, snapshot)
+                blockers = self._git_checkpoint_service.validate_guardrails(
+                    Path(workspace_root), expected_head=expected_head
+                )
+                if blockers:
+                    raise FinishTaskNotAllowed(blockers[0])
+
         return spec_content
 
     def _ensure_execution_thread(
@@ -664,25 +758,59 @@ class FinishTaskService:
             )
             return True
 
+    def _resolve_expected_baseline_sha(
+        self,
+        project_id: str,
+        node_id: str,
+        snapshot: dict[str, Any],
+    ) -> str | None:
+        """Resolve the expected git HEAD from the checkpoint chain.
+
+        Returns a git commit SHA (40-char hex) for guardrail check 7,
+        or None if no baseline can be determined (root node, split before git init).
+        """
+        node_index = snapshot.get("tree_state", {}).get("node_index", {})
+        node = node_index.get(node_id, {})
+        parent_id = node.get("parent_id")
+
+        if not parent_id:
+            return None
+
+        parent = node_index.get(parent_id, {})
+        review_node_id = parent.get("review_node_id")
+        if not review_node_id:
+            return None
+
+        review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
+        if not review_state:
+            return None
+
+        checkpoints = review_state.get("checkpoints", [])
+        if not checkpoints:
+            return None
+
+        latest_sha = checkpoints[-1].get("sha", "")
+        if self._git_checkpoint_service is not None:
+            if self._git_checkpoint_service.is_git_commit_sha(latest_sha):
+                return latest_sha
+            # K0 uses sha256: format — fall back to k0_git_head_sha
+            k0_git_head = review_state.get("k0_git_head_sha")
+            if self._git_checkpoint_service.is_git_commit_sha(k0_git_head):
+                return k0_git_head
+
+        return None
+
     def _compute_initial_sha(
         self,
         project_id: str,
         node_id: str,
         snapshot: dict[str, Any],
     ) -> str:
-        node_index = snapshot.get("tree_state", {}).get("node_index", {})
-        node = node_index.get(node_id, {})
-        parent_id = node.get("parent_id")
-
-        if parent_id:
-            parent = node_index.get(parent_id, {})
-            review_node_id = parent.get("review_node_id")
-            if review_node_id:
-                review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
-                if review_state:
-                    checkpoints = review_state.get("checkpoints", [])
-                    if checkpoints:
-                        return checkpoints[-1]["sha"]
+        """Capture initial SHA for execution. Uses git if available, falls back to workspace SHA."""
+        if self._git_checkpoint_service is not None:
+            workspace_root = self._workspace_root_from_snapshot(snapshot)
+            if workspace_root:
+                return self._git_checkpoint_service.capture_head_sha(Path(workspace_root))
 
         workspace_root = self._workspace_root_from_snapshot(snapshot)
         if workspace_root is None:

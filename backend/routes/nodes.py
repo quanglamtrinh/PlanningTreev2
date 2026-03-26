@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional
+from pathlib import Path
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -169,3 +170,55 @@ async def accept_local_review(
 @router.post("/projects/{project_id}/nodes/{node_id}/accept-rollup-review")
 async def accept_rollup_review(request: Request, project_id: str, node_id: str) -> dict:
     return request.app.state.review_service.accept_rollup_review(project_id, node_id)
+
+
+class ResetWorkspaceRequest(BaseModel):
+    target: Literal["initial", "head"]
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/reset-workspace")
+async def reset_workspace(
+    request: Request, project_id: str, node_id: str, body: ResetWorkspaceRequest
+) -> dict:
+    from backend.errors.app_errors import ResetWorkspaceNotAllowed
+
+    storage = request.app.state.storage
+    git_svc = request.app.state.git_checkpoint_service
+    chat_svc = request.app.state.chat_service
+
+    # Load execution state
+    exec_state = storage.execution_state_store.read_state(project_id, node_id)
+    if exec_state is None:
+        raise ResetWorkspaceNotAllowed("No execution state exists for this node.")
+
+    # Resolve target SHA
+    if body.target == "initial":
+        target_sha = exec_state.get("initial_sha")
+    else:
+        target_sha = exec_state.get("head_sha")
+
+    if not target_sha:
+        raise ResetWorkspaceNotAllowed(
+            f"No {body.target} SHA recorded for this node's execution."
+        )
+
+    # Block if active work in this project
+    if chat_svc is not None and chat_svc.has_live_turns_for_project(project_id):
+        raise ResetWorkspaceNotAllowed(
+            "Cannot reset workspace while an execution or chat turn is active."
+        )
+
+    # Perform reset
+    project_path = Path(storage.workspace_store.get_folder_path(project_id))
+    git_svc.hard_reset(project_path, target_sha)
+
+    # Return refreshed detail state
+    detail_state = request.app.state.node_detail_service.get_detail_state(project_id, node_id)
+    current_head = git_svc.get_head_sha(project_path)
+    return {
+        "status": "reset",
+        "target_sha": target_sha,
+        "current_head_sha": current_head,
+        "task_present_in_current_workspace": current_head == exec_state.get("head_sha"),
+        "detail_state": detail_state,
+    }

@@ -17,6 +17,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from backend.services import planningtree_workspace
+from backend.tests.conftest import init_git_repo
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +211,9 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
     client.app.state.finish_task_service._codex_client = codex
     client.app.state.chat_service._codex_client = codex
     client.app.state.thread_lineage_service._codex_client = codex
+
+    # Initialize git repo so git guardrails pass
+    init_git_repo(workspace_root)
 
     project_id, root_id = _setup_project(client, workspace_root)
 
@@ -433,6 +437,9 @@ def test_legacy_eager_lifecycle(client: TestClient, workspace_root):
     client.app.state.finish_task_service._codex_client = codex
     client.app.state.chat_service._codex_client = codex
     client.app.state.thread_lineage_service._codex_client = codex
+
+    # Initialize git repo so git guardrails pass
+    init_git_repo(workspace_root)
 
     project_id, root_id = _setup_project(client, workspace_root)
 

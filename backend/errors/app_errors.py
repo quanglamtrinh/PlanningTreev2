@@ -328,3 +328,18 @@ class ReviewNotAllowed(AppError):
 class SiblingActivationNotAllowed(AppError):
     def __init__(self, reason: str) -> None:
         super().__init__("sibling_activation_not_allowed", reason, 400)
+
+
+class GitCheckpointError(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__("git_checkpoint_error", message, 500)
+
+
+class GitInitNotAllowed(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__("git_init_not_allowed", message, 400)
+
+
+class ResetWorkspaceNotAllowed(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__("reset_workspace_not_allowed", message, 400)

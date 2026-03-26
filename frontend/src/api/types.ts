@@ -2,7 +2,7 @@ export type NodeStatus = 'locked' | 'draft' | 'ready' | 'in_progress' | 'done'
 export type NodeKind = 'root' | 'original' | 'superseded' | 'review'
 export type WorkflowStep = 'frame' | 'clarify' | 'spec'
 export type ThreadRole = 'audit' | 'ask_planning' | 'execution'
-export type ExecutionStatus = 'idle' | 'executing' | 'completed' | 'review_pending' | 'review_accepted'
+export type ExecutionStatus = 'idle' | 'executing' | 'completed' | 'failed' | 'review_pending' | 'review_accepted'
 export type RollupStatus = 'pending' | 'ready' | 'accepted'
 export type SplitMode =
   | 'workflow'

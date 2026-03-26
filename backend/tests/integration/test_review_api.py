@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.ai.codex_client import CodexTransportError
 from backend.services import planningtree_workspace
+from backend.tests.conftest import init_git_repo
 
 
 class ReviewCodexClient:
@@ -163,6 +164,9 @@ def _setup_node_with_execution_completed(
         codex_client = ReviewCodexClient()
     client.app.state.finish_task_service._codex_client = codex_client
     client.app.state.thread_lineage_service._codex_client = codex_client
+
+    # Initialize git repo so git guardrails pass
+    init_git_repo(workspace_root)
 
     project_id, root_id = _setup_project(client, workspace_root)
 
