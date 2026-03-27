@@ -343,9 +343,11 @@ def test_generate_clarify_uses_confirmed_content_not_draft(
     service.generate_clarify(project_id, root_id)
     time.sleep(1)
 
-    assert len(received_prompts) == 1
-    assert "Confirmed Content" in received_prompts[0]
-    assert "Draft Content" not in received_prompts[0]
+    # Filter out thread bootstrap initialization prompts
+    gen_prompts = [p for p in received_prompts if "Confirmed frame document" in p or "Draft Content" in p]
+    assert len(gen_prompts) == 1
+    assert "Confirmed Content" in gen_prompts[0]
+    assert "Draft Content" not in gen_prompts[0]
 
 
 def test_generate_clarify_preserves_custom_answer_on_regenerate(

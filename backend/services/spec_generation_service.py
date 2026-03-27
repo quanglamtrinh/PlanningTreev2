@@ -9,7 +9,10 @@ from backend.ai.ask_thread_config import build_ask_planning_thread_config
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.ai.spec_prompt_builder import (
     build_spec_generation_prompt,
+    build_spec_generation_role_prefix,
+    build_spec_output_schema,
     extract_spec_content,
+    extract_spec_content_from_structured_output,
     extract_spec_content_from_text,
 )
 from backend.ai.split_context_builder import build_split_context
@@ -221,26 +224,39 @@ class SpecGenerationService:
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             task_context = build_split_context(snapshot, node, node_by_id)
 
-        prompt = build_spec_generation_prompt(frame_content, task_context)
+        role_prefix = build_spec_generation_role_prefix()
+        prompt = build_spec_generation_prompt(
+            frame_content, task_context, role_prefix=role_prefix
+        )
         result = self._codex_client.run_turn_streaming(
             prompt,
             thread_id=thread_id,
             timeout_sec=self._timeout,
             cwd=workspace_root,
+            output_schema=build_spec_output_schema(),
         )
 
+        stdout = str(result.get("stdout", "") or "").strip()
+
+        # Tier 1: structured JSON from stdout (primary — new path)
+        if stdout:
+            content = extract_spec_content_from_structured_output(stdout)
+            if content is not None:
+                return content
+
+        # Tier 2: tool_calls (backward compat with old threads)
         tool_calls = result.get("tool_calls", [])
         content = extract_spec_content(tool_calls)
         if content is not None:
             return content
 
-        # Fallback: try parsing stdout
-        stdout = str(result.get("stdout", "") or "").strip()
+        # Tier 3: parse spec from stdout (checks for markdown headers or JSON)
         if stdout:
             content = extract_spec_content_from_text(stdout)
             if content is not None:
                 return content
 
+        # NO raw stdout fallback — raw text could be summary, not spec
         raise SpecGenerationBackendUnavailable(
             "AI did not produce spec content. Retry the generation."
         )

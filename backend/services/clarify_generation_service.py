@@ -8,7 +8,10 @@ from typing import Any
 from backend.ai.ask_thread_config import build_ask_planning_thread_config
 from backend.ai.clarify_prompt_builder import (
     build_clarify_generation_prompt,
+    build_clarify_generation_role_prefix,
+    build_clarify_output_schema,
     extract_clarify_questions,
+    extract_clarify_questions_from_structured_output,
     extract_clarify_questions_from_text,
 )
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
@@ -209,26 +212,40 @@ class ClarifyGenerationService:
             task_context = build_split_context(snapshot, node, node_by_id)
 
         # Build prompt using snapshotted frame content (captured at job start)
-        prompt = build_clarify_generation_prompt(frame_content, task_context)
+        role_prefix = build_clarify_generation_role_prefix()
+        prompt = build_clarify_generation_prompt(
+            frame_content, task_context, role_prefix=role_prefix
+        )
         result = self._codex_client.run_turn_streaming(
             prompt,
             thread_id=thread_id,
             timeout_sec=self._timeout,
             cwd=workspace_root,
+            output_schema=build_clarify_output_schema(),
         )
 
+        stdout = str(result.get("stdout", "") or "").strip()
+
+        # Tier 1: structured JSON from stdout (primary — new path)
+        # Note: questions=[] is valid success (all fields resolved → auto-confirm)
+        if stdout:
+            questions = extract_clarify_questions_from_structured_output(stdout)
+            if questions is not None:
+                return questions
+
+        # Tier 2: tool_calls (backward compat with old threads)
         tool_calls = result.get("tool_calls", [])
         questions = extract_clarify_questions(tool_calls)
         if questions is not None:
             return questions
 
-        # Fallback: try parsing stdout as JSON
-        stdout = str(result.get("stdout", "") or "").strip()
+        # Tier 3: parse JSON from stdout text (try to find JSON payload)
         if stdout:
             questions = extract_clarify_questions_from_text(stdout)
             if questions is not None:
                 return questions
 
+        # NO raw stdout fallback — raw text is not valid clarify data
         raise ClarifyGenerationBackendUnavailable(
             "AI did not produce clarify questions. Retry the generation."
         )

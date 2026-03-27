@@ -9,7 +9,10 @@ from backend.ai.ask_thread_config import build_ask_planning_thread_config
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.ai.frame_prompt_builder import (
     build_frame_generation_prompt,
+    build_frame_generation_role_prefix,
+    build_frame_output_schema,
     extract_frame_content,
+    extract_frame_content_from_structured_output,
 )
 from backend.ai.split_context_builder import build_split_context
 from backend.errors.app_errors import (
@@ -178,21 +181,33 @@ class FrameGenerationService:
             chat_messages = chat_session.get("messages", [])
 
         # Build prompt and run turn (outside lock)
-        prompt = build_frame_generation_prompt(chat_messages, task_context)
+        role_prefix = build_frame_generation_role_prefix()
+        prompt = build_frame_generation_prompt(
+            chat_messages, task_context, role_prefix=role_prefix
+        )
         result = self._codex_client.run_turn_streaming(
             prompt,
             thread_id=thread_id,
             timeout_sec=self._timeout,
             cwd=workspace_root,
+            output_schema=build_frame_output_schema(),
         )
 
+        stdout = str(result.get("stdout", "") or "").strip()
+
+        # Tier 1: structured JSON from stdout (primary — new path)
+        if stdout:
+            content = extract_frame_content_from_structured_output(stdout)
+            if content:
+                return content
+
+        # Tier 2: tool_calls (backward compat with old threads)
         tool_calls = result.get("tool_calls", [])
         content = extract_frame_content(tool_calls)
         if content:
             return content
 
-        # Fallback: use stdout if no tool call
-        stdout = str(result.get("stdout", "") or "").strip()
+        # Tier 3: raw stdout as markdown (frame content IS markdown)
         if stdout:
             return stdout
 

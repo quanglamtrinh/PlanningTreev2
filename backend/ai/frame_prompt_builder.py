@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from backend.ai.prompt_helpers import normalize_text, strip_json_fence, truncate
+
 
 _FRAME_SECTION_TEMPLATE = """\
 # Task Title
@@ -50,40 +52,56 @@ Rules:
 7. After the tool call, write a brief summary for the user (do not repeat the frame).
 """
 
+_GENERATION_ROLE_PREFIX = """\
+You are a task-framing assistant for the PlanningTree project planning tool.
+
+Your job is to generate a frame document (frame.md) for a task node.
+The frame is a structured markdown document that captures the task's scope,
+requirements, and shaping decisions.
+
+Frame format:
+""" + _FRAME_SECTION_TEMPLATE + """
+
+Rules:
+1. Derive the frame entirely from the conversation history and task context provided.
+2. Do not invent requirements that are not grounded in the conversation or context.
+3. Do not ask clarification questions — produce the best frame from available information.
+4. Leave Task-Shaping Fields blank (no value after the colon) when the conversation
+   does not provide enough information to decide.
+5. Keep section content concise and actionable.
+"""
+
 _CHAT_CHAR_LIMIT = 8000
 _CONTEXT_CHAR_LIMIT = 2000
 
 
-def frame_render_tool() -> dict[str, Any]:
+def build_frame_generation_role_prefix() -> str:
+    return _GENERATION_ROLE_PREFIX
+
+
+def build_frame_output_schema() -> dict[str, Any]:
     return {
-        "name": "emit_frame_content",
-        "description": (
-            "Emit the generated frame.md content for the app to store. "
-            "Call this exactly once with the full markdown content. "
-            "Do not duplicate the frame content in plain text."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string",
-                    "description": "The full markdown content for frame.md",
-                },
+        "type": "object",
+        "required": ["content"],
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "The full markdown content for frame.md",
             },
-            "required": ["content"],
         },
     }
-
-
-def build_frame_base_instructions() -> str:
-    return _SYSTEM_PROMPT
 
 
 def build_frame_generation_prompt(
     chat_messages: list[dict[str, Any]],
     task_context: dict[str, Any],
+    *,
+    role_prefix: str | None = None,
 ) -> str:
     sections: list[str] = []
+
+    if role_prefix:
+        sections.append(role_prefix)
 
     sections.append(_format_task_context(task_context))
 
@@ -93,7 +111,7 @@ def build_frame_generation_prompt(
 
     sections.append(
         "Generate the frame document now. "
-        "Call emit_frame_content with the full markdown content."
+        "Respond with the full markdown content as structured JSON output."
     )
 
     return "\n\n".join(s for s in sections if s.strip())
@@ -116,24 +134,40 @@ def extract_frame_content(tool_calls: Any) -> str | None:
     return None
 
 
+def extract_frame_content_from_structured_output(stdout: str) -> str | None:
+    """Parse structured JSON output for frame content."""
+    text = strip_json_fence(stdout)
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if isinstance(parsed, dict):
+        content = parsed.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+    return None
+
+
 def _format_task_context(task_context: dict[str, Any]) -> str:
     lines = ["Task context:"]
 
-    current = _normalize_text(task_context.get("current_node_prompt"))
+    current = normalize_text(task_context.get("current_node_prompt"))
     if current:
-        lines.append(f"- Current task: {_truncate(current, 500)}")
+        lines.append(f"- Current task: {truncate(current, 500)}")
 
-    root = _normalize_text(task_context.get("root_prompt"))
+    root = normalize_text(task_context.get("root_prompt"))
     if root:
-        lines.append(f"- Root goal: {_truncate(root, 300)}")
+        lines.append(f"- Root goal: {truncate(root, 300)}")
 
     parent_chain = task_context.get("parent_chain_prompts")
     if isinstance(parent_chain, list) and parent_chain:
         lines.append("- Parent chain:")
         for item in parent_chain:
-            normalized = _normalize_text(item)
+            normalized = normalize_text(item)
             if normalized:
-                lines.append(f"  - {_truncate(normalized, 300)}")
+                lines.append(f"  - {truncate(normalized, 300)}")
 
     siblings = task_context.get("prior_node_summaries_compact")
     if isinstance(siblings, list) and siblings:
@@ -141,11 +175,11 @@ def _format_task_context(task_context: dict[str, Any]) -> str:
         for item in siblings:
             if not isinstance(item, dict):
                 continue
-            title = _normalize_text(item.get("title"))
-            desc = _normalize_text(item.get("description"))
+            title = normalize_text(item.get("title"))
+            desc = normalize_text(item.get("description"))
             summary = f"{title}: {desc}" if title and desc else title or desc
             if summary:
-                lines.append(f"  - {_truncate(summary, 200)}")
+                lines.append(f"  - {truncate(summary, 200)}")
 
     return "\n".join(lines)
 
@@ -171,15 +205,3 @@ def _format_chat_history(messages: list[dict[str, Any]]) -> str:
     if len(lines) <= 1:
         return ""
     return "\n".join(lines)
-
-
-def _normalize_text(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    return " ".join(value.split())
-
-
-def _truncate(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."

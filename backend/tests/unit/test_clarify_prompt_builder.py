@@ -1,26 +1,53 @@
 from __future__ import annotations
 
+import json
+
 from backend.ai.clarify_prompt_builder import (
     _normalize_options,
     _to_snake_case,
-    build_clarify_base_instructions,
     build_clarify_generation_prompt,
-    clarify_render_tool,
+    build_clarify_generation_role_prefix,
+    build_clarify_output_schema,
     extract_clarify_questions,
+    extract_clarify_questions_from_structured_output,
     extract_clarify_questions_from_text,
 )
 
 
-def test_clarify_render_tool_shape() -> None:
-    tool = clarify_render_tool()
-    assert tool["name"] == "emit_clarify_questions"
-    assert "questions" in tool["inputSchema"]["properties"]
-    assert tool["inputSchema"]["required"] == ["questions"]
-    items = tool["inputSchema"]["properties"]["questions"]["items"]
+# ── Role prefix ──────────────────────────────────────────────────
+
+
+def test_role_prefix_contains_clarify_context() -> None:
+    prefix = build_clarify_generation_role_prefix()
+    assert "clarif" in prefix.lower()
+    assert "options" in prefix.lower()
+    assert "recommended" in prefix.lower()
+    assert "snake_case" in prefix
+
+
+def test_role_prefix_has_no_emit_references() -> None:
+    prefix = build_clarify_generation_role_prefix()
+    assert "emit_" not in prefix
+
+
+def test_role_prefix_empty_list_instruction() -> None:
+    """Rule 5 should reference JSON output, not tool call."""
+    prefix = build_clarify_generation_role_prefix()
+    assert '{"questions": []}' in prefix
+
+
+# ── Output schema ────────────────────────────────────────────────
+
+
+def test_output_schema_shape() -> None:
+    schema = build_clarify_output_schema()
+    assert schema["type"] == "object"
+    assert "questions" in schema["properties"]
+    assert schema["required"] == ["questions"]
+    items = schema["properties"]["questions"]["items"]
     assert "field_name" in items["properties"]
     assert "question" in items["properties"]
     assert "options" in items["properties"]
-    # Option items have required fields
     option_items = items["properties"]["options"]["items"]
     assert "id" in option_items["properties"]
     assert "label" in option_items["properties"]
@@ -29,17 +56,7 @@ def test_clarify_render_tool_shape() -> None:
     assert "recommended" in option_items["properties"]
 
 
-def test_base_instructions_mentions_clarify() -> None:
-    instructions = build_clarify_base_instructions()
-    assert "clarif" in instructions.lower()
-    assert "emit_clarify_questions" in instructions
-
-
-def test_base_instructions_mentions_options() -> None:
-    instructions = build_clarify_base_instructions()
-    assert "options" in instructions.lower()
-    assert "recommended" in instructions.lower()
-    assert "snake_case" in instructions
+# ── Generation prompt ────────────────────────────────────────────
 
 
 def test_build_prompt_includes_frame_content() -> None:
@@ -71,7 +88,7 @@ def test_build_prompt_empty_frame() -> None:
         task_context={"current_node_prompt": "Test"},
     )
     assert "(empty)" in prompt
-    assert "emit_clarify_questions" in prompt
+    assert "structured JSON output" in prompt
 
 
 def test_build_prompt_truncates_long_frame() -> None:
@@ -82,6 +99,19 @@ def test_build_prompt_truncates_long_frame() -> None:
     )
     assert "..." in prompt
     assert len(prompt) < 10000
+
+
+def test_build_prompt_with_role_prefix() -> None:
+    prefix = "You are a clarify assistant."
+    prompt = build_clarify_generation_prompt(
+        frame_content="# Frame",
+        task_context={"current_node_prompt": "Test"},
+        role_prefix=prefix,
+    )
+    assert prompt.startswith(prefix)
+
+
+# ── Extract from tool_calls (tier 2 fallback) ───────────────────
 
 
 def test_extract_clarify_questions_from_tool_calls() -> None:
@@ -181,6 +211,52 @@ def test_extract_clarify_questions_empty_list_from_tool_call() -> None:
     result = extract_clarify_questions(tool_calls)
     assert result is not None
     assert result == []
+
+
+# ── Extract from structured output (tier 1) ─────────────────────
+
+
+def test_extract_structured_output_valid() -> None:
+    stdout = json.dumps({
+        "questions": [
+            {"field_name": "auth", "question": "Which auth?", "options": []},
+        ]
+    })
+    result = extract_clarify_questions_from_structured_output(stdout)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["field_name"] == "auth"
+
+
+def test_extract_structured_output_empty_questions() -> None:
+    """Empty questions list is valid success (all fields resolved)."""
+    stdout = json.dumps({"questions": []})
+    result = extract_clarify_questions_from_structured_output(stdout)
+    assert result is not None
+    assert result == []
+
+
+def test_extract_structured_output_with_fence() -> None:
+    inner = json.dumps({"questions": [{"field_name": "x", "question": "y", "options": []}]})
+    stdout = f"```json\n{inner}\n```"
+    result = extract_clarify_questions_from_structured_output(stdout)
+    assert result is not None
+    assert len(result) == 1
+
+
+def test_extract_structured_output_invalid_json() -> None:
+    assert extract_clarify_questions_from_structured_output("not json") is None
+
+
+def test_extract_structured_output_empty() -> None:
+    assert extract_clarify_questions_from_structured_output("") is None
+
+
+def test_extract_structured_output_missing_questions_key() -> None:
+    assert extract_clarify_questions_from_structured_output(json.dumps({"other": "val"})) is None
+
+
+# ── Extract from text (tier 3 fallback) ──────────────────────────
 
 
 def test_extract_clarify_questions_from_text_empty_json_array() -> None:

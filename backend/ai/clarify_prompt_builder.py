@@ -4,6 +4,13 @@ import json
 import re
 from typing import Any
 
+from backend.ai.prompt_helpers import (
+    format_frame_content,
+    normalize_text,
+    strip_json_fence,
+    truncate,
+)
+
 
 _SYSTEM_PROMPT = """\
 You are a task-clarification assistant for the PlanningTree project planning tool.
@@ -39,106 +46,133 @@ Output:
 8. After the tool call, write a brief summary for the user (do not repeat the questions).
 """
 
+_GENERATION_ROLE_PREFIX = """\
+You are a task-clarification assistant for the PlanningTree project planning tool.
+
+Your job is to generate clarifying questions ONLY for unresolved task-shaping fields
+in a confirmed frame document. Task-shaping fields are steering-level decisions that
+affect implementation scope, approach, or constraints.
+
+For each question you MUST provide 2-4 concrete options the user can choose from.
+
+Rules:
+1. Read the frame document carefully. Focus on the "Task-Shaping Fields" section.
+2. For each field that has NO value or an EMPTY value — generate one question asking
+   the user to resolve it. The field_name must match the field name from the frame.
+3. For each field that ALREADY has a value — skip it. It is already resolved.
+4. Do NOT invent new questions beyond the task-shaping fields in the frame. Only
+   unresolved steering-level fields become clarify questions.
+5. If ALL task-shaping fields are already resolved, return {"questions": []} as the
+   structured output.
+6. Do not ask generic questions — each question must target a specific unresolved
+   task-shaping field from this frame.
+
+Per-question requirements:
+- Provide 2-4 concrete options. Each option must have: id, label, value, rationale, recommended.
+- The `id` field must be the snake_case form of `value` (e.g., value "Mobile Web" → id "mobile_web").
+- Exactly 1 option per question must have `recommended: true`.
+- Include `why_it_matters` explaining the steering significance of this field.
+- Include `current_value` with what the frame currently says (empty string if unresolved).
+- Set `allow_custom: true` for all questions.
+"""
+
 _FRAME_CHAR_LIMIT = 6000
 _CONTEXT_CHAR_LIMIT = 2000
 
 
-def clarify_render_tool() -> dict[str, Any]:
+def build_clarify_generation_role_prefix() -> str:
+    return _GENERATION_ROLE_PREFIX
+
+
+def build_clarify_output_schema() -> dict[str, Any]:
     return {
-        "name": "emit_clarify_questions",
-        "description": (
-            "Emit the generated clarifying questions for the app to store. "
-            "Call this exactly once with the full list of questions. "
-            "Do not duplicate the questions in plain text."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "questions": {
-                    "type": "array",
-                    "description": "List of clarifying questions for the task.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "field_name": {
-                                "type": "string",
-                                "description": (
-                                    "The exact field name from the frame's Task-Shaping Fields section "
-                                    "(e.g. 'target platform', 'auth provider'). Must match verbatim."
-                                ),
-                            },
-                            "question": {
-                                "type": "string",
-                                "description": "The clarifying question to ask the user.",
-                            },
-                            "why_it_matters": {
-                                "type": "string",
-                                "description": "Why this field affects steering.",
-                            },
-                            "current_value": {
-                                "type": "string",
-                                "description": "Value from frame (empty if unresolved).",
-                            },
-                            "options": {
-                                "type": "array",
-                                "description": "2-4 concrete options for the user.",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "id": {
-                                            "type": "string",
-                                            "description": "snake_case of value.",
-                                        },
-                                        "label": {
-                                            "type": "string",
-                                            "description": "Short display label.",
-                                        },
-                                        "value": {
-                                            "type": "string",
-                                            "description": "Concrete value this option represents.",
-                                        },
-                                        "rationale": {
-                                            "type": "string",
-                                            "description": "Why this option makes sense.",
-                                        },
-                                        "recommended": {
-                                            "type": "boolean",
-                                            "description": "True for exactly one option per question.",
-                                        },
+        "type": "object",
+        "required": ["questions"],
+        "properties": {
+            "questions": {
+                "type": "array",
+                "description": "List of clarifying questions for the task.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "field_name": {
+                            "type": "string",
+                            "description": (
+                                "The exact field name from the frame's Task-Shaping Fields section "
+                                "(e.g. 'target platform', 'auth provider'). Must match verbatim."
+                            ),
+                        },
+                        "question": {
+                            "type": "string",
+                            "description": "The clarifying question to ask the user.",
+                        },
+                        "why_it_matters": {
+                            "type": "string",
+                            "description": "Why this field affects steering.",
+                        },
+                        "current_value": {
+                            "type": "string",
+                            "description": "Value from frame (empty if unresolved).",
+                        },
+                        "options": {
+                            "type": "array",
+                            "description": "2-4 concrete options for the user.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {
+                                        "type": "string",
+                                        "description": "snake_case of value.",
                                     },
-                                    "required": ["id", "label", "value", "rationale", "recommended"],
+                                    "label": {
+                                        "type": "string",
+                                        "description": "Short display label.",
+                                    },
+                                    "value": {
+                                        "type": "string",
+                                        "description": "Concrete value this option represents.",
+                                    },
+                                    "rationale": {
+                                        "type": "string",
+                                        "description": "Why this option makes sense.",
+                                    },
+                                    "recommended": {
+                                        "type": "boolean",
+                                        "description": "True for exactly one option per question.",
+                                    },
                                 },
-                            },
-                            "allow_custom": {
-                                "type": "boolean",
-                                "description": "Whether custom freeform answer is allowed.",
+                                "required": ["id", "label", "value", "rationale", "recommended"],
                             },
                         },
-                        "required": ["field_name", "question", "options"],
+                        "allow_custom": {
+                            "type": "boolean",
+                            "description": "Whether custom freeform answer is allowed.",
+                        },
                     },
+                    "required": ["field_name", "question", "options"],
                 },
             },
-            "required": ["questions"],
         },
     }
-
-
-def build_clarify_base_instructions() -> str:
-    return _SYSTEM_PROMPT
 
 
 def build_clarify_generation_prompt(
     frame_content: str,
     task_context: dict[str, Any],
+    *,
+    role_prefix: str | None = None,
 ) -> str:
     sections: list[str] = []
+
+    if role_prefix:
+        sections.append(role_prefix)
 
     sections.append(_format_task_context(task_context))
     sections.append(_format_frame_content(frame_content))
 
     sections.append(
         "Generate clarifying questions for this task now. "
-        "Call emit_clarify_questions with the full list of questions."
+        "Respond with the questions as structured JSON output."
     )
 
     return "\n\n".join(s for s in sections if s.strip())
@@ -156,6 +190,28 @@ def extract_clarify_questions(tool_calls: Any) -> list[dict[str, Any]] | None:
         if not isinstance(arguments, dict):
             continue
         questions = arguments.get("questions")
+        if isinstance(questions, list):
+            return _normalize_questions(questions)
+    return None
+
+
+def extract_clarify_questions_from_structured_output(
+    stdout: str,
+) -> list[dict[str, Any]] | None:
+    """Parse structured JSON output for clarify questions.
+
+    Returns [] (not None) when the model returns {"questions": []},
+    which is a valid success case (all fields resolved → auto-confirm).
+    """
+    text = strip_json_fence(stdout)
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if isinstance(parsed, dict):
+        questions = parsed.get("questions")
         if isinstance(questions, list):
             return _normalize_questions(questions)
     return None
@@ -264,43 +320,26 @@ def _normalize_questions(raw_questions: list[Any]) -> list[dict[str, Any]]:
 
 
 def _format_frame_content(frame_content: str) -> str:
-    content = frame_content.strip()
-    if not content:
-        return "Frame document: (empty)"
-    if len(content) > _FRAME_CHAR_LIMIT:
-        content = content[:_FRAME_CHAR_LIMIT - 3] + "..."
-    return f"Confirmed frame document:\n\n{content}"
+    return format_frame_content(frame_content, _FRAME_CHAR_LIMIT)
 
 
 def _format_task_context(task_context: dict[str, Any]) -> str:
     lines = ["Task context:"]
 
-    current = _normalize_text(task_context.get("current_node_prompt"))
+    current = normalize_text(task_context.get("current_node_prompt"))
     if current:
-        lines.append(f"- Current task: {_truncate(current, 500)}")
+        lines.append(f"- Current task: {truncate(current, 500)}")
 
-    root = _normalize_text(task_context.get("root_prompt"))
+    root = normalize_text(task_context.get("root_prompt"))
     if root:
-        lines.append(f"- Root goal: {_truncate(root, 300)}")
+        lines.append(f"- Root goal: {truncate(root, 300)}")
 
     parent_chain = task_context.get("parent_chain_prompts")
     if isinstance(parent_chain, list) and parent_chain:
         lines.append("- Parent chain:")
         for item in parent_chain:
-            normalized = _normalize_text(item)
+            normalized = normalize_text(item)
             if normalized:
-                lines.append(f"  - {_truncate(normalized, 300)}")
+                lines.append(f"  - {truncate(normalized, 300)}")
 
     return "\n".join(lines)
-
-
-def _normalize_text(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    return " ".join(value.split())
-
-
-def _truncate(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
