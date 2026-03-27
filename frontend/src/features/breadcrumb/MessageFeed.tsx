@@ -173,18 +173,7 @@ function partsEqual(a: MessagePart[] | undefined, b: MessagePart[] | undefined):
 const MessageFeedRow = memo(
   function MessageFeedRow({ msg }: { msg: ChatMessage }) {
     if (msg.role === 'system') {
-      return (
-        <div className={`${styles.row} ${styles.rowSystem}`}>
-          <div className={styles.systemCard} role="note" aria-label="Thread context">
-            <p className={styles.systemEyebrow}>Context</p>
-            {msg.content ? (
-              <div className={`${styles.content} ${styles.systemContent}`}>
-                {renderContent(msg.content)}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      )
+      return null
     }
 
     return (

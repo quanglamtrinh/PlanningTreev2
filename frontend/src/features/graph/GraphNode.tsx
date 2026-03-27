@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom'
 import { Handle, Position, useStore, type NodeProps } from '@xyflow/react'
 import type { ExecutionStatus } from '../../api/types'
 import { NodeStatusBadge } from '../node/NodeStatusBadge'
-import { ExecutionStatusBadge } from '../node/ExecutionStatusBadge'
 import { AgentSpinner, SPINNER_WORDS_SPLITTING } from '../../components/AgentSpinner'
 import { useGraphNodeActions } from './graphNodeActionsContext'
 import { GRAPH_SPLIT_OPTIONS } from './splitModes'
@@ -424,10 +423,6 @@ function GraphNodeComponent({ data }: NodeProps) {
                 <NodeStatusBadge
                   status={d.node.status}
                   className={`${styles.graphStatusBadge} ${d.node.status === 'in_progress' ? styles.graphStatusInProgress : ''}`}
-                />
-                <ExecutionStatusBadge
-                  status={d.executionStatus === 'review_accepted' ? null : d.executionStatus}
-                  className={styles.graphExecutionBadge}
                 />
               </div>
             </div>

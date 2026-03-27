@@ -13,7 +13,7 @@ type WorkflowStepperProps = {
 
 function TickIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <circle
         cx="8"
         cy="8"

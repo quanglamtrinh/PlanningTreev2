@@ -9,7 +9,7 @@ from backend.ai.frame_prompt_builder import (
 )
 
 
-# ── Role prefix ──────────────────────────────────────────────────
+# Role prefix
 
 
 def test_role_prefix_contains_frame_context() -> None:
@@ -23,7 +23,14 @@ def test_role_prefix_has_no_emit_references() -> None:
     assert "emit_" not in prefix
 
 
-# ── Output schema ────────────────────────────────────────────────
+def test_role_prefix_supports_inherit_and_specialize_shaping_fields() -> None:
+    prefix = build_frame_generation_role_prefix()
+    assert "inherit" in prefix.lower()
+    assert "specialize" in prefix.lower()
+    assert "task-shaping fields" in prefix.lower()
+
+
+# Output schema
 
 
 def test_output_schema_shape() -> None:
@@ -34,7 +41,7 @@ def test_output_schema_shape() -> None:
     assert schema["required"] == ["content"]
 
 
-# ── Generation prompt ────────────────────────────────────────────
+# Generation prompt
 
 
 def test_build_prompt_includes_task_context() -> None:
@@ -103,7 +110,7 @@ def test_build_prompt_without_role_prefix() -> None:
     assert prompt.startswith("Task context:")
 
 
-# ── Extract from tool_calls (tier 2 fallback) ───────────────────
+# Extract from tool_calls (tier 2 fallback)
 
 
 def test_extract_frame_content_from_tool_calls() -> None:
@@ -139,7 +146,7 @@ def test_extract_frame_content_skips_empty_content() -> None:
     assert result is None
 
 
-# ── Extract from structured output (tier 1) ─────────────────────
+# Extract from structured output (tier 1)
 
 
 def test_extract_structured_output_valid_json() -> None:

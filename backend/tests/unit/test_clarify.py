@@ -225,6 +225,39 @@ def test_apply_clarify_requires_all_resolved(
     assert result["frame_needs_reconfirm"] is True
 
 
+def test_reseed_after_apply_keeps_answered_clarify_for_review(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    """Re-confirming frame after apply must not wipe answered clarify questions."""
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    doc_service = NodeDocumentService(storage)
+    detail_service = NodeDetailService(storage, tree_service)
+    doc_service.put_document(project_id, root_id, "frame", FRAME_WITH_UNRESOLVED)
+    detail_service.bump_frame_revision(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    detail_service.update_clarify_answers(
+        project_id,
+        root_id,
+        [
+            {"field_name": "target platform", "custom_answer": "web"},
+            {"field_name": "storage level", "custom_answer": "local"},
+        ],
+    )
+    detail_service.apply_clarify_to_frame(project_id, root_id)
+    detail_service.confirm_frame(project_id, root_id)
+
+    clarify = detail_service.get_clarify(project_id, root_id)
+    assert clarify["confirmed_at"] is not None
+    by_field = {q["field_name"]: q for q in clarify["questions"]}
+    assert by_field["target platform"]["custom_answer"] == "web"
+    assert by_field["storage level"]["custom_answer"] == "local"
+
+
 def test_reseed_preserves_custom_answer(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:

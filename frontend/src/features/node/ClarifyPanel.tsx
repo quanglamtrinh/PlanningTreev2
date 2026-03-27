@@ -139,8 +139,6 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
     [questions],
   )
 
-  const noQuestions = hasLoaded && questions.length === 0
-
   const handleConfirmClarify = useCallback(async () => {
     setIsConfirming(true)
     setConfirmError(null)
@@ -166,6 +164,11 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
   const detailState = useDetailStateStore((s) => s.entries[key])
   const isAlreadyConfirmed = detailState?.clarify_confirmed ?? false
   const isDisabled = readOnly || isAlreadyConfirmed
+
+  // Exclude already-confirmed state from the no-questions early return so the
+  // confirmed UI (disabled questions + "Clarify confirmed." status) always renders
+  // regardless of whether the backend cleared the questions array post-confirmation.
+  const noQuestions = hasLoaded && questions.length === 0 && !isAlreadyConfirmed
 
   // ── Generating state ────────────────────────────────────────
 

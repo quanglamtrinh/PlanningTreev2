@@ -34,7 +34,8 @@ def _setup_to_spec_step(
     """Create a project and advance the workflow to active_step='spec'.
 
     Full loop: confirm frame → resolve clarify → apply to frame → reconfirm
-    → zero questions → auto-confirm → active_step='spec'.
+    → no unresolved shaping fields → auto-confirm (answered questions kept on disk)
+    → active_step='spec'.
     """
     project_service = ProjectService(storage)
     snapshot = create_project(project_service, str(workspace_root))
@@ -59,7 +60,7 @@ def _setup_to_spec_step(
     assert result["active_step"] == "frame"
     assert result["frame_needs_reconfirm"] is True
 
-    # 3. Reconfirm the patched frame — all fields now resolved → zero questions → auto-confirm
+    # 3. Reconfirm the patched frame — all fields resolved → auto-confirm; clarify Q&A retained
     detail_service.confirm_frame(project_id, root_id)
     state = detail_service.get_detail_state(project_id, root_id)
     assert state["active_step"] == "spec"

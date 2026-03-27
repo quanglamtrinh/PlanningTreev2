@@ -38,18 +38,40 @@ Your job is to generate a frame document (frame.md) for a task node.
 The frame is a structured markdown document that captures the task's scope,
 requirements, and shaping decisions.
 
+The conversation history may include inherited context from parent and ancestor
+tasks, including confirmed frame snapshots. Use that context when deciding which
+task-shaping decisions this task should inherit, restate, or specialize.
+
 Frame format:
 """ + _FRAME_SECTION_TEMPLATE + """
 
 Rules:
-1. Derive the frame entirely from the conversation history and task context provided.
-2. Do not invent requirements that are not grounded in the conversation or context.
-3. Do not ask clarification questions — produce the best frame from available information.
-4. Leave Task-Shaping Fields blank (no value after the colon) when the conversation
-   does not provide enough information to decide.
-5. Keep section content concise and actionable.
-6. Output the frame by calling emit_frame_content with the full markdown string.
-7. After the tool call, write a brief summary for the user (do not repeat the frame).
+1. Derive the task's scope, requirements, and success criteria from the conversation
+   history and task context provided. Do not invent committed requirements that are
+   not grounded in the available context.
+2. Use Task-Shaping Fields to capture implementation-steering decisions that are
+   materially relevant to this task.
+3. If a relevant parent or ancestor task-shaping decision already exists, restate
+   it in this task's Task-Shaping Fields in the most specific form that applies to
+   this task.
+4. If an inherited decision is too broad for this task, add a more specific
+   task-level Task-Shaping Field that specializes it.
+5. Fill in Task-Shaping Fields when the value is reasonably implied by the
+   conversation history, inherited context, or this task's scope.
+6. If a task-shaping decision is relevant to this task but still not determined,
+   include it as an unresolved Task-Shaping Field with nothing after the colon.
+7. Do not reopen, contradict, or remove settled parent or ancestor decisions unless
+   the conversation explicitly changes them.
+8. Do not add generic or low-value fields. Only include shaping fields that would
+   materially affect implementation, UX behavior, integration behavior, sequencing,
+   constraints, or technical approach for this specific task.
+9. Use the exact bullet format `- field name: value` for resolved fields and
+   `- field name:` for unresolved fields.
+10. Do not ask clarification questions directly - produce the best frame from
+    available information.
+11. Keep section content concise and actionable.
+12. Output the frame by calling emit_frame_content with the full markdown string.
+13. After the tool call, write a brief summary for the user (do not repeat the frame).
 """
 
 _GENERATION_ROLE_PREFIX = """\
@@ -59,16 +81,38 @@ Your job is to generate a frame document (frame.md) for a task node.
 The frame is a structured markdown document that captures the task's scope,
 requirements, and shaping decisions.
 
+The conversation history may include inherited context from parent and ancestor
+tasks, including confirmed frame snapshots. Use that context when deciding which
+task-shaping decisions this task should inherit, restate, or specialize.
+
 Frame format:
 """ + _FRAME_SECTION_TEMPLATE + """
 
 Rules:
-1. Derive the frame entirely from the conversation history and task context provided.
-2. Do not invent requirements that are not grounded in the conversation or context.
-3. Do not ask clarification questions — produce the best frame from available information.
-4. Leave Task-Shaping Fields blank (no value after the colon) when the conversation
-   does not provide enough information to decide.
-5. Keep section content concise and actionable.
+1. Derive the task's scope, requirements, and success criteria from the conversation
+   history and task context provided. Do not invent committed requirements that are
+   not grounded in the available context.
+2. Use Task-Shaping Fields to capture implementation-steering decisions that are
+   materially relevant to this task.
+3. If a relevant parent or ancestor task-shaping decision already exists, restate
+   it in this task's Task-Shaping Fields in the most specific form that applies to
+   this task.
+4. If an inherited decision is too broad for this task, add a more specific
+   task-level Task-Shaping Field that specializes it.
+5. Fill in Task-Shaping Fields when the value is reasonably implied by the
+   conversation history, inherited context, or this task's scope.
+6. If a task-shaping decision is relevant to this task but still not determined,
+   include it as an unresolved Task-Shaping Field with nothing after the colon.
+7. Do not reopen, contradict, or remove settled parent or ancestor decisions unless
+   the conversation explicitly changes them.
+8. Do not add generic or low-value fields. Only include shaping fields that would
+   materially affect implementation, UX behavior, integration behavior, sequencing,
+   constraints, or technical approach for this specific task.
+9. Use the exact bullet format `- field name: value` for resolved fields and
+   `- field name:` for unresolved fields.
+10. Do not ask clarification questions directly - produce the best frame from
+    available information.
+11. Keep section content concise and actionable.
 """
 
 _CHAT_CHAR_LIMIT = 8000

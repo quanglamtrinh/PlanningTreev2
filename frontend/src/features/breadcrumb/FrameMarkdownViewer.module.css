@@ -63,6 +63,18 @@
   color: var(--text-primary);
 }
 
+/* ─── Paragraph card box ─────────────────────────────────────────── */
+.paraCard {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  padding: 10px 14px;
+}
+
+.paraCard .p {
+  margin: 0;
+}
+
 /* ─── Lists — rendered as card boxes ─────────────────────────────── */
 .listCard {
   border: 1px solid var(--border-default);

@@ -147,19 +147,13 @@ function parseFrameContent(content: string): Section[] {
 
 // ─── Shared markdown components ────────────────────────────────────
 
-const mdComponents: Components = {
+// Flat components — no card wrapping; used inside callout bodies and decision bodies
+// to avoid double-boxing.
+const mdComponentsFlat: Components = {
   p: ({ children }) => <p className={styles.p}>{children}</p>,
   strong: ({ children }) => <strong className={styles.strong}>{children}</strong>,
-  ul: ({ children }) => (
-    <div className={styles.listCard}>
-      <ul className={styles.ul}>{children}</ul>
-    </div>
-  ),
-  ol: ({ children }) => (
-    <div className={styles.listCard}>
-      <ol className={styles.ol}>{children}</ol>
-    </div>
-  ),
+  ul: ({ children }) => <ul className={styles.ul}>{children}</ul>,
+  ol: ({ children }) => <ol className={styles.ol}>{children}</ol>,
   li: ({ children }) => <li className={styles.li}>{children}</li>,
   h3: ({ children }) => <h3 className={styles.h3}>{children}</h3>,
   h4: ({ children }) => <h4 className={styles.h4}>{children}</h4>,
@@ -170,6 +164,26 @@ const mdComponents: Components = {
     return <code className={styles.inlineCode}>{children}</code>
   },
   pre: ({ children }) => <pre className={styles.pre}>{children}</pre>,
+}
+
+// Card components — wraps p and lists in bordered card boxes; used for top-level body sections.
+const mdComponents: Components = {
+  ...mdComponentsFlat,
+  p: ({ children }) => (
+    <div className={styles.paraCard}>
+      <p className={styles.p}>{children}</p>
+    </div>
+  ),
+  ul: ({ children }) => (
+    <div className={styles.listCard}>
+      <ul className={styles.ul}>{children}</ul>
+    </div>
+  ),
+  ol: ({ children }) => (
+    <div className={styles.listCard}>
+      <ol className={styles.ol}>{children}</ol>
+    </div>
+  ),
 }
 
 // ─── Component ─────────────────────────────────────────────────────
@@ -198,7 +212,7 @@ export function FrameMarkdownViewer({ content }: { content: string }) {
               <span className={styles.calloutLabel}>{section.label}</span>
               {section.body && (
                 <div className={styles.calloutBody}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponentsFlat}>
                     {section.body}
                   </ReactMarkdown>
                 </div>
@@ -218,7 +232,7 @@ export function FrameMarkdownViewer({ content }: { content: string }) {
                   )}
                   {card.body && (
                     <div className={styles.decisionBody}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponentsFlat}>
                         {card.body}
                       </ReactMarkdown>
                     </div>

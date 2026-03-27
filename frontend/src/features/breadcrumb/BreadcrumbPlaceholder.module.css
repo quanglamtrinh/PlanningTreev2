@@ -3,6 +3,10 @@
   display: flex;
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: clip;
   flex-direction: column;
   background:
     radial-gradient(circle at top left, color-mix(in srgb, var(--accent-primary) 12%, transparent), transparent 32%),
@@ -14,6 +18,10 @@
   display: flex;
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: clip;
   background: color-mix(in srgb, var(--bg-app) 92%, transparent);
   backdrop-filter: blur(8px);
 }
