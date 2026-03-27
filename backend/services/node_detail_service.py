@@ -233,6 +233,10 @@ def build_detail_state(
         "audit_writable": execution_fields["audit_writable"],
         "package_audit_ready": execution_fields["package_audit_ready"],
         "review_status": execution_fields["review_status"],
+        "auto_review_status": execution_fields["auto_review_status"],
+        "auto_review_summary": execution_fields["auto_review_summary"],
+        "auto_review_overall_severity": execution_fields["auto_review_overall_severity"],
+        "auto_review_overall_score": execution_fields["auto_review_overall_score"],
     }
 
 

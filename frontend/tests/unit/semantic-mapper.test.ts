@@ -70,6 +70,55 @@ describe('semanticMapper', () => {
     expect(blocks.some((block) => block.type === 'plan')).toBe(true)
     expect(blocks.some((block) => block.type === 'tool_action')).toBe(true)
     expect(blocks.some((block) => block.type === 'error_blocker')).toBe(true)
+    expect(blocks.filter((block) => block.type === 'error_blocker')).toHaveLength(1)
+  })
+
+  it('surfaces failed tool details without a retry blocker when the turn still completes', () => {
+    const message = makeAssistantMessage({
+      status: 'completed',
+      items: [
+        {
+          item_id: 'assistant_text',
+          item_type: 'assistant_text',
+          status: 'completed',
+          started_at: '2026-01-01T00:00:00Z',
+          completed_at: '2026-01-01T00:00:01Z',
+          last_payload: null,
+          lifecycle: [
+            { phase: 'delta', timestamp: '2026-01-01T00:00:00Z', text: 'Completed after one retry.' },
+          ],
+        },
+        {
+          item_id: 'tool:cmd-1',
+          item_type: 'tool_call',
+          status: 'error',
+          started_at: '2026-01-01T00:00:00Z',
+          completed_at: '2026-01-01T00:00:02Z',
+          last_payload: { status: 'error', output: 'npm test failed', exit_code: 1 },
+          lifecycle: [
+            {
+              phase: 'started',
+              timestamp: '2026-01-01T00:00:00Z',
+              payload: { tool_name: 'shell_command', arguments: { command: 'npm test' } },
+            },
+            {
+              phase: 'error',
+              timestamp: '2026-01-01T00:00:02Z',
+              payload: { status: 'error', output: 'npm test failed', exit_code: 1 },
+            },
+          ],
+        },
+      ],
+    })
+
+    const blocks = mapMessageToSemanticBlocks(message)
+    const errorBlock = blocks.find((block) => block.type === 'error_blocker')
+    expect(errorBlock).toBeTruthy()
+    expect(errorBlock?.title).toContain('tool step failed')
+    expect(errorBlock?.impact).toContain('npm test')
+    expect(errorBlock?.impact).toContain('code 1')
+    expect(errorBlock?.attempted).toContain('npm test failed')
+    expect(errorBlock?.requiredDecision).toBeNull()
   })
 
   it('falls back to legacy parts when items are absent', () => {

@@ -334,6 +334,9 @@ def test_finish_task_background_completion_publishes_sse_and_head_sha(
         )
         and state["status"] == "completed"
         and state["head_sha"] is not None
+        and storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")[
+            "active_turn_id"
+        ] is None
     )
 
     session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")

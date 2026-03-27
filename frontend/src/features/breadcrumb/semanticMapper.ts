@@ -28,6 +28,14 @@ export type SemanticBlock =
       requiredDecision: string | null
     }
 
+function truncateInline(text: string, maxChars: number): string {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxChars) {
+    return normalized
+  }
+  return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`
+}
+
 function concatenateItemText(item: MessageItem): string {
   return item.lifecycle
     .map((entry) => (typeof entry.text === 'string' ? entry.text : ''))
@@ -56,7 +64,77 @@ function completedPayload(item: MessageItem): Record<string, unknown> | null {
   return null
 }
 
-function mapItemsToBlocks(items: MessageItem[]): SemanticBlock[] {
+function buildLifecycleErrorBlock(
+  items: MessageItem[],
+  messageStatus: ChatMessage['status'],
+  messageError: string | null,
+): Extract<SemanticBlock, { type: 'error_blocker' }> | null {
+  if (messageError) {
+    return null
+  }
+
+  const erroredItems = items.filter((item) => item.status === 'error' && item.item_type !== 'error_blocker')
+  if (erroredItems.length === 0) {
+    return null
+  }
+
+  const toolItem = erroredItems.find((item) => item.item_type === 'tool_call')
+  if (toolItem) {
+    const start = startedPayload(toolItem)
+    const end = completedPayload(toolItem) ?? toolItem.last_payload ?? null
+    const toolName = typeof start?.tool_name === 'string' ? start.tool_name : 'tool_call'
+    const args =
+      start?.arguments && typeof start.arguments === 'object'
+        ? (start.arguments as Record<string, unknown>)
+        : null
+    const target =
+      typeof args?.command === 'string'
+        ? args.command
+        : (typeof args?.path === 'string' ? args.path : null)
+    const exitCode = typeof end?.exit_code === 'number' ? end.exit_code : null
+    const output = typeof end?.output === 'string' ? truncateInline(end.output, 180) : null
+    const label = target ? `${toolName} on ${target}` : toolName
+    const impact = exitCode !== null
+      ? `${label} exited with code ${exitCode}.`
+      : `${label} reported an error during this turn.`
+    const attempted = output
+      ? `Latest tool output: ${output}`
+      : 'The agent reached a tool failure before this step could complete cleanly.'
+
+    return {
+      type: 'error_blocker',
+      title: messageStatus === 'completed'
+        ? 'A tool step failed during this turn'
+        : 'Agent encountered an execution blocker',
+      impact,
+      attempted,
+      requiredDecision: messageStatus === 'completed'
+        ? null
+        : 'Review the failed tool step and decide whether to retry.',
+    }
+  }
+
+  const first = erroredItems[0]
+  const extraCount = erroredItems.length - 1
+  const extraSuffix = extraCount > 0 ? ` ${extraCount} additional item(s) also failed.` : ''
+  return {
+    type: 'error_blocker',
+    title: messageStatus === 'completed'
+      ? 'A lifecycle item failed during this turn'
+      : 'Agent encountered an execution blocker',
+    impact: `${first.item_type} reported an error.${extraSuffix}`,
+    attempted: 'Inspect the lifecycle details in this message to identify the failing step.',
+    requiredDecision: messageStatus === 'completed'
+      ? null
+      : 'Review error details and decide whether to retry.',
+  }
+}
+
+function mapItemsToBlocks(
+  items: MessageItem[],
+  messageStatus: ChatMessage['status'],
+  messageError: string | null,
+): SemanticBlock[] {
   const blocks: SemanticBlock[] = []
 
   const textItem = items.find((item) => item.item_type === 'assistant_text')
@@ -116,15 +194,9 @@ function mapItemsToBlocks(items: MessageItem[]): SemanticBlock[] {
     })
   }
 
-  const hasErrorItem = items.some((item) => item.status === 'error')
-  if (hasErrorItem) {
-    blocks.push({
-      type: 'error_blocker',
-      title: 'Agent encountered an execution blocker',
-      impact: 'At least one lifecycle item failed during this turn.',
-      attempted: 'The agent streamed intermediate progress before this error.',
-      requiredDecision: 'Review error details and decide whether to retry.',
-    })
+  const errorBlock = buildLifecycleErrorBlock(items, messageStatus, messageError)
+  if (errorBlock) {
+    blocks.push(errorBlock)
   }
 
   return blocks
@@ -173,7 +245,9 @@ function mapPartsFallback(parts: MessagePart[] | undefined): SemanticBlock[] {
 }
 
 export function mapMessageToSemanticBlocks(message: ChatMessage): SemanticBlock[] {
-  const itemBlocks = message.items && message.items.length > 0 ? mapItemsToBlocks(message.items) : []
+  const itemBlocks = message.items && message.items.length > 0
+    ? mapItemsToBlocks(message.items, message.status, message.error)
+    : []
   const baseBlocks = itemBlocks.length > 0 ? itemBlocks : mapPartsFallback(message.parts)
   if (!baseBlocks.some((block) => block.type === 'summary') && message.content.trim()) {
     baseBlocks.unshift({

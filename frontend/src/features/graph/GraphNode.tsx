@@ -167,11 +167,7 @@ function GraphNodeActionsDropdown({
           }}
         >
           <span className={styles.menuTitle}>Open Breadcrumb</span>
-          <span className={styles.menuDesc}>
-            {canOpenBreadcrumb
-              ? 'Open the placeholder breadcrumb route for this node.'
-              : 'Codex CLI is not installed.'}
-          </span>
+          <span className={styles.menuDesc}>Open the breadcrumb route for this node.</span>
         </button>
         <button
           type="button"
@@ -433,6 +429,21 @@ function GraphNodeComponent({ data }: NodeProps) {
               <AgentSpinner className={styles.activity} words={SPINNER_WORDS_SPLITTING} />
             ) : null}
           </div>
+          {d.canOpenBreadcrumb ? (
+            <div className={styles.footer}>
+              <button
+                type="button"
+                className={`${styles.openBreadcrumbBtn} ${CONTROL_CLASS_NAME}`}
+                data-testid={`graph-node-open-breadcrumb-${d.node.node_id}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  actions.openBreadcrumb(d.node.node_id)
+                }}
+              >
+                Open in Breadcrumb
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 

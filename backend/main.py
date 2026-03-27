@@ -116,6 +116,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_timeout=get_execution_timeout(),
         chat_service=chat_service,
         git_checkpoint_service=git_checkpoint_service,
+        review_service=review_service,
     )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service

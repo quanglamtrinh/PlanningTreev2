@@ -197,6 +197,11 @@ export interface DetailState {
   git_blocker_message?: string | null
   /** Paths changed for this task (from git or execution metadata). */
   changed_files?: ChangedFileRecord[] | string[]
+  /** Automated local review status after execution completes. */
+  auto_review_status?: 'running' | 'completed' | 'failed' | null
+  auto_review_summary?: string | null
+  auto_review_overall_severity?: 'critical' | 'high' | 'medium' | 'low' | 'info' | null
+  auto_review_overall_score?: number | null
 }
 
 export interface ClarifyOption {

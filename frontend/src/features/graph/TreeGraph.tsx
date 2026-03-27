@@ -21,12 +21,7 @@ import {
 import { GraphNode, type GraphNodeData } from './GraphNode'
 import { GhostGraphNode, type GhostGraphNodeData } from './GhostGraphNode'
 import { ReviewGraphNode, type ReviewGraphNodeData } from './ReviewGraphNode'
-import {
-  buildGhostSiblingPositions,
-  buildReviewOverlayPositions,
-  buildTreeLayoutPositions,
-  TREE_DEPTH_STEP_PX,
-} from './treeGraphLayout'
+import { buildReviewOverlayPositions, buildTreeLayoutPositions, TREE_DEPTH_STEP_PX } from './treeGraphLayout'
 import styles from './TreeGraph.module.css'
 
 const nodeTypes = {
@@ -43,7 +38,7 @@ const STRUCTURAL_EDGE_STROKE = 'var(--graph-edge-stroke)'
 const EDGE_ARROW_MARKER = { width: 15, height: 15 } as const
 
 type FlowEdgeData = {
-  kind: 'structural' | 'review-child' | 'review-return'
+  kind: 'structural' | 'review-child' | 'review-return' | 'ghost-review'
   parentId: string
 }
 
@@ -538,30 +533,12 @@ export function TreeGraph({
     return () => document.removeEventListener('keydown', handleEscape)
   }, [isFullscreen])
 
-  const layout = useMemo(
-    () =>
-      buildTreeLayoutPositions({
-        nodeById,
-        rootIds: effectiveRootIds,
-        visibleChildrenById,
-        depthBaseNodeId: graphViewRootId,
-      }),
-    [nodeById, effectiveRootIds, graphViewRootId, visibleChildrenById],
-  )
-
-  const reviewOverlayPositions = useMemo(
-    () =>
-      buildReviewOverlayPositions({
-        nodeById,
-        visibleChildrenById,
-        treePositions: layout,
-      }),
-    [layout, nodeById, visibleChildrenById],
-  )
-
   // Ghost siblings: unmaterialized pending siblings from review node manifests
   const ghostSiblingMap = useMemo(() => {
-    const map = new Map<string, { id: string; title: string; index: number }[]>()
+    const map = new Map<
+      string,
+      { id: string; title: string; index: number; objective: string }[]
+    >()
     for (const node of snapshot.tree_state.node_registry) {
       if (node.node_kind !== 'review' || !node.review_summary?.sibling_manifest) continue
       if (!node.parent_id) continue
@@ -571,6 +548,7 @@ export function TreeGraph({
           id: `ghost::${node.parent_id}::${s.index}`,
           title: s.title,
           index: s.index,
+          objective: (s.objective ?? '').trim(),
         }))
       if (pending.length > 0) {
         map.set(node.parent_id, pending)
@@ -579,14 +557,26 @@ export function TreeGraph({
     return map
   }, [snapshot.tree_state.node_registry])
 
-  const ghostPositions = useMemo(
+  const { nodePositions, ghostPositions } = useMemo(
     () =>
-      buildGhostSiblingPositions({
+      buildTreeLayoutPositions({
+        nodeById,
+        rootIds: effectiveRootIds,
         visibleChildrenById,
-        treePositions: layout,
-        ghostSiblings: ghostSiblingMap,
+        depthBaseNodeId: graphViewRootId,
+        ghostSiblingsByParent: ghostSiblingMap,
       }),
-    [layout, visibleChildrenById, ghostSiblingMap],
+    [nodeById, effectiveRootIds, ghostSiblingMap, graphViewRootId, visibleChildrenById],
+  )
+
+  const reviewOverlayPositions = useMemo(
+    () =>
+      buildReviewOverlayPositions({
+        nodeById,
+        visibleChildrenById,
+        treePositions: nodePositions,
+      }),
+    [nodeById, nodePositions, visibleChildrenById],
   )
 
   const realFlowNodes = useMemo<Node<GraphNodeData>[]>(() => {
@@ -596,7 +586,7 @@ export function TreeGraph({
         id: node.node_id,
         type: 'graphNode',
         className: 'nopan',
-        position: layout.get(node.node_id) ?? { x: 0, y: node.depth * TREE_DEPTH_STEP_PX },
+        position: nodePositions.get(node.node_id) ?? { x: 0, y: node.depth * TREE_DEPTH_STEP_PX },
         draggable: false,
         selectable: false,
         data: {
@@ -623,7 +613,7 @@ export function TreeGraph({
             (activeChildrenById.get(node.node_id) ?? []).length === 0 &&
             (node.workflow?.frame_confirmed ?? false) &&
             node.workflow?.active_step === 'spec',
-          canOpenBreadcrumb: codexAvailable,
+          canOpenBreadcrumb: true,
           isSplitting: splitStatus === 'active' && splittingNodeId === node.node_id,
           isSplitDisabled: splitStatus === 'active',
           executionStatus: node.workflow?.execution_status ?? null,
@@ -636,7 +626,7 @@ export function TreeGraph({
     collapsedById,
     directHiddenChildrenById,
     graphViewRootId,
-    layout,
+    nodePositions,
     selectedNode?.node_id,
     siblingLayerIndexByNodeId,
     splitStatus,
@@ -684,7 +674,7 @@ export function TreeGraph({
           pendingSiblingCount: summary?.pending_sibling_count ?? 0,
           siblingEntries,
           reviewNodeId: isSynthetic ? null : reviewId,
-          canOpenBreadcrumb: !isSynthetic && codexAvailable,
+          canOpenBreadcrumb: !isSynthetic,
         },
       })
     }
@@ -711,6 +701,7 @@ export function TreeGraph({
             title: sibling.title,
             siblingIndex: sibling.index,
             parentHierarchicalNumber: parent.hierarchical_number,
+            objective: sibling.objective,
           },
         })
       }
@@ -830,8 +821,18 @@ export function TreeGraph({
 
     // Dashed structural edges from parent to ghost (pending) siblings
     const ghostEdges = []
+    const ghostReviewEdges = []
     for (const [parentId, siblings] of ghostSiblingMap) {
       if (!visibleSet.has(parentId)) continue
+
+      const parentRecord = nodeById.get(parentId)
+      const childIds = visibleChildrenById.get(parentId) ?? []
+      const reviewNodeId = parentRecord?.review_node_id
+      const useSynthetic = !reviewNodeId && childIds.length >= 2
+      const reviewId =
+        reviewNodeId || useSynthetic ? (reviewNodeId ?? `review::${parentId}`) : null
+      const reviewVisible = reviewId !== null && visibleSet.has(reviewId)
+
       for (const sibling of siblings) {
         if (!ghostPositions.has(sibling.id)) continue
         ghostEdges.push({
@@ -855,11 +856,48 @@ export function TreeGraph({
             opacity: 0.45,
           },
         })
+
+        if (reviewVisible && visibleSet.has(sibling.id)) {
+          ghostReviewEdges.push({
+            id: `ghost-review-${sibling.id}`,
+            source: sibling.id,
+            target: reviewId,
+            sourceHandle: 'to-review',
+            targetHandle: 'in',
+            data: {
+              kind: 'ghost-review' as const,
+              parentId,
+            },
+            type: 'straight',
+            sourcePosition: Position.Top,
+            targetPosition: Position.Bottom,
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: REVIEW_EDGE_STROKE,
+              ...EDGE_ARROW_MARKER,
+            },
+            style: {
+              stroke: REVIEW_EDGE_STROKE,
+              strokeWidth: 'var(--graph-edge-width)',
+              strokeLinecap: 'round' as const,
+              opacity: 0.55,
+            },
+          })
+        }
       }
     }
 
-    return [...structuralEdges, ...reviewEdges, ...ghostEdges]
-  }, [flowNodes, ghostSiblingMap, ghostPositions, layout, reviewOverlayPositions, snapshot.tree_state.node_registry, visibleChildrenById])
+    return [...structuralEdges, ...reviewEdges, ...ghostEdges, ...ghostReviewEdges]
+  }, [
+    flowNodes,
+    ghostPositions,
+    ghostSiblingMap,
+    nodeById,
+    nodePositions,
+    reviewOverlayPositions,
+    snapshot.tree_state.node_registry,
+    visibleChildrenById,
+  ])
 
   const fitKey = useMemo(
     () =>

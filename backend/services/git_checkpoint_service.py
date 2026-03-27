@@ -515,6 +515,17 @@ class GitCheckpointService:
             )
             return []
 
+    def get_diff(self, project_path: Path, from_sha: str, to_sha: str) -> str:
+        """Return raw unified diff between two commits.
+
+        Best-effort — raises GitCheckpointError on failure.
+        """
+        result = self._run_git(
+            ["-C", str(project_path), "diff", from_sha, to_sha],
+            cwd=project_path,
+        )
+        return result.stdout
+
     @staticmethod
     def build_commit_message(hierarchical_number: str, title: str) -> str:
         """Format: ``pt(1.2): implement auth guard`` (truncated to 72 chars)."""

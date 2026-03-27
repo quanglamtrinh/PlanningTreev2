@@ -185,7 +185,8 @@ export function BreadcrumbChatView() {
   const reviewInputRef = useRef<HTMLInputElement>(null)
 
   const canAcceptLocalReview = nodeDetailState?.can_accept_local_review === true
-  const showAcceptReview = threadTab === 'audit' && canAcceptLocalReview
+  const autoReviewStatus = nodeDetailState?.auto_review_status ?? null
+  const showAcceptReview = threadTab === 'audit' && canAcceptLocalReview && !autoReviewStatus
 
   useEffect(() => {
     if (!showAcceptReview) {

@@ -139,6 +139,8 @@ def derive_execution_workflow_fields(
 
     can_accept_local = exec_status == "review_pending"
 
+    auto_review = exec_state.get("auto_review") if isinstance(exec_state, dict) else None
+
     return {
         "execution_started": started,
         "execution_completed": completed,
@@ -149,6 +151,10 @@ def derive_execution_workflow_fields(
         "audit_writable": writable,
         "package_audit_ready": package_ready,
         "review_status": review_status,
+        "auto_review_status": auto_review.get("status") if isinstance(auto_review, dict) else None,
+        "auto_review_summary": auto_review.get("summary") if isinstance(auto_review, dict) else None,
+        "auto_review_overall_severity": auto_review.get("overall_severity") if isinstance(auto_review, dict) else None,
+        "auto_review_overall_score": auto_review.get("overall_score") if isinstance(auto_review, dict) else None,
     }
 
 
