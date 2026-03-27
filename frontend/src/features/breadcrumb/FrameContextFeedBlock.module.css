@@ -1,0 +1,115 @@
+/* ─── Outer wrapper (same max-width / padding as message rows) ──────── */
+.feedBlock {
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 36px 24px 0;
+  box-sizing: border-box;
+}
+
+/* ─── Eyebrow label at top ─────────────────────────────────────────── */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-quaternary, var(--text-tertiary));
+  margin-bottom: 24px;
+}
+
+/* ─── Per-node section ─────────────────────────────────────────────── */
+.nodeSection {
+  margin-bottom: 0;
+}
+
+.sectionDivider {
+  height: 1px;
+  background: var(--border-default);
+  margin: 28px 0;
+  opacity: 0.5;
+}
+
+/* ─── Node header ──────────────────────────────────────────────────── */
+.nodeHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.nodeHeaderCurrent {
+  /* current node header gets a slightly different look */
+}
+
+.nodeNumber {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.nodeNumberCurrent {
+  color: var(--accent-primary);
+}
+
+.nodeTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+}
+
+.nodeTitleCurrent {
+  color: var(--text-primary);
+}
+
+.currentBadge {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--accent-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 38%, transparent);
+  border-radius: 3px;
+  padding: 1px 5px;
+  background: color-mix(in srgb, var(--accent-primary) 7%, transparent);
+}
+
+/* ─── Frame content padding ────────────────────────────────────────── */
+.frameContent {
+  /* no extra indent — FrameMarkdownViewer handles its own spacing */
+}
+
+/* ─── States ───────────────────────────────────────────────────────── */
+.stateLoading {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  padding: 2px 0 8px;
+}
+
+.stateEmpty {
+  font-size: 12px;
+  color: var(--text-quaternary, var(--text-tertiary));
+  font-style: italic;
+  padding: 2px 0 8px;
+}
+
+.stateError {
+  font-size: 12px;
+  color: var(--text-error, #b91c1c);
+  padding: 2px 0 8px;
+}
+
+/* ─── Bottom separator before messages ─────────────────────────────── */
+.contextFooter {
+  height: 1px;
+  background: var(--border-default);
+  margin-top: 32px;
+  opacity: 0.6;
+}

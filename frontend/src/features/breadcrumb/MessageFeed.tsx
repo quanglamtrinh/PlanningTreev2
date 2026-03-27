@@ -221,9 +221,11 @@ const MessageFeedRow = memo(
 
 interface MessageFeedProps {
   messages: ChatMessage[]
+  prefix?: React.ReactNode
+  isLoading?: boolean
 }
 
-export function MessageFeed({ messages }: MessageFeedProps) {
+export function MessageFeed({ messages, prefix, isLoading }: MessageFeedProps) {
   const endRef = useRef<HTMLDivElement>(null)
   const prevCountRef = useRef(0)
 
@@ -243,16 +245,19 @@ export function MessageFeed({ messages }: MessageFeedProps) {
     endRef.current?.scrollIntoView({ behavior, block: 'end' })
   }, [messages.length, tail?.message_id, tail?.content, tail?.status, tail?.error, tailPartsKey])
 
-  if (messages.length === 0) {
-    return (
-      <div className={feedStyles.empty}>
-        Send a message to start the conversation
-      </div>
-    )
-  }
+  const showEmpty = !isLoading && messages.length === 0 && !prefix
 
   return (
     <div className={feedStyles.feed}>
+      {prefix}
+      {isLoading && (
+        <div className={feedStyles.loadingInFeed}>Loading…</div>
+      )}
+      {showEmpty && (
+        <div className={feedStyles.emptyInFeed}>
+          Send a message to start the conversation
+        </div>
+      )}
       {messages.map((msg) => (
         <MessageFeedRow key={msg.message_id} msg={msg} />
       ))}

@@ -7,6 +7,7 @@ import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
 import { NodeDetailCard } from '../node/NodeDetailCard'
 import { ComposerBar } from './ComposerBar'
+import { FrameContextFeedBlock } from './FrameContextFeedBlock'
 import { MessageFeed } from './MessageFeed'
 import styles from './BreadcrumbChatView.module.css'
 
@@ -269,19 +270,26 @@ export function BreadcrumbChatView() {
 
           <div className={styles.threadTabBody}>
             <>
-              {isLoading && (
-                <div className={styles.loadingState}>
-                  Loading...
-                </div>
-              )}
               {error && (
                 <div className={styles.errorBanner}>
                   {error}
                 </div>
               )}
-              {!isLoading && session && (
-                <MessageFeed messages={session.messages} />
-              )}
+              <MessageFeed
+                messages={session?.messages ?? []}
+                isLoading={isLoading}
+                prefix={
+                  threadTab === 'ask' && !isReviewNode && snapshot && projectId && nodeId
+                    ? (
+                        <FrameContextFeedBlock
+                          projectId={projectId}
+                          nodeId={nodeId}
+                          nodeRegistry={snapshot.tree_state.node_registry}
+                        />
+                      )
+                    : undefined
+                }
+              />
               {showAcceptReview && (
                 <div className={styles.acceptReviewBar} data-testid="accept-review-bar">
                   {acceptReviewError ? (
