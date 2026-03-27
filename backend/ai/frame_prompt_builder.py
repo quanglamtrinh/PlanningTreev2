@@ -82,6 +82,7 @@ def build_frame_generation_role_prefix() -> str:
 def build_frame_output_schema() -> dict[str, Any]:
     return {
         "type": "object",
+        "additionalProperties": False,
         "required": ["content"],
         "properties": {
             "content": {

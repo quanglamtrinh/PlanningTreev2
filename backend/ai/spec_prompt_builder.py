@@ -83,6 +83,7 @@ def build_spec_generation_role_prefix() -> str:
 def build_spec_output_schema() -> dict[str, Any]:
     return {
         "type": "object",
+        "additionalProperties": False,
         "required": ["content"],
         "properties": {
             "content": {

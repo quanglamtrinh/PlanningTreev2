@@ -29,6 +29,7 @@ def test_role_prefix_has_no_emit_references() -> None:
 def test_output_schema_shape() -> None:
     schema = build_frame_output_schema()
     assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
     assert "content" in schema["properties"]
     assert schema["required"] == ["content"]
 

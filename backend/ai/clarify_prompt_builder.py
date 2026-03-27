@@ -87,6 +87,7 @@ def build_clarify_generation_role_prefix() -> str:
 def build_clarify_output_schema() -> dict[str, Any]:
     return {
         "type": "object",
+        "additionalProperties": False,
         "required": ["questions"],
         "properties": {
             "questions": {
@@ -94,6 +95,7 @@ def build_clarify_output_schema() -> dict[str, Any]:
                 "description": "List of clarifying questions for the task.",
                 "items": {
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": {
                         "field_name": {
                             "type": "string",
@@ -119,6 +121,7 @@ def build_clarify_output_schema() -> dict[str, Any]:
                             "description": "2-4 concrete options for the user.",
                             "items": {
                                 "type": "object",
+                                "additionalProperties": False,
                                 "properties": {
                                     "id": {
                                         "type": "string",
@@ -149,7 +152,14 @@ def build_clarify_output_schema() -> dict[str, Any]:
                             "description": "Whether custom freeform answer is allowed.",
                         },
                     },
-                    "required": ["field_name", "question", "options"],
+                    "required": [
+                        "field_name",
+                        "question",
+                        "why_it_matters",
+                        "current_value",
+                        "options",
+                        "allow_custom",
+                    ],
                 },
             },
         },

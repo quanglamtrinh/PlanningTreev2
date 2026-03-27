@@ -42,13 +42,24 @@ def test_role_prefix_empty_list_instruction() -> None:
 def test_output_schema_shape() -> None:
     schema = build_clarify_output_schema()
     assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
     assert "questions" in schema["properties"]
     assert schema["required"] == ["questions"]
     items = schema["properties"]["questions"]["items"]
+    assert items["additionalProperties"] is False
+    assert items["required"] == [
+        "field_name",
+        "question",
+        "why_it_matters",
+        "current_value",
+        "options",
+        "allow_custom",
+    ]
     assert "field_name" in items["properties"]
     assert "question" in items["properties"]
     assert "options" in items["properties"]
     option_items = items["properties"]["options"]["items"]
+    assert option_items["additionalProperties"] is False
     assert "id" in option_items["properties"]
     assert "label" in option_items["properties"]
     assert "value" in option_items["properties"]
