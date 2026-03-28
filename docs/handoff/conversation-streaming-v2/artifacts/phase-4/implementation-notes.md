@@ -20,7 +20,8 @@ Intentional mixed-mode boundary that remains:
 - detail-state loading stays on current detail APIs
 - local-review acceptance stays on current detail APIs
 
-Follow-up items before Phase 4 can be marked complete:
+Completion/sign-off notes:
 
-- broader frontend verification pass once unrelated baseline test noise is resolved
-- screenshot/evidence capture for shell parity and reset flow
+- Phase 4 was closed after focused V2 + V1 regression verification passed and the remaining full-suite blocker was triaged.
+- The remaining `NodeDetailCard` failure was classified as legacy detail-panel baseline noise, not a hidden `/chat-v2` regression.
+- `/chat-v2` is now the intended rehearsal surface for Phase 5.

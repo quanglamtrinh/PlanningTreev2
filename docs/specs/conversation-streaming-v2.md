@@ -1,6 +1,6 @@
 # Conversation Streaming V2
 
-Status: active rollout spec. Phases 0-3 are implemented and verified in the handoff tracker; Phase 4 frontend hidden breadcrumb rollout is in progress. Defines the canonical item-centric conversation model, backend/runtime contract, and frontend rendering contract for the PlanningTreeMain streaming chat rewrite.
+Status: active rollout spec. Phases 0-4 are implemented and verified in the handoff tracker; Phase 5 isolated rehearsal is next. Defines the canonical item-centric conversation model, backend/runtime contract, and frontend rendering contract for the PlanningTreeMain streaming chat rewrite.
 
 Primary rollout docs:
 
@@ -118,7 +118,7 @@ Runtime flow:
 
 ## Phase 4 Frontend Rollout Notes
 
-Phase 4 introduces a hidden `/chat-v2` route instead of immediately replacing the default `/chat` surface.
+Phase 4 introduced a hidden `/chat-v2` route instead of immediately replacing the default `/chat` surface.
 
 Phase 4 frontend constraints:
 
@@ -127,6 +127,7 @@ Phase 4 frontend constraints:
 - hidden path must preserve breadcrumb shell parity, not just thread rendering parity
 - hidden path must implement V1-equivalent stale guards for snapshot loads, sends, resets, reconnects, and SSE handling
 - reset convergence must happen through `thread.reset` plus `thread.snapshot`, or an explicit V2 snapshot reload when the stream is unhealthy
+- the hidden frontend rollout is now the Phase 5 rehearsal surface
 
 ## Canonical Types
 

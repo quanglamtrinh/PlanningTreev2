@@ -1,6 +1,6 @@
 # Conversation Streaming V2 Rollout Plan
 
-Status: active rollout handoff. Phases 0 through 3 are completed, and Phase 4 frontend V2 is now in progress as a hidden `/chat-v2` breadcrumb rollout.
+Status: active rollout handoff. Phases 0 through 4 are completed, and Phase 5 isolated rehearsal is the next rollout phase.
 
 Primary specs:
 
@@ -41,9 +41,10 @@ Tracking artifacts:
 - Phase 1 is completed and verified
 - Phase 2 backend core is completed and verified through focused unit plus integration coverage plus fixture replay
 - Phase 3 consumer migration and audit-writer migration is completed and verified through focused backend plus integration coverage and code-search evidence
-- Phase 4 is now the active implementation phase and is landing the hidden `/chat-v2` breadcrumb surface on top of the V2 backend
+- Phase 4 hidden frontend rollout is completed and the hidden `/chat-v2` breadcrumb surface is now the rehearsal UI for the next phase
 - Phase 3 leaves two intentional mixed-mode bridges in place: lineage remains registry-first with legacy session mirroring, and audit readiness remains V2-first with explicit temporary V1 fallback
 - Phase 4 intentionally keeps one frontend mixed-mode split: conversation transport on `/chat-v2` is V2-only, while detail-state loading and local-review acceptance remain on current detail APIs
+- Phase 4 closeout includes a documented waiver for one unrelated legacy `NodeDetailCard` unit-test failure outside the hidden V2 surface
 - remaining upstream "always" guarantees are tracked in `artifacts/phase-0/open-questions.md` as non-blocking follow-up questions
 - active design source of truth is `docs/specs/conversation-streaming-v2.md`
 - phase tracker source of truth is `progress.yaml`
@@ -99,11 +100,11 @@ Each phase should update:
 - if a phase is split, each sub-PR must still preserve the exit criteria listed in the phase doc
 - do not mark a phase complete until verification and artifact updates are recorded
 
-## Phase 4 Focus
+## Phase 5 Readiness
 
-Phase 4 is not just a reducer rewrite. The hidden `/chat-v2` path must preserve the current breadcrumb experience closely enough to be a valid rehearsal surface for Phase 5 and a safe frontend base for Phase 6.
+Phase 4 delivered the hidden `/chat-v2` breadcrumb surface closely enough to serve as the rehearsal frontend for Phase 5 and the future base for Phase 6.
 
-Required Phase 4 qualities:
+Confirmed Phase 4 qualities:
 
 - hidden route parity in `Layout`
 - route-to-project selection parity
@@ -112,6 +113,12 @@ Required Phase 4 qualities:
 - local-review acceptance parity on `/chat-v2`
 - ask-thread reset parity using the V2 reset contract
 - explicit stale-request and stale-SSE guards in the V2 store
+
+Phase 5 may now assume:
+
+- `/chat-v2` is the frontend rehearsal surface
+- conversation transport there is V2-only
+- detail-state loading and local-review acceptance remain side-channel by design at this boundary
 
 ## Cutover Definition
 

@@ -1,6 +1,6 @@
 # Phase 4: Frontend V2 Hidden Breadcrumb Surface
 
-Status: in progress.
+Status: completed.
 
 ## Goal
 
@@ -98,9 +98,9 @@ Required guard behavior:
 - do not use `semanticMapper.ts` or `SemanticBlocks.tsx` on the hidden path
 - working indicator derives from `processingState + activeTurnId`
 
-## Current Implementation Snapshot
+## Landed Summary
 
-The following Phase 4 slices are now landed:
+The following Phase 4 slices are landed and treated as complete for rollout purposes:
 
 - hidden `/chat-v2` route in `frontend/src/App.tsx`
 - breadcrumb route parity in `frontend/src/components/Layout.tsx`
@@ -113,6 +113,8 @@ The following Phase 4 slices are now landed:
 - local-review acceptance parity on `/chat-v2`
 - project-global V2 workflow bridge hook
 - focused unit and route tests for the new path
+
+Phase 4 is closed as a hidden-rollout frontend phase. `/chat-v2` is now the rehearsal surface for Phase 5, while `/chat` remains the default V1 route.
 
 ## File Targets
 
@@ -129,9 +131,9 @@ The following Phase 4 slices are now landed:
 - `frontend/tests/unit/BreadcrumbChatViewV2.test.tsx`
 - `frontend/tests/unit/Layout.test.tsx`
 
-## Verification
+## Final Verification
 
-Required verification for this phase:
+Required verification for this phase was:
 
 - reducer tests for snapshot, upsert, patch, missing-item mismatch, and `outputFilesReplace`
 - store tests for load, send, stale-load ignore, and stream wiring
@@ -139,12 +141,30 @@ Required verification for this phase:
 - V1 regression tests for `Layout`, `BreadcrumbChatView`, and `chat-store`
 - frontend `typecheck`
 
-Latest focused verification:
+Focused verification completed on 2026-03-28:
 
 - `npm run typecheck`
 - `npx vitest run tests/unit/applyThreadEvent.test.ts tests/unit/threadStoreV2.test.ts tests/unit/BreadcrumbChatViewV2.test.tsx tests/unit/Layout.test.tsx tests/unit/BreadcrumbChatView.test.tsx tests/unit/chat-store.test.ts`
 
-Note: the broader frontend unit suite still contains an unrelated pre-existing failure in `tests/unit/NodeDetailCard.test.tsx` around the `Execution Complete` assertion. Phase 4 work was validated against the focused V2 and V1 regression set above.
+Results:
+
+- frontend typecheck passed
+- focused V2 + V1 regression suite passed: 6 files, 47 tests
+- full frontend unit suite failed in exactly one unrelated legacy detail-panel test:
+  - `tests/unit/NodeDetailCard.test.tsx > NodeDetailCard > shows execution lifecycle badge separately from coarse node status`
+  - failing assertion expects `Execution Complete`
+
+Blocker triage disposition:
+
+- the failure reproduces entirely inside the legacy `NodeDetailCard` graph/detail path
+- the failing DOM does not involve hidden `/chat-v2`, V2 conversation items, or V2 store/router code
+- `frontend/src/features/node/NodeDetailCard.tsx` does not depend on the V2 conversation stack
+- this is treated as unrelated baseline noise and is waived for Phase 4 closeout
+
+Smoke evidence:
+
+- executable route/view evidence is recorded in `tests/unit/BreadcrumbChatViewV2.test.tsx`, `tests/unit/Layout.test.tsx`, and `tests/unit/threadStoreV2.test.ts`
+- supporting notes, route-access instructions, and checklist coverage are recorded in `docs/handoff/conversation-streaming-v2/artifacts/phase-4/smoke-checklist.md`
 
 ## Exit Criteria
 
@@ -156,8 +176,20 @@ Note: the broader frontend unit suite still contains an unrelated pre-existing f
 - local-review acceptance parity is preserved on `/chat-v2`
 - V1 route remains isolated and unchanged by default
 
+All exit criteria above are satisfied for Phase 4 closeout.
+
+## Phase 5 Handoff
+
+Phase 5 can assume:
+
+- `/chat-v2` is the rehearsal frontend surface
+- conversation transport is V2-only on the hidden path
+- detail-state loading and local-review acceptance remain side-channel by design at this phase boundary
+- no additional Phase 4 feature work is expected unless rehearsal finds a real parity regression
+
 ## Artifacts To Produce
 
 - `docs/handoff/conversation-streaming-v2/artifacts/phase-4/README.md`
 - `docs/handoff/conversation-streaming-v2/artifacts/phase-4/implementation-notes.md`
 - `docs/handoff/conversation-streaming-v2/artifacts/phase-4/verification-notes.md`
+- `docs/handoff/conversation-streaming-v2/artifacts/phase-4/smoke-checklist.md`

@@ -15,3 +15,4 @@ Current files:
 
 - `implementation-notes.md`
 - `verification-notes.md`
+- `smoke-checklist.md`
