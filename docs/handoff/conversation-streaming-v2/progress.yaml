@@ -1,0 +1,209 @@
+migration_id: conversation_streaming_v2
+status: planning
+current_phase: null
+next_phase: 0
+
+references:
+  specs:
+    - docs/specs/conversation-streaming-v2.md
+    - docs/specs/type-contracts-v2.md
+  plan_doc: docs/handoff/conversation-streaming-v2/README.md
+
+locked_decisions:
+  - id: canonical_backend_snapshot
+    status: locked
+    decision: backend transcript source of truth is ThreadSnapshotV2
+  - id: canonical_frontend_items
+    status: locked
+    decision: frontend source of truth is canonical ConversationItem[]
+  - id: direct_rendering
+    status: locked
+    decision: UI renders directly from item.kind without semantic mapping
+  - id: no_message_pair
+    status: locked
+    decision: no pair-based user and assistant creation semantics exist in V2
+  - id: tool_identity
+    status: locked
+    decision: upstream typed item id is canonical tool identity
+  - id: audit_bundle_cutover
+    status: locked
+    decision: execution plus the entire audit namespace cut over together before ask_planning
+  - id: metadata_sync
+    status: locked
+    decision: all metadata-bearing mutations synchronize through thread.snapshot
+  - id: file_change_final_list
+    status: locked
+    decision: fileChange authoritative final file lists use outputFilesReplace
+
+phases:
+  - phase: 0
+    name: contract_freeze_and_fixture_capture
+    status: not_started
+    depends_on: []
+    goals:
+      - freeze the canonical item schema, patch schema, API contract, and runtime contract
+      - capture raw fixtures for every required upstream event class
+      - remove field ambiguity before implementation starts
+    exit_criteria:
+      - sections 5, 6, 7, and 8 of the active spec are treated as frozen contract
+      - backend and frontend both have fixture corpora to replay against
+      - no unresolved field-level ambiguity remains for projector or reducer work
+    verification:
+      - fixture replay matrix exists
+      - contract review sign-off is recorded
+    artifacts:
+      - docs/specs/conversation-streaming-v2.md
+      - docs/handoff/conversation-streaming-v2/artifacts/
+    notes: ""
+
+  - phase: 1
+    name: codex_client_event_expansion
+    status: not_started
+    depends_on:
+      - 0
+    goals:
+      - preserve itemId on deltas
+      - surface reasoning, file-change, turn-completed, and request-resolved details
+      - make projector input lossless enough for V2
+    exit_criteria:
+      - codex_client exposes every raw field required by the V2 mapping table
+      - no critical projector path depends on guessed or missing ids
+    verification:
+      - targeted unit tests cover adapted event payloads
+    artifacts:
+      - docs/handoff/conversation-streaming-v2/phase-1-codex-client-expansion.md
+    notes: ""
+
+  - phase: 2
+    name: canonical_backend_core
+    status: not_started
+    depends_on:
+      - 1
+    goals:
+      - implement ThreadSnapshotV2, registry, projector, runtime, query, and V2 routes
+      - enforce persist-before-publish and first-frame thread.snapshot
+      - establish metadata synchronization rules in code
+    exit_criteria:
+      - replayed fixtures produce deterministic snapshots
+      - GET plus SSE does not lose events
+      - message_created does not exist in V2
+    verification:
+      - backend unit and integration coverage for projector, query, and stream open sequence
+    artifacts:
+      - docs/handoff/conversation-streaming-v2/phase-2-backend-core.md
+    notes: ""
+
+  - phase: 3
+    name: consumer_and_audit_writer_migration
+    status: not_started
+    depends_on:
+      - 2
+    goals:
+      - migrate transcript and metadata consumers behind V2 abstractions
+      - migrate immutable audit writers off V1 helper paths
+      - make thread_registry_service the only metadata writer
+    exit_criteria:
+      - no production consumer reads transcript state directly from V1 session schema where V2 abstractions exist
+      - node_detail_service and review_service no longer write audit namespace through V1 immutable append helpers
+    verification:
+      - targeted backend tests plus code search gate for legacy helper usage
+    artifacts:
+      - docs/handoff/conversation-streaming-v2/phase-3-consumer-migration.md
+    notes: ""
+
+  - phase: 4
+    name: frontend_v2
+    status: not_started
+    depends_on:
+      - 2
+    goals:
+      - implement V2 reducer, router, hydration, and renderers
+      - remove pair logic and semantic mapping from the new conversation path
+    exit_criteria:
+      - reducer applies canonical events only
+      - UI renders directly from item.kind
+      - reconnect and reload converge on the same state
+    verification:
+      - frontend unit tests plus fixture-driven rendering checks
+    artifacts:
+      - docs/handoff/conversation-streaming-v2/phase-4-frontend-v2.md
+    notes: ""
+
+  - phase: 5
+    name: isolated_execution_and_audit_rehearsal
+    status: not_started
+    depends_on:
+      - 3
+      - 4
+    goals:
+      - rehearse execution and audit bundle on isolated inputs
+      - prove tool collapse, file-change replacement, user-input resolution, and workflow bridge correctness
+      - enforce the no-V1-audit-write gate before production cutover
+    exit_criteria:
+      - rehearsal path has no production workspace side effects
+      - no production audit writer remains on V1 helper paths
+      - fileChange authoritative final lists overwrite preview lists correctly
+    verification:
+      - end-to-end rehearsal evidence and targeted integration tests
+    artifacts:
+      - docs/handoff/conversation-streaming-v2/phase-5-isolated-rehearsal.md
+    notes: ""
+
+  - phase: 6
+    name: execution_and_audit_cutover
+    status: not_started
+    depends_on:
+      - 5
+    goals:
+      - cut execution to V2
+      - cut the full audit namespace to V2
+      - enable workflow bridge in production
+    exit_criteria:
+      - execution and audit both use V2 contract end to end
+      - no audit producer writes V1 transcript state
+    verification:
+      - targeted production-like integration pass
+    artifacts:
+      - docs/handoff/conversation-streaming-v2/phase-6-execution-audit-cutover.md
+    notes: ""
+
+  - phase: 7
+    name: ask_planning_cutover
+    status: not_started
+    depends_on:
+      - 6
+    goals:
+      - move ask_planning to the same V2 runtime, reducer, and snapshot contract
+      - retire dual-read transcript logic
+    exit_criteria:
+      - all three thread roles use the V2 item model
+      - ask_planning no longer depends on V1 transcript state
+    verification:
+      - ask-planning integration and UI coverage
+    artifacts:
+      - docs/handoff/conversation-streaming-v2/phase-7-ask-planning-cutover.md
+    notes: ""
+
+  - phase: 8
+    name: hard_cutover_and_cleanup
+    status: not_started
+    depends_on:
+      - 7
+    goals:
+      - remove V1 routes, stores, mappers, and accumulators
+      - leave only the V2 conversation path in production
+    exit_criteria:
+      - no render path uses legacy content or parts
+      - no production service reads legacy session transcript schema
+      - legacy files are deleted or fail fast
+    verification:
+      - full targeted backend plus frontend regression suite
+    artifacts:
+      - docs/handoff/conversation-streaming-v2/phase-8-hard-cutover-cleanup.md
+    notes: ""
+
+update_rules:
+  - set current_phase when active implementation work begins
+  - update notes and blockers before moving any phase to blocked
+  - record verification evidence before marking a phase completed
+  - keep the active spec aligned with any accepted contract change
