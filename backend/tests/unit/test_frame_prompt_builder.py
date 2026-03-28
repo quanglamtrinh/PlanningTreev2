@@ -30,6 +30,22 @@ def test_role_prefix_supports_inherit_and_specialize_shaping_fields() -> None:
     assert "task-shaping fields" in prefix.lower()
 
 
+def test_role_prefix_preserves_relevant_unresolved_shaping_fields() -> None:
+    prefix = build_frame_generation_role_prefix()
+    assert "minimal sufficient set" in prefix.lower()
+    assert "clearly grounded" in prefix.lower()
+    assert "still not determined" in prefix.lower()
+    assert "left blank" in prefix.lower()
+
+
+def test_role_prefix_no_longer_pushes_infer_first_policy() -> None:
+    prefix = build_frame_generation_role_prefix()
+    lowered = prefix.lower()
+    assert "reasonably implied" not in lowered
+    assert "do not ask clarification questions directly" not in lowered
+    assert "produce the best frame from available information" not in lowered
+
+
 # Output schema
 
 
@@ -100,6 +116,16 @@ def test_build_prompt_with_role_prefix() -> None:
         role_prefix=prefix,
     )
     assert prompt.startswith(prefix)
+
+
+def test_build_prompt_includes_current_task_only_policy_when_using_default_prefix() -> None:
+    prompt = build_frame_generation_prompt(
+        chat_messages=[],
+        task_context={"current_node_prompt": "Test"},
+        role_prefix=build_frame_generation_role_prefix(),
+    )
+    assert "current task only" in prompt.lower()
+    assert "structured json output" in prompt.lower()
 
 
 def test_build_prompt_without_role_prefix() -> None:

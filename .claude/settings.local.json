@@ -44,7 +44,9 @@
       "Bash(npx --prefix frontend tsc --noEmit --project frontend/tsconfig.app.json)",
       "Bash(find C:/Users/Thong -path *CodexMonitor/src/features/messages* -type f \\\\\\(-name *.tsx -o -name *.ts \\\\\\))",
       "Bash(find C:/Users/Thong/CodexUI/CodexMonitor/src/features/messages -type f \\\\\\(-name *.tsx -o -name *.ts \\\\\\))",
-      "Bash(find C:/Users/Thong/PlanningTreeMain/frontend/src -maxdepth 5 -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))"
+      "Bash(find C:/Users/Thong/PlanningTreeMain/frontend/src -maxdepth 5 -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
+      "Bash(find C:UsersThongPlanningTreeMainfrontendsrc -type f \\\\\\(-name *chat* -o -name *stream* -o -name *sse* -o -name *hook* \\\\\\))",
+      "Bash(find C:UsersThongPlanningTreeMainfrontendsrc -type f \\\\\\(-name *hook* -o -name *use* \\\\\\))"
     ]
   }
 }
