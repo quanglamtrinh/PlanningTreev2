@@ -90,6 +90,56 @@ def apply_lifecycle(
     ]
 
 
+def finalize_turn(
+    snapshot: ThreadSnapshotV2,
+    *,
+    turn_id: str | None,
+    outcome: str,
+    error_item: ConversationItem | None = None,
+) -> tuple[ThreadSnapshotV2, list[dict[str, Any]]]:
+    resolved_turn_id = str(turn_id or snapshot.get("activeTurnId") or "").strip() or None
+    updated = copy_snapshot(snapshot)
+    events: list[dict[str, Any]] = []
+
+    if outcome == "waiting_user_input":
+        updated, lifecycle_events = apply_lifecycle(
+            updated,
+            state=event_types.WAITING_USER_INPUT,
+            processing_state="waiting_user_input",
+            active_turn_id=resolved_turn_id,
+        )
+        events.extend(lifecycle_events)
+        return updated, events
+
+    terminal_status = "failed" if outcome == "failed" else "completed"
+    if resolved_turn_id:
+        updated, terminal_events = _finalize_open_items(
+            updated,
+            turn_id=resolved_turn_id,
+            status=terminal_status,
+        )
+        events.extend(terminal_events)
+
+    if outcome == "failed" and error_item is not None:
+        normalized_error = copy.deepcopy(error_item)
+        if resolved_turn_id and not normalized_error.get("turnId"):
+            normalized_error["turnId"] = resolved_turn_id
+        if int(normalized_error.get("sequence") or 0) <= 0:
+            normalized_error["sequence"] = _next_sequence(updated)
+        updated, error_events = apply_error(updated, normalized_error)
+        events.extend(error_events)
+
+    lifecycle_state = event_types.TURN_FAILED if outcome == "failed" else event_types.TURN_COMPLETED
+    updated, lifecycle_events = apply_lifecycle(
+        updated,
+        state=lifecycle_state,
+        processing_state="idle",
+        active_turn_id=None,
+    )
+    events.extend(lifecycle_events)
+    return updated, events
+
+
 def apply_requested_user_input(
     snapshot: ThreadSnapshotV2,
     *,
@@ -464,48 +514,50 @@ def _apply_request_resolved(snapshot: ThreadSnapshotV2, raw_event: dict[str, Any
 def _apply_thread_status_changed(snapshot: ThreadSnapshotV2, raw_event: dict[str, Any]) -> tuple[ThreadSnapshotV2, list[dict[str, Any]]]:
     params = raw_event.get("params", {})
     status = params.get("status") if isinstance(params, dict) else {}
-    status_type = str(status.get("type") or status.get("state") or "").strip() if isinstance(status, dict) else ""
-    processing_state = snapshot.get("processingState") or "idle"
-    if status_type in {"waiting_for_user_input", "waiting_user_input"}:
+    raw_status = str(status.get("type") or status.get("state") or "").strip() if isinstance(status, dict) else ""
+    normalized_status = raw_status.lower()
+    if normalized_status in {"waiting_for_user_input", "waiting_user_input", "waitingforuserinput"}:
+        lifecycle_state = event_types.WAITING_USER_INPUT
         processing_state = "waiting_user_input"
-    elif status_type in {"running", "in_progress"}:
+    elif normalized_status in {"running", "in_progress"}:
+        lifecycle_state = event_types.TURN_STARTED
         processing_state = "running"
-    elif status_type in {"failed", "error"}:
+    elif normalized_status in {"failed", "error"}:
+        lifecycle_state = event_types.TURN_FAILED
         processing_state = "failed"
     else:
-        processing_state = "idle"
+        return snapshot, []
     return apply_lifecycle(
         snapshot,
-        state=status_type or event_types.TURN_STARTED,
+        state=lifecycle_state,
         processing_state=str(processing_state),
         active_turn_id=snapshot.get("activeTurnId"),
+        detail=raw_status or None,
     )
 
 
 def _apply_turn_completed(snapshot: ThreadSnapshotV2, raw_event: dict[str, Any]) -> tuple[ThreadSnapshotV2, list[dict[str, Any]]]:
     params = raw_event.get("params", {})
     turn_payload = params.get("turn") if isinstance(params, dict) else {}
-    turn_status = str(turn_payload.get("status") or params.get("status") or "").strip() if isinstance(turn_payload, dict) else str(params.get("status") or "").strip()
-    if turn_status in {"waiting_user_input", "waitingForUserInput"}:
-        return apply_lifecycle(
-            snapshot,
-            state=event_types.WAITING_USER_INPUT,
-            processing_state="waiting_user_input",
-            active_turn_id=snapshot.get("activeTurnId"),
-        )
-    if turn_status in {"failed", "error", "interrupted", "cancelled"}:
-        updated, events = apply_lifecycle(
-            snapshot,
-            state=event_types.TURN_FAILED,
-            processing_state="idle",
-            active_turn_id=None,
-        )
-        return updated, events
-    return apply_lifecycle(
+    raw_turn_status = (
+        str(turn_payload.get("status") or params.get("status") or "").strip()
+        if isinstance(turn_payload, dict)
+        else str(params.get("status") or "").strip()
+    )
+    normalized_status = raw_turn_status.lower()
+    turn_id = (
+        str(turn_payload.get("id") or raw_event.get("turn_id") or snapshot.get("activeTurnId") or "").strip()
+        if isinstance(turn_payload, dict)
+        else str(raw_event.get("turn_id") or snapshot.get("activeTurnId") or "").strip()
+    ) or None
+    if normalized_status in {"waiting_user_input", "waiting_for_user_input", "waitingforuserinput"}:
+        return finalize_turn(snapshot, turn_id=turn_id, outcome="waiting_user_input")
+    if normalized_status in {"failed", "error", "interrupted", "cancelled"}:
+        return finalize_turn(snapshot, turn_id=turn_id, outcome="failed")
+    return finalize_turn(
         snapshot,
-        state=event_types.TURN_COMPLETED,
-        processing_state="idle",
-        active_turn_id=None,
+        turn_id=turn_id,
+        outcome="completed",
     )
 
 
@@ -572,6 +624,33 @@ def _find_item_index(snapshot: ThreadSnapshotV2, item_id: str) -> int | None:
 
 def _next_sequence(snapshot: ThreadSnapshotV2) -> int:
     return max((int(item.get("sequence") or 0) for item in snapshot.get("items", [])), default=0) + 1
+
+
+def _finalize_open_items(
+    snapshot: ThreadSnapshotV2,
+    *,
+    turn_id: str,
+    status: str,
+) -> tuple[ThreadSnapshotV2, list[dict[str, Any]]]:
+    updated = copy_snapshot(snapshot)
+    events: list[dict[str, Any]] = []
+    for item in list(updated.get("items", [])):
+        if str(item.get("turnId") or "") != turn_id:
+            continue
+        current_status = str(item.get("status") or "").strip()
+        if current_status not in {"pending", "in_progress"}:
+            continue
+        updated, patch_events = patch_item(
+            updated,
+            str(item.get("id") or ""),
+            {
+                "kind": str(item.get("kind") or ""),
+                "status": status,
+                "updatedAt": iso_now(),
+            },
+        )
+        events.extend(patch_events)
+    return updated, events
 
 
 def _extract_output_files(raw: Any) -> list[ToolOutputFile]:

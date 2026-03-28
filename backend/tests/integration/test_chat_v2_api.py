@@ -333,6 +333,86 @@ class FakeUserInputV2CodexClient(FakeConversationV2CodexClient):
         return record
 
 
+class FakeIncompleteItemsV2CodexClient(FakeConversationV2CodexClient):
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        del prompt
+        on_raw_event = kwargs.get("on_raw_event")
+        thread_id = str(kwargs.get("thread_id") or "thread-1")
+        turn_id = str(self._turn_id_resolver() or "turn-1")
+        if callable(on_raw_event):
+            on_raw_event(
+                {
+                    "method": "item/reasoning/summaryDelta",
+                    "received_at": "2026-03-28T10:00:01Z",
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "item_id": "reason-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"delta": "thinking"},
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "turn/completed",
+                    "received_at": "2026-03-28T10:00:02Z",
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "item_id": None,
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"turn": {"id": turn_id, "status": "completed"}},
+                }
+            )
+        return {
+            "stdout": "",
+            "thread_id": thread_id,
+            "turn_id": turn_id,
+            "turn_status": "completed",
+        }
+
+
+class FailingConversationV2CodexClient(FakeConversationV2CodexClient):
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        del prompt
+        on_raw_event = kwargs.get("on_raw_event")
+        thread_id = str(kwargs.get("thread_id") or "thread-1")
+        turn_id = str(self._turn_id_resolver() or "turn-1")
+        if not callable(on_raw_event):
+            return {
+                "stdout": "",
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+                "turn_status": "completed",
+            }
+        if callable(on_raw_event):
+            on_raw_event(
+                {
+                    "method": "item/started",
+                    "received_at": "2026-03-28T10:00:01Z",
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "item_id": "msg-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"item": {"type": "agentMessage", "id": "msg-1"}},
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/agentMessage/delta",
+                    "received_at": "2026-03-28T10:00:02Z",
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "item_id": "msg-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"delta": "partial assistant output"},
+                }
+            )
+        raise RuntimeError("Simulated turn failure")
+
+
 def test_v2_get_thread_snapshot_returns_wrapped_envelope(client: TestClient, workspace_root) -> None:
     project_id, root_id = _setup_project(client, workspace_root)
     codex = FakeConversationV2CodexClient(
@@ -543,6 +623,75 @@ def test_v2_start_turn_persists_items_and_authoritative_file_list(client: TestCl
     assert file_tool["outputFiles"] == [
         {"path": "final.txt", "changeType": "updated", "summary": "final"}
     ]
+
+
+def test_v2_terminal_success_finalizes_open_items_when_upstream_omits_item_completed(
+    client: TestClient, workspace_root
+) -> None:
+    project_id, root_id = _setup_project(client, workspace_root)
+    codex = FakeIncompleteItemsV2CodexClient(
+        lambda: client.app.state.storage.chat_state_store.read_session(
+            project_id,
+            root_id,
+            thread_role="ask_planning",
+        )["active_turn_id"]
+    )
+    _set_v2_codex_client(client, codex)
+
+    response = client.post(
+        f"/v2/projects/{project_id}/nodes/{root_id}/threads/ask_planning/turns",
+        json={"text": "Finish open items"},
+    )
+
+    assert response.status_code == 200
+
+    snapshot = _wait_for_snapshot(
+        client,
+        project_id,
+        root_id,
+        "ask_planning",
+        lambda snap: snap["processingState"] == "idle" and any(item["id"] == "reason-1" for item in snap["items"]),
+    )
+
+    reasoning = next(item for item in snapshot["items"] if item["id"] == "reason-1")
+    assert reasoning["status"] == "completed"
+
+
+def test_v2_failed_turn_error_item_sorts_after_existing_items(client: TestClient, workspace_root) -> None:
+    project_id, root_id = _setup_project(client, workspace_root)
+    codex = FailingConversationV2CodexClient(
+        lambda: client.app.state.storage.chat_state_store.read_session(
+            project_id,
+            root_id,
+            thread_role="ask_planning",
+        )["active_turn_id"]
+    )
+    _set_v2_codex_client(client, codex)
+
+    response = client.post(
+        f"/v2/projects/{project_id}/nodes/{root_id}/threads/ask_planning/turns",
+        json={"text": "Fail this turn"},
+    )
+
+    assert response.status_code == 200
+
+    snapshot = _wait_for_snapshot(
+        client,
+        project_id,
+        root_id,
+        "ask_planning",
+        lambda snap: snap["processingState"] == "idle"
+        and any(item["kind"] == "error" for item in snap["items"])
+        and any(item["id"] == "msg-1" for item in snap["items"]),
+    )
+
+    assistant = next(item for item in snapshot["items"] if item["id"] == "msg-1")
+    error_item = next(item for item in snapshot["items"] if item["kind"] == "error")
+
+    assert assistant["status"] == "failed"
+    assert error_item["id"].startswith("error:")
+    assert error_item["sequence"] == max(int(item["sequence"]) for item in snapshot["items"])
+    assert snapshot["items"][-1]["id"] == error_item["id"]
 
 
 @pytest.mark.anyio

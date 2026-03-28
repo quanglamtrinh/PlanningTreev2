@@ -15,10 +15,10 @@ from backend.conversation.domain.types import (
     normalize_user_input_answer,
 )
 from backend.conversation.projector.thread_event_projector import (
-    apply_error,
     apply_lifecycle,
     apply_raw_event,
     apply_resolved_user_input,
+    finalize_turn,
     patch_item,
     upsert_item,
 )
@@ -194,39 +194,12 @@ class ThreadRuntimeService:
             thread_role,
             publish_repairs=False,
         )
-        updated = copy_snapshot(snapshot)
-        events: list[dict[str, Any]] = []
-        if outcome == "failed":
-            updated, terminal_events = self._finalize_open_items(updated, turn_id=turn_id, status="failed")
-            events.extend(terminal_events)
-            if error_item is not None:
-                updated, error_events = apply_error(updated, error_item)
-                events.extend(error_events)
-            updated, lifecycle_events = apply_lifecycle(
-                updated,
-                state=event_types.TURN_FAILED,
-                processing_state="idle",
-                active_turn_id=None,
-            )
-            events.extend(lifecycle_events)
-        elif outcome == "waiting_user_input":
-            updated, lifecycle_events = apply_lifecycle(
-                updated,
-                state=event_types.WAITING_USER_INPUT,
-                processing_state="waiting_user_input",
-                active_turn_id=turn_id,
-            )
-            events.extend(lifecycle_events)
-        else:
-            updated, terminal_events = self._finalize_open_items(updated, turn_id=turn_id, status="completed")
-            events.extend(terminal_events)
-            updated, lifecycle_events = apply_lifecycle(
-                updated,
-                state=event_types.TURN_COMPLETED,
-                processing_state="idle",
-                active_turn_id=None,
-            )
-            events.extend(lifecycle_events)
+        updated, events = finalize_turn(
+            snapshot,
+            turn_id=turn_id,
+            outcome=outcome,
+            error_item=error_item,
+        )
 
         persisted, _ = self._query_service.persist_thread_mutation(
             project_id,
@@ -405,12 +378,11 @@ class ThreadRuntimeService:
         input_text: str,
     ) -> None:
         provisional_tool_calls: dict[str, dict[str, Any]] = {}
-        saw_terminal_event = False
         final_turn_status = "completed"
         boundary_prompt_kind: str | None = None
 
         def handle_raw_event(raw_event: dict[str, Any]) -> None:
-            nonlocal saw_terminal_event, final_turn_status
+            nonlocal final_turn_status
             method = str(raw_event.get("method") or "").strip()
             if not method:
                 return
@@ -450,7 +422,6 @@ class ThreadRuntimeService:
                         provisional_tool_calls[call_id]["matched"] = True
 
             if method == "turn/completed":
-                saw_terminal_event = True
                 params = raw_event.get("params", {})
                 turn_payload = params.get("turn", {}) if isinstance(params, dict) else {}
                 raw_status = (
@@ -460,11 +431,7 @@ class ThreadRuntimeService:
                 )
                 if raw_status:
                     final_turn_status = raw_status
-                updated, provisional_events = self._finalize_unmatched_provisional_tools(
-                    updated,
-                    provisional_tool_calls,
-                )
-                events.extend(provisional_events)
+                return
 
             updated, raw_events = apply_raw_event(updated, raw_event)
             events.extend(raw_events)
@@ -502,20 +469,29 @@ class ThreadRuntimeService:
             returned_status = str(result.get("turn_status") or "").strip().lower()
             if returned_status:
                 final_turn_status = returned_status
-            if not saw_terminal_event:
-                outcome = "completed"
-                if final_turn_status in {"waiting_user_input", "waitingforuserinput"}:
-                    outcome = "waiting_user_input"
-                elif final_turn_status in {"failed", "error", "interrupted", "cancelled"}:
-                    outcome = "failed"
-                self.complete_turn(
-                    project_id=project_id,
-                    node_id=node_id,
-                    thread_role=thread_role,
-                    turn_id=turn_id,
-                    outcome=outcome,
-                )
-            waiting_for_user_input = final_turn_status in {"waiting_user_input", "waitingforuserinput"}
+            self._flush_unmatched_provisional_tools(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                provisional_tool_calls=provisional_tool_calls,
+            )
+            outcome = "completed"
+            if final_turn_status in {"waiting_user_input", "waitingforuserinput", "waiting_for_user_input"}:
+                outcome = "waiting_user_input"
+            elif final_turn_status in {"failed", "error", "interrupted", "cancelled"}:
+                outcome = "failed"
+            self.complete_turn(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                turn_id=turn_id,
+                outcome=outcome,
+            )
+            waiting_for_user_input = final_turn_status in {
+                "waiting_user_input",
+                "waitingforuserinput",
+                "waiting_for_user_input",
+            }
             if not waiting_for_user_input:
                 self._query_service.clear_legacy_turn_state(
                     project_id,
@@ -552,10 +528,23 @@ class ThreadRuntimeService:
                 exc_info=True,
             )
             try:
+                self._flush_unmatched_provisional_tools(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role=thread_role,
+                    provisional_tool_calls=provisional_tool_calls,
+                )
+                current_snapshot = self._query_service.get_thread_snapshot(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    publish_repairs=False,
+                )
                 error_item = self._build_error_item(
                     turn_id=turn_id,
                     thread_id=thread_id,
                     message=str(exc),
+                    sequence=self._next_sequence(current_snapshot),
                 )
                 final_snapshot = self.complete_turn(
                     project_id=project_id,
@@ -614,6 +603,7 @@ class ThreadRuntimeService:
         turn_id: str,
         thread_id: str,
         message: str,
+        sequence: int,
     ) -> ConversationItem:
         now = iso_now()
         return {
@@ -621,7 +611,7 @@ class ThreadRuntimeService:
             "kind": "error",
             "threadId": thread_id,
             "turnId": turn_id,
-            "sequence": 0,
+            "sequence": sequence,
             "createdAt": now,
             "updatedAt": now,
             "status": "failed",
@@ -635,32 +625,32 @@ class ThreadRuntimeService:
             "relatedItemId": None,
         }
 
-    def _finalize_open_items(
+    def _flush_unmatched_provisional_tools(
         self,
-        snapshot: ThreadSnapshotV2,
         *,
-        turn_id: str,
-        status: str,
-    ) -> tuple[ThreadSnapshotV2, list[dict[str, Any]]]:
-        updated = copy_snapshot(snapshot)
-        events: list[dict[str, Any]] = []
-        for item in list(updated.get("items", [])):
-            if str(item.get("turnId") or "") != turn_id:
-                continue
-            current_status = str(item.get("status") or "").strip()
-            if current_status not in {"pending", "in_progress"}:
-                continue
-            updated, patch_events = patch_item(
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        provisional_tool_calls: dict[str, dict[str, Any]],
+    ) -> None:
+        snapshot = self._query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=False,
+        )
+        updated, events = self._finalize_unmatched_provisional_tools(
+            snapshot,
+            provisional_tool_calls,
+        )
+        if events:
+            self._query_service.persist_thread_mutation(
+                project_id,
+                node_id,
+                thread_role,
                 updated,
-                str(item.get("id") or ""),
-                {
-                    "kind": str(item.get("kind") or ""),
-                    "status": status,
-                    "updatedAt": iso_now(),
-                },
+                events,
             )
-            events.extend(patch_events)
-        return updated, events
 
     def _finalize_unmatched_provisional_tools(
         self,

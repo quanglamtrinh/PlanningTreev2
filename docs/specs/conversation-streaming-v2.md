@@ -542,8 +542,15 @@ Raw event mapping rules:
 - `item/tool/requestUserInput` -> upsert `userInput`, persist `PendingUserInputRequest`, publish requested companion event
 - `serverRequest/resolved` -> patch `userInput` answers by `itemId`, patch ledger by `requestId`, publish resolved companion event
 - `item/tool/call` -> provisional enrichment keyed by `callId`, collapsed into typed tool item when present
-- `thread/status/changed` -> lifecycle state update, optional `status` item if user-visible
+- `thread/status/changed` -> canonical lifecycle update using the frozen enum only:
+  - `running` or `in_progress` -> `turn_started`
+  - `waiting_for_user_input`, `waiting_user_input`, or `waitingForUserInput` -> `waiting_user_input`
+  - `failed` or `error` -> `turn_failed`
+  - raw upstream status may be carried in `thread.lifecycle.detail`
+  - unknown or idle-like raw states do not widen the lifecycle enum
 - `turn/completed` -> authoritative terminal lifecycle signal
+  - success or failure must finalize still-open items for that turn
+  - `waiting_user_input` is the only terminal outcome allowed to leave turn items open
 
 Tool de-duplication rules:
 
@@ -573,6 +580,8 @@ Required invariant tests:
 - metadata-bearing mutations always emit `thread.snapshot`
 - user-input resolution always bridges `requestId` and `itemId`
 - no pair-based message assumption remains anywhere in reducer or runtime paths
+- terminal success and failure leave no `pending` or `in_progress` items behind for that turn unless the outcome is `waiting_user_input`
+- `thread.lifecycle.state` never exposes raw upstream status strings outside the frozen lifecycle enum
 
 ## Open Questions
 

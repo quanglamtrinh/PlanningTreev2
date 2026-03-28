@@ -102,7 +102,7 @@ def test_phase0_fixture_replay_builds_deterministic_snapshot() -> None:
     assert plan_item["text"] == "step 1"
     assert plan_item["status"] == "completed"
     assert reasoning["summaryText"] == "think"
-    assert reasoning["status"] == "in_progress"
+    assert reasoning["status"] == "completed"
     assert command_tool["outputText"] == "stdout"
     assert command_tool["exitCode"] == 0
     assert command_tool["status"] == "completed"
@@ -111,8 +111,24 @@ def test_phase0_fixture_replay_builds_deterministic_snapshot() -> None:
     ]
     assert file_tool["status"] == "completed"
     assert all(item["id"] != "tool-call:call-1" for item in snapshot["items"])
+    lifecycle_states = [
+        event["payload"]["state"]
+        for event in emitted
+        if event["type"] == event_types.THREAD_LIFECYCLE
+    ]
+    assert event_types.TURN_STARTED in lifecycle_states
     assert emitted[-1]["type"] == event_types.THREAD_LIFECYCLE
     assert emitted[-1]["payload"]["state"] == event_types.TURN_COMPLETED
+    assert all(
+        state
+        in {
+            event_types.TURN_STARTED,
+            event_types.WAITING_USER_INPUT,
+            event_types.TURN_COMPLETED,
+            event_types.TURN_FAILED,
+        }
+        for state in lifecycle_states
+    )
 
 
 def test_phase0_fixture_replay_waiting_user_input_and_resolution() -> None:
@@ -168,6 +184,22 @@ def test_phase0_fixture_replay_failed_turn_maps_to_turn_failed_lifecycle() -> No
         ["turn_completed_failed"],
     )
 
+    assert snapshot["processingState"] == "idle"
+    assert snapshot["activeTurnId"] is None
+    assert emitted[-1]["type"] == event_types.THREAD_LIFECYCLE
+    assert emitted[-1]["payload"]["state"] == event_types.TURN_FAILED
+
+
+def test_phase0_fixture_replay_failed_turn_finalizes_open_items() -> None:
+    entries = _load_fixture_entries()
+    snapshot, emitted = _apply_sequence(
+        _seed_snapshot(),
+        entries,
+        ["reasoning_event", "turn_completed_failed"],
+    )
+
+    reasoning = next(item for item in snapshot["items"] if item["id"] == "reason-1")
+    assert reasoning["status"] == "failed"
     assert snapshot["processingState"] == "idle"
     assert snapshot["activeTurnId"] is None
     assert emitted[-1]["type"] == event_types.THREAD_LIFECYCLE
