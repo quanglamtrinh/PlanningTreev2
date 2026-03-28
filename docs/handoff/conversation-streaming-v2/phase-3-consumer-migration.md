@@ -6,6 +6,12 @@ Status: completed on 2026-03-28.
 
 Move critical transcript, metadata, and audit-write consumers onto V2 abstractions before the execution plus audit production cutover.
 
+Mixed-mode note:
+
+- Phase 3 delivers registry-first lineage writes and V2-first audit readiness checks.
+- Phase 3 does not yet claim sole-writer metadata semantics or V2-only readiness semantics.
+- Legacy session mirroring in `thread_lineage_service.py` and the explicit temporary V1 fallback inside `execution_gating.py` remain intentional compatibility bridges until later cutover phases.
+
 ## In Scope
 
 - transcript consumers that must stop reading V1 session transcript data directly
@@ -75,15 +81,17 @@ Verification commands completed successfully:
 
 ## Exit Criteria
 
-- no production metadata consumer writes metadata outside `thread_registry_service`
+- no production metadata write path bypasses `thread_registry_service` as the first write target; legacy session mirroring remains allowed during mixed mode
 - no production audit writer remains on V1 immutable append helpers
-- critical transcript consumers no longer depend on legacy transcript schema where V2 abstraction exists
+- critical transcript consumers route through V2 abstractions where available, and audit readiness checks are V2-first with explicit temporary V1 fallback during mixed mode
 
 Exit criteria status:
 
 - satisfied: `frame_generation_service.py` no longer reads transcript messages directly
 - satisfied: production immutable audit writers no longer call `append_immutable_audit_record(...)`
 - satisfied: `thread_lineage_service.py` writes registry-first and mirrors legacy session metadata for mixed mode
+- satisfied: `execution_gating.py` checks canonical V2 audit marker items first and retains an explicit temporary V1 fallback in the same helper
+- satisfied: Phase 3 is documented as registry-first and V2-first, not yet sole-writer or V2-only
 
 ## Artifacts To Produce
 

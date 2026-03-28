@@ -41,6 +41,7 @@ Tracking artifacts:
 - Phase 1 is completed and verified
 - Phase 2 backend core is completed and verified through focused unit plus integration coverage plus fixture replay
 - Phase 3 consumer migration and audit-writer migration is completed and verified through focused backend plus integration coverage and code-search evidence
+- Phase 3 leaves two intentional mixed-mode bridges in place: lineage remains registry-first with legacy session mirroring, and audit readiness remains V2-first with explicit temporary V1 fallback
 - remaining upstream "always" guarantees are tracked in `artifacts/phase-0/open-questions.md` as non-blocking follow-up questions
 - active design source of truth is `docs/specs/conversation-streaming-v2.md`
 - phase tracker source of truth is `progress.yaml`
