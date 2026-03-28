@@ -1,6 +1,6 @@
 # Phase 2: Canonical Backend Core
 
-Status: not started.
+Status: in progress.
 
 ## Goal
 
@@ -57,12 +57,33 @@ Implement the backend core for V2 snapshots, projection, registry reconciliation
 - backend unit tests for projector, registry, request ledger, and snapshot store
 - integration tests for GET plus SSE open sequence
 
+Current verification landed:
+
+- `python -m pytest backend/tests/unit/test_conversation_v2_stores.py backend/tests/unit/test_conversation_v2_projector.py backend/tests/integration/test_chat_v2_api.py -q`
+- result: `9 passed`
+
+Current implementation landed:
+
+- V2 domain models and envelope helpers
+- V2 snapshot and registry stores under `.planningtree/conversation_v2/` and `.planningtree/thread_registry/`
+- pure projector with patch validation and `outputFilesReplace`
+- request ledger service
+- thread query service with ensure-and-read semantics and metadata synchronization
+- thread runtime service with internal turn ownership for the additive V2 path
+- additive `/v2` routes and separate V2 brokers wired in `backend/main.py`
+
 ## Exit Criteria
 
 - deterministic snapshot generation from fixtures
 - no V2 code path emits `message_created`
 - metadata-bearing mutations publish `thread.snapshot`
 - stream open sequence proves no event loss between GET and subscribe
+
+Remaining work before Phase 2 can be marked completed:
+
+- replay Phase 0 raw fixtures through the projector and record the matrix in artifacts
+- add or capture explicit verification evidence for mixed metadata repair scenarios against the real fixture corpus
+- decide whether any additional targeted route coverage is needed for reset or workflow stream before phase close-out
 
 ## Artifacts To Produce
 

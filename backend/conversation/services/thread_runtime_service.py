@@ -1,0 +1,812 @@
+from __future__ import annotations
+
+import json
+import logging
+import threading
+from typing import Any
+
+from backend.conversation.domain import events as event_types
+from backend.conversation.domain.types import (
+    ConversationItem,
+    ThreadRole,
+    ThreadSnapshotV2,
+    UserInputAnswer,
+    copy_snapshot,
+    normalize_user_input_answer,
+)
+from backend.conversation.projector.thread_event_projector import (
+    apply_error,
+    apply_lifecycle,
+    apply_raw_event,
+    apply_resolved_user_input,
+    patch_item,
+    upsert_item,
+)
+from backend.conversation.services.request_ledger_service import RequestLedgerService
+from backend.conversation.services.thread_query_service import ThreadQueryService
+from backend.errors.app_errors import ChatBackendUnavailable, ChatTurnAlreadyActive, InvalidRequest
+from backend.storage.file_utils import iso_now, new_id
+
+logger = logging.getLogger(__name__)
+
+
+class ThreadRuntimeService:
+    def __init__(
+        self,
+        *,
+        storage: Any,
+        tree_service: Any,
+        chat_service: Any,
+        codex_client: Any,
+        query_service: ThreadQueryService,
+        request_ledger_service: RequestLedgerService,
+        chat_timeout: int,
+        max_message_chars: int = 10000,
+    ) -> None:
+        self._storage = storage
+        self._tree_service = tree_service
+        self._chat_service = chat_service
+        self._codex_client = codex_client
+        self._query_service = query_service
+        self._request_ledger_service = request_ledger_service
+        self._chat_timeout = int(chat_timeout)
+        self._max_message_chars = int(max_message_chars)
+
+    def start_turn(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        text: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del metadata
+        self._chat_service._validate_thread_access(project_id, node_id, thread_role)
+        self._chat_service._check_thread_writable(project_id, node_id, thread_role)
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            raise InvalidRequest("Message text is required.")
+        if len(cleaned) > self._max_message_chars:
+            raise InvalidRequest(
+                f"Message text exceeds {self._max_message_chars} character limit."
+            )
+        if thread_role == "audit":
+            self._chat_service._maybe_start_local_review_for_audit_write(project_id, node_id)
+
+        snapshot = self._query_service.get_thread_snapshot(project_id, node_id, thread_role)
+        if snapshot.get("activeTurnId"):
+            raise ChatTurnAlreadyActive()
+        thread_id = str(snapshot.get("threadId") or "").strip()
+        if not thread_id:
+            raise ChatBackendUnavailable("V2 thread bootstrap did not return a thread id.")
+
+        turn_id = new_id("turn")
+        user_item = self._build_local_user_item(
+            snapshot=snapshot,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            text=cleaned,
+        )
+        updated = self.begin_turn(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            origin="interactive",
+            created_items=[user_item],
+            turn_id=turn_id,
+        )
+        self._append_legacy_user_message(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            turn_id=turn_id,
+            text=cleaned,
+        )
+
+        threading.Thread(
+            target=self._run_background_turn,
+            kwargs={
+                "project_id": project_id,
+                "node_id": node_id,
+                "thread_role": thread_role,
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+                "input_text": cleaned,
+            },
+            daemon=True,
+        ).start()
+
+        return {
+            "accepted": True,
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "snapshotVersion": updated["snapshotVersion"],
+            "createdItems": [user_item],
+        }
+
+    def begin_turn(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        origin: str,
+        created_items: list[ConversationItem],
+        turn_id: str | None = None,
+    ) -> ThreadSnapshotV2:
+        del origin
+        snapshot = self._query_service.get_thread_snapshot(project_id, node_id, thread_role)
+        if snapshot.get("activeTurnId"):
+            raise ChatTurnAlreadyActive()
+        resolved_turn_id = str(turn_id or new_id("turn"))
+        thread_id = str(snapshot.get("threadId") or "").strip() or None
+        updated = copy_snapshot(snapshot)
+        events: list[dict[str, Any]] = []
+        for item in created_items:
+            normalized = dict(item)
+            normalized["threadId"] = thread_id or str(item.get("threadId") or "")
+            normalized["turnId"] = resolved_turn_id
+            updated, item_events = upsert_item(updated, normalized)  # type: ignore[arg-type]
+            events.extend(item_events)
+        updated, lifecycle_events = apply_lifecycle(
+            updated,
+            state=event_types.TURN_STARTED,
+            processing_state="running",
+            active_turn_id=resolved_turn_id,
+        )
+        events.extend(lifecycle_events)
+        persisted, _ = self._query_service.persist_thread_mutation(
+            project_id,
+            node_id,
+            thread_role,
+            updated,
+            events,
+        )
+        self._query_service.sync_legacy_turn_state(
+            project_id,
+            node_id,
+            thread_role,
+            thread_id=thread_id,
+            active_turn_id=resolved_turn_id,
+        )
+        self._chat_service.register_external_live_turn(
+            project_id,
+            node_id,
+            thread_role,
+            resolved_turn_id,
+        )
+        return persisted
+
+    def complete_turn(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        turn_id: str,
+        outcome: str,
+        error_item: ConversationItem | None = None,
+    ) -> ThreadSnapshotV2:
+        snapshot = self._query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=False,
+        )
+        updated = copy_snapshot(snapshot)
+        events: list[dict[str, Any]] = []
+        if outcome == "failed":
+            updated, terminal_events = self._finalize_open_items(updated, turn_id=turn_id, status="failed")
+            events.extend(terminal_events)
+            if error_item is not None:
+                updated, error_events = apply_error(updated, error_item)
+                events.extend(error_events)
+            updated, lifecycle_events = apply_lifecycle(
+                updated,
+                state=event_types.TURN_FAILED,
+                processing_state="idle",
+                active_turn_id=None,
+            )
+            events.extend(lifecycle_events)
+        elif outcome == "waiting_user_input":
+            updated, lifecycle_events = apply_lifecycle(
+                updated,
+                state=event_types.WAITING_USER_INPUT,
+                processing_state="waiting_user_input",
+                active_turn_id=turn_id,
+            )
+            events.extend(lifecycle_events)
+        else:
+            updated, terminal_events = self._finalize_open_items(updated, turn_id=turn_id, status="completed")
+            events.extend(terminal_events)
+            updated, lifecycle_events = apply_lifecycle(
+                updated,
+                state=event_types.TURN_COMPLETED,
+                processing_state="idle",
+                active_turn_id=None,
+            )
+            events.extend(lifecycle_events)
+
+        persisted, _ = self._query_service.persist_thread_mutation(
+            project_id,
+            node_id,
+            thread_role,
+            updated,
+            events,
+        )
+        if outcome == "waiting_user_input":
+            return persisted
+        self._query_service.clear_legacy_turn_state(
+            project_id,
+            node_id,
+            thread_role,
+            thread_id=persisted.get("threadId"),
+        )
+        self._chat_service.clear_external_live_turn(project_id, node_id, thread_role, turn_id)
+        return persisted
+
+    def resolve_user_input(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        request_id: str,
+        answers: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        snapshot = self._query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=False,
+        )
+        pending = self._find_pending_request(snapshot, request_id)
+        if pending is None:
+            raise InvalidRequest(f"Unknown user-input request {request_id!r}.")
+        normalized_answers = self._normalize_answers(answers)
+        submitted_at = iso_now()
+        updated = self._request_ledger_service.submit_answers(
+            snapshot,
+            request_id=request_id,
+            answers=normalized_answers,
+        )
+        updated, submit_events = patch_item(
+            updated,
+            str(pending.get("itemId") or ""),
+            {
+                "kind": "userInput",
+                "answersReplace": normalized_answers,
+                "status": "answer_submitted",
+                "updatedAt": submitted_at,
+            },
+        )
+        self._query_service.persist_thread_mutation(
+            project_id,
+            node_id,
+            thread_role,
+            updated,
+            submit_events,
+        )
+
+        rpc_answers = {str(answer["questionId"]): answer.get("value") for answer in normalized_answers}
+        record = self._codex_client.resolve_runtime_request_user_input(
+            request_id,
+            answers=rpc_answers,
+        )
+        if record is None:
+            raise InvalidRequest(f"Unknown runtime user-input request {request_id!r}.")
+
+        resolved_at = iso_now()
+        snapshot = self._query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=False,
+        )
+        updated, resolved_events = apply_resolved_user_input(
+            snapshot,
+            request_id=request_id,
+            item_id=str(pending.get("itemId") or ""),
+            answers=normalized_answers,
+            resolved_at=resolved_at,
+        )
+        if (
+            snapshot.get("processingState") == "waiting_user_input"
+            and str(snapshot.get("activeTurnId") or "") == str(pending.get("turnId") or "")
+        ):
+            updated, lifecycle_events = apply_lifecycle(
+                updated,
+                state=event_types.TURN_COMPLETED,
+                processing_state="idle",
+                active_turn_id=None,
+            )
+            resolved_events.extend(lifecycle_events)
+        persisted, _ = self._query_service.persist_thread_mutation(
+            project_id,
+            node_id,
+            thread_role,
+            updated,
+            resolved_events,
+        )
+        if str(persisted.get("activeTurnId") or "") != str(pending.get("turnId") or ""):
+            self._query_service.clear_legacy_turn_state(
+                project_id,
+                node_id,
+                thread_role,
+                thread_id=persisted.get("threadId"),
+            )
+            turn_id = str(pending.get("turnId") or "").strip()
+            if turn_id:
+                self._chat_service.clear_external_live_turn(project_id, node_id, thread_role, turn_id)
+        return {
+            "requestId": request_id,
+            "itemId": str(pending.get("itemId") or ""),
+            "threadId": str(snapshot.get("threadId") or ""),
+            "turnId": pending.get("turnId"),
+            "status": "answer_submitted",
+            "answers": normalized_answers,
+            "submittedAt": submitted_at,
+        }
+
+    def upsert_system_message(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        item_id: str,
+        turn_id: str | None,
+        text: str,
+        tone: str = "neutral",
+        metadata: dict[str, Any] | None = None,
+    ) -> ThreadSnapshotV2:
+        snapshot = self._query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=False,
+        )
+        now = iso_now()
+        item: ConversationItem = {
+            "id": item_id,
+            "kind": "message",
+            "threadId": str(snapshot.get("threadId") or ""),
+            "turnId": turn_id,
+            "sequence": self._next_sequence(snapshot),
+            "createdAt": now,
+            "updatedAt": now,
+            "status": "completed",
+            "source": "backend",
+            "tone": tone,  # type: ignore[typeddict-item]
+            "metadata": dict(metadata or {}),
+            "role": "system",
+            "text": str(text or ""),
+            "format": "markdown",
+        }
+        updated, events = upsert_item(snapshot, item)
+        persisted, _ = self._query_service.persist_thread_mutation(
+            project_id,
+            node_id,
+            thread_role,
+            updated,
+            events,
+        )
+        return persisted
+
+    def _run_background_turn(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        thread_id: str,
+        turn_id: str,
+        input_text: str,
+    ) -> None:
+        provisional_tool_calls: dict[str, dict[str, Any]] = {}
+        saw_terminal_event = False
+        final_turn_status = "completed"
+        boundary_prompt_kind: str | None = None
+
+        def handle_raw_event(raw_event: dict[str, Any]) -> None:
+            nonlocal saw_terminal_event, final_turn_status
+            method = str(raw_event.get("method") or "").strip()
+            if not method:
+                return
+            if method == "item/tool/call":
+                call_id = str(raw_event.get("call_id") or "").strip()
+                if not call_id:
+                    return
+                params = raw_event.get("params", {})
+                provisional_tool_calls[call_id] = {
+                    "callId": call_id,
+                    "toolName": str(params.get("tool_name") or params.get("toolName") or "").strip() or None
+                    if isinstance(params, dict)
+                    else None,
+                    "arguments": params.get("arguments") if isinstance(params, dict) else {},
+                    "threadId": str(raw_event.get("thread_id") or thread_id),
+                    "turnId": str(raw_event.get("turn_id") or turn_id),
+                    "createdAt": str(raw_event.get("received_at") or iso_now()),
+                    "matched": False,
+                }
+                return
+
+            current = self._query_service.get_thread_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+                publish_repairs=False,
+            )
+            updated = current
+            events: list[dict[str, Any]] = []
+
+            if method == "item/started":
+                params = raw_event.get("params", {})
+                item = params.get("item", {}) if isinstance(params, dict) else {}
+                if isinstance(item, dict):
+                    call_id = str(item.get("callId") or item.get("call_id") or "").strip()
+                    if call_id and call_id in provisional_tool_calls:
+                        provisional_tool_calls[call_id]["matched"] = True
+
+            if method == "turn/completed":
+                saw_terminal_event = True
+                params = raw_event.get("params", {})
+                turn_payload = params.get("turn", {}) if isinstance(params, dict) else {}
+                raw_status = (
+                    str(turn_payload.get("status") or params.get("status") or "").strip().lower()
+                    if isinstance(turn_payload, dict)
+                    else str(params.get("status") or "").strip().lower()
+                )
+                if raw_status:
+                    final_turn_status = raw_status
+                updated, provisional_events = self._finalize_unmatched_provisional_tools(
+                    updated,
+                    provisional_tool_calls,
+                )
+                events.extend(provisional_events)
+
+            updated, raw_events = apply_raw_event(updated, raw_event)
+            events.extend(raw_events)
+            if events:
+                self._query_service.persist_thread_mutation(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    updated,
+                    events,
+                )
+
+        try:
+            snapshot = self._storage.project_store.load_snapshot(project_id)
+            node_by_id = self._tree_service.node_index(snapshot)
+            node = node_by_id.get(node_id)
+            workspace_root = self._chat_service._workspace_root_from_snapshot(snapshot)
+            prompt, boundary_prompt_kind = self._chat_service._build_prompt_for_turn(
+                project_id=project_id,
+                node_id=node_id,
+                turn_id=turn_id,
+                thread_role=thread_role,
+                snapshot=snapshot,
+                node=node,
+                node_by_id=node_by_id,
+                user_content=input_text,
+            )
+            result = self._codex_client.run_turn_streaming(
+                prompt,
+                thread_id=thread_id,
+                timeout_sec=self._chat_timeout,
+                cwd=workspace_root,
+                on_raw_event=handle_raw_event,
+            )
+            returned_status = str(result.get("turn_status") or "").strip().lower()
+            if returned_status:
+                final_turn_status = returned_status
+            if not saw_terminal_event:
+                outcome = "completed"
+                if final_turn_status in {"waiting_user_input", "waitingforuserinput"}:
+                    outcome = "waiting_user_input"
+                elif final_turn_status in {"failed", "error", "interrupted", "cancelled"}:
+                    outcome = "failed"
+                self.complete_turn(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role=thread_role,
+                    turn_id=turn_id,
+                    outcome=outcome,
+                )
+            waiting_for_user_input = final_turn_status in {"waiting_user_input", "waitingforuserinput"}
+            if not waiting_for_user_input:
+                self._query_service.clear_legacy_turn_state(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    thread_id=thread_id,
+                )
+                self._chat_service.clear_external_live_turn(project_id, node_id, thread_role, turn_id)
+                final_snapshot = self._query_service.get_thread_snapshot(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    publish_repairs=False,
+                )
+                self._upsert_legacy_assistant_message_from_snapshot(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role=thread_role,
+                    turn_id=turn_id,
+                    snapshot=final_snapshot,
+                    error=None if final_turn_status not in {"failed", "error", "interrupted", "cancelled"} else "Turn failed.",
+                )
+                if boundary_prompt_kind == "local_review" and thread_role == "audit":
+                    self._chat_service._mark_local_review_prompt_consumed(project_id, node_id)
+                elif boundary_prompt_kind == "package_review" and thread_role == "audit":
+                    self._chat_service._mark_package_review_prompt_consumed(project_id, node_id)
+        except Exception as exc:
+            logger.debug(
+                "V2 thread turn failed for %s/%s/%s: %s",
+                project_id,
+                node_id,
+                thread_role,
+                exc,
+                exc_info=True,
+            )
+            try:
+                error_item = self._build_error_item(
+                    turn_id=turn_id,
+                    thread_id=thread_id,
+                    message=str(exc),
+                )
+                final_snapshot = self.complete_turn(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role=thread_role,
+                    turn_id=turn_id,
+                    outcome="failed",
+                    error_item=error_item,
+                )
+                self._upsert_legacy_assistant_message_from_snapshot(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role=thread_role,
+                    turn_id=turn_id,
+                    snapshot=final_snapshot,
+                    error=str(exc),
+                )
+            finally:
+                self._query_service.clear_legacy_turn_state(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    thread_id=thread_id,
+                )
+                self._chat_service.clear_external_live_turn(project_id, node_id, thread_role, turn_id)
+
+    def _build_local_user_item(
+        self,
+        *,
+        snapshot: ThreadSnapshotV2,
+        thread_id: str,
+        turn_id: str,
+        text: str,
+    ) -> ConversationItem:
+        now = iso_now()
+        return {
+            "id": f"turn:{turn_id}:user",
+            "kind": "message",
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "sequence": self._next_sequence(snapshot),
+            "createdAt": now,
+            "updatedAt": now,
+            "status": "completed",
+            "source": "local",
+            "tone": "neutral",
+            "metadata": {},
+            "role": "user",
+            "text": text,
+            "format": "markdown",
+        }
+
+    def _build_error_item(
+        self,
+        *,
+        turn_id: str,
+        thread_id: str,
+        message: str,
+    ) -> ConversationItem:
+        now = iso_now()
+        return {
+            "id": f"error:{turn_id}",
+            "kind": "error",
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "sequence": 0,
+            "createdAt": now,
+            "updatedAt": now,
+            "status": "failed",
+            "source": "backend",
+            "tone": "danger",
+            "metadata": {},
+            "code": "conversation_turn_failed",
+            "title": "Turn failed",
+            "message": message,
+            "recoverable": True,
+            "relatedItemId": None,
+        }
+
+    def _finalize_open_items(
+        self,
+        snapshot: ThreadSnapshotV2,
+        *,
+        turn_id: str,
+        status: str,
+    ) -> tuple[ThreadSnapshotV2, list[dict[str, Any]]]:
+        updated = copy_snapshot(snapshot)
+        events: list[dict[str, Any]] = []
+        for item in list(updated.get("items", [])):
+            if str(item.get("turnId") or "") != turn_id:
+                continue
+            current_status = str(item.get("status") or "").strip()
+            if current_status not in {"pending", "in_progress"}:
+                continue
+            updated, patch_events = patch_item(
+                updated,
+                str(item.get("id") or ""),
+                {
+                    "kind": str(item.get("kind") or ""),
+                    "status": status,
+                    "updatedAt": iso_now(),
+                },
+            )
+            events.extend(patch_events)
+        return updated, events
+
+    def _finalize_unmatched_provisional_tools(
+        self,
+        snapshot: ThreadSnapshotV2,
+        provisional_tool_calls: dict[str, dict[str, Any]],
+    ) -> tuple[ThreadSnapshotV2, list[dict[str, Any]]]:
+        updated = copy_snapshot(snapshot)
+        events: list[dict[str, Any]] = []
+        for call_id, record in list(provisional_tool_calls.items()):
+            if record.get("matched"):
+                continue
+            arguments = record.get("arguments") if isinstance(record.get("arguments"), dict) else {}
+            arguments_text = json.dumps(arguments, ensure_ascii=True, sort_keys=True) if arguments else None
+            item: ConversationItem = {
+                "id": f"tool-call:{call_id}",
+                "kind": "tool",
+                "threadId": str(record.get("threadId") or snapshot.get("threadId") or ""),
+                "turnId": str(record.get("turnId") or snapshot.get("activeTurnId") or "") or None,
+                "sequence": self._next_sequence(updated),
+                "createdAt": str(record.get("createdAt") or iso_now()),
+                "updatedAt": iso_now(),
+                "status": "completed",
+                "source": "upstream",
+                "tone": "neutral",
+                "metadata": {"provisional": True},
+                "toolType": "generic",
+                "title": str(record.get("toolName") or "tool"),
+                "toolName": record.get("toolName"),
+                "callId": call_id,
+                "argumentsText": arguments_text,
+                "outputText": "",
+                "outputFiles": [],
+                "exitCode": None,
+            }
+            updated, upsert_events = upsert_item(updated, item)
+            events.extend(upsert_events)
+            provisional_tool_calls[call_id]["matched"] = True
+        return updated, events
+
+    def _normalize_answers(self, answers: list[dict[str, Any]]) -> list[UserInputAnswer]:
+        normalized_answers: list[UserInputAnswer] = []
+        for answer in answers:
+            normalized = normalize_user_input_answer(answer)
+            if normalized is not None:
+                normalized_answers.append(normalized)
+        if not normalized_answers:
+            raise InvalidRequest("answers must contain at least one valid answer.")
+        return normalized_answers
+
+    def _find_pending_request(self, snapshot: ThreadSnapshotV2, request_id: str) -> dict[str, Any] | None:
+        for pending in snapshot.get("pendingRequests", []):
+            if str(pending.get("requestId") or "") == request_id:
+                return pending
+        return None
+
+    def _append_legacy_user_message(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        turn_id: str,
+        text: str,
+    ) -> None:
+        now = iso_now()
+        with self._storage.project_lock(project_id):
+            session = self._storage.chat_state_store.read_session(
+                project_id,
+                node_id,
+                thread_role=thread_role,
+            )
+            session["messages"].append(
+                {
+                    "message_id": new_id("msg"),
+                    "role": "user",
+                    "content": text,
+                    "status": "completed",
+                    "error": None,
+                    "turn_id": turn_id,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+            self._storage.chat_state_store.write_session(
+                project_id,
+                node_id,
+                session,
+                thread_role=thread_role,
+            )
+
+    def _upsert_legacy_assistant_message_from_snapshot(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        turn_id: str,
+        snapshot: ThreadSnapshotV2,
+        error: str | None,
+    ) -> None:
+        assistant_items = [
+            item
+            for item in snapshot.get("items", [])
+            if str(item.get("kind") or "") == "message"
+            and str(item.get("role") or "") == "assistant"
+            and str(item.get("turnId") or "") == turn_id
+        ]
+        content = str(assistant_items[-1].get("text") or "") if assistant_items else ""
+        status = "error" if error else "completed"
+        now = iso_now()
+        with self._storage.project_lock(project_id):
+            session = self._storage.chat_state_store.read_session(
+                project_id,
+                node_id,
+                thread_role=thread_role,
+            )
+            target = None
+            for message in reversed(session.get("messages", [])):
+                if str(message.get("role") or "") == "assistant" and str(message.get("turn_id") or "") == turn_id:
+                    target = message
+                    break
+            if target is None:
+                session["messages"].append(
+                    {
+                        "message_id": new_id("msg"),
+                        "role": "assistant",
+                        "content": content,
+                        "status": status,
+                        "error": error,
+                        "turn_id": turn_id,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+            else:
+                target["content"] = content
+                target["status"] = status
+                target["error"] = error
+                target["updated_at"] = now
+            self._storage.chat_state_store.write_session(
+                project_id,
+                node_id,
+                session,
+                thread_role=thread_role,
+            )
+
+    @staticmethod
+    def _next_sequence(snapshot: ThreadSnapshotV2) -> int:
+        return max((int(item.get("sequence") or 0) for item in snapshot.get("items", [])), default=0) + 1

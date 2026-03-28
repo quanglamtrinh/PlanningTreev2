@@ -12,10 +12,16 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
+from backend.conversation.services.request_ledger_service import RequestLedgerService
+from backend.conversation.services.thread_query_service import ThreadQueryService
+from backend.conversation.services.thread_registry_service import ThreadRegistryService
+from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
+from backend.conversation.services.thread_transcript_builder import ThreadTranscriptBuilder
+from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.config.app_config import build_app_paths, get_chat_timeout, get_clarify_gen_timeout, get_codex_cmd, get_execution_timeout, get_frame_gen_timeout, get_max_chat_message_chars, get_port, get_spec_gen_timeout, get_split_timeout
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
-from backend.routes import bootstrap, chat, codex, nodes, projects, split
+from backend.routes import bootstrap, chat, chat_v2, codex, nodes, projects, split
 from backend.services.chat_service import ChatService
 from backend.services.codex_account_service import CodexAccountService
 from backend.services.clarify_generation_service import ClarifyGenerationService
@@ -120,6 +126,31 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service
+    thread_registry_service_v2 = ThreadRegistryService(storage.thread_registry_store)
+    request_ledger_service_v2 = RequestLedgerService()
+    conversation_event_broker_v2 = ChatEventBroker()
+    workflow_event_broker_v2 = GlobalEventBroker()
+    thread_query_service_v2 = ThreadQueryService(
+        storage=storage,
+        chat_service=chat_service,
+        codex_client=codex_client,
+        snapshot_store=storage.thread_snapshot_store_v2,
+        registry_service=thread_registry_service_v2,
+        request_ledger_service=request_ledger_service_v2,
+        thread_event_broker=conversation_event_broker_v2,
+    )
+    thread_transcript_builder_v2 = ThreadTranscriptBuilder()
+    workflow_event_publisher_v2 = WorkflowEventPublisher(workflow_event_broker_v2)
+    thread_runtime_service_v2 = ThreadRuntimeService(
+        storage=storage,
+        tree_service=tree_service,
+        chat_service=chat_service,
+        codex_client=codex_client,
+        query_service=thread_query_service_v2,
+        request_ledger_service=request_ledger_service_v2,
+        chat_timeout=get_chat_timeout(),
+        max_message_chars=get_max_chat_message_chars(),
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -173,6 +204,14 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.chat_event_broker = chat_event_broker
     app.state.review_service = review_service
     app.state.finish_task_service = finish_task_service
+    app.state.thread_registry_service_v2 = thread_registry_service_v2
+    app.state.request_ledger_service_v2 = request_ledger_service_v2
+    app.state.conversation_event_broker_v2 = conversation_event_broker_v2
+    app.state.workflow_event_broker_v2 = workflow_event_broker_v2
+    app.state.thread_query_service_v2 = thread_query_service_v2
+    app.state.thread_runtime_service_v2 = thread_runtime_service_v2
+    app.state.thread_transcript_builder_v2 = thread_transcript_builder_v2
+    app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
@@ -202,6 +241,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.include_router(nodes.router, prefix="/v1")
     app.include_router(split.router, prefix="/v1")
     app.include_router(chat.router, prefix="/v1")
+    app.include_router(chat_v2.router, prefix="/v2")
 
     if getattr(sys, "frozen", False):
         dist = Path(sys._MEIPASS) / "frontend" / "dist"  # type: ignore[attr-defined]

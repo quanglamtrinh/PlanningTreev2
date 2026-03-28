@@ -1,7 +1,7 @@
 migration_id: conversation_streaming_v2
-status: phase_0_in_progress
-current_phase: 0
-next_phase: 2
+status: phase_2_in_progress
+current_phase: 2
+next_phase: 3
 
 references:
   specs:
@@ -94,7 +94,7 @@ phases:
 
   - phase: 2
     name: canonical_backend_core
-    status: not_started
+    status: in_progress
     depends_on:
       - 1
     goals:
@@ -109,7 +109,17 @@ phases:
       - backend unit and integration coverage for projector, query, and stream open sequence
     artifacts:
       - docs/handoff/conversation-streaming-v2/phase-2-backend-core.md
-    notes: ""
+    notes: >
+      Phase 2 implementation landed on 2026-03-28. The backend now includes
+      canonical V2 domain types, thread snapshot and registry stores, a pure
+      projector, request ledger behavior, shared runtime and query services,
+      separate V2 conversation and workflow brokers, and additive `/v2` routes
+      with wrapped `ok/data` or `ok/error` envelopes. Focused verification
+      passed for V2 stores, patch semantics, first-frame `thread.snapshot`,
+      start-turn flow, authoritative `outputFilesReplace`, wrapped stream
+      mismatch errors, and user-input resolution through the V2 route surface.
+      Remaining Phase 2 close-out work is fixture-driven replay against the
+      Phase 0 corpus and artifact completion for replay evidence.
 
   - phase: 3
     name: consumer_and_audit_writer_migration
