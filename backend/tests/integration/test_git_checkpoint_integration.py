@@ -113,6 +113,13 @@ def _set_codex(client: TestClient, codex):
     client.app.state.thread_lineage_service._codex_client = codex
 
 
+def _set_temp_global_git_identity(monkeypatch, workspace_root: Path) -> None:
+    """Provide a per-test global git identity without touching the user's config."""
+    gitconfig = workspace_root.parent / ".test-global-gitconfig"
+    gitconfig.write_text("[user]\n\tname = Test\n\temail = t@t.com\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -256,7 +263,7 @@ def test_init_blocks_nested_repo(client: TestClient, tmp_path):
     assert "inside" in init_resp.json()["message"].lower()
 
 
-def test_init_git_success(client: TestClient, workspace_root):
+def test_init_git_success(client: TestClient, workspace_root, monkeypatch):
     """git init on a fresh project -> success."""
     project_id, root_id = _setup_project(client, workspace_root)
 
@@ -265,9 +272,8 @@ def test_init_git_success(client: TestClient, workspace_root):
     project = next(p for p in projects if p["id"] == project_id)
     assert project.get("git_initialized") is False
 
-    # Configure git identity (init_repo requires it)
-    subprocess.run(["git", "config", "--global", "user.name", "Test"], check=True, capture_output=True)
-    subprocess.run(["git", "config", "--global", "user.email", "t@t.com"], check=True, capture_output=True)
+    # Configure git identity for this test only; do not mutate the real global config.
+    _set_temp_global_git_identity(monkeypatch, workspace_root)
 
     init_resp = client.post(f"/v1/projects/{project_id}/git/init")
     assert init_resp.status_code == 200
