@@ -1,7 +1,7 @@
 migration_id: conversation_streaming_v2
-status: phase_3_complete
-current_phase: null
-next_phase: 4
+status: phase_4_in_progress
+current_phase: 4
+next_phase: 5
 
 references:
   specs:
@@ -155,21 +155,34 @@ phases:
 
   - phase: 4
     name: frontend_v2
-    status: not_started
+    status: in_progress
     depends_on:
       - 2
     goals:
-      - implement V2 reducer, router, hydration, and renderers
-      - remove pair logic and semantic mapping from the new conversation path
+      - ship a hidden `/chat-v2` breadcrumb surface backed by V2 conversation transport only
+      - preserve breadcrumb shell parity, route-to-project sync, review-node layout parity, and local-review acceptance parity
+      - implement V2 reducer, router, hydration, renderers, workflow bridge, and stale-response guards
     exit_criteria:
-      - reducer applies canonical events only
-      - UI renders directly from item.kind
-      - reconnect and reload converge on the same state
+      - hidden `/chat-v2` behaves like a breadcrumb surface instead of a thread-only demo
+      - reducer applies canonical events only and ignores stale responses or stale SSE payloads
+      - UI renders directly from item.kind and does not depend on semantic mapping
+      - reset-thread exists on hidden ask-planning only when writable and converges through `thread.reset` plus `thread.snapshot`
+      - local-review acceptance parity is preserved, including tab reset to ask before `/chat-v2` sibling navigation
     verification:
-      - frontend unit tests plus fixture-driven rendering checks
+      - frontend unit and route tests plus focused V1 regression checks
     artifacts:
       - docs/handoff/conversation-streaming-v2/phase-4-frontend-v2.md
-    notes: ""
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-4/README.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-4/implementation-notes.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-4/verification-notes.md
+    notes: >
+      Started on 2026-03-28. Hidden `/chat-v2` route, V2 transport helpers,
+      V2 thread store with generation-token stale guards, direct render-by-kind
+      components, workflow bridge hook, local-review acceptance parity, and
+      ask-thread reset action are landed. Focused frontend verification passed for
+      new reducer/store/view tests plus V1 regression tests. Full unit-suite status
+      is not yet Phase-4-complete because a pre-existing unrelated `NodeDetailCard`
+      test failure remains outside the hidden V2 path scope.
 
   - phase: 5
     name: isolated_execution_and_audit_rehearsal

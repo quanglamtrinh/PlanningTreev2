@@ -105,4 +105,22 @@ describe('Layout', () => {
     expect(screen.getByText('Graph workspace stub')).toBeInTheDocument()
     expect(useUIStore.getState().activeSurface).toBe('graph')
   })
+
+  it('shows Back to Graph on hidden breadcrumb V2 route', () => {
+    render(
+      <MemoryRouter
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        initialEntries={['/projects/project-1/nodes/root/chat-v2']}
+      >
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<div>Graph workspace stub</div>} />
+            <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<div>breadcrumb chat v2</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('button', { name: 'Back to Graph' })).toBeInTheDocument()
+  })
 })

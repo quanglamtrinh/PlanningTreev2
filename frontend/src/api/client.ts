@@ -12,15 +12,19 @@ import type {
   FrameGenStatusResponse,
   NodeDocument,
   NodeDocumentKind,
+  ResetThreadV2Response,
+  ResolveUserInputV2Response,
   ProjectSummary,
   ReviewState,
   SendMessageResponse,
   Snapshot,
+  StartTurnV2Response,
   SpecGenAcceptedResponse,
   SpecGenStatusResponse,
   SplitAcceptedResponse,
   SplitMode,
   SplitStatusResponse,
+  ThreadSnapshotV2,
   ThreadRole,
 } from './types'
 
@@ -29,6 +33,16 @@ type JsonBody = Record<string, unknown> | undefined
 interface ErrorPayload {
   code?: string
   message?: string
+}
+
+interface V2SuccessEnvelope<T> {
+  ok: true
+  data: T
+}
+
+interface V2FailureEnvelope {
+  ok: false
+  error?: ErrorPayload
 }
 
 const DEFAULT_TIMEOUT_MS = 300_000
@@ -45,6 +59,27 @@ export function buildChatEventsUrl(
   threadRole?: ThreadRole,
 ): string {
   return withThreadRole(`/v1/projects/${projectId}/nodes/${nodeId}/chat/events`, threadRole)
+}
+
+function buildThreadPathV2(projectId: string, nodeId: string, threadRole: ThreadRole): string {
+  return `/v2/projects/${projectId}/nodes/${nodeId}/threads/${threadRole}`
+}
+
+export function buildThreadEventsUrlV2(
+  projectId: string,
+  nodeId: string,
+  threadRole: ThreadRole,
+  afterSnapshotVersion?: number | null,
+): string {
+  const base = `${buildThreadPathV2(projectId, nodeId, threadRole)}/events`
+  if (afterSnapshotVersion == null) {
+    return base
+  }
+  return `${base}?after_snapshot_version=${encodeURIComponent(String(afterSnapshotVersion))}`
+}
+
+export function buildProjectEventsUrlV2(projectId: string): string {
+  return `/v2/projects/${projectId}/events`
 }
 
 let _cachedAuthToken: string | null = null
@@ -140,6 +175,48 @@ async function jsonFetch<T>(path: string, init?: RequestInit, body?: JsonBody): 
     return undefined as T
   }
   return (await response.json()) as T
+}
+
+async function jsonFetchV2<T>(path: string, init?: RequestInit, body?: JsonBody): Promise<T> {
+  const authHeaders = await getElectronAuthHeaders()
+  const response = await withRequestTimeout(
+    fetch(path, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders,
+        ...(init?.headers ?? {}),
+      },
+      body: body === undefined ? init?.body : JSON.stringify(body),
+    }),
+  )
+
+  let payload: V2SuccessEnvelope<T> | V2FailureEnvelope | null = null
+  if (response.status !== 204) {
+    try {
+      payload = (await response.json()) as V2SuccessEnvelope<T> | V2FailureEnvelope
+    } catch {
+      payload = null
+    }
+  }
+
+  if (!response.ok) {
+    const errorPayload = payload && 'ok' in payload && payload.ok === false ? payload.error ?? null : null
+    throw new ApiError(response.status, errorPayload)
+  }
+
+  if (response.status === 204) {
+    return undefined as T
+  }
+
+  if (!payload || !('ok' in payload) || payload.ok !== true) {
+    throw new ApiError(response.status, {
+      code: 'invalid_v2_response',
+      message: 'The V2 API returned an unexpected response envelope.',
+    })
+  }
+
+  return payload.data
 }
 
 export const api = {
@@ -340,5 +417,51 @@ export const api = {
     target: 'initial' | 'head',
   ): Promise<{ status: string; target_sha: string; current_head_sha: string; task_present_in_current_workspace: boolean; detail_state: DetailState }> {
     return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/reset-workspace`, { method: 'POST' }, { target })
+  },
+  async getThreadSnapshotV2(
+    projectId: string,
+    nodeId: string,
+    threadRole: ThreadRole,
+  ): Promise<ThreadSnapshotV2> {
+    const response = await jsonFetchV2<{ snapshot: ThreadSnapshotV2 }>(
+      buildThreadPathV2(projectId, nodeId, threadRole),
+    )
+    return response.snapshot
+  },
+  startThreadTurnV2(
+    projectId: string,
+    nodeId: string,
+    threadRole: ThreadRole,
+    text: string,
+    metadata: Record<string, unknown> = {},
+  ): Promise<StartTurnV2Response> {
+    return jsonFetchV2<StartTurnV2Response>(
+      `${buildThreadPathV2(projectId, nodeId, threadRole)}/turns`,
+      { method: 'POST' },
+      { text, metadata },
+    )
+  },
+  resolveThreadUserInputV2(
+    projectId: string,
+    nodeId: string,
+    threadRole: ThreadRole,
+    requestId: string,
+    answers: ResolveUserInputV2Response['answers'],
+  ): Promise<ResolveUserInputV2Response> {
+    return jsonFetchV2<ResolveUserInputV2Response>(
+      `${buildThreadPathV2(projectId, nodeId, threadRole)}/requests/${requestId}/resolve`,
+      { method: 'POST' },
+      { answers },
+    )
+  },
+  resetThreadV2(
+    projectId: string,
+    nodeId: string,
+    threadRole: ThreadRole,
+  ): Promise<ResetThreadV2Response> {
+    return jsonFetchV2<ResetThreadV2Response>(
+      `${buildThreadPathV2(projectId, nodeId, threadRole)}/reset`,
+      { method: 'POST' },
+    )
   },
 }

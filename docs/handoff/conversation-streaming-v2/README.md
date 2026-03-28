@@ -1,6 +1,6 @@
 # Conversation Streaming V2 Rollout Plan
 
-Status: active rollout handoff. Phase 0, Phase 1, Phase 2, and Phase 3 are completed, and the next implementation target is Phase 4 frontend V2.
+Status: active rollout handoff. Phases 0 through 3 are completed, and Phase 4 frontend V2 is now in progress as a hidden `/chat-v2` breadcrumb rollout.
 
 Primary specs:
 
@@ -41,7 +41,9 @@ Tracking artifacts:
 - Phase 1 is completed and verified
 - Phase 2 backend core is completed and verified through focused unit plus integration coverage plus fixture replay
 - Phase 3 consumer migration and audit-writer migration is completed and verified through focused backend plus integration coverage and code-search evidence
+- Phase 4 is now the active implementation phase and is landing the hidden `/chat-v2` breadcrumb surface on top of the V2 backend
 - Phase 3 leaves two intentional mixed-mode bridges in place: lineage remains registry-first with legacy session mirroring, and audit readiness remains V2-first with explicit temporary V1 fallback
+- Phase 4 intentionally keeps one frontend mixed-mode split: conversation transport on `/chat-v2` is V2-only, while detail-state loading and local-review acceptance remain on current detail APIs
 - remaining upstream "always" guarantees are tracked in `artifacts/phase-0/open-questions.md` as non-blocking follow-up questions
 - active design source of truth is `docs/specs/conversation-streaming-v2.md`
 - phase tracker source of truth is `progress.yaml`
@@ -55,7 +57,7 @@ Phase order:
 2. Phase 1: codex client event expansion
 3. Phase 2: canonical backend core
 4. Phase 3: consumer migration and audit writer migration
-5. Phase 4: frontend V2 reducer and renderer
+5. Phase 4: frontend V2 hidden breadcrumb surface
 6. Phase 5: isolated rehearsal for execution and audit bundle
 7. Phase 6: production cutover for execution plus audit
 8. Phase 7: ask-planning cutover
@@ -66,6 +68,7 @@ Critical dependency chain:
 - Phase 0 before all other phases
 - Phase 1 before Phase 2 because projector correctness depends on upstream fields
 - Phase 2 before Phase 4 because frontend must target a frozen V2 backend contract
+- Phase 4 must preserve breadcrumb-shell parity and stale-request guards before Phase 5 rehearsal starts
 - Phase 3 and Phase 5 gates must both pass before Phase 6
 - Phase 6 before Phase 7 because execution and audit are the first production cutover bundle
 - Phase 7 before Phase 8 because the hard cleanup only happens once all thread roles are on V2
@@ -74,6 +77,7 @@ Critical dependency chain:
 
 - do not reintroduce pair-based message semantics anywhere in V2
 - do not let frontend render from `content`, `parts`, or semantic mapping output
+- do not let stale snapshot responses or stale SSE payloads mutate the V2 conversation store
 - do not let any service mutate thread lifecycle outside `thread_runtime_service`
 - do not let any production audit writer keep using V1 append helpers after Phase 5 gate
 - do not allow metadata-bearing mutations to bypass `thread.snapshot`
@@ -94,6 +98,20 @@ Each phase should update:
 - one primary PR per phase unless the phase is too large and intentionally split
 - if a phase is split, each sub-PR must still preserve the exit criteria listed in the phase doc
 - do not mark a phase complete until verification and artifact updates are recorded
+
+## Phase 4 Focus
+
+Phase 4 is not just a reducer rewrite. The hidden `/chat-v2` path must preserve the current breadcrumb experience closely enough to be a valid rehearsal surface for Phase 5 and a safe frontend base for Phase 6.
+
+Required Phase 4 qualities:
+
+- hidden route parity in `Layout`
+- route-to-project selection parity
+- review-node audit-only layout parity
+- `FrameContextFeedBlock` prefix parity for ask and audit on non-review nodes
+- local-review acceptance parity on `/chat-v2`
+- ask-thread reset parity using the V2 reset contract
+- explicit stale-request and stale-SSE guards in the V2 store
 
 ## Cutover Definition
 
