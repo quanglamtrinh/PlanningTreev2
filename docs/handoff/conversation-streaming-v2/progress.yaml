@@ -1,7 +1,7 @@
 migration_id: conversation_streaming_v2
-status: planning
-current_phase: null
-next_phase: 0
+status: phase_0_in_progress
+current_phase: 0
+next_phase: 1
 
 references:
   specs:
@@ -38,7 +38,7 @@ locked_decisions:
 phases:
   - phase: 0
     name: contract_freeze_and_fixture_capture
-    status: not_started
+    status: in_progress
     depends_on: []
     goals:
       - freeze the canonical item schema, patch schema, API contract, and runtime contract
@@ -54,7 +54,12 @@ phases:
     artifacts:
       - docs/specs/conversation-streaming-v2.md
       - docs/handoff/conversation-streaming-v2/artifacts/
-    notes: ""
+    notes: >
+      Phase 0 started on 2026-03-28. Initial starter artifacts were created under
+      docs/handoff/conversation-streaming-v2/artifacts/phase-0/, including a fixture
+      manifest template, raw event sample template, contract review checklist, and
+      open-questions log. Next step is to capture real upstream payloads and mark
+      unresolved field gaps directly in the artifact set before sign-off.
 
   - phase: 1
     name: codex_client_event_expansion

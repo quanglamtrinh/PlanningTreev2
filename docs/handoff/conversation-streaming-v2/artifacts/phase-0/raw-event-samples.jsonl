@@ -1,0 +1,20 @@
+{"event_class":"agent_message_started","upstream_method":"item/started","capture_status":"template","notes":"Replace payload with a real upstream frame for item.type=agentMessage","payload":null}
+{"event_class":"agent_message_delta","upstream_method":"item/agentMessage/delta","capture_status":"template","notes":"Must include itemId to unblock projector patching","payload":null}
+{"event_class":"agent_message_completed","upstream_method":"item/completed","capture_status":"template","notes":"Replace with terminal assistant message payload","payload":null}
+{"event_class":"plan_started","upstream_method":"item/started","capture_status":"template","notes":"Replace payload with a real upstream frame for item.type=plan","payload":null}
+{"event_class":"plan_delta","upstream_method":"item/plan/delta","capture_status":"template","notes":"Replace with plan delta payload","payload":null}
+{"event_class":"plan_completed","upstream_method":"item/completed","capture_status":"template","notes":"Replace with terminal plan payload","payload":null}
+{"event_class":"reasoning_event","upstream_method":"item/reasoning/*","capture_status":"template","notes":"Replace with one or more real reasoning frames preserving upstream identity","payload":null}
+{"event_class":"command_started","upstream_method":"item/started","capture_status":"template","notes":"Replace payload with a real upstream frame for item.type=commandExecution","payload":null}
+{"event_class":"command_output_delta","upstream_method":"item/commandExecution/outputDelta","capture_status":"template","notes":"Replace with raw command output delta payload","payload":null}
+{"event_class":"command_completed","upstream_method":"item/completed","capture_status":"template","notes":"Replace with terminal commandExecution payload including exit code if present","payload":null}
+{"event_class":"file_change_started","upstream_method":"item/started","capture_status":"template","notes":"Replace payload with a real upstream frame for item.type=fileChange","payload":null}
+{"event_class":"file_change_delta","upstream_method":"item/fileChange/outputDelta","capture_status":"template","notes":"Replace with preview file-change payload if upstream emits one","payload":null}
+{"event_class":"file_change_completed","upstream_method":"item/completed","capture_status":"template","notes":"Replace with authoritative fileChange terminal payload used for outputFilesReplace","payload":null}
+{"event_class":"raw_tool_call","upstream_method":"item/tool/call","capture_status":"template","notes":"Replace with raw tool call payload including callId and arguments","payload":null}
+{"event_class":"user_input_requested","upstream_method":"item/tool/requestUserInput","capture_status":"template","notes":"Replace with payload containing both itemId and requestId","payload":null}
+{"event_class":"user_input_resolved","upstream_method":"serverRequest/resolved","capture_status":"template","notes":"Replace with payload containing both itemId and requestId plus answers","payload":null}
+{"event_class":"thread_status_changed","upstream_method":"thread/status/changed","capture_status":"template","notes":"Replace with raw lifecycle status payload","payload":null}
+{"event_class":"turn_completed_success","upstream_method":"turn/completed","capture_status":"template","notes":"Replace with successful turn completion payload","payload":null}
+{"event_class":"turn_completed_waiting_user_input","upstream_method":"turn/completed","capture_status":"template","notes":"Replace with waiting-user-input terminal payload","payload":null}
+{"event_class":"turn_completed_failed","upstream_method":"turn/completed","capture_status":"template","notes":"Replace with failed or interrupted terminal payload","payload":null}
