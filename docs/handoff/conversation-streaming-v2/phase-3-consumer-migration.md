@@ -53,6 +53,8 @@ Audit writer targets:
 - immutable audit writer callsites in `node_detail_service.py` and `review_service.py` now write canonical V2 system messages through `ConversationSystemMessageWriter`
 - `thread_lineage_service.py` now writes lineage metadata registry-first through `ThreadRegistryService` while preserving legacy session-shaped return values to callers
 - `main.py` now wires `ThreadRegistryService` into `ThreadLineageService` and keeps `ConversationSystemMessageWriter` bound to `ThreadRuntimeService`
+- route-level integration coverage now confirms `confirm-frame`, `confirm-spec`, and accepted rollup review writes land in canonical V2 audit snapshot items through production app wiring
+- executable guard coverage now scans production Python paths to ensure `append_immutable_audit_record(...)` is not reintroduced outside the helper definition
 
 ## Checklist
 
@@ -63,7 +65,7 @@ Audit writer targets:
 - [x] migrate spec audit write path in `node_detail_service.py`
 - [x] migrate rollup package audit write path in `review_service.py`
 - [x] add tests proving audit items land in V2 snapshot items
-- [x] add code-search or static gate proving production paths no longer call `append_immutable_audit_record(...)`
+- [x] add executable guard proving production paths no longer call `append_immutable_audit_record(...)`
 
 ## Verification
 
@@ -74,7 +76,9 @@ Audit writer targets:
 Verification commands completed successfully:
 
 - `python -m pytest backend/tests/unit/test_frame_generation_service.py backend/tests/unit/test_execution_gating.py backend/tests/unit/test_node_detail_service_audit_v2.py backend/tests/unit/test_thread_lineage_service.py -q`
+- `python -m pytest backend/tests/unit/test_system_message_writer.py backend/tests/unit/test_phase3_no_legacy_audit_writer_callsites.py -q`
 - `python -m pytest backend/tests/unit/test_review_service.py -q`
+- `python -m pytest backend/tests/integration/test_node_documents_api.py -q`
 - `python -m pytest backend/tests/integration/test_review_api.py -q`
 - `python -m pytest backend/tests/unit/test_chat_service.py backend/tests/unit/test_snapshot_view_service.py -q`
 - `python -m pytest backend/tests/unit/test_clarify_generation_service.py backend/tests/unit/test_spec_generation_service.py backend/tests/unit/test_split_service.py -q`

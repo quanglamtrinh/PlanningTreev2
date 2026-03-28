@@ -32,6 +32,15 @@ IMMUTABLE_PATCH_FIELDS = {
     "requestId",
 }
 
+IMMUTABLE_UPSERT_FIELDS = {
+    "threadId",
+    "turnId",
+    "source",
+    "role",
+    "toolType",
+    "requestId",
+}
+
 
 def build_snapshot_event(snapshot: ThreadSnapshotV2) -> dict[str, Any]:
     return {"type": event_types.THREAD_SNAPSHOT, "payload": {"snapshot": snapshot}}
@@ -47,7 +56,12 @@ def upsert_item(snapshot: ThreadSnapshotV2, item: ConversationItem) -> tuple[Thr
         existing = updated["items"][existing_index]
         if str(existing.get("kind") or "") != str(normalized.get("kind") or ""):
             raise ConversationStreamMismatch()
-        updated["items"][existing_index] = normalized
+        _validate_upsert_immutable_fields(existing, normalized)
+        merged = copy.deepcopy(normalized)
+        merged["sequence"] = existing["sequence"]
+        merged["createdAt"] = existing["createdAt"]
+        updated["items"][existing_index] = merged
+        normalized = merged
     updated["items"].sort(key=lambda current: (int(current.get("sequence") or 0), str(current.get("id") or "")))
     return updated, [{"type": event_types.CONVERSATION_ITEM_UPSERT, "payload": {"item": normalized}}]
 
@@ -620,6 +634,14 @@ def _find_item_index(snapshot: ThreadSnapshotV2, item_id: str) -> int | None:
         if str(item.get("id") or "") == item_id:
             return index
     return None
+
+
+def _validate_upsert_immutable_fields(existing: ConversationItem, incoming: ConversationItem) -> None:
+    for key in IMMUTABLE_UPSERT_FIELDS:
+        if key not in existing and key not in incoming:
+            continue
+        if existing.get(key) != incoming.get(key):
+            raise ConversationStreamMismatch()
 
 
 def _next_sequence(snapshot: ThreadSnapshotV2) -> int:

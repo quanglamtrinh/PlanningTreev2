@@ -136,7 +136,7 @@ phases:
       - node_detail_service and review_service no longer write audit namespace through V1 immutable append helpers
       - no production metadata write path bypasses thread_registry_service as the first write target during mixed mode
     verification:
-      - targeted backend tests plus code search gate for legacy helper usage
+      - targeted backend tests plus executable guard for legacy helper usage
     artifacts:
       - docs/handoff/conversation-streaming-v2/phase-3-consumer-migration.md
       - docs/handoff/conversation-streaming-v2/artifacts/phase-3/consumer-migration-matrix.md
@@ -149,8 +149,9 @@ phases:
       audit snapshot items, and ThreadLineageService writes registry metadata first while
       preserving legacy session mirroring and legacy session-shaped returns for mixed-mode
       callers. This phase is registry-first and V2-first, not yet sole-writer or V2-only.
-      Focused verification passed for transcript, gating, node-detail, review, lineage,
-      chat, snapshot-view, clarify/spec, split, and review API paths.
+      Focused verification passed for transcript, gating, runtime-backed and fallback
+      audit writer paths, node-detail confirm routes, review, lineage, chat,
+      snapshot-view, clarify/spec, split, and review API paths.
 
   - phase: 4
     name: frontend_v2

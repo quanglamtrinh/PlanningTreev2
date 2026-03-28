@@ -1,5 +1,9 @@
 # Phase 3 Code-Search Evidence
 
+This artifact is supporting manual evidence only. The executable guard for this lane now lives in:
+
+- `backend/tests/unit/test_phase3_no_legacy_audit_writer_callsites.py`
+
 ## Legacy Immutable Audit Helper
 
 Command:

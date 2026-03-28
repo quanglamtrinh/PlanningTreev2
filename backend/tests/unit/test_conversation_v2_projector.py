@@ -155,3 +155,100 @@ def test_thread_status_changed_maps_to_canonical_lifecycle_state() -> None:
             },
         }
     ]
+
+
+def test_upsert_existing_item_preserves_sequence_and_created_at() -> None:
+    snapshot = default_thread_snapshot("project-1", "node-1", "audit")
+    snapshot["threadId"] = "audit-thread-1"
+    snapshot, _ = upsert_item(
+        snapshot,
+        {
+            "id": "audit-record:frame",
+            "kind": "message",
+            "threadId": "audit-thread-1",
+            "turnId": None,
+            "sequence": 3,
+            "createdAt": "2026-03-28T10:00:00Z",
+            "updatedAt": "2026-03-28T10:00:00Z",
+            "status": "completed",
+            "source": "backend",
+            "tone": "neutral",
+            "metadata": {},
+            "role": "system",
+            "text": "original",
+            "format": "markdown",
+        },
+    )
+
+    updated, events = upsert_item(
+        snapshot,
+        {
+            "id": "audit-record:frame",
+            "kind": "message",
+            "threadId": "audit-thread-1",
+            "turnId": None,
+            "sequence": 99,
+            "createdAt": "2030-01-01T00:00:00Z",
+            "updatedAt": "2026-03-28T10:05:00Z",
+            "status": "completed",
+            "source": "backend",
+            "tone": "success",
+            "metadata": {"reconfirmed": True},
+            "role": "system",
+            "text": "updated",
+            "format": "markdown",
+        },
+    )
+
+    item = updated["items"][0]
+    assert item["sequence"] == 3
+    assert item["createdAt"] == "2026-03-28T10:00:00Z"
+    assert item["updatedAt"] == "2026-03-28T10:05:00Z"
+    assert item["text"] == "updated"
+    assert events[0]["payload"]["item"]["sequence"] == 3
+    assert events[0]["payload"]["item"]["createdAt"] == "2026-03-28T10:00:00Z"
+
+
+def test_upsert_existing_item_raises_on_immutable_field_drift() -> None:
+    snapshot = default_thread_snapshot("project-1", "node-1", "audit")
+    snapshot["threadId"] = "audit-thread-1"
+    snapshot, _ = upsert_item(
+        snapshot,
+        {
+            "id": "audit-record:frame",
+            "kind": "message",
+            "threadId": "audit-thread-1",
+            "turnId": None,
+            "sequence": 1,
+            "createdAt": "2026-03-28T10:00:00Z",
+            "updatedAt": "2026-03-28T10:00:00Z",
+            "status": "completed",
+            "source": "backend",
+            "tone": "neutral",
+            "metadata": {},
+            "role": "system",
+            "text": "original",
+            "format": "markdown",
+        },
+    )
+
+    with pytest.raises(ConversationStreamMismatch):
+        upsert_item(
+            snapshot,
+            {
+                "id": "audit-record:frame",
+                "kind": "message",
+                "threadId": "audit-thread-1",
+                "turnId": "turn-1",
+                "sequence": 2,
+                "createdAt": "2026-03-28T10:01:00Z",
+                "updatedAt": "2026-03-28T10:01:00Z",
+                "status": "completed",
+                "source": "backend",
+                "tone": "neutral",
+                "metadata": {},
+                "role": "system",
+                "text": "updated",
+                "format": "markdown",
+            },
+        )
