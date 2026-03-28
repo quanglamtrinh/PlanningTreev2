@@ -6,6 +6,12 @@ Final verification completed on 2026-03-28:
 - `npx vitest run tests/unit/applyThreadEvent.test.ts tests/unit/threadStoreV2.test.ts tests/unit/BreadcrumbChatViewV2.test.tsx tests/unit/Layout.test.tsx tests/unit/BreadcrumbChatView.test.tsx tests/unit/chat-store.test.ts`
 - `npm run test:unit`
 
+Follow-up hardening verification completed on 2026-03-28 after the post-closeout findings review:
+
+- `npm run typecheck`
+- `npx vitest run tests/unit/threadStoreV2.test.ts tests/unit/BreadcrumbChatViewV2.test.tsx tests/unit/workflowEventBridge.test.tsx`
+- `npm run test:unit`
+
 What this covered:
 
 - V2 snapshot/upsert/patch reducer behavior
@@ -16,17 +22,24 @@ What this covered:
 - local-review acceptance parity on `/chat-v2`
 - Layout back-to-graph parity for hidden route
 - V1 breadcrumb and V1 chat-store regression checks
+- reset-thread visibility and header action wiring on hidden ask-planning
+- reset convergence through `thread.reset` plus `thread.snapshot`
+- `resolveUserInput` degraded-stream convergence fallback
+- workflow bridge refresh behavior for `node.workflow.updated` and `node.detail.invalidate`
+- workflow bridge reconnect behavior after stream errors
 
 Focused results:
 
 - `npm run typecheck`: passed
 - focused V2 + V1 regression suite: passed
 - focused vitest summary: 6 files, 47 tests passed
+- follow-up focused V2 hardening suite: passed
+- follow-up vitest summary: 3 files, 15 tests passed
 
 Full frontend unit suite result:
 
 - `npm run test:unit`: failed
-- failure count: 1 failed file, 1 failed test, 19 passed files, 135 passed tests
+- failure count: 1 failed file, 1 failed test, 20 passed files, 144 passed tests
 - failing test:
   - `tests/unit/NodeDetailCard.test.tsx > NodeDetailCard > shows execution lifecycle badge separately from coarse node status`
   - assertion expects `Execution Complete`
@@ -47,5 +60,9 @@ Smoke evidence summary:
 - review-node audit-only layout: covered by `BreadcrumbChatViewV2.test.tsx`
 - local-review acceptance tab reset + sibling `/chat-v2` navigation: covered by `BreadcrumbChatViewV2.test.tsx`
 - stale-target guard behavior: covered by `threadStoreV2.test.ts`
+- ask-thread reset button visibility and confirmation wiring: covered by `BreadcrumbChatViewV2.test.tsx`
+- ask-thread reset convergence through `thread.reset` plus `thread.snapshot`: covered by `threadStoreV2.test.ts`
+- `resolveUserInput` immediate reload on unhealthy stream and delayed reload fallback on degraded stream: covered by `threadStoreV2.test.ts`
+- workflow side-channel refresh and reconnect behavior: covered by `workflowEventBridge.test.tsx`
 - hidden route parity in shell chrome: covered by `Layout.test.tsx`
 - access notes for Electron/manual review: see `smoke-checklist.md`

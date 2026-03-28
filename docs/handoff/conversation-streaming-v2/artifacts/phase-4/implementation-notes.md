@@ -9,10 +9,13 @@ Landed slices:
 - V2 frontend type surface and V2 API client helpers
 - V2 thread store, event applier, and thread/workflow event parsing
 - generation-token stale guards for load/send/reset/reconnect/SSE paths
+- `resolveUserInput` convergence fallback when the thread stream is degraded or unhealthy
 - direct render-by-kind conversation components
 - hidden breadcrumb shell with prefix/detail-pane/review-layout parity
 - ask-thread reset action in header
 - local-review acceptance parity on `/chat-v2`
+- direct workflow bridge tests for refresh and reconnect behavior
+- direct reset-thread tests for button gating and stream-based convergence
 
 Intentional mixed-mode boundary that remains:
 
@@ -23,5 +26,6 @@ Intentional mixed-mode boundary that remains:
 Completion/sign-off notes:
 
 - Phase 4 was closed after focused V2 + V1 regression verification passed and the remaining full-suite blocker was triaged.
+- A post-closeout hardening pass landed to close follow-up findings around `resolveUserInput` convergence, reset coverage, and workflow bridge verification.
 - The remaining `NodeDetailCard` failure was classified as legacy detail-panel baseline noise, not a hidden `/chat-v2` regression.
 - `/chat-v2` is now the intended rehearsal surface for Phase 5.

@@ -32,9 +32,14 @@ window.dispatchEvent(new PopStateEvent('popstate'))
 - local-review acceptance on audit resets tab to ask and navigates to sibling `/chat-v2`
   - covered by `frontend/tests/unit/BreadcrumbChatViewV2.test.tsx`
 - ask-thread reset appears only when writable and converges through stream/reload semantics
-  - covered by hidden-route implementation plus focused reducer/store verification
+  - button visibility and confirm wiring covered by `frontend/tests/unit/BreadcrumbChatViewV2.test.tsx`
+  - convergence through `thread.reset` plus `thread.snapshot` covered by `frontend/tests/unit/threadStoreV2.test.ts`
+- `resolveUserInput` converges when the stream is degraded or unhealthy
+  - covered by `frontend/tests/unit/threadStoreV2.test.ts`
 - stale route/tab changes do not leak old thread state into the current target
   - covered by `frontend/tests/unit/threadStoreV2.test.ts`
+- workflow side-channel refresh for the active node
+  - covered by `frontend/tests/unit/workflowEventBridge.test.tsx`
 - breadcrumb-shell route parity for back-to-graph chrome
   - covered by `frontend/tests/unit/Layout.test.tsx`
 

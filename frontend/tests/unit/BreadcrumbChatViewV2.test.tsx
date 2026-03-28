@@ -182,6 +182,7 @@ describe('BreadcrumbChatViewV2', () => {
     expect(screen.getByTestId('breadcrumb-detail-pane')).toBeInTheDocument()
     expect(screen.getByTestId('frame-context-ask')).toBeInTheDocument()
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
+    expect(screen.queryByTestId('breadcrumb-v2-reset-thread')).not.toBeInTheDocument()
   })
 
   it('forces audit layout and hides the detail pane for review nodes', () => {
@@ -295,5 +296,69 @@ describe('BreadcrumbChatViewV2', () => {
     await waitFor(() => {
       expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
     })
+  })
+
+  it('shows reset on writable ask and calls resetThread after confirmation', async () => {
+    const resetThread = vi.fn().mockResolvedValue(undefined)
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    useProjectStore.setState({
+      activeProjectId: 'project-1',
+      snapshot: makeProjectSnapshot('original'),
+      selectedNodeId: 'root',
+      isLoadingSnapshot: false,
+      error: null,
+      loadProject: vi.fn().mockResolvedValue(undefined),
+      selectNode: vi.fn().mockResolvedValue(undefined),
+    })
+    useDetailStateStore.setState({
+      entries: {
+        'project-1::root': {
+          node_id: 'root',
+          workflow: null,
+          frame_confirmed: true,
+          frame_confirmed_revision: 1,
+          frame_revision: 1,
+          active_step: 'frame',
+          workflow_notice: null,
+          frame_needs_reconfirm: false,
+          frame_read_only: false,
+          clarify_read_only: true,
+          clarify_confirmed: false,
+          spec_read_only: true,
+          spec_stale: false,
+          spec_confirmed: false,
+          shaping_frozen: false,
+          can_accept_local_review: false,
+          execution_status: null,
+          audit_writable: true,
+        },
+      },
+      loadDetailState: vi.fn().mockResolvedValue(undefined),
+      acceptLocalReview: vi.fn(),
+    } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
+    useConversationThreadStoreV2.setState({
+      snapshot: makeConversationSnapshot(),
+      loadThread: vi.fn().mockResolvedValue(undefined),
+      sendTurn: vi.fn().mockResolvedValue(undefined),
+      resolveUserInput: vi.fn().mockResolvedValue(undefined),
+      resetThread,
+      disconnectThread: vi.fn(),
+    } as Partial<ReturnType<typeof useConversationThreadStoreV2.getState>>)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByTestId('breadcrumb-v2-reset-thread'))
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith('Reset this thread?')
+    })
+    expect(resetThread).toHaveBeenCalledTimes(1)
   })
 })

@@ -75,6 +75,7 @@ Required state rules:
 
 - only `conversation.item.upsert` and `conversation.item.patch` mutate `snapshot.items`
 - requested and resolved companion events mutate pending-request state only
+- `resolveUserInput` must converge like reset: rely on SSE when healthy, and fall back to an explicit V2 snapshot reload when the stream is degraded or unhealthy
 - patching a missing item is a mismatch path, not an implicit upsert
 - `outputFilesReplace` overwrites any preview accumulated from `outputFilesAppend`
 - no pair-based message logic exists anywhere in V2
@@ -113,6 +114,7 @@ The following Phase 4 slices are landed and treated as complete for rollout purp
 - local-review acceptance parity on `/chat-v2`
 - project-global V2 workflow bridge hook
 - focused unit and route tests for the new path
+- follow-up direct tests for reset convergence, degraded `resolveUserInput` fallback, and workflow bridge refresh or reconnect behavior
 
 Phase 4 is closed as a hidden-rollout frontend phase. `/chat-v2` is now the rehearsal surface for Phase 5, while `/chat` remains the default V1 route.
 
@@ -130,14 +132,16 @@ Phase 4 is closed as a hidden-rollout frontend phase. `/chat-v2` is now the rehe
 - `frontend/tests/unit/threadStoreV2.test.ts`
 - `frontend/tests/unit/BreadcrumbChatViewV2.test.tsx`
 - `frontend/tests/unit/Layout.test.tsx`
+- `frontend/tests/unit/workflowEventBridge.test.tsx`
 
 ## Final Verification
 
 Required verification for this phase was:
 
 - reducer tests for snapshot, upsert, patch, missing-item mismatch, and `outputFilesReplace`
-- store tests for load, send, stale-load ignore, and stream wiring
+- store tests for load, send, stale-load ignore, stream wiring, reset convergence, and degraded `resolveUserInput` fallback
 - route tests for `/chat-v2` shell parity and local-review navigation
+- workflow bridge tests for active-node refresh and reconnect behavior
 - V1 regression tests for `Layout`, `BreadcrumbChatView`, and `chat-store`
 - frontend `typecheck`
 
@@ -150,6 +154,7 @@ Results:
 
 - frontend typecheck passed
 - focused V2 + V1 regression suite passed: 6 files, 47 tests
+- follow-up focused V2 hardening suite passed: 3 files, 15 tests
 - full frontend unit suite failed in exactly one unrelated legacy detail-panel test:
   - `tests/unit/NodeDetailCard.test.tsx > NodeDetailCard > shows execution lifecycle badge separately from coarse node status`
   - failing assertion expects `Execution Complete`
@@ -164,6 +169,7 @@ Blocker triage disposition:
 Smoke evidence:
 
 - executable route/view evidence is recorded in `tests/unit/BreadcrumbChatViewV2.test.tsx`, `tests/unit/Layout.test.tsx`, and `tests/unit/threadStoreV2.test.ts`
+- workflow bridge evidence is recorded in `tests/unit/workflowEventBridge.test.tsx`
 - supporting notes, route-access instructions, and checklist coverage are recorded in `docs/handoff/conversation-streaming-v2/artifacts/phase-4/smoke-checklist.md`
 
 ## Exit Criteria

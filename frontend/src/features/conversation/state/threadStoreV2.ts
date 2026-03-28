@@ -13,6 +13,7 @@ import { parseThreadEventEnvelope } from './threadEventRouter'
 const DEFAULT_THREAD_ROLE: ThreadRole = 'ask_planning'
 const SSE_RECONNECT_RETRY_MS = 1000
 const RESET_FALLBACK_RELOAD_MS = 1500
+const USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS = 1500
 
 export type ThreadStreamStatusV2 = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'error'
 
@@ -42,6 +43,7 @@ export type ConversationThreadStoreV2State = {
 let threadEventSource: EventSource | null = null
 let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 let resetFallbackTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+const resolveFallbackTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
 let threadGeneration = 0
 
 function clearReconnectTimer() {
@@ -55,6 +57,40 @@ function clearResetFallbackTimer() {
   if (resetFallbackTimer !== null) {
     globalThis.clearTimeout(resetFallbackTimer)
     resetFallbackTimer = null
+  }
+}
+
+function clearResolveFallbackTimer(requestId: string) {
+  const timer = resolveFallbackTimers.get(requestId)
+  if (timer !== undefined) {
+    globalThis.clearTimeout(timer)
+    resolveFallbackTimers.delete(requestId)
+  }
+}
+
+function clearResolveFallbackTimers() {
+  for (const timer of resolveFallbackTimers.values()) {
+    globalThis.clearTimeout(timer)
+  }
+  resolveFallbackTimers.clear()
+}
+
+function reconcileResolveFallbackTimers(snapshot: ThreadSnapshotV2 | null) {
+  if (!snapshot) {
+    clearResolveFallbackTimers()
+    return
+  }
+
+  const answerSubmittedRequestIds = new Set(
+    snapshot.pendingRequests
+      .filter((request) => request.status === 'answer_submitted')
+      .map((request) => request.requestId),
+  )
+
+  for (const requestId of [...resolveFallbackTimers.keys()]) {
+    if (!answerSubmittedRequestIds.has(requestId)) {
+      clearResolveFallbackTimer(requestId)
+    }
   }
 }
 
@@ -80,6 +116,13 @@ function isActiveTarget(
 
 function isCurrentGeneration(generation: number) {
   return generation === threadGeneration
+}
+
+function isStreamHealthy(state: Pick<ConversationThreadStoreV2State, 'streamStatus'>) {
+  return (
+    threadEventSource !== null &&
+    (state.streamStatus === 'open' || state.streamStatus === 'connecting')
+  )
 }
 
 async function reloadThreadSnapshot(
@@ -124,6 +167,7 @@ async function reloadThreadSnapshot(
       lastSnapshotVersion: snapshot.snapshotVersion,
       streamStatus: 'connecting',
     })
+    reconcileResolveFallbackTimers(snapshot)
     openThreadEventStream(get, set, projectId, nodeId, threadRole, generation, snapshot.snapshotVersion)
   } catch (error) {
     const latestState = get()
@@ -136,6 +180,43 @@ async function reloadThreadSnapshot(
       error: error instanceof Error ? error.message : String(error),
     })
   }
+}
+
+function scheduleResolveFallbackReload(
+  get: () => ConversationThreadStoreV2State,
+  set: (
+    partial:
+      | Partial<ConversationThreadStoreV2State>
+      | ((state: ConversationThreadStoreV2State) => Partial<ConversationThreadStoreV2State>),
+  ) => void,
+  projectId: string,
+  nodeId: string,
+  threadRole: ThreadRole,
+  generation: number,
+  requestId: string,
+) {
+  clearResolveFallbackTimer(requestId)
+  const timer = globalThis.setTimeout(() => {
+    resolveFallbackTimers.delete(requestId)
+    const state = get()
+    if (!isCurrentGeneration(generation) || !isActiveTarget(state, projectId, nodeId, threadRole)) {
+      return
+    }
+
+    const pendingRequest = state.snapshot?.pendingRequests.find(
+      (request) => request.requestId === requestId,
+    )
+    if (!pendingRequest || pendingRequest.status !== 'answer_submitted') {
+      return
+    }
+
+    void reloadThreadSnapshot(get, set, projectId, nodeId, threadRole, generation, {
+      setLoading: false,
+      keepResetting: state.isResetting,
+      reason: null,
+    })
+  }, USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS)
+  resolveFallbackTimers.set(requestId, timer)
 }
 
 function scheduleStreamReopen(
@@ -252,6 +333,18 @@ function openThreadEventStream(
       throw error
     }
 
+    if (event.type === 'thread.snapshot') {
+      clearResetFallbackTimer()
+      reconcileResolveFallbackTimers(nextSnapshot)
+    } else if (event.type === 'thread.reset') {
+      clearResolveFallbackTimers()
+    } else if (event.type === 'conversation.request.user_input.resolved') {
+      clearResolveFallbackTimer(event.payload.requestId)
+      reconcileResolveFallbackTimers(nextSnapshot)
+    } else {
+      reconcileResolveFallbackTimers(nextSnapshot)
+    }
+
     set((state) => {
       if (!isCurrentGeneration(generation) || !isActiveTarget(state, projectId, nodeId, threadRole)) {
         return {}
@@ -349,6 +442,7 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
 
     clearReconnectTimer()
     clearResetFallbackTimer()
+    clearResolveFallbackTimers()
     closeThreadEventSource()
 
     const generation = ++threadGeneration
@@ -379,6 +473,7 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
         lastSnapshotVersion: snapshot.snapshotVersion,
         streamStatus: 'connecting',
       })
+      reconcileResolveFallbackTimers(snapshot)
       openThreadEventStream(get, set, projectId, nodeId, threadRole, generation, snapshot.snapshotVersion)
     } catch (error) {
       const latestState = get()
@@ -503,6 +598,30 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
           },
         }
       })
+
+      const latestState = get()
+      if (!isCurrentGeneration(generation) || !isActiveTarget(latestState, activeProjectId, activeNodeId, activeThreadRole)) {
+        return
+      }
+
+      if (!isStreamHealthy(latestState)) {
+        await reloadThreadSnapshot(get, set, activeProjectId, activeNodeId, activeThreadRole, generation, {
+          setLoading: false,
+          keepResetting: latestState.isResetting,
+          reason: null,
+        })
+        return
+      }
+
+      scheduleResolveFallbackReload(
+        get,
+        set,
+        activeProjectId,
+        activeNodeId,
+        activeThreadRole,
+        generation,
+        requestId,
+      )
     } catch (error) {
       const state = get()
       if (!isCurrentGeneration(generation) || !isActiveTarget(state, activeProjectId, activeNodeId, activeThreadRole)) {
@@ -528,8 +647,7 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
         return
       }
 
-      const streamHealthy = threadEventSource !== null && (state.streamStatus === 'open' || state.streamStatus === 'connecting')
-      if (!streamHealthy) {
+      if (!isStreamHealthy(state)) {
         await reloadThreadSnapshot(get, set, activeProjectId, activeNodeId, activeThreadRole, generation, {
           setLoading: false,
           keepResetting: false,
@@ -563,6 +681,7 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
     threadGeneration += 1
     clearReconnectTimer()
     clearResetFallbackTimer()
+    clearResolveFallbackTimers()
     closeThreadEventSource()
     set({
       snapshot: null,

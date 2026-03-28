@@ -1,5 +1,5 @@
 import { act } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -38,6 +38,10 @@ type EventSourceMockInstance = {
 
 type EventSourceMockClass = {
   instances: EventSourceMockInstance[]
+}
+
+function getEventSourceMock(): EventSourceMockClass {
+  return globalThis.EventSource as unknown as EventSourceMockClass
 }
 
 function makeSnapshot(nodeId = 'node-1', overrides: Partial<ThreadSnapshotV2> = {}): ThreadSnapshotV2 {
@@ -80,6 +84,10 @@ describe('threadStoreV2', () => {
     useConversationThreadStoreV2.getState().disconnectThread()
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('loads a V2 snapshot and opens a V2 thread stream', async () => {
     apiMock.getThreadSnapshotV2.mockResolvedValue(makeSnapshot())
 
@@ -88,7 +96,7 @@ describe('threadStoreV2', () => {
     })
 
     const state = useConversationThreadStoreV2.getState()
-    const EventSourceMock = globalThis.EventSource as unknown as EventSourceMockClass
+    const EventSourceMock = getEventSourceMock()
 
     expect(state.snapshot?.threadId).toBe('thread-node-1')
     expect(state.activeNodeId).toBe('node-1')
@@ -159,5 +167,313 @@ describe('threadStoreV2', () => {
         kind: 'message',
       }),
     )
+  })
+
+  it('reloads immediately after resolveUserInput when the stream is unhealthy', async () => {
+    apiMock.getThreadSnapshotV2
+      .mockResolvedValueOnce(
+        makeSnapshot('node-1', {
+          pendingRequests: [
+            {
+              requestId: 'req-1',
+              itemId: 'item-ui-1',
+              threadId: 'thread-node-1',
+              turnId: 'turn-1',
+              status: 'requested',
+              createdAt: '2026-03-28T00:00:00Z',
+              submittedAt: null,
+              resolvedAt: null,
+              answers: [],
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeSnapshot('node-1', {
+          snapshotVersion: 2,
+          pendingRequests: [
+            {
+              requestId: 'req-1',
+              itemId: 'item-ui-1',
+              threadId: 'thread-node-1',
+              turnId: 'turn-1',
+              status: 'answered',
+              createdAt: '2026-03-28T00:00:00Z',
+              submittedAt: '2026-03-28T00:01:00Z',
+              resolvedAt: '2026-03-28T00:01:05Z',
+              answers: [{ questionId: 'q1', value: 'a', label: 'A' }],
+            },
+          ],
+        }),
+      )
+    apiMock.resolveThreadUserInputV2.mockResolvedValue({
+      requestId: 'req-1',
+      itemId: 'item-ui-1',
+      threadId: 'thread-node-1',
+      turnId: 'turn-1',
+      status: 'answer_submitted',
+      answers: [{ questionId: 'q1', value: 'a', label: 'A' }],
+      submittedAt: '2026-03-28T00:01:00Z',
+    })
+
+    await act(async () => {
+      await useConversationThreadStoreV2.getState().loadThread('project-1', 'node-1', 'ask_planning')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitError()
+
+    await act(async () => {
+      await useConversationThreadStoreV2
+        .getState()
+        .resolveUserInput('req-1', [{ questionId: 'q1', value: 'a', label: 'A' }])
+    })
+
+    const state = useConversationThreadStoreV2.getState()
+    expect(apiMock.getThreadSnapshotV2).toHaveBeenCalledTimes(2)
+    expect(state.snapshot?.pendingRequests[0]?.status).toBe('answered')
+  })
+
+  it('reloads after resolveUserInput fallback timeout when the stream stays degraded', async () => {
+    vi.useFakeTimers()
+
+    apiMock.getThreadSnapshotV2
+      .mockResolvedValueOnce(
+        makeSnapshot('node-1', {
+          pendingRequests: [
+            {
+              requestId: 'req-1',
+              itemId: 'item-ui-1',
+              threadId: 'thread-node-1',
+              turnId: 'turn-1',
+              status: 'requested',
+              createdAt: '2026-03-28T00:00:00Z',
+              submittedAt: null,
+              resolvedAt: null,
+              answers: [],
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeSnapshot('node-1', {
+          snapshotVersion: 2,
+          pendingRequests: [
+            {
+              requestId: 'req-1',
+              itemId: 'item-ui-1',
+              threadId: 'thread-node-1',
+              turnId: 'turn-1',
+              status: 'answered',
+              createdAt: '2026-03-28T00:00:00Z',
+              submittedAt: '2026-03-28T00:01:00Z',
+              resolvedAt: '2026-03-28T00:01:05Z',
+              answers: [{ questionId: 'q1', value: 'a', label: 'A' }],
+            },
+          ],
+        }),
+      )
+    apiMock.resolveThreadUserInputV2.mockResolvedValue({
+      requestId: 'req-1',
+      itemId: 'item-ui-1',
+      threadId: 'thread-node-1',
+      turnId: 'turn-1',
+      status: 'answer_submitted',
+      answers: [{ questionId: 'q1', value: 'a', label: 'A' }],
+      submittedAt: '2026-03-28T00:01:00Z',
+    })
+
+    await act(async () => {
+      await useConversationThreadStoreV2.getState().loadThread('project-1', 'node-1', 'ask_planning')
+    })
+
+    getEventSourceMock().instances[0]?.emitOpen()
+
+    await act(async () => {
+      await useConversationThreadStoreV2
+        .getState()
+        .resolveUserInput('req-1', [{ questionId: 'q1', value: 'a', label: 'A' }])
+    })
+
+    expect(useConversationThreadStoreV2.getState().snapshot?.pendingRequests[0]?.status).toBe(
+      'answer_submitted',
+    )
+    expect(apiMock.getThreadSnapshotV2).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500)
+    })
+
+    expect(apiMock.getThreadSnapshotV2).toHaveBeenCalledTimes(2)
+    expect(useConversationThreadStoreV2.getState().snapshot?.pendingRequests[0]?.status).toBe(
+      'answered',
+    )
+  })
+
+  it('clears resolveUserInput fallback when the final resolved event arrives', async () => {
+    vi.useFakeTimers()
+
+    apiMock.getThreadSnapshotV2.mockResolvedValue(
+      makeSnapshot('node-1', {
+        pendingRequests: [
+          {
+            requestId: 'req-1',
+            itemId: 'item-ui-1',
+            threadId: 'thread-node-1',
+            turnId: 'turn-1',
+            status: 'requested',
+            createdAt: '2026-03-28T00:00:00Z',
+            submittedAt: null,
+            resolvedAt: null,
+            answers: [],
+          },
+        ],
+      }),
+    )
+    apiMock.resolveThreadUserInputV2.mockResolvedValue({
+      requestId: 'req-1',
+      itemId: 'item-ui-1',
+      threadId: 'thread-node-1',
+      turnId: 'turn-1',
+      status: 'answer_submitted',
+      answers: [{ questionId: 'q1', value: 'a', label: 'A' }],
+      submittedAt: '2026-03-28T00:01:00Z',
+    })
+
+    await act(async () => {
+      await useConversationThreadStoreV2.getState().loadThread('project-1', 'node-1', 'ask_planning')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      await useConversationThreadStoreV2
+        .getState()
+        .resolveUserInput('req-1', [{ questionId: 'q1', value: 'a', label: 'A' }])
+    })
+
+    await act(async () => {
+      eventSource.emitMessage(
+        JSON.stringify({
+          eventId: 'evt-resolved',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'ask_planning',
+          occurredAt: '2026-03-28T00:01:05Z',
+          snapshotVersion: 2,
+          type: 'conversation.request.user_input.resolved',
+          payload: {
+            requestId: 'req-1',
+            itemId: 'item-ui-1',
+            status: 'answered',
+            answers: [{ questionId: 'q1', value: 'a', label: 'A' }],
+            resolvedAt: '2026-03-28T00:01:05Z',
+          },
+        }),
+      )
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500)
+    })
+
+    expect(apiMock.getThreadSnapshotV2).toHaveBeenCalledTimes(1)
+    expect(useConversationThreadStoreV2.getState().snapshot?.pendingRequests[0]?.status).toBe(
+      'answered',
+    )
+  })
+
+  it('reloads reset immediately when the stream is unhealthy', async () => {
+    apiMock.getThreadSnapshotV2
+      .mockResolvedValueOnce(makeSnapshot())
+      .mockResolvedValueOnce(makeSnapshot('node-1', { snapshotVersion: 2 }))
+    apiMock.resetThreadV2.mockResolvedValue({
+      threadId: 'thread-node-1',
+      snapshotVersion: 2,
+    })
+
+    await act(async () => {
+      await useConversationThreadStoreV2.getState().loadThread('project-1', 'node-1', 'ask_planning')
+    })
+
+    getEventSourceMock().instances[0]?.emitError()
+
+    await act(async () => {
+      await useConversationThreadStoreV2.getState().resetThread()
+    })
+
+    expect(apiMock.getThreadSnapshotV2).toHaveBeenCalledTimes(2)
+    expect(useConversationThreadStoreV2.getState().isResetting).toBe(false)
+  })
+
+  it('converges reset through thread.reset followed by thread.snapshot', async () => {
+    vi.useFakeTimers()
+
+    apiMock.getThreadSnapshotV2.mockResolvedValue(makeSnapshot())
+    apiMock.resetThreadV2.mockResolvedValue({
+      threadId: 'thread-node-1',
+      snapshotVersion: 2,
+    })
+
+    await act(async () => {
+      await useConversationThreadStoreV2.getState().loadThread('project-1', 'node-1', 'ask_planning')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      await useConversationThreadStoreV2.getState().resetThread()
+    })
+
+    expect(useConversationThreadStoreV2.getState().isResetting).toBe(true)
+
+    await act(async () => {
+      eventSource.emitMessage(
+        JSON.stringify({
+          eventId: 'evt-reset',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'ask_planning',
+          occurredAt: '2026-03-28T00:02:00Z',
+          snapshotVersion: 2,
+          type: 'thread.reset',
+          payload: {
+            threadId: 'thread-node-1',
+          },
+        }),
+      )
+      eventSource.emitMessage(
+        JSON.stringify({
+          eventId: 'evt-snapshot',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'ask_planning',
+          occurredAt: '2026-03-28T00:02:01Z',
+          snapshotVersion: 3,
+          type: 'thread.snapshot',
+          payload: {
+            snapshot: makeSnapshot('node-1', {
+              snapshotVersion: 3,
+              updatedAt: '2026-03-28T00:02:01Z',
+            }),
+          },
+        }),
+      )
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500)
+    })
+
+    expect(useConversationThreadStoreV2.getState().isResetting).toBe(false)
+    expect(useConversationThreadStoreV2.getState().snapshot?.snapshotVersion).toBe(3)
+    expect(apiMock.getThreadSnapshotV2).toHaveBeenCalledTimes(1)
   })
 })
