@@ -14,7 +14,10 @@ from backend.services.node_detail_service import NodeDetailService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
-from backend.services.thread_lineage_service import ThreadLineageService
+from backend.services.thread_lineage_service import (
+    ThreadLineageService,
+    _ROLLOUT_BOOTSTRAP_PROMPT,
+)
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now
 from backend.storage.storage import Storage
@@ -57,6 +60,8 @@ class FakeIntegrationCodexClient:
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            return {"stdout": "READY", "thread_id": str(kwargs.get("thread_id") or "")}
         self.prompts.append(prompt)
         if self.fail:
             raise RuntimeError("integration failed")
@@ -77,6 +82,10 @@ class StrictIntegrationCodexClient(FakeIntegrationCodexClient):
         self.run_kwargs: list[dict[str, object]] = []
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            if kwargs.get("sandbox_profile") != "read_only":
+                raise RuntimeError("missing read_only sandbox_profile")
+            return {"stdout": "READY", "thread_id": str(kwargs.get("thread_id") or "")}
         self.run_kwargs.append(dict(kwargs))
         expected_schema = build_review_rollup_output_schema()
         if kwargs.get("sandbox_profile") != "read_only":
@@ -90,7 +99,10 @@ class StrictIntegrationCodexClient(FakeIntegrationCodexClient):
 
 class ReadOnlyRejectingIntegrationCodexClient(FakeIntegrationCodexClient):
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
-        del prompt
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            if kwargs.get("sandbox_profile") != "read_only":
+                raise RuntimeError("missing read_only sandbox_profile")
+            return {"stdout": "READY", "thread_id": str(kwargs.get("thread_id") or "")}
         if kwargs.get("sandbox_profile") == "read_only":
             raise CodexTransportError("read_only sandbox rejected", "invalid_sandbox_policy")
         raise RuntimeError("missing read_only sandbox_profile")

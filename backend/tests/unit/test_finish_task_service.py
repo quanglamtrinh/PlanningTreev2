@@ -14,7 +14,10 @@ from backend.services.chat_service import ChatService
 from backend.services.finish_task_service import FinishTaskService
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.project_service import ProjectService
-from backend.services.thread_lineage_service import ThreadLineageService
+from backend.services.thread_lineage_service import (
+    ThreadLineageService,
+    _ROLLOUT_BOOTSTRAP_PROMPT,
+)
 from backend.services.tree_service import TreeService
 from backend.streaming.sse_broker import ChatEventBroker
 
@@ -58,8 +61,10 @@ class FakeExecutionCodexClient:
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
-        self.prompts.append(prompt)
         thread_id = str(kwargs.get("thread_id") or "")
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            return {"stdout": "READY", "thread_id": thread_id}
+        self.prompts.append(prompt)
         cwd = kwargs.get("cwd")
         on_delta = kwargs.get("on_delta")
         on_plan_delta = kwargs.get("on_plan_delta")

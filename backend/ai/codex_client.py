@@ -32,6 +32,22 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _copy_dict(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    return copy.deepcopy(payload)
+
+
+def _extract_str(container: dict[str, Any] | None, *keys: str) -> str | None:
+    if not isinstance(container, dict):
+        return None
+    for key in keys:
+        value = container.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
 def copy_plan_item(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
@@ -53,6 +69,7 @@ class RuntimeRequestRecord:
     item_id: str
     prompt_payload: dict[str, Any]
     created_at: str = field(default_factory=_iso_now)
+    submitted_at: str | None = None
     resolved_at: str | None = None
     status: str = "pending"
     answer_payload: dict[str, Any] | None = None
@@ -74,8 +91,13 @@ class _TurnState:
     on_request_resolved: Callable[[dict[str, Any]], None] | None = None
     on_thread_status: Callable[[dict[str, Any]], None] | None = None
     on_item_event: Callable[[str, dict[str, Any]], None] | None = None
+    on_raw_event: Callable[[dict[str, Any]], None] | None = None
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     runtime_request_ids: list[str] = field(default_factory=list)
+    raw_events: list[dict[str, Any]] = field(default_factory=list)
+    raw_events_delivered: int = 0
+    callbacks_attached: bool = False
+    replaying_raw_events: bool = False
 
 
 class CodexTransportError(Exception):
@@ -140,6 +162,7 @@ class CodexTransport(ABC):
         on_request_user_input: Callable[[dict[str, Any]], None] | None = None,
         on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
         on_item_event: Callable[[str, dict[str, Any]], None] | None = None,
+        on_raw_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Send a prompt and stream deltas when available."""
 
@@ -265,6 +288,7 @@ class StdioTransport(CodexTransport):
         on_request_user_input: Callable[[dict[str, Any]], None] | None = None,
         on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
         on_item_event: Callable[[str, dict[str, Any]], None] | None = None,
+        on_raw_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
             raise CodexTransportNotFound("StdioTransport process is not alive")
@@ -280,6 +304,7 @@ class StdioTransport(CodexTransport):
             on_request_user_input=on_request_user_input,
             on_request_resolved=on_request_resolved,
             on_item_event=on_item_event,
+            on_raw_event=on_raw_event,
         )
 
     def start_thread(
@@ -374,6 +399,7 @@ class StdioTransport(CodexTransport):
         on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
         on_thread_status: Callable[[dict[str, Any]], None] | None = None,
         on_item_event: Callable[[str, dict[str, Any]], None] | None = None,
+        on_raw_event: Callable[[dict[str, Any]], None] | None = None,
         output_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
@@ -392,6 +418,7 @@ class StdioTransport(CodexTransport):
             on_request_resolved=on_request_resolved,
             on_thread_status=on_thread_status,
             on_item_event=on_item_event,
+            on_raw_event=on_raw_event,
             output_schema=output_schema,
             initialize_session=True,
         )
@@ -475,6 +502,7 @@ class StdioTransport(CodexTransport):
         on_request_user_input: Callable[[dict[str, Any]], None] | None,
         on_request_resolved: Callable[[dict[str, Any]], None] | None,
         on_item_event: Callable[[str, dict[str, Any]], None] | None,
+        on_raw_event: Callable[[dict[str, Any]], None] | None,
     ) -> dict[str, Any]:
         self._initialize_session(timeout_sec)
         resolved_thread_id = thread_id
@@ -505,6 +533,7 @@ class StdioTransport(CodexTransport):
             timeout_sec=timeout_sec,
             cwd=cwd,
             writable_roots=writable_roots,
+            sandbox_profile=None,
             on_delta=on_delta,
             on_tool_call=on_tool_call,
             on_plan_delta=on_plan_delta,
@@ -512,6 +541,7 @@ class StdioTransport(CodexTransport):
             on_request_resolved=on_request_resolved,
             on_thread_status=None,
             on_item_event=on_item_event,
+            on_raw_event=on_raw_event,
             output_schema=None,
             initialize_session=False,
         )
@@ -532,6 +562,7 @@ class StdioTransport(CodexTransport):
         on_request_resolved: Callable[[dict[str, Any]], None] | None,
         on_thread_status: Callable[[dict[str, Any]], None] | None,
         on_item_event: Callable[[str, dict[str, Any]], None] | None,
+        on_raw_event: Callable[[dict[str, Any]], None] | None,
         output_schema: dict[str, Any] | None,
         initialize_session: bool,
     ) -> dict[str, Any]:
@@ -569,7 +600,16 @@ class StdioTransport(CodexTransport):
             or state.turn_status is not None
             or state.error_message is not None
         )
-        if not completed_early:
+        preserve_existing_state = completed_early or any(
+            (
+                state.raw_events,
+                state.stdout_parts,
+                state.tool_calls,
+                state.runtime_request_ids,
+                state.final_plan_item is not None,
+            )
+        )
+        if not preserve_existing_state:
             state.event.clear()
             state.stdout_parts = []
             state.final_text = None
@@ -578,6 +618,10 @@ class StdioTransport(CodexTransport):
             state.turn_status = None
             state.tool_calls = []
             state.runtime_request_ids = []
+            state.raw_events = []
+            state.raw_events_delivered = 0
+            state.callbacks_attached = False
+            state.replaying_raw_events = False
         state.thread_id = thread_id
         state.on_delta = on_delta
         state.on_tool_call = on_tool_call
@@ -586,9 +630,36 @@ class StdioTransport(CodexTransport):
         state.on_request_resolved = on_request_resolved
         state.on_thread_status = on_thread_status
         state.on_item_event = on_item_event
-        if on_delta is not None and state.stdout_parts:
-            for chunk in list(state.stdout_parts):
-                self._emit_delta(state, chunk)
+        state.on_raw_event = on_raw_event
+        with self._lock:
+            thread_status_payload = copy.deepcopy(self._thread_statuses.get(thread_id))
+        if thread_status_payload and not any(
+            str(event.get("method") or "") == "thread/status/changed" for event in state.raw_events
+        ):
+            state.raw_events.append(
+                self._build_raw_turn_event(
+                    "thread/status/changed",
+                    {
+                        "threadId": thread_id,
+                        "status": thread_status_payload.get("status"),
+                    },
+                    thread_id=thread_id,
+                )
+            )
+        state.callbacks_attached = any(
+            callback is not None
+            for callback in (
+                on_delta,
+                on_tool_call,
+                on_plan_delta,
+                on_request_user_input,
+                on_request_resolved,
+                on_thread_status,
+                on_item_event,
+                on_raw_event,
+            )
+        )
+        self._replay_buffered_raw_events(state)
 
         wait_result = self._wait_for_turn_result(turn_id, timeout_sec)
         if len(wait_result) == 2:
@@ -802,9 +873,9 @@ class StdioTransport(CodexTransport):
             if record is None:
                 return None
             if record.status == "pending":
-                record.status = "resolved"
-                record.answer_payload = {"answers": answers}
-                record.resolved_at = _iso_now()
+                record.status = "answer_submitted"
+                record.answer_payload = {"answers": copy.deepcopy(answers)}
+                record.submitted_at = _iso_now()
             return RuntimeRequestRecord(**record.__dict__)
 
     def _extract_thread_id(self, payload: dict[str, Any]) -> str:
@@ -923,6 +994,15 @@ class StdioTransport(CodexTransport):
         except Exception:
             logger.debug("StdioTransport item callback failed", exc_info=True)
 
+    def _emit_raw_event(self, state: _TurnState, payload: dict[str, Any]) -> None:
+        callback = state.on_raw_event
+        if callback is None:
+            return
+        try:
+            callback(copy.deepcopy(payload))
+        except Exception:
+            logger.debug("StdioTransport raw event callback failed", exc_info=True)
+
     def _emit_global_notification_callbacks(
         self,
         callbacks: tuple[Callable[[dict[str, Any]], None], ...],
@@ -934,6 +1014,160 @@ class StdioTransport(CodexTransport):
                 callback(copy.deepcopy(payload))
             except Exception:
                 logger.debug("StdioTransport %s callback failed", label, exc_info=True)
+
+    def _build_raw_turn_event(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        thread_id: str | None = None,
+        turn_id: str | None = None,
+        item_id: str | None = None,
+        request_id: str | None = None,
+        call_id: str | None = None,
+    ) -> dict[str, Any]:
+        item_payload = params.get("item")
+        event_thread_id = (
+            thread_id
+            or _extract_str(params, "threadId", "thread_id")
+            or _extract_str(item_payload if isinstance(item_payload, dict) else None, "threadId", "thread_id")
+        )
+        event_turn_id = (
+            turn_id
+            or _extract_str(params, "turnId", "turn_id")
+            or _extract_str(item_payload if isinstance(item_payload, dict) else None, "turnId", "turn_id")
+        )
+        event_item_id = (
+            item_id
+            or _extract_str(params, "itemId", "item_id")
+            or _extract_str(item_payload if isinstance(item_payload, dict) else None, "id", "itemId", "item_id")
+        )
+        event_request_id = request_id or _extract_str(params, "requestId", "request_id")
+        event_call_id = (
+            call_id
+            or _extract_str(params, "callId", "call_id")
+            or _extract_str(item_payload if isinstance(item_payload, dict) else None, "callId", "call_id")
+        )
+        return {
+            "method": method,
+            "received_at": _iso_now(),
+            "thread_id": event_thread_id,
+            "turn_id": event_turn_id,
+            "item_id": event_item_id,
+            "request_id": event_request_id,
+            "call_id": event_call_id,
+            "params": _copy_dict(params),
+        }
+
+    def _normalize_tool_call_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        payload = _copy_dict(params)
+        tool_arguments = payload.get("arguments")
+        payload["tool_name"] = _extract_str(
+            payload,
+            "tool_name",
+            "tool",
+            "name",
+            "toolName",
+        )
+        payload["arguments"] = (
+            copy.deepcopy(tool_arguments)
+            if isinstance(tool_arguments, dict)
+            else {}
+        )
+        payload["call_id"] = _extract_str(payload, "call_id", "callId")
+        payload["turn_id"] = _extract_str(payload, "turn_id", "turnId")
+        payload["thread_id"] = _extract_str(payload, "thread_id", "threadId")
+        payload["raw_request"] = _copy_dict(params)
+        return payload
+
+    def _dispatch_raw_event(self, state: _TurnState, raw_event: dict[str, Any]) -> None:
+        method = str(raw_event.get("method") or "")
+        params = raw_event.get("params")
+        if not isinstance(params, dict):
+            return
+
+        self._emit_raw_event(state, raw_event)
+
+        if method == "thread/status/changed":
+            self._emit_thread_status(
+                state,
+                {
+                    "thread_id": raw_event.get("thread_id"),
+                    "status": _copy_dict(params.get("status")),
+                },
+            )
+            return
+
+        if method == "item/agentMessage/delta":
+            delta = params.get("delta")
+            if isinstance(delta, str):
+                self._emit_delta(state, delta)
+            return
+
+        if method == "item/plan/delta":
+            delta = params.get("delta")
+            item = {
+                "id": raw_event.get("item_id") or "",
+                "turn_id": raw_event.get("turn_id") or "",
+                "thread_id": raw_event.get("thread_id") or "",
+            }
+            if isinstance(delta, str):
+                self._emit_plan_delta(state, delta, item)
+            return
+
+        if method == "item/started":
+            item = params.get("item")
+            if isinstance(item, dict):
+                self._emit_item_event(state, "started", item)
+            return
+
+        if method == "item/completed":
+            item = params.get("item")
+            if isinstance(item, dict):
+                self._emit_item_event(state, "completed", item)
+            return
+
+        if method == "item/tool/requestUserInput":
+            self._emit_request_user_input(state, params)
+            return
+
+        if method == "serverRequest/resolved":
+            self._emit_request_resolved(state, params)
+            return
+
+        if method == "item/tool/call":
+            tool_name = _extract_str(params, "tool_name", "tool", "name", "toolName")
+            arguments = params.get("arguments")
+            if isinstance(tool_name, str) and isinstance(arguments, dict):
+                self._emit_tool_call(state, tool_name, _copy_dict(arguments))
+
+    def _record_and_dispatch_raw_event(self, state: _TurnState, raw_event: dict[str, Any]) -> None:
+        should_dispatch = False
+        with self._lock:
+            state.raw_events.append(copy.deepcopy(raw_event))
+            should_dispatch = state.callbacks_attached
+        if should_dispatch:
+            self._replay_buffered_raw_events(state)
+
+    def _replay_buffered_raw_events(self, state: _TurnState) -> None:
+        with self._lock:
+            if not state.callbacks_attached or state.replaying_raw_events:
+                return
+            state.replaying_raw_events = True
+        while True:
+            with self._lock:
+                if not state.callbacks_attached:
+                    state.replaying_raw_events = False
+                    return
+                start = state.raw_events_delivered
+                end = len(state.raw_events)
+                if start >= end:
+                    state.replaying_raw_events = False
+                    return
+                pending_events = [copy.deepcopy(event) for event in state.raw_events[start:end]]
+                state.raw_events_delivered = end
+            for raw_event in pending_events:
+                self._dispatch_raw_event(state, raw_event)
 
     def _handle_notification(self, method: str, params: Any) -> None:
         if not isinstance(params, dict):
@@ -960,12 +1194,19 @@ class StdioTransport(CodexTransport):
             status = params.get("status")
             if not isinstance(thread_id, str) or not isinstance(status, dict):
                 return
-            thread_payload = {
-                "thread_id": thread_id,
-                "status": status,
-            }
+            raw_event = self._build_raw_turn_event(
+                method,
+                {
+                    "threadId": thread_id,
+                    "status": status,
+                },
+                thread_id=thread_id,
+            )
             with self._lock:
-                self._thread_statuses[thread_id] = thread_payload
+                self._thread_statuses[thread_id] = {
+                    "thread_id": thread_id,
+                    "status": _copy_dict(status),
+                }
                 if status.get("type") == "notLoaded":
                     self._loaded_threads.discard(thread_id)
                 else:
@@ -973,8 +1214,14 @@ class StdioTransport(CodexTransport):
                 matching_states = [
                     state for state in self._turn_states.values() if state.thread_id == thread_id
                 ]
+                if not matching_states:
+                    unbound_states = [
+                        state for state in self._turn_states.values() if state.thread_id is None
+                    ]
+                    if len(unbound_states) == 1:
+                        matching_states = unbound_states
             for state in matching_states:
-                self._emit_thread_status(state, thread_payload)
+                self._record_and_dispatch_raw_event(state, raw_event)
             return
 
         if method == "item/agentMessage/delta":
@@ -983,7 +1230,7 @@ class StdioTransport(CodexTransport):
             if isinstance(turn_id, str) and isinstance(delta, str):
                 state = self._get_turn_state(turn_id)
                 state.stdout_parts.append(delta)
-                self._emit_delta(state, delta)
+                self._record_and_dispatch_raw_event(state, self._build_raw_turn_event(method, params))
             return
 
         if method == "item/plan/delta":
@@ -998,14 +1245,15 @@ class StdioTransport(CodexTransport):
                 and isinstance(delta, str)
             ):
                 state = self._get_turn_state(turn_id)
-                self._emit_plan_delta(
+                self._record_and_dispatch_raw_event(
                     state,
-                    delta,
-                    {
-                        "id": item_id,
-                        "turn_id": turn_id,
-                        "thread_id": thread_id,
-                    },
+                    self._build_raw_turn_event(
+                        method,
+                        params,
+                        thread_id=thread_id,
+                        turn_id=turn_id,
+                        item_id=item_id,
+                    ),
                 )
             return
 
@@ -1015,7 +1263,10 @@ class StdioTransport(CodexTransport):
             if not isinstance(turn_id, str) or not isinstance(item, dict):
                 return
             state = self._get_turn_state(turn_id)
-            self._emit_item_event(state, "started", item)
+            self._record_and_dispatch_raw_event(
+                state,
+                self._build_raw_turn_event(method, params, turn_id=turn_id),
+            )
             return
 
         if method == "item/completed":
@@ -1025,7 +1276,10 @@ class StdioTransport(CodexTransport):
             if not isinstance(turn_id, str) or not isinstance(thread_id, str) or not isinstance(item, dict):
                 return
             state = self._get_turn_state(turn_id)
-            self._emit_item_event(state, "completed", item)
+            self._record_and_dispatch_raw_event(
+                state,
+                self._build_raw_turn_event(method, params, thread_id=thread_id, turn_id=turn_id),
+            )
             item_type = item.get("type")
             if item_type == "agentMessage":
                 text = item.get("text")
@@ -1067,6 +1321,10 @@ class StdioTransport(CodexTransport):
                     state.error_message = "App server turn failed"
             elif status == "interrupted":
                 state.error_message = "App server turn was interrupted"
+            self._record_and_dispatch_raw_event(
+                state,
+                self._build_raw_turn_event(method, params, thread_id=thread_id, turn_id=turn_id),
+            )
             state.event.set()
             return
 
@@ -1080,20 +1338,47 @@ class StdioTransport(CodexTransport):
                 record = self._runtime_request_registry.get(request_key)
                 if record is None:
                     return
-                if record.status == "pending":
+                answers: dict[str, Any] = {}
+                if isinstance(record.answer_payload, dict):
+                    maybe_answers = record.answer_payload.get("answers")
+                    if isinstance(maybe_answers, dict):
+                        answers = copy.deepcopy(maybe_answers)
+                if not answers:
+                    maybe_answers = params.get("answers")
+                    if isinstance(maybe_answers, dict):
+                        answers = copy.deepcopy(maybe_answers)
+                if record.status == "answer_submitted":
+                    record.status = "answered"
+                elif record.status == "pending":
                     record.status = "stale"
                 if not record.resolved_at:
                     record.resolved_at = _iso_now()
-                state = self._turn_states.get(record.turn_id)
                 payload = {
                     "request_id": record.request_id,
+                    "item_id": record.item_id,
                     "thread_id": record.thread_id,
                     "turn_id": record.turn_id,
                     "status": record.status,
+                    "answers": answers,
+                    "submitted_at": record.submitted_at,
                     "resolved_at": record.resolved_at,
                 }
-            if state is not None:
-                self._emit_request_resolved(state, payload)
+            if isinstance(record.turn_id, str) and record.turn_id.strip():
+                state = self._get_turn_state(record.turn_id)
+                state.thread_id = state.thread_id or record.thread_id
+                if record.request_id not in state.runtime_request_ids:
+                    state.runtime_request_ids.append(record.request_id)
+                self._record_and_dispatch_raw_event(
+                    state,
+                    self._build_raw_turn_event(
+                        method,
+                        payload,
+                        thread_id=record.thread_id,
+                        turn_id=record.turn_id,
+                        item_id=record.item_id,
+                        request_id=record.request_id,
+                    ),
+                )
             return
 
         if method == "error":
@@ -1106,7 +1391,36 @@ class StdioTransport(CodexTransport):
                 state.error_message = str(error.get("message") or json.dumps(error, ensure_ascii=True))
             else:
                 state.error_message = str(params.get("message") or "App server error")
+            self._record_and_dispatch_raw_event(
+                state,
+                self._build_raw_turn_event(method, params, turn_id=turn_id),
+            )
             state.event.set()
+
+        if method.startswith("item/reasoning/"):
+            turn_id = params.get("turnId")
+            if not isinstance(turn_id, str):
+                return
+            state = self._get_turn_state(turn_id)
+            self._record_and_dispatch_raw_event(
+                state,
+                self._build_raw_turn_event(method, params, turn_id=turn_id),
+            )
+            return
+
+        if method in {
+            "item/commandExecution/outputDelta",
+            "item/commandExecution/terminalInteraction",
+            "item/fileChange/outputDelta",
+        }:
+            turn_id = params.get("turnId")
+            if not isinstance(turn_id, str):
+                return
+            state = self._get_turn_state(turn_id)
+            self._record_and_dispatch_raw_event(
+                state,
+                self._build_raw_turn_event(method, params, turn_id=turn_id),
+            )
 
     def _handle_server_request(self, message_id: str | int, method: str, params: Any) -> None:
         if method == "item/tool/requestUserInput":
@@ -1142,22 +1456,30 @@ class StdioTransport(CodexTransport):
             )
             with self._lock:
                 self._runtime_request_registry[request_key] = record
-                state = self._turn_states.get(turn_id)
-                if state is not None and request_key not in state.runtime_request_ids:
-                    state.runtime_request_ids.append(request_key)
-            if state is not None:
-                self._emit_request_user_input(
-                    state,
-                    {
-                        "request_id": record.request_id,
-                        "thread_id": thread_id,
-                        "turn_id": turn_id,
-                        "item_id": item_id,
-                        "questions": list(questions),
-                        "created_at": record.created_at,
-                        "status": record.status,
-                    },
-                )
+            state = self._get_turn_state(turn_id)
+            state.thread_id = state.thread_id or thread_id
+            if request_key not in state.runtime_request_ids:
+                state.runtime_request_ids.append(request_key)
+            payload = {
+                "request_id": record.request_id,
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+                "item_id": item_id,
+                "questions": list(questions),
+                "created_at": record.created_at,
+                "status": record.status,
+            }
+            self._record_and_dispatch_raw_event(
+                state,
+                self._build_raw_turn_event(
+                    method,
+                    payload,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    item_id=item_id,
+                    request_id=record.request_id,
+                ),
+            )
             return
 
         if method != "item/tool/call":
@@ -1185,6 +1507,7 @@ class StdioTransport(CodexTransport):
 
         if isinstance(turn_id, str) and isinstance(tool_name, str):
             state = self._get_turn_state(turn_id)
+            state.thread_id = state.thread_id or _extract_str(params, "threadId", "thread_id")
             tool_call = {
                 "tool_name": tool_name,
                 "arguments": arguments,
@@ -1193,7 +1516,17 @@ class StdioTransport(CodexTransport):
                 "thread_id": params.get("threadId"),
             }
             state.tool_calls.append(tool_call)
-            self._emit_tool_call(state, tool_name, arguments)
+            raw_payload = self._normalize_tool_call_params(params)
+            self._record_and_dispatch_raw_event(
+                state,
+                self._build_raw_turn_event(
+                    method,
+                    raw_payload,
+                    thread_id=_extract_str(tool_call, "thread_id"),
+                    turn_id=turn_id,
+                    call_id=_extract_str(tool_call, "call_id"),
+                ),
+            )
 
         try:
             self._send_response(message_id, _DEFAULT_TOOL_RESPONSE)
@@ -1385,6 +1718,7 @@ class CodexAppClient:
         on_request_user_input: Callable[[dict[str, Any]], None] | None = None,
         on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
         on_item_event: Callable[[str, dict[str, Any]], None] | None = None,
+        on_raw_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
             self.start()
@@ -1398,6 +1732,7 @@ class CodexAppClient:
             "on_request_user_input": on_request_user_input,
             "on_request_resolved": on_request_resolved,
             "on_item_event": on_item_event,
+            "on_raw_event": on_raw_event,
         }
         if writable_roots is not None:
             transport_kwargs["writable_roots"] = writable_roots
@@ -1500,6 +1835,7 @@ class CodexAppClient:
         on_request_resolved: Callable[[dict[str, Any]], None] | None = None,
         on_thread_status: Callable[[dict[str, Any]], None] | None = None,
         on_item_event: Callable[[str, dict[str, Any]], None] | None = None,
+        on_raw_event: Callable[[dict[str, Any]], None] | None = None,
         output_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self.is_alive():
@@ -1519,6 +1855,7 @@ class CodexAppClient:
             on_request_resolved=on_request_resolved,
             on_thread_status=on_thread_status,
             on_item_event=on_item_event,
+            on_raw_event=on_raw_event,
             output_schema=output_schema,
         )
 

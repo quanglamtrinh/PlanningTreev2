@@ -674,6 +674,7 @@ class ThreadLineageService:
             timeout_sec=_THREAD_TIMEOUT_SEC,
             cwd=cwd,
             writable_roots=writable_roots,
+            sandbox_profile="read_only",
         )
 
     def _start_thread(
