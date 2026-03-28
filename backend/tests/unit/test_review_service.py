@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from backend.ai.codex_client import CodexTransportError
-from backend.ai.integration_rollup_prompt_builder import build_integration_rollup_output_schema
+from backend.ai.review_rollup_prompt_builder import build_review_rollup_output_schema
 from backend.errors.app_errors import ReviewNotAllowed
 from backend.services import planningtree_workspace
 from backend.services.node_detail_service import NodeDetailService
@@ -78,7 +78,7 @@ class StrictIntegrationCodexClient(FakeIntegrationCodexClient):
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
         self.run_kwargs.append(dict(kwargs))
-        expected_schema = build_integration_rollup_output_schema()
+        expected_schema = build_review_rollup_output_schema()
         if kwargs.get("sandbox_profile") != "read_only":
             raise RuntimeError("missing read_only sandbox_profile")
         if kwargs.get("writable_roots") is not None:
@@ -767,7 +767,7 @@ def test_integration_rollup_uses_read_only_sandbox_and_output_schema(
     assert len(codex_client.run_kwargs) == 1
     assert codex_client.run_kwargs[0]["sandbox_profile"] == "read_only"
     assert codex_client.run_kwargs[0]["writable_roots"] is None
-    assert codex_client.run_kwargs[0]["output_schema"] == build_integration_rollup_output_schema()
+    assert codex_client.run_kwargs[0]["output_schema"] == build_review_rollup_output_schema()
 
 
 def test_integration_rollup_read_only_sandbox_error_marks_session_failed(
@@ -885,7 +885,7 @@ def test_integration_rollup_can_retry_after_error_and_persist_new_draft(
     codex_client.fail = False
     codex_client.summary = "Recovered integration draft."
 
-    restarted = review_service.start_integration_rollup(project_id, review_node_id)
+    restarted = review_service.start_review_rollup(project_id, review_node_id)
     assert restarted is True
 
     review_state = wait_for_rollup_draft(storage, project_id, review_node_id)

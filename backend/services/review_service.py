@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
-from backend.ai.integration_rollup_prompt_builder import (
-    build_integration_rollup_base_instructions,
-    build_integration_rollup_output_schema,
+from backend.ai.review_rollup_prompt_builder import (
+    build_review_rollup_base_instructions,
+    build_review_rollup_output_schema,
     build_rollup_prompt_from_storage,
-    extract_integration_rollup_summary,
-    render_integration_rollup_message,
+    extract_review_rollup_summary,
+    render_review_rollup_message,
 )
 from backend.ai.part_accumulator import PartAccumulator
 from backend.errors.app_errors import (
@@ -168,7 +168,7 @@ class ReviewService:
 
         if rollup_ready_review_node_id:
             try:
-                self.start_integration_rollup(project_id, rollup_ready_review_node_id)
+                self.start_review_rollup(project_id, rollup_ready_review_node_id)
             except Exception:
                 logger.debug(
                     "Failed to auto-start integration rollup for %s/%s",
@@ -193,7 +193,7 @@ class ReviewService:
 
     # -- Integration Rollup ------------------------------------------
 
-    def start_integration_rollup(self, project_id: str, review_node_id: str) -> bool:
+    def start_review_rollup(self, project_id: str, review_node_id: str) -> bool:
         if self._codex_client is None or self._chat_event_broker is None:
             logger.debug(
                 "Skipping integration rollup auto-start for %s/%s because backend dependencies are unavailable.",
@@ -277,7 +277,7 @@ class ReviewService:
         )
 
         threading.Thread(
-            target=self._run_background_integration_rollup,
+            target=self._run_background_review_rollup,
             kwargs={
                 "project_id": project_id,
                 "review_node_id": review_node_id,
@@ -467,7 +467,7 @@ class ReviewService:
 
     # -- Background Integration Runner -------------------------------
 
-    def _run_background_integration_rollup(
+    def _run_background_review_rollup(
         self,
         *,
         project_id: str,
@@ -561,7 +561,7 @@ class ReviewService:
             )
 
         try:
-            thread_id = self._ensure_integration_thread(
+            thread_id = self._ensure_review_audit_thread(
                 project_id,
                 review_node_id,
                 workspace_root,
@@ -584,7 +584,7 @@ class ReviewService:
                 on_delta=capture_delta,
                 on_tool_call=capture_tool_call,
                 on_thread_status=capture_thread_status,
-                output_schema=build_integration_rollup_output_schema(),
+                output_schema=build_review_rollup_output_schema(),
             )
 
             with draft_lock:
@@ -594,7 +594,7 @@ class ReviewService:
                 final_items = accumulator.snapshot_items()
 
             stdout = str(result.get("stdout", "") or "")
-            summary = extract_integration_rollup_summary(stdout) or extract_integration_rollup_summary(
+            summary = extract_review_rollup_summary(stdout) or extract_review_rollup_summary(
                 streamed_content
             )
             if not summary:
@@ -610,7 +610,7 @@ class ReviewService:
                 sha=final_sha,
             )
 
-            final_content = render_integration_rollup_message(summary, final_sha)
+            final_content = render_review_rollup_message(summary, final_sha)
             persisted = self._persist_assistant_message(
                 project_id=project_id,
                 node_id=review_node_id,
@@ -681,7 +681,7 @@ class ReviewService:
 
     # -- Persistence Helpers -----------------------------------------
 
-    def _ensure_integration_thread(
+    def _ensure_review_audit_thread(
         self,
         project_id: str,
         review_node_id: str,
@@ -695,16 +695,14 @@ class ReviewService:
                 review_node_id,
                 "audit",
                 workspace_root,
-                base_instructions=build_integration_rollup_base_instructions(),
+                base_instructions=build_review_rollup_base_instructions(),
             )
         except (CodexTransportError, ValueError) as exc:
-            raise ReviewNotAllowed(f"Integration backend unavailable: {exc}") from exc
+            raise ReviewNotAllowed(f"Review audit backend unavailable: {exc}") from exc
 
         thread_id = str(session.get("thread_id") or "").strip()
         if not thread_id:
-            raise ReviewNotAllowed(
-                "Integration thread start did not return a thread id."
-            )
+            raise ReviewNotAllowed("Review audit thread start did not return a thread id.")
         return thread_id
 
     def _persist_thread_id(

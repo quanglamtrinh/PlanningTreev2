@@ -387,7 +387,6 @@ describe('TreeGraph', () => {
 
     const graphNode = screen.getByTestId('graph-node-root')
     expect(within(graphNode).getByText('In Progress')).toBeInTheDocument()
-    expect(within(graphNode).getByText('Execution Complete')).toBeInTheDocument()
   })
 
   it('expands a locked parent to reveal children via the collapse toggle', () => {
@@ -445,6 +444,46 @@ describe('TreeGraph', () => {
     expect(screen.getByText('AI Split')).toBeInTheDocument()
     expect(screen.getByText('Workflow')).toBeInTheDocument()
     expect(screen.getByText('Phase Breakdown')).toBeInTheDocument()
+  })
+
+  it('keeps Open Breadcrumb enabled even when Codex CLI is unavailable', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [buildNode({ node_id: 'root', child_ids: [] })],
+      },
+    })
+
+    renderTreeGraph(snapshot, { codexAvailable: false })
+
+    const rootWrapper = screen.getByTestId('rf-node-root')
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
+    expect(screen.getByText('Open Breadcrumb').closest('button')).toBeEnabled()
+  })
+
+  it('opens breadcrumb from the action menu for a done node', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({
+            node_id: 'root',
+            status: 'done',
+            child_ids: [],
+          }),
+        ],
+      },
+    })
+
+    const { onOpenBreadcrumb } = renderTreeGraph(snapshot)
+
+    const rootWrapper = screen.getByTestId('rf-node-root')
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
+    fireEvent.click(screen.getByText('Open Breadcrumb'))
+
+    expect(onOpenBreadcrumb).toHaveBeenCalledWith('root')
   })
 
   it('disables Finish Task until spec is confirmed', () => {
@@ -744,11 +783,21 @@ describe('TreeGraph', () => {
 
     const ghostB = screen.getByTestId('graph-ghost-node-2')
     expect(within(ghostB).getByText('1.B')).toBeInTheDocument()
-    expect(within(ghostB).getByText('Waiting for 1.A review')).toBeInTheDocument()
+    expect(within(ghostB).getByText('Second lazy step')).toBeInTheDocument()
 
     const ghostC = screen.getByTestId('graph-ghost-node-3')
     expect(within(ghostC).getByText('1.C')).toBeInTheDocument()
-    expect(within(ghostC).getByText('Waiting for 1.B review')).toBeInTheDocument()
+    expect(within(ghostC).getByText('Final lazy step')).toBeInTheDocument()
+
+    expect(renderedEdges('ghost-review')).toHaveLength(2)
+    expect(screen.getByTestId('rf-edge-ghost-review-ghost::root::2')).toHaveAttribute(
+      'data-edge-target',
+      'review-1',
+    )
+    expect(screen.getByTestId('rf-edge-ghost-review-ghost::root::3')).toHaveAttribute(
+      'data-edge-target',
+      'review-1',
+    )
   })
 
   it('removes the review overlay when a branch is collapsed', () => {

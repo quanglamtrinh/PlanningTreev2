@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { apiMock } = vi.hoisted(() => ({
@@ -255,9 +255,15 @@ function makeDetailState(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location-path">{location.pathname}</div>
+}
+
 function renderBreadcrumbChatView(initialEntry = '/projects/project-1/nodes/root/chat') {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
+      <LocationProbe />
       <Routes>
         <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbChatView />} />
       </Routes>
@@ -517,6 +523,47 @@ describe('BreadcrumbChatView', () => {
     expect(
       within(detailCard).getByText('This node was not found in the current project snapshot.'),
     ).toBeInTheDocument()
+  })
+
+  it('keeps a review-accepted done node on the breadcrumb route', async () => {
+    const snapshot = makeSnapshot('project-1', 'child-1')
+    apiMock.getSnapshot.mockResolvedValue({
+      ...snapshot,
+      tree_state: {
+        ...snapshot.tree_state,
+        node_registry: snapshot.tree_state.node_registry.map((node) =>
+          node.node_id === 'child-1'
+            ? {
+                ...node,
+                status: 'done' as const,
+              }
+            : node,
+        ),
+      },
+    })
+    apiMock.getDetailState.mockResolvedValue(
+      makeDetailState({
+        node_id: 'child-1',
+        execution_started: true,
+        execution_completed: true,
+        execution_status: 'review_accepted',
+        auto_review_status: 'completed',
+        can_accept_local_review: false,
+        audit_writable: false,
+      }),
+    )
+
+    renderBreadcrumbChatView('/projects/project-1/nodes/child-1/chat')
+
+    await screen.findByTestId('breadcrumb-node-detail-card')
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'child-1')
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(screen.getByTestId('location-path')).toHaveTextContent(
+      '/projects/project-1/nodes/child-1/chat',
+    )
   })
 
   it('keeps the review summary and shows an inline error when accept review fails', async () => {

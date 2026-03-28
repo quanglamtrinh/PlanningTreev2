@@ -215,4 +215,39 @@ describe('GraphWorkspace', () => {
 
     expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat')
   })
+
+  it('still navigates to breadcrumb when persisting the active node fails', async () => {
+    apiMock.getBootstrapStatus.mockResolvedValue({
+      ready: true,
+      workspace_configured: true,
+      codex_available: false,
+      codex_path: null,
+    })
+    apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-1')])
+    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1'))
+    apiMock.setActiveNode.mockRejectedValue(new Error('selection failed'))
+    apiMock.getSplitStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      node_id: null,
+      mode: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+
+    render(
+      <MemoryRouter>
+        <GraphWorkspace />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+
+    await screen.findByTestId('tree-graph')
+    await act(async () => {
+      fireEvent.click(screen.getByText('Open Root Breadcrumb'))
+    })
+
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat')
+  })
 })

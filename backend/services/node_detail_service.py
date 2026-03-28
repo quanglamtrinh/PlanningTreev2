@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -232,6 +233,10 @@ def build_detail_state(
         "audit_writable": execution_fields["audit_writable"],
         "package_audit_ready": execution_fields["package_audit_ready"],
         "review_status": execution_fields["review_status"],
+        "auto_review_status": execution_fields["auto_review_status"],
+        "auto_review_summary": execution_fields["auto_review_summary"],
+        "auto_review_overall_severity": execution_fields["auto_review_overall_severity"],
+        "auto_review_overall_score": execution_fields["auto_review_overall_score"],
     }
 
 
@@ -682,8 +687,18 @@ class NodeDetailService:
                     if old_selected is not None:
                         q["selected_option_id"] = old_selected
 
-        # Zero questions = auto-confirm per workflow contract
-        auto_confirm = len(new_questions) == 0
+        # No unresolved fields in frame.md → clarify step is complete (auto-confirm).
+        # If we already had answered clarify questions on disk (e.g. after apply_clarify
+        # filled the frame), keep that list for review instead of replacing it with [].
+        extracted_empty = len(new_questions) == 0
+        if extracted_empty and existing is not None:
+            prior = [
+                q for q in (existing.get("questions") or []) if isinstance(q, dict)
+            ]
+            if prior:
+                new_questions = copy.deepcopy(prior)
+
+        auto_confirm = extracted_empty
         now = iso_now()
         clarify: Dict[str, Any] = {
             "schema_version": 2,

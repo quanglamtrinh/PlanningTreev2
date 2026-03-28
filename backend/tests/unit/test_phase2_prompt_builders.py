@@ -9,7 +9,7 @@ from backend.ai.chat_prompt_builder import (
     build_local_review_prompt,
     build_package_review_prompt,
 )
-from backend.ai.integration_rollup_prompt_builder import build_rollup_prompt_from_storage
+from backend.ai.review_rollup_prompt_builder import build_rollup_prompt_from_storage
 from backend.services import planningtree_workspace
 from backend.services.node_detail_service import FRAME_META_FILE, SPEC_META_FILE
 from backend.services.project_service import ProjectService

@@ -3,12 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
-from backend.ai.integration_rollup_prompt_builder import build_integration_rollup_base_instructions
+from backend.ai.review_rollup_prompt_builder import build_review_rollup_base_instructions
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
 
 _RESUME_TIMEOUT_SEC = 15
 _THREAD_TIMEOUT_SEC = 30
+_ROLLOUT_BOOTSTRAP_PROMPT = (
+    "Initialization only. Do not call any tools. Reply with exactly READY."
+)
 
 
 class ThreadLineageService:
@@ -58,6 +61,11 @@ class ThreadLineageService:
                 cwd=workspace_root,
                 base_instructions=self._build_audit_base_instructions(snapshot, node),
             )
+            self._materialize_thread_rollout(
+                new_thread_id,
+                cwd=workspace_root,
+                writable_roots=None,
+            )
             return self._persist_session_locked(
                 project_id,
                 node_id,
@@ -87,18 +95,6 @@ class ThreadLineageService:
     ) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             self._load_snapshot_and_node_locked(project_id, node_id)
-            source_session = self._resolve_source_session_locked(
-                project_id,
-                source_node_id,
-                source_role,
-                workspace_root,
-            )
-            source_thread_id = self._normalize_thread_id(source_session)
-            if not source_thread_id:
-                raise ValueError(
-                    f"Source session {source_node_id!r}/{source_role!r} does not have a thread id."
-                )
-
             target_session = self._storage.chat_state_store.read_session(
                 project_id,
                 node_id,
@@ -126,6 +122,18 @@ class ThreadLineageService:
                             lineage_root_thread_id=lineage_root_thread_id,
                         )
                     return target_session
+
+            source_session = self._resolve_source_session_locked(
+                project_id,
+                source_node_id,
+                source_role,
+                workspace_root,
+            )
+            source_thread_id = self._normalize_thread_id(source_session)
+            if not source_thread_id:
+                raise ValueError(
+                    f"Source session {source_node_id!r}/{source_role!r} does not have a thread id."
+                )
 
             lineage_root_thread_id = self._normalize_optional_string(
                 source_session.get("lineage_root_thread_id")
@@ -180,16 +188,12 @@ class ThreadLineageService:
                     writable_roots=writable_roots,
                 )
 
-            try:
-                self._codex_client.resume_thread(
-                    thread_id,
-                    cwd=workspace_root,
-                    timeout_sec=_RESUME_TIMEOUT_SEC,
-                    writable_roots=writable_roots,
-                )
-            except CodexTransportError as exc:
-                if not self._is_missing_thread_error(exc):
-                    raise
+            resumed = self._resume_existing_thread(
+                thread_id,
+                cwd=workspace_root,
+                writable_roots=writable_roots,
+            )
+            if not resumed:
                 return self.rebuild_from_ancestor(
                     project_id,
                     node_id,
@@ -234,7 +238,12 @@ class ThreadLineageService:
                 return self.ensure_root_audit_thread(project_id, node_id, workspace_root)
 
             if thread_role in {"ask_planning", "execution"}:
-                self._ensure_audit_exists(project_id, node_id, workspace_root)
+                self._ensure_audit_exists(
+                    project_id,
+                    node_id,
+                    workspace_root,
+                    require_live_thread=True,
+                )
                 return self._fork_target_from_source_locked(
                     project_id,
                     node_id,
@@ -252,7 +261,12 @@ class ThreadLineageService:
                 parent_id = self._normalize_optional_string(node.get("parent_id"))
                 if not parent_id:
                     raise ValueError(f"Review node {node_id!r} is missing a parent.")
-                self._ensure_audit_exists(project_id, parent_id, workspace_root)
+                self._ensure_audit_exists(
+                    project_id,
+                    parent_id,
+                    workspace_root,
+                    require_live_thread=True,
+                )
                 return self._fork_target_from_source_locked(
                     project_id,
                     node_id,
@@ -281,7 +295,12 @@ class ThreadLineageService:
                         dynamic_tools=dynamic_tools,
                         writable_roots=writable_roots,
                     )
-                return self._ensure_audit_exists(project_id, node_id, workspace_root)
+                return self._ensure_audit_exists(
+                    project_id,
+                    node_id,
+                    workspace_root,
+                    require_live_thread=True,
+                )
 
             raise ValueError(f"Unsupported thread role for rebuild: {thread_role!r}")
 
@@ -290,6 +309,8 @@ class ThreadLineageService:
         project_id: str,
         node_id: str,
         workspace_root: str | None,
+        *,
+        require_live_thread: bool = False,
     ) -> dict[str, Any]:
         snapshot, node, node_by_id = self._load_snapshot_and_node_locked(project_id, node_id)
         session = self._storage.chat_state_store.read_session(project_id, node_id, thread_role="audit")
@@ -299,25 +320,51 @@ class ThreadLineageService:
             return self.ensure_root_audit_thread(project_id, node_id, workspace_root)
 
         if thread_id:
-            if self._needs_legacy_backfill(session):
-                return self._persist_session_locked(
-                    project_id,
-                    node_id,
-                    "audit",
-                    session=session,
-                    thread_id=thread_id,
-                    fork_reason="legacy_resumed",
-                    lineage_root_thread_id=self._normalize_optional_string(
-                        session.get("lineage_root_thread_id")
-                    ),
+            if require_live_thread:
+                resumed = self._resume_existing_thread(
+                    thread_id,
+                    cwd=workspace_root,
+                    writable_roots=None,
                 )
-            return session
+                if resumed:
+                    if self._needs_legacy_backfill(session):
+                        return self._persist_session_locked(
+                            project_id,
+                            node_id,
+                            "audit",
+                            session=session,
+                            thread_id=thread_id,
+                            fork_reason="legacy_resumed",
+                            lineage_root_thread_id=self._normalize_optional_string(
+                                session.get("lineage_root_thread_id")
+                            ),
+                        )
+                    return session
+            else:
+                if self._needs_legacy_backfill(session):
+                    return self._persist_session_locked(
+                        project_id,
+                        node_id,
+                        "audit",
+                        session=session,
+                        thread_id=thread_id,
+                        fork_reason="legacy_resumed",
+                        lineage_root_thread_id=self._normalize_optional_string(
+                            session.get("lineage_root_thread_id")
+                        ),
+                    )
+                return session
 
         if str(node.get("node_kind") or "").strip() == "review":
             parent_id = self._normalize_optional_string(node.get("parent_id"))
             if not parent_id:
                 raise ValueError(f"Review node {node_id!r} is missing a parent.")
-            self._ensure_audit_exists(project_id, parent_id, workspace_root)
+            self._ensure_audit_exists(
+                project_id,
+                parent_id,
+                workspace_root,
+                require_live_thread=True,
+            )
             return self._fork_target_from_source_locked(
                 project_id,
                 node_id,
@@ -356,6 +403,11 @@ class ThreadLineageService:
         new_thread_id = self._start_thread(
             cwd=workspace_root,
             base_instructions=self._build_audit_base_instructions(snapshot, node),
+        )
+        self._materialize_thread_rollout(
+            new_thread_id,
+            cwd=workspace_root,
+            writable_roots=None,
         )
         return self._persist_session_locked(
             project_id,
@@ -463,7 +515,7 @@ class ThreadLineageService:
         if base_instructions is not None:
             return base_instructions
         if self._normalize_optional_string(node.get("node_kind")) == "review":
-            return build_integration_rollup_base_instructions()
+            return build_review_rollup_base_instructions()
         return None
 
     def _persist_session_locked(
@@ -512,7 +564,12 @@ class ThreadLineageService:
         workspace_root: str | None,
     ) -> dict[str, Any]:
         if source_role == "audit":
-            return self._ensure_audit_exists(project_id, source_node_id, workspace_root)
+            return self._ensure_audit_exists(
+                project_id,
+                source_node_id,
+                workspace_root,
+                require_live_thread=True,
+            )
         return self._storage.chat_state_store.read_session(
             project_id,
             source_node_id,
@@ -588,9 +645,36 @@ class ThreadLineageService:
             )
             return True
         except CodexTransportError as exc:
-            if self._is_missing_thread_error(exc):
+            if self._is_no_rollout_error(exc):
+                try:
+                    self._materialize_thread_rollout(
+                        thread_id,
+                        cwd=cwd,
+                        writable_roots=writable_roots,
+                    )
+                    return True
+                except CodexTransportError as materialize_exc:
+                    if self._is_missing_thread_error(materialize_exc):
+                        return False
+                    raise
+            if self._is_thread_not_found_error(exc):
                 return False
             raise
+
+    def _materialize_thread_rollout(
+        self,
+        thread_id: str,
+        *,
+        cwd: str | None,
+        writable_roots: list[str] | None,
+    ) -> None:
+        self._codex_client.run_turn_streaming(
+            _ROLLOUT_BOOTSTRAP_PROMPT,
+            thread_id=thread_id,
+            timeout_sec=_THREAD_TIMEOUT_SEC,
+            cwd=cwd,
+            writable_roots=writable_roots,
+        )
 
     def _start_thread(
         self,
@@ -677,6 +761,16 @@ class ThreadLineageService:
         return value.strip() if isinstance(value, str) and value.strip() else None
 
     @staticmethod
+    def _is_no_rollout_error(exc: Exception) -> bool:
+        return "no rollout found for thread id" in str(exc).lower()
+
+    @staticmethod
+    def _is_thread_not_found_error(exc: Exception) -> bool:
+        return "thread not found" in str(exc).lower()
+
+    @staticmethod
     def _is_missing_thread_error(exc: Exception) -> bool:
-        message = str(exc).lower()
-        return "no rollout found for thread id" in message or "thread not found" in message
+        return (
+            ThreadLineageService._is_no_rollout_error(exc)
+            or ThreadLineageService._is_thread_not_found_error(exc)
+        )

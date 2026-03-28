@@ -7,6 +7,7 @@ import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
 import { NodeDetailCard } from '../node/NodeDetailCard'
 import { ComposerBar } from './ComposerBar'
+import { FrameContextFeedBlock } from './FrameContextFeedBlock'
 import { MessageFeed } from './MessageFeed'
 import styles from './BreadcrumbChatView.module.css'
 
@@ -184,7 +185,8 @@ export function BreadcrumbChatView() {
   const reviewInputRef = useRef<HTMLInputElement>(null)
 
   const canAcceptLocalReview = nodeDetailState?.can_accept_local_review === true
-  const showAcceptReview = threadTab === 'audit' && canAcceptLocalReview
+  const autoReviewStatus = nodeDetailState?.auto_review_status ?? null
+  const showAcceptReview = threadTab === 'audit' && canAcceptLocalReview && !autoReviewStatus
 
   useEffect(() => {
     if (!showAcceptReview) {
@@ -224,7 +226,10 @@ export function BreadcrumbChatView() {
 
   return (
     <div className={styles.root}>
-      <div className={styles.threadPane} data-testid="breadcrumb-thread-pane">
+      <div
+        className={`${styles.threadPane} ${isReviewNode ? styles.threadPaneSolo : ''}`}
+        data-testid="breadcrumb-thread-pane"
+      >
         <div className={styles.threadSurface}>
           {isReviewNode ? (
             <div className={styles.threadTabBar} data-testid="breadcrumb-review-audit-header">
@@ -269,19 +274,28 @@ export function BreadcrumbChatView() {
 
           <div className={styles.threadTabBody}>
             <>
-              {isLoading && (
-                <div className={styles.loadingState}>
-                  Loading...
-                </div>
-              )}
               {error && (
                 <div className={styles.errorBanner}>
                   {error}
                 </div>
               )}
-              {!isLoading && session && (
-                <MessageFeed messages={session.messages} />
-              )}
+              <MessageFeed
+                messages={session?.messages ?? []}
+                isLoading={isLoading}
+                prefix={
+                  (threadTab === 'ask' || threadTab === 'audit') && !isReviewNode && snapshot && projectId && nodeId
+                    ? (
+                        <FrameContextFeedBlock
+                          projectId={projectId}
+                          nodeId={nodeId}
+                          nodeRegistry={snapshot.tree_state.node_registry}
+                          variant={threadTab === 'audit' ? 'audit' : 'ask'}
+                          specConfirmed={nodeDetailState?.spec_confirmed === true}
+                        />
+                      )
+                    : undefined
+                }
+              />
               {showAcceptReview && (
                 <div className={styles.acceptReviewBar} data-testid="accept-review-bar">
                   {acceptReviewError ? (

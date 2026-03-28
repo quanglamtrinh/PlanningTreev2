@@ -39,15 +39,15 @@ _ROLLUP_OUTPUT_SCHEMA: dict[str, object] = {
 }
 
 
-def build_integration_rollup_base_instructions() -> str:
+def build_review_rollup_base_instructions() -> str:
     return _BASE_INSTRUCTIONS
 
 
-def build_integration_rollup_output_schema() -> dict[str, object]:
+def build_review_rollup_output_schema() -> dict[str, object]:
     return copy.deepcopy(_ROLLUP_OUTPUT_SCHEMA)
 
 
-def build_integration_rollup_prompt(system_messages: list[dict[str, object]]) -> str:
+def build_review_rollup_prompt(system_messages: list[dict[str, object]]) -> str:
     sections = ["Integration rollup context:"]
     for message in system_messages:
         if not isinstance(message, dict):
@@ -100,7 +100,7 @@ def build_rollup_prompt_from_storage(
     return "\n\n".join(sections)
 
 
-def extract_integration_rollup_summary(text: str) -> str | None:
+def extract_review_rollup_summary(text: str) -> str | None:
     payload = _extract_json_object(text)
     if not isinstance(payload, dict):
         return None
@@ -111,7 +111,7 @@ def extract_integration_rollup_summary(text: str) -> str | None:
     return cleaned or None
 
 
-def render_integration_rollup_message(summary: str, sha: str) -> str:
+def render_review_rollup_message(summary: str, sha: str) -> str:
     return (
         "## Integration Rollup\n\n"
         f"**Summary:** {summary}\n\n"

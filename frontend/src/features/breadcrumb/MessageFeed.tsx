@@ -173,18 +173,7 @@ function partsEqual(a: MessagePart[] | undefined, b: MessagePart[] | undefined):
 const MessageFeedRow = memo(
   function MessageFeedRow({ msg }: { msg: ChatMessage }) {
     if (msg.role === 'system') {
-      return (
-        <div className={`${styles.row} ${styles.rowSystem}`}>
-          <div className={styles.systemCard} role="note" aria-label="Thread context">
-            <p className={styles.systemEyebrow}>Context</p>
-            {msg.content ? (
-              <div className={`${styles.content} ${styles.systemContent}`}>
-                {renderContent(msg.content)}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      )
+      return null
     }
 
     return (
@@ -221,9 +210,11 @@ const MessageFeedRow = memo(
 
 interface MessageFeedProps {
   messages: ChatMessage[]
+  prefix?: React.ReactNode
+  isLoading?: boolean
 }
 
-export function MessageFeed({ messages }: MessageFeedProps) {
+export function MessageFeed({ messages, prefix, isLoading }: MessageFeedProps) {
   const endRef = useRef<HTMLDivElement>(null)
   const prevCountRef = useRef(0)
 
@@ -243,16 +234,19 @@ export function MessageFeed({ messages }: MessageFeedProps) {
     endRef.current?.scrollIntoView({ behavior, block: 'end' })
   }, [messages.length, tail?.message_id, tail?.content, tail?.status, tail?.error, tailPartsKey])
 
-  if (messages.length === 0) {
-    return (
-      <div className={feedStyles.empty}>
-        Send a message to start the conversation
-      </div>
-    )
-  }
+  const showEmpty = !isLoading && messages.length === 0 && !prefix
 
   return (
     <div className={feedStyles.feed}>
+      {prefix}
+      {isLoading && (
+        <div className={feedStyles.loadingInFeed}>Loading…</div>
+      )}
+      {showEmpty && (
+        <div className={feedStyles.emptyInFeed}>
+          Send a message to start the conversation
+        </div>
+      )}
       {messages.map((msg) => (
         <MessageFeedRow key={msg.message_id} msg={msg} />
       ))}

@@ -5,7 +5,6 @@ import { ClarifyPanel } from './ClarifyPanel'
 import { NodeDescribePanel } from './NodeDescribePanel'
 import { NodeDocumentEditor, type FramePostUpdateBranch } from './NodeDocumentEditor'
 import { SplitPanel } from './SplitPanel'
-import { ExecutionStatusBadge } from './ExecutionStatusBadge'
 import { NodeStatusBadge } from './NodeStatusBadge'
 import { ReviewDetailPanel } from './ReviewDetailPanel'
 import { WorkflowStepper } from './WorkflowStepper'
@@ -33,12 +32,20 @@ function deriveDetailTab(activeStep: 'frame' | 'clarify' | 'spec', frameBranchRe
   return activeStep
 }
 
-function resolveRequestedDetailTab(requestedTab: DetailTab): DetailTab {
-  // "Frame updated" always maps to the frame document (frame.md), never to active_step (e.g. spec).
-  if (requestedTab === 'frame_updated') {
+function resolveRequestedDetailTab(
+  requestedTab: DetailTab,
+  detailState?: {
+    active_step: 'frame' | 'clarify' | 'spec'
+    frame_branch_ready?: boolean
+  },
+): DetailTab {
+  if (requestedTab !== 'frame_updated') {
+    return requestedTab
+  }
+  if (detailState?.frame_branch_ready) {
     return 'frame_updated'
   }
-  return requestedTab
+  return detailState?.active_step ?? 'frame'
 }
 
 const FRAME_POST_UPDATE_STORAGE = 'planningtree:framePostUpdate:'
@@ -89,11 +96,11 @@ export function NodeDetailCard({
     if (!detailState || !projectId || !node) {
       return
     }
-    if (detailState.active_step === 'spec') {
-      sessionStorage.setItem(framePostUpdateStorageKey(projectId, node.node_id), 'spec')
-      setFramePostUpdateBranch('spec')
+    if (detailState.frame_needs_reconfirm && framePostUpdateBranch !== 'none') {
+      sessionStorage.removeItem(framePostUpdateStorageKey(projectId, node.node_id))
+      setFramePostUpdateBranch('none')
     }
-  }, [detailState?.active_step, projectId, node])
+  }, [detailState?.frame_needs_reconfirm, framePostUpdateBranch, projectId, node])
 
   useEffect(() => {
     if (projectId && node && state === 'ready') {
@@ -109,16 +116,20 @@ export function NodeDetailCard({
           return currentTab
         }
         // Stay on Frame updated (frame.md) while the workflow suggests Spec (spec.md).
-        if (currentTab === 'frame_updated' && nextTab === 'spec') {
+        if (currentTab === 'frame_updated' && nextTab === 'spec' && framePostUpdateBranch !== 'spec') {
+          return currentTab
+        }
+        // Stay on Clarify after the user confirms — answered questions remain visible.
+        // The user can navigate to Spec manually via the tab bar.
+        if (currentTab === 'clarify' && nextTab === 'spec') {
           return currentTab
         }
         return nextTab
       })
     }
-  }, [detailState?.active_step, detailState?.frame_branch_ready])
+  }, [detailState?.active_step, detailState?.frame_branch_ready, framePostUpdateBranch])
 
-  const splitTabBlocked =
-    framePostUpdateBranch === 'spec' || detailState?.active_step === 'spec'
+  const splitTabBlocked = framePostUpdateBranch === 'spec'
   const specTabBlocked = framePostUpdateBranch === 'split'
 
   const commitFramePostUpdate = useCallback(
@@ -149,9 +160,9 @@ export function NodeDetailCard({
       if (nextTab === 'spec' && specTabBlocked) {
         return
       }
-      setDetailTab(resolveRequestedDetailTab(nextTab))
+      setDetailTab(resolveRequestedDetailTab(nextTab, detailState))
     },
-    [specTabBlocked, splitTabBlocked],
+    [detailState, specTabBlocked, splitTabBlocked],
   )
 
   const rootClassName = useMemo(
@@ -197,12 +208,6 @@ export function NodeDetailCard({
             <div className={styles.nodeMetaRow}>
               <span className={styles.nodeHier}>{node.hierarchical_number}</span>
               <NodeStatusBadge status={node.status} />
-              {!isReviewNode ? (
-                <ExecutionStatusBadge
-                  status={detailState?.execution_status}
-                  className={styles.executionStatusBadge}
-                />
-              ) : null}
             </div>
             <h2 className={styles.nodeHeading}>{node.title}</h2>
           </div>

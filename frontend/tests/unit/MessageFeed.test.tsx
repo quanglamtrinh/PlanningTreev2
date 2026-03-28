@@ -17,20 +17,6 @@ function makeAssistantMessage(overrides: Partial<ChatMessage> = {}): ChatMessage
   }
 }
 
-function makeSystemMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
-  return {
-    message_id: 'system-1',
-    role: 'system',
-    content: 'Canonical task context',
-    status: 'completed',
-    error: null,
-    turn_id: null,
-    created_at: '2026-03-20T00:00:00Z',
-    updated_at: '2026-03-20T00:00:00Z',
-    ...overrides,
-  }
-}
-
 describe('MessageFeed', () => {
   it('renders fenced code blocks from flat content fallback', () => {
     render(
@@ -78,20 +64,27 @@ describe('MessageFeed', () => {
     expect(screen.getByText('const answer = 42', { exact: false }).closest('pre')).not.toBeNull()
   })
 
-  it('renders system messages as thread context blocks', () => {
+  it('does not render system role messages in the feed', () => {
     render(
       <MessageFeed
         messages={[
-          makeSystemMessage({
+          {
+            message_id: 'system-1',
+            role: 'system',
             content: 'Checkpoint context:\n- SHA: `sha256:abc123`\n- Summary: Accepted',
-          }),
+            status: 'completed',
+            error: null,
+            turn_id: null,
+            created_at: '2026-03-20T00:00:00Z',
+            updated_at: '2026-03-20T00:00:00Z',
+          },
         ]}
       />,
     )
 
-    expect(screen.getByText('Context')).toBeInTheDocument()
-    expect(screen.getByText('Checkpoint context:')).toBeInTheDocument()
-    expect(screen.getByText('sha256:abc123')).toBeInTheDocument()
+    expect(screen.queryByText('Context')).not.toBeInTheDocument()
+    expect(screen.queryByText('Checkpoint context:')).not.toBeInTheDocument()
+    expect(screen.queryByText('sha256:abc123')).not.toBeInTheDocument()
   })
 
   it('renders plan items and still shows the final summary content', () => {

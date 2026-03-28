@@ -100,7 +100,7 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
         loading: { ...s.loading, [key]: false },
         errors: { ...s.errors, [key]: '' },
       }))
-      if (state.execution_status === 'executing') {
+      if (state.execution_status === 'executing' || state.auto_review_status === 'running') {
         if (!executionPollTimers.has(key)) {
           const timer = globalThis.setTimeout(() => {
             executionPollTimers.delete(key)
@@ -130,7 +130,7 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
         entries: { ...s.entries, [key]: state },
         errors: { ...s.errors, [key]: '' },
       }))
-      if (state.execution_status === 'executing') {
+      if (state.execution_status === 'executing' || state.auto_review_status === 'running') {
         const timer = globalThis.setTimeout(() => {
           executionPollTimers.delete(key)
           void get().refreshExecutionState(projectId, nodeId)

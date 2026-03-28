@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.ai.integration_rollup_prompt_builder import build_integration_rollup_base_instructions
+from backend.ai.review_rollup_prompt_builder import build_review_rollup_base_instructions
 from backend.ai.codex_client import CodexTransportError
 from backend.errors.app_errors import SplitNotAllowed
 from backend.services import planningtree_workspace
@@ -215,7 +215,7 @@ def test_split_service_creates_children_and_reuses_parent_audit_thread(
     assert review_audit_session["forked_from_node_id"] == root_id
     assert first_child_audit_session["fork_reason"] == "child_activation"
     assert first_child_audit_session["forked_from_node_id"] == review_node_id
-    assert fake_client.forked_threads[0]["base_instructions"] == build_integration_rollup_base_instructions()
+    assert fake_client.forked_threads[0]["base_instructions"] == build_review_rollup_base_instructions()
 
     make_node_split_ready(storage, tree_service, project_id, first_child_id)
     accepted_second = service.split_node(project_id, first_child_id, "phase_breakdown")

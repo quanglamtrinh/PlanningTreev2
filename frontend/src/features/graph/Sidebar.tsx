@@ -75,22 +75,23 @@ export function Sidebar() {
 
   const handleOpenBreadcrumb = useCallback(
     async (nodeId: string) => {
-      try {
-        await selectNode(nodeId, true)
-        const latestState = useProjectStore.getState()
-        const latestSnapshot = latestState.snapshot
-        if (!latestSnapshot || latestState.activeProjectId !== latestSnapshot.project.id) {
-          return
-        }
-        const targetNode =
-          latestSnapshot.tree_state.node_registry.find((node) => node.node_id === nodeId) ?? null
-        if (!targetNode) {
-          return
-        }
-        navigate(`/projects/${latestSnapshot.project.id}/nodes/${targetNode.node_id}/chat`)
-      } catch {
-        /* ignore */
+      const latestState = useProjectStore.getState()
+      const latestSnapshot = latestState.snapshot
+      const projectId = latestSnapshot?.project.id ?? latestState.activeProjectId
+      if (!projectId) {
+        return
       }
+
+      if (
+        latestSnapshot &&
+        latestSnapshot.project.id === projectId &&
+        !latestSnapshot.tree_state.node_registry.some((node) => node.node_id === nodeId)
+      ) {
+        return
+      }
+
+      navigate(`/projects/${projectId}/nodes/${nodeId}/chat`)
+      void selectNode(nodeId, true)
     },
     [navigate, selectNode],
   )
@@ -452,12 +453,14 @@ function NodeTreeItem({
       <div
         className={`${styles.nodeRow} ${isSelected ? styles.nodeRowActive : ''}`}
         style={{ paddingLeft: `${indentLeft}px` }}
+        onDoubleClick={() => void onDoubleClickNode(node.node_id)}
       >
         {hasChildren ? (
           <button
             type="button"
             className={styles.treeChevron}
             onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v) }}
+            onDoubleClick={(e) => { e.stopPropagation() }}
             aria-label={expanded ? 'Collapse children' : 'Expand children'}
           >
             <svg
@@ -477,8 +480,7 @@ function NodeTreeItem({
           type="button"
           className={styles.nodeRowInner}
           onClick={() => onClickNode(node.node_id)}
-          onDoubleClick={() => void onDoubleClickNode(node.node_id)}
-          title={`${node.hierarchical_number} - ${node.title}\nDouble-click to open chat`}
+          title={`${node.hierarchical_number} - ${node.title}\nDouble-click to open breadcrumb`}
         >
           <StatusDot status={node.status} />
           <span className={styles.nodeTitle}>

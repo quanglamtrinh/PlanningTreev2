@@ -1,6 +1,6 @@
 # Review Node and Checkpoint Model
 
-Status: spec (updated through Phase 6). Defines review node identity, checkpoint chain, and rollup review.
+Status: active spec (updated through Phase 7). Defines review node identity, checkpoint chain, and rollup review.
 
 ## Review Node
 
@@ -112,13 +112,14 @@ K3 (after 1.C)
 
 All SHAs here are workspace/subtree state SHAs — the same type used in `execution_state.initial_sha`, `execution_state.head_sha`, and upward handoff. See `execution-state-model.md` SHA Strategy for the consistent definition.
 
-### Checkpoint as Sibling Seed
+### Checkpoint as Child Activation Context
 
-When a new sibling is activated (see `lazy-sibling-creation.md`), its audit thread is seeded with:
-- The latest checkpoint's summary and SHA
-- The sibling's split item (title + objective from `pending_siblings`)
+When a new sibling is activated (see `lazy-sibling-creation.md`):
+- `child.audit` is created by `fork(review.audit)`
+- the latest checkpoint summary/SHA and the sibling split item come from storage, not seed messages
+- `ask_planning` receives that activation context on the first successful ask turn while the child-activation boundary is open
 
-This ensures each sibling starts from the latest accepted state, not stale split-time context.
+This keeps review conversation history in lineage while canonical child-assignment/checkpoint context remains storage-backed.
 
 ## Three-Layer Review Model
 
@@ -218,7 +219,7 @@ This check runs inside `accept_local_review()` after updating the checkpoint. No
 When rollup is `ready`:
 
 1. Ensure the review node's `audit` thread exists (`chat/{review_node_id}/audit.json`)
-2. Seed the thread with parent frame, split rationale, all checkpoint records, all accepted local review summaries
+2. Build rollup context from storage: parent frame, split rationale, accepted checkpoint records, and accepted local review summaries
 3. Run Codex agent in the review audit thread — agent performs automated analysis:
    - Detect conflicts, overlap, missing glue, integration mismatches
    - Compare realized subtree against parent's split rationale

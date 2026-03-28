@@ -89,22 +89,23 @@ export function GraphWorkspace() {
   }
 
   async function handleOpenBreadcrumb(nodeId: string) {
-    try {
-      await selectNode(nodeId, true)
-      const latestState = useProjectStore.getState()
-      const latestSnapshot = latestState.snapshot
-      if (!latestSnapshot || latestState.activeProjectId !== latestSnapshot.project.id) {
-        return
-      }
-      const targetNode =
-        latestSnapshot.tree_state.node_registry.find((item) => item.node_id === nodeId) ?? null
-      if (!targetNode) {
-        return
-      }
-      navigate(`/projects/${latestSnapshot.project.id}/nodes/${nodeId}/chat`)
-    } catch {
+    const latestState = useProjectStore.getState()
+    const latestSnapshot = latestState.snapshot
+    const projectId = latestSnapshot?.project.id ?? latestState.activeProjectId
+    if (!projectId) {
       return
     }
+
+    if (
+      latestSnapshot &&
+      latestSnapshot.project.id === projectId &&
+      !latestSnapshot.tree_state.node_registry.some((item) => item.node_id === nodeId)
+    ) {
+      return
+    }
+
+    navigate(`/projects/${projectId}/nodes/${nodeId}/chat`)
+    void selectNode(nodeId, true)
   }
 
   async function handleFinishTask(nodeId: string) {

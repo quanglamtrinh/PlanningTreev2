@@ -1,10 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Sidebar } from '../../src/features/graph/Sidebar'
 import { useCodexStore } from '../../src/stores/codex-store'
 import { useProjectStore } from '../../src/stores/project-store'
+
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location-path">{location.pathname}</div>
+}
 
 describe('Sidebar', () => {
   beforeEach(() => {
@@ -148,5 +153,94 @@ describe('Sidebar', () => {
       expect(selectFolder).toHaveBeenCalled()
     })
     expect(attachProjectFolder).not.toHaveBeenCalled()
+  })
+
+  it('opens breadcrumb on double-click for a done node in the sidebar tree', async () => {
+    vi.useRealTimers()
+    const selectNode = vi.fn().mockResolvedValue(undefined)
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project-1',
+          name: 'Project 1',
+          root_goal: 'Goal',
+          project_path: 'C:/workspace/project-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+      activeProjectId: 'project-1',
+      selectedNodeId: 'done-node',
+      selectNode,
+      snapshot: {
+        schema_version: 6,
+        project: {
+          id: 'project-1',
+          name: 'Project 1',
+          root_goal: 'Goal',
+          project_path: 'C:/workspace/project-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+        tree_state: {
+          root_node_id: 'root',
+          active_node_id: 'done-node',
+          node_registry: [
+            {
+              node_id: 'root',
+              parent_id: null,
+              child_ids: ['done-node'],
+              title: 'Root',
+              description: '',
+              status: 'draft',
+              node_kind: 'root',
+              depth: 0,
+              display_order: 0,
+              hierarchical_number: '1',
+              is_superseded: false,
+              created_at: '2026-01-01T00:00:00Z',
+              workflow: {
+                frame_confirmed: false,
+                active_step: 'frame',
+                spec_confirmed: false,
+              },
+            },
+            {
+              node_id: 'done-node',
+              parent_id: 'root',
+              child_ids: [],
+              title: 'Completed task',
+              description: '',
+              status: 'done',
+              node_kind: 'original',
+              depth: 1,
+              display_order: 0,
+              hierarchical_number: '1.1',
+              is_superseded: false,
+              created_at: '2026-01-01T00:00:00Z',
+              workflow: {
+                frame_confirmed: true,
+                active_step: 'spec',
+                spec_confirmed: true,
+              },
+            },
+          ],
+        },
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    })
+
+    render(
+      <MemoryRouter>
+        <Sidebar />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: /1\.1 Completed task/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/done-node/chat')
+    })
   })
 })

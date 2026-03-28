@@ -16,14 +16,14 @@
     ".    .    .      .       .        .          .          .   csArr  spec   cfArr2  finish"
     "desc a1  frame  cfArr  clarify  doneArr  frameUpd  .   .      .      .       ."
     ".    .    .      .       .          .          .          .   spArr  spTask  .       .";
-  grid-template-columns: auto 14px auto auto auto auto auto 12px auto auto auto auto;
+  grid-template-columns: auto 10px auto auto auto auto auto 9px auto auto auto auto;
   grid-template-rows: auto auto auto;
-  row-gap: 6px;
+  row-gap: 4px;
   column-gap: 0;
   align-items: center;
   justify-items: center;
   width: 100%;
-  padding: 8px 0 4px;
+  padding: 4px 0 2px;
   overflow-x: auto;
 
   --conn: var(--color-border-strong);
@@ -34,15 +34,15 @@
 .node {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
+  gap: 3px;
+  padding: 3px 7px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   background: var(--color-bg-panel, #fff);
   font-family: var(--font-sans, sans-serif);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
-  line-height: 1.4;
+  line-height: 1.35;
   color: var(--color-text-tertiary);
   cursor: pointer;
   white-space: nowrap;
@@ -56,15 +56,15 @@
 .nodeVisual {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
+  gap: 3px;
+  padding: 3px 7px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   background: var(--color-bg-panel, #fff);
   font-family: var(--font-sans, sans-serif);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
-  line-height: 1.4;
+  line-height: 1.35;
   color: var(--color-text-tertiary);
   white-space: nowrap;
   cursor: default;
@@ -116,12 +116,12 @@
   font-weight: 700;
   border-color: var(--color-accent);
   background: color-mix(in srgb, var(--color-accent) 5%, var(--color-bg-panel, #fff));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 18%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 18%, transparent);
 }
 
 /* Active + done — glow ring on top of done fill */
 .active.done {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 28%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 28%, transparent);
 }
 
 /* ── "Frame updated" — read-only state indicator ──────────────────── */
@@ -166,12 +166,12 @@
 .arrowShort::after {
   content: '';
   position: absolute;
-  right: -5px;
+  right: -4px;
   top: 50%;
   transform: translateY(-50%);
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 6px solid var(--conn);
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-left: 5px solid var(--conn);
 }
 
 /* ── Labeled arrow connector (most transitions) ────────────────────── */
@@ -183,7 +183,7 @@
   flex-direction: column;
   justify-content: center;
   align-items: stretch;
-  min-width: 20px;
+  min-width: 14px;
   min-height: 0;
 }
 
@@ -200,12 +200,12 @@
 .arrowLine::after {
   content: '';
   position: absolute;
-  right: -5px;
+  right: -4px;
   top: 50%;
   transform: translateY(-50%);
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 6px solid var(--conn);
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-left: 5px solid var(--conn);
 }
 
 /* ── T-junction (vertical line + horizontal arm, spans all 3 rows) ─── */

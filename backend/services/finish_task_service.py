@@ -6,6 +6,12 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from backend.ai.auto_review_prompt_builder import (
+    build_auto_review_base_instructions,
+    build_auto_review_output_schema,
+    build_auto_review_prompt,
+    extract_auto_review_result,
+)
 from backend.ai.codex_client import CodexAppClient
 from backend.ai.execution_prompt_builder import (
     build_execution_base_instructions,
@@ -32,6 +38,7 @@ _DRAFT_FLUSH_INTERVAL_SEC = 0.5
 
 if TYPE_CHECKING:
     from backend.services.chat_service import ChatService
+    from backend.services.review_service import ReviewService
 
 
 class FinishTaskService:
@@ -46,6 +53,7 @@ class FinishTaskService:
         chat_timeout: int,
         chat_service: ChatService | None = None,
         git_checkpoint_service: Any = None,
+        review_service: ReviewService | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -56,6 +64,7 @@ class FinishTaskService:
         self._chat_timeout = int(chat_timeout)
         self._chat_service = chat_service
         self._git_checkpoint_service = git_checkpoint_service
+        self._review_service = review_service
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}
 
@@ -550,7 +559,7 @@ class FinishTaskService:
             # === POINT OF NO RETURN: execution state is "completed" ===
             # Errors below are best-effort only — do NOT call fail_execution()
 
-            # 4. BEST-EFFORT: chat message + event
+            # 4. BEST-EFFORT: finalize execution chat message first (clears active_turn_id)
             try:
                 persisted = self._persist_execution_message(
                     project_id=project_id,
@@ -579,6 +588,21 @@ class FinishTaskService:
                     )
             except Exception:
                 logger.warning("Failed to persist/publish completed message for %s/%s", project_id, node_id)
+
+            # 5. BEST-EFFORT: start automated local review (after execution session is finalized)
+            try:
+                self._start_auto_review(
+                    project_id=project_id,
+                    node_id=node_id,
+                    workspace_root=workspace_root,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to start auto-review for %s/%s",
+                    project_id,
+                    node_id,
+                    exc_info=True,
+                )
         except Exception as exc:
             logger.debug(
                 "Execution turn failed for %s/%s: %s",
@@ -877,3 +901,534 @@ class FinishTaskService:
                 "execution",
                 turn_id,
             )
+
+    # -- Automated Local Review --------------------------------------
+
+    def _start_auto_review(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+    ) -> bool:
+        if self._codex_client is None or self._chat_event_broker is None:
+            logger.debug(
+                "Skipping auto-review for %s/%s: dependencies unavailable.",
+                project_id,
+                node_id,
+            )
+            return False
+
+        turn_id = new_id("auto_review")
+        assistant_message_id = new_id("msg")
+        now = iso_now()
+        assistant_message = {
+            "message_id": assistant_message_id,
+            "role": "assistant",
+            "content": "",
+            "status": "pending",
+            "error": None,
+            "turn_id": turn_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        with self._storage.project_lock(project_id):
+            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            if exec_state is None or exec_state.get("status") != "completed":
+                logger.debug(
+                    "Skipping auto-review for %s/%s: execution status is not 'completed'.",
+                    project_id,
+                    node_id,
+                )
+                return False
+
+            existing_auto_review = exec_state.get("auto_review")
+            if isinstance(existing_auto_review, dict) and existing_auto_review.get("status") in (
+                "running",
+                "completed",
+            ):
+                logger.debug(
+                    "Skipping auto-review for %s/%s: already %s.",
+                    project_id,
+                    node_id,
+                    existing_auto_review.get("status"),
+                )
+                return False
+
+            session = self._storage.chat_state_store.read_session(
+                project_id, node_id, thread_role="audit"
+            )
+            if session.get("active_turn_id"):
+                logger.warning(
+                    "Skipping auto-review for %s/%s: audit session already has active turn %s.",
+                    project_id,
+                    node_id,
+                    session.get("active_turn_id"),
+                )
+                return False
+
+            session["active_turn_id"] = turn_id
+            session["messages"].append(assistant_message)
+            self._storage.chat_state_store.write_session(
+                project_id, node_id, session, thread_role="audit"
+            )
+
+            exec_state["auto_review"] = {
+                "status": "running",
+                "started_at": now,
+                "completed_at": None,
+                "summary": None,
+                "checkpoint_summary": None,
+                "overall_severity": None,
+                "overall_score": None,
+                "findings": [],
+                "error_message": None,
+                "review_message_id": assistant_message_id,
+            }
+            self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
+
+        if self._chat_service is not None:
+            self._chat_service.register_external_live_turn(
+                project_id, node_id, "audit", turn_id
+            )
+
+        self._chat_event_broker.publish(
+            project_id,
+            node_id,
+            {
+                "type": "message_created",
+                "assistant_message": assistant_message,
+                "active_turn_id": turn_id,
+            },
+            thread_role="audit",
+        )
+        self._chat_event_broker.publish(
+            project_id,
+            node_id,
+            {"type": "auto_review_started", "node_id": node_id, "turn_id": turn_id, "message_id": assistant_message_id},
+            thread_role="audit",
+        )
+
+        threading.Thread(
+            target=self._run_background_auto_review,
+            kwargs={
+                "project_id": project_id,
+                "node_id": node_id,
+                "turn_id": turn_id,
+                "assistant_message_id": assistant_message_id,
+                "workspace_root": workspace_root,
+            },
+            daemon=True,
+        ).start()
+        return True
+
+    def _run_background_auto_review(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        turn_id: str,
+        assistant_message_id: str,
+        workspace_root: str | None,
+    ) -> None:
+        thread_id: str | None = None
+        draft_lock = threading.Lock()
+        accumulator = PartAccumulator()
+        last_checkpoint_at = time.monotonic()
+
+        def capture_delta(delta: str) -> None:
+            nonlocal last_checkpoint_at
+            checkpoint_content: str | None = None
+            with draft_lock:
+                accumulator.on_delta(delta)
+                now_t = time.monotonic()
+                if now_t - last_checkpoint_at >= _DRAFT_FLUSH_INTERVAL_SEC:
+                    checkpoint_content = accumulator.content_projection()
+                    last_checkpoint_at = now_t
+
+            self._chat_event_broker.publish(
+                project_id,
+                node_id,
+                {
+                    "type": "assistant_delta",
+                    "message_id": assistant_message_id,
+                    "delta": delta,
+                    "item_id": "assistant_text",
+                    "item_type": "assistant_text",
+                    "phase": "delta",
+                },
+                thread_role="audit",
+            )
+
+            if checkpoint_content is not None:
+                self._persist_auto_review_message(
+                    project_id=project_id,
+                    node_id=node_id,
+                    turn_id=turn_id,
+                    assistant_message_id=assistant_message_id,
+                    content=checkpoint_content,
+                    status="streaming",
+                    error=None,
+                    thread_id=thread_id,
+                    clear_active_turn=False,
+                    parts=accumulator.snapshot_parts(),
+                    items=accumulator.snapshot_items(),
+                )
+
+        def capture_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
+            with draft_lock:
+                item_id = accumulator.on_tool_call(tool_name, arguments)
+                part_index = len(accumulator.parts) - 1
+            self._chat_event_broker.publish(
+                project_id,
+                node_id,
+                {
+                    "type": "assistant_tool_call",
+                    "message_id": assistant_message_id,
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                    "part_index": part_index,
+                    "item_id": item_id,
+                    "item_type": "tool_call",
+                    "phase": "started",
+                },
+                thread_role="audit",
+            )
+
+        def capture_thread_status(payload: dict[str, Any]) -> None:
+            with draft_lock:
+                accumulator.on_thread_status(payload)
+            status = payload.get("status", {})
+            status_type = status.get("type", "unknown") if isinstance(status, dict) else "unknown"
+            from backend.ai.part_accumulator import _status_label
+
+            self._chat_event_broker.publish(
+                project_id,
+                node_id,
+                {
+                    "type": "assistant_status",
+                    "message_id": assistant_message_id,
+                    "status_type": status_type,
+                    "label": _status_label(status_type),
+                    "item_id": "thread_status",
+                    "item_type": "thread_status",
+                    "phase": "delta",
+                },
+                thread_role="audit",
+            )
+
+        try:
+            if self._thread_lineage_service is None:
+                raise FinishTaskNotAllowed("Thread lineage service unavailable for auto-review.")
+
+            session = self._thread_lineage_service.resume_or_rebuild_session(
+                project_id,
+                node_id,
+                "audit",
+                workspace_root,
+                base_instructions=build_auto_review_base_instructions(),
+            )
+            thread_id = str(session.get("thread_id") or "").strip()
+            if not thread_id:
+                raise FinishTaskNotAllowed("Auto-review audit thread did not return a thread id.")
+
+            self._persist_auto_review_thread_id(
+                project_id=project_id,
+                node_id=node_id,
+                turn_id=turn_id,
+                assistant_message_id=assistant_message_id,
+                thread_id=thread_id,
+            )
+
+            prompt = build_auto_review_prompt(
+                self._storage,
+                project_id,
+                node_id,
+                workspace_root,
+                self._git_checkpoint_service,
+            )
+
+            result = self._codex_client.run_turn_streaming(
+                prompt,
+                thread_id=thread_id,
+                timeout_sec=self._chat_timeout,
+                cwd=workspace_root,
+                writable_roots=None,
+                sandbox_profile="read_only",
+                on_delta=capture_delta,
+                on_tool_call=capture_tool_call,
+                on_thread_status=capture_thread_status,
+                output_schema=build_auto_review_output_schema(),
+            )
+
+            with draft_lock:
+                accumulator.finalize()
+                streamed_content = accumulator.content_projection()
+                final_parts = accumulator.snapshot_parts()
+                final_items = accumulator.snapshot_items()
+
+            stdout = str(result.get("stdout", "") or "")
+            review_result = extract_auto_review_result(stdout) or extract_auto_review_result(
+                streamed_content
+            )
+            if not review_result:
+                raise FinishTaskNotAllowed(
+                    "Auto-review did not return a valid structured result."
+                )
+
+            now = iso_now()
+            with self._storage.project_lock(project_id):
+                exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+                if exec_state is not None:
+                    auto_review = exec_state.get("auto_review") or {}
+                    auto_review.update({
+                        "status": "completed",
+                        "completed_at": now,
+                        "summary": review_result["summary"],
+                        "checkpoint_summary": review_result["checkpoint_summary"],
+                        "overall_severity": review_result["overall_severity"],
+                        "overall_score": review_result["overall_score"],
+                        "findings": review_result["findings"],
+                        "error_message": None,
+                    })
+                    exec_state["auto_review"] = auto_review
+                    self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
+
+            severity = review_result["overall_severity"]
+            score = review_result["overall_score"]
+            final_content = (
+                f"## Automated Local Review\n\n"
+                f"**Severity:** {severity} | **Score:** {score}/100\n\n"
+                f"{review_result['summary']}"
+            )
+
+            finalized_parts = [dict(p) for p in final_parts if p.get("type") != "assistant_text"]
+            finalized_parts.append({"type": "assistant_text", "content": final_content, "is_streaming": False})
+
+            persisted = self._persist_auto_review_message(
+                project_id=project_id,
+                node_id=node_id,
+                turn_id=turn_id,
+                assistant_message_id=assistant_message_id,
+                content=final_content,
+                status="completed",
+                error=None,
+                thread_id=str(result.get("thread_id") or thread_id or ""),
+                clear_active_turn=True,
+                parts=finalized_parts,
+                items=final_items,
+            )
+
+            if persisted:
+                self._chat_event_broker.publish(
+                    project_id,
+                    node_id,
+                    {
+                        "type": "assistant_completed",
+                        "message_id": assistant_message_id,
+                        "content": final_content,
+                        "thread_id": str(result.get("thread_id") or thread_id or ""),
+                    },
+                    thread_role="audit",
+                )
+                self._chat_event_broker.publish(
+                    project_id,
+                    node_id,
+                    {
+                        "type": "auto_review_completed",
+                        "node_id": node_id,
+                        "overall_severity": severity,
+                        "overall_score": score,
+                        "summary": review_result["summary"],
+                    },
+                    thread_role="audit",
+                )
+
+            self._auto_accept_local_review(project_id=project_id, node_id=node_id)
+
+        except Exception as exc:
+            logger.debug(
+                "Auto-review failed for %s/%s: %s",
+                project_id,
+                node_id,
+                exc,
+                exc_info=True,
+            )
+            try:
+                with draft_lock:
+                    accumulator.finalize()
+                    error_parts = accumulator.snapshot_parts()
+                    streamed_content = accumulator.content_projection()
+
+                now = iso_now()
+                with self._storage.project_lock(project_id):
+                    exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+                    if exec_state is not None:
+                        auto_review = exec_state.get("auto_review") or {}
+                        auto_review.update({
+                            "status": "failed",
+                            "completed_at": now,
+                            "error_message": str(exc),
+                        })
+                        exec_state["auto_review"] = auto_review
+                        self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
+
+                persisted = self._persist_auto_review_message(
+                    project_id=project_id,
+                    node_id=node_id,
+                    turn_id=turn_id,
+                    assistant_message_id=assistant_message_id,
+                    content=streamed_content,
+                    status="error",
+                    error=str(exc),
+                    thread_id=thread_id,
+                    clear_active_turn=True,
+                    parts=error_parts,
+                    items=accumulator.snapshot_items(),
+                )
+            except Exception:
+                persisted = False
+                logger.debug("Failed to persist auto-review error state", exc_info=True)
+
+            if persisted:
+                self._chat_event_broker.publish(
+                    project_id,
+                    node_id,
+                    {"type": "assistant_error", "message_id": assistant_message_id, "error": str(exc)},
+                    thread_role="audit",
+                )
+            self._chat_event_broker.publish(
+                project_id,
+                node_id,
+                {"type": "auto_review_failed", "node_id": node_id, "error": str(exc)},
+                thread_role="audit",
+            )
+        finally:
+            if self._chat_service is not None:
+                self._chat_service.clear_external_live_turn(
+                    project_id, node_id, "audit", turn_id
+                )
+
+    def _auto_accept_local_review(self, *, project_id: str, node_id: str) -> None:
+        if self._review_service is None:
+            logger.debug(
+                "Skipping auto-accept for %s/%s: review_service unavailable.",
+                project_id,
+                node_id,
+            )
+            return
+
+        try:
+            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            if exec_state is None or exec_state.get("status") != "completed":
+                logger.debug(
+                    "Skipping auto-accept for %s/%s: execution status is not 'completed'.",
+                    project_id,
+                    node_id,
+                )
+                return
+
+            auto_review = exec_state.get("auto_review") or {}
+            checkpoint_summary = str(auto_review.get("checkpoint_summary") or "").strip()
+            overall_severity = str(auto_review.get("overall_severity") or "info").strip()
+            overall_score = auto_review.get("overall_score")
+            score_str = str(overall_score) if isinstance(overall_score, int) else "?"
+            full_summary = f"[Auto-reviewed: {overall_severity}/{score_str}] {checkpoint_summary}"
+
+            self._review_service.start_local_review(project_id, node_id)
+            response = self._review_service.accept_local_review(project_id, node_id, full_summary)
+            activated_sibling_id = response.get("activated_sibling_id")
+
+            self._chat_event_broker.publish(
+                project_id,
+                node_id,
+                {
+                    "type": "auto_review_accepted",
+                    "node_id": node_id,
+                    "activated_sibling_id": activated_sibling_id,
+                },
+                thread_role="audit",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Auto-accept failed for %s/%s: %s",
+                project_id,
+                node_id,
+                exc,
+                exc_info=True,
+            )
+
+    def _persist_auto_review_message(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        turn_id: str,
+        assistant_message_id: str,
+        content: str,
+        status: str,
+        error: str | None,
+        thread_id: str | None,
+        clear_active_turn: bool,
+        parts: list[dict[str, Any]] | None = None,
+        items: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        with self._storage.project_lock(project_id):
+            session = self._storage.chat_state_store.read_session(
+                project_id, node_id, thread_role="audit"
+            )
+            if str(session.get("active_turn_id") or "") != turn_id:
+                return False
+            message = None
+            for candidate in reversed(session.get("messages", [])):
+                if candidate.get("message_id") == assistant_message_id:
+                    message = candidate
+                    break
+            if message is None:
+                return False
+
+            message["content"] = content
+            message["status"] = status
+            message["error"] = error
+            message["updated_at"] = iso_now()
+            if parts is not None:
+                message["parts"] = parts
+            if items is not None:
+                message["items"] = items
+            if thread_id is not None:
+                session["thread_id"] = thread_id
+            if clear_active_turn:
+                session["active_turn_id"] = None
+
+            self._storage.chat_state_store.write_session(
+                project_id, node_id, session, thread_role="audit"
+            )
+            return True
+
+    def _persist_auto_review_thread_id(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        turn_id: str,
+        assistant_message_id: str,
+        thread_id: str,
+    ) -> bool:
+        with self._storage.project_lock(project_id):
+            session = self._storage.chat_state_store.read_session(
+                project_id, node_id, thread_role="audit"
+            )
+            if str(session.get("active_turn_id") or "") != turn_id:
+                return False
+            msg_found = any(
+                m.get("message_id") == assistant_message_id
+                for m in session.get("messages", [])
+            )
+            if not msg_found:
+                return False
+            session["thread_id"] = thread_id
+            self._storage.chat_state_store.write_session(
+                project_id, node_id, session, thread_role="audit"
+            )
+            return True

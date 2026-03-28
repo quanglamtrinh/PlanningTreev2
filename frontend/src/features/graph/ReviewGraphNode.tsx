@@ -99,7 +99,7 @@ function ReviewGraphNodeComponent({ data }: NodeProps) {
               type="button"
               className={`${styles.openBreadcrumbBtn} nodrag nopan`}
               disabled={!d.canOpenBreadcrumb}
-              title={d.canOpenBreadcrumb ? 'Open review audit' : 'Codex CLI is not installed.'}
+              title={d.canOpenBreadcrumb ? 'Open review audit' : 'This review overlay is not available yet.'}
               data-testid={`review-open-breadcrumb-${d.parentNodeId}`}
               onClick={(e) => {
                 e.stopPropagation()

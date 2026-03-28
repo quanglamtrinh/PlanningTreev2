@@ -302,9 +302,9 @@ class StdioTransport(CodexTransport):
             "experimentalRawEvents": True,
             "persistExtendedHistory": bool(persist_extended_history),
         }
-        if base_instructions:
+        if base_instructions is not None:
             params["baseInstructions"] = base_instructions
-        if dynamic_tools:
+        if dynamic_tools is not None:
             params["dynamicTools"] = dynamic_tools
         return self._rpc("thread/start", params, timeout=min(30, timeout_sec))
 
@@ -352,9 +352,9 @@ class StdioTransport(CodexTransport):
             "sandbox": self._thread_sandbox_mode(writable_roots),
             "persistExtendedHistory": bool(persist_extended_history),
         }
-        if base_instructions:
+        if base_instructions is not None:
             params["baseInstructions"] = base_instructions
-        if dynamic_tools:
+        if dynamic_tools is not None:
             params["dynamicTools"] = dynamic_tools
         return self._rpc("thread/fork", params, timeout=min(30, timeout_sec))
 

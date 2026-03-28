@@ -302,6 +302,14 @@ function openEventStream(
       if (event.type === 'execution_completed') {
         void useDetailStateStore.getState().refreshExecutionState(projectId, nodeId)
       }
+      if (
+        event.type === 'auto_review_started' ||
+        event.type === 'auto_review_completed' ||
+        event.type === 'auto_review_failed' ||
+        event.type === 'auto_review_accepted'
+      ) {
+        void useDetailStateStore.getState().refreshExecutionState(projectId, nodeId)
+      }
     } catch {
       // Ignore parse errors.
     }

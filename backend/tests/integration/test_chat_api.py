@@ -263,7 +263,7 @@ def test_chat_session_honors_thread_role_query(client: TestClient, workspace_roo
     assert resp.json()["thread_role"] == "audit"
 
 
-def test_audit_session_returns_system_seed_messages_for_ready_child(client: TestClient, workspace_root):
+def test_audit_session_bootstraps_lineage_without_seed_replay(client: TestClient, workspace_root):
     _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
@@ -312,10 +312,10 @@ def test_audit_session_returns_system_seed_messages_for_ready_child(client: Test
 
     assert response.status_code == 200
     payload = response.json()
-    assert [message["role"] for message in payload["messages"]] == ["system", "system", "system"]
-    assert "Auth guard" in payload["messages"][0]["content"]
-    assert "sha256:k1" in payload["messages"][1]["content"]
-    assert "Parent Task" in payload["messages"][2]["content"]
+    assert payload["thread_role"] == "audit"
+    assert payload["thread_id"] is not None
+    assert payload["fork_reason"] == "child_activation"
+    assert payload["messages"] == []
 
 
 def test_task_node_rejects_invalid_thread_role_pair(client: TestClient, workspace_root):
@@ -475,7 +475,7 @@ def test_review_audit_session_includes_assistant_output_after_auto_start(
     client.app.state.review_service._codex_client = IntegrationRollupCodexClient(
         summary="Integration output is ready."
     )
-    started = client.app.state.review_service.start_integration_rollup(project_id, review_id)
+    started = client.app.state.review_service.start_review_rollup(project_id, review_id)
     assert started is True
 
     _wait_for_integration_completion(client, project_id, review_id)

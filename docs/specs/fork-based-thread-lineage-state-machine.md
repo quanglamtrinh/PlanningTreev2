@@ -1,6 +1,6 @@
 # Fork-Based Thread Lineage State Machine
 
-Status: draft spec for review. Proposed fork-based replacement for the current seed-heavy thread model in `thread-state-model.md` and the review-thread parts of `review-node-checkpoint.md`.
+Status: active spec (implemented through Phase 7). Defines the shipped fork-based replacement for the legacy seed-heavy thread model in `thread-state-model.md` and the review-thread portions of `review-node-checkpoint.md`.
 
 ## Purpose
 
@@ -380,23 +380,18 @@ Session message history is preserved for UI continuity but is not required for l
 9. Any context needed for deterministic rebuild must exist in persisted local storage, not solely on the Codex app server.
 10. Fork operations and artifact persistence that gate downstream forks are serialized under one project-scoped critical section; no two lineage-mutating operations may race on the same canonical source thread.
 
-## Current Implementation Gaps
+## Implementation Notes
 
-This target spec differs from the current codebase in several major ways:
+The Phase 1-7 migration is complete. The live codebase now matches this model in the following ways:
 
-- current services create most threads with `start_thread()` or recover with `resume_thread()`
-- current model seeds context into sessions instead of using fork inheritance plus prompt injection from storage
-- current review node model uses an `integration` thread instead of a single canonical `audit` review thread
-- current split flow uses a project-level split thread rather than the parent node's `audit`
+- `ThreadLineageService` owns start, fork, resume, and rebuild behavior
+- `ask_planning` and `execution` are created from `task.audit`
+- review nodes use a canonical `review.audit` thread rather than a dedicated `integration` thread
+- split runs on `parent.audit`
+- prompt builders load canonical artifacts from storage at workflow boundaries
+- seed-based session inheritance has been retired
 
-The migration path should therefore update:
-
-- thread role validation rules
-- session metadata schema
-- chat, finish task, split, and review services to use `fork_thread()`
-- prompt builders to load canonical artifacts from storage at workflow boundaries
-- rebuild logic for missing app-server threads
-- tests that currently assert seed-based thread creation
+Historical migration details, compatibility windows, and rollout sequencing remain in `fork-based-thread-lineage-delta-migration-plan.md` and the Phase handoff artifacts.
 
 ## Resolved V1 Decisions
 

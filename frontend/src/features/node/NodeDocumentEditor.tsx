@@ -101,8 +101,7 @@ export function NodeDocumentEditor({
   const isUpdatedFrameStep = kind === 'frame' && workflowTab === 'frame_updated'
   const isSpecStep = kind === 'spec'
 
-  const confirmAndSplitDisabled =
-    framePostUpdateBranch === 'spec' || detailState?.active_step === 'spec'
+  const confirmAndSplitDisabled = framePostUpdateBranch === 'spec'
   const confirmAndCreateSpecDisabled = framePostUpdateBranch === 'split'
 
   useEffect(() => {
@@ -252,8 +251,9 @@ export function NodeDocumentEditor({
         }
       }
 
-      await loadDetailState(projectId, node.node_id)
       onFramePostUpdateCommit?.('spec')
+      await loadDetailState(projectId, node.node_id)
+      onWorkflowTabChange?.('spec')
     } catch (error) {
       setConfirmError(error instanceof Error ? error.message : 'Create spec failed')
     } finally {
@@ -268,6 +268,7 @@ export function NodeDocumentEditor({
     invalidateDocument,
     loadDetailState,
     node.node_id,
+    onWorkflowTabChange,
     onFramePostUpdateCommit,
     projectId,
   ])
@@ -359,7 +360,19 @@ export function NodeDocumentEditor({
     !isConfirming &&
     !isGenerating &&
     !entry.isSaving
-  const canFinishTask = canConfirm && !isFinishingTask && detailState?.can_finish_task !== false
+  const canFinishTaskAfterConfirm =
+    node.node_kind !== 'review' &&
+    node.child_ids.length === 0 &&
+    (node.status === 'ready' || node.status === 'in_progress') &&
+    detailState?.shaping_frozen !== true &&
+    detailState?.git_ready !== false
+  const canFinishTask =
+    canConfirm &&
+    !isFinishingTask &&
+    (
+      detailState?.can_finish_task === true ||
+      (detailState?.spec_confirmed !== true && canFinishTaskAfterConfirm)
+    )
 
   return (
     <div className={styles.documentPanel}>

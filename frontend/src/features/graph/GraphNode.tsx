@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom'
 import { Handle, Position, useStore, type NodeProps } from '@xyflow/react'
 import type { ExecutionStatus } from '../../api/types'
 import { NodeStatusBadge } from '../node/NodeStatusBadge'
-import { ExecutionStatusBadge } from '../node/ExecutionStatusBadge'
 import { AgentSpinner, SPINNER_WORDS_SPLITTING } from '../../components/AgentSpinner'
 import { useGraphNodeActions } from './graphNodeActionsContext'
 import { GRAPH_SPLIT_OPTIONS } from './splitModes'
@@ -168,11 +167,7 @@ function GraphNodeActionsDropdown({
           }}
         >
           <span className={styles.menuTitle}>Open Breadcrumb</span>
-          <span className={styles.menuDesc}>
-            {canOpenBreadcrumb
-              ? 'Open the placeholder breadcrumb route for this node.'
-              : 'Codex CLI is not installed.'}
-          </span>
+          <span className={styles.menuDesc}>Open the breadcrumb route for this node.</span>
         </button>
         <button
           type="button"
@@ -425,10 +420,6 @@ function GraphNodeComponent({ data }: NodeProps) {
                   status={d.node.status}
                   className={`${styles.graphStatusBadge} ${d.node.status === 'in_progress' ? styles.graphStatusInProgress : ''}`}
                 />
-                <ExecutionStatusBadge
-                  status={d.executionStatus === 'review_accepted' ? null : d.executionStatus}
-                  className={styles.graphExecutionBadge}
-                />
               </div>
             </div>
             {hasDescription && descriptionExpanded ? (
@@ -438,6 +429,21 @@ function GraphNodeComponent({ data }: NodeProps) {
               <AgentSpinner className={styles.activity} words={SPINNER_WORDS_SPLITTING} />
             ) : null}
           </div>
+          {d.canOpenBreadcrumb ? (
+            <div className={styles.footer}>
+              <button
+                type="button"
+                className={`${styles.openBreadcrumbBtn} ${CONTROL_CLASS_NAME}`}
+                data-testid={`graph-node-open-breadcrumb-${d.node.node_id}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  actions.openBreadcrumb(d.node.node_id)
+                }}
+              >
+                Open in Breadcrumb
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 

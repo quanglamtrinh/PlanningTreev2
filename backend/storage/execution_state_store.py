@@ -23,6 +23,7 @@ _DEFAULT_STATE: dict[str, Any] = {
     "commit_message": None,
     "changed_files": [],
     "error_message": None,
+    "auto_review": None,
 }
 
 
@@ -86,6 +87,7 @@ class ExecutionStateStore:
         commit_message = payload.get("commit_message")
         changed_files = payload.get("changed_files")
         error_message = payload.get("error_message")
+        auto_review = payload.get("auto_review")
 
         return {
             "status": status if isinstance(status, str) and status in _VALID_STATUSES else "idle",
@@ -115,4 +117,5 @@ class ExecutionStateStore:
                 if isinstance(error_message, str) and error_message.strip()
                 else None
             ),
+            "auto_review": auto_review if isinstance(auto_review, dict) else None,
         }

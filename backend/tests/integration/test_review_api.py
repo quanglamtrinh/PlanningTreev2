@@ -572,7 +572,7 @@ def test_accept_rollup_review_route_happy_path(client: TestClient, workspace_roo
     # Wire rollup codex and start integration
     client.app.state.review_service._codex_client = rollup_codex
     client.app.state.thread_lineage_service._codex_client = rollup_codex
-    client.app.state.review_service.start_integration_rollup(project_id, review_id)
+    client.app.state.review_service.start_review_rollup(project_id, review_id)
 
     # Wait for integration to finish and produce a draft
     _wait_for_integration_terminal(client, project_id, review_id)
