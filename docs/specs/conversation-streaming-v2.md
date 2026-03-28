@@ -1,6 +1,6 @@
 # Conversation Streaming V2
 
-Status: draft spec (implementation not started). Defines the canonical item-centric conversation model, backend/runtime contract, and frontend rendering contract for the PlanningTreeMain streaming chat rewrite.
+Status: active rollout spec. Phases 0-2 are implemented and verified in the handoff tracker; Phase 3 consumer migration is next. Defines the canonical item-centric conversation model, backend/runtime contract, and frontend rendering contract for the PlanningTreeMain streaming chat rewrite.
 
 Primary rollout docs:
 

@@ -90,6 +90,38 @@ def _wait_for_snapshot(
     raise AssertionError(f"Timed out waiting for snapshot condition. Last snapshot: {last_snapshot!r}")
 
 
+def _seed_metadata_repair_state(
+    client: TestClient,
+    project_id: str,
+    node_id: str,
+    thread_role: str,
+    *,
+    minimum_snapshot_version: int,
+) -> None:
+    storage = client.app.state.storage
+    session = storage.chat_state_store.read_session(project_id, node_id, thread_role=thread_role)
+    session["forked_from_thread_id"] = "repair-source-thread"
+    session["forked_from_node_id"] = "repair-source-node"
+    session["forked_from_role"] = "audit"
+    session["fork_reason"] = "metadata_repair"
+    session["lineage_root_thread_id"] = "repair-root-thread"
+    storage.chat_state_store.write_session(project_id, node_id, session, thread_role=thread_role)
+
+    stale_snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, thread_role)
+    stale_snapshot["lineage"] = {
+        "forkedFromThreadId": "stale-thread",
+        "forkedFromNodeId": "stale-node",
+        "forkedFromRole": "execution",
+        "forkReason": "stale",
+        "lineageRootThreadId": "stale-root",
+    }
+    stale_snapshot["snapshotVersion"] = max(
+        int(stale_snapshot.get("snapshotVersion") or 0),
+        int(minimum_snapshot_version),
+    )
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, thread_role, stale_snapshot)
+
+
 class FakeConversationV2CodexClient:
     def __init__(self, turn_id_resolver: Callable[[], str | None]) -> None:
         self._turn_id_resolver = turn_id_resolver
@@ -366,28 +398,13 @@ async def test_v2_get_thread_snapshot_repairs_metadata_and_publishes_snapshot_ev
     assert initial_response.status_code == 200
     initial_snapshot = initial_response.json()["data"]["snapshot"]
 
-    storage = client.app.state.storage
-    session = storage.chat_state_store.read_session(project_id, root_id, thread_role="ask_planning")
-    session["forked_from_thread_id"] = "repair-source-thread"
-    session["forked_from_node_id"] = "repair-source-node"
-    session["forked_from_role"] = "audit"
-    session["fork_reason"] = "metadata_repair"
-    session["lineage_root_thread_id"] = "repair-root-thread"
-    storage.chat_state_store.write_session(project_id, root_id, session, thread_role="ask_planning")
-
-    stale_snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, root_id, "ask_planning")
-    stale_snapshot["lineage"] = {
-        "forkedFromThreadId": "stale-thread",
-        "forkedFromNodeId": "stale-node",
-        "forkedFromRole": "execution",
-        "forkReason": "stale",
-        "lineageRootThreadId": "stale-root",
-    }
-    stale_snapshot["snapshotVersion"] = max(
-        int(stale_snapshot.get("snapshotVersion") or 0),
-        int(initial_snapshot["snapshotVersion"]),
+    _seed_metadata_repair_state(
+        client,
+        project_id,
+        root_id,
+        "ask_planning",
+        minimum_snapshot_version=int(initial_snapshot["snapshotVersion"]),
     )
-    storage.thread_snapshot_store_v2.write_snapshot(project_id, root_id, "ask_planning", stale_snapshot)
 
     queue = client.app.state.conversation_event_broker_v2.subscribe(project_id, root_id, thread_role="ask_planning")
     try:
@@ -412,6 +429,79 @@ async def test_v2_get_thread_snapshot_repairs_metadata_and_publishes_snapshot_ev
         "lineageRootThreadId": "repair-root-thread",
     }
     assert envelope["payload"]["snapshot"]["lineage"] == repaired_snapshot["lineage"]
+
+
+@pytest.mark.anyio
+async def test_v2_thread_events_stream_open_repairs_metadata_and_publishes_to_existing_subscribers(
+    client: TestClient, workspace_root
+) -> None:
+    project_id, root_id = _setup_project(client, workspace_root)
+    codex = FakeConversationV2CodexClient(
+        lambda: client.app.state.storage.chat_state_store.read_session(
+            project_id,
+            root_id,
+            thread_role="ask_planning",
+        )["active_turn_id"]
+    )
+    _set_v2_codex_client(client, codex)
+
+    initial_response = client.get(f"/v2/projects/{project_id}/nodes/{root_id}/threads/ask_planning")
+    assert initial_response.status_code == 200
+    initial_snapshot = initial_response.json()["data"]["snapshot"]
+
+    request_a = _StreamingTestRequest(client.app)
+    response_a = await chat_v2_route_module.thread_events_v2(
+        request_a,
+        project_id,
+        root_id,
+        "ask_planning",
+        initial_snapshot["snapshotVersion"],
+    )
+
+    request_b: _StreamingTestRequest | None = None
+    response_b = None
+    try:
+        first_a = await _read_sse_payload(response_a)
+        assert first_a["type"] == event_types.THREAD_SNAPSHOT
+        assert first_a["payload"]["snapshot"]["lineage"] == initial_snapshot["lineage"]
+
+        _seed_metadata_repair_state(
+            client,
+            project_id,
+            root_id,
+            "ask_planning",
+            minimum_snapshot_version=int(initial_snapshot["snapshotVersion"]),
+        )
+
+        request_b = _StreamingTestRequest(client.app)
+        response_b = await chat_v2_route_module.thread_events_v2(
+            request_b,
+            project_id,
+            root_id,
+            "ask_planning",
+            initial_snapshot["snapshotVersion"],
+        )
+
+        repaired_for_a = await _read_sse_payload(response_a)
+        first_b = await _read_sse_payload(response_b)
+
+        assert repaired_for_a["type"] == event_types.THREAD_SNAPSHOT
+        assert first_b["type"] == event_types.THREAD_SNAPSHOT
+        assert repaired_for_a["payload"]["snapshot"]["lineage"] == {
+            "forkedFromThreadId": "repair-source-thread",
+            "forkedFromNodeId": "repair-source-node",
+            "forkedFromRole": "audit",
+            "forkReason": "metadata_repair",
+            "lineageRootThreadId": "repair-root-thread",
+        }
+        assert first_b["payload"]["snapshot"]["lineage"] == repaired_for_a["payload"]["snapshot"]["lineage"]
+
+        with pytest.raises(asyncio.TimeoutError):
+            await _read_stream_chunk(response_b, timeout_sec=0.1)
+    finally:
+        if response_b is not None and request_b is not None:
+            await _close_stream(response_b, request_b)
+        await _close_stream(response_a, request_a)
 
 
 def test_v2_start_turn_persists_items_and_authoritative_file_list(client: TestClient, workspace_root) -> None:

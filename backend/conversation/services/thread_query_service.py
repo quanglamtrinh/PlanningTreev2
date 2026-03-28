@@ -5,7 +5,7 @@ from typing import Any
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
 from backend.conversation.domain.types import ThreadRole, ThreadSnapshotV2, copy_snapshot, next_snapshot_version, snapshot_with_metadata
-from backend.conversation.projector.thread_event_projector import apply_reset, build_snapshot_event
+from backend.conversation.projector.thread_event_projector import apply_reset
 from backend.conversation.services.request_ledger_service import RequestLedgerService
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
 from backend.conversation.storage.thread_snapshot_store_v2 import ThreadSnapshotStoreV2
@@ -167,7 +167,7 @@ class ThreadQueryService:
         *,
         after_snapshot_version: int | None,
     ) -> ThreadSnapshotV2:
-        snapshot = self.get_thread_snapshot(project_id, node_id, thread_role, publish_repairs=False)
+        snapshot = self.get_thread_snapshot(project_id, node_id, thread_role, publish_repairs=True)
         if after_snapshot_version is not None and int(after_snapshot_version) > int(snapshot.get("snapshotVersion") or 0):
             from backend.errors.app_errors import ConversationStreamMismatch
 
