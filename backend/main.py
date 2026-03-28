@@ -16,6 +16,7 @@ from backend.conversation.services.request_ledger_service import RequestLedgerSe
 from backend.conversation.services.thread_query_service import ThreadQueryService
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
 from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
+from backend.conversation.services.system_message_writer import ConversationSystemMessageWriter
 from backend.conversation.services.thread_transcript_builder import ThreadTranscriptBuilder
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.config.app_config import build_app_paths, get_chat_timeout, get_clarify_gen_timeout, get_codex_cmd, get_execution_timeout, get_frame_gen_timeout, get_max_chat_message_chars, get_port, get_spec_gen_timeout, get_split_timeout
@@ -56,9 +57,22 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     )
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
-    node_detail_service = NodeDetailService(storage, tree_service, git_checkpoint_service=git_checkpoint_service)
+    thread_registry_service_v2 = ThreadRegistryService(storage.thread_registry_store)
+    system_message_writer_v2 = ConversationSystemMessageWriter(storage)
+    node_detail_service = NodeDetailService(
+        storage,
+        tree_service,
+        git_checkpoint_service=git_checkpoint_service,
+        system_message_writer=system_message_writer_v2,
+    )
     codex_client = CodexAppClient(StdioTransport(codex_cmd=get_codex_cmd() or "codex"))
-    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
+    thread_lineage_service = ThreadLineageService(
+        storage,
+        codex_client,
+        tree_service,
+        thread_registry_service_v2=thread_registry_service_v2,
+    )
+    thread_transcript_builder_v2 = ThreadTranscriptBuilder(storage, storage.thread_snapshot_store_v2)
     codex_event_broker = GlobalEventBroker()
     codex_account_service = CodexAccountService(
         codex_client=codex_client,
@@ -78,6 +92,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         codex_client=codex_client,
         thread_lineage_service=thread_lineage_service,
         frame_gen_timeout=get_frame_gen_timeout(),
+        thread_transcript_builder=thread_transcript_builder_v2,
     )
     clarify_generation_service = ClarifyGenerationService(
         storage=storage,
@@ -111,6 +126,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_event_broker=chat_event_broker,
         chat_timeout=get_chat_timeout(),
         chat_service=chat_service,
+        system_message_writer=system_message_writer_v2,
     )
     finish_task_service = FinishTaskService(
         storage=storage,
@@ -126,7 +142,6 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service
-    thread_registry_service_v2 = ThreadRegistryService(storage.thread_registry_store)
     request_ledger_service_v2 = RequestLedgerService()
     conversation_event_broker_v2 = ChatEventBroker()
     workflow_event_broker_v2 = GlobalEventBroker()
@@ -139,7 +154,6 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         request_ledger_service=request_ledger_service_v2,
         thread_event_broker=conversation_event_broker_v2,
     )
-    thread_transcript_builder_v2 = ThreadTranscriptBuilder()
     workflow_event_publisher_v2 = WorkflowEventPublisher(workflow_event_broker_v2)
     thread_runtime_service_v2 = ThreadRuntimeService(
         storage=storage,
@@ -151,6 +165,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),
     )
+    system_message_writer_v2.set_runtime_service(thread_runtime_service_v2)
+    thread_lineage_service.set_thread_registry_service(thread_registry_service_v2)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -212,6 +228,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.thread_runtime_service_v2 = thread_runtime_service_v2
     app.state.thread_transcript_builder_v2 = thread_transcript_builder_v2
     app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2
+    app.state.system_message_writer_v2 = system_message_writer_v2
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
+from backend.conversation.services.thread_registry_service import ThreadRegistryService
 from backend.ai.review_rollup_prompt_builder import build_review_rollup_base_instructions
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
@@ -20,10 +21,18 @@ class ThreadLineageService:
         storage: Storage,
         codex_client: CodexAppClient,
         tree_service: TreeService,
+        thread_registry_service_v2: ThreadRegistryService | None = None,
     ) -> None:
         self._storage = storage
         self._codex_client = codex_client
         self._tree_service = tree_service
+        self._thread_registry_service_v2 = thread_registry_service_v2
+
+    def set_thread_registry_service(
+        self,
+        thread_registry_service_v2: ThreadRegistryService,
+    ) -> None:
+        self._thread_registry_service_v2 = thread_registry_service_v2
 
     def ensure_root_audit_thread(
         self,
@@ -36,7 +45,7 @@ class ThreadLineageService:
             if not self._is_root_node(snapshot, node):
                 raise ValueError(f"Node {node_id!r} is not the root node.")
 
-            session = self._storage.chat_state_store.read_session(project_id, node_id, thread_role="audit")
+            session = self._read_session_with_registry_locked(project_id, node_id, "audit")
             thread_id = self._normalize_thread_id(session)
             if thread_id:
                 resumed = self._resume_existing_thread(
@@ -95,10 +104,10 @@ class ThreadLineageService:
     ) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             self._load_snapshot_and_node_locked(project_id, node_id)
-            target_session = self._storage.chat_state_store.read_session(
+            target_session = self._read_session_with_registry_locked(
                 project_id,
                 node_id,
-                thread_role=thread_role,
+                thread_role,
             )
             existing_thread_id = self._normalize_thread_id(target_session)
             if existing_thread_id:
@@ -171,10 +180,10 @@ class ThreadLineageService:
     ) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             snapshot, node, _ = self._load_snapshot_and_node_locked(project_id, node_id)
-            session = self._storage.chat_state_store.read_session(
+            session = self._read_session_with_registry_locked(
                 project_id,
                 node_id,
-                thread_role=thread_role,
+                thread_role,
             )
             thread_id = self._normalize_thread_id(session)
             if not thread_id:
@@ -313,7 +322,7 @@ class ThreadLineageService:
         require_live_thread: bool = False,
     ) -> dict[str, Any]:
         snapshot, node, node_by_id = self._load_snapshot_and_node_locked(project_id, node_id)
-        session = self._storage.chat_state_store.read_session(project_id, node_id, thread_role="audit")
+        session = self._read_session_with_registry_locked(project_id, node_id, "audit")
         thread_id = self._normalize_thread_id(session)
 
         if self._is_root_node(snapshot, node):
@@ -535,7 +544,7 @@ class ThreadLineageService:
         payload = dict(
             session
             if isinstance(session, dict)
-            else self._storage.chat_state_store.read_session(project_id, node_id, thread_role=thread_role)
+            else self._read_session_with_registry_locked(project_id, node_id, thread_role)
         )
         payload["thread_role"] = thread_role
         if thread_id is not None:
@@ -549,6 +558,19 @@ class ThreadLineageService:
         payload["forked_from_role"] = forked_from_role
         payload["fork_reason"] = fork_reason
         payload["lineage_root_thread_id"] = lineage_root_thread_id
+        registry_entry = self._write_registry_entry_locked(
+            project_id,
+            node_id,
+            thread_role,
+            thread_id=payload.get("thread_id"),
+            forked_from_thread_id=payload.get("forked_from_thread_id"),
+            forked_from_node_id=payload.get("forked_from_node_id"),
+            forked_from_role=payload.get("forked_from_role"),
+            fork_reason=payload.get("fork_reason"),
+            lineage_root_thread_id=payload.get("lineage_root_thread_id"),
+        )
+        if registry_entry is not None:
+            payload = self._apply_registry_entry_to_session(payload, registry_entry)
         return self._storage.chat_state_store.write_session(
             project_id,
             node_id,
@@ -570,10 +592,10 @@ class ThreadLineageService:
                 workspace_root,
                 require_live_thread=True,
             )
-        return self._storage.chat_state_store.read_session(
+        return self._read_session_with_registry_locked(
             project_id,
             source_node_id,
-            thread_role=source_role,
+            source_role,
         )
 
     def _fork_target_from_source_locked(
@@ -601,10 +623,10 @@ class ThreadLineageService:
             raise ValueError(
                 f"Source session {source_node_id!r}/{source_role!r} does not have a thread id."
             )
-        target_session = self._storage.chat_state_store.read_session(
+        target_session = self._read_session_with_registry_locked(
             project_id,
             node_id,
-            thread_role=thread_role,
+            thread_role,
         )
         lineage_root_thread_id = self._normalize_optional_string(
             source_session.get("lineage_root_thread_id")
@@ -740,6 +762,82 @@ class ThreadLineageService:
 
     def _needs_legacy_backfill(self, session: dict[str, Any]) -> bool:
         return self._normalize_thread_id(session) is not None and not self._has_lineage_metadata(session)
+
+    def _read_session_with_registry_locked(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+    ) -> dict[str, Any]:
+        session = self._storage.chat_state_store.read_session(
+            project_id,
+            node_id,
+            thread_role=thread_role,
+        )
+        return self._merge_registry_into_session_locked(
+            project_id,
+            node_id,
+            thread_role,
+            session,
+        )
+
+    def _merge_registry_into_session_locked(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        session: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self._thread_registry_service_v2 is None:
+            return dict(session)
+        registry_entry, _ = self._thread_registry_service_v2.seed_from_legacy_session(
+            project_id,
+            node_id,
+            thread_role,  # type: ignore[arg-type]
+            session,
+        )
+        return self._apply_registry_entry_to_session(session, registry_entry)
+
+    def _apply_registry_entry_to_session(
+        self,
+        session: dict[str, Any],
+        registry_entry: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = dict(session)
+        merged["thread_id"] = registry_entry.get("threadId")
+        merged["forked_from_thread_id"] = registry_entry.get("forkedFromThreadId")
+        merged["forked_from_node_id"] = registry_entry.get("forkedFromNodeId")
+        merged["forked_from_role"] = registry_entry.get("forkedFromRole")
+        merged["fork_reason"] = registry_entry.get("forkReason")
+        merged["lineage_root_thread_id"] = registry_entry.get("lineageRootThreadId")
+        return merged
+
+    def _write_registry_entry_locked(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        *,
+        thread_id: str | None,
+        forked_from_thread_id: str | None,
+        forked_from_node_id: str | None,
+        forked_from_role: str | None,
+        fork_reason: str | None,
+        lineage_root_thread_id: str | None,
+    ) -> dict[str, Any] | None:
+        if self._thread_registry_service_v2 is None:
+            return None
+        return self._thread_registry_service_v2.update_entry(
+            project_id,
+            node_id,
+            thread_role,  # type: ignore[arg-type]
+            thread_id=self._normalize_optional_string(thread_id),
+            forked_from_thread_id=self._normalize_optional_string(forked_from_thread_id),
+            forked_from_node_id=self._normalize_optional_string(forked_from_node_id),
+            forked_from_role=self._normalize_optional_string(forked_from_role),  # type: ignore[arg-type]
+            fork_reason=self._normalize_optional_string(fork_reason),
+            lineage_root_thread_id=self._normalize_optional_string(lineage_root_thread_id),
+        )
 
     def _has_lineage_metadata(self, session: dict[str, Any]) -> bool:
         for key in (

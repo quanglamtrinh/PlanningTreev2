@@ -1,6 +1,6 @@
 # Conversation Streaming V2 Rollout Plan
 
-Status: active rollout handoff. Phase 0, Phase 1, and Phase 2 are completed, and the next implementation target is Phase 3 consumer and audit-writer migration.
+Status: active rollout handoff. Phase 0, Phase 1, Phase 2, and Phase 3 are completed, and the next implementation target is Phase 4 frontend V2.
 
 Primary specs:
 
@@ -40,6 +40,7 @@ Tracking artifacts:
 - Phase 0 fixture capture is complete with adapter-captured replayable raw-event samples for every required event class
 - Phase 1 is completed and verified
 - Phase 2 backend core is completed and verified through focused unit plus integration coverage plus fixture replay
+- Phase 3 consumer migration and audit-writer migration is completed and verified through focused backend plus integration coverage and code-search evidence
 - remaining upstream "always" guarantees are tracked in `artifacts/phase-0/open-questions.md` as non-blocking follow-up questions
 - active design source of truth is `docs/specs/conversation-streaming-v2.md`
 - phase tracker source of truth is `progress.yaml`

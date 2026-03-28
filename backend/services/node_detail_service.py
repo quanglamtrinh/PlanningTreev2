@@ -6,11 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
+from backend.conversation.services.system_message_writer import ConversationSystemMessageWriter
 from backend.errors.app_errors import ConfirmationNotAllowed, InvalidRequest, NodeNotFound
 from backend.services.execution_gating import (
     AUDIT_FRAME_RECORD_MESSAGE_ID,
     AUDIT_SPEC_RECORD_MESSAGE_ID,
-    append_immutable_audit_record,
     derive_execution_workflow_fields,
     require_shaping_not_frozen,
 )
@@ -291,10 +291,15 @@ class NodeDetailService:
         storage: Storage,
         tree_service: TreeService,
         git_checkpoint_service: Any = None,
+        system_message_writer: ConversationSystemMessageWriter | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
         self._git_checkpoint_service = git_checkpoint_service
+        self._system_message_writer = system_message_writer or ConversationSystemMessageWriter(storage)
+
+    def set_system_message_writer(self, system_message_writer: ConversationSystemMessageWriter) -> None:
+        self._system_message_writer = system_message_writer
 
     # ── Shaping freeze guard ─────────────────────────────────────
 
@@ -380,12 +385,14 @@ class NodeDetailService:
 
             # Seed clarify from unresolved shaping fields
             self._seed_clarify_internal(node_dir, content, frame_meta)
-        append_immutable_audit_record(
-            self._storage,
-            project_id,
-            node_id,
-            message_id=AUDIT_FRAME_RECORD_MESSAGE_ID,
-            content=self._build_frame_audit_record(content),
+        self._system_message_writer.upsert_system_message(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="audit",
+            item_id=AUDIT_FRAME_RECORD_MESSAGE_ID,
+            turn_id=None,
+            text=self._build_frame_audit_record(content),
+            tone="neutral",
         )
         return self.get_detail_state(project_id, node_id)
 
@@ -585,12 +592,14 @@ class NodeDetailService:
             spec_meta["source_frame_revision"] = frame_meta.get("confirmed_revision", 0)
             spec_meta["confirmed_at"] = iso_now()
             self._save_spec_meta(node_dir, spec_meta)
-        append_immutable_audit_record(
-            self._storage,
-            project_id,
-            node_id,
-            message_id=AUDIT_SPEC_RECORD_MESSAGE_ID,
-            content=self._build_spec_audit_record(content),
+        self._system_message_writer.upsert_system_message(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="audit",
+            item_id=AUDIT_SPEC_RECORD_MESSAGE_ID,
+            turn_id=None,
+            text=self._build_spec_audit_record(content),
+            tone="neutral",
         )
         return self.get_detail_state(project_id, node_id)
 

@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 
 from backend.ai.codex_client import CodexTransportError
 from backend.services import planningtree_workspace
+from backend.services.thread_lineage_service import _ROLLOUT_BOOTSTRAP_PROMPT
+from backend.storage.file_utils import iso_now
 from backend.tests.conftest import init_git_repo
 
 
@@ -63,6 +65,8 @@ class IntegrationRollupCodexClient:
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            return {"stdout": "READY", "thread_id": str(kwargs.get("thread_id") or "")}
         del prompt
         self.run_kwargs.append(dict(kwargs))
         payload = json.dumps({"summary": self.summary})
@@ -74,6 +78,10 @@ class IntegrationRollupCodexClient:
 
 class StrictIntegrationRollupCodexClient(IntegrationRollupCodexClient):
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            if kwargs.get("sandbox_profile") != "read_only":
+                raise RuntimeError("missing read_only sandbox_profile")
+            return {"stdout": "READY", "thread_id": str(kwargs.get("thread_id") or "")}
         output_schema = kwargs.get("output_schema")
         if kwargs.get("sandbox_profile") != "read_only":
             raise RuntimeError("missing read_only sandbox_profile")
@@ -199,28 +207,21 @@ def _setup_node_with_execution_completed(
     assert spec_resp.status_code == 200
     assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-spec").status_code == 200
 
-    # Force status to ready for finish-task
+    current_sha = "sha256:integration-ready"
+    client.app.state.storage.execution_state_store.write_state(
+        project_id,
+        root_id,
+        {
+            "status": "completed",
+            "initial_sha": "sha256:initial",
+            "head_sha": current_sha,
+            "started_at": iso_now(),
+            "completed_at": iso_now(),
+        },
+    )
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][root_id]["status"] = "ready"
     client.app.state.storage.project_store.save_snapshot(project_id, snapshot)
-
-    # Finish task → starts execution
-    finish_resp = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
-    assert finish_resp.status_code == 200
-
-    # Wait for execution to complete
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
-        exec_state = client.app.state.storage.execution_state_store.read_state(
-            project_id, root_id
-        )
-        if exec_state and exec_state.get("status") == "completed":
-            break
-        time.sleep(0.02)
-
-    exec_state = client.app.state.storage.execution_state_store.read_state(project_id, root_id)
-    assert exec_state is not None
-    assert exec_state["status"] == "completed"
 
     return project_id, root_id
 
@@ -246,6 +247,14 @@ def _wait_for_integration_terminal(
                 return session
         time.sleep(0.01)
     raise AssertionError("Timed out waiting for integration completion.")
+
+
+def _find_audit_snapshot_item(client: TestClient, project_id: str, node_id: str, item_id: str) -> dict | None:
+    snapshot = client.app.state.storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "audit")
+    for item in snapshot.get("items", []):
+        if item.get("id") == item_id:
+            return item
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -595,15 +604,17 @@ def test_accept_rollup_review_route_happy_path(client: TestClient, workspace_roo
     assert payload["rollup_status"] == "accepted"
     assert payload["summary"] == "All subtasks integrated successfully"
 
-    # Verify rollup package appended to parent audit
-    audit_session = client.app.state.storage.chat_state_store.read_session(
-        project_id, root_id, thread_role="audit"
+    # Verify rollup package persisted to parent audit V2 snapshot
+    rollup_item = _find_audit_snapshot_item(
+        client,
+        project_id,
+        root_id,
+        "audit-package:rollup",
     )
-    system_messages = [
-        m for m in audit_session.get("messages", [])
-        if m.get("role") == "system" and "Rollup Package" in m.get("content", "")
-    ]
-    assert len(system_messages) == 1
+    assert rollup_item is not None
+    assert rollup_item["kind"] == "message"
+    assert rollup_item["role"] == "system"
+    assert "Rollup Package" in rollup_item["text"]
 
 
 def test_accept_rollup_review_rejects_non_ready(client: TestClient, workspace_root):

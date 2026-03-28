@@ -52,6 +52,38 @@ def _make_service(storage: Storage, tree_service: TreeService, codex_mock: Magic
     )
 
 
+def test_generate_frame_content_builds_prompt_from_transcript_builder(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    codex_mock = _make_codex_mock()
+    transcript_builder = MagicMock()
+    transcript_builder.build_prompt_messages.return_value = [
+        {"role": "user", "content": "Need a login flow."},
+        {"role": "assistant", "content": "Let's structure the frame."},
+    ]
+    service = FrameGenerationService(
+        storage,
+        tree_service,
+        codex_mock,
+        thread_lineage_service=ThreadLineageService(storage, codex_mock, tree_service),
+        frame_gen_timeout=30,
+        thread_transcript_builder=transcript_builder,
+    )
+
+    content = service._generate_frame_content(project_id, root_id, "ask-thread-123")
+
+    assert content == "# Task Title\nGenerated frame"
+    transcript_builder.build_prompt_messages.assert_called_once_with(
+        project_id,
+        root_id,
+        "ask_planning",
+    )
+
+
 def test_generate_frame_returns_accepted(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:

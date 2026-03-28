@@ -1,6 +1,6 @@
 migration_id: conversation_streaming_v2
-status: phase_2_complete
-current_phase: 3
+status: phase_3_complete
+current_phase: null
 next_phase: 4
 
 references:
@@ -124,7 +124,7 @@ phases:
 
   - phase: 3
     name: consumer_and_audit_writer_migration
-    status: not_started
+    status: completed
     depends_on:
       - 2
     goals:
@@ -138,7 +138,17 @@ phases:
       - targeted backend tests plus code search gate for legacy helper usage
     artifacts:
       - docs/handoff/conversation-streaming-v2/phase-3-consumer-migration.md
-    notes: ""
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-3/consumer-migration-matrix.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-3/audit-writer-cutover-check.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-3/code-search-evidence.md
+    notes: >
+      Completed on 2026-03-28. Frame-generation transcript history now routes through
+      ThreadTranscriptBuilder, audit marker readiness checks are V2-first with temporary
+      V1 fallback, immutable frame/spec/rollup audit writers now land in canonical V2
+      audit snapshot items, and ThreadLineageService writes registry metadata first while
+      preserving legacy session-shaped returns for mixed-mode callers. Focused verification
+      passed for transcript, gating, node-detail, review, lineage, chat, snapshot-view,
+      clarify/spec, split, and review API paths.
 
   - phase: 4
     name: frontend_v2

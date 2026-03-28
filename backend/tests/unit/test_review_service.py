@@ -199,6 +199,14 @@ def make_review_service(
     )
 
 
+def _find_audit_snapshot_item(storage: Storage, project_id: str, node_id: str, item_id: str) -> dict | None:
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "audit")
+    for item in snapshot.get("items", []):
+        if item.get("id") == item_id:
+            return item
+    return None
+
+
 def wait_for_rollup_draft(
     storage: Storage,
     project_id: str,
@@ -915,7 +923,7 @@ def test_integration_rollup_can_retry_after_error_and_persist_new_draft(
     assert "Recovered integration draft." in assistants[-1]["content"]
 
 
-def test_accept_rollup_review_sets_accepted_and_appends_to_parent_audit(
+def test_accept_rollup_review_sets_accepted_and_writes_parent_audit_v2_item(
     storage: Storage, workspace_root,
 ) -> None:
     project_service = ProjectService(storage)
@@ -965,14 +973,17 @@ def test_accept_rollup_review_sets_accepted_and_appends_to_parent_audit(
         "generated_at": None,
     }
 
-    audit_session = storage.chat_state_store.read_session(
-        project_id, root_id, thread_role="audit"
+    rollup_item = _find_audit_snapshot_item(
+        storage,
+        project_id,
+        root_id,
+        "audit-package:rollup",
     )
-    messages = audit_session.get("messages", [])
-    rollup_msgs = [m for m in messages if m.get("message_id") == "audit-package:rollup"]
-    assert len(rollup_msgs) == 1
-    assert "Integration looks good." in rollup_msgs[0]["content"]
-    assert draft_sha in rollup_msgs[0]["content"]
+    assert rollup_item is not None
+    assert rollup_item["kind"] == "message"
+    assert rollup_item["role"] == "system"
+    assert "Integration looks good." in rollup_item["text"]
+    assert draft_sha in rollup_item["text"]
 
 
 def test_accept_rollup_review_rejects_non_ready(

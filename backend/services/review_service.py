@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
+from backend.conversation.services.system_message_writer import ConversationSystemMessageWriter
 from backend.ai.review_rollup_prompt_builder import (
     build_review_rollup_base_instructions,
     build_review_rollup_output_schema,
@@ -48,6 +49,7 @@ class ReviewService:
         chat_event_broker: ChatEventBroker | None = None,
         chat_timeout: int = 30,
         chat_service: ChatService | None = None,
+        system_message_writer: ConversationSystemMessageWriter | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -56,6 +58,10 @@ class ReviewService:
         self._chat_event_broker = chat_event_broker
         self._chat_timeout = int(chat_timeout)
         self._chat_service = chat_service
+        self._system_message_writer = system_message_writer or ConversationSystemMessageWriter(storage)
+
+    def set_system_message_writer(self, system_message_writer: ConversationSystemMessageWriter) -> None:
+        self._system_message_writer = system_message_writer
 
     # -- Local Review -------------------------------------------------
 
@@ -336,10 +342,7 @@ class ReviewService:
             parent_id = str(review_node.get("parent_id") or "") if review_node else ""
 
             if parent_id:
-                from backend.services.execution_gating import (
-                    AUDIT_ROLLUP_PACKAGE_MESSAGE_ID,
-                    append_immutable_audit_record,
-                )
+                from backend.services.execution_gating import AUDIT_ROLLUP_PACKAGE_MESSAGE_ID
 
                 package_content = (
                     "## Rollup Package\n\n"
@@ -348,12 +351,14 @@ class ReviewService:
                     f"**Review Node:** {review_node_id}\n\n"
                     f"**Accepted At:** {iso_now()}\n"
                 )
-                append_immutable_audit_record(
-                    self._storage,
-                    project_id,
-                    parent_id,
-                    message_id=AUDIT_ROLLUP_PACKAGE_MESSAGE_ID,
-                    content=package_content,
+                self._system_message_writer.upsert_system_message(
+                    project_id=project_id,
+                    node_id=parent_id,
+                    thread_role="audit",
+                    item_id=AUDIT_ROLLUP_PACKAGE_MESSAGE_ID,
+                    turn_id=None,
+                    text=package_content,
+                    tone="neutral",
                 )
                 self._storage.review_state_store.open_package_review(project_id, review_node_id)
 
