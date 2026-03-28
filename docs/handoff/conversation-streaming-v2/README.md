@@ -1,6 +1,6 @@
 # Conversation Streaming V2 Rollout Plan
 
-Status: planning artifact (implementation not started). This folder tracks the phased rewrite of PlanningTreeMain conversation streaming onto a canonical item-centric architecture.
+Status: active rollout handoff. Phase 0, Phase 1, and Phase 2 are completed, and the next implementation target is Phase 3 consumer and audit-writer migration.
 
 Primary specs:
 
@@ -37,7 +37,10 @@ Tracking artifacts:
 
 ## Current Handoff State
 
-- no V2 implementation has landed yet
+- Phase 0 fixture capture is complete with adapter-captured replayable raw-event samples for every required event class
+- Phase 1 is completed and verified
+- Phase 2 backend core is completed and verified through focused unit plus integration coverage plus fixture replay
+- remaining upstream "always" guarantees are tracked in `artifacts/phase-0/open-questions.md` as non-blocking follow-up questions
 - active design source of truth is `docs/specs/conversation-streaming-v2.md`
 - phase tracker source of truth is `progress.yaml`
 - every implementation PR should map to one primary phase document in this folder

@@ -1,6 +1,6 @@
 # Phase 0: Contract Freeze and Fixture Capture
 
-Status: in progress. Started on 2026-03-28.
+Status: completed on 2026-03-28.
 
 ## Goal
 
@@ -68,7 +68,8 @@ Freeze the V2 conversation contract before implementation starts so backend and 
 - `artifacts/phase-0/contract-review-checklist.md`
 - optional `artifacts/phase-0/open-questions.md` if any unresolved upstream gaps remain
 
-## Phase Start Notes
+## Completion Notes
 
-- starter artifact templates have been created under `artifacts/phase-0/`
-- the next concrete step is to replace placeholder payloads in `raw-event-samples.jsonl` with captured upstream frames from `backend/ai/codex_client.py`
+- starter templates under `artifacts/phase-0/` have been replaced with adapter-captured replayable `on_raw_event` payloads emitted by `backend/ai/codex_client.py`
+- the Phase 0 corpus now covers every required event class listed in this document
+- open upstream "always" guarantees that exceed the captured sample set remain logged in `artifacts/phase-0/open-questions.md` as non-blocking follow-up questions

@@ -1,6 +1,6 @@
 # Phase 2: Canonical Backend Core
 
-Status: in progress.
+Status: completed on 2026-03-28.
 
 ## Goal
 
@@ -59,8 +59,9 @@ Implement the backend core for V2 snapshots, projection, registry reconciliation
 
 Current verification landed:
 
-- `python -m pytest backend/tests/unit/test_conversation_v2_stores.py backend/tests/unit/test_conversation_v2_projector.py backend/tests/integration/test_chat_v2_api.py -q`
-- result: `9 passed`
+- `python -m py_compile backend/conversation/domain/events.py backend/conversation/domain/types.py backend/conversation/projector/thread_event_projector.py backend/conversation/services/request_ledger_service.py backend/conversation/services/thread_query_service.py backend/conversation/services/thread_registry_service.py backend/conversation/services/thread_runtime_service.py backend/conversation/services/thread_transcript_builder.py backend/conversation/services/workflow_event_publisher.py backend/conversation/storage/thread_registry_store.py backend/conversation/storage/thread_snapshot_store_v2.py backend/routes/chat_v2.py backend/main.py backend/storage/storage.py`
+- `python -m pytest backend/tests/unit/test_conversation_v2_stores.py backend/tests/unit/test_conversation_v2_projector.py backend/tests/unit/test_conversation_v2_fixture_replay.py backend/tests/integration/test_chat_v2_api.py -q`
+- result: syntax check passed; focused Phase 2 suite passed with `16 passed`
 
 Current implementation landed:
 
@@ -71,6 +72,11 @@ Current implementation landed:
 - thread query service with ensure-and-read semantics and metadata synchronization
 - thread runtime service with internal turn ownership for the additive V2 path
 - additive `/v2` routes and separate V2 brokers wired in `backend/main.py`
+- focused coverage now also verifies:
+  - metadata repair through ensure-and-read publishes a fresh `thread.snapshot`
+  - reset publishes `thread.reset` followed by a fresh `thread.snapshot`
+  - workflow V2 stream emits wrapped workflow envelopes through the dedicated broker
+  - adapter-captured Phase 0 raw-event fixtures replay deterministically through the pure projector with no spec drift
 
 ## Exit Criteria
 
@@ -79,14 +85,36 @@ Current implementation landed:
 - metadata-bearing mutations publish `thread.snapshot`
 - stream open sequence proves no event loss between GET and subscribe
 
-Remaining work before Phase 2 can be marked completed:
+All Phase 2 exit criteria are now satisfied.
 
-- replay Phase 0 raw fixtures through the projector and record the matrix in artifacts
-- add or capture explicit verification evidence for mixed metadata repair scenarios against the real fixture corpus
-- decide whether any additional targeted route coverage is needed for reset or workflow stream before phase close-out
+## Ready for Phase 3
+
+Stable Phase 2 primitives that Phase 3 should build on:
+
+- `thread_snapshot_store_v2`
+- `thread_registry_store`
+- `thread_event_projector`
+- `thread_runtime_service`
+- `thread_query_service`
+- additive `/v2` route surface and separate V2 brokers
+
+Phase 3 must keep these boundaries intact:
+
+- do not migrate production callers by bypassing `thread_runtime_service`
+- do not add any new item mutation path outside `conversation.item.upsert` and `conversation.item.patch`
+- do not reopen schema or route contract without first updating the active spec
+- do not remove V1 paths during consumer migration; Phase 3 is additive migration only
+
+Phase 3 entry checklist:
+
+- start every consumer migration from a V2 abstraction, not a direct store read
+- move audit writers off V1 append helpers instead of creating parallel audit persistence paths
+- preserve metadata sync through `thread.snapshot` on any repair or lineage update
+- keep Phase 2 artifacts linked from `progress.yaml` as the regression baseline for consumer migration
 
 ## Artifacts To Produce
 
 - `artifacts/phase-2/projector-replay-matrix.md`
 - `artifacts/phase-2/api-payload-examples.md`
 - `artifacts/phase-2/verification-notes.md`
+- `artifacts/phase-2/phase-3-entry-checklist.md`

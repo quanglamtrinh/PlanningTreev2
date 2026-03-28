@@ -24,6 +24,7 @@ python -m py_compile `
 python -m pytest `
   backend/tests/unit/test_conversation_v2_stores.py `
   backend/tests/unit/test_conversation_v2_projector.py `
+  backend/tests/unit/test_conversation_v2_fixture_replay.py `
   backend/tests/integration/test_chat_v2_api.py `
   -q
 ```
@@ -31,7 +32,7 @@ python -m pytest `
 ## Result
 
 - syntax check passed
-- focused Phase 2 pytest suite passed: `9 passed`
+- focused Phase 2 pytest suite passed: `16 passed in 7.18s`
 
 ## Verified Behaviors
 
@@ -43,8 +44,13 @@ python -m pytest `
 - `/v2` start-turn path persists canonical user item and background raw events
 - invalid `after_snapshot_version` returns wrapped `conversation_stream_mismatch`
 - `/v2` resolve-user-input updates both canonical item state and the persisted pending request ledger
+- ensure-and-read metadata repair publishes a fresh `thread.snapshot`
+- `/v2` reset emits `thread.reset` followed by a fresh `thread.snapshot`
+- workflow V2 route streams wrapped workflow envelopes from the dedicated V2 broker
+- Phase 0 adapter-captured raw corpus replays deterministically through the pure projector
+- no spec drift was observed between the replay corpus and the frozen V2 contract
 
 ## Remaining Phase 2 Verification Gaps
 
-- replay against the real Phase 0 fixture corpus is still pending
-- dedicated reset-route and workflow-stream V2 coverage can be added if Phase 2 close-out wants broader evidence
+- no blocking Phase 2 verification gaps remain
+- upstream "always" guarantees tracked in `artifacts/phase-0/open-questions.md` are non-blocking follow-up questions rather than Phase 2 blockers

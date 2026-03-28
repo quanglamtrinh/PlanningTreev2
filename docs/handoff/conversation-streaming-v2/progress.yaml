@@ -1,7 +1,7 @@
 migration_id: conversation_streaming_v2
-status: phase_2_in_progress
-current_phase: 2
-next_phase: 3
+status: phase_2_complete
+current_phase: 3
+next_phase: 4
 
 references:
   specs:
@@ -38,7 +38,7 @@ locked_decisions:
 phases:
   - phase: 0
     name: contract_freeze_and_fixture_capture
-    status: in_progress
+    status: completed
     depends_on: []
     goals:
       - freeze the canonical item schema, patch schema, API contract, and runtime contract
@@ -55,11 +55,12 @@ phases:
       - docs/specs/conversation-streaming-v2.md
       - docs/handoff/conversation-streaming-v2/artifacts/
     notes: >
-      Phase 0 started on 2026-03-28. Initial starter artifacts were created under
-      docs/handoff/conversation-streaming-v2/artifacts/phase-0/, including a fixture
-      manifest template, raw event sample template, contract review checklist, and
-      open-questions log. Next step is to capture real upstream payloads and mark
-      unresolved field gaps directly in the artifact set before sign-off.
+      Completed on 2026-03-28. The active spec sections for schema, patch contract,
+      API contract, lifecycle, and raw mapping are frozen in docs/specs, the Phase 0
+      raw-event corpus now contains replayable adapter-captured on_raw_event payloads
+      for every required event class, and the fixture manifest plus contract review
+      checklist were updated accordingly. Open upstream "always" guarantees remain
+      logged in artifacts/phase-0/open-questions.md as non-blocking follow-up questions.
 
   - phase: 1
     name: codex_client_event_expansion
@@ -94,7 +95,7 @@ phases:
 
   - phase: 2
     name: canonical_backend_core
-    status: in_progress
+    status: completed
     depends_on:
       - 1
     goals:
@@ -110,16 +111,16 @@ phases:
     artifacts:
       - docs/handoff/conversation-streaming-v2/phase-2-backend-core.md
     notes: >
-      Phase 2 implementation landed on 2026-03-28. The backend now includes
-      canonical V2 domain types, thread snapshot and registry stores, a pure
-      projector, request ledger behavior, shared runtime and query services,
-      separate V2 conversation and workflow brokers, and additive `/v2` routes
-      with wrapped `ok/data` or `ok/error` envelopes. Focused verification
-      passed for V2 stores, patch semantics, first-frame `thread.snapshot`,
-      start-turn flow, authoritative `outputFilesReplace`, wrapped stream
-      mismatch errors, and user-input resolution through the V2 route surface.
-      Remaining Phase 2 close-out work is fixture-driven replay against the
-      Phase 0 corpus and artifact completion for replay evidence.
+      Completed on 2026-03-28. The backend now includes canonical V2 domain
+      types, thread snapshot and registry stores, a pure projector, request
+      ledger behavior, shared runtime and query services, separate V2 conversation
+      and workflow brokers, and additive `/v2` routes with wrapped `ok/data` or
+      `ok/error` envelopes. Focused verification covers stores, patch semantics,
+      metadata repair publishing `thread.snapshot`, reset emitting `thread.reset`
+      plus a fresh snapshot, workflow V2 stream envelopes, and adapter-captured
+      fixture replay from artifacts/phase-0/raw-event-samples.jsonl with no
+      spec drift observed. Phase 3 consumer migration can now start from the
+      landed V2 abstractions and route surface.
 
   - phase: 3
     name: consumer_and_audit_writer_migration

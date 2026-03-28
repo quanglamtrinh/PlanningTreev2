@@ -9,6 +9,7 @@ from typing import Any, Callable
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.conversation.domain import events as event_types
 from backend.routes import chat_v2 as chat_v2_route_module
 
 
@@ -38,6 +39,16 @@ async def _close_stream(response: Any, request: _StreamingTestRequest) -> None:
 def _parse_sse_chunk(chunk: str) -> dict[str, Any]:
     data_line = next(line for line in chunk.splitlines() if line.startswith("data: "))
     return json.loads(data_line[len("data: ") :])
+
+
+async def _read_sse_payload(response: Any, *, timeout_sec: float = 1.0) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        chunk = await _read_stream_chunk(response, timeout_sec=timeout_sec)
+        if chunk.lstrip().startswith(":"):
+            continue
+        return _parse_sse_chunk(chunk)
+    raise AssertionError("Timed out waiting for SSE payload.")
 
 
 def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
@@ -337,6 +348,72 @@ async def test_v2_thread_events_emits_first_snapshot_frame(client: TestClient, w
     assert payload["payload"]["snapshot"]["threadRole"] == "ask_planning"
 
 
+@pytest.mark.anyio
+async def test_v2_get_thread_snapshot_repairs_metadata_and_publishes_snapshot_event(
+    client: TestClient, workspace_root
+) -> None:
+    project_id, root_id = _setup_project(client, workspace_root)
+    codex = FakeConversationV2CodexClient(
+        lambda: client.app.state.storage.chat_state_store.read_session(
+            project_id,
+            root_id,
+            thread_role="ask_planning",
+        )["active_turn_id"]
+    )
+    _set_v2_codex_client(client, codex)
+
+    initial_response = client.get(f"/v2/projects/{project_id}/nodes/{root_id}/threads/ask_planning")
+    assert initial_response.status_code == 200
+    initial_snapshot = initial_response.json()["data"]["snapshot"]
+
+    storage = client.app.state.storage
+    session = storage.chat_state_store.read_session(project_id, root_id, thread_role="ask_planning")
+    session["forked_from_thread_id"] = "repair-source-thread"
+    session["forked_from_node_id"] = "repair-source-node"
+    session["forked_from_role"] = "audit"
+    session["fork_reason"] = "metadata_repair"
+    session["lineage_root_thread_id"] = "repair-root-thread"
+    storage.chat_state_store.write_session(project_id, root_id, session, thread_role="ask_planning")
+
+    stale_snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, root_id, "ask_planning")
+    stale_snapshot["lineage"] = {
+        "forkedFromThreadId": "stale-thread",
+        "forkedFromNodeId": "stale-node",
+        "forkedFromRole": "execution",
+        "forkReason": "stale",
+        "lineageRootThreadId": "stale-root",
+    }
+    stale_snapshot["snapshotVersion"] = max(
+        int(stale_snapshot.get("snapshotVersion") or 0),
+        int(initial_snapshot["snapshotVersion"]),
+    )
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, root_id, "ask_planning", stale_snapshot)
+
+    queue = client.app.state.conversation_event_broker_v2.subscribe(project_id, root_id, thread_role="ask_planning")
+    try:
+        repaired_response = client.get(f"/v2/projects/{project_id}/nodes/{root_id}/threads/ask_planning")
+        assert repaired_response.status_code == 200
+        repaired_snapshot = repaired_response.json()["data"]["snapshot"]
+        envelope = await asyncio.wait_for(queue.get(), timeout=1.0)
+    finally:
+        client.app.state.conversation_event_broker_v2.unsubscribe(
+            project_id,
+            root_id,
+            queue,
+            thread_role="ask_planning",
+        )
+
+    assert envelope["type"] == event_types.THREAD_SNAPSHOT
+    assert repaired_snapshot["lineage"] == {
+        "forkedFromThreadId": "repair-source-thread",
+        "forkedFromNodeId": "repair-source-node",
+        "forkedFromRole": "audit",
+        "forkReason": "metadata_repair",
+        "lineageRootThreadId": "repair-root-thread",
+    }
+    assert envelope["payload"]["snapshot"]["lineage"] == repaired_snapshot["lineage"]
+
+
 def test_v2_start_turn_persists_items_and_authoritative_file_list(client: TestClient, workspace_root) -> None:
     project_id, root_id = _setup_project(client, workspace_root)
     codex = FakeConversationV2CodexClient(
@@ -376,6 +453,61 @@ def test_v2_start_turn_persists_items_and_authoritative_file_list(client: TestCl
     assert file_tool["outputFiles"] == [
         {"path": "final.txt", "changeType": "updated", "summary": "final"}
     ]
+
+
+@pytest.mark.anyio
+async def test_v2_reset_route_streams_reset_then_fresh_snapshot(client: TestClient, workspace_root) -> None:
+    project_id, root_id = _setup_project(client, workspace_root)
+    codex = FakeConversationV2CodexClient(
+        lambda: client.app.state.storage.chat_state_store.read_session(
+            project_id,
+            root_id,
+            thread_role="ask_planning",
+        )["active_turn_id"]
+    )
+    _set_v2_codex_client(client, codex)
+
+    start_response = client.post(
+        f"/v2/projects/{project_id}/nodes/{root_id}/threads/ask_planning/turns",
+        json={"text": "Reset me"},
+    )
+    assert start_response.status_code == 200
+
+    settled_snapshot = _wait_for_snapshot(
+        client,
+        project_id,
+        root_id,
+        "ask_planning",
+        lambda snap: snap["processingState"] == "idle" and len(snap["items"]) >= 2,
+    )
+
+    request = _StreamingTestRequest(client.app)
+    response = await chat_v2_route_module.thread_events_v2(
+        request,
+        project_id,
+        root_id,
+        "ask_planning",
+        settled_snapshot["snapshotVersion"],
+    )
+
+    try:
+        first_payload = await _read_sse_payload(response)
+        reset_response = client.post(
+            f"/v2/projects/{project_id}/nodes/{root_id}/threads/ask_planning/reset",
+        )
+        assert reset_response.status_code == 200
+
+        second_payload = await _read_sse_payload(response)
+        third_payload = await _read_sse_payload(response)
+    finally:
+        await _close_stream(response, request)
+
+    assert first_payload["type"] == event_types.THREAD_SNAPSHOT
+    assert second_payload["type"] == event_types.THREAD_RESET
+    assert third_payload["type"] == event_types.THREAD_SNAPSHOT
+    assert third_payload["payload"]["snapshot"]["items"] == []
+    assert third_payload["payload"]["snapshot"]["pendingRequests"] == []
+    assert third_payload["payload"]["snapshot"]["processingState"] == "idle"
 
 
 def test_v2_invalid_after_snapshot_version_returns_wrapped_error(client: TestClient, workspace_root) -> None:
@@ -454,3 +586,44 @@ def test_v2_resolve_user_input_updates_item_and_ledger(client: TestClient, works
     assert user_input["answers"] == [
         {"questionId": "q1", "value": "option_a", "label": "Option A"}
     ]
+
+
+@pytest.mark.anyio
+async def test_v2_workflow_stream_emits_wrapped_v2_workflow_envelopes(client: TestClient, workspace_root) -> None:
+    project_id, root_id = _setup_project(client, workspace_root)
+    request = _StreamingTestRequest(client.app)
+    response = await chat_v2_route_module.workflow_events_v2(request, project_id)
+
+    try:
+        client.app.state.workflow_event_publisher_v2.publish_workflow_updated(
+            project_id=project_id,
+            node_id=root_id,
+            execution_state="completed",
+            review_state="running",
+        )
+        client.app.state.workflow_event_publisher_v2.publish_detail_invalidate(
+            project_id=project_id,
+            node_id=root_id,
+            reason="execution_completed",
+        )
+
+        workflow_payload = await _read_sse_payload(response)
+        invalidate_payload = await _read_sse_payload(response)
+    finally:
+        await _close_stream(response, request)
+
+    assert workflow_payload["channel"] == event_types.WORKFLOW_CHANNEL
+    assert workflow_payload["type"] == event_types.NODE_WORKFLOW_UPDATED
+    assert workflow_payload["payload"] == {
+        "projectId": project_id,
+        "nodeId": root_id,
+        "executionState": "completed",
+        "reviewState": "running",
+    }
+    assert invalidate_payload["channel"] == event_types.WORKFLOW_CHANNEL
+    assert invalidate_payload["type"] == event_types.NODE_DETAIL_INVALIDATE
+    assert invalidate_payload["payload"] == {
+        "projectId": project_id,
+        "nodeId": root_id,
+        "reason": "execution_completed",
+    }

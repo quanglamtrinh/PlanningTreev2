@@ -114,3 +114,74 @@ These examples reflect the implemented additive V2 backend path.
 }
 ```
 
+## `thread.reset` followed by fresh `thread.snapshot`
+
+```json
+{
+  "eventId": "evt_456",
+  "channel": "thread",
+  "projectId": "project_1",
+  "nodeId": "node_1",
+  "threadRole": "ask_planning",
+  "occurredAt": "2026-03-28T10:00:05Z",
+  "snapshotVersion": 5,
+  "type": "thread.reset",
+  "payload": {
+    "threadId": "ask-thread-1"
+  }
+}
+```
+
+```json
+{
+  "eventId": "evt_457",
+  "channel": "thread",
+  "projectId": "project_1",
+  "nodeId": "node_1",
+  "threadRole": "ask_planning",
+  "occurredAt": "2026-03-28T10:00:05Z",
+  "snapshotVersion": 5,
+  "type": "thread.snapshot",
+  "payload": {
+    "snapshot": {
+      "projectId": "project_1",
+      "nodeId": "node_1",
+      "threadRole": "ask_planning",
+      "threadId": null,
+      "activeTurnId": null,
+      "processingState": "idle",
+      "snapshotVersion": 5,
+      "createdAt": "2026-03-28T10:00:00Z",
+      "updatedAt": "2026-03-28T10:00:05Z",
+      "lineage": {
+        "forkedFromThreadId": null,
+        "forkedFromNodeId": null,
+        "forkedFromRole": null,
+        "forkReason": null,
+        "lineageRootThreadId": null
+      },
+      "items": [],
+      "pendingRequests": []
+    }
+  }
+}
+```
+
+## Workflow stream envelope example
+
+```json
+{
+  "eventId": "evt_789",
+  "channel": "workflow",
+  "projectId": "project_1",
+  "nodeId": "node_1",
+  "occurredAt": "2026-03-28T10:00:06Z",
+  "type": "node.workflow.updated",
+  "payload": {
+    "projectId": "project_1",
+    "nodeId": "node_1",
+    "executionState": "completed",
+    "reviewState": "running"
+  }
+}
+```
