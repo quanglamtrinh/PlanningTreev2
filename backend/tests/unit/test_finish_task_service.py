@@ -876,6 +876,95 @@ def test_finish_task_v2_rehearsal_uses_v2_snapshot_without_legacy_conversation_e
     )
 
 
+def test_finish_task_v2_raw_event_callbacks_do_not_reenter_thread_binding(
+    storage,
+    tree_service,
+    detail_service,
+    chat_event_broker,
+    project_id,
+    root_node_id,
+) -> None:
+    _confirm_spec(storage, project_id, root_node_id)
+    codex_client = FakeExecutionV2CodexClient()
+    original_run_turn_streaming = codex_client.run_turn_streaming
+    callback_depth = 0
+
+    def wrapped_run_turn_streaming(prompt: str, **kwargs: object) -> dict[str, str]:
+        on_raw_event = kwargs.get("on_raw_event")
+        if callable(on_raw_event):
+            def wrapped_on_raw_event(raw_event: dict[str, object]) -> None:
+                nonlocal callback_depth
+                callback_depth += 1
+                try:
+                    on_raw_event(raw_event)
+                finally:
+                    callback_depth -= 1
+
+            kwargs = dict(kwargs)
+            kwargs["on_raw_event"] = wrapped_on_raw_event
+        return original_run_turn_streaming(prompt, **kwargs)
+
+    codex_client.run_turn_streaming = wrapped_run_turn_streaming  # type: ignore[method-assign]
+    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
+    chat_service = ChatService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+    thread_runtime_service_v2, workflow_event_publisher_v2 = _build_v2_runtime(
+        storage=storage,
+        tree_service=tree_service,
+        chat_service=chat_service,
+        codex_client=codex_client,
+    )
+    original_get_thread_snapshot = thread_runtime_service_v2._query_service.get_thread_snapshot
+    callback_snapshot_calls: list[dict[str, object]] = []
+
+    def wrapped_get_thread_snapshot(
+        project_id_arg: str,
+        node_id_arg: str,
+        thread_role_arg: str,
+        **kwargs: object,
+    ):
+        if callback_depth:
+            callback_snapshot_calls.append(
+                {
+                    "project_id": project_id_arg,
+                    "node_id": node_id_arg,
+                    "thread_role": thread_role_arg,
+                    **kwargs,
+                }
+            )
+            assert kwargs.get("ensure_binding") is False
+            assert kwargs.get("allow_thread_read_hydration") is False
+        return original_get_thread_snapshot(project_id_arg, node_id_arg, thread_role_arg, **kwargs)
+
+    thread_runtime_service_v2._query_service.get_thread_snapshot = wrapped_get_thread_snapshot  # type: ignore[method-assign]
+    finish_service = FinishTaskService(
+        storage=storage,
+        tree_service=tree_service,
+        node_detail_service=detail_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        chat_service=chat_service,
+        thread_runtime_service_v2=thread_runtime_service_v2,
+        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_rehearsal_enabled=True,
+        rehearsal_workspace_root=Path(storage.workspace_store.get_folder_path(project_id)).parent,
+    )
+
+    result = finish_service.finish_task(project_id, root_node_id)
+    assert result["execution_started"] is True
+    assert callback_snapshot_calls
+    assert all(call["thread_role"] == "execution" for call in callback_snapshot_calls)
+
+
 def test_finish_task_v2_rehearsal_rejects_workspace_outside_sandbox_root(
     storage,
     tree_service,

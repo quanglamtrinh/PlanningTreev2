@@ -48,6 +48,13 @@ def _extract_str(container: dict[str, Any] | None, *keys: str) -> str | None:
     return None
 
 
+def _normalize_optional_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
 def copy_plan_item(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
@@ -905,7 +912,20 @@ class StdioTransport(CodexTransport):
         state = self._get_turn_state(turn_id)
         if not state.event.wait(timeout_sec):
             with self._lock:
+                buffered_raw_event_count = len(state.raw_events)
+                saw_turn_completed = any(
+                    str(event.get("method") or "").strip() == "turn/completed"
+                    for event in state.raw_events
+                )
                 self._turn_states.pop(turn_id, None)
+            logger.warning(
+                "turn/start timed out after %ss for thread_id=%r turn_id=%r buffered_raw_events=%s saw_turn_completed=%s",
+                timeout_sec,
+                state.thread_id,
+                turn_id,
+                buffered_raw_event_count,
+                saw_turn_completed,
+            )
             raise CodexTransportTimeout(f"turn/start timed out after {timeout_sec}s")
 
         with self._lock:
@@ -1030,15 +1050,18 @@ class StdioTransport(CodexTransport):
         request_id: str | None = None,
         call_id: str | None = None,
     ) -> dict[str, Any]:
+        turn_payload = params.get("turn")
         item_payload = params.get("item")
         event_thread_id = (
             thread_id
             or _extract_str(params, "threadId", "thread_id")
+            or _extract_str(turn_payload if isinstance(turn_payload, dict) else None, "threadId", "thread_id")
             or _extract_str(item_payload if isinstance(item_payload, dict) else None, "threadId", "thread_id")
         )
         event_turn_id = (
             turn_id
             or _extract_str(params, "turnId", "turn_id")
+            or _extract_str(turn_payload if isinstance(turn_payload, dict) else None, "id", "turnId", "turn_id")
             or _extract_str(item_payload if isinstance(item_payload, dict) else None, "turnId", "turn_id")
         )
         event_item_id = (
@@ -1083,6 +1106,130 @@ class StdioTransport(CodexTransport):
         payload["thread_id"] = _extract_str(payload, "thread_id", "threadId")
         payload["raw_request"] = _copy_dict(params)
         return payload
+
+    def _extract_notification_thread_id(self, params: dict[str, Any]) -> str | None:
+        turn_payload = params.get("turn")
+        item_payload = params.get("item")
+        return (
+            _extract_str(params, "threadId", "thread_id")
+            or _extract_str(turn_payload if isinstance(turn_payload, dict) else None, "threadId", "thread_id")
+            or _extract_str(item_payload if isinstance(item_payload, dict) else None, "threadId", "thread_id")
+        )
+
+    def _extract_notification_turn_id(self, params: dict[str, Any]) -> str | None:
+        turn_payload = params.get("turn")
+        item_payload = params.get("item")
+        return (
+            _extract_str(params, "turnId", "turn_id")
+            or _extract_str(turn_payload if isinstance(turn_payload, dict) else None, "id", "turnId", "turn_id")
+            or _extract_str(item_payload if isinstance(item_payload, dict) else None, "turnId", "turn_id")
+        )
+
+    def _extract_notification_item_id(self, params: dict[str, Any]) -> str | None:
+        item_payload = params.get("item")
+        return (
+            _extract_str(params, "itemId", "item_id")
+            or _extract_str(item_payload if isinstance(item_payload, dict) else None, "id", "itemId", "item_id")
+        )
+
+    def _normalize_notification_method(self, method: str) -> str | None:
+        if method == "item/reasoning/summaryTextDelta":
+            return "item/reasoning/summaryDelta"
+        if method == "item/reasoning/textDelta":
+            return "item/reasoning/detailDelta"
+        if method == "item/reasoning/summaryPartAdded":
+            logger.debug("Ignoring app-server reasoning boundary event %s", method)
+            return None
+        return method
+
+    def _is_terminal_turn_state(self, state: _TurnState) -> bool:
+        if state.event.is_set():
+            return True
+        return str(state.turn_status or "").strip().lower() in {
+            "completed",
+            "failed",
+            "error",
+            "interrupted",
+            "cancelled",
+            "waiting_user_input",
+            "waitingforuserinput",
+            "waiting_for_user_input",
+        }
+
+    def _log_dropped_notification(
+        self,
+        *,
+        method: str,
+        thread_id: str | None,
+        turn_id: str | None,
+        item_id: str | None,
+        reason: str,
+    ) -> None:
+        logger.debug(
+            "Dropping app-server notification %s: thread_id=%r turn_id=%r item_id=%r reason=%s",
+            method,
+            thread_id,
+            turn_id,
+            item_id,
+            reason,
+        )
+
+    def _resolve_turn_state_for_notification(
+        self,
+        *,
+        method: str,
+        params: dict[str, Any],
+    ) -> tuple[_TurnState, str | None, str | None, str | None] | None:
+        thread_id = self._extract_notification_thread_id(params)
+        turn_id = self._extract_notification_turn_id(params)
+        item_id = self._extract_notification_item_id(params)
+
+        if turn_id is not None:
+            state = self._get_turn_state(turn_id)
+            if thread_id and not state.thread_id:
+                state.thread_id = thread_id
+            return state, thread_id or state.thread_id, turn_id, item_id
+
+        if not thread_id:
+            self._log_dropped_notification(
+                method=method,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                item_id=item_id,
+                reason="missing_thread_id_and_turn_id",
+            )
+            return None
+
+        with self._lock:
+            bound_matches = [
+                (candidate_turn_id, candidate_state)
+                for candidate_turn_id, candidate_state in self._turn_states.items()
+                if candidate_state.thread_id == thread_id
+            ]
+            nonterminal_matches = [
+                (candidate_turn_id, candidate_state)
+                for candidate_turn_id, candidate_state in bound_matches
+                if not self._is_terminal_turn_state(candidate_state)
+            ]
+            if len(nonterminal_matches) == 1:
+                resolved_turn_id, state = nonterminal_matches[0]
+                if not state.thread_id:
+                    state.thread_id = thread_id
+                return state, thread_id, resolved_turn_id, item_id
+            if len(bound_matches) == 1:
+                resolved_turn_id, state = bound_matches[0]
+                if not state.thread_id:
+                    state.thread_id = thread_id
+                return state, thread_id, resolved_turn_id, item_id
+
+        self._log_dropped_notification(
+            method=method,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            item_id=item_id,
+            reason="ambiguous_or_missing_thread_match",
+        )
+        return None
 
     def _dispatch_raw_event(self, state: _TurnState, raw_event: dict[str, Any]) -> None:
         method = str(raw_event.get("method") or "")
@@ -1176,6 +1323,10 @@ class StdioTransport(CodexTransport):
     def _handle_notification(self, method: str, params: Any) -> None:
         if not isinstance(params, dict):
             return
+        normalized_method = self._normalize_notification_method(method)
+        if normalized_method is None:
+            return
+        method = normalized_method
 
         if method == "account/updated":
             with self._lock:
@@ -1229,26 +1380,28 @@ class StdioTransport(CodexTransport):
             return
 
         if method == "item/agentMessage/delta":
-            turn_id = params.get("turnId")
             delta = params.get("delta")
-            if isinstance(turn_id, str) and isinstance(delta, str):
-                state = self._get_turn_state(turn_id)
+            resolved = self._resolve_turn_state_for_notification(method=method, params=params)
+            if resolved is not None and isinstance(delta, str):
+                state, thread_id, turn_id, item_id = resolved
                 state.stdout_parts.append(delta)
-                self._record_and_dispatch_raw_event(state, self._build_raw_turn_event(method, params))
+                self._record_and_dispatch_raw_event(
+                    state,
+                    self._build_raw_turn_event(
+                        method,
+                        params,
+                        thread_id=thread_id,
+                        turn_id=turn_id,
+                        item_id=item_id,
+                    ),
+                )
             return
 
         if method == "item/plan/delta":
-            turn_id = params.get("turnId")
-            thread_id = params.get("threadId")
-            item_id = params.get("itemId")
             delta = params.get("delta")
-            if (
-                isinstance(turn_id, str)
-                and isinstance(thread_id, str)
-                and isinstance(item_id, str)
-                and isinstance(delta, str)
-            ):
-                state = self._get_turn_state(turn_id)
+            resolved = self._resolve_turn_state_for_notification(method=method, params=params)
+            if resolved is not None and isinstance(delta, str):
+                state, thread_id, turn_id, item_id = resolved
                 self._record_and_dispatch_raw_event(
                     state,
                     self._build_raw_turn_event(
@@ -1262,27 +1415,38 @@ class StdioTransport(CodexTransport):
             return
 
         if method == "item/started":
-            turn_id = params.get("turnId")
             item = params.get("item", {})
-            if not isinstance(turn_id, str) or not isinstance(item, dict):
+            resolved = self._resolve_turn_state_for_notification(method=method, params=params)
+            if resolved is None or not isinstance(item, dict):
                 return
-            state = self._get_turn_state(turn_id)
+            state, thread_id, turn_id, item_id = resolved
             self._record_and_dispatch_raw_event(
                 state,
-                self._build_raw_turn_event(method, params, turn_id=turn_id),
+                self._build_raw_turn_event(
+                    method,
+                    params,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    item_id=item_id,
+                ),
             )
             return
 
         if method == "item/completed":
-            turn_id = params.get("turnId")
-            thread_id = params.get("threadId")
             item = params.get("item", {})
-            if not isinstance(turn_id, str) or not isinstance(thread_id, str) or not isinstance(item, dict):
+            resolved = self._resolve_turn_state_for_notification(method=method, params=params)
+            if resolved is None or not isinstance(item, dict):
                 return
-            state = self._get_turn_state(turn_id)
+            state, thread_id, turn_id, item_id = resolved
             self._record_and_dispatch_raw_event(
                 state,
-                self._build_raw_turn_event(method, params, thread_id=thread_id, turn_id=turn_id),
+                self._build_raw_turn_event(
+                    method,
+                    params,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    item_id=item_id,
+                ),
             )
             item_type = item.get("type")
             if item_type == "agentMessage":
@@ -1303,17 +1467,15 @@ class StdioTransport(CodexTransport):
 
         if method == "turn/completed":
             turn = params.get("turn", {})
-            thread_id = params.get("threadId")
-            if not isinstance(turn, dict):
+            resolved = self._resolve_turn_state_for_notification(method=method, params=params)
+            if resolved is None:
                 return
-            turn_id = turn.get("id")
-            if not isinstance(turn_id, str) or not isinstance(thread_id, str):
-                return
-            state = self._get_turn_state(turn_id)
-            status = str(turn.get("status", "")).strip().lower()
+            state, thread_id, turn_id, _ = resolved
+            turn_payload = turn if isinstance(turn, dict) else {}
+            status = str(turn_payload.get("status") or params.get("status") or "").strip().lower()
             state.turn_status = status or None
-            state.thread_id = thread_id
-            error = turn.get("error")
+            state.thread_id = thread_id or state.thread_id
+            error = turn_payload.get("error") if isinstance(turn_payload, dict) else params.get("error")
             if status == "failed":
                 if isinstance(error, dict):
                     message = error.get("message")
@@ -1386,10 +1548,10 @@ class StdioTransport(CodexTransport):
             return
 
         if method == "error":
-            turn_id = params.get("turnId")
-            if not isinstance(turn_id, str):
+            resolved = self._resolve_turn_state_for_notification(method=method, params=params)
+            if resolved is None:
                 return
-            state = self._get_turn_state(turn_id)
+            state, thread_id, turn_id, item_id = resolved
             error = params.get("error")
             if isinstance(error, dict):
                 state.error_message = str(error.get("message") or json.dumps(error, ensure_ascii=True))
@@ -1397,18 +1559,31 @@ class StdioTransport(CodexTransport):
                 state.error_message = str(params.get("message") or "App server error")
             self._record_and_dispatch_raw_event(
                 state,
-                self._build_raw_turn_event(method, params, turn_id=turn_id),
+                self._build_raw_turn_event(
+                    method,
+                    params,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    item_id=item_id,
+                ),
             )
             state.event.set()
+            return
 
         if method.startswith("item/reasoning/"):
-            turn_id = params.get("turnId")
-            if not isinstance(turn_id, str):
+            resolved = self._resolve_turn_state_for_notification(method=method, params=params)
+            if resolved is None:
                 return
-            state = self._get_turn_state(turn_id)
+            state, thread_id, turn_id, item_id = resolved
             self._record_and_dispatch_raw_event(
                 state,
-                self._build_raw_turn_event(method, params, turn_id=turn_id),
+                self._build_raw_turn_event(
+                    method,
+                    params,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    item_id=item_id,
+                ),
             )
             return
 
@@ -1417,14 +1592,21 @@ class StdioTransport(CodexTransport):
             "item/commandExecution/terminalInteraction",
             "item/fileChange/outputDelta",
         }:
-            turn_id = params.get("turnId")
-            if not isinstance(turn_id, str):
+            resolved = self._resolve_turn_state_for_notification(method=method, params=params)
+            if resolved is None:
                 return
-            state = self._get_turn_state(turn_id)
+            state, thread_id, turn_id, item_id = resolved
             self._record_and_dispatch_raw_event(
                 state,
-                self._build_raw_turn_event(method, params, turn_id=turn_id),
+                self._build_raw_turn_event(
+                    method,
+                    params,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    item_id=item_id,
+                ),
             )
+            return
 
     def _handle_server_request(self, message_id: str | int, method: str, params: Any) -> None:
         if method == "item/tool/requestUserInput":

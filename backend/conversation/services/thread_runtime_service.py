@@ -417,6 +417,8 @@ class ThreadRuntimeService:
                 node_id,
                 thread_role,
                 publish_repairs=False,
+                ensure_binding=False,
+                allow_thread_read_hydration=False,
             )
             updated = current
             events: list[dict[str, Any]] = []
@@ -559,6 +561,8 @@ class ThreadRuntimeService:
                 node_id,
                 thread_role,
                 publish_repairs=False,
+                ensure_binding=False,
+                allow_thread_read_hydration=False,
             )
             updated = current
             events: list[dict[str, Any]] = []

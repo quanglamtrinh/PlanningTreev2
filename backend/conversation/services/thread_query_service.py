@@ -46,12 +46,14 @@ class ThreadQueryService:
         thread_role: ThreadRole,
         *,
         publish_repairs: bool = True,
+        ensure_binding: bool = True,
+        allow_thread_read_hydration: bool = True,
     ) -> ThreadSnapshotV2:
         self._chat_service._validate_thread_access(project_id, node_id, thread_role)
         session = None
         if thread_role == "ask_planning":
             session = self._chat_service.get_session(project_id, node_id, thread_role=thread_role)
-        elif self._thread_lineage_service is not None:
+        elif ensure_binding and self._thread_lineage_service is not None:
             workspace_root = self._chat_service._workspace_root_for_project(project_id)
             self._thread_lineage_service.ensure_thread_binding_v2(
                 project_id,
@@ -69,6 +71,8 @@ class ThreadQueryService:
             )
             thread_id = str(updated.get("threadId") or "").strip()
             should_hydrate_from_thread_read = (
+                allow_thread_read_hydration
+                and
                 thread_role != "ask_planning"
                 and bool(thread_id)
                 and not updated.get("items")

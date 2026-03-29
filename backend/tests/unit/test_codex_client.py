@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from backend.ai.codex_client import StdioTransport
@@ -264,6 +265,171 @@ def test_reasoning_and_output_delta_events_surface_through_on_raw_event() -> Non
         "item/fileChange/outputDelta",
     ]
     assert [event["item_id"] for event in seen] == ["reason-1", "cmd-1", "cmd-1", "file-1"]
+
+
+def test_notification_routing_falls_back_to_unique_thread_state_without_turn_id() -> None:
+    transport = StdioTransport()
+    raw_seen: list[dict[str, object]] = []
+    items_seen: list[tuple[str, dict[str, object]]] = []
+    deltas: list[str] = []
+
+    state = transport._get_turn_state("turn_1")
+    state.thread_id = "thread_1"
+    state.on_raw_event = raw_seen.append
+    state.on_item_event = lambda phase, item: items_seen.append((phase, item))
+    state.on_delta = deltas.append
+    state.callbacks_attached = True
+
+    command_item = {
+        "type": "commandExecution",
+        "id": "cmd-1",
+        "command": "npm test",
+    }
+
+    transport._handle_notification(
+        "item/started",
+        {"threadId": "thread_1", "item": command_item},
+    )
+    transport._handle_notification(
+        "item/agentMessage/delta",
+        {"threadId": "thread_1", "itemId": "msg-1", "delta": "hello"},
+    )
+    transport._handle_notification(
+        "item/commandExecution/outputDelta",
+        {"threadId": "thread_1", "itemId": "cmd-1", "delta": "stdout"},
+    )
+    transport._handle_notification(
+        "item/commandExecution/terminalInteraction",
+        {"threadId": "thread_1", "itemId": "cmd-1", "stdin": "y\n"},
+    )
+    transport._handle_notification(
+        "item/completed",
+        {"threadId": "thread_1", "item": {**command_item, "status": "completed"}},
+    )
+
+    assert deltas == ["hello"]
+    assert items_seen == [
+        ("started", command_item),
+        ("completed", {**command_item, "status": "completed"}),
+    ]
+    assert [event["method"] for event in raw_seen] == [
+        "item/started",
+        "item/agentMessage/delta",
+        "item/commandExecution/outputDelta",
+        "item/commandExecution/terminalInteraction",
+        "item/completed",
+    ]
+    assert all(event["turn_id"] == "turn_1" for event in raw_seen)
+
+
+def test_turn_completed_accepts_top_level_turn_id_and_marks_event_set() -> None:
+    transport = StdioTransport()
+    raw_seen: list[dict[str, object]] = []
+
+    state = transport._get_turn_state("turn_1")
+    state.thread_id = "thread_1"
+    state.on_raw_event = raw_seen.append
+    state.callbacks_attached = True
+
+    transport._handle_notification(
+        "turn/completed",
+        {
+            "threadId": "thread_1",
+            "turnId": "turn_1",
+            "status": "completed",
+        },
+    )
+
+    assert state.event.is_set()
+    assert state.turn_status == "completed"
+    assert raw_seen == [
+        {
+            "method": "turn/completed",
+            "received_at": raw_seen[0]["received_at"],
+            "thread_id": "thread_1",
+            "turn_id": "turn_1",
+            "item_id": None,
+            "request_id": None,
+            "call_id": None,
+            "params": {
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "status": "completed",
+            },
+        }
+    ]
+
+
+def test_turn_completed_routes_by_unique_thread_id_without_turn_id() -> None:
+    transport = StdioTransport()
+    raw_seen: list[dict[str, object]] = []
+
+    state = transport._get_turn_state("turn_1")
+    state.thread_id = "thread_1"
+    state.on_raw_event = raw_seen.append
+    state.callbacks_attached = True
+
+    transport._handle_notification(
+        "turn/completed",
+        {
+            "threadId": "thread_1",
+            "turn": {"status": "completed"},
+        },
+    )
+
+    assert state.event.is_set()
+    assert state.turn_status == "completed"
+    assert raw_seen[0]["turn_id"] == "turn_1"
+    assert raw_seen[0]["thread_id"] == "thread_1"
+
+
+def test_reasoning_alias_methods_are_normalized_before_dispatch() -> None:
+    transport = StdioTransport()
+    raw_seen: list[dict[str, object]] = []
+
+    state = transport._get_turn_state("turn_1")
+    state.thread_id = "thread_1"
+    state.on_raw_event = raw_seen.append
+    state.callbacks_attached = True
+
+    transport._handle_notification(
+        "item/reasoning/summaryTextDelta",
+        {"threadId": "thread_1", "itemId": "reason-1", "delta": "think"},
+    )
+    transport._handle_notification(
+        "item/reasoning/textDelta",
+        {"threadId": "thread_1", "itemId": "reason-1", "delta": "details"},
+    )
+
+    assert [event["method"] for event in raw_seen] == [
+        "item/reasoning/summaryDelta",
+        "item/reasoning/detailDelta",
+    ]
+    assert all(event["turn_id"] == "turn_1" for event in raw_seen)
+
+
+def test_ambiguous_thread_id_notification_is_dropped_with_debug_log(caplog) -> None:
+    transport = StdioTransport()
+    raw_seen: list[dict[str, object]] = []
+
+    first = transport._get_turn_state("turn_1")
+    first.thread_id = "thread_1"
+    first.on_raw_event = raw_seen.append
+    first.callbacks_attached = True
+
+    second = transport._get_turn_state("turn_2")
+    second.thread_id = "thread_1"
+    second.on_raw_event = raw_seen.append
+    second.callbacks_attached = True
+
+    with caplog.at_level(logging.DEBUG):
+        transport._handle_notification(
+            "item/started",
+            {"threadId": "thread_1", "item": {"type": "agentMessage", "id": "msg-1"}},
+        )
+
+    assert raw_seen == []
+    assert "ambiguous_or_missing_thread_match" in caplog.text
 
 
 def test_request_user_input_and_resolved_emit_raw_and_legacy_payloads(monkeypatch) -> None:
