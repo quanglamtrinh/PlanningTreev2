@@ -1,6 +1,6 @@
 migration_id: conversation_streaming_v2
-status: phase_5_complete
-current_phase: null
+status: phase_6_in_progress
+current_phase: 6
 next_phase: 6
 
 references:
@@ -229,21 +229,49 @@ phases:
 
   - phase: 6
     name: execution_and_audit_cutover
-    status: not_started
+    status: in_progress
     depends_on:
       - 5
     goals:
       - cut execution to V2
       - cut the full audit namespace to V2
       - enable workflow bridge in production
+      - close semantic presentation parity gaps for execution and audit V2 surfaces
     exit_criteria:
       - execution and audit both use V2 contract end to end
       - no audit producer writes V1 transcript state
+      - execution and audit V2 surfaces satisfy semantic presentation parity goals defined in the phase-6 handoff doc
+      - command terminal interaction semantics reach canonical tool items and the V2 feed
     verification:
       - targeted production-like integration pass
+      - semantic parity unit and integration coverage
     artifacts:
       - docs/handoff/conversation-streaming-v2/phase-6-execution-audit-cutover.md
-    notes: ""
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-6/README.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-6/cutover-checklist.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-6/smoke-results.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-6/rollback-notes.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-6/semantic-presentation-parity-plan.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-6/semantic-parity-verification.md
+    notes: >
+      In progress on 2026-03-28. A dedicated production flag
+      (`PLANNINGTREE_EXECUTION_AUDIT_V2_ENABLED`) now gates the first production
+      V2 cutover bundle for execution plus the entire audit namespace. Finish-task
+      production paths now enter the shared V2 runtime, execution auto-review now
+      runs through canonical audit thread items instead of the legacy accumulator,
+      review rollup production routing now uses the same V2 runtime branch as
+      rehearsal, and frontend graph, sidebar, `/chat`, and `/chat-v2` routing now
+      canonicalize execution or audit traffic onto `/chat-v2` while redirecting
+      ask back to `/chat`. Focused verification currently passes for targeted
+      backend unit coverage, a new Phase 6 production integration test, and the
+      route-level frontend unit suite. Review against the active spec and
+      CodexMonitor parity shows the phase is not yet closeable because semantic
+      presentation remains too flat: the V2 feed still lacks a dedicated
+      view-state layer, semantic working-indicator behavior, grouped tool
+      rendering, near-bottom auto-scroll semantics, reasoning-derived progress
+      labels, and command terminal-interaction projection into canonical tool
+      output. Remaining work now includes both rollout evidence and the semantic
+      parity closeout plan tracked in the phase-6 handoff doc.
 
   - phase: 7
     name: ask_planning_cutover

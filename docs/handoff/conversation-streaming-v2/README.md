@@ -1,6 +1,6 @@
 # Conversation Streaming V2 Rollout Plan
 
-Status: active rollout handoff. Phases 0 through 5 are completed, and Phase 6 execution plus audit cutover is the next rollout phase.
+Status: active rollout handoff. Phases 0 through 5 are completed, and Phase 6 execution plus audit cutover is now in progress.
 
 Primary specs:
 
@@ -43,6 +43,7 @@ Tracking artifacts:
 - Phase 3 consumer migration and audit-writer migration is completed and verified through focused backend plus integration coverage and code-search evidence
 - Phase 4 hidden frontend rollout is completed and the hidden `/chat-v2` breadcrumb surface is now the rehearsal UI for the next phase
 - Phase 5 isolated rehearsal is completed; execution and review-rollup can now run through canonical V2 threads behind a server-side rehearsal flag and sandbox-root gate
+- Phase 6 implementation is in progress: production execution now branches through the shared V2 runtime behind `PLANNINGTREE_EXECUTION_AUDIT_V2_ENABLED`, production auto-review transcript persistence is V2-backed, production review-rollup uses the V2 runtime branch, and graph/sidebar/breadcrumb routing now sends execution or audit traffic to `/chat-v2` while keeping ask on `/chat`
 - Phase 3 leaves two intentional mixed-mode bridges in place: lineage remains registry-first with legacy session mirroring, and audit readiness remains V2-first with explicit temporary V1 fallback
 - Phase 4 intentionally keeps one frontend mixed-mode split: conversation transport on `/chat-v2` is V2-only, while detail-state loading and local-review acceptance remain on current detail APIs
 - Phase 4 closeout includes a documented waiver for one unrelated legacy `NodeDetailCard` unit-test failure outside the hidden V2 surface

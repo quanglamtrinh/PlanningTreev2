@@ -329,7 +329,7 @@ describe('NodeDetailCard', () => {
     expect(screen.getByDisplayValue('# Spec')).toBeInTheDocument()
   })
 
-  it('shows execution lifecycle badge separately from coarse node status', async () => {
+  it('keeps coarse node status visible even when execution lifecycle is completed', async () => {
     apiMock.getDetailState.mockResolvedValue({
       node_id: 'root',
       workflow: {
@@ -389,7 +389,8 @@ describe('NodeDetailCard', () => {
     )
 
     expect(screen.getByText('In Progress')).toBeInTheDocument()
-    expect(await screen.findByText('Execution Complete')).toBeInTheDocument()
+    await screen.findByDisplayValue('# Frame')
+    expect(screen.queryByText('Execution Complete')).not.toBeInTheDocument()
   })
 
   it('flushes the active document immediately on blur', async () => {

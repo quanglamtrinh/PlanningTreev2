@@ -19,6 +19,7 @@ class ThreadQueryService:
         *,
         storage: Any,
         chat_service: Any,
+        thread_lineage_service: Any | None,
         codex_client: Any,
         snapshot_store: ThreadSnapshotStoreV2,
         registry_service: ThreadRegistryService,
@@ -27,6 +28,7 @@ class ThreadQueryService:
     ) -> None:
         self._storage = storage
         self._chat_service = chat_service
+        self._thread_lineage_service = thread_lineage_service
         self._codex_client = codex_client
         self._snapshot_store = snapshot_store
         self._registry_service = registry_service
@@ -42,26 +44,41 @@ class ThreadQueryService:
         publish_repairs: bool = True,
     ) -> ThreadSnapshotV2:
         self._chat_service._validate_thread_access(project_id, node_id, thread_role)
-        session = self._chat_service.get_session(project_id, node_id, thread_role=thread_role)
-        with self._storage.project_lock(project_id):
-            snapshot = self._snapshot_store.read_snapshot(project_id, node_id, thread_role)
-            registry, registry_changed = self._registry_service.seed_from_legacy_session(
+        session = None
+        if thread_role == "ask_planning":
+            session = self._chat_service.get_session(project_id, node_id, thread_role=thread_role)
+        elif self._thread_lineage_service is not None:
+            workspace_root = self._chat_service._workspace_root_for_project(project_id)
+            self._thread_lineage_service.ensure_thread_binding_v2(
                 project_id,
                 node_id,
                 thread_role,
-                session,
+                workspace_root,
             )
+        with self._storage.project_lock(project_id):
+            snapshot = self._snapshot_store.read_snapshot(project_id, node_id, thread_role)
+            registry_changed = False
+            if session is not None:
+                registry, registry_changed = self._registry_service.seed_from_legacy_session(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    session,
+                )
+            else:
+                registry = self._registry_service.read_entry(project_id, node_id, thread_role)
             updated = snapshot_with_metadata(snapshot, registry)
             changed = registry_changed or updated != snapshot or not self._snapshot_store.exists(project_id, node_id, thread_role)
 
-            legacy_active_turn = str(session.get("active_turn_id") or "").strip() or None
-            if updated.get("activeTurnId") != legacy_active_turn:
-                updated["activeTurnId"] = legacy_active_turn
-                if legacy_active_turn:
-                    updated["processingState"] = "running"
-                elif updated.get("processingState") == "running":
-                    updated["processingState"] = "idle"
-                changed = True
+            if session is not None:
+                legacy_active_turn = str(session.get("active_turn_id") or "").strip() or None
+                if updated.get("activeTurnId") != legacy_active_turn:
+                    updated["activeTurnId"] = legacy_active_turn
+                    if legacy_active_turn:
+                        updated["processingState"] = "running"
+                    elif updated.get("processingState") == "running":
+                        updated["processingState"] = "idle"
+                    changed = True
 
             stale_checked, stale_changed = self._request_ledger_service.mark_stale_missing_runtime_requests(
                 updated,
@@ -144,6 +161,8 @@ class ThreadQueryService:
         thread_id: str | None,
         active_turn_id: str | None,
     ) -> None:
+        if thread_role != "ask_planning":
+            return
         with self._storage.project_lock(project_id):
             session = self._storage.chat_state_store.read_session(project_id, node_id, thread_role=thread_role)
             session["thread_id"] = thread_id

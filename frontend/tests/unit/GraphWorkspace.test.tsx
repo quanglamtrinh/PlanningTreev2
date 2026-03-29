@@ -43,11 +43,13 @@ vi.mock('../../src/features/graph/TreeGraph', () => ({
     snapshot,
     selectedNodeId,
     onOpenBreadcrumb,
+    onFinishTask,
     onResetProject,
   }: {
     snapshot: { tree_state: { root_node_id: string } }
     selectedNodeId: string | null
     onOpenBreadcrumb: (nodeId: string) => Promise<void>
+    onFinishTask: (nodeId: string) => Promise<void>
     onResetProject: () => Promise<void>
   }) => (
     <div data-testid="tree-graph">
@@ -57,6 +59,9 @@ vi.mock('../../src/features/graph/TreeGraph', () => ({
       <div data-testid="selected-node-id">{selectedNodeId}</div>
       <button onClick={() => void onOpenBreadcrumb(snapshot.tree_state.root_node_id)}>
         Open Root Breadcrumb
+      </button>
+      <button onClick={() => void onFinishTask(snapshot.tree_state.root_node_id)}>
+        Open Execution Surface
       </button>
       <button onClick={() => void onResetProject()}>Reset to Root</button>
     </div>
@@ -69,7 +74,7 @@ import { useUIStore } from '../../src/stores/ui-store'
 
 function LocationProbe() {
   const location = useLocation()
-  return <div data-testid="location-path">{location.pathname}</div>
+  return <div data-testid="location-path">{`${location.pathname}${location.search}`}</div>
 }
 
 function makeProjectSummary(id: string) {
@@ -114,6 +119,16 @@ function makeSnapshot(projectId = 'project-1') {
     },
     updated_at: '2026-03-20T00:00:00Z',
   }
+}
+
+function makeReviewSnapshot(projectId = 'project-1') {
+  const snapshot = makeSnapshot(projectId)
+  snapshot.tree_state.node_registry[0] = {
+    ...snapshot.tree_state.node_registry[0],
+    node_kind: 'review',
+    title: 'Review Node',
+  }
+  return snapshot
 }
 
 describe('GraphWorkspace', () => {
@@ -213,7 +228,7 @@ describe('GraphWorkspace', () => {
       fireEvent.click(screen.getByText('Open Root Breadcrumb'))
     })
 
-    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat')
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=ask')
   })
 
   it('still navigates to breadcrumb when persisting the active node fails', async () => {
@@ -248,6 +263,150 @@ describe('GraphWorkspace', () => {
       fireEvent.click(screen.getByText('Open Root Breadcrumb'))
     })
 
-    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat')
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=ask')
+  })
+
+  it('routes finish-task entry to /chat-v2 execution', async () => {
+    apiMock.getBootstrapStatus.mockResolvedValue({
+      ready: true,
+      workspace_configured: true,
+      codex_available: true,
+      codex_path: 'codex',
+      execution_audit_v2_enabled: true,
+    })
+    apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-1')])
+    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1'))
+    apiMock.setActiveNode.mockResolvedValue(makeSnapshot('project-1'))
+    apiMock.getSplitStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      node_id: null,
+      mode: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+
+    render(
+      <MemoryRouter>
+        <GraphWorkspace />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+
+    await screen.findByTestId('tree-graph')
+    await act(async () => {
+      fireEvent.click(screen.getByText('Open Execution Surface'))
+    })
+
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat-v2?thread=execution')
+  })
+
+  it('routes review-node breadcrumb entry to /chat-v2 audit', async () => {
+    apiMock.getBootstrapStatus.mockResolvedValue({
+      ready: true,
+      workspace_configured: true,
+      codex_available: true,
+      codex_path: 'codex',
+      execution_audit_v2_enabled: true,
+    })
+    apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-1')])
+    apiMock.getSnapshot.mockResolvedValue(makeReviewSnapshot('project-1'))
+    apiMock.setActiveNode.mockResolvedValue(makeReviewSnapshot('project-1'))
+    apiMock.getSplitStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      node_id: null,
+      mode: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+
+    render(
+      <MemoryRouter>
+        <GraphWorkspace />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+
+    await screen.findByTestId('tree-graph')
+    await act(async () => {
+      fireEvent.click(screen.getByText('Open Root Breadcrumb'))
+    })
+
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat-v2?thread=audit')
+  })
+
+  it('keeps finish-task entry on legacy chat when the V2 surface flag is disabled', async () => {
+    apiMock.getBootstrapStatus.mockResolvedValue({
+      ready: true,
+      workspace_configured: true,
+      codex_available: true,
+      codex_path: 'codex',
+      execution_audit_v2_enabled: false,
+    })
+    apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-1')])
+    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1'))
+    apiMock.setActiveNode.mockResolvedValue(makeSnapshot('project-1'))
+    apiMock.getSplitStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      node_id: null,
+      mode: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+
+    render(
+      <MemoryRouter>
+        <GraphWorkspace />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+
+    await screen.findByTestId('tree-graph')
+    await act(async () => {
+      fireEvent.click(screen.getByText('Open Execution Surface'))
+    })
+
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=execution')
+  })
+
+  it('keeps review-node breadcrumb entry on legacy audit when the V2 surface flag is disabled', async () => {
+    apiMock.getBootstrapStatus.mockResolvedValue({
+      ready: true,
+      workspace_configured: true,
+      codex_available: true,
+      codex_path: 'codex',
+      execution_audit_v2_enabled: false,
+    })
+    apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-1')])
+    apiMock.getSnapshot.mockResolvedValue(makeReviewSnapshot('project-1'))
+    apiMock.setActiveNode.mockResolvedValue(makeReviewSnapshot('project-1'))
+    apiMock.getSplitStatus.mockResolvedValue({
+      status: 'idle',
+      job_id: null,
+      node_id: null,
+      mode: null,
+      started_at: null,
+      completed_at: null,
+      error: null,
+    })
+
+    render(
+      <MemoryRouter>
+        <GraphWorkspace />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+
+    await screen.findByTestId('tree-graph')
+    await act(async () => {
+      fireEvent.click(screen.getByText('Open Root Breadcrumb'))
+    })
+
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=audit')
   })
 })

@@ -67,11 +67,16 @@ class ConversationSystemMessageWriter:
             snapshot = copy_snapshot(
                 self._storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, thread_role)
             )
-            legacy_session = self._storage.chat_state_store.read_session(project_id, node_id, thread_role=thread_role)
+            registry_entry = self._storage.thread_registry_store.read_entry(project_id, node_id, thread_role)
+            thread_id = str(snapshot.get("threadId") or registry_entry.get("threadId") or "").strip()
+            if not thread_id:
+                raise ValueError(
+                    f"Cannot upsert V2 system message for {project_id}/{node_id}/{thread_role}: missing threadId."
+                )
             item: ConversationItem = {
                 "id": item_id,
                 "kind": "message",
-                "threadId": str(snapshot.get("threadId") or legacy_session.get("thread_id") or ""),
+                "threadId": thread_id,
                 "turnId": turn_id,
                 "sequence": self._next_sequence(snapshot),
                 "createdAt": now,

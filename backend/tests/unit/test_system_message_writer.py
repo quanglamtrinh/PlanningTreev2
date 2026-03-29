@@ -47,9 +47,17 @@ def test_system_message_writer_fallback_writes_v2_snapshot_item(
     workspace_root: Path,
 ) -> None:
     project_id, node_id = _create_project(storage, str(workspace_root))
-    session = storage.chat_state_store.read_session(project_id, node_id, thread_role="audit")
-    session["thread_id"] = "audit-thread-1"
-    storage.chat_state_store.write_session(project_id, node_id, session, thread_role="audit")
+    storage.thread_registry_store.write_entry(
+        project_id,
+        node_id,
+        "audit",
+        {
+            "projectId": project_id,
+            "nodeId": node_id,
+            "threadRole": "audit",
+            "threadId": "audit-thread-1",
+        },
+    )
 
     writer = ConversationSystemMessageWriter(storage)
     writer.upsert_system_message(
@@ -68,3 +76,25 @@ def test_system_message_writer_fallback_writes_v2_snapshot_item(
     assert item["role"] == "system"
     assert item["threadId"] == "audit-thread-1"
     assert item["text"] == "Canonical confirmed frame snapshot"
+
+
+def test_system_message_writer_fallback_raises_when_v2_thread_binding_missing(
+    storage,
+    workspace_root: Path,
+) -> None:
+    project_id, node_id = _create_project(storage, str(workspace_root))
+    writer = ConversationSystemMessageWriter(storage)
+
+    try:
+        writer.upsert_system_message(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="audit",
+            item_id="audit-record:frame",
+            turn_id=None,
+            text="Canonical confirmed frame snapshot",
+        )
+    except ValueError as exc:
+        assert "missing threadId" in str(exc)
+    else:
+        raise AssertionError("Expected fallback system-message write to fail without a V2 thread binding.")

@@ -110,7 +110,20 @@ function makeConversationSnapshot(
 
 function LocationProbe() {
   const location = useLocation()
-  return <div data-testid="location-probe">{location.pathname}</div>
+  return <div data-testid="location-probe">{`${location.pathname}${location.search}`}</div>
+}
+
+function setBootstrapStatus(enabled: boolean) {
+  useProjectStore.setState((state) => ({
+    ...state,
+    bootstrap: {
+      ready: true,
+      workspace_configured: true,
+      codex_available: true,
+      codex_path: 'codex',
+      execution_audit_v2_enabled: enabled,
+    },
+  }))
 }
 
 describe('BreadcrumbChatViewV2', () => {
@@ -119,9 +132,10 @@ describe('BreadcrumbChatViewV2', () => {
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
     useConversationThreadStoreV2.getState().disconnectThread()
+    setBootstrapStatus(true)
   })
 
-  it('renders prefix and detail pane for non-review nodes', () => {
+  it('defaults non-review /chat-v2 routes to the execution surface', async () => {
     const loadProject = vi.fn().mockResolvedValue(undefined)
     const selectNode = vi.fn().mockResolvedValue(undefined)
     const loadDetailState = vi.fn().mockResolvedValue(undefined)
@@ -163,7 +177,7 @@ describe('BreadcrumbChatViewV2', () => {
       acceptLocalReview: vi.fn(),
     } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
     useConversationThreadStoreV2.setState({
-      snapshot: makeConversationSnapshot(),
+      snapshot: makeConversationSnapshot({ threadRole: 'execution' }),
       loadThread,
       sendTurn: vi.fn().mockResolvedValue(undefined),
       resolveUserInput: vi.fn().mockResolvedValue(undefined),
@@ -174,18 +188,31 @@ describe('BreadcrumbChatViewV2', () => {
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat-v2"
+            element={
+              <>
+                <BreadcrumbChatViewV2 />
+                <LocationProbe />
+              </>
+            }
+          />
         </Routes>
       </MemoryRouter>,
     )
 
     expect(screen.getByTestId('breadcrumb-detail-pane')).toBeInTheDocument()
-    expect(screen.getByTestId('frame-context-ask')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('location-probe')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=execution')
+    })
+    expect(screen.queryByTestId('frame-context-ask')).not.toBeInTheDocument()
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
     expect(screen.queryByTestId('breadcrumb-v2-reset-thread')).not.toBeInTheDocument()
+    expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'execution')
   })
 
-  it('forces audit layout and hides the detail pane for review nodes', () => {
+  it('forces audit layout and canonicalizes review nodes onto /chat-v2?thread=audit', async () => {
+    setBootstrapStatus(true)
     useProjectStore.setState({
       activeProjectId: 'project-1',
       snapshot: makeProjectSnapshot('review'),
@@ -212,18 +239,30 @@ describe('BreadcrumbChatViewV2', () => {
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat-v2"
+            element={
+              <>
+                <BreadcrumbChatViewV2 />
+                <LocationProbe />
+              </>
+            }
+          />
         </Routes>
       </MemoryRouter>,
     )
 
     expect(screen.getByTestId('breadcrumb-review-audit-header')).toBeInTheDocument()
     expect(screen.queryByTestId('breadcrumb-detail-pane')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('location-probe')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=audit')
+    })
   })
 
-  it('accept-review success resets tab to ask and navigates to sibling /chat-v2', async () => {
+  it('accept-review success sends the activated sibling back to legacy ask surface', async () => {
     const acceptLocalReview = vi.fn().mockResolvedValue('sibling-1')
 
+    setBootstrapStatus(true)
     useProjectStore.setState({
       activeProjectId: 'project-1',
       snapshot: makeProjectSnapshot('original'),
@@ -269,8 +308,17 @@ describe('BreadcrumbChatViewV2', () => {
     } as Partial<ReturnType<typeof useConversationThreadStoreV2.getState>>)
 
     render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2']}>
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
         <Routes>
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat"
+            element={
+              <>
+                <div data-testid="legacy-chat-route" />
+                <LocationProbe />
+              </>
+            }
+          />
           <Route
             path="/projects/:projectId/nodes/:nodeId/chat-v2"
             element={
@@ -291,17 +339,12 @@ describe('BreadcrumbChatViewV2', () => {
     fireEvent.click(screen.getByTestId('accept-review-button'))
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-probe')).toHaveTextContent('/projects/project-1/nodes/sibling-1/chat-v2')
-    })
-    await waitFor(() => {
-      expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByTestId('location-probe')).toHaveTextContent('/projects/project-1/nodes/sibling-1/chat?thread=ask')
     })
   })
 
-  it('shows reset on writable ask and calls resetThread after confirmation', async () => {
-    const resetThread = vi.fn().mockResolvedValue(undefined)
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-
+  it('redirects /chat-v2 ask requests back to legacy /chat ask', async () => {
+    setBootstrapStatus(true)
     useProjectStore.setState({
       activeProjectId: 'project-1',
       snapshot: makeProjectSnapshot('original'),
@@ -342,23 +385,90 @@ describe('BreadcrumbChatViewV2', () => {
       loadThread: vi.fn().mockResolvedValue(undefined),
       sendTurn: vi.fn().mockResolvedValue(undefined),
       resolveUserInput: vi.fn().mockResolvedValue(undefined),
-      resetThread,
+      resetThread: vi.fn().mockResolvedValue(undefined),
       disconnectThread: vi.fn(),
     } as Partial<ReturnType<typeof useConversationThreadStoreV2.getState>>)
 
     render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2']}>
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat"
+            element={<LocationProbe />}
+          />
           <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByTestId('breadcrumb-v2-reset-thread'))
+    await waitFor(() => {
+      expect(screen.getByTestId('location-probe')).toHaveTextContent('/projects/project-1/nodes/root/chat?thread=ask')
+    })
+  })
+
+  it('falls back to legacy execution when the V2 surface flag is disabled', async () => {
+    const loadThread = vi.fn().mockResolvedValue(undefined)
+
+    setBootstrapStatus(false)
+    useProjectStore.setState({
+      activeProjectId: 'project-1',
+      snapshot: makeProjectSnapshot('original'),
+      selectedNodeId: 'root',
+      isLoadingSnapshot: false,
+      error: null,
+      loadProject: vi.fn().mockResolvedValue(undefined),
+      selectNode: vi.fn().mockResolvedValue(undefined),
+    })
+    useDetailStateStore.setState({
+      entries: {
+        'project-1::root': {
+          node_id: 'root',
+          workflow: null,
+          frame_confirmed: true,
+          frame_confirmed_revision: 1,
+          frame_revision: 1,
+          active_step: 'spec',
+          workflow_notice: null,
+          frame_needs_reconfirm: false,
+          frame_read_only: true,
+          clarify_read_only: true,
+          clarify_confirmed: true,
+          spec_read_only: true,
+          spec_stale: false,
+          spec_confirmed: true,
+          shaping_frozen: true,
+          can_accept_local_review: false,
+          execution_status: 'completed',
+          audit_writable: true,
+        },
+      },
+      loadDetailState: vi.fn().mockResolvedValue(undefined),
+      acceptLocalReview: vi.fn(),
+    } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
+    useConversationThreadStoreV2.setState({
+      snapshot: makeConversationSnapshot({ threadRole: 'execution' }),
+      loadThread,
+      sendTurn: vi.fn().mockResolvedValue(undefined),
+      resolveUserInput: vi.fn().mockResolvedValue(undefined),
+      resetThread: vi.fn().mockResolvedValue(undefined),
+      disconnectThread: vi.fn(),
+    } as Partial<ReturnType<typeof useConversationThreadStoreV2.getState>>)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
+        <Routes>
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat"
+            element={<LocationProbe />}
+          />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
 
     await waitFor(() => {
-      expect(confirmSpy).toHaveBeenCalledWith('Reset this thread?')
+      expect(screen.getByTestId('location-probe')).toHaveTextContent('/projects/project-1/nodes/root/chat?thread=execution')
     })
-    expect(resetThread).toHaveBeenCalledTimes(1)
+    expect(loadThread).not.toHaveBeenCalled()
   })
 })

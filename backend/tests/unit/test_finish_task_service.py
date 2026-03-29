@@ -19,6 +19,7 @@ from backend.services.chat_service import ChatService
 from backend.services.finish_task_service import FinishTaskService
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.project_service import ProjectService
+from backend.services.review_service import ReviewService
 from backend.services.thread_lineage_service import (
     ThreadLineageService,
     _ROLLOUT_BOOTSTRAP_PROMPT,
@@ -134,9 +135,61 @@ class FakeExecutionV2CodexClient(FakeExecutionCodexClient):
         self.prompts.append(prompt)
         on_raw_event = kwargs.get("on_raw_event")
         cwd = kwargs.get("cwd")
+        output_schema = kwargs.get("output_schema")
 
         if self.fail:
             raise CodexTransportError("Execution failed", "rpc_error")
+
+        if output_schema is not None:
+            rendered_message = "## Automated Local Review\n\nLooks solid overall."
+            if callable(on_raw_event):
+                on_raw_event(
+                    {
+                        "method": "item/started",
+                        "received_at": "2026-03-28T10:05:01Z",
+                        "thread_id": thread_id,
+                        "turn_id": None,
+                        "item_id": "auto-review-msg-1",
+                        "request_id": None,
+                        "call_id": None,
+                        "params": {"item": {"type": "agentMessage", "id": "auto-review-msg-1"}},
+                    }
+                )
+                on_raw_event(
+                    {
+                        "method": "item/agentMessage/delta",
+                        "received_at": "2026-03-28T10:05:02Z",
+                        "thread_id": thread_id,
+                        "turn_id": None,
+                        "item_id": "auto-review-msg-1",
+                        "request_id": None,
+                        "call_id": None,
+                        "params": {"delta": rendered_message},
+                    }
+                )
+                on_raw_event(
+                    {
+                        "method": "turn/completed",
+                        "received_at": "2026-03-28T10:05:03Z",
+                        "thread_id": thread_id,
+                        "turn_id": None,
+                        "item_id": None,
+                        "request_id": None,
+                        "call_id": None,
+                        "params": {"turn": {"status": "completed"}},
+                    }
+                )
+            return {
+                "stdout": (
+                    '{"summary":"Looks solid overall.","checkpoint_summary":"Looks solid overall.",'
+                    '"overall_severity":"info","overall_score":92,'
+                    '"findings":[{"title":"No blocking issues","severity":"info",'
+                    '"description":"Implementation matches the spec.","file_path":"","evidence":"",'
+                    '"suggested_followup":""}]}'
+                ),
+                "thread_id": thread_id,
+                "turn_status": "completed",
+            }
 
         if callable(on_raw_event):
             on_raw_event(
@@ -274,6 +327,7 @@ def _build_v2_runtime(
     query_service = ThreadQueryService(
         storage=storage,
         chat_service=chat_service,
+        thread_lineage_service=chat_service._thread_lineage_service,
         codex_client=codex_client,
         snapshot_store=storage.thread_snapshot_store_v2,
         registry_service=thread_registry_service,
@@ -338,6 +392,17 @@ def _confirm_spec(storage, project_id: str, node_id: str) -> None:
     from backend.services import planningtree_workspace
 
     detail_svc = NodeDetailService(storage, TreeService())
+    storage.thread_registry_store.write_entry(
+        project_id,
+        node_id,
+        "audit",
+        {
+            "projectId": project_id,
+            "nodeId": node_id,
+            "threadRole": "audit",
+            "threadId": f"audit-thread-{node_id}",
+        },
+    )
 
     def _get_node_dir():
         snap = storage.project_store.load_snapshot(project_id)
@@ -854,3 +919,169 @@ def test_finish_task_v2_rehearsal_rejects_workspace_outside_sandbox_root(
 
     with pytest.raises(ExecutionAuditRehearsalWorkspaceUnsafe):
         finish_service.finish_task(project_id, root_node_id)
+
+
+def test_finish_task_v2_production_cuts_execution_and_auto_review_to_v2(
+    storage,
+    tree_service,
+    detail_service,
+    chat_event_broker,
+    project_id,
+    root_node_id,
+) -> None:
+    _confirm_spec(storage, project_id, root_node_id)
+    codex_client = FakeExecutionV2CodexClient()
+    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
+    chat_service = ChatService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+    thread_runtime_service_v2, workflow_event_publisher_v2 = _build_v2_runtime(
+        storage=storage,
+        tree_service=tree_service,
+        chat_service=chat_service,
+        codex_client=codex_client,
+    )
+    review_service = ReviewService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        chat_service=chat_service,
+        thread_runtime_service_v2=thread_runtime_service_v2,
+        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_enabled=True,
+    )
+    published: list[dict[str, object]] = []
+    original_publish = chat_event_broker.publish
+
+    def capture_publish(project_id_arg, node_id_arg, event, thread_role=""):
+        published.append(
+            {
+                "project_id": project_id_arg,
+                "node_id": node_id_arg,
+                "thread_role": thread_role,
+                "event": dict(event),
+            }
+        )
+        return original_publish(project_id_arg, node_id_arg, event, thread_role=thread_role)
+
+    chat_event_broker.publish = capture_publish  # type: ignore[method-assign]
+    workflow_events: list[tuple[str, dict[str, object]]] = []
+    original_workflow_updated = workflow_event_publisher_v2.publish_workflow_updated
+    original_detail_invalidate = workflow_event_publisher_v2.publish_detail_invalidate
+
+    def capture_workflow_updated(**kwargs):
+        envelope = original_workflow_updated(**kwargs)
+        workflow_events.append(("updated", envelope))
+        return envelope
+
+    def capture_detail_invalidate(**kwargs):
+        envelope = original_detail_invalidate(**kwargs)
+        workflow_events.append(("invalidate", envelope))
+        return envelope
+
+    workflow_event_publisher_v2.publish_workflow_updated = capture_workflow_updated  # type: ignore[method-assign]
+    workflow_event_publisher_v2.publish_detail_invalidate = capture_detail_invalidate  # type: ignore[method-assign]
+    finish_service = FinishTaskService(
+        storage=storage,
+        tree_service=tree_service,
+        node_detail_service=detail_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        chat_service=chat_service,
+        review_service=review_service,
+        thread_runtime_service_v2=thread_runtime_service_v2,
+        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_enabled=True,
+    )
+
+    result = finish_service.finish_task(project_id, root_node_id)
+    assert result["execution_started"] is True
+
+    execution_snapshot = _wait_for_condition(
+        lambda: (
+            snapshot := storage.thread_snapshot_store_v2.read_snapshot(project_id, root_node_id, "execution")
+        )
+        and snapshot.get("processingState") == "idle"
+        and snapshot.get("activeTurnId") is None
+        and any(item.get("kind") == "tool" for item in snapshot.get("items", []))
+        and snapshot
+    )
+    audit_snapshot = _wait_for_condition(
+        lambda: (
+            snapshot := storage.thread_snapshot_store_v2.read_snapshot(project_id, root_node_id, "audit")
+        )
+        and snapshot.get("processingState") == "idle"
+        and snapshot.get("activeTurnId") is None
+        and any(
+            item.get("kind") == "message" and item.get("role") == "assistant"
+            for item in snapshot.get("items", [])
+        )
+        and (
+            exec_state := storage.execution_state_store.read_state(project_id, root_node_id)
+        )
+        and isinstance(exec_state.get("auto_review"), dict)
+        and exec_state["auto_review"].get("status") == "completed"
+        and snapshot
+    )
+
+    exec_state = _wait_for_condition(
+        lambda: (
+            state := storage.execution_state_store.read_state(project_id, root_node_id)
+        )
+        and state.get("status") == "review_accepted"
+        and state
+    )
+    assert exec_state is not None
+    assert exec_state["auto_review"]["summary"] == "Looks solid overall."
+
+    execution_session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")
+    audit_session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="audit")
+    assert execution_session["messages"] == []
+    assert audit_session["messages"] == []
+
+    tool_items = [item for item in execution_snapshot["items"] if item.get("kind") == "tool"]
+    assert len(tool_items) == 1
+    assert tool_items[0]["outputFiles"] == [{"path": "final.txt", "changeType": "updated", "summary": "final"}]
+
+    audit_messages = [
+        item for item in audit_snapshot["items"]
+        if item.get("kind") == "message" and item.get("role") == "assistant"
+    ]
+    assert len(audit_messages) == 1
+    assert "Looks solid overall." in audit_messages[0]["text"]
+
+    legacy_types = {
+        "message_created",
+        "assistant_delta",
+        "assistant_tool_call",
+        "assistant_completed",
+        "assistant_error",
+        "execution_completed",
+    }
+    assert not any(
+        item["thread_role"] in {"execution", "audit"}
+        and isinstance(item["event"], dict)
+        and item["event"].get("type") in legacy_types
+        for item in published
+    )
+
+    invalidate_reasons = [
+        envelope["payload"]["reason"]
+        for kind, envelope in workflow_events
+        if kind == "invalidate"
+    ]
+    assert "execution_started" in invalidate_reasons
+    assert "execution_completed" in invalidate_reasons
+    assert "auto_review_started" in invalidate_reasons
+    assert "auto_review_completed" in invalidate_reasons

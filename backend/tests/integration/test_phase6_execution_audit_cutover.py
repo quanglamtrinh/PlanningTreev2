@@ -3,28 +3,29 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from backend.services import planningtree_workspace
-from backend.services.node_detail_service import NodeDetailService
-from backend.services.project_service import ProjectService
-from backend.services.tree_service import TreeService
-from backend.services.thread_lineage_service import _ROLLOUT_BOOTSTRAP_PROMPT
-from backend.storage.file_utils import iso_now
-from backend.tests.conftest import init_git_repo
 from backend.main import create_app
+from backend.services.thread_lineage_service import _ROLLOUT_BOOTSTRAP_PROMPT
+from backend.tests.conftest import init_git_repo
+from backend.tests.integration.test_phase5_execution_audit_rehearsal import (
+    _confirm_spec,
+    _do_lazy_split,
+    _set_phase5_codex_client as _set_phase6_codex_client,
+    _setup_project,
+    _wait_for_thread_snapshot,
+)
 
 
-class Phase5RehearsalCodexClient:
+class Phase6ProductionCodexClient:
     def __init__(self) -> None:
         self.started_threads: list[str] = []
         self.forked_threads: list[dict[str, object]] = []
         self.prompts: list[str] = []
 
     def start_thread(self, **_: object) -> dict[str, str]:
-        thread_id = f"phase5-thread-{len(self.started_threads) + 1}"
+        thread_id = f"phase6-thread-{len(self.started_threads) + 1}"
         self.started_threads.append(thread_id)
         return {"thread_id": thread_id}
 
@@ -32,7 +33,7 @@ class Phase5RehearsalCodexClient:
         return {"thread_id": thread_id}
 
     def fork_thread(self, source_thread_id: str, **kwargs: object) -> dict[str, str]:
-        thread_id = f"phase5-fork-{len(self.forked_threads) + 1}"
+        thread_id = f"phase6-fork-{len(self.forked_threads) + 1}"
         self.forked_threads.append({"thread_id": thread_id, "source_thread_id": source_thread_id, **kwargs})
         return {"thread_id": thread_id}
 
@@ -46,8 +47,62 @@ class Phase5RehearsalCodexClient:
         cwd = kwargs.get("cwd")
         output_schema = kwargs.get("output_schema")
 
+        if isinstance(output_schema, dict) and "checkpoint_summary" in (output_schema.get("properties") or {}):
+            summary = "Looks solid overall."
+            checkpoint_summary = "Implementation looks coherent and ready to merge."
+            if callable(on_raw_event):
+                on_raw_event(
+                    {
+                        "method": "item/started",
+                        "received_at": "2026-03-28T12:00:01Z",
+                        "thread_id": thread_id,
+                        "turn_id": None,
+                        "item_id": "auto-review-msg-1",
+                        "request_id": None,
+                        "call_id": None,
+                        "params": {"item": {"type": "agentMessage", "id": "auto-review-msg-1"}},
+                    }
+                )
+                on_raw_event(
+                    {
+                        "method": "item/agentMessage/delta",
+                        "received_at": "2026-03-28T12:00:02Z",
+                        "thread_id": thread_id,
+                        "turn_id": None,
+                        "item_id": "auto-review-msg-1",
+                        "request_id": None,
+                        "call_id": None,
+                        "params": {"delta": f"## Automated Local Review\n\n{summary}"},
+                    }
+                )
+                on_raw_event(
+                    {
+                        "method": "turn/completed",
+                        "received_at": "2026-03-28T12:00:03Z",
+                        "thread_id": thread_id,
+                        "turn_id": None,
+                        "item_id": None,
+                        "request_id": None,
+                        "call_id": None,
+                        "params": {"turn": {"status": "completed"}},
+                    }
+                )
+            return {
+                "stdout": json.dumps(
+                    {
+                        "summary": summary,
+                        "checkpoint_summary": checkpoint_summary,
+                        "overall_severity": "info",
+                        "overall_score": 94,
+                        "findings": [],
+                    }
+                ),
+                "thread_id": thread_id,
+                "turn_status": "completed",
+            }
+
         if output_schema is not None:
-            summary = "Integrated package from rehearsal."
+            summary = "Integrated package from production."
             if callable(on_raw_event):
                 on_raw_event(
                     {
@@ -201,183 +256,37 @@ class Phase5RehearsalCodexClient:
         return {"stdout": "Implemented the task.", "thread_id": thread_id, "turn_status": "completed"}
 
 
-def _set_phase5_codex_client(app, codex_client: object) -> None:
-    app.state.codex_client = codex_client
-    app.state.chat_service._codex_client = codex_client
-    app.state.thread_lineage_service._codex_client = codex_client
-    app.state.thread_query_service_v2._codex_client = codex_client
-    app.state.thread_runtime_service_v2._codex_client = codex_client
-    app.state.finish_task_service._codex_client = codex_client
-    app.state.review_service._codex_client = codex_client
-
-
-def _setup_project(client: TestClient, workspace_root: Path) -> tuple[str, str]:
-    response = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
-    assert response.status_code == 200
-    payload = response.json()
-    return payload["project"]["id"], payload["tree_state"]["root_node_id"]
-
-
-def _confirm_spec(storage, project_id: str, node_id: str) -> None:
-    detail_service = NodeDetailService(storage, TreeService())
-    storage.thread_registry_store.write_entry(
-        project_id,
-        node_id,
-        "audit",
-        {
-            "projectId": project_id,
-            "nodeId": node_id,
-            "threadRole": "audit",
-            "threadId": f"audit-thread-{node_id}",
-        },
-    )
-    snapshot = storage.project_store.load_snapshot(project_id)
-    project_path = Path(snapshot["project"]["project_path"])
-    node_dir = planningtree_workspace.resolve_node_dir(project_path, snapshot, node_id)
-    assert node_dir is not None
-    frame_path = node_dir / "frame.md"
-    frame_path.parent.mkdir(parents=True, exist_ok=True)
-    frame_path.write_text("# Task Title\nTask\n\n# Objective\nDo it\n", encoding="utf-8")
-    detail_service.confirm_frame(project_id, node_id)
-    node_dir = planningtree_workspace.resolve_node_dir(project_path, storage.project_store.load_snapshot(project_id), node_id)
-    assert node_dir is not None
-    spec_path = node_dir / "spec.md"
-    spec_path.write_text("# Spec\nImplement it\n", encoding="utf-8")
-    detail_service.confirm_spec(project_id, node_id)
-    snapshot = storage.project_store.load_snapshot(project_id)
-    snapshot["tree_state"]["node_index"][node_id]["status"] = "ready"
-    storage.project_store.save_snapshot(project_id, snapshot)
-
-
-def _do_lazy_split(storage, project_id: str, node_id: str) -> tuple[str, str]:
-    from backend.services.workspace_sha import compute_workspace_sha
-
-    tree_service = TreeService()
-    snapshot = storage.project_store.load_snapshot(project_id)
-    node_by_id = tree_service.node_index(snapshot)
-    parent = node_by_id[node_id]
-    now = iso_now()
-    parent_hnum = str(parent.get("hierarchical_number") or "1")
-    parent_depth = int(parent.get("depth", 0) or 0)
-
-    first_child_id = uuid4().hex
-    snapshot["tree_state"]["node_index"][first_child_id] = {
-        "node_id": first_child_id,
-        "parent_id": node_id,
-        "child_ids": [],
-        "title": "Subtask 1",
-        "description": "Do subtask 1.",
-        "status": "ready",
-        "node_kind": "original",
-        "depth": parent_depth + 1,
-        "display_order": 0,
-        "hierarchical_number": f"{parent_hnum}.1",
-        "created_at": now,
-    }
-    parent.setdefault("child_ids", []).append(first_child_id)
-
-    review_node_id = uuid4().hex
-    snapshot["tree_state"]["node_index"][review_node_id] = {
-        "node_id": review_node_id,
-        "parent_id": node_id,
-        "child_ids": [],
-        "title": "Review",
-        "description": f"Review node for {parent_hnum}",
-        "status": "ready",
-        "node_kind": "review",
-        "depth": parent_depth + 1,
-        "display_order": 1,
-        "hierarchical_number": f"{parent_hnum}.R",
-        "created_at": now,
-    }
-    parent["review_node_id"] = review_node_id
-    if parent.get("status") in {"ready", "in_progress"}:
-        parent["status"] = "draft"
-    snapshot["tree_state"]["active_node_id"] = first_child_id
-    snapshot["updated_at"] = now
-    storage.project_store.save_snapshot(project_id, snapshot)
-
-    workspace_root = Path(snapshot["project"]["project_path"])
-    storage.review_state_store.write_state(
-        project_id,
-        review_node_id,
-        {
-            "checkpoints": [
-                {
-                    "label": "K0",
-                    "sha": compute_workspace_sha(workspace_root),
-                    "summary": None,
-                    "source_node_id": None,
-                    "accepted_at": now,
-                }
-            ],
-            "rollup": {"status": "pending", "summary": None, "sha": None, "accepted_at": None},
-            "pending_siblings": [],
-        },
-    )
-    planningtree_workspace.sync_snapshot_tree(workspace_root, snapshot)
-    return first_child_id, review_node_id
-
-
-def _wait_for_thread_snapshot(
-    client: TestClient,
-    project_id: str,
-    node_id: str,
-    thread_role: str,
-    predicate,
-    *,
-    timeout_sec: float = 3.0,
-) -> dict:
-    deadline = time.monotonic() + timeout_sec
-    last_snapshot: dict | None = None
-    while time.monotonic() < deadline:
-        response = client.get(f"/v2/projects/{project_id}/nodes/{node_id}/threads/{thread_role}")
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["ok"] is True
-        snapshot = payload["data"]["snapshot"]
-        last_snapshot = snapshot
-        if predicate(snapshot):
-            return snapshot
-        time.sleep(0.02)
-    raise AssertionError(f"Timed out waiting for snapshot condition. Last snapshot: {last_snapshot!r}")
-
-
-def _wait_for_execution_status(storage, project_id: str, node_id: str, expected_status: str, *, timeout_sec: float = 3.0) -> dict:
-    deadline = time.monotonic() + timeout_sec
-    last_state: dict | None = None
-    while time.monotonic() < deadline:
-        last_state = storage.execution_state_store.read_state(project_id, node_id)
-        if isinstance(last_state, dict) and str(last_state.get("status") or "") == expected_status:
-            return last_state
-        time.sleep(0.02)
-    raise AssertionError(f"Timed out waiting for execution status '{expected_status}'. Last state: {last_state!r}")
-
-
-def _wait_for_condition(predicate, *, timeout_sec: float = 3.0):
+def _wait_for_condition(predicate, *, timeout_sec: float = 4.0):
     deadline = time.monotonic() + timeout_sec
     last_value = None
     while time.monotonic() < deadline:
-        last_value = predicate()
-        if last_value:
-            return last_value
+        value = predicate()
+        if value:
+            return value
+        last_value = value
         time.sleep(0.02)
     raise AssertionError(f"Timed out waiting for condition. Last value: {last_value!r}")
 
 
-def test_phase5_rehearsal_finish_task_and_rollup_routes_use_v2_threads(monkeypatch, tmp_path: Path) -> None:
-    rehearsal_root = tmp_path / "rehearsal-root"
-    rehearsal_root.mkdir()
-    workspace_root = rehearsal_root / "workspace"
+def _file_fingerprint(path: Path) -> tuple[bool, int | None, bytes | None]:
+    if not path.exists():
+        return (False, None, None)
+    stat = path.stat()
+    return (True, stat.st_mtime_ns, path.read_bytes())
+
+
+def test_phase6_production_finish_task_cuts_execution_auto_review_and_rollup_to_v2(monkeypatch, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
     init_git_repo(workspace_root)
 
-    monkeypatch.setenv("PLANNINGTREE_EXECUTION_AUDIT_V2_REHEARSAL", "1")
-    monkeypatch.setenv("PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT", str(rehearsal_root))
+    monkeypatch.delenv("PLANNINGTREE_EXECUTION_AUDIT_V2_REHEARSAL", raising=False)
+    monkeypatch.delenv("PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT", raising=False)
+    monkeypatch.setenv("PLANNINGTREE_EXECUTION_AUDIT_V2_ENABLED", "1")
 
     app = create_app(data_root=tmp_path / "appdata")
-    codex_client = Phase5RehearsalCodexClient()
-    _set_phase5_codex_client(app, codex_client)
+    codex_client = Phase6ProductionCodexClient()
+    _set_phase6_codex_client(app, codex_client)
 
     published: list[dict[str, object]] = []
     original_publish = app.state.chat_event_broker.publish
@@ -416,6 +325,35 @@ def test_phase5_rehearsal_finish_task_and_rollup_routes_use_v2_threads(monkeypat
         child_id, review_node_id = _do_lazy_split(app.state.storage, project_id, root_id)
         _confirm_spec(app.state.storage, project_id, child_id)
 
+        execution_chat_path = app.state.storage.chat_state_store.path(project_id, child_id, thread_role="execution")
+        child_audit_chat_path = app.state.storage.chat_state_store.path(project_id, child_id, thread_role="audit")
+        review_audit_chat_path = app.state.storage.chat_state_store.path(project_id, review_node_id, thread_role="audit")
+        execution_snapshot_path = app.state.storage.thread_snapshot_store_v2.path(project_id, child_id, "execution")
+        child_audit_snapshot_path = app.state.storage.thread_snapshot_store_v2.path(project_id, child_id, "audit")
+        review_audit_snapshot_path = app.state.storage.thread_snapshot_store_v2.path(project_id, review_node_id, "audit")
+        execution_registry_path = app.state.storage.thread_registry_store.path(project_id, child_id, "execution")
+        child_audit_registry_path = app.state.storage.thread_registry_store.path(project_id, child_id, "audit")
+        review_audit_registry_path = app.state.storage.thread_registry_store.path(project_id, review_node_id, "audit")
+
+        legacy_before = {
+            "execution": _file_fingerprint(execution_chat_path),
+            "child_audit": _file_fingerprint(child_audit_chat_path),
+            "review_audit": _file_fingerprint(review_audit_chat_path),
+        }
+        legacy_write_calls: list[tuple[str, str]] = []
+        original_write_session = app.state.storage.chat_state_store.write_session
+
+        def capture_write_session(project_id_arg, node_id_arg, session, thread_role="ask_planning"):
+            if (
+                project_id_arg == project_id
+                and node_id_arg in {child_id, review_node_id}
+                and thread_role in {"execution", "audit"}
+            ):
+                legacy_write_calls.append((node_id_arg, str(thread_role)))
+            return original_write_session(project_id_arg, node_id_arg, session, thread_role=thread_role)
+
+        app.state.storage.chat_state_store.write_session = capture_write_session
+
         finish_response = client.post(f"/v1/projects/{project_id}/nodes/{child_id}/finish-task")
         assert finish_response.status_code == 200
 
@@ -430,25 +368,31 @@ def test_phase5_rehearsal_finish_task_and_rollup_routes_use_v2_threads(monkeypat
                 and any(item.get("kind") == "tool" for item in snapshot.get("items", []))
             ),
         )
-        execution_tools = [item for item in execution_snapshot["items"] if item.get("kind") == "tool"]
-        assert len(execution_tools) == 1
-        assert execution_tools[0]["id"] == "file-1"
-        assert execution_tools[0]["outputFiles"] == [
-            {"path": "final.txt", "changeType": "updated", "summary": "final"}
-        ]
-        assert all(item.get("id") != "tool-call:call-1" for item in execution_snapshot["items"])
-
-        execution_session = app.state.storage.chat_state_store.read_session(project_id, child_id, thread_role="execution")
-        assert execution_session["messages"] == []
-        _wait_for_execution_status(app.state.storage, project_id, child_id, "review_pending")
-
-        accept_response = client.post(
-            f"/v1/projects/{project_id}/nodes/{child_id}/accept-local-review",
-            json={"summary": "Looks good."},
+        exec_state = _wait_for_condition(
+            lambda: (
+                state := app.state.storage.execution_state_store.read_state(project_id, child_id)
+            )
+            and state.get("status") == "review_accepted"
+            and isinstance(state.get("auto_review"), dict)
+            and state["auto_review"].get("status") == "completed"
+            and state
         )
-        assert accept_response.status_code == 200
-
-        audit_snapshot = _wait_for_thread_snapshot(
+        child_audit_snapshot = _wait_for_thread_snapshot(
+            client,
+            project_id,
+            child_id,
+            "audit",
+            lambda snapshot: (
+                snapshot.get("processingState") == "idle"
+                and snapshot.get("activeTurnId") is None
+                and any(
+                    item.get("kind") == "message" and item.get("role") == "assistant"
+                    for item in snapshot.get("items", [])
+                )
+            ),
+            timeout_sec=6.0,
+        )
+        review_audit_snapshot = _wait_for_thread_snapshot(
             client,
             project_id,
             review_node_id,
@@ -462,17 +406,6 @@ def test_phase5_rehearsal_finish_task_and_rollup_routes_use_v2_threads(monkeypat
                 )
             ),
         )
-        audit_session = app.state.storage.chat_state_store.read_session(project_id, review_node_id, thread_role="audit")
-        assert audit_session["messages"] == []
-
-        assistant_messages = [
-            item
-            for item in audit_snapshot["items"]
-            if item.get("kind") == "message" and item.get("role") == "assistant"
-        ]
-        assert len(assistant_messages) == 1
-        assert "Integrated package from rehearsal." in assistant_messages[0]["text"]
-
         review_state = _wait_for_condition(
             lambda: (
                 state := app.state.storage.review_state_store.read_state(project_id, review_node_id)
@@ -482,13 +415,57 @@ def test_phase5_rehearsal_finish_task_and_rollup_routes_use_v2_threads(monkeypat
             and str(state["rollup"]["draft"].get("summary") or "").strip()
             and state
         )
-        assert review_state["rollup"]["draft"]["summary"] == "Integrated package from rehearsal."
+
+        assert exec_state["auto_review"]["summary"] == "Looks solid overall."
+
+        execution_session = app.state.storage.chat_state_store.read_session(project_id, child_id, thread_role="execution")
+        child_audit_session = app.state.storage.chat_state_store.read_session(project_id, child_id, thread_role="audit")
+        review_audit_session = app.state.storage.chat_state_store.read_session(project_id, review_node_id, thread_role="audit")
+        assert execution_session["messages"] == []
+        assert child_audit_session["messages"] == []
+        assert review_audit_session["messages"] == []
+        assert legacy_write_calls == []
+
+        assert execution_registry_path.exists()
+        assert child_audit_registry_path.exists()
+        assert review_audit_registry_path.exists()
+        assert execution_snapshot_path.exists()
+        assert child_audit_snapshot_path.exists()
+        assert review_audit_snapshot_path.exists()
+        assert legacy_before["execution"] == _file_fingerprint(execution_chat_path)
+        assert legacy_before["child_audit"] == _file_fingerprint(child_audit_chat_path)
+        assert legacy_before["review_audit"] == _file_fingerprint(review_audit_chat_path)
+
+        tool_items = [item for item in execution_snapshot["items"] if item.get("kind") == "tool"]
+        assert len(tool_items) == 1
+        assert tool_items[0]["id"] == "file-1"
+        assert tool_items[0]["outputFiles"] == [{"path": "final.txt", "changeType": "updated", "summary": "final"}]
+        assert all(item.get("id") != "tool-call:call-1" for item in execution_snapshot["items"])
+
+        child_audit_messages = [
+            item
+            for item in child_audit_snapshot["items"]
+            if item.get("kind") == "message" and item.get("role") == "assistant"
+        ]
+        assert len(child_audit_messages) == 1
+        assert "Looks solid overall." in child_audit_messages[0]["text"]
+
+        review_audit_messages = [
+            item
+            for item in review_audit_snapshot["items"]
+            if item.get("kind") == "message" and item.get("role") == "assistant"
+        ]
+        assert len(review_audit_messages) == 1
+        assert "Integrated package from production." in review_audit_messages[0]["text"]
+
+        assert review_state["rollup"]["draft"]["summary"] == "Integrated package from production."
 
         legacy_types = {
             "message_created",
             "assistant_delta",
             "assistant_tool_call",
             "assistant_completed",
+            "assistant_error",
             "execution_completed",
         }
         assert not any(
@@ -497,6 +474,7 @@ def test_phase5_rehearsal_finish_task_and_rollup_routes_use_v2_threads(monkeypat
             and item["event"].get("type") in legacy_types
             for item in published
         )
+
         invalidate_reasons = [
             envelope["payload"]["reason"]
             for kind, envelope in workflow_events
@@ -504,6 +482,8 @@ def test_phase5_rehearsal_finish_task_and_rollup_routes_use_v2_threads(monkeypat
         ]
         assert "execution_started" in invalidate_reasons
         assert "execution_completed" in invalidate_reasons
+        assert "auto_review_started" in invalidate_reasons
+        assert "auto_review_completed" in invalidate_reasons
         assert "review_rollup_started" in invalidate_reasons
         _wait_for_condition(
             lambda: "review_rollup_completed"
@@ -519,26 +499,3 @@ def test_phase5_rehearsal_finish_task_and_rollup_routes_use_v2_threads(monkeypat
             if kind == "invalidate"
         ]
         assert "review_rollup_completed" in invalidate_reasons
-
-
-def test_phase5_rehearsal_route_rejects_workspace_outside_configured_root(monkeypatch, tmp_path: Path) -> None:
-    rehearsal_root = tmp_path / "rehearsal-root"
-    rehearsal_root.mkdir()
-    outside_workspace = tmp_path / "outside-workspace"
-    outside_workspace.mkdir()
-    init_git_repo(outside_workspace)
-
-    monkeypatch.setenv("PLANNINGTREE_EXECUTION_AUDIT_V2_REHEARSAL", "1")
-    monkeypatch.setenv("PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT", str(rehearsal_root))
-
-    app = create_app(data_root=tmp_path / "appdata")
-    codex_client = Phase5RehearsalCodexClient()
-    _set_phase5_codex_client(app, codex_client)
-
-    with TestClient(app) as client:
-        project_id, root_id = _setup_project(client, outside_workspace)
-        _confirm_spec(app.state.storage, project_id, root_id)
-        response = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
-        assert response.status_code == 412
-        payload = response.json()
-        assert payload["code"] == "execution_audit_v2_rehearsal_workspace_unsafe"

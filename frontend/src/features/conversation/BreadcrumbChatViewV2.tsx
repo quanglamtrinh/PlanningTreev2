@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { ThreadRole } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
@@ -7,12 +7,18 @@ import { useProjectStore } from '../../stores/project-store'
 import { NodeDetailCard } from '../node/NodeDetailCard'
 import { ComposerBar } from '../breadcrumb/ComposerBar'
 import { FrameContextFeedBlock } from '../breadcrumb/FrameContextFeedBlock'
+import {
+  buildChatV2Url,
+  buildLegacyChatUrl,
+  isExecutionAuditV2SurfaceEnabled,
+  parseThreadTab,
+  resolveV2RouteTarget,
+  type ThreadTab,
+} from './surfaceRouting'
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { ConversationFeed } from './components/ConversationFeed'
 import { useConversationThreadStoreV2 } from './state/threadStoreV2'
 import { useWorkflowEventBridge } from './state/workflowEventBridge'
-
-type ThreadTab = 'ask' | 'execution' | 'audit'
 
 function isThreadComposerReadOnly(
   threadRole: ThreadRole,
@@ -41,7 +47,7 @@ function resolveThreadRole(isReviewNode: boolean, threadTab: ThreadTab): ThreadR
 export function BreadcrumbChatViewV2() {
   const navigate = useNavigate()
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
-  const [threadTab, setThreadTab] = useState<ThreadTab>('ask')
+  const [searchParams] = useSearchParams()
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
 
@@ -73,6 +79,7 @@ export function BreadcrumbChatViewV2() {
 
   const {
     activeProjectId,
+    bootstrap,
     snapshot,
     selectedNodeId,
     isLoadingSnapshot,
@@ -82,6 +89,7 @@ export function BreadcrumbChatViewV2() {
   } = useProjectStore(
     useShallow((state) => ({
       activeProjectId: state.activeProjectId,
+      bootstrap: state.bootstrap,
       snapshot: state.snapshot,
       selectedNodeId: state.selectedNodeId,
       isLoadingSnapshot: state.isLoadingSnapshot,
@@ -105,9 +113,48 @@ export function BreadcrumbChatViewV2() {
     return node?.node_kind === 'review'
   }, [nodeId, projectId, snapshot])
 
+  const requestedThreadTab = parseThreadTab(searchParams.get('thread'))
+  const executionAuditV2Enabled = isExecutionAuditV2SurfaceEnabled(bootstrap)
+  const routeTarget = resolveV2RouteTarget({
+    requestedThreadTab,
+    isReviewNode,
+    executionAuditV2Enabled,
+  })
+  const threadTab: ThreadTab = routeTarget.threadTab
   const threadRole = resolveThreadRole(isReviewNode, threadTab)
+  const shouldRedirectToLegacy = routeTarget.surface === 'legacy'
+  const shouldCanonicalizeV2 =
+    routeTarget.surface === 'v2' && requestedThreadTab !== routeTarget.threadTab
 
-  useWorkflowEventBridge(projectId, nodeId, Boolean(projectId && nodeId))
+  useWorkflowEventBridge(
+    projectId,
+    nodeId,
+    Boolean(projectId && nodeId && !shouldRedirectToLegacy && !shouldCanonicalizeV2),
+  )
+
+  useEffect(() => {
+    if (!projectId || !nodeId) {
+      return
+    }
+    if (!snapshot || snapshot.project.id !== projectId) {
+      return
+    }
+    if (shouldRedirectToLegacy) {
+      void navigate(buildLegacyChatUrl(projectId, nodeId, threadTab), { replace: true })
+      return
+    }
+    if (shouldCanonicalizeV2 && threadTab !== 'ask') {
+      void navigate(buildChatV2Url(projectId, nodeId, threadTab), { replace: true })
+    }
+  }, [
+    navigate,
+    nodeId,
+    projectId,
+    shouldCanonicalizeV2,
+    shouldRedirectToLegacy,
+    snapshot,
+    threadTab,
+  ])
 
   useEffect(() => {
     if (!projectId) {
@@ -156,11 +203,28 @@ export function BreadcrumbChatViewV2() {
   }, [detailNode, loadDetailState, nodeId, projectId, snapshot])
 
   useEffect(() => {
-    if (!projectId || !nodeId || !detailNode || !snapshot || snapshot.project.id !== projectId) {
+    if (
+      !projectId ||
+      !nodeId ||
+      !detailNode ||
+      !snapshot ||
+      snapshot.project.id !== projectId ||
+      shouldRedirectToLegacy ||
+      shouldCanonicalizeV2
+    ) {
       return
     }
     void loadThread(projectId, nodeId, threadRole)
-  }, [detailNode, loadThread, nodeId, projectId, snapshot, threadRole])
+  }, [
+    detailNode,
+    loadThread,
+    nodeId,
+    projectId,
+    shouldCanonicalizeV2,
+    shouldRedirectToLegacy,
+    snapshot,
+    threadRole,
+  ])
 
   useEffect(() => () => {
     disconnectThread()
@@ -225,8 +289,7 @@ export function BreadcrumbChatViewV2() {
       setReviewSummaryDraft('')
       setAcceptReviewError(null)
       if (activatedSiblingId) {
-        setThreadTab('ask')
-        void navigate(`/projects/${projectId}/nodes/${activatedSiblingId}/chat-v2`)
+        void navigate(buildLegacyChatUrl(projectId, activatedSiblingId, 'ask'))
       }
     } catch (caughtError) {
       setAcceptReviewError(caughtError instanceof Error ? caughtError.message : String(caughtError))
@@ -285,7 +348,11 @@ export function BreadcrumbChatViewV2() {
                   className={`${styles.threadTab} ${threadTab === 'ask' ? styles.threadTabActive : ''}`}
                   data-testid="breadcrumb-thread-tab-ask"
                   aria-selected={threadTab === 'ask'}
-                  onClick={() => setThreadTab('ask')}
+                  onClick={() => {
+                    if (projectId && nodeId) {
+                      void navigate(buildLegacyChatUrl(projectId, nodeId, 'ask'))
+                    }
+                  }}
                 >
                   Ask
                 </button>
@@ -295,7 +362,11 @@ export function BreadcrumbChatViewV2() {
                   className={`${styles.threadTab} ${threadTab === 'execution' ? styles.threadTabActive : ''}`}
                   data-testid="breadcrumb-thread-tab-execution"
                   aria-selected={threadTab === 'execution'}
-                  onClick={() => setThreadTab('execution')}
+                  onClick={() => {
+                    if (projectId && nodeId) {
+                      void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
+                    }
+                  }}
                 >
                   Execution
                 </button>
@@ -305,7 +376,11 @@ export function BreadcrumbChatViewV2() {
                   className={`${styles.threadTab} ${threadTab === 'audit' ? styles.threadTabActive : ''}`}
                   data-testid="breadcrumb-thread-tab-audit"
                   aria-selected={threadTab === 'audit'}
-                  onClick={() => setThreadTab('audit')}
+                  onClick={() => {
+                    if (projectId && nodeId) {
+                      void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
+                    }
+                  }}
                 >
                   Audit
                 </button>

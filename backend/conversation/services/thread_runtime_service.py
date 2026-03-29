@@ -96,13 +96,14 @@ class ThreadRuntimeService:
             created_items=[user_item],
             turn_id=turn_id,
         )
-        self._append_legacy_user_message(
-            project_id=project_id,
-            node_id=node_id,
-            thread_role=thread_role,
-            turn_id=turn_id,
-            text=cleaned,
-        )
+        if thread_role == "ask_planning":
+            self._append_legacy_user_message(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                turn_id=turn_id,
+                text=cleaned,
+            )
 
         threading.Thread(
             target=self._run_background_turn,
@@ -163,13 +164,14 @@ class ThreadRuntimeService:
             updated,
             events,
         )
-        self._query_service.sync_legacy_turn_state(
-            project_id,
-            node_id,
-            thread_role,
-            thread_id=thread_id,
-            active_turn_id=resolved_turn_id,
-        )
+        if thread_role == "ask_planning":
+            self._query_service.sync_legacy_turn_state(
+                project_id,
+                node_id,
+                thread_role,
+                thread_id=thread_id,
+                active_turn_id=resolved_turn_id,
+            )
         self._chat_service.register_external_live_turn(
             project_id,
             node_id,
@@ -210,12 +212,13 @@ class ThreadRuntimeService:
         )
         if outcome == "waiting_user_input":
             return persisted
-        self._query_service.clear_legacy_turn_state(
-            project_id,
-            node_id,
-            thread_role,
-            thread_id=persisted.get("threadId"),
-        )
+        if thread_role == "ask_planning":
+            self._query_service.clear_legacy_turn_state(
+                project_id,
+                node_id,
+                thread_role,
+                thread_id=persisted.get("threadId"),
+            )
         self._chat_service.clear_external_live_turn(project_id, node_id, thread_role, turn_id)
         return persisted
 
@@ -303,12 +306,13 @@ class ThreadRuntimeService:
             resolved_events,
         )
         if str(persisted.get("activeTurnId") or "") != str(pending.get("turnId") or ""):
-            self._query_service.clear_legacy_turn_state(
-                project_id,
-                node_id,
-                thread_role,
-                thread_id=persisted.get("threadId"),
-            )
+            if thread_role == "ask_planning":
+                self._query_service.clear_legacy_turn_state(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    thread_id=persisted.get("threadId"),
+                )
             turn_id = str(pending.get("turnId") or "").strip()
             if turn_id:
                 self._chat_service.clear_external_live_turn(project_id, node_id, thread_role, turn_id)
@@ -639,27 +643,29 @@ class ThreadRuntimeService:
                 "waiting_for_user_input",
             }
             if not waiting_for_user_input:
-                self._query_service.clear_legacy_turn_state(
-                    project_id,
-                    node_id,
-                    thread_role,
-                    thread_id=thread_id,
-                )
+                if thread_role == "ask_planning":
+                    self._query_service.clear_legacy_turn_state(
+                        project_id,
+                        node_id,
+                        thread_role,
+                        thread_id=thread_id,
+                    )
                 self._chat_service.clear_external_live_turn(project_id, node_id, thread_role, turn_id)
-                final_snapshot = self._query_service.get_thread_snapshot(
-                    project_id,
-                    node_id,
-                    thread_role,
-                    publish_repairs=False,
-                )
-                self._upsert_legacy_assistant_message_from_snapshot(
-                    project_id=project_id,
-                    node_id=node_id,
-                    thread_role=thread_role,
-                    turn_id=turn_id,
-                    snapshot=final_snapshot,
-                    error=None if final_turn_status not in {"failed", "error", "interrupted", "cancelled"} else "Turn failed.",
-                )
+                if thread_role == "ask_planning":
+                    final_snapshot = self._query_service.get_thread_snapshot(
+                        project_id,
+                        node_id,
+                        thread_role,
+                        publish_repairs=False,
+                    )
+                    self._upsert_legacy_assistant_message_from_snapshot(
+                        project_id=project_id,
+                        node_id=node_id,
+                        thread_role=thread_role,
+                        turn_id=turn_id,
+                        snapshot=final_snapshot,
+                        error=None if final_turn_status not in {"failed", "error", "interrupted", "cancelled"} else "Turn failed.",
+                    )
                 if boundary_prompt_kind == "local_review" and thread_role == "audit":
                     self._chat_service._mark_local_review_prompt_consumed(project_id, node_id)
                 elif boundary_prompt_kind == "package_review" and thread_role == "audit":
@@ -700,21 +706,23 @@ class ThreadRuntimeService:
                     outcome="failed",
                     error_item=error_item,
                 )
-                self._upsert_legacy_assistant_message_from_snapshot(
-                    project_id=project_id,
-                    node_id=node_id,
-                    thread_role=thread_role,
-                    turn_id=turn_id,
-                    snapshot=final_snapshot,
-                    error=str(exc),
-                )
+                if thread_role == "ask_planning":
+                    self._upsert_legacy_assistant_message_from_snapshot(
+                        project_id=project_id,
+                        node_id=node_id,
+                        thread_role=thread_role,
+                        turn_id=turn_id,
+                        snapshot=final_snapshot,
+                        error=str(exc),
+                    )
             finally:
-                self._query_service.clear_legacy_turn_state(
-                    project_id,
-                    node_id,
-                    thread_role,
-                    thread_id=thread_id,
-                )
+                if thread_role == "ask_planning":
+                    self._query_service.clear_legacy_turn_state(
+                        project_id,
+                        node_id,
+                        thread_role,
+                        thread_id=thread_id,
+                    )
                 self._chat_service.clear_external_live_turn(project_id, node_id, thread_role, turn_id)
 
     def _build_local_user_item(

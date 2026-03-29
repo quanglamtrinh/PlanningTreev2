@@ -100,6 +100,19 @@ def get_execution_timeout() -> int:
     return max(10, min(3600, timeout))
 
 
+def is_execution_audit_v2_enabled() -> bool:
+    raw = str(os.environ.get("PLANNINGTREE_EXECUTION_AUDIT_V2_ENABLED", "") or "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    # Production V2 is now the default path. Rehearsal still needs a way to
+    # opt into its isolated branch without also forcing production mode on.
+    if is_execution_audit_v2_rehearsal_enabled():
+        return False
+    return True
+
+
 def is_execution_audit_v2_rehearsal_enabled() -> bool:
     raw = str(os.environ.get("PLANNINGTREE_EXECUTION_AUDIT_V2_REHEARSAL", "") or "").strip().lower()
     return raw in {"1", "true", "yes", "on"}

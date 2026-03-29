@@ -34,6 +34,28 @@ class ThreadLineageService:
     ) -> None:
         self._thread_registry_service_v2 = thread_registry_service_v2
 
+    def ensure_thread_binding_v2(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        workspace_root: str | None,
+        *,
+        base_instructions: str | None = None,
+        dynamic_tools: list[dict[str, Any]] | None = None,
+        writable_roots: list[str] | None = None,
+    ) -> dict[str, Any]:
+        with self._storage.project_lock(project_id):
+            return self._ensure_thread_binding_v2_locked(
+                project_id,
+                node_id,
+                thread_role,
+                workspace_root,
+                base_instructions=base_instructions,
+                dynamic_tools=dynamic_tools,
+                writable_roots=writable_roots,
+            )
+
     def ensure_root_audit_thread(
         self,
         project_id: str,
@@ -473,6 +495,314 @@ class ThreadLineageService:
             writable_roots=writable_roots,
         )
 
+    def _ensure_thread_binding_v2_locked(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        workspace_root: str | None,
+        *,
+        base_instructions: str | None,
+        dynamic_tools: list[dict[str, Any]] | None,
+        writable_roots: list[str] | None,
+    ) -> dict[str, Any]:
+        snapshot, node, node_by_id = self._load_snapshot_and_node_locked(project_id, node_id)
+        if thread_role == "audit" and self._is_root_node(snapshot, node):
+            return self._ensure_root_audit_binding_v2_locked(
+                project_id,
+                node_id,
+                workspace_root,
+            )
+
+        entry = self._read_registry_entry_locked(project_id, node_id, thread_role)
+        thread_id = self._normalize_optional_string(entry.get("threadId"))
+        if thread_id:
+            resumed = self._resume_existing_thread(
+                thread_id,
+                cwd=workspace_root,
+                writable_roots=writable_roots,
+            )
+            if resumed:
+                return entry
+
+        if thread_role in {"ask_planning", "execution"}:
+            source_entry = self._ensure_audit_binding_v2_locked(
+                project_id,
+                node_id,
+                workspace_root,
+                require_live_thread=True,
+            )
+            return self._fork_target_binding_v2_locked(
+                project_id,
+                node_id,
+                thread_role,
+                source_entry=source_entry,
+                source_node_id=node_id,
+                source_role="audit",
+                fork_reason=self._fork_reason_for_role(thread_role),
+                workspace_root=workspace_root,
+                base_instructions=base_instructions,
+                dynamic_tools=dynamic_tools,
+                writable_roots=writable_roots,
+            )
+
+        if thread_role == "audit" and str(node.get("node_kind") or "").strip() == "review":
+            parent_id = self._normalize_optional_string(node.get("parent_id"))
+            if not parent_id:
+                raise ValueError(f"Review node {node_id!r} is missing a parent.")
+            source_entry = self._ensure_audit_binding_v2_locked(
+                project_id,
+                parent_id,
+                workspace_root,
+                require_live_thread=True,
+            )
+            return self._fork_target_binding_v2_locked(
+                project_id,
+                node_id,
+                "audit",
+                source_entry=source_entry,
+                source_node_id=parent_id,
+                source_role="audit",
+                fork_reason="review_bootstrap",
+                workspace_root=workspace_root,
+                base_instructions=self._review_audit_base_instructions(node, base_instructions),
+                dynamic_tools=dynamic_tools,
+                writable_roots=writable_roots,
+            )
+
+        if thread_role == "audit":
+            review_node_id = self._review_node_id_for_child(node, node_by_id)
+            if review_node_id:
+                source_entry = self._ensure_thread_binding_v2_locked(
+                    project_id,
+                    review_node_id,
+                    "audit",
+                    workspace_root,
+                    base_instructions=None,
+                    dynamic_tools=None,
+                    writable_roots=writable_roots,
+                )
+                return self._fork_target_binding_v2_locked(
+                    project_id,
+                    node_id,
+                    "audit",
+                    source_entry=source_entry,
+                    source_node_id=review_node_id,
+                    source_role="audit",
+                    fork_reason="child_activation",
+                    workspace_root=workspace_root,
+                    base_instructions=base_instructions,
+                    dynamic_tools=dynamic_tools,
+                    writable_roots=writable_roots,
+                )
+            return self._ensure_audit_binding_v2_locked(
+                project_id,
+                node_id,
+                workspace_root,
+                require_live_thread=True,
+            )
+
+        raise ValueError(f"Unsupported thread role for V2 binding: {thread_role!r}")
+
+    def _ensure_root_audit_binding_v2_locked(
+        self,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+    ) -> dict[str, Any]:
+        snapshot, node, _ = self._load_snapshot_and_node_locked(project_id, node_id)
+        if not self._is_root_node(snapshot, node):
+            raise ValueError(f"Node {node_id!r} is not the root node.")
+
+        entry = self._read_registry_entry_locked(project_id, node_id, "audit")
+        thread_id = self._normalize_optional_string(entry.get("threadId"))
+        if thread_id:
+            resumed = self._resume_existing_thread(
+                thread_id,
+                cwd=workspace_root,
+                writable_roots=None,
+            )
+            if resumed:
+                if entry.get("lineageRootThreadId") != thread_id or entry.get("forkReason") != "root_bootstrap":
+                    return self._write_registry_entry_locked(
+                        project_id,
+                        node_id,
+                        "audit",
+                        thread_id=thread_id,
+                        forked_from_thread_id=None,
+                        forked_from_node_id=None,
+                        forked_from_role=None,
+                        fork_reason="root_bootstrap",
+                        lineage_root_thread_id=thread_id,
+                    ) or entry
+                return entry
+
+        new_thread_id = self._start_thread(
+            cwd=workspace_root,
+            base_instructions=self._build_audit_base_instructions(snapshot, node),
+        )
+        self._materialize_thread_rollout(
+            new_thread_id,
+            cwd=workspace_root,
+            writable_roots=None,
+        )
+        return self._write_registry_entry_locked(
+            project_id,
+            node_id,
+            "audit",
+            thread_id=new_thread_id,
+            forked_from_thread_id=None,
+            forked_from_node_id=None,
+            forked_from_role=None,
+            fork_reason="root_bootstrap",
+            lineage_root_thread_id=new_thread_id,
+        ) or self._read_registry_entry_locked(project_id, node_id, "audit")
+
+    def _ensure_audit_binding_v2_locked(
+        self,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+        *,
+        require_live_thread: bool,
+    ) -> dict[str, Any]:
+        snapshot, node, node_by_id = self._load_snapshot_and_node_locked(project_id, node_id)
+        entry = self._read_registry_entry_locked(project_id, node_id, "audit")
+        thread_id = self._normalize_optional_string(entry.get("threadId"))
+
+        if self._is_root_node(snapshot, node):
+            return self._ensure_root_audit_binding_v2_locked(project_id, node_id, workspace_root)
+
+        if thread_id:
+            if require_live_thread:
+                resumed = self._resume_existing_thread(
+                    thread_id,
+                    cwd=workspace_root,
+                    writable_roots=None,
+                )
+                if resumed:
+                    return entry
+            else:
+                return entry
+
+        if str(node.get("node_kind") or "").strip() == "review":
+            parent_id = self._normalize_optional_string(node.get("parent_id"))
+            if not parent_id:
+                raise ValueError(f"Review node {node_id!r} is missing a parent.")
+            source_entry = self._ensure_audit_binding_v2_locked(
+                project_id,
+                parent_id,
+                workspace_root,
+                require_live_thread=True,
+            )
+            return self._fork_target_binding_v2_locked(
+                project_id,
+                node_id,
+                "audit",
+                source_entry=source_entry,
+                source_node_id=parent_id,
+                source_role="audit",
+                fork_reason="review_bootstrap",
+                workspace_root=workspace_root,
+                base_instructions=self._review_audit_base_instructions(node, None),
+                dynamic_tools=None,
+                writable_roots=None,
+            )
+
+        review_node_id = self._review_node_id_for_child(node, node_by_id)
+        if review_node_id:
+            source_entry = self._ensure_thread_binding_v2_locked(
+                project_id,
+                review_node_id,
+                "audit",
+                workspace_root,
+                base_instructions=None,
+                dynamic_tools=None,
+                writable_roots=None,
+            )
+            return self._fork_target_binding_v2_locked(
+                project_id,
+                node_id,
+                "audit",
+                source_entry=source_entry,
+                source_node_id=review_node_id,
+                source_role="audit",
+                fork_reason="child_activation",
+                workspace_root=workspace_root,
+                base_instructions=None,
+                dynamic_tools=None,
+                writable_roots=None,
+            )
+
+        root_id = self._root_node_id(snapshot)
+        if not root_id:
+            raise ValueError(f"Project {project_id!r} is missing a root node.")
+        root_entry = self._ensure_root_audit_binding_v2_locked(project_id, root_id, workspace_root)
+        root_thread_id = self._normalize_optional_string(root_entry.get("threadId"))
+        if not root_thread_id:
+            raise ValueError("Root audit bootstrap did not produce a thread id.")
+
+        new_thread_id = self._start_thread(
+            cwd=workspace_root,
+            base_instructions=self._build_audit_base_instructions(snapshot, node),
+        )
+        self._materialize_thread_rollout(
+            new_thread_id,
+            cwd=workspace_root,
+            writable_roots=None,
+        )
+        return self._write_registry_entry_locked(
+            project_id,
+            node_id,
+            "audit",
+            thread_id=new_thread_id,
+            forked_from_thread_id=None,
+            forked_from_node_id=None,
+            forked_from_role=None,
+            fork_reason="audit_lazy_bootstrap",
+            lineage_root_thread_id=root_thread_id,
+        ) or self._read_registry_entry_locked(project_id, node_id, "audit")
+
+    def _fork_target_binding_v2_locked(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        *,
+        source_entry: dict[str, Any],
+        source_node_id: str,
+        source_role: str,
+        fork_reason: str,
+        workspace_root: str | None,
+        base_instructions: str | None,
+        dynamic_tools: list[dict[str, Any]] | None,
+        writable_roots: list[str] | None,
+    ) -> dict[str, Any]:
+        source_thread_id = self._normalize_optional_string(source_entry.get("threadId"))
+        if not source_thread_id:
+            raise ValueError(
+                f"Source binding {source_node_id!r}/{source_role!r} does not have a thread id."
+            )
+        lineage_root_thread_id = self._normalize_optional_string(source_entry.get("lineageRootThreadId"))
+        new_thread_id = self._fork_thread(
+            source_thread_id,
+            cwd=workspace_root,
+            base_instructions=base_instructions,
+            dynamic_tools=dynamic_tools,
+            writable_roots=writable_roots,
+        )
+        return self._write_registry_entry_locked(
+            project_id,
+            node_id,
+            thread_role,
+            thread_id=new_thread_id,
+            forked_from_thread_id=source_thread_id,
+            forked_from_node_id=source_node_id,
+            forked_from_role=source_role,
+            fork_reason=fork_reason,
+            lineage_root_thread_id=lineage_root_thread_id,
+        ) or self._read_registry_entry_locked(project_id, node_id, thread_role)
+
     def _load_snapshot_and_node_locked(
         self,
         project_id: str,
@@ -811,6 +1141,20 @@ class ThreadLineageService:
         merged["fork_reason"] = registry_entry.get("forkReason")
         merged["lineage_root_thread_id"] = registry_entry.get("lineageRootThreadId")
         return merged
+
+    def _read_registry_entry_locked(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+    ) -> dict[str, Any]:
+        if self._thread_registry_service_v2 is None:
+            raise ValueError("Thread registry service unavailable for V2 thread binding.")
+        return self._thread_registry_service_v2.read_entry(
+            project_id,
+            node_id,
+            thread_role,  # type: ignore[arg-type]
+        )
 
     def _write_registry_entry_locked(
         self,

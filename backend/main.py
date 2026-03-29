@@ -31,6 +31,7 @@ from backend.config.app_config import (
     get_rehearsal_workspace_root,
     get_spec_gen_timeout,
     get_split_timeout,
+    is_execution_audit_v2_enabled,
     is_execution_audit_v2_rehearsal_enabled,
 )
 from backend.errors.app_errors import AppError
@@ -63,10 +64,14 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     storage = Storage(paths)
     tree_service = TreeService()
     git_checkpoint_service = GitCheckpointService()
+    execution_audit_v2_enabled = is_execution_audit_v2_enabled()
+    rehearsal_enabled = is_execution_audit_v2_rehearsal_enabled()
+    rehearsal_workspace_root = get_rehearsal_workspace_root()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
     project_service = ProjectService(
         storage, snapshot_view_service, chat_service=None,
         git_checkpoint_service=git_checkpoint_service,
+        execution_audit_v2_enabled=execution_audit_v2_enabled,
     )
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
@@ -91,8 +96,6 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         codex_client=codex_client,
         event_broker=codex_event_broker,
     )
-    rehearsal_enabled = is_execution_audit_v2_rehearsal_enabled()
-    rehearsal_workspace_root = get_rehearsal_workspace_root()
     split_service = SplitService(
         storage=storage,
         tree_service=tree_service,
@@ -139,6 +142,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     thread_query_service_v2 = ThreadQueryService(
         storage=storage,
         chat_service=chat_service,
+        thread_lineage_service=thread_lineage_service,
         codex_client=codex_client,
         snapshot_store=storage.thread_snapshot_store_v2,
         registry_service=thread_registry_service_v2,
@@ -168,6 +172,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         system_message_writer=system_message_writer_v2,
         thread_runtime_service_v2=thread_runtime_service_v2,
         workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_enabled=execution_audit_v2_enabled,
         execution_audit_v2_rehearsal_enabled=rehearsal_enabled,
         rehearsal_workspace_root=rehearsal_workspace_root,
     )
@@ -184,6 +189,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         review_service=review_service,
         thread_runtime_service_v2=thread_runtime_service_v2,
         workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_enabled=execution_audit_v2_enabled,
         execution_audit_v2_rehearsal_enabled=rehearsal_enabled,
         rehearsal_workspace_root=rehearsal_workspace_root,
     )
@@ -252,6 +258,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.thread_transcript_builder_v2 = thread_transcript_builder_v2
     app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2
     app.state.system_message_writer_v2 = system_message_writer_v2
+    app.state.execution_audit_v2_enabled = execution_audit_v2_enabled
+    app.state.execution_audit_v2_rehearsal_enabled = rehearsal_enabled
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

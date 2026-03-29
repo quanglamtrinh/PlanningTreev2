@@ -56,6 +56,7 @@ class ReviewService:
         system_message_writer: ConversationSystemMessageWriter | None = None,
         thread_runtime_service_v2: ThreadRuntimeService | None = None,
         workflow_event_publisher_v2: WorkflowEventPublisher | None = None,
+        execution_audit_v2_enabled: bool = False,
         execution_audit_v2_rehearsal_enabled: bool = False,
         rehearsal_workspace_root: Path | None = None,
     ) -> None:
@@ -69,6 +70,7 @@ class ReviewService:
         self._system_message_writer = system_message_writer or ConversationSystemMessageWriter(storage)
         self._thread_runtime_service_v2 = thread_runtime_service_v2
         self._workflow_event_publisher_v2 = workflow_event_publisher_v2
+        self._execution_audit_v2_enabled = bool(execution_audit_v2_enabled)
         self._execution_audit_v2_rehearsal_enabled = bool(execution_audit_v2_rehearsal_enabled)
         self._rehearsal_workspace_root = (
             Path(rehearsal_workspace_root).expanduser().resolve()
@@ -218,6 +220,19 @@ class ReviewService:
     # -- Integration Rollup ------------------------------------------
 
     def start_review_rollup(self, project_id: str, review_node_id: str) -> bool:
+        if self._execution_audit_v2_enabled:
+            if self._codex_client is None:
+                logger.debug(
+                    "Skipping V2 rollup start for %s/%s because backend dependencies are unavailable.",
+                    project_id,
+                    review_node_id,
+                )
+                return False
+            return self._start_review_rollup_v2(
+                project_id,
+                review_node_id,
+                enforce_rehearsal_workspace=False,
+            )
         if self._execution_audit_v2_rehearsal_enabled:
             if self._codex_client is None:
                 logger.debug(
@@ -226,7 +241,11 @@ class ReviewService:
                     review_node_id,
                 )
                 return False
-            return self._start_review_rollup_v2_rehearsal(project_id, review_node_id)
+            return self._start_review_rollup_v2(
+                project_id,
+                review_node_id,
+                enforce_rehearsal_workspace=True,
+            )
 
         if self._codex_client is None or self._chat_event_broker is None:
             logger.debug(
@@ -324,10 +343,16 @@ class ReviewService:
         ).start()
         return True
 
-    def _start_review_rollup_v2_rehearsal(self, project_id: str, review_node_id: str) -> bool:
+    def _start_review_rollup_v2(
+        self,
+        project_id: str,
+        review_node_id: str,
+        *,
+        enforce_rehearsal_workspace: bool,
+    ) -> bool:
         if self._thread_runtime_service_v2 is None:
             logger.debug(
-                "Skipping V2 rehearsal rollup start for %s/%s because runtime is unavailable.",
+                "Skipping V2 rollup start for %s/%s because runtime is unavailable.",
                 project_id,
                 review_node_id,
             )
@@ -365,8 +390,9 @@ class ReviewService:
             )
             workspace_root = self._workspace_root_from_snapshot(snapshot)
 
-        self._assert_rehearsal_workspace_allowed(workspace_root)
-        thread_id = self._ensure_review_audit_thread(
+        if enforce_rehearsal_workspace:
+            self._assert_rehearsal_workspace_allowed(workspace_root)
+        thread_id = self._ensure_review_audit_thread_id_v2(
             project_id,
             review_node_id,
             workspace_root,
@@ -390,7 +416,7 @@ class ReviewService:
         )
 
         threading.Thread(
-            target=self._run_background_review_rollup_v2_rehearsal,
+            target=self._run_background_review_rollup_v2,
             kwargs={
                 "project_id": project_id,
                 "review_node_id": review_node_id,
@@ -417,12 +443,21 @@ class ReviewService:
                     f"Cannot accept rollup: rollup status is '{rollup.get('status')}', expected 'ready'."
                 )
 
-            session = self._storage.chat_state_store.read_session(
-                project_id,
-                review_node_id,
-                thread_role="audit",
-            )
-            if session.get("active_turn_id"):
+            if self._rollup_uses_v2_thread_state():
+                audit_snapshot = self._storage.thread_snapshot_store_v2.read_snapshot(
+                    project_id,
+                    review_node_id,
+                    "audit",
+                )
+                active_turn_id = audit_snapshot.get("activeTurnId")
+            else:
+                session = self._storage.chat_state_store.read_session(
+                    project_id,
+                    review_node_id,
+                    thread_role="audit",
+                )
+                active_turn_id = session.get("active_turn_id")
+            if active_turn_id:
                 raise ReviewNotAllowed(
                     "Cannot accept rollup while integration analysis is still running."
                 )
@@ -791,7 +826,7 @@ class ReviewService:
         finally:
             self._clear_live_turn(project_id, review_node_id, turn_id)
 
-    def _run_background_review_rollup_v2_rehearsal(
+    def _run_background_review_rollup_v2(
         self,
         *,
         project_id: str,
@@ -803,7 +838,7 @@ class ReviewService:
     ) -> None:
         if self._thread_runtime_service_v2 is None:
             logger.warning(
-                "Skipping V2 rehearsal rollup for %s/%s: runtime unavailable.",
+                "Skipping V2 rollup for %s/%s: runtime unavailable.",
                 project_id,
                 review_node_id,
             )
@@ -878,7 +913,7 @@ class ReviewService:
             )
         except Exception as exc:
             logger.debug(
-                "V2 rehearsal integration rollup failed for %s/%s: %s",
+                "V2 integration rollup failed for %s/%s: %s",
                 project_id,
                 review_node_id,
                 exc,
@@ -905,7 +940,7 @@ class ReviewService:
                     turn_finalized = True
                 except Exception:
                     logger.debug(
-                        "Failed to finalize V2 rehearsal rollup turn for %s/%s",
+                        "Failed to finalize V2 rollup turn for %s/%s",
                         project_id,
                         review_node_id,
                         exc_info=True,
@@ -941,6 +976,34 @@ class ReviewService:
         if not thread_id:
             raise ReviewNotAllowed("Review audit thread start did not return a thread id.")
         return thread_id
+
+    def _ensure_review_audit_thread_id_v2(
+        self,
+        project_id: str,
+        review_node_id: str,
+        workspace_root: str | None,
+    ) -> str:
+        if self._thread_lineage_service is None:
+            raise ReviewNotAllowed("Review audit lineage service is unavailable.")
+        try:
+            entry = self._thread_lineage_service.ensure_thread_binding_v2(
+                project_id,
+                review_node_id,
+                "audit",
+                workspace_root,
+                base_instructions=build_review_rollup_base_instructions(),
+                dynamic_tools=None,
+                writable_roots=None,
+            )
+        except (CodexTransportError, ValueError) as exc:
+            raise ReviewNotAllowed(f"Review audit backend unavailable: {exc}") from exc
+        thread_id = str(entry.get("threadId") or "").strip()
+        if not thread_id:
+            raise ReviewNotAllowed("Review audit thread start did not return a V2 thread id.")
+        return thread_id
+
+    def _rollup_uses_v2_thread_state(self) -> bool:
+        return bool(self._execution_audit_v2_enabled or self._execution_audit_v2_rehearsal_enabled)
 
     def _persist_thread_id(
         self,
