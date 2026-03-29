@@ -1,6 +1,6 @@
 # Conversation Streaming V2 Rollout Plan
 
-Status: active rollout handoff. Phases 0 through 4 are completed, and Phase 5 isolated rehearsal is the next rollout phase.
+Status: active rollout handoff. Phases 0 through 5 are completed, and Phase 6 execution plus audit cutover is the next rollout phase.
 
 Primary specs:
 
@@ -42,6 +42,7 @@ Tracking artifacts:
 - Phase 2 backend core is completed and verified through focused unit plus integration coverage plus fixture replay
 - Phase 3 consumer migration and audit-writer migration is completed and verified through focused backend plus integration coverage and code-search evidence
 - Phase 4 hidden frontend rollout is completed and the hidden `/chat-v2` breadcrumb surface is now the rehearsal UI for the next phase
+- Phase 5 isolated rehearsal is completed; execution and review-rollup can now run through canonical V2 threads behind a server-side rehearsal flag and sandbox-root gate
 - Phase 3 leaves two intentional mixed-mode bridges in place: lineage remains registry-first with legacy session mirroring, and audit readiness remains V2-first with explicit temporary V1 fallback
 - Phase 4 intentionally keeps one frontend mixed-mode split: conversation transport on `/chat-v2` is V2-only, while detail-state loading and local-review acceptance remain on current detail APIs
 - Phase 4 closeout includes a documented waiver for one unrelated legacy `NodeDetailCard` unit-test failure outside the hidden V2 surface
@@ -100,24 +101,23 @@ Each phase should update:
 - if a phase is split, each sub-PR must still preserve the exit criteria listed in the phase doc
 - do not mark a phase complete until verification and artifact updates are recorded
 
-## Phase 5 Readiness
+## Phase 6 Readiness
 
-Phase 4 delivered the hidden `/chat-v2` breadcrumb surface closely enough to serve as the rehearsal frontend for Phase 5 and the future base for Phase 6.
+Phase 5 delivered the server-flagged rehearsal backend needed to move into Phase 6 execution plus audit cutover planning.
 
-Confirmed Phase 4 qualities:
+Confirmed Phase 5 qualities:
 
-- hidden route parity in `Layout`
-- route-to-project selection parity
-- review-node audit-only layout parity
-- `FrameContextFeedBlock` prefix parity for ask and audit on non-review nodes
-- local-review acceptance parity on `/chat-v2`
-- ask-thread reset parity using the V2 reset contract
-- explicit stale-request and stale-SSE guards in the V2 store
+- rehearsal safety is enforced through `PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT`
+- `FinishTaskService` can branch into V2 execution conversation without legacy transcript events
+- `ReviewService` can branch into V2 rollup conversation without legacy transcript events
+- `/chat-v2` remains the supported observation surface for rehearsal
+- `fileChange` authoritative final lists converge through `outputFilesReplace`
+- workflow-side invalidation events are emitted during rehearsal
 
-Phase 5 may now assume:
+Phase 6 may now assume:
 
 - `/chat-v2` is the frontend rehearsal surface
-- conversation transport there is V2-only
+- execution and review-rollup rehearsal paths already exist behind a server flag
 - detail-state loading and local-review acceptance remain side-channel by design at this boundary
 
 ## Cutover Definition

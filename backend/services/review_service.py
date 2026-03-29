@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.conversation.services.system_message_writer import ConversationSystemMessageWriter
+from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
+from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.ai.review_rollup_prompt_builder import (
     build_review_rollup_base_instructions,
     build_review_rollup_output_schema,
@@ -18,6 +20,8 @@ from backend.ai.review_rollup_prompt_builder import (
 )
 from backend.ai.part_accumulator import PartAccumulator
 from backend.errors.app_errors import (
+    ExecutionAuditRehearsalWorkspaceUnsafe,
+    ChatTurnAlreadyActive,
     NodeNotFound,
     ReviewNotAllowed,
 )
@@ -50,6 +54,10 @@ class ReviewService:
         chat_timeout: int = 30,
         chat_service: ChatService | None = None,
         system_message_writer: ConversationSystemMessageWriter | None = None,
+        thread_runtime_service_v2: ThreadRuntimeService | None = None,
+        workflow_event_publisher_v2: WorkflowEventPublisher | None = None,
+        execution_audit_v2_rehearsal_enabled: bool = False,
+        rehearsal_workspace_root: Path | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -59,6 +67,14 @@ class ReviewService:
         self._chat_timeout = int(chat_timeout)
         self._chat_service = chat_service
         self._system_message_writer = system_message_writer or ConversationSystemMessageWriter(storage)
+        self._thread_runtime_service_v2 = thread_runtime_service_v2
+        self._workflow_event_publisher_v2 = workflow_event_publisher_v2
+        self._execution_audit_v2_rehearsal_enabled = bool(execution_audit_v2_rehearsal_enabled)
+        self._rehearsal_workspace_root = (
+            Path(rehearsal_workspace_root).expanduser().resolve()
+            if rehearsal_workspace_root is not None
+            else None
+        )
 
     def set_system_message_writer(self, system_message_writer: ConversationSystemMessageWriter) -> None:
         self._system_message_writer = system_message_writer
@@ -175,6 +191,8 @@ class ReviewService:
         if rollup_ready_review_node_id:
             try:
                 self.start_review_rollup(project_id, rollup_ready_review_node_id)
+            except ExecutionAuditRehearsalWorkspaceUnsafe:
+                raise
             except Exception:
                 logger.debug(
                     "Failed to auto-start integration rollup for %s/%s",
@@ -200,6 +218,16 @@ class ReviewService:
     # -- Integration Rollup ------------------------------------------
 
     def start_review_rollup(self, project_id: str, review_node_id: str) -> bool:
+        if self._execution_audit_v2_rehearsal_enabled:
+            if self._codex_client is None:
+                logger.debug(
+                    "Skipping V2 rehearsal rollup start for %s/%s because backend dependencies are unavailable.",
+                    project_id,
+                    review_node_id,
+                )
+                return False
+            return self._start_review_rollup_v2_rehearsal(project_id, review_node_id)
+
         if self._codex_client is None or self._chat_event_broker is None:
             logger.debug(
                 "Skipping integration rollup auto-start for %s/%s because backend dependencies are unavailable.",
@@ -289,6 +317,85 @@ class ReviewService:
                 "review_node_id": review_node_id,
                 "turn_id": turn_id,
                 "assistant_message_id": assistant_message_id,
+                "prompt": prompt,
+                "workspace_root": workspace_root,
+            },
+            daemon=True,
+        ).start()
+        return True
+
+    def _start_review_rollup_v2_rehearsal(self, project_id: str, review_node_id: str) -> bool:
+        if self._thread_runtime_service_v2 is None:
+            logger.debug(
+                "Skipping V2 rehearsal rollup start for %s/%s because runtime is unavailable.",
+                project_id,
+                review_node_id,
+            )
+            return False
+
+        turn_id = new_id("rollup")
+        workspace_root: str | None
+        prompt: str
+
+        with self._storage.project_lock(project_id):
+            snapshot = self._storage.project_store.load_snapshot(project_id)
+            node_by_id = self._tree_service.node_index(snapshot)
+            review_node = node_by_id.get(review_node_id)
+            if review_node is None:
+                raise NodeNotFound(review_node_id)
+            if str(review_node.get("node_kind") or "").strip() != "review":
+                raise ReviewNotAllowed("Integration rollup is only valid for review nodes.")
+
+            review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
+            if review_state is None:
+                raise ReviewNotAllowed("No review state found for this review node.")
+
+            rollup = review_state.get("rollup", {})
+            if not isinstance(rollup, dict) or rollup.get("status") != "ready":
+                raise ReviewNotAllowed("Integration rollup can only start when rollup status is 'ready'.")
+
+            draft = rollup.get("draft", {})
+            if isinstance(draft, dict) and draft.get("summary") and draft.get("sha"):
+                return False
+
+            prompt = build_rollup_prompt_from_storage(
+                self._storage,
+                project_id,
+                review_node_id,
+            )
+            workspace_root = self._workspace_root_from_snapshot(snapshot)
+
+        self._assert_rehearsal_workspace_allowed(workspace_root)
+        thread_id = self._ensure_review_audit_thread(
+            project_id,
+            review_node_id,
+            workspace_root,
+        )
+        try:
+            self._thread_runtime_service_v2.begin_turn(
+                project_id=project_id,
+                node_id=review_node_id,
+                thread_role="audit",
+                origin="review",
+                created_items=[],
+                turn_id=turn_id,
+            )
+        except ChatTurnAlreadyActive:
+            return False
+
+        self._publish_workflow_refresh(
+            project_id=project_id,
+            node_id=review_node_id,
+            reason="review_rollup_started",
+        )
+
+        threading.Thread(
+            target=self._run_background_review_rollup_v2_rehearsal,
+            kwargs={
+                "project_id": project_id,
+                "review_node_id": review_node_id,
+                "turn_id": turn_id,
+                "thread_id": thread_id,
                 "prompt": prompt,
                 "workspace_root": workspace_root,
             },
@@ -684,6 +791,131 @@ class ReviewService:
         finally:
             self._clear_live_turn(project_id, review_node_id, turn_id)
 
+    def _run_background_review_rollup_v2_rehearsal(
+        self,
+        *,
+        project_id: str,
+        review_node_id: str,
+        turn_id: str,
+        thread_id: str,
+        prompt: str,
+        workspace_root: str | None,
+    ) -> None:
+        if self._thread_runtime_service_v2 is None:
+            logger.warning(
+                "Skipping V2 rehearsal rollup for %s/%s: runtime unavailable.",
+                project_id,
+                review_node_id,
+            )
+            return
+
+        turn_finalized = False
+        try:
+            stream_result = self._thread_runtime_service_v2.stream_agent_turn(
+                project_id=project_id,
+                node_id=review_node_id,
+                thread_role="audit",
+                thread_id=thread_id,
+                turn_id=turn_id,
+                prompt=prompt,
+                cwd=workspace_root,
+                writable_roots=None,
+                sandbox_profile="read_only",
+                output_schema=build_review_rollup_output_schema(),
+                timeout_sec=self._chat_timeout,
+            )
+            result = stream_result["result"]
+            turn_status = str(stream_result.get("turnStatus") or "").strip().lower()
+            outcome = self._thread_runtime_service_v2.outcome_from_turn_status(turn_status)
+            if outcome != "completed":
+                error_message = f"Integration rollup rehearsal returned terminal status '{turn_status or 'unknown'}'."
+                error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                    project_id=project_id,
+                    node_id=review_node_id,
+                    thread_role="audit",
+                    turn_id=turn_id,
+                    thread_id=thread_id,
+                    message=error_message,
+                )
+                self._thread_runtime_service_v2.complete_turn(
+                    project_id=project_id,
+                    node_id=review_node_id,
+                    thread_role="audit",
+                    turn_id=turn_id,
+                    outcome="failed",
+                    error_item=error_item,
+                )
+                turn_finalized = True
+                raise ReviewNotAllowed(error_message)
+
+            stdout = str(result.get("stdout", "") or "")
+            summary = extract_review_rollup_summary(stdout)
+            if not summary:
+                raise ReviewNotAllowed(
+                    "Integration backend did not return a valid JSON rollup summary."
+                )
+
+            final_sha = self._compute_workspace_sha(workspace_root)
+            self._storage.review_state_store.set_rollup_draft(
+                project_id,
+                review_node_id,
+                summary=summary,
+                sha=final_sha,
+            )
+
+            self._thread_runtime_service_v2.complete_turn(
+                project_id=project_id,
+                node_id=review_node_id,
+                thread_role="audit",
+                turn_id=turn_id,
+                outcome="completed",
+            )
+            turn_finalized = True
+            self._publish_workflow_refresh(
+                project_id=project_id,
+                node_id=review_node_id,
+                reason="review_rollup_completed",
+            )
+        except Exception as exc:
+            logger.debug(
+                "V2 rehearsal integration rollup failed for %s/%s: %s",
+                project_id,
+                review_node_id,
+                exc,
+                exc_info=True,
+            )
+            if not turn_finalized:
+                try:
+                    error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                        project_id=project_id,
+                        node_id=review_node_id,
+                        thread_role="audit",
+                        turn_id=turn_id,
+                        thread_id=thread_id,
+                        message=str(exc),
+                    )
+                    self._thread_runtime_service_v2.complete_turn(
+                        project_id=project_id,
+                        node_id=review_node_id,
+                        thread_role="audit",
+                        turn_id=turn_id,
+                        outcome="failed",
+                        error_item=error_item,
+                    )
+                    turn_finalized = True
+                except Exception:
+                    logger.debug(
+                        "Failed to finalize V2 rehearsal rollup turn for %s/%s",
+                        project_id,
+                        review_node_id,
+                        exc_info=True,
+                    )
+            self._publish_workflow_refresh(
+                project_id=project_id,
+                node_id=review_node_id,
+                reason="review_rollup_failed",
+            )
+
     # -- Persistence Helpers -----------------------------------------
 
     def _ensure_review_audit_thread(
@@ -831,6 +1063,43 @@ class ReviewService:
         if isinstance(workspace_root, str) and workspace_root.strip():
             return workspace_root
         return None
+
+    def _assert_rehearsal_workspace_allowed(self, workspace_root: str | None) -> Path:
+        raw_workspace_root = str(workspace_root or "").strip()
+        if not raw_workspace_root:
+            raise ExecutionAuditRehearsalWorkspaceUnsafe(
+                "Execution/audit V2 rehearsal requires a project workspace root."
+            )
+        if self._rehearsal_workspace_root is None:
+            raise ExecutionAuditRehearsalWorkspaceUnsafe(
+                "Execution/audit V2 rehearsal requires PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT to be configured."
+            )
+        resolved_workspace_root = Path(raw_workspace_root).expanduser().resolve()
+        try:
+            resolved_workspace_root.relative_to(self._rehearsal_workspace_root)
+        except ValueError as exc:
+            raise ExecutionAuditRehearsalWorkspaceUnsafe(
+                "Execution/audit V2 rehearsal is allowed only for workspaces under the configured rehearsal root."
+            ) from exc
+        return resolved_workspace_root
+
+    def _publish_workflow_refresh(self, *, project_id: str, node_id: str, reason: str) -> None:
+        if self._workflow_event_publisher_v2 is None:
+            return
+        review_state = self._storage.review_state_store.read_state(project_id, node_id)
+        rollup = review_state.get("rollup", {}) if isinstance(review_state, dict) else {}
+        review_status = (str(rollup.get("status") or "").strip() or None) if isinstance(rollup, dict) else None
+        self._workflow_event_publisher_v2.publish_workflow_updated(
+            project_id=project_id,
+            node_id=node_id,
+            execution_state=None,
+            review_state=review_status,
+        )
+        self._workflow_event_publisher_v2.publish_detail_invalidate(
+            project_id=project_id,
+            node_id=node_id,
+            reason=reason,
+        )
 
     def _compute_workspace_sha(self, workspace_root: str | None) -> str:
         if workspace_root:

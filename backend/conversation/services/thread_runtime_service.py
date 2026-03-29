@@ -367,6 +367,152 @@ class ThreadRuntimeService:
         )
         return persisted
 
+    def stream_agent_turn(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        thread_id: str,
+        turn_id: str,
+        prompt: str,
+        cwd: str | None,
+        writable_roots: list[str] | None = None,
+        sandbox_profile: str | None = None,
+        output_schema: dict[str, Any] | None = None,
+        timeout_sec: int | None = None,
+    ) -> dict[str, Any]:
+        provisional_tool_calls: dict[str, dict[str, Any]] = {}
+        final_turn_status = "completed"
+
+        def handle_raw_event(raw_event: dict[str, Any]) -> None:
+            nonlocal final_turn_status
+            method = str(raw_event.get("method") or "").strip()
+            if not method:
+                return
+            if method == "item/tool/call":
+                call_id = str(raw_event.get("call_id") or "").strip()
+                if not call_id:
+                    return
+                params = raw_event.get("params", {})
+                provisional_tool_calls[call_id] = {
+                    "callId": call_id,
+                    "toolName": str(params.get("tool_name") or params.get("toolName") or "").strip() or None
+                    if isinstance(params, dict)
+                    else None,
+                    "arguments": params.get("arguments") if isinstance(params, dict) else {},
+                    "threadId": str(raw_event.get("thread_id") or thread_id),
+                    "turnId": str(raw_event.get("turn_id") or turn_id),
+                    "createdAt": str(raw_event.get("received_at") or iso_now()),
+                    "matched": False,
+                }
+                return
+
+            current = self._query_service.get_thread_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+                publish_repairs=False,
+            )
+            updated = current
+            events: list[dict[str, Any]] = []
+
+            if method == "item/started":
+                params = raw_event.get("params", {})
+                item = params.get("item", {}) if isinstance(params, dict) else {}
+                if isinstance(item, dict):
+                    call_id = str(item.get("callId") or item.get("call_id") or "").strip()
+                    if call_id and call_id in provisional_tool_calls:
+                        provisional_tool_calls[call_id]["matched"] = True
+
+            if method == "turn/completed":
+                params = raw_event.get("params", {})
+                turn_payload = params.get("turn", {}) if isinstance(params, dict) else {}
+                raw_status = (
+                    str(turn_payload.get("status") or params.get("status") or "").strip().lower()
+                    if isinstance(turn_payload, dict)
+                    else str(params.get("status") or "").strip().lower()
+                )
+                if raw_status:
+                    final_turn_status = raw_status
+
+            updated, raw_events = apply_raw_event(updated, raw_event)
+            events.extend(raw_events)
+            if events:
+                self._query_service.persist_thread_mutation(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    updated,
+                    events,
+                )
+
+        try:
+            result = self._codex_client.run_turn_streaming(
+                prompt,
+                thread_id=thread_id,
+                timeout_sec=int(timeout_sec or self._chat_timeout),
+                cwd=cwd,
+                writable_roots=writable_roots,
+                sandbox_profile=sandbox_profile,
+                on_raw_event=handle_raw_event,
+                output_schema=output_schema,
+            )
+            returned_status = str(result.get("turn_status") or "").strip().lower()
+            if returned_status:
+                final_turn_status = returned_status
+            self._flush_unmatched_provisional_tools(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                provisional_tool_calls=provisional_tool_calls,
+            )
+            return {
+                "result": result,
+                "turnStatus": final_turn_status,
+            }
+        except Exception:
+            self._flush_unmatched_provisional_tools(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                provisional_tool_calls=provisional_tool_calls,
+            )
+            raise
+
+    @staticmethod
+    def outcome_from_turn_status(turn_status: str | None) -> str:
+        normalized = str(turn_status or "").strip().lower()
+        if normalized in {"waiting_user_input", "waitingforuserinput", "waiting_for_user_input"}:
+            return "waiting_user_input"
+        if normalized in {"failed", "error", "interrupted", "cancelled"}:
+            return "failed"
+        return "completed"
+
+    def build_error_item_for_turn(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        turn_id: str,
+        message: str,
+        thread_id: str | None = None,
+    ) -> ConversationItem:
+        snapshot = self._query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=False,
+        )
+        resolved_thread_id = str(thread_id or snapshot.get("threadId") or "")
+        return self._build_error_item(
+            turn_id=turn_id,
+            thread_id=resolved_thread_id,
+            message=message,
+            sequence=self._next_sequence(snapshot),
+        )
+
     def _run_background_turn(
         self,
         *,

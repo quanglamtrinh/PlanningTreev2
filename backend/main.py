@@ -19,7 +19,20 @@ from backend.conversation.services.thread_runtime_service import ThreadRuntimeSe
 from backend.conversation.services.system_message_writer import ConversationSystemMessageWriter
 from backend.conversation.services.thread_transcript_builder import ThreadTranscriptBuilder
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
-from backend.config.app_config import build_app_paths, get_chat_timeout, get_clarify_gen_timeout, get_codex_cmd, get_execution_timeout, get_frame_gen_timeout, get_max_chat_message_chars, get_port, get_spec_gen_timeout, get_split_timeout
+from backend.config.app_config import (
+    build_app_paths,
+    get_chat_timeout,
+    get_clarify_gen_timeout,
+    get_codex_cmd,
+    get_execution_timeout,
+    get_frame_gen_timeout,
+    get_max_chat_message_chars,
+    get_port,
+    get_rehearsal_workspace_root,
+    get_spec_gen_timeout,
+    get_split_timeout,
+    is_execution_audit_v2_rehearsal_enabled,
+)
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import bootstrap, chat, chat_v2, codex, nodes, projects, split
@@ -78,6 +91,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         codex_client=codex_client,
         event_broker=codex_event_broker,
     )
+    rehearsal_enabled = is_execution_audit_v2_rehearsal_enabled()
+    rehearsal_workspace_root = get_rehearsal_workspace_root()
     split_service = SplitService(
         storage=storage,
         tree_service=tree_service,
@@ -118,30 +133,6 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),
     )
-    review_service = ReviewService(
-        storage=storage,
-        tree_service=tree_service,
-        codex_client=codex_client,
-        thread_lineage_service=thread_lineage_service,
-        chat_event_broker=chat_event_broker,
-        chat_timeout=get_chat_timeout(),
-        chat_service=chat_service,
-        system_message_writer=system_message_writer_v2,
-    )
-    finish_task_service = FinishTaskService(
-        storage=storage,
-        tree_service=tree_service,
-        node_detail_service=node_detail_service,
-        codex_client=codex_client,
-        thread_lineage_service=thread_lineage_service,
-        chat_event_broker=chat_event_broker,
-        chat_timeout=get_execution_timeout(),
-        chat_service=chat_service,
-        git_checkpoint_service=git_checkpoint_service,
-        review_service=review_service,
-    )
-    project_service._chat_service = chat_service
-    chat_service._review_service = review_service
     request_ledger_service_v2 = RequestLedgerService()
     conversation_event_broker_v2 = ChatEventBroker()
     workflow_event_broker_v2 = GlobalEventBroker()
@@ -166,6 +157,38 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         max_message_chars=get_max_chat_message_chars(),
     )
     system_message_writer_v2.set_runtime_service(thread_runtime_service_v2)
+    review_service = ReviewService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=get_chat_timeout(),
+        chat_service=chat_service,
+        system_message_writer=system_message_writer_v2,
+        thread_runtime_service_v2=thread_runtime_service_v2,
+        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_rehearsal_enabled=rehearsal_enabled,
+        rehearsal_workspace_root=rehearsal_workspace_root,
+    )
+    finish_task_service = FinishTaskService(
+        storage=storage,
+        tree_service=tree_service,
+        node_detail_service=node_detail_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=get_execution_timeout(),
+        chat_service=chat_service,
+        git_checkpoint_service=git_checkpoint_service,
+        review_service=review_service,
+        thread_runtime_service_v2=thread_runtime_service_v2,
+        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_rehearsal_enabled=rehearsal_enabled,
+        rehearsal_workspace_root=rehearsal_workspace_root,
+    )
+    project_service._chat_service = chat_service
+    chat_service._review_service = review_service
     thread_lineage_service.set_thread_registry_service(thread_registry_service_v2)
 
     @asynccontextmanager

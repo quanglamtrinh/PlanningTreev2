@@ -7,9 +7,14 @@ from pathlib import Path
 
 import pytest
 
+from backend.conversation.services.request_ledger_service import RequestLedgerService
+from backend.conversation.services.thread_query_service import ThreadQueryService
+from backend.conversation.services.thread_registry_service import ThreadRegistryService
+from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
+from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.ai.execution_prompt_builder import build_execution_base_instructions
 from backend.ai.codex_client import CodexTransportError
-from backend.errors.app_errors import FinishTaskNotAllowed
+from backend.errors.app_errors import ExecutionAuditRehearsalWorkspaceUnsafe, FinishTaskNotAllowed
 from backend.services.chat_service import ChatService
 from backend.services.finish_task_service import FinishTaskService
 from backend.services.node_detail_service import NodeDetailService
@@ -19,7 +24,7 @@ from backend.services.thread_lineage_service import (
     _ROLLOUT_BOOTSTRAP_PROMPT,
 )
 from backend.services.tree_service import TreeService
-from backend.streaming.sse_broker import ChatEventBroker
+from backend.streaming.sse_broker import ChatEventBroker, GlobalEventBroker
 
 
 class FakeExecutionCodexClient:
@@ -121,6 +126,129 @@ class FakeExecutionCodexClient:
         return {"stdout": self.response_text, "thread_id": thread_id}
 
 
+class FakeExecutionV2CodexClient(FakeExecutionCodexClient):
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        thread_id = str(kwargs.get("thread_id") or "")
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            return {"stdout": "READY", "thread_id": thread_id}
+        self.prompts.append(prompt)
+        on_raw_event = kwargs.get("on_raw_event")
+        cwd = kwargs.get("cwd")
+
+        if self.fail:
+            raise CodexTransportError("Execution failed", "rpc_error")
+
+        if callable(on_raw_event):
+            on_raw_event(
+                {
+                    "method": "item/started",
+                    "received_at": "2026-03-28T10:00:01Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "msg-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"item": {"type": "agentMessage", "id": "msg-1"}},
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/agentMessage/delta",
+                    "received_at": "2026-03-28T10:00:02Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "msg-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"delta": "Implemented the task."},
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/tool/call",
+                    "received_at": "2026-03-28T10:00:03Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": None,
+                    "request_id": None,
+                    "call_id": "call-1",
+                    "params": {
+                        "tool_name": "apply_patch",
+                        "toolName": "apply_patch",
+                        "arguments": {"path": self.create_file_name},
+                    },
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/started",
+                    "received_at": "2026-03-28T10:00:04Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "file-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {
+                        "item": {
+                            "type": "fileChange",
+                            "id": "file-1",
+                            "callId": "call-1",
+                            "toolName": "apply_patch",
+                        }
+                    },
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/fileChange/outputDelta",
+                    "received_at": "2026-03-28T10:00:05Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "file-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {
+                        "delta": "preview",
+                        "files": [{"path": "preview.txt", "changeType": "created", "summary": "preview"}],
+                    },
+                }
+            )
+        if isinstance(cwd, str) and cwd:
+            Path(cwd, self.create_file_name).write_text("updated by execution\n", encoding="utf-8")
+        if callable(on_raw_event):
+            on_raw_event(
+                {
+                    "method": "item/completed",
+                    "received_at": "2026-03-28T10:00:06Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "file-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {
+                        "item": {
+                            "type": "fileChange",
+                            "id": "file-1",
+                            "changes": [{"path": "final.txt", "changeType": "updated", "summary": "final"}],
+                        }
+                    },
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "turn/completed",
+                    "received_at": "2026-03-28T10:00:07Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": None,
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"turn": {"status": "completed"}},
+                }
+            )
+        return {"stdout": self.response_text, "thread_id": thread_id, "turn_status": "completed"}
+
+
 def _wait_for_condition(predicate, timeout: float = 2.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -129,6 +257,41 @@ def _wait_for_condition(predicate, timeout: float = 2.0):
             return value
         time.sleep(0.02)
     raise AssertionError("Condition did not become true in time")
+
+
+def _build_v2_runtime(
+    *,
+    storage,
+    tree_service,
+    chat_service,
+    codex_client,
+) -> tuple[ThreadRuntimeService, WorkflowEventPublisher]:
+    request_ledger_service = RequestLedgerService()
+    thread_registry_service = ThreadRegistryService(storage.thread_registry_store)
+    chat_service._thread_lineage_service.set_thread_registry_service(thread_registry_service)
+    conversation_event_broker = ChatEventBroker()
+    workflow_event_broker = GlobalEventBroker()
+    query_service = ThreadQueryService(
+        storage=storage,
+        chat_service=chat_service,
+        codex_client=codex_client,
+        snapshot_store=storage.thread_snapshot_store_v2,
+        registry_service=thread_registry_service,
+        request_ledger_service=request_ledger_service,
+        thread_event_broker=conversation_event_broker,
+    )
+    runtime = ThreadRuntimeService(
+        storage=storage,
+        tree_service=tree_service,
+        chat_service=chat_service,
+        codex_client=codex_client,
+        query_service=query_service,
+        request_ledger_service=request_ledger_service,
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+    workflow_publisher = WorkflowEventPublisher(workflow_event_broker)
+    return runtime, workflow_publisher
 
 
 @pytest.fixture
@@ -536,3 +699,158 @@ def test_workspace_sha_is_deterministic_and_ignores_planningtree(
     third = compute_workspace_sha(workspace_root)
     assert third != first
     assert third.startswith("sha256:")
+
+
+def test_finish_task_v2_rehearsal_uses_v2_snapshot_without_legacy_conversation_events(
+    storage,
+    tree_service,
+    detail_service,
+    chat_event_broker,
+    project_id,
+    root_node_id,
+) -> None:
+    _confirm_spec(storage, project_id, root_node_id)
+    codex_client = FakeExecutionV2CodexClient()
+    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
+    chat_service = ChatService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+    thread_runtime_service_v2, workflow_event_publisher_v2 = _build_v2_runtime(
+        storage=storage,
+        tree_service=tree_service,
+        chat_service=chat_service,
+        codex_client=codex_client,
+    )
+    published: list[dict[str, object]] = []
+    original_publish = chat_event_broker.publish
+
+    def capture_publish(project_id_arg, node_id_arg, event, thread_role=""):
+        published.append(
+            {
+                "project_id": project_id_arg,
+                "node_id": node_id_arg,
+                "thread_role": thread_role,
+                "event": dict(event),
+            }
+        )
+        return original_publish(project_id_arg, node_id_arg, event, thread_role=thread_role)
+
+    chat_event_broker.publish = capture_publish  # type: ignore[method-assign]
+    finish_service = FinishTaskService(
+        storage=storage,
+        tree_service=tree_service,
+        node_detail_service=detail_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        chat_service=chat_service,
+        thread_runtime_service_v2=thread_runtime_service_v2,
+        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_rehearsal_enabled=True,
+        rehearsal_workspace_root=Path(storage.workspace_store.get_folder_path(project_id)).parent,
+    )
+
+    result = finish_service.finish_task(project_id, root_node_id)
+    assert result["execution_started"] is True
+
+    execution_snapshot = _wait_for_condition(
+        lambda: (
+            snapshot := storage.thread_snapshot_store_v2.read_snapshot(project_id, root_node_id, "execution")
+        )
+        and snapshot.get("processingState") == "idle"
+        and snapshot.get("activeTurnId") is None
+        and any(item.get("kind") == "tool" for item in snapshot.get("items", []))
+        and (
+            exec_state := storage.execution_state_store.read_state(project_id, root_node_id)
+        )
+        and exec_state.get("status") == "completed"
+        and snapshot,
+    )
+    exec_state = storage.execution_state_store.read_state(project_id, root_node_id)
+    assert exec_state is not None
+    assert exec_state["status"] == "completed"
+
+    session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")
+    assert session["active_turn_id"] is None
+    assert session["messages"] == []
+
+    assistant_messages = [
+        item for item in execution_snapshot["items"]
+        if item.get("kind") == "message" and item.get("role") == "assistant"
+    ]
+    assert len(assistant_messages) == 1
+    assert assistant_messages[0]["text"] == "Implemented the task."
+
+    tool_items = [item for item in execution_snapshot["items"] if item.get("kind") == "tool"]
+    assert len(tool_items) == 1
+    tool_item = tool_items[0]
+    assert tool_item["id"] == "file-1"
+    assert tool_item["outputFiles"] == [{"path": "final.txt", "changeType": "updated", "summary": "final"}]
+    assert all(item.get("id") != "tool-call:call-1" for item in execution_snapshot["items"])
+    assert Path(storage.workspace_store.get_folder_path(project_id), "execution-output.txt").exists()
+
+    legacy_types = {
+        "message_created",
+        "assistant_delta",
+        "assistant_tool_call",
+        "assistant_completed",
+        "execution_completed",
+    }
+    assert not any(
+        item["thread_role"] == "execution"
+        and isinstance(item["event"], dict)
+        and item["event"].get("type") in legacy_types
+        for item in published
+    )
+
+
+def test_finish_task_v2_rehearsal_rejects_workspace_outside_sandbox_root(
+    storage,
+    tree_service,
+    detail_service,
+    chat_event_broker,
+    project_id,
+    root_node_id,
+) -> None:
+    _confirm_spec(storage, project_id, root_node_id)
+    codex_client = FakeExecutionV2CodexClient()
+    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
+    chat_service = ChatService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+    thread_runtime_service_v2, workflow_event_publisher_v2 = _build_v2_runtime(
+        storage=storage,
+        tree_service=tree_service,
+        chat_service=chat_service,
+        codex_client=codex_client,
+    )
+    finish_service = FinishTaskService(
+        storage=storage,
+        tree_service=tree_service,
+        node_detail_service=detail_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        chat_service=chat_service,
+        thread_runtime_service_v2=thread_runtime_service_v2,
+        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_rehearsal_enabled=True,
+        rehearsal_workspace_root=Path(storage.workspace_store.get_folder_path(project_id)) / "outside-root",
+    )
+
+    with pytest.raises(ExecutionAuditRehearsalWorkspaceUnsafe):
+        finish_service.finish_task(project_id, root_node_id)

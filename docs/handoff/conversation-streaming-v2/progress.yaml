@@ -1,7 +1,7 @@
 migration_id: conversation_streaming_v2
-status: phase_4_complete
+status: phase_5_complete
 current_phase: null
-next_phase: 5
+next_phase: 6
 
 references:
   specs:
@@ -196,7 +196,7 @@ phases:
 
   - phase: 5
     name: isolated_execution_and_audit_rehearsal
-    status: not_started
+    status: completed
     depends_on:
       - 3
       - 4
@@ -212,7 +212,20 @@ phases:
       - end-to-end rehearsal evidence and targeted integration tests
     artifacts:
       - docs/handoff/conversation-streaming-v2/phase-5-isolated-rehearsal.md
-    notes: ""
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-5/README.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-5/rehearsal-runbook.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-5/rehearsal-results.md
+      - docs/handoff/conversation-streaming-v2/artifacts/phase-5/no-v1-audit-writers-check.md
+    notes: >
+      Completed on 2026-03-28. Execution and review-rollup now have a
+      server-flagged rehearsal branch that writes canonical V2 execution and
+      audit snapshots through ThreadRuntimeService and the shared projector,
+      rejects workspaces outside PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT, and
+      keeps legacy transcript events off the rehearsal path. Focused unit and
+      integration coverage now verifies safety rejection, execution plus rollup
+      V2 snapshots, no-legacy-event behavior, authoritative fileChange final
+      lists, and continued no-V1-audit-writer coverage. Phase 6 can build on
+      this branch for the first production execution plus audit cutover.
 
   - phase: 6
     name: execution_and_audit_cutover

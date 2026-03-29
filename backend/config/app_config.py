@@ -100,6 +100,18 @@ def get_execution_timeout() -> int:
     return max(10, min(3600, timeout))
 
 
+def is_execution_audit_v2_rehearsal_enabled() -> bool:
+    raw = str(os.environ.get("PLANNINGTREE_EXECUTION_AUDIT_V2_REHEARSAL", "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def get_rehearsal_workspace_root() -> Optional[Path]:
+    raw = str(os.environ.get("PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT", "") or "").strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser().resolve()
+
+
 def get_max_chat_message_chars() -> int:
     raw = os.environ.get("PLANNINGTREE_MAX_CHAT_MESSAGE_CHARS", "10000")
     try:
