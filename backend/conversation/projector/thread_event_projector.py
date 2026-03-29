@@ -298,6 +298,25 @@ def apply_raw_event(snapshot: ThreadSnapshotV2, raw_event: dict[str, Any]) -> tu
                 "updatedAt": str(raw_event.get("received_at") or iso_now()),
             },
         )
+    if method == "item/commandExecution/terminalInteraction":
+        item_id = str(raw_event["item_id"])
+        index = _find_item_index(snapshot, item_id)
+        if index is None:
+            raise ConversationStreamMismatch()
+        current_item = snapshot["items"][index]
+        return patch_item(
+            snapshot,
+            item_id,
+            {
+                "kind": "tool",
+                "outputTextAppend": _format_terminal_interaction_block(
+                    current_output=str(current_item.get("outputText") or ""),
+                    payload=raw_event.get("params", {}),
+                ),
+                "status": "in_progress",
+                "updatedAt": str(raw_event.get("received_at") or iso_now()),
+            },
+        )
     if method == "item/fileChange/outputDelta":
         patch: dict[str, Any] = {
             "kind": "tool",
@@ -684,3 +703,27 @@ def _extract_output_files(raw: Any) -> list[ToolOutputFile]:
         if normalized is not None:
             files.append(normalized)
     return files
+
+
+def _extract_terminal_interaction_text(payload: Any) -> str:
+    if isinstance(payload, dict):
+        for key in ("stdin", "input", "text", "delta", "content"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                return value
+        interaction = payload.get("interaction")
+        if isinstance(interaction, dict):
+            for key in ("stdin", "input", "text", "delta", "content"):
+                value = interaction.get(key)
+                if isinstance(value, str):
+                    return value
+    return ""
+
+
+def _format_terminal_interaction_block(*, current_output: str, payload: Any) -> str:
+    raw_text = _extract_terminal_interaction_text(payload)
+    normalized = raw_text.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    prefix = "" if not current_output or current_output.endswith("\n") else "\n"
+    if not normalized:
+        return f"{prefix}[stdin]\n"
+    return f"{prefix}[stdin]\n{normalized}\n"

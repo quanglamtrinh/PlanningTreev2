@@ -157,6 +157,67 @@ def test_thread_status_changed_maps_to_canonical_lifecycle_state() -> None:
     ]
 
 
+def test_terminal_interaction_appends_stdin_block_in_receive_order() -> None:
+    snapshot = default_thread_snapshot("project-1", "node-1", "execution")
+    snapshot["threadId"] = "thread-1"
+    snapshot, _ = upsert_item(
+        snapshot,
+        {
+            "id": "cmd-1",
+            "kind": "tool",
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-03-28T10:00:00Z",
+            "updatedAt": "2026-03-28T10:00:00Z",
+            "status": "in_progress",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "toolType": "commandExecution",
+            "title": "cmd",
+            "toolName": "powershell",
+            "callId": "call-1",
+            "argumentsText": None,
+            "outputText": "stdout line",
+            "outputFiles": [],
+            "exitCode": None,
+        },
+    )
+
+    updated, events = apply_raw_event(
+        snapshot,
+        {
+            "method": "item/commandExecution/terminalInteraction",
+            "received_at": "2026-03-28T10:00:01Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "cmd-1",
+            "request_id": None,
+            "call_id": None,
+            "params": {"stdin": "y\r\n"},
+        },
+    )
+
+    tool = updated["items"][0]
+    assert tool["outputText"] == "stdout line\n[stdin]\ny\n"
+    assert tool["status"] == "in_progress"
+    assert events == [
+        {
+            "type": event_types.CONVERSATION_ITEM_PATCH,
+            "payload": {
+                "itemId": "cmd-1",
+                "patch": {
+                    "kind": "tool",
+                    "outputTextAppend": "\n[stdin]\ny\n",
+                    "status": "in_progress",
+                    "updatedAt": "2026-03-28T10:00:01Z",
+                },
+            },
+        }
+    ]
+
+
 def test_upsert_existing_item_preserves_sequence_and_created_at() -> None:
     snapshot = default_thread_snapshot("project-1", "node-1", "audit")
     snapshot["threadId"] = "audit-thread-1"

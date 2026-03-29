@@ -249,6 +249,10 @@ def test_reasoning_and_output_delta_events_surface_through_on_raw_event() -> Non
         {"turnId": "turn_1", "threadId": "thread_1", "itemId": "cmd-1", "delta": "stdout"},
     )
     transport._handle_notification(
+        "item/commandExecution/terminalInteraction",
+        {"turnId": "turn_1", "threadId": "thread_1", "itemId": "cmd-1", "stdin": "y\n"},
+    )
+    transport._handle_notification(
         "item/fileChange/outputDelta",
         {"turnId": "turn_1", "threadId": "thread_1", "itemId": "file-1", "delta": "patch"},
     )
@@ -256,9 +260,10 @@ def test_reasoning_and_output_delta_events_surface_through_on_raw_event() -> Non
     assert [event["method"] for event in seen] == [
         "item/reasoning/summaryDelta",
         "item/commandExecution/outputDelta",
+        "item/commandExecution/terminalInteraction",
         "item/fileChange/outputDelta",
     ]
-    assert [event["item_id"] for event in seen] == ["reason-1", "cmd-1", "file-1"]
+    assert [event["item_id"] for event in seen] == ["reason-1", "cmd-1", "cmd-1", "file-1"]
 
 
 def test_request_user_input_and_resolved_emit_raw_and_legacy_payloads(monkeypatch) -> None:

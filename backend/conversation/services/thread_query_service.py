@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
 from backend.conversation.domain.types import ThreadRole, ThreadSnapshotV2, copy_snapshot, next_snapshot_version, snapshot_with_metadata
 from backend.conversation.projector.thread_event_projector import apply_reset
+from backend.conversation.services.thread_history_importer import hydrate_snapshot_from_thread_read
 from backend.conversation.services.request_ledger_service import RequestLedgerService
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
 from backend.conversation.storage.thread_snapshot_store_v2 import ThreadSnapshotStoreV2
 from backend.storage.file_utils import iso_now
 from backend.streaming.sse_broker import ChatEventBroker
+
+logger = logging.getLogger(__name__)
 
 
 class ThreadQueryService:
@@ -55,30 +59,45 @@ class ThreadQueryService:
                 thread_role,
                 workspace_root,
             )
+        thread_read_payload: dict[str, Any] | None = None
         with self._storage.project_lock(project_id):
-            snapshot = self._snapshot_store.read_snapshot(project_id, node_id, thread_role)
-            registry_changed = False
-            if session is not None:
-                registry, registry_changed = self._registry_service.seed_from_legacy_session(
+            updated, changed = self._load_reconciled_snapshot_locked(
+                project_id,
+                node_id,
+                thread_role,
+                session=session,
+            )
+            thread_id = str(updated.get("threadId") or "").strip()
+            should_hydrate_from_thread_read = (
+                thread_role != "ask_planning"
+                and bool(thread_id)
+                and not updated.get("items")
+            )
+
+        if should_hydrate_from_thread_read:
+            try:
+                read_thread = getattr(self._codex_client, "read_thread", None)
+                if callable(read_thread):
+                    thread_read_payload = read_thread(thread_id, include_turns=True, timeout_sec=15)
+            except Exception:
+                logger.debug(
+                    "Failed to read Codex thread history for %s/%s/%s",
                     project_id,
                     node_id,
                     thread_role,
-                    session,
+                    exc_info=True,
                 )
-            else:
-                registry = self._registry_service.read_entry(project_id, node_id, thread_role)
-            updated = snapshot_with_metadata(snapshot, registry)
-            changed = registry_changed or updated != snapshot or not self._snapshot_store.exists(project_id, node_id, thread_role)
 
-            if session is not None:
-                legacy_active_turn = str(session.get("active_turn_id") or "").strip() or None
-                if updated.get("activeTurnId") != legacy_active_turn:
-                    updated["activeTurnId"] = legacy_active_turn
-                    if legacy_active_turn:
-                        updated["processingState"] = "running"
-                    elif updated.get("processingState") == "running":
-                        updated["processingState"] = "idle"
-                    changed = True
+        with self._storage.project_lock(project_id):
+            updated, changed = self._load_reconciled_snapshot_locked(
+                project_id,
+                node_id,
+                thread_role,
+                session=session,
+            )
+            if thread_read_payload is not None and not updated.get("items"):
+                updated, imported_changed = hydrate_snapshot_from_thread_read(updated, thread_read_payload)
+                changed = changed or imported_changed
 
             stale_checked, stale_changed = self._request_ledger_service.mark_stale_missing_runtime_requests(
                 updated,
@@ -104,6 +123,40 @@ class ThreadQueryService:
                 )
                 self._thread_event_broker.publish(project_id, node_id, envelope, thread_role=thread_role)
             return updated
+
+    def _load_reconciled_snapshot_locked(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRole,
+        *,
+        session: dict[str, Any] | None,
+    ) -> tuple[ThreadSnapshotV2, bool]:
+        snapshot = self._snapshot_store.read_snapshot(project_id, node_id, thread_role)
+        registry_changed = False
+        if session is not None:
+            registry, registry_changed = self._registry_service.seed_from_legacy_session(
+                project_id,
+                node_id,
+                thread_role,
+                session,
+            )
+        else:
+            registry = self._registry_service.read_entry(project_id, node_id, thread_role)
+        updated = snapshot_with_metadata(snapshot, registry)
+        changed = registry_changed or updated != snapshot or not self._snapshot_store.exists(project_id, node_id, thread_role)
+
+        if session is not None:
+            legacy_active_turn = str(session.get("active_turn_id") or "").strip() or None
+            if updated.get("activeTurnId") != legacy_active_turn:
+                updated["activeTurnId"] = legacy_active_turn
+                if legacy_active_turn:
+                    updated["processingState"] = "running"
+                elif updated.get("processingState") == "running":
+                    updated["processingState"] = "idle"
+                changed = True
+
+        return updated, changed
 
     def persist_thread_mutation(
         self,

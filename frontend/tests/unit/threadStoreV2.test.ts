@@ -169,6 +169,91 @@ describe('threadStoreV2', () => {
     )
   })
 
+  it('seeds processingStartedAt when loading a running snapshot', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-28T00:00:00Z'))
+    apiMock.getThreadSnapshotV2.mockResolvedValue(
+      makeSnapshot('node-1', {
+        activeTurnId: 'turn-1',
+        processingState: 'running',
+      }),
+    )
+
+    await act(async () => {
+      await useConversationThreadStoreV2.getState().loadThread('project-1', 'node-1', 'execution')
+    })
+
+    const state = useConversationThreadStoreV2.getState()
+    expect(state.processingStartedAt).toBe(Date.parse('2026-03-28T00:00:00Z'))
+    expect(state.lastDurationMs).toBeNull()
+  })
+
+  it('records duration telemetry from lifecycle events', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-28T00:00:00Z'))
+    apiMock.getThreadSnapshotV2.mockResolvedValue(makeSnapshot('node-1'))
+
+    await act(async () => {
+      await useConversationThreadStoreV2.getState().loadThread('project-1', 'node-1', 'execution')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      vi.setSystemTime(new Date('2026-03-28T00:00:01Z'))
+      eventSource.emitMessage(
+        JSON.stringify({
+          eventId: 'evt-start',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'execution',
+          occurredAt: '2026-03-28T00:00:01Z',
+          snapshotVersion: 2,
+          type: 'thread.lifecycle',
+          payload: {
+            activeTurnId: 'turn-1',
+            processingState: 'running',
+            state: 'turn_started',
+            detail: null,
+          },
+        }),
+      )
+    })
+
+    expect(useConversationThreadStoreV2.getState().processingStartedAt).toBe(
+      Date.parse('2026-03-28T00:00:01Z'),
+    )
+
+    await act(async () => {
+      vi.setSystemTime(new Date('2026-03-28T00:00:05Z'))
+      eventSource.emitMessage(
+        JSON.stringify({
+          eventId: 'evt-complete',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'execution',
+          occurredAt: '2026-03-28T00:00:05Z',
+          snapshotVersion: 3,
+          type: 'thread.lifecycle',
+          payload: {
+            activeTurnId: null,
+            processingState: 'idle',
+            state: 'turn_completed',
+            detail: null,
+          },
+        }),
+      )
+    })
+
+    const state = useConversationThreadStoreV2.getState()
+    expect(state.processingStartedAt).toBeNull()
+    expect(state.lastDurationMs).toBe(4000)
+    expect(state.lastCompletedAt).toBe(Date.parse('2026-03-28T00:00:05Z'))
+  })
+
   it('reloads immediately after resolveUserInput when the stream is unhealthy', async () => {
     apiMock.getThreadSnapshotV2
       .mockResolvedValueOnce(

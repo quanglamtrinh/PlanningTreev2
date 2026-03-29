@@ -28,6 +28,9 @@ export type ConversationThreadStoreV2State = {
   streamStatus: ThreadStreamStatusV2
   lastEventId: string | null
   lastSnapshotVersion: number | null
+  processingStartedAt: number | null
+  lastCompletedAt: number | null
+  lastDurationMs: number | null
   error: string | null
 
   loadThread: (projectId: string, nodeId: string, threadRole?: ThreadRole) => Promise<void>
@@ -45,6 +48,50 @@ let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 let resetFallbackTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 const resolveFallbackTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
 let threadGeneration = 0
+
+type ProcessingTelemetryState = Pick<
+  ConversationThreadStoreV2State,
+  'processingStartedAt' | 'lastCompletedAt' | 'lastDurationMs'
+>
+
+function resetProcessingTelemetry(): ProcessingTelemetryState {
+  return {
+    processingStartedAt: null,
+    lastCompletedAt: null,
+    lastDurationMs: null,
+  }
+}
+
+function seedRunningTelemetry(
+  state: ProcessingTelemetryState,
+  snapshot: ThreadSnapshotV2 | null,
+): ProcessingTelemetryState {
+  if (!snapshot) {
+    return resetProcessingTelemetry()
+  }
+  if (snapshot.processingState === 'running' || snapshot.processingState === 'waiting_user_input') {
+    return {
+      processingStartedAt: state.processingStartedAt ?? Date.now(),
+      lastCompletedAt: state.lastCompletedAt,
+      lastDurationMs: state.lastDurationMs,
+    }
+  }
+  return {
+    processingStartedAt: state.processingStartedAt,
+    lastCompletedAt: state.lastCompletedAt,
+    lastDurationMs: state.lastDurationMs,
+  }
+}
+
+function completeProcessingTelemetry(state: ProcessingTelemetryState): ProcessingTelemetryState {
+  const completedAt = Date.now()
+  return {
+    processingStartedAt: null,
+    lastCompletedAt: completedAt,
+    lastDurationMs:
+      state.processingStartedAt != null ? Math.max(0, completedAt - state.processingStartedAt) : state.lastDurationMs,
+  }
+}
 
 function clearReconnectTimer() {
   if (reconnectTimer !== null) {
@@ -166,6 +213,7 @@ async function reloadThreadSnapshot(
       error: null,
       lastSnapshotVersion: snapshot.snapshotVersion,
       streamStatus: 'connecting',
+      ...seedRunningTelemetry(get(), snapshot),
     })
     reconcileResolveFallbackTimers(snapshot)
     openThreadEventStream(get, set, projectId, nodeId, threadRole, generation, snapshot.snapshotVersion)
@@ -361,10 +409,35 @@ function openThreadEventStream(
         nextState.isLoading = false
         nextState.isResetting = false
         nextState.error = null
+        if (
+          (state.snapshot?.processingState === 'running' ||
+            state.snapshot?.processingState === 'waiting_user_input') &&
+          (nextSnapshot.processingState === 'idle' || nextSnapshot.processingState === 'failed')
+        ) {
+          Object.assign(nextState, completeProcessingTelemetry(state))
+        } else {
+          Object.assign(nextState, seedRunningTelemetry(state, nextSnapshot))
+        }
       } else if (event.type === 'thread.reset') {
         nextState.isResetting = true
+        Object.assign(nextState, resetProcessingTelemetry())
       } else if (event.type === 'thread.error') {
         nextState.error = event.payload.errorItem.message
+      } else if (event.type === 'thread.lifecycle') {
+        if (event.payload.state === 'turn_started') {
+          Object.assign(nextState, {
+            processingStartedAt: state.processingStartedAt ?? Date.now(),
+          })
+        } else if (event.payload.state === 'waiting_user_input') {
+          Object.assign(nextState, {
+            processingStartedAt: state.processingStartedAt ?? Date.now(),
+          })
+        } else if (
+          event.payload.state === 'turn_completed' ||
+          event.payload.state === 'turn_failed'
+        ) {
+          Object.assign(nextState, completeProcessingTelemetry(state))
+        }
       }
 
       return nextState
@@ -426,6 +499,9 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
   streamStatus: 'idle',
   lastEventId: null,
   lastSnapshotVersion: null,
+  processingStartedAt: null,
+  lastCompletedAt: null,
+  lastDurationMs: null,
   error: null,
 
   async loadThread(projectId: string, nodeId: string, threadRole: ThreadRole = DEFAULT_THREAD_ROLE) {
@@ -457,6 +533,7 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
       streamStatus: 'connecting',
       lastEventId: null,
       lastSnapshotVersion: null,
+      ...resetProcessingTelemetry(),
       error: null,
     })
 
@@ -472,6 +549,7 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
         error: null,
         lastSnapshotVersion: snapshot.snapshotVersion,
         streamStatus: 'connecting',
+        ...seedRunningTelemetry(get(), snapshot),
       })
       reconcileResolveFallbackTimers(snapshot)
       openThreadEventStream(get, set, projectId, nodeId, threadRole, generation, snapshot.snapshotVersion)
@@ -539,6 +617,7 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
             snapshotVersion: Math.max(nextSnapshot.snapshotVersion, response.snapshotVersion),
           },
           lastSnapshotVersion: Math.max(state.lastSnapshotVersion ?? 0, response.snapshotVersion),
+          processingStartedAt: state.processingStartedAt ?? Date.now(),
         }
       })
 
@@ -694,6 +773,7 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
       streamStatus: 'idle',
       lastEventId: null,
       lastSnapshotVersion: null,
+      ...resetProcessingTelemetry(),
       error: null,
     })
   },

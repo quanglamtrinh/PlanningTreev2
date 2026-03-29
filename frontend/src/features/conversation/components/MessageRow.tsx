@@ -9,6 +9,11 @@ function roleLabel(role: ConversationMessageItem['role']) {
 }
 
 export function MessageRow({ item }: { item: ConversationMessageItem }) {
+  const hasContent = item.text.trim().length > 0
+  if (!hasContent) {
+    return null
+  }
+
   const rowClass =
     item.role === 'user'
       ? styles.rowMessageUser

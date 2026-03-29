@@ -56,6 +56,9 @@ export function BreadcrumbChatViewV2() {
     isLoading,
     isSending,
     isResetting,
+    processingStartedAt,
+    lastCompletedAt,
+    lastDurationMs,
     error,
     loadThread,
     sendTurn,
@@ -68,6 +71,9 @@ export function BreadcrumbChatViewV2() {
       isLoading: state.isLoading,
       isSending: state.isSending,
       isResetting: state.isResetting,
+      processingStartedAt: state.processingStartedAt,
+      lastCompletedAt: state.lastCompletedAt,
+      lastDurationMs: state.lastDurationMs,
       error: state.error,
       loadThread: state.loadThread,
       sendTurn: state.sendTurn,
@@ -409,6 +415,9 @@ export function BreadcrumbChatViewV2() {
                 snapshot={conversationSnapshot}
                 isLoading={isLoading}
                 onResolveUserInput={resolveUserInput}
+                processingStartedAt={processingStartedAt}
+                lastCompletedAt={lastCompletedAt}
+                lastDurationMs={lastDurationMs}
                 prefix={
                   (threadTab === 'ask' || threadTab === 'audit') &&
                   !isReviewNode &&

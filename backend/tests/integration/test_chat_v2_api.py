@@ -262,6 +262,68 @@ class FakeConversationV2CodexClient:
         return None
 
 
+class FakeThreadReadBackfillCodexClient:
+    def start_thread(self, **_: object) -> dict[str, str]:
+        return {"thread_id": "thread-backfill-1"}
+
+    def resume_thread(self, thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": thread_id}
+
+    def fork_thread(self, source_thread_id: str, **_: object) -> dict[str, str]:
+        return {"thread_id": f"forked-from-{source_thread_id}"}
+
+    def get_runtime_request(self, request_id: str) -> None:
+        del request_id
+        return None
+
+    def read_thread(self, thread_id: str, *, include_turns: bool = False, timeout_sec: int = 30) -> dict[str, Any]:
+        del include_turns, timeout_sec
+        return {
+            "thread": {
+                "id": thread_id,
+                "createdAt": 1774773247,
+                "updatedAt": 1774773577,
+                "turns": [
+                    {
+                        "id": "019d38b6-8f4b-76a0-a4e1-c330e61c6ef8",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "type": "agentMessage",
+                                "id": "old-assistant",
+                                "text": "older inherited answer",
+                                "phase": "final_answer",
+                            }
+                        ],
+                    },
+                    {
+                        "id": "019d38bc-1854-7df2-843e-88ef9c7d3077",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "type": "userMessage",
+                                "id": "exec-user",
+                                "content": [{"type": "text", "text": "internal execution prompt"}],
+                            },
+                            {
+                                "type": "agentMessage",
+                                "id": "exec-commentary",
+                                "text": "I am checking the repo layout.",
+                                "phase": "commentary",
+                            },
+                            {
+                                "type": "agentMessage",
+                                "id": "exec-final",
+                                "text": "Implemented the browser round interface.",
+                                "phase": "final_answer",
+                            },
+                        ],
+                    },
+                ],
+            }
+        }
+
+
 class FakeUserInputV2CodexClient(FakeConversationV2CodexClient):
     def __init__(self, turn_id_resolver: Callable[[], str | None]) -> None:
         super().__init__(turn_id_resolver)
@@ -825,6 +887,43 @@ def test_v2_resolve_user_input_updates_item_and_ledger(client: TestClient, works
     assert user_input["answers"] == [
         {"questionId": "q1", "value": "option_a", "label": "Option A"}
     ]
+
+
+def test_v2_execution_snapshot_backfills_empty_items_from_thread_read(client: TestClient, workspace_root) -> None:
+    project_id, root_id = _setup_project(client, workspace_root)
+    storage = client.app.state.storage
+    thread_id = "019d38ba-9fe3-7f52-a773-41a2df4b55af"
+
+    storage.thread_registry_store.write_entry(
+        project_id,
+        root_id,
+        "execution",
+        {
+            "projectId": project_id,
+            "nodeId": root_id,
+            "threadRole": "execution",
+            "threadId": thread_id,
+            "forkReason": "execution_bootstrap",
+            "lineageRootThreadId": "019d38b3-36db-7663-8e4f-30450576f505",
+        },
+    )
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, root_id, "execution")
+    snapshot["threadId"] = thread_id
+    snapshot["activeTurnId"] = "exec_local_turn_1"
+    snapshot["processingState"] = "running"
+    snapshot["updatedAt"] = "2026-03-29T08:35:43Z"
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, root_id, "execution", snapshot)
+
+    _set_v2_codex_client(client, FakeThreadReadBackfillCodexClient())
+
+    response = client.get(f"/v2/projects/{project_id}/nodes/{root_id}/threads/execution")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    execution_snapshot = payload["data"]["snapshot"]
+    assert [item["id"] for item in execution_snapshot["items"]] == ["exec-commentary", "exec-final"]
+    assert execution_snapshot["items"][0]["metadata"]["phase"] == "commentary"
 
 
 @pytest.mark.anyio

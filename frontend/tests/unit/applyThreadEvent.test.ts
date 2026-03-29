@@ -118,6 +118,52 @@ describe('applyThreadEvent', () => {
     expect(finalItem.status).toBe('completed')
   })
 
+  it('preserves stdin markers in appended command output', () => {
+    const toolItem: ToolItem = {
+      id: 'tool-stdin-1',
+      kind: 'tool',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      sequence: 1,
+      createdAt: '2026-03-28T00:00:00Z',
+      updatedAt: '2026-03-28T00:00:00Z',
+      status: 'in_progress',
+      source: 'upstream',
+      tone: 'neutral',
+      metadata: {},
+      toolType: 'commandExecution',
+      title: 'Run command',
+      toolName: 'powershell',
+      callId: 'call-1',
+      argumentsText: null,
+      outputText: 'stdout line\n',
+      outputFiles: [],
+      exitCode: null,
+    }
+
+    const nextSnapshot = applyThreadEvent(makeSnapshot({ items: [toolItem] }), {
+      eventId: 'evt-stdin',
+      channel: 'thread',
+      projectId: 'project-1',
+      nodeId: 'node-1',
+      threadRole: 'ask_planning',
+      occurredAt: '2026-03-28T00:02:00Z',
+      snapshotVersion: 2,
+      type: 'conversation.item.patch',
+      payload: {
+        itemId: 'tool-stdin-1',
+        patch: {
+          kind: 'tool',
+          outputTextAppend: '[stdin]\ny\n',
+          status: 'in_progress',
+          updatedAt: '2026-03-28T00:02:00Z',
+        },
+      },
+    })
+
+    expect((nextSnapshot.items[0] as ToolItem).outputText).toBe('stdout line\n[stdin]\ny\n')
+  })
+
   it('updates pending requests from companion user-input events', () => {
     const item: UserInputItem = {
       id: 'input-1',

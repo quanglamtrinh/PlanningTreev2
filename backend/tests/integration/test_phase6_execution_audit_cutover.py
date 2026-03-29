@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -151,8 +152,34 @@ class Phase6ProductionCodexClient:
         if callable(on_raw_event):
             on_raw_event(
                 {
-                    "method": "item/started",
+                    "method": "thread/status/changed",
+                    "received_at": "2026-03-28T10:00:00Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": None,
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"status": {"type": "running"}},
+                }
+            )
+            time.sleep(0.1)
+            on_raw_event(
+                {
+                    "method": "item/reasoning/summaryDelta",
                     "received_at": "2026-03-28T10:00:01Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "reason-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"delta": "Checking workspace state"},
+                }
+            )
+            time.sleep(0.1)
+            on_raw_event(
+                {
+                    "method": "item/started",
+                    "received_at": "2026-03-28T10:00:02Z",
                     "thread_id": thread_id,
                     "turn_id": None,
                     "item_id": "exec-msg-1",
@@ -164,7 +191,7 @@ class Phase6ProductionCodexClient:
             on_raw_event(
                 {
                     "method": "item/agentMessage/delta",
-                    "received_at": "2026-03-28T10:00:02Z",
+                    "received_at": "2026-03-28T10:00:03Z",
                     "thread_id": thread_id,
                     "turn_id": None,
                     "item_id": "exec-msg-1",
@@ -175,8 +202,63 @@ class Phase6ProductionCodexClient:
             )
             on_raw_event(
                 {
+                    "method": "item/started",
+                    "received_at": "2026-03-28T10:00:04Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "cmd-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {
+                        "item": {
+                            "type": "commandExecution",
+                            "id": "cmd-1",
+                            "command": "npm test",
+                            "toolName": "powershell",
+                        }
+                    },
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/commandExecution/outputDelta",
+                    "received_at": "2026-03-28T10:00:05Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "cmd-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"delta": "npm test\n"},
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/commandExecution/terminalInteraction",
+                    "received_at": "2026-03-28T10:00:06Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "cmd-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"input": "y\r\n"},
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/completed",
+                    "received_at": "2026-03-28T10:00:07Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "cmd-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"item": {"type": "commandExecution", "id": "cmd-1", "exitCode": 0}},
+                }
+            )
+            on_raw_event(
+                {
                     "method": "item/tool/call",
-                    "received_at": "2026-03-28T10:00:03Z",
+                    "received_at": "2026-03-28T10:00:08Z",
                     "thread_id": thread_id,
                     "turn_id": None,
                     "item_id": None,
@@ -192,7 +274,7 @@ class Phase6ProductionCodexClient:
             on_raw_event(
                 {
                     "method": "item/started",
-                    "received_at": "2026-03-28T10:00:04Z",
+                    "received_at": "2026-03-28T10:00:09Z",
                     "thread_id": thread_id,
                     "turn_id": None,
                     "item_id": "file-1",
@@ -211,7 +293,7 @@ class Phase6ProductionCodexClient:
             on_raw_event(
                 {
                     "method": "item/fileChange/outputDelta",
-                    "received_at": "2026-03-28T10:00:05Z",
+                    "received_at": "2026-03-28T10:00:10Z",
                     "thread_id": thread_id,
                     "turn_id": None,
                     "item_id": "file-1",
@@ -226,7 +308,7 @@ class Phase6ProductionCodexClient:
             on_raw_event(
                 {
                     "method": "item/completed",
-                    "received_at": "2026-03-28T10:00:06Z",
+                    "received_at": "2026-03-28T10:00:11Z",
                     "thread_id": thread_id,
                     "turn_id": None,
                     "item_id": "file-1",
@@ -244,7 +326,7 @@ class Phase6ProductionCodexClient:
             on_raw_event(
                 {
                     "method": "turn/completed",
-                    "received_at": "2026-03-28T10:00:07Z",
+                    "received_at": "2026-03-28T10:00:12Z",
                     "thread_id": thread_id,
                     "turn_id": None,
                     "item_id": None,
@@ -354,7 +436,42 @@ def test_phase6_production_finish_task_cuts_execution_auto_review_and_rollup_to_
 
         app.state.storage.chat_state_store.write_session = capture_write_session
 
-        finish_response = client.post(f"/v1/projects/{project_id}/nodes/{child_id}/finish-task")
+        finish_response_holder: dict[str, object] = {}
+
+        def invoke_finish_task() -> None:
+            finish_response_holder["response"] = client.post(
+                f"/v1/projects/{project_id}/nodes/{child_id}/finish-task"
+            )
+
+        finish_thread = threading.Thread(target=invoke_finish_task, daemon=True)
+        finish_thread.start()
+
+        _wait_for_thread_snapshot(
+            client,
+            project_id,
+            child_id,
+            "execution",
+            lambda snapshot: snapshot.get("processingState") == "running",
+            timeout_sec=5.0,
+        )
+        _wait_for_thread_snapshot(
+            client,
+            project_id,
+            child_id,
+            "execution",
+            lambda snapshot: (
+                snapshot.get("processingState") == "running"
+                and any(
+                    item.get("kind") in {"message", "reasoning", "tool", "plan"}
+                    for item in snapshot.get("items", [])
+                )
+            ),
+            timeout_sec=5.0,
+        )
+
+        finish_thread.join(timeout=6.0)
+        assert not finish_thread.is_alive()
+        finish_response = finish_response_holder["response"]
         assert finish_response.status_code == 200
 
         execution_snapshot = _wait_for_thread_snapshot(
@@ -367,6 +484,7 @@ def test_phase6_production_finish_task_cuts_execution_auto_review_and_rollup_to_
                 and snapshot.get("activeTurnId") is None
                 and any(item.get("kind") == "tool" for item in snapshot.get("items", []))
             ),
+            timeout_sec=8.0,
         )
         exec_state = _wait_for_condition(
             lambda: (
@@ -437,9 +555,17 @@ def test_phase6_production_finish_task_cuts_execution_auto_review_and_rollup_to_
         assert legacy_before["review_audit"] == _file_fingerprint(review_audit_chat_path)
 
         tool_items = [item for item in execution_snapshot["items"] if item.get("kind") == "tool"]
-        assert len(tool_items) == 1
-        assert tool_items[0]["id"] == "file-1"
-        assert tool_items[0]["outputFiles"] == [{"path": "final.txt", "changeType": "updated", "summary": "final"}]
+        assert {item["id"] for item in tool_items} == {"cmd-1", "file-1"}
+        command_item = next(item for item in tool_items if item["id"] == "cmd-1")
+        file_change_item = next(item for item in tool_items if item["id"] == "file-1")
+        assert "[stdin]\ny\n" in command_item["outputText"]
+        assert command_item["exitCode"] == 0
+        assert file_change_item["outputFiles"] == [
+            {"path": "final.txt", "changeType": "updated", "summary": "final"}
+        ]
+        reasoning_items = [item for item in execution_snapshot["items"] if item.get("kind") == "reasoning"]
+        assert len(reasoning_items) == 1
+        assert reasoning_items[0]["summaryText"] == "Checking workspace state"
         assert all(item.get("id") != "tool-call:call-1" for item in execution_snapshot["items"])
 
         child_audit_messages = [

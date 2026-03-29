@@ -1001,7 +1001,11 @@ class StdioTransport(CodexTransport):
         try:
             callback(copy.deepcopy(payload))
         except Exception:
-            logger.debug("StdioTransport raw event callback failed", exc_info=True)
+            logger.warning(
+                "StdioTransport raw event callback failed for %s",
+                str(payload.get("method") or "unknown"),
+                exc_info=True,
+            )
 
     def _emit_global_notification_callbacks(
         self,

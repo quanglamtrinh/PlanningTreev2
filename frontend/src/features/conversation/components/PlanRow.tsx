@@ -3,6 +3,11 @@ import { ConversationMarkdown } from './ConversationMarkdown'
 import styles from './ConversationFeed.module.css'
 
 export function PlanRow({ item }: { item: PlanItem }) {
+  const hasText = item.text.trim().length > 0
+  const hasSteps = item.steps.length > 0
+  const emptyStateLabel =
+    item.status === 'in_progress' ? 'Building plan...' : 'No plan details yet.'
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-item-plan">
       <div className={styles.card}>
@@ -13,8 +18,8 @@ export function PlanRow({ item }: { item: PlanItem }) {
           </div>
           <div className={`${styles.statusPill} ${styles.statusInProgress}`}>{item.status}</div>
         </div>
-        <ConversationMarkdown content={item.text} />
-        {item.steps.length ? (
+        {hasText ? <ConversationMarkdown content={item.text} /> : <div className={styles.subtleText}>{emptyStateLabel}</div>}
+        {hasSteps ? (
           <div className={styles.stepList}>
             {item.steps.map((step) => (
               <div key={step.id} className={styles.stepItem}>
