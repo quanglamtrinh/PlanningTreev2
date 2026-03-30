@@ -713,9 +713,6 @@ class ChatService:
 
     def _check_thread_writable(self, project_id: str, node_id: str, thread_role: str) -> None:
         """Enforce read-only rules per thread-state-model.md."""
-        if thread_role == "execution":
-            raise ThreadReadOnly("execution", "Execution thread is automated; user cannot send messages.")
-
         if thread_role == "ask_planning":
             if self._storage.execution_state_store.exists(project_id, node_id):
                 raise ThreadReadOnly("ask_planning", "Shaping is frozen after Finish Task.")

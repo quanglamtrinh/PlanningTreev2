@@ -687,6 +687,51 @@ def test_v2_start_turn_persists_items_and_authoritative_file_list(client: TestCl
     ]
 
 
+def test_v2_start_turn_allows_execution_thread_messages(client: TestClient, workspace_root) -> None:
+    project_id, root_id = _setup_project(client, workspace_root)
+    codex = FakeConversationV2CodexClient(
+        lambda: client.app.state.storage.thread_snapshot_store_v2.read_snapshot(
+            project_id,
+            root_id,
+            "execution",
+        ).get("activeTurnId")
+    )
+    _set_v2_codex_client(client, codex)
+
+    response = client.post(
+        f"/v2/projects/{project_id}/nodes/{root_id}/threads/execution/turns",
+        json={"text": "Hello execution"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    created = payload["data"]["createdItems"]
+    assert len(created) == 1
+    assert created[0]["role"] == "user"
+
+    snapshot = _wait_for_snapshot(
+        client,
+        project_id,
+        root_id,
+        "execution",
+        lambda snap: snap["processingState"] == "idle"
+        and any(item["id"] == "msg-1" for item in snap["items"])
+        and any(item["id"] == "file-1" and item["status"] == "completed" for item in snap["items"]),
+    )
+
+    user_item = next(item for item in snapshot["items"] if item["id"] == created[0]["id"])
+    assistant = next(item for item in snapshot["items"] if item["id"] == "msg-1")
+    file_tool = next(item for item in snapshot["items"] if item["id"] == "file-1")
+
+    assert snapshot["threadRole"] == "execution"
+    assert user_item["text"] == "Hello execution"
+    assert assistant["text"] == "Hello from V2"
+    assert file_tool["outputFiles"] == [
+        {"path": "final.txt", "changeType": "updated", "summary": "final"}
+    ]
+
+
 def test_v2_terminal_success_finalizes_open_items_when_upstream_omits_item_completed(
     client: TestClient, workspace_root
 ) -> None:

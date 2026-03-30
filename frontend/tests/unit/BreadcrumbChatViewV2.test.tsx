@@ -206,7 +206,7 @@ describe('BreadcrumbChatViewV2', () => {
       expect(screen.getByTestId('location-probe')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=execution')
     })
     expect(screen.queryByTestId('frame-context-ask')).not.toBeInTheDocument()
-    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
     expect(screen.queryByTestId('breadcrumb-v2-reset-thread')).not.toBeInTheDocument()
     expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'execution')
   })

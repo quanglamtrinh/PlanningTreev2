@@ -39,7 +39,7 @@ This document is the single source of truth for what actions are allowed when. S
 | Action | Preconditions | Error if violated |
 |--------|--------------|-------------------|
 | **Send message to ask_planning** | `shaping_frozen == false` (no execution_state exists) | `ThreadReadOnly` |
-| **Send message to execution** | Never (execution is automated, user cannot send messages) | `ThreadReadOnly` |
+| **Send message to execution** | Thread is available and no active execution-thread turn is already running | `ThreadReadOnly` / `ChatTurnAlreadyActive` |
 | **Send message to audit (local review)** | `execution_state.status >= completed` (node went through execution) | `ThreadReadOnly` |
 | **Send message to audit (package audit)** | `node.review_node_id` is set AND review node `rollup.status == accepted` AND rollup package appended to audit | `ThreadReadOnly` |
 | **Reset ask_planning** | `shaping_frozen == false` | `ThreadReadOnly` |

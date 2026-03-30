@@ -511,6 +511,7 @@ describe('BreadcrumbChatView', () => {
       expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat?thread=execution')
     })
     expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'root', 'execution')
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
   })
 
   it('does not load the legacy store before redirecting execution traffic to /chat-v2', async () => {

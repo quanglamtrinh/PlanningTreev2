@@ -28,7 +28,7 @@ function isThreadComposerReadOnly(
     case 'ask_planning':
       return shapingFrozen
     case 'execution':
-      return true
+      return false
     case 'audit':
       return !auditWritable
     default:

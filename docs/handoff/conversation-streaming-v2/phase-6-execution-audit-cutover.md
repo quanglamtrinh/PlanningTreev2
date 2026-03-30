@@ -32,7 +32,7 @@ Cut execution and the full audit namespace to V2 in production without splitting
 - enable V2 routes and runtime for all audit producers
 - confirm manual audit, rollup audit, frame/spec audit records, and auto-review persistence all land in V2
 - enable workflow bridge production path
-- confirm read-only rules still hold for execution and automated audit contexts
+- confirm execution and automated-audit composer/write rules match the current gating policy
 - close semantic presentation findings on execution and audit feeds before marking the phase complete
 - monitor mismatch, reconnect, and error rates during rollout
 

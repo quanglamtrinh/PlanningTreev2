@@ -30,6 +30,14 @@ class FakeReadonlyCodexClient:
         self.forked_threads.append(source_thread_id)
         return {"thread_id": thread_id}
 
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        del prompt
+        return {
+            "stdout": "READY",
+            "thread_id": str(kwargs.get("thread_id") or ""),
+            "turn_status": "completed",
+        }
+
 
 @pytest.fixture
 def project_id(storage, workspace_root):
@@ -78,9 +86,8 @@ def chat_service(storage, tree_service):
     )
 
 
-def test_execution_thread_always_readonly(chat_service, project_id, root_node_id):
-    with pytest.raises(ThreadReadOnly, match="execution"):
-        chat_service.create_message(project_id, root_node_id, "test", thread_role="execution")
+def test_execution_thread_is_writable(chat_service, project_id, root_node_id):
+    chat_service._check_thread_writable(project_id, root_node_id, "execution")
 
 
 def test_review_audit_thread_always_readonly(chat_service, project_id, review_node_id):
