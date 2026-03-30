@@ -59,8 +59,29 @@ def audit_message_exists(
     *,
     message_id: str,
 ) -> bool:
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "audit")
+    if _snapshot_contains_audit_item(snapshot, message_id):
+        return True
     session = storage.chat_state_store.read_session(project_id, node_id, thread_role="audit")
-    return any(message.get("message_id") == message_id for message in session.get("messages", []))
+    return _legacy_session_contains_audit_message(session, message_id)
+
+
+def _snapshot_contains_audit_item(snapshot: dict[str, Any], message_id: str) -> bool:
+    items = snapshot.get("items", []) if isinstance(snapshot, dict) else []
+    if not isinstance(items, list):
+        return False
+    return any(str(item.get("id") or "") == message_id for item in items if isinstance(item, dict))
+
+
+def _legacy_session_contains_audit_message(session: dict[str, Any], message_id: str) -> bool:
+    messages = session.get("messages", []) if isinstance(session, dict) else []
+    if not isinstance(messages, list):
+        return False
+    return any(
+        str(message.get("message_id") or "") == message_id
+        for message in messages
+        if isinstance(message, dict)
+    )
 
 
 def package_audit_ready(

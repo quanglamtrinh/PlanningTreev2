@@ -13,13 +13,20 @@ from backend.ai.auto_review_prompt_builder import (
     extract_auto_review_result,
 )
 from backend.ai.codex_client import CodexAppClient
+from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
+from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.ai.execution_prompt_builder import (
     build_execution_base_instructions,
     build_execution_prompt,
 )
 from backend.ai.part_accumulator import PartAccumulator
 from backend.ai.split_context_builder import build_split_context
-from backend.errors.app_errors import FinishTaskNotAllowed, NodeNotFound
+from backend.errors.app_errors import (
+    ChatTurnAlreadyActive,
+    ExecutionAuditRehearsalWorkspaceUnsafe,
+    FinishTaskNotAllowed,
+    NodeNotFound,
+)
 from backend.services import planningtree_workspace
 from backend.services.node_detail_service import (
     NodeDetailService,
@@ -54,6 +61,11 @@ class FinishTaskService:
         chat_service: ChatService | None = None,
         git_checkpoint_service: Any = None,
         review_service: ReviewService | None = None,
+        thread_runtime_service_v2: ThreadRuntimeService | None = None,
+        workflow_event_publisher_v2: WorkflowEventPublisher | None = None,
+        execution_audit_v2_enabled: bool = False,
+        execution_audit_v2_rehearsal_enabled: bool = False,
+        rehearsal_workspace_root: Path | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -65,6 +77,15 @@ class FinishTaskService:
         self._chat_service = chat_service
         self._git_checkpoint_service = git_checkpoint_service
         self._review_service = review_service
+        self._thread_runtime_service_v2 = thread_runtime_service_v2
+        self._workflow_event_publisher_v2 = workflow_event_publisher_v2
+        self._execution_audit_v2_enabled = bool(execution_audit_v2_enabled)
+        self._execution_audit_v2_rehearsal_enabled = bool(execution_audit_v2_rehearsal_enabled)
+        self._rehearsal_workspace_root = (
+            Path(rehearsal_workspace_root).expanduser().resolve()
+            if rehearsal_workspace_root is not None
+            else None
+        )
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}
 
@@ -81,6 +102,29 @@ class FinishTaskService:
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             frame_content = self._load_confirmed_frame_content(node_dir)
             task_context = build_split_context(snapshot, node, node_index)
+        v2_mode = self._execution_audit_v2_mode()
+        if v2_mode == "production":
+            return self._finish_task_v2(
+                project_id=project_id,
+                node_id=node_id,
+                spec_content=spec_content,
+                frame_content=frame_content,
+                task_context=task_context,
+                workspace_root=workspace_root,
+                node=node,
+                enforce_rehearsal_workspace=False,
+                enable_auto_review=True,
+            )
+        if self._execution_audit_v2_rehearsal_enabled:
+            return self._finish_task_v2_rehearsal(
+                project_id=project_id,
+                node_id=node_id,
+                spec_content=spec_content,
+                frame_content=frame_content,
+                task_context=task_context,
+                workspace_root=workspace_root,
+                node=node,
+            )
         execution_session = self._ensure_execution_thread(project_id, node_id, workspace_root)
         thread_id = str(execution_session.get("thread_id") or "").strip()
         if not thread_id:
@@ -182,6 +226,145 @@ class FinishTaskService:
 
         return self._node_detail_service.get_detail_state(project_id, node_id)
 
+    def _execution_audit_v2_mode(self) -> str | None:
+        if self._execution_audit_v2_enabled:
+            return "production"
+        if self._execution_audit_v2_rehearsal_enabled:
+            return "rehearsal"
+        return None
+
+    def _finish_task_v2(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        spec_content: str,
+        frame_content: str,
+        task_context: str,
+        workspace_root: str | None,
+        node: dict[str, Any],
+        enforce_rehearsal_workspace: bool,
+        enable_auto_review: bool,
+    ) -> dict[str, Any]:
+        if self._thread_runtime_service_v2 is None:
+            raise FinishTaskNotAllowed("Execution V2 runtime is unavailable.")
+        if enforce_rehearsal_workspace:
+            self._assert_rehearsal_workspace_allowed(workspace_root)
+        thread_id = self._ensure_execution_thread_id_v2(project_id, node_id, workspace_root)
+
+        turn_id = new_id("exec")
+        prompt = build_execution_prompt(
+            spec_content=spec_content,
+            frame_content=frame_content,
+            task_context=task_context,
+        )
+        now = iso_now()
+        initial_sha: str
+
+        self._thread_runtime_service_v2.begin_turn(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            origin="execution",
+            created_items=[],
+            turn_id=turn_id,
+        )
+
+        try:
+            with self._storage.project_lock(project_id):
+                snapshot = self._storage.project_store.load_snapshot(project_id)
+                node_index = snapshot.get("tree_state", {}).get("node_index", {})
+                current_node = node_index.get(node_id)
+                if current_node is None:
+                    raise NodeNotFound(node_id)
+                node_dir = self._resolve_node_dir(snapshot, node_id)
+                self._validate_finish_task_locked(project_id, node_id, snapshot, current_node, node_dir)
+                initial_sha = self._compute_initial_sha(project_id, node_id, snapshot)
+
+                exec_state = {
+                    "status": "executing",
+                    "initial_sha": initial_sha,
+                    "head_sha": None,
+                    "started_at": now,
+                    "completed_at": None,
+                    "local_review_started_at": None,
+                    "local_review_prompt_consumed_at": None,
+                }
+                self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
+
+                if current_node.get("status") != "in_progress":
+                    current_node["status"] = "in_progress"
+                    snapshot["updated_at"] = now
+                    self._storage.project_store.save_snapshot(project_id, snapshot)
+
+                self._mark_live_job(project_id, node_id, turn_id)
+        except Exception as exc:
+            error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="execution",
+                turn_id=turn_id,
+                thread_id=thread_id,
+                message=str(exc),
+            )
+            self._thread_runtime_service_v2.complete_turn(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="execution",
+                turn_id=turn_id,
+                outcome="failed",
+                error_item=error_item,
+            )
+            raise
+
+        self._publish_workflow_refresh(
+            project_id=project_id,
+            node_id=node_id,
+            reason="execution_started",
+        )
+
+        threading.Thread(
+            target=self._run_background_execution_v2,
+            kwargs={
+                "project_id": project_id,
+                "node_id": node_id,
+                "turn_id": turn_id,
+                "thread_id": thread_id,
+                "prompt": prompt,
+                "workspace_root": workspace_root,
+                "initial_sha": initial_sha,
+                "hierarchical_number": str(node.get("hierarchical_number") or ""),
+                "title": str(node.get("title") or ""),
+                "enable_auto_review": enable_auto_review,
+            },
+            daemon=True,
+        ).start()
+
+        return self._node_detail_service.get_detail_state(project_id, node_id)
+
+    def _finish_task_v2_rehearsal(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        spec_content: str,
+        frame_content: str,
+        task_context: str,
+        workspace_root: str | None,
+        node: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._finish_task_v2(
+            project_id=project_id,
+            node_id=node_id,
+            spec_content=spec_content,
+            frame_content=frame_content,
+            task_context=task_context,
+            workspace_root=workspace_root,
+            node=node,
+            enforce_rehearsal_workspace=True,
+            enable_auto_review=False,
+        )
+
     def complete_execution(
         self,
         project_id: str,
@@ -189,6 +372,8 @@ class FinishTaskService:
         head_sha: str | None = None,
         commit_message: str | None = None,
         changed_files: list[dict[str, Any]] | None = None,
+        *,
+        publish_legacy_event: bool = True,
     ) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
@@ -209,17 +394,18 @@ class FinishTaskService:
             self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
         detail_state = self._node_detail_service.get_detail_state(project_id, node_id)
-        self._chat_event_broker.publish(
-            project_id,
-            node_id,
-            {
-                "type": "execution_completed",
-                "node_id": node_id,
-                "head_sha": head_sha,
-                "execution_status": "completed",
-            },
-            thread_role="execution",
-        )
+        if publish_legacy_event:
+            self._chat_event_broker.publish(
+                project_id,
+                node_id,
+                {
+                    "type": "execution_completed",
+                    "node_id": node_id,
+                    "head_sha": head_sha,
+                    "execution_status": "completed",
+                },
+                thread_role="execution",
+            )
         return detail_state
 
     def fail_execution(
@@ -652,6 +838,190 @@ class FinishTaskService:
         finally:
             self._clear_live_job(project_id, node_id, turn_id)
 
+    def _run_background_execution_v2(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        turn_id: str,
+        thread_id: str,
+        prompt: str,
+        workspace_root: str | None,
+        initial_sha: str = "",
+        hierarchical_number: str = "",
+        title: str = "",
+        enable_auto_review: bool,
+    ) -> None:
+        if self._thread_runtime_service_v2 is None:
+            logger.warning(
+                "Skipping V2 execution for %s/%s: runtime unavailable.",
+                project_id,
+                node_id,
+            )
+            self._clear_live_job(project_id, node_id, turn_id)
+            return
+
+        turn_finalized = False
+        try:
+            stream_result = self._thread_runtime_service_v2.stream_agent_turn(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="execution",
+                thread_id=thread_id,
+                turn_id=turn_id,
+                prompt=prompt,
+                cwd=workspace_root,
+                writable_roots=[workspace_root] if isinstance(workspace_root, str) and workspace_root.strip() else None,
+                timeout_sec=self._chat_timeout,
+            )
+            result = stream_result["result"]
+            turn_status = str(stream_result.get("turnStatus") or "").strip().lower()
+            outcome = self._thread_runtime_service_v2.outcome_from_turn_status(turn_status)
+            if outcome != "completed":
+                error_message = f"Execution rehearsal returned terminal status '{turn_status or 'unknown'}'."
+                error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role="execution",
+                    turn_id=turn_id,
+                    thread_id=thread_id,
+                    message=error_message,
+                )
+                self._thread_runtime_service_v2.complete_turn(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role="execution",
+                    turn_id=turn_id,
+                    outcome="failed",
+                    error_item=error_item,
+                )
+                turn_finalized = True
+                raise FinishTaskNotAllowed(error_message)
+
+            head_sha: str | None = None
+            commit_msg: str | None = None
+            changed: list[dict[str, Any]] = []
+            if self._git_checkpoint_service is not None and workspace_root:
+                commit_msg = self._git_checkpoint_service.build_commit_message(
+                    hierarchical_number, title
+                )
+                new_sha = self._git_checkpoint_service.commit_if_changed(
+                    Path(workspace_root), commit_msg
+                )
+                head_sha = new_sha if new_sha else initial_sha
+                if new_sha:
+                    try:
+                        changed = self._git_checkpoint_service.get_changed_files(
+                            Path(workspace_root), initial_sha, head_sha
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to collect changed files for %s/%s",
+                            project_id,
+                            node_id,
+                        )
+                        changed = []
+                else:
+                    commit_msg = None
+            else:
+                from backend.services.workspace_sha import compute_workspace_sha
+
+                head_sha = compute_workspace_sha(Path(workspace_root)) if workspace_root else None
+
+            self.complete_execution(
+                project_id,
+                node_id,
+                head_sha=head_sha,
+                commit_message=commit_msg,
+                changed_files=changed,
+                publish_legacy_event=False,
+            )
+            self._thread_runtime_service_v2.complete_turn(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="execution",
+                turn_id=turn_id,
+                outcome="completed",
+            )
+            turn_finalized = True
+
+            self._publish_workflow_refresh(
+                project_id=project_id,
+                node_id=node_id,
+                reason="execution_completed",
+            )
+
+            if enable_auto_review:
+                try:
+                    self._start_auto_review_v2(
+                        project_id=project_id,
+                        node_id=node_id,
+                        workspace_root=workspace_root,
+                    )
+                except Exception:
+                    logger.debug(
+                        "Failed to start V2 auto-review after execution for %s/%s",
+                        project_id,
+                        node_id,
+                        exc_info=True,
+                    )
+            elif self._review_service is not None:
+                try:
+                    self._review_service.start_local_review(project_id, node_id)
+                except Exception:
+                    logger.debug(
+                        "Failed to auto-open local review after rehearsal execution for %s/%s",
+                        project_id,
+                        node_id,
+                        exc_info=True,
+                    )
+        except Exception as exc:
+            logger.debug(
+                "V2 execution failed for %s/%s: %s",
+                project_id,
+                node_id,
+                exc,
+                exc_info=True,
+            )
+            if not turn_finalized:
+                try:
+                    error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                        project_id=project_id,
+                        node_id=node_id,
+                        thread_role="execution",
+                        turn_id=turn_id,
+                        thread_id=thread_id,
+                        message=str(exc),
+                    )
+                    self._thread_runtime_service_v2.complete_turn(
+                        project_id=project_id,
+                        node_id=node_id,
+                        thread_role="execution",
+                        turn_id=turn_id,
+                        outcome="failed",
+                        error_item=error_item,
+                    )
+                    turn_finalized = True
+                except Exception:
+                    logger.debug(
+                        "Failed to finalize V2 execution turn for %s/%s",
+                        project_id,
+                        node_id,
+                        exc_info=True,
+                    )
+
+            try:
+                self.fail_execution(project_id, node_id, error_message=str(exc))
+            except Exception:
+                logger.debug("Failed to persist failed V2 execution state", exc_info=True)
+            self._publish_workflow_refresh(
+                project_id=project_id,
+                node_id=node_id,
+                reason="execution_failed",
+            )
+        finally:
+            self._clear_live_job(project_id, node_id, turn_id)
+
     def _validate_finish_task_locked(
         self,
         project_id: str,
@@ -727,6 +1097,32 @@ class FinishTaskService:
             )
         except Exception as exc:
             raise FinishTaskNotAllowed(f"Execution backend unavailable: {exc}") from exc
+
+    def _ensure_execution_thread_id_v2(
+        self,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+    ) -> str:
+        if self._thread_lineage_service is None:
+            raise FinishTaskNotAllowed("Execution lineage service unavailable for V2 runtime.")
+        writable_roots = [workspace_root] if isinstance(workspace_root, str) and workspace_root.strip() else None
+        try:
+            entry = self._thread_lineage_service.ensure_thread_binding_v2(
+                project_id,
+                node_id,
+                "execution",
+                workspace_root,
+                base_instructions=build_execution_base_instructions(),
+                dynamic_tools=[],
+                writable_roots=writable_roots,
+            )
+        except Exception as exc:
+            raise FinishTaskNotAllowed(f"Execution backend unavailable: {exc}") from exc
+        thread_id = str(entry.get("threadId") or "").strip()
+        if not thread_id:
+            raise FinishTaskNotAllowed("Execution bootstrap did not return a V2 thread id.")
+        return thread_id
 
     def _persist_execution_message(
         self,
@@ -875,6 +1271,42 @@ class FinishTaskService:
             return workspace_root
         return None
 
+    def _assert_rehearsal_workspace_allowed(self, workspace_root: str | None) -> Path:
+        raw_workspace_root = str(workspace_root or "").strip()
+        if not raw_workspace_root:
+            raise ExecutionAuditRehearsalWorkspaceUnsafe(
+                "Execution/audit V2 rehearsal requires a project workspace root."
+            )
+        if self._rehearsal_workspace_root is None:
+            raise ExecutionAuditRehearsalWorkspaceUnsafe(
+                "Execution/audit V2 rehearsal requires PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT to be configured."
+            )
+        resolved_workspace_root = Path(raw_workspace_root).expanduser().resolve()
+        try:
+            resolved_workspace_root.relative_to(self._rehearsal_workspace_root)
+        except ValueError as exc:
+            raise ExecutionAuditRehearsalWorkspaceUnsafe(
+                "Execution/audit V2 rehearsal is allowed only for workspaces under the configured rehearsal root."
+            ) from exc
+        return resolved_workspace_root
+
+    def _publish_workflow_refresh(self, *, project_id: str, node_id: str, reason: str) -> None:
+        if self._workflow_event_publisher_v2 is None:
+            return
+        exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+        execution_status = (str(exec_state.get("status") or "").strip() or None) if exec_state else None
+        self._workflow_event_publisher_v2.publish_workflow_updated(
+            project_id=project_id,
+            node_id=node_id,
+            execution_state=execution_status,
+            review_state=None,
+        )
+        self._workflow_event_publisher_v2.publish_detail_invalidate(
+            project_id=project_id,
+            node_id=node_id,
+            reason=reason,
+        )
+
     def _job_key(self, project_id: str, node_id: str) -> str:
         return f"{project_id}::{node_id}"
 
@@ -902,7 +1334,303 @@ class FinishTaskService:
                 turn_id,
             )
 
+    def _ensure_audit_thread(
+        self,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+    ) -> str:
+        if self._thread_lineage_service is None:
+            raise FinishTaskNotAllowed("Thread lineage service unavailable for audit runtime.")
+        session = self._thread_lineage_service.resume_or_rebuild_session(
+            project_id,
+            node_id,
+            "audit",
+            workspace_root,
+            base_instructions=build_auto_review_base_instructions(),
+        )
+        thread_id = str(session.get("thread_id") or "").strip()
+        if not thread_id:
+            raise FinishTaskNotAllowed("Audit thread bootstrap did not return a thread id.")
+        return thread_id
+
+    def _ensure_audit_thread_id_v2(
+        self,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+    ) -> str:
+        if self._thread_lineage_service is None:
+            raise FinishTaskNotAllowed("Thread lineage service unavailable for audit V2 runtime.")
+        try:
+            entry = self._thread_lineage_service.ensure_thread_binding_v2(
+                project_id,
+                node_id,
+                "audit",
+                workspace_root,
+                base_instructions=build_auto_review_base_instructions(),
+                dynamic_tools=None,
+                writable_roots=None,
+            )
+        except Exception as exc:
+            raise FinishTaskNotAllowed(f"Audit backend unavailable: {exc}") from exc
+        thread_id = str(entry.get("threadId") or "").strip()
+        if not thread_id:
+            raise FinishTaskNotAllowed("Audit thread bootstrap did not return a V2 thread id.")
+        return thread_id
+
     # -- Automated Local Review --------------------------------------
+
+    def _start_auto_review_v2(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+    ) -> bool:
+        if self._thread_runtime_service_v2 is None:
+            raise FinishTaskNotAllowed("Auto-review V2 runtime is unavailable.")
+
+        turn_id = new_id("auto_review")
+        with self._storage.project_lock(project_id):
+            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            if exec_state is None or exec_state.get("status") != "completed":
+                logger.debug(
+                    "Skipping V2 auto-review for %s/%s: execution status is not 'completed'.",
+                    project_id,
+                    node_id,
+                )
+                return False
+
+            existing_auto_review = exec_state.get("auto_review")
+            if isinstance(existing_auto_review, dict) and existing_auto_review.get("status") in (
+                "running",
+                "completed",
+            ):
+                logger.debug(
+                    "Skipping V2 auto-review for %s/%s: already %s.",
+                    project_id,
+                    node_id,
+                    existing_auto_review.get("status"),
+                )
+                return False
+
+        thread_id = self._ensure_audit_thread_id_v2(project_id, node_id, workspace_root)
+        try:
+            self._thread_runtime_service_v2.begin_turn(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="audit",
+                origin="auto_review",
+                created_items=[],
+                turn_id=turn_id,
+            )
+        except ChatTurnAlreadyActive:
+            logger.warning(
+                "Skipping V2 auto-review for %s/%s: audit thread already has an active turn.",
+                project_id,
+                node_id,
+            )
+            return False
+
+        now = iso_now()
+        with self._storage.project_lock(project_id):
+            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            if exec_state is not None:
+                exec_state["auto_review"] = {
+                    "status": "running",
+                    "started_at": now,
+                    "completed_at": None,
+                    "summary": None,
+                    "checkpoint_summary": None,
+                    "overall_severity": None,
+                    "overall_score": None,
+                    "findings": [],
+                    "error_message": None,
+                }
+                self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
+
+        self._publish_workflow_refresh(
+            project_id=project_id,
+            node_id=node_id,
+            reason="auto_review_started",
+        )
+
+        threading.Thread(
+            target=self._run_background_auto_review_v2,
+            kwargs={
+                "project_id": project_id,
+                "node_id": node_id,
+                "turn_id": turn_id,
+                "thread_id": thread_id,
+                "workspace_root": workspace_root,
+            },
+            daemon=True,
+        ).start()
+        return True
+
+    def _run_background_auto_review_v2(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        turn_id: str,
+        thread_id: str,
+        workspace_root: str | None,
+    ) -> None:
+        if self._thread_runtime_service_v2 is None:
+            logger.warning(
+                "Skipping V2 auto-review for %s/%s: runtime unavailable.",
+                project_id,
+                node_id,
+            )
+            return
+
+        turn_finalized = False
+        try:
+            prompt = build_auto_review_prompt(
+                self._storage,
+                project_id,
+                node_id,
+                workspace_root,
+                self._git_checkpoint_service,
+            )
+            stream_result = self._thread_runtime_service_v2.stream_agent_turn(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="audit",
+                thread_id=thread_id,
+                turn_id=turn_id,
+                prompt=prompt,
+                cwd=workspace_root,
+                writable_roots=None,
+                sandbox_profile="read_only",
+                output_schema=build_auto_review_output_schema(),
+                timeout_sec=self._chat_timeout,
+            )
+            result = stream_result["result"]
+            turn_status = str(stream_result.get("turnStatus") or "").strip().lower()
+            outcome = self._thread_runtime_service_v2.outcome_from_turn_status(turn_status)
+            if outcome != "completed":
+                error_message = f"Auto-review returned terminal status '{turn_status or 'unknown'}'."
+                error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role="audit",
+                    turn_id=turn_id,
+                    thread_id=thread_id,
+                    message=error_message,
+                )
+                self._thread_runtime_service_v2.complete_turn(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role="audit",
+                    turn_id=turn_id,
+                    outcome="failed",
+                    error_item=error_item,
+                )
+                turn_finalized = True
+                raise FinishTaskNotAllowed(error_message)
+
+            stdout = str(result.get("stdout", "") or "")
+            review_result = extract_auto_review_result(stdout)
+            if not review_result:
+                raise FinishTaskNotAllowed("Auto-review did not return a valid structured result.")
+
+            now = iso_now()
+            with self._storage.project_lock(project_id):
+                exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+                if exec_state is not None:
+                    current_auto_review = exec_state.get("auto_review")
+                    started_at = (
+                        current_auto_review.get("started_at")
+                        if isinstance(current_auto_review, dict)
+                        else None
+                    )
+                    exec_state["auto_review"] = {
+                        "status": "completed",
+                        "started_at": started_at,
+                        "completed_at": now,
+                        "summary": review_result["summary"],
+                        "checkpoint_summary": review_result["checkpoint_summary"],
+                        "overall_severity": review_result["overall_severity"],
+                        "overall_score": review_result["overall_score"],
+                        "findings": review_result["findings"],
+                        "error_message": None,
+                    }
+                    self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
+
+            self._thread_runtime_service_v2.complete_turn(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="audit",
+                turn_id=turn_id,
+                outcome="completed",
+            )
+            turn_finalized = True
+            self._publish_workflow_refresh(
+                project_id=project_id,
+                node_id=node_id,
+                reason="auto_review_completed",
+            )
+            self._auto_accept_local_review(project_id=project_id, node_id=node_id)
+        except Exception as exc:
+            logger.debug(
+                "V2 auto-review failed for %s/%s: %s",
+                project_id,
+                node_id,
+                exc,
+                exc_info=True,
+            )
+            now = iso_now()
+            with self._storage.project_lock(project_id):
+                exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+                if exec_state is not None:
+                    current = exec_state.get("auto_review")
+                    exec_state["auto_review"] = {
+                        "status": "failed",
+                        "started_at": current.get("started_at") if isinstance(current, dict) else None,
+                        "completed_at": now,
+                        "summary": current.get("summary") if isinstance(current, dict) else None,
+                        "checkpoint_summary": current.get("checkpoint_summary") if isinstance(current, dict) else None,
+                        "overall_severity": current.get("overall_severity") if isinstance(current, dict) else None,
+                        "overall_score": current.get("overall_score") if isinstance(current, dict) else None,
+                        "findings": current.get("findings", []) if isinstance(current, dict) else [],
+                        "error_message": str(exc),
+                    }
+                    self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
+
+            if not turn_finalized:
+                try:
+                    error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                        project_id=project_id,
+                        node_id=node_id,
+                        thread_role="audit",
+                        turn_id=turn_id,
+                        thread_id=thread_id,
+                        message=str(exc),
+                    )
+                    self._thread_runtime_service_v2.complete_turn(
+                        project_id=project_id,
+                        node_id=node_id,
+                        thread_role="audit",
+                        turn_id=turn_id,
+                        outcome="failed",
+                        error_item=error_item,
+                    )
+                    turn_finalized = True
+                except Exception:
+                    logger.debug(
+                        "Failed to finalize V2 auto-review turn for %s/%s",
+                        project_id,
+                        node_id,
+                        exc_info=True,
+                    )
+            self._publish_workflow_refresh(
+                project_id=project_id,
+                node_id=node_id,
+                reason="auto_review_failed",
+            )
 
     def _start_auto_review(
         self,

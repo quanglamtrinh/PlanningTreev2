@@ -8,17 +8,26 @@ import pytest
 
 from backend.ai.codex_client import CodexTransportError
 from backend.ai.review_rollup_prompt_builder import build_review_rollup_output_schema
-from backend.errors.app_errors import ReviewNotAllowed
+from backend.conversation.services.request_ledger_service import RequestLedgerService
+from backend.conversation.services.thread_query_service import ThreadQueryService
+from backend.conversation.services.thread_registry_service import ThreadRegistryService
+from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
+from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
+from backend.errors.app_errors import ExecutionAuditRehearsalWorkspaceUnsafe, ReviewNotAllowed
 from backend.services import planningtree_workspace
+from backend.services.chat_service import ChatService
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
-from backend.services.thread_lineage_service import ThreadLineageService
+from backend.services.thread_lineage_service import (
+    ThreadLineageService,
+    _ROLLOUT_BOOTSTRAP_PROMPT,
+)
 from backend.services.tree_service import TreeService
 from backend.storage.file_utils import iso_now
 from backend.storage.storage import Storage
-from backend.streaming.sse_broker import ChatEventBroker
+from backend.streaming.sse_broker import ChatEventBroker, GlobalEventBroker
 
 
 class FakeIntegrationCodexClient:
@@ -57,6 +66,8 @@ class FakeIntegrationCodexClient:
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            return {"stdout": "READY", "thread_id": str(kwargs.get("thread_id") or "")}
         self.prompts.append(prompt)
         if self.fail:
             raise RuntimeError("integration failed")
@@ -77,6 +88,10 @@ class StrictIntegrationCodexClient(FakeIntegrationCodexClient):
         self.run_kwargs: list[dict[str, object]] = []
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            if kwargs.get("sandbox_profile") != "read_only":
+                raise RuntimeError("missing read_only sandbox_profile")
+            return {"stdout": "READY", "thread_id": str(kwargs.get("thread_id") or "")}
         self.run_kwargs.append(dict(kwargs))
         expected_schema = build_review_rollup_output_schema()
         if kwargs.get("sandbox_profile") != "read_only":
@@ -90,10 +105,73 @@ class StrictIntegrationCodexClient(FakeIntegrationCodexClient):
 
 class ReadOnlyRejectingIntegrationCodexClient(FakeIntegrationCodexClient):
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
-        del prompt
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            if kwargs.get("sandbox_profile") != "read_only":
+                raise RuntimeError("missing read_only sandbox_profile")
+            return {"stdout": "READY", "thread_id": str(kwargs.get("thread_id") or "")}
         if kwargs.get("sandbox_profile") == "read_only":
             raise CodexTransportError("read_only sandbox rejected", "invalid_sandbox_policy")
         raise RuntimeError("missing read_only sandbox_profile")
+
+
+class FakeIntegrationV2CodexClient(FakeIntegrationCodexClient):
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        thread_id = str(kwargs.get("thread_id") or "")
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            if kwargs.get("sandbox_profile") not in {None, "read_only"}:
+                raise RuntimeError("unexpected sandbox_profile")
+            return {"stdout": "READY", "thread_id": thread_id}
+        self.prompts.append(prompt)
+        if kwargs.get("sandbox_profile") != "read_only":
+            raise RuntimeError("missing read_only sandbox_profile")
+        if kwargs.get("writable_roots") is not None:
+            raise RuntimeError("review rollup must not set writable_roots")
+        if kwargs.get("output_schema") != build_review_rollup_output_schema():
+            raise RuntimeError("review rollup must pass the expected output_schema")
+        if self.fail:
+            raise RuntimeError("integration failed")
+
+        on_raw_event = kwargs.get("on_raw_event")
+        rendered_message = f"## Rollup Summary\n\n{self.summary}"
+        if callable(on_raw_event):
+            on_raw_event(
+                {
+                    "method": "item/started",
+                    "received_at": "2026-03-28T10:10:01Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "msg-rollup-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"item": {"type": "agentMessage", "id": "msg-rollup-1"}},
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/agentMessage/delta",
+                    "received_at": "2026-03-28T10:10:02Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": "msg-rollup-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"delta": rendered_message},
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "turn/completed",
+                    "received_at": "2026-03-28T10:10:03Z",
+                    "thread_id": thread_id,
+                    "turn_id": None,
+                    "item_id": None,
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"turn": {"status": "completed"}},
+                }
+            )
+        payload = json.dumps({"summary": self.summary})
+        return {"stdout": payload, "thread_id": thread_id, "turn_status": "completed"}
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -113,6 +191,17 @@ def make_node_split_ready(
     title = str(snapshot["tree_state"]["node_index"][node_id]["title"])
     doc_service = NodeDocumentService(storage)
     detail_service = NodeDetailService(storage, tree_service)
+    storage.thread_registry_store.write_entry(
+        project_id,
+        node_id,
+        "audit",
+        {
+            "projectId": project_id,
+            "nodeId": node_id,
+            "threadRole": "audit",
+            "threadId": f"audit-thread-{node_id}",
+        },
+    )
     doc_service.put_document(
         project_id,
         node_id,
@@ -187,6 +276,50 @@ def make_review_service(
     )
 
 
+def _build_v2_runtime(
+    *,
+    storage: Storage,
+    tree_service: TreeService,
+    chat_service: ChatService,
+    codex_client,
+) -> tuple[ThreadRuntimeService, WorkflowEventPublisher]:
+    request_ledger_service = RequestLedgerService()
+    thread_registry_service = ThreadRegistryService(storage.thread_registry_store)
+    chat_service._thread_lineage_service.set_thread_registry_service(thread_registry_service)
+    conversation_event_broker = ChatEventBroker()
+    workflow_event_broker = GlobalEventBroker()
+    query_service = ThreadQueryService(
+        storage=storage,
+        chat_service=chat_service,
+        thread_lineage_service=chat_service._thread_lineage_service,
+        codex_client=codex_client,
+        snapshot_store=storage.thread_snapshot_store_v2,
+        registry_service=thread_registry_service,
+        request_ledger_service=request_ledger_service,
+        thread_event_broker=conversation_event_broker,
+    )
+    runtime = ThreadRuntimeService(
+        storage=storage,
+        tree_service=tree_service,
+        chat_service=chat_service,
+        codex_client=codex_client,
+        query_service=query_service,
+        request_ledger_service=request_ledger_service,
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+    workflow_publisher = WorkflowEventPublisher(workflow_event_broker)
+    return runtime, workflow_publisher
+
+
+def _find_audit_snapshot_item(storage: Storage, project_id: str, node_id: str, item_id: str) -> dict | None:
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "audit")
+    for item in snapshot.get("items", []):
+        if item.get("id") == item_id:
+            return item
+    return None
+
+
 def wait_for_rollup_draft(
     storage: Storage,
     project_id: str,
@@ -231,6 +364,33 @@ def wait_for_integration_terminal(
                 return session
         time.sleep(0.01)
     raise AssertionError("Timed out waiting for integration turn to finish.")
+
+
+def wait_for_integration_terminal_v2(
+    storage: Storage,
+    project_id: str,
+    review_node_id: str,
+    *,
+    timeout_sec: float = 2.0,
+) -> dict:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, review_node_id, "audit")
+        if snapshot.get("activeTurnId") is None and snapshot.get("processingState") == "idle":
+            assistant = next(
+                (
+                    item
+                    for item in reversed(snapshot.get("items", []))
+                    if isinstance(item, dict)
+                    and item.get("kind") == "message"
+                    and item.get("role") == "assistant"
+                ),
+                None,
+            )
+            if assistant is not None and assistant.get("status") == "completed":
+                return snapshot
+        time.sleep(0.01)
+    raise AssertionError("Timed out waiting for V2 integration turn to finish.")
 
 
 # ── Fake split helper ────────────────────────────────────────────
@@ -770,6 +930,182 @@ def test_integration_rollup_uses_read_only_sandbox_and_output_schema(
     assert codex_client.run_kwargs[0]["output_schema"] == build_review_rollup_output_schema()
 
 
+def test_review_rollup_v2_rehearsal_uses_v2_snapshot_without_legacy_events(
+    storage: Storage, workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    codex_client = FakeIntegrationV2CodexClient(summary="Integrated successfully.")
+    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
+    chat_event_broker = ChatEventBroker()
+    chat_service = ChatService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+    thread_runtime_service_v2, workflow_event_publisher_v2 = _build_v2_runtime(
+        storage=storage,
+        tree_service=tree_service,
+        chat_service=chat_service,
+        codex_client=codex_client,
+    )
+    published: list[dict[str, object]] = []
+    original_publish = chat_event_broker.publish
+
+    def capture_publish(project_id_arg, node_id_arg, event, thread_role=""):
+        published.append(
+            {
+                "project_id": project_id_arg,
+                "node_id": node_id_arg,
+                "thread_role": thread_role,
+                "event": dict(event),
+            }
+        )
+        return original_publish(project_id_arg, node_id_arg, event, thread_role=thread_role)
+
+    chat_event_broker.publish = capture_publish  # type: ignore[method-assign]
+    review_service = ReviewService(
+        storage,
+        tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        chat_service=chat_service,
+        thread_runtime_service_v2=thread_runtime_service_v2,
+        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_rehearsal_enabled=True,
+        rehearsal_workspace_root=workspace_root.parent,
+    )
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=1)
+    first_child_id = split_result["first_child_id"]
+    review_node_id = split_result["review_node_id"]
+
+    simulate_execution_completed(storage, project_id, first_child_id, "sha256:only-child")
+    review_service.start_local_review(project_id, first_child_id)
+    review_service.accept_local_review(project_id, first_child_id, "Only child done.")
+
+    review_state = wait_for_rollup_draft(storage, project_id, review_node_id)
+    assert review_state["rollup"]["draft"]["summary"] == "Integrated successfully."
+
+    audit_snapshot = wait_for_rollup_draft(storage, project_id, review_node_id)
+    assert audit_snapshot["rollup"]["status"] == "ready"
+
+    conversation_snapshot = wait_for_integration_terminal_v2(storage, project_id, review_node_id)
+    session = storage.chat_state_store.read_session(project_id, review_node_id, thread_role="audit")
+    assert session["active_turn_id"] is None
+    assert session["messages"] == []
+
+    assistant_messages = [
+        item for item in conversation_snapshot["items"]
+        if item.get("kind") == "message" and item.get("role") == "assistant"
+    ]
+    assert len(assistant_messages) == 1
+    assert "Integrated successfully." in assistant_messages[0]["text"]
+
+    legacy_types = {"message_created", "assistant_delta", "assistant_completed"}
+    assert not any(
+        item["thread_role"] == "audit"
+        and isinstance(item["event"], dict)
+        and item["event"].get("type") in legacy_types
+        for item in published
+    )
+
+
+def test_review_rollup_v2_production_uses_v2_snapshot_without_legacy_events(
+    storage: Storage, workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    codex_client = FakeIntegrationV2CodexClient(summary="Integrated successfully.")
+    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
+    chat_event_broker = ChatEventBroker()
+    chat_service = ChatService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+    thread_runtime_service_v2, workflow_event_publisher_v2 = _build_v2_runtime(
+        storage=storage,
+        tree_service=tree_service,
+        chat_service=chat_service,
+        codex_client=codex_client,
+    )
+    published: list[dict[str, object]] = []
+    original_publish = chat_event_broker.publish
+
+    def capture_publish(project_id_arg, node_id_arg, event, thread_role=""):
+        published.append(
+            {
+                "project_id": project_id_arg,
+                "node_id": node_id_arg,
+                "thread_role": thread_role,
+                "event": dict(event),
+            }
+        )
+        return original_publish(project_id_arg, node_id_arg, event, thread_role=thread_role)
+
+    chat_event_broker.publish = capture_publish  # type: ignore[method-assign]
+    review_service = ReviewService(
+        storage,
+        tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        chat_service=chat_service,
+        thread_runtime_service_v2=thread_runtime_service_v2,
+        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_enabled=True,
+    )
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=1)
+    first_child_id = split_result["first_child_id"]
+    review_node_id = split_result["review_node_id"]
+
+    simulate_execution_completed(storage, project_id, first_child_id, "sha256:only-child")
+    review_service.start_local_review(project_id, first_child_id)
+    review_service.accept_local_review(project_id, first_child_id, "Only child done.")
+
+    review_state = wait_for_rollup_draft(storage, project_id, review_node_id)
+    assert review_state["rollup"]["draft"]["summary"] == "Integrated successfully."
+
+    conversation_snapshot = wait_for_integration_terminal_v2(storage, project_id, review_node_id)
+    session = storage.chat_state_store.read_session(project_id, review_node_id, thread_role="audit")
+    assert session["active_turn_id"] is None
+    assert session["messages"] == []
+
+    assistant_messages = [
+        item for item in conversation_snapshot["items"]
+        if item.get("kind") == "message" and item.get("role") == "assistant"
+    ]
+    assert len(assistant_messages) == 1
+    assert "Integrated successfully." in assistant_messages[0]["text"]
+
+    legacy_types = {"message_created", "assistant_delta", "assistant_completed"}
+    assert not any(
+        item["thread_role"] == "audit"
+        and isinstance(item["event"], dict)
+        and item["event"].get("type") in legacy_types
+        for item in published
+    )
+
+
 def test_integration_rollup_read_only_sandbox_error_marks_session_failed(
     storage: Storage, workspace_root,
 ) -> None:
@@ -807,6 +1143,54 @@ def test_integration_rollup_read_only_sandbox_error_marks_session_failed(
         "sha": None,
         "generated_at": None,
     }
+
+
+def test_review_rollup_v2_rehearsal_rejects_workspace_outside_sandbox_root(
+    storage: Storage, workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    codex_client = FakeIntegrationV2CodexClient(summary="Integrated successfully.")
+    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
+    chat_event_broker = ChatEventBroker()
+    chat_service = ChatService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+    thread_runtime_service_v2, workflow_event_publisher_v2 = _build_v2_runtime(
+        storage=storage,
+        tree_service=tree_service,
+        chat_service=chat_service,
+        codex_client=codex_client,
+    )
+    review_service = ReviewService(
+        storage,
+        tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        chat_service=chat_service,
+        thread_runtime_service_v2=thread_runtime_service_v2,
+        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        execution_audit_v2_rehearsal_enabled=True,
+        rehearsal_workspace_root=workspace_root / "outside-root",
+    )
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=1)
+    review_node_id = split_result["review_node_id"]
+    storage.review_state_store.set_rollup(project_id, review_node_id, "ready")
+
+    with pytest.raises(ExecutionAuditRehearsalWorkspaceUnsafe):
+        review_service.start_review_rollup(project_id, review_node_id)
 
 
 def test_integration_rollup_failure_keeps_ready_without_draft_and_marks_session_error(
@@ -903,7 +1287,7 @@ def test_integration_rollup_can_retry_after_error_and_persist_new_draft(
     assert "Recovered integration draft." in assistants[-1]["content"]
 
 
-def test_accept_rollup_review_sets_accepted_and_appends_to_parent_audit(
+def test_accept_rollup_review_sets_accepted_and_writes_parent_audit_v2_item(
     storage: Storage, workspace_root,
 ) -> None:
     project_service = ProjectService(storage)
@@ -932,6 +1316,17 @@ def test_accept_rollup_review_sets_accepted_and_appends_to_parent_audit(
     review_state = wait_for_rollup_draft(storage, project_id, review_node_id)
     draft_sha = review_state["rollup"]["draft"]["sha"]
     assert draft_sha is not None
+    storage.thread_registry_store.write_entry(
+        project_id,
+        root_id,
+        "audit",
+        {
+            "projectId": project_id,
+            "nodeId": root_id,
+            "threadRole": "audit",
+            "threadId": f"audit-thread-{root_id}",
+        },
+    )
 
     (workspace_root / "changed-after-draft.txt").write_text("new content\n", encoding="utf-8")
 
@@ -953,14 +1348,17 @@ def test_accept_rollup_review_sets_accepted_and_appends_to_parent_audit(
         "generated_at": None,
     }
 
-    audit_session = storage.chat_state_store.read_session(
-        project_id, root_id, thread_role="audit"
+    rollup_item = _find_audit_snapshot_item(
+        storage,
+        project_id,
+        root_id,
+        "audit-package:rollup",
     )
-    messages = audit_session.get("messages", [])
-    rollup_msgs = [m for m in messages if m.get("message_id") == "audit-package:rollup"]
-    assert len(rollup_msgs) == 1
-    assert "Integration looks good." in rollup_msgs[0]["content"]
-    assert draft_sha in rollup_msgs[0]["content"]
+    assert rollup_item is not None
+    assert rollup_item["kind"] == "message"
+    assert rollup_item["role"] == "system"
+    assert "Integration looks good." in rollup_item["text"]
+    assert draft_sha in rollup_item["text"]
 
 
 def test_accept_rollup_review_rejects_non_ready(
@@ -1040,6 +1438,58 @@ def test_accept_rollup_review_rejects_while_integration_turn_is_active(
         review_node_id,
         session,
         thread_role="audit",
+    )
+
+    with pytest.raises(ReviewNotAllowed, match="still running"):
+        review_service.accept_rollup_review(project_id, review_node_id)
+
+
+def test_accept_rollup_review_v2_rejects_while_integration_turn_is_active_from_snapshot(
+    storage: Storage, workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    review_service = ReviewService(
+        storage,
+        tree_service,
+        execution_audit_v2_enabled=True,
+    )
+
+    split_result = do_lazy_split(storage, tree_service, project_id, root_id, subtask_count=1)
+    review_node_id = split_result["review_node_id"]
+    storage.review_state_store.set_rollup(project_id, review_node_id, "ready")
+    storage.review_state_store.set_rollup_draft(
+        project_id,
+        review_node_id,
+        summary="Draft exists",
+        sha="sha256:draft",
+    )
+    storage.thread_registry_store.write_entry(
+        project_id,
+        review_node_id,
+        "audit",
+        {
+            "projectId": project_id,
+            "nodeId": review_node_id,
+            "threadRole": "audit",
+            "threadId": "audit-thread-1",
+        },
+    )
+    storage.thread_snapshot_store_v2.write_snapshot(
+        project_id,
+        review_node_id,
+        "audit",
+        {
+            "projectId": project_id,
+            "nodeId": review_node_id,
+            "threadRole": "audit",
+            "threadId": "audit-thread-1",
+            "activeTurnId": "rollup-turn-1",
+            "processingState": "running",
+        },
     )
 
     with pytest.raises(ReviewNotAllowed, match="still running"):

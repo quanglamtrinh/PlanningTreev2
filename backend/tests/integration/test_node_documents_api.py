@@ -61,6 +61,14 @@ def wait_for_terminal_status(client, project_id: str, timeout_sec: float = 2.0) 
     raise AssertionError("split api job did not finish in time")
 
 
+def _find_audit_snapshot_item(client, project_id: str, node_id: str, item_id: str) -> dict | None:
+    snapshot = client.app.state.storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "audit")
+    for item in snapshot.get("items", []):
+        if item.get("id") == item_id:
+            return item
+    return None
+
+
 def test_root_documents_can_be_read_and_written(client, tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
@@ -105,6 +113,75 @@ def test_child_document_endpoints_work_immediately_after_create_child(client, tm
     response = client.get(f"/v1/projects/{project_id}/nodes/{child_id}/documents/spec")
     assert response.status_code == 200
     assert response.json()["content"] == ""
+
+
+def test_confirm_frame_route_writes_v2_audit_item_and_preserves_ordering_on_reconfirm(
+    client,
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+
+    attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    assert attached.status_code == 200
+    payload = attached.json()
+    project_id = payload["project"]["id"]
+    root_id = payload["tree_state"]["root_node_id"]
+
+    put_response = client.put(
+        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        json={"content": "# Task Title\nLogin flow\n\n# Task-Shaping Fields\n- target platform: web\n"},
+    )
+    assert put_response.status_code == 200
+
+    first_confirm = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame")
+    assert first_confirm.status_code == 200
+    first_item = _find_audit_snapshot_item(client, project_id, root_id, "audit-record:frame")
+    assert first_item is not None
+    first_sequence = first_item["sequence"]
+    first_created_at = first_item["createdAt"]
+
+    second_confirm = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame")
+    assert second_confirm.status_code == 200
+    second_item = _find_audit_snapshot_item(client, project_id, root_id, "audit-record:frame")
+    assert second_item is not None
+    assert second_item["kind"] == "message"
+    assert second_item["role"] == "system"
+    assert "Canonical confirmed frame snapshot" in second_item["text"]
+    assert second_item["sequence"] == first_sequence
+    assert second_item["createdAt"] == first_created_at
+
+
+def test_confirm_spec_route_writes_v2_audit_item_via_production_wiring(client, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+
+    attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    assert attached.status_code == 200
+    payload = attached.json()
+    project_id = payload["project"]["id"]
+    root_id = payload["tree_state"]["root_node_id"]
+
+    frame_response = client.put(
+        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        json={"content": "# Task Title\nLogin flow\n\n# Task-Shaping Fields\n- target platform: web\n"},
+    )
+    assert frame_response.status_code == 200
+    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame").status_code == 200
+
+    spec_response = client.put(
+        f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec",
+        json={"content": "# Spec\nBuild the login flow.\n"},
+    )
+    assert spec_response.status_code == 200
+    confirm_response = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-spec")
+    assert confirm_response.status_code == 200
+
+    item = _find_audit_snapshot_item(client, project_id, root_id, "audit-record:spec")
+    assert item is not None
+    assert item["kind"] == "message"
+    assert item["role"] == "system"
+    assert "Canonical confirmed spec snapshot" in item["text"]
 
 
 def test_split_created_child_document_endpoints_work(client, tmp_path: Path) -> None:

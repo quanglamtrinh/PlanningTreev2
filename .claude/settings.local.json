@@ -41,7 +41,12 @@
       "Bash(.venv/Scripts/python.exe -m pytest backend/tests/unit/ -q)",
       "Bash(.venv/Scripts/python.exe -c \"from backend.main import create_app; print\\('OK'\\)\")",
       "Bash(.venv/Scripts/python.exe -m pytest backend/tests/unit/test_finish_task_service.py backend/tests/unit/test_shaping_freeze.py backend/tests/unit/test_split_service.py -q 2>&1)",
-      "Bash(npx --prefix frontend tsc --noEmit --project frontend/tsconfig.app.json)"
+      "Bash(npx --prefix frontend tsc --noEmit --project frontend/tsconfig.app.json)",
+      "Bash(find C:/Users/Thong -path *CodexMonitor/src/features/messages* -type f \\\\\\(-name *.tsx -o -name *.ts \\\\\\))",
+      "Bash(find C:/Users/Thong/CodexUI/CodexMonitor/src/features/messages -type f \\\\\\(-name *.tsx -o -name *.ts \\\\\\))",
+      "Bash(find C:/Users/Thong/PlanningTreeMain/frontend/src -maxdepth 5 -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
+      "Bash(find C:UsersThongPlanningTreeMainfrontendsrc -type f \\\\\\(-name *chat* -o -name *stream* -o -name *sse* -o -name *hook* \\\\\\))",
+      "Bash(find C:UsersThongPlanningTreeMainfrontendsrc -type f \\\\\\(-name *hook* -o -name *use* \\\\\\))"
     ]
   }
 }

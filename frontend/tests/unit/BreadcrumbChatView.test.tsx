@@ -255,9 +255,23 @@ function makeDetailState(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function setBootstrapStatus(overrides: Partial<NonNullable<ReturnType<typeof useProjectStore.getState>['bootstrap']>> = {}) {
+  useProjectStore.setState((state) => ({
+    ...state,
+    bootstrap: {
+      ready: true,
+      workspace_configured: true,
+      codex_available: true,
+      codex_path: 'codex',
+      execution_audit_v2_enabled: false,
+      ...overrides,
+    },
+  }))
+}
+
 function LocationProbe() {
   const location = useLocation()
-  return <div data-testid="location-path">{location.pathname}</div>
+  return <div data-testid="location-path">{`${location.pathname}${location.search}`}</div>
 }
 
 function renderBreadcrumbChatView(initialEntry = '/projects/project-1/nodes/root/chat') {
@@ -266,6 +280,7 @@ function renderBreadcrumbChatView(initialEntry = '/projects/project-1/nodes/root
       <LocationProbe />
       <Routes>
         <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbChatView />} />
+        <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<div data-testid="chat-v2-route" />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -281,6 +296,7 @@ describe('BreadcrumbChatView', () => {
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.getState().reset()
     useNodeDocumentStore.getState().reset()
+    setBootstrapStatus()
     apiMock.getChatSession.mockResolvedValue(makeSession())
     apiMock.getSplitStatus.mockResolvedValue(makeIdleSplitStatus())
     apiMock.getNodeDocument.mockResolvedValue({
@@ -340,7 +356,9 @@ describe('BreadcrumbChatView', () => {
     expect(screen.getByTestId('breadcrumb-detail-pane')).toBeInTheDocument()
     const detailCard = await screen.findByTestId('breadcrumb-node-detail-card')
     expect(screen.getByTestId('message-feed')).toBeInTheDocument()
-    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+    await waitFor(() => {
+      expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+    })
     fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
     expect(within(detailCard).getByRole('heading', { level: 2, name: 'Root' })).toBeInTheDocument()
     expect(within(detailCard).getByRole('heading', { level: 3, name: 'Root' })).toBeInTheDocument()
@@ -356,7 +374,8 @@ describe('BreadcrumbChatView', () => {
     })
   })
 
-  it('switches between Ask, Execution, and Audit thread sessions', async () => {
+  it('redirects execution and audit tab selections to /chat-v2', async () => {
+    setBootstrapStatus({ execution_audit_v2_enabled: true })
     apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'child-1'))
     apiMock.getChatSession.mockImplementation(
       async (_projectId: string, _nodeId: string, threadRole?: string) =>
@@ -371,38 +390,33 @@ describe('BreadcrumbChatView', () => {
         }),
     )
 
-    renderBreadcrumbChatView()
+    const view = renderBreadcrumbChatView()
 
     await screen.findByTestId('breadcrumb-node-detail-card')
 
     expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+    await waitFor(() => {
+      expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+    })
     expect(screen.getByTestId('message-feed')).toHaveTextContent('0 messages')
+    expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat?thread=ask')
 
     fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-execution'))
     await waitFor(() => {
-      expect(screen.getByTestId('breadcrumb-thread-tab-execution')).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=execution')
     })
-    expect(screen.getByTestId('message-feed')).toHaveTextContent('1 messages')
-    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
 
+    view.unmount()
+    renderBreadcrumbChatView('/projects/project-1/nodes/root/chat?thread=ask')
+    await screen.findByTestId('breadcrumb-node-detail-card')
     fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
     await waitFor(() => {
-      expect(screen.getByTestId('breadcrumb-thread-tab-audit')).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=audit')
     })
-    expect(screen.getByTestId('message-feed')).toHaveTextContent('2 messages')
-    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
-
-    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-ask'))
-    await waitFor(() => {
-      expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
-    })
-    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
-    expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'root', 'execution')
-    expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'root', 'audit')
   })
 
-  it('renders review nodes on the Review Audit thread', async () => {
+  it('redirects review-node breadcrumb routes to /chat-v2 audit', async () => {
+    setBootstrapStatus({ execution_audit_v2_enabled: true })
     const snapshot = makeSnapshot('project-1', 'review-1')
     apiMock.getSnapshot.mockResolvedValue({
       ...snapshot,
@@ -436,11 +450,9 @@ describe('BreadcrumbChatView', () => {
 
     renderBreadcrumbChatView('/projects/project-1/nodes/review-1/chat')
 
-    await screen.findByTestId('breadcrumb-node-detail-card')
-    expect(screen.getByTestId('breadcrumb-review-audit-header')).toBeInTheDocument()
-    expect(screen.getByTestId('breadcrumb-thread-tab-review-audit')).toHaveTextContent('Review Audit')
-    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
-    expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'review-1', 'audit')
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/review-1/chat-v2?thread=audit')
+    })
   })
 
   it('disables ask_planning when shaping is frozen', async () => {
@@ -464,7 +476,7 @@ describe('BreadcrumbChatView', () => {
     })
   })
 
-  it('enables audit only when audit_writable is true', async () => {
+  it('keeps ask composer enabled only on the legacy ask surface', async () => {
     apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'child-1'))
     apiMock.getDetailState.mockResolvedValue(
       makeDetailState({
@@ -479,12 +491,39 @@ describe('BreadcrumbChatView', () => {
     renderBreadcrumbChatView()
 
     await screen.findByTestId('breadcrumb-node-detail-card')
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
+  })
 
-    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
+  it('keeps execution traffic on the legacy surface when the V2 flag is disabled', async () => {
+    setBootstrapStatus({ execution_audit_v2_enabled: false })
+    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'child-1'))
+    apiMock.getChatSession.mockResolvedValue(
+      makeSession({
+        thread_role: 'execution',
+        messages: [{ message_id: 'exec-1' } as never],
+      }),
+    )
+
+    renderBreadcrumbChatView('/projects/project-1/nodes/root/chat?thread=execution')
+
+    await screen.findByTestId('breadcrumb-node-detail-card')
     await waitFor(() => {
-      expect(screen.getByTestId('breadcrumb-thread-tab-audit')).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat?thread=execution')
     })
+    expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'root', 'execution')
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+  })
+
+  it('does not load the legacy store before redirecting execution traffic to /chat-v2', async () => {
+    setBootstrapStatus({ execution_audit_v2_enabled: true })
+    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'child-1'))
+
+    renderBreadcrumbChatView('/projects/project-1/nodes/root/chat?thread=execution')
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=execution')
+    })
+    expect(apiMock.getChatSession).not.toHaveBeenCalled()
   })
 
   it('reloads project details when the store is focused on another project', async () => {
@@ -562,216 +601,8 @@ describe('BreadcrumbChatView', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(screen.getByTestId('location-path')).toHaveTextContent(
-      '/projects/project-1/nodes/child-1/chat',
+      '/projects/project-1/nodes/child-1/chat?thread=ask',
     )
   })
 
-  it('keeps the review summary and shows an inline error when accept review fails', async () => {
-    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'root'))
-    apiMock.getDetailState.mockResolvedValue(
-      makeDetailState({
-        can_accept_local_review: true,
-        audit_writable: true,
-        execution_started: true,
-        execution_completed: true,
-        execution_status: 'review_pending',
-      }),
-    )
-    apiMock.acceptLocalReview.mockRejectedValue(new Error('Review conflict'))
-
-    renderBreadcrumbChatView()
-
-    await screen.findByTestId('breadcrumb-node-detail-card')
-    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
-
-    const summaryInput = await screen.findByPlaceholderText('Review summary...')
-    fireEvent.change(summaryInput, { target: { value: 'Looks good overall' } })
-    fireEvent.click(screen.getByTestId('accept-review-button'))
-
-    expect(await screen.findByTestId('accept-review-error')).toHaveTextContent('Review conflict')
-    expect(summaryInput).toHaveValue('Looks good overall')
-
-    fireEvent.change(summaryInput, { target: { value: 'Looks good with one follow-up' } })
-    await waitFor(() => {
-      expect(screen.queryByTestId('accept-review-error')).not.toBeInTheDocument()
-    })
-    expect(summaryInput).toHaveValue('Looks good with one follow-up')
-  })
-
-  it('clears the review summary only after accept review succeeds', async () => {
-    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1', 'root'))
-    apiMock.getDetailState
-      .mockResolvedValueOnce(
-        makeDetailState({
-          can_accept_local_review: true,
-          audit_writable: true,
-          execution_started: true,
-          execution_completed: true,
-          execution_status: 'review_pending',
-        }),
-      )
-      .mockResolvedValueOnce(
-        makeDetailState({
-          can_accept_local_review: false,
-          audit_writable: true,
-          execution_started: true,
-          execution_completed: true,
-          execution_status: 'review_accepted',
-        }),
-      )
-
-    renderBreadcrumbChatView()
-
-    await screen.findByTestId('breadcrumb-node-detail-card')
-    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
-
-    const summaryInput = await screen.findByPlaceholderText('Review summary...')
-    fireEvent.change(summaryInput, { target: { value: 'Looks good overall' } })
-    fireEvent.click(screen.getByTestId('accept-review-button'))
-
-    await waitFor(() => {
-      expect(apiMock.acceptLocalReview).toHaveBeenCalledWith('project-1', 'root', 'Looks good overall')
-    })
-    await waitFor(() => {
-      expect(screen.queryByTestId('accept-review-bar')).not.toBeInTheDocument()
-    })
-    expect(screen.queryByTestId('accept-review-error')).not.toBeInTheDocument()
-  })
-
-  it('navigates to the activated sibling and resets to Ask after accept review succeeds', async () => {
-    let accepted = false
-    apiMock.getSnapshot.mockImplementation(async () => {
-      if (!accepted) {
-        return makeSnapshot('project-1', 'root')
-      }
-      return {
-        schema_version: 6,
-        project: {
-          id: 'project-1',
-          name: 'Project project-1',
-          root_goal: 'Goal project-1',
-          project_path: 'C:/workspace/project-1',
-          created_at: '2026-03-20T00:00:00Z',
-          updated_at: '2026-03-20T00:00:00Z',
-        },
-        tree_state: {
-          root_node_id: 'root',
-          active_node_id: 'child-2',
-          node_registry: [
-            {
-              node_id: 'root',
-              parent_id: null,
-              child_ids: ['child-1', 'child-2'],
-              title: 'Root',
-              description: 'Root node',
-              status: 'draft',
-              node_kind: 'root',
-              depth: 0,
-              display_order: 0,
-              hierarchical_number: '1',
-              is_superseded: false,
-              created_at: '2026-03-20T00:00:00Z',
-              workflow: {
-                frame_confirmed: false,
-                active_step: 'frame' as const,
-                spec_confirmed: false,
-              },
-            },
-            {
-              node_id: 'child-1',
-              parent_id: 'root',
-              child_ids: [],
-              title: 'Child',
-              description: 'Child node',
-              status: 'done',
-              node_kind: 'original',
-              depth: 1,
-              display_order: 0,
-              hierarchical_number: '1.1',
-              is_superseded: false,
-              created_at: '2026-03-20T00:00:00Z',
-              workflow: {
-                frame_confirmed: false,
-                active_step: 'frame' as const,
-                spec_confirmed: false,
-              },
-            },
-            {
-              node_id: 'child-2',
-              parent_id: 'root',
-              child_ids: [],
-              title: 'Child 2',
-              description: 'Next sibling',
-              status: 'ready',
-              node_kind: 'original',
-              depth: 1,
-              display_order: 1,
-              hierarchical_number: '1.2',
-              is_superseded: false,
-              created_at: '2026-03-20T00:00:00Z',
-              workflow: {
-                frame_confirmed: false,
-                active_step: 'frame' as const,
-                spec_confirmed: false,
-              },
-            },
-          ],
-        },
-        updated_at: '2026-03-20T00:00:00Z',
-      }
-    })
-    apiMock.getDetailState.mockImplementation(async (_projectId: string, currentNodeId: string) => {
-      if (currentNodeId === 'child-2') {
-        return makeDetailState({
-          node_id: 'child-2',
-          execution_started: false,
-          execution_completed: false,
-          shaping_frozen: false,
-          can_finish_task: false,
-          can_accept_local_review: false,
-          execution_status: null,
-          audit_writable: false,
-          package_audit_ready: false,
-        })
-      }
-      return makeDetailState({
-        can_accept_local_review: !accepted,
-        audit_writable: true,
-        execution_started: true,
-        execution_completed: true,
-        execution_status: accepted ? 'review_accepted' : 'review_pending',
-      })
-    })
-    apiMock.acceptLocalReview.mockImplementation(async () => {
-      accepted = true
-      return {
-        node_id: 'root',
-        status: 'review_accepted',
-        activated_sibling_id: 'child-2',
-      }
-    })
-
-    renderBreadcrumbChatView()
-
-    await screen.findByTestId('breadcrumb-node-detail-card')
-    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
-
-    const summaryInput = await screen.findByPlaceholderText('Review summary...')
-    fireEvent.change(summaryInput, { target: { value: 'Looks good overall' } })
-    fireEvent.click(screen.getByTestId('accept-review-button'))
-
-    await waitFor(() => {
-      expect(apiMock.acceptLocalReview).toHaveBeenCalledWith('project-1', 'root', 'Looks good overall')
-    })
-    await waitFor(() => {
-      expect(apiMock.getChatSession).toHaveBeenCalledWith('project-1', 'child-2', 'ask_planning')
-    })
-    await waitFor(() => {
-      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'child-2')
-    })
-    await waitFor(() => {
-      expect(useProjectStore.getState().selectedNodeId).toBe('child-2')
-    })
-    expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'true')
-  })
 })

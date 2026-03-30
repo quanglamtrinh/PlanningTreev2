@@ -7,6 +7,7 @@ import pytest
 
 from backend.ai.review_rollup_prompt_builder import build_review_rollup_base_instructions
 from backend.ai.codex_client import CodexTransportError
+from backend.conversation.services.thread_registry_service import ThreadRegistryService
 from backend.main import create_app
 from backend.services import planningtree_workspace
 from backend.services.project_service import ProjectService
@@ -87,12 +88,19 @@ def codex_client() -> FakeThreadLineageCodexClient:
 
 @pytest.fixture
 def thread_lineage_service(storage, tree_service, codex_client) -> ThreadLineageService:
-    return ThreadLineageService(storage, codex_client, tree_service)
+    registry_service = ThreadRegistryService(storage.thread_registry_store)
+    return ThreadLineageService(
+        storage,
+        codex_client,
+        tree_service,
+        thread_registry_service_v2=registry_service,
+    )
 
 
 def test_create_app_exposes_thread_lineage_service(data_root: Path) -> None:
     app = create_app(data_root=data_root)
     assert isinstance(app.state.thread_lineage_service, ThreadLineageService)
+    assert app.state.thread_lineage_service._thread_registry_service_v2 is app.state.thread_registry_service_v2
 
 
 def test_root_audit_bootstrap_from_empty_session(
@@ -114,6 +122,10 @@ def test_root_audit_bootstrap_from_empty_session(
     assert len(codex_client.started_threads) == 1
     assert [item["thread_id"] for item in codex_client.turns_run] == [session["thread_id"]]
     assert "canonical audit assistant" in str(codex_client.started_threads[0]["base_instructions"]).lower()
+    registry_entry = storage.thread_registry_store.read_entry(project_id, root_id, "audit")
+    assert registry_entry["threadId"] == session["thread_id"]
+    assert registry_entry["forkReason"] == "root_bootstrap"
+    assert registry_entry["lineageRootThreadId"] == session["thread_id"]
 
 
 def test_root_audit_resume_when_thread_exists(
@@ -280,6 +292,13 @@ def test_ensure_forked_thread_creates_fresh_fork_and_persists_lineage(
     assert len(codex_client.forked_threads) == 1
     assert codex_client.forked_threads[0]["base_instructions"] == "Ask planning base instructions"
     assert codex_client.forked_threads[0]["dynamic_tools"] == [{"name": "emit_frame_content"}]
+    registry_entry = storage.thread_registry_store.read_entry(project_id, root_id, "ask_planning")
+    assert registry_entry["threadId"] == session["thread_id"]
+    assert registry_entry["forkedFromThreadId"] == root_session["thread_id"]
+    assert registry_entry["forkedFromNodeId"] == root_id
+    assert registry_entry["forkedFromRole"] == "audit"
+    assert registry_entry["forkReason"] == "ask_bootstrap"
+    assert registry_entry["lineageRootThreadId"] == root_session["lineage_root_thread_id"]
 
 
 def test_ensure_forked_thread_resumes_existing_fork_without_overwriting_metadata(

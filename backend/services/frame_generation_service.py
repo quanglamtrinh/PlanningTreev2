@@ -21,6 +21,7 @@ from backend.errors.app_errors import (
     NodeNotFound,
     ProjectNotFound,
 )
+from backend.conversation.services.thread_transcript_builder import ThreadTranscriptBuilder
 from backend.services import planningtree_workspace
 from backend.services.execution_gating import require_shaping_not_frozen
 from backend.services.thread_lineage_service import ThreadLineageService
@@ -51,12 +52,17 @@ class FrameGenerationService:
         codex_client: CodexAppClient,
         thread_lineage_service: ThreadLineageService,
         frame_gen_timeout: int,
+        thread_transcript_builder: ThreadTranscriptBuilder | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
         self._codex_client = codex_client
         self._thread_lineage_service = thread_lineage_service
         self._timeout = int(frame_gen_timeout)
+        self._thread_transcript_builder = thread_transcript_builder or ThreadTranscriptBuilder(
+            storage,
+            storage.thread_snapshot_store_v2,
+        )
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}  # keyed by "project_id::node_id"
 
@@ -171,14 +177,11 @@ class FrameGenerationService:
 
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             task_context = build_split_context(snapshot, node, node_by_id)
-
-            # Read chat history for this node
-            chat_session = self._storage.chat_state_store.read_session(
+            chat_messages = self._thread_transcript_builder.build_prompt_messages(
                 project_id,
                 node_id,
-                thread_role="ask_planning",
+                "ask_planning",
             )
-            chat_messages = chat_session.get("messages", [])
 
         # Build prompt and run turn (outside lock)
         role_prefix = build_frame_generation_role_prefix()

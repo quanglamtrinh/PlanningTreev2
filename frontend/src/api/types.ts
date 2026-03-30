@@ -17,6 +17,7 @@ export interface BootstrapStatus {
   workspace_configured: boolean
   codex_available: boolean
   codex_path: string | null
+  execution_audit_v2_enabled?: boolean
 }
 
 export interface CodexAccount {
@@ -432,4 +433,385 @@ export interface AcceptRollupReviewResponse {
   rollup_status: 'accepted'
   summary: string
   sha: string
+}
+
+// Conversation V2 types
+
+export type ProcessingState = 'idle' | 'running' | 'waiting_user_input' | 'failed'
+export type ItemStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'requested'
+  | 'answer_submitted'
+  | 'answered'
+  | 'stale'
+export type ItemSource = 'upstream' | 'backend' | 'local'
+export type ItemTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted'
+export type ConversationItemKind =
+  | 'message'
+  | 'reasoning'
+  | 'plan'
+  | 'tool'
+  | 'userInput'
+  | 'status'
+  | 'error'
+
+export interface ItemBase {
+  id: string
+  kind: ConversationItemKind
+  threadId: string
+  turnId: string | null
+  sequence: number
+  createdAt: string
+  updatedAt: string
+  status: ItemStatus
+  source: ItemSource
+  tone: ItemTone
+  metadata: Record<string, unknown>
+}
+
+export interface ConversationMessageItem extends ItemBase {
+  kind: 'message'
+  role: 'user' | 'assistant' | 'system'
+  text: string
+  format: 'markdown'
+}
+
+export interface ReasoningItem extends ItemBase {
+  kind: 'reasoning'
+  summaryText: string
+  detailText: string | null
+}
+
+export interface PlanStep {
+  id: string
+  text: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
+export interface PlanItem extends ItemBase {
+  kind: 'plan'
+  title: string | null
+  text: string
+  steps: PlanStep[]
+}
+
+export interface ToolOutputFile {
+  path: string
+  changeType: 'created' | 'updated' | 'deleted'
+  summary: string | null
+}
+
+export interface ToolItem extends ItemBase {
+  kind: 'tool'
+  toolType: 'commandExecution' | 'fileChange' | 'generic'
+  title: string
+  toolName: string | null
+  callId: string | null
+  argumentsText: string | null
+  outputText: string
+  outputFiles: ToolOutputFile[]
+  exitCode: number | null
+}
+
+export interface UserInputAnswer {
+  questionId: string
+  value: string
+  label: string | null
+}
+
+export interface UserInputQuestionOption {
+  label: string
+  description: string | null
+}
+
+export interface UserInputQuestion {
+  id: string
+  header: string | null
+  prompt: string
+  inputType: 'single_select' | 'multi_select' | 'text'
+  options: UserInputQuestionOption[]
+}
+
+export interface UserInputItem extends ItemBase {
+  kind: 'userInput'
+  requestId: string
+  title: string | null
+  questions: UserInputQuestion[]
+  answers: UserInputAnswer[]
+  requestedAt: string
+  resolvedAt: string | null
+}
+
+export interface StatusItem extends ItemBase {
+  kind: 'status'
+  code: string
+  label: string
+  detail: string | null
+}
+
+export interface ErrorItem extends ItemBase {
+  kind: 'error'
+  code: string
+  title: string
+  message: string
+  recoverable: boolean
+  relatedItemId: string | null
+}
+
+export type ConversationItem =
+  | ConversationMessageItem
+  | ReasoningItem
+  | PlanItem
+  | ToolItem
+  | UserInputItem
+  | StatusItem
+  | ErrorItem
+
+export interface PendingUserInputRequest {
+  requestId: string
+  itemId: string
+  threadId: string
+  turnId: string | null
+  status: 'requested' | 'answer_submitted' | 'answered' | 'stale'
+  createdAt: string
+  submittedAt: string | null
+  resolvedAt: string | null
+  answers: UserInputAnswer[]
+}
+
+export interface ThreadLineageV2 {
+  forkedFromThreadId: string | null
+  forkedFromNodeId: string | null
+  forkedFromRole: ThreadRole | null
+  forkReason: string | null
+  lineageRootThreadId: string | null
+}
+
+export interface ThreadSnapshotV2 {
+  projectId: string
+  nodeId: string
+  threadRole: ThreadRole
+  threadId: string | null
+  activeTurnId: string | null
+  processingState: ProcessingState
+  snapshotVersion: number
+  createdAt: string
+  updatedAt: string
+  lineage: ThreadLineageV2
+  items: ConversationItem[]
+  pendingRequests: PendingUserInputRequest[]
+}
+
+export interface MessagePatch {
+  kind: 'message'
+  textAppend?: string
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface ReasoningPatch {
+  kind: 'reasoning'
+  summaryTextAppend?: string
+  detailTextAppend?: string
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface PlanPatch {
+  kind: 'plan'
+  textAppend?: string
+  stepsReplace?: PlanStep[]
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface ToolPatch {
+  kind: 'tool'
+  title?: string
+  argumentsText?: string | null
+  outputTextAppend?: string
+  outputFilesAppend?: ToolOutputFile[]
+  outputFilesReplace?: ToolOutputFile[]
+  exitCode?: number | null
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface UserInputPatch {
+  kind: 'userInput'
+  answersReplace?: UserInputAnswer[]
+  resolvedAt?: string | null
+  status?: Extract<ItemStatus, 'requested' | 'answer_submitted' | 'answered' | 'stale'>
+  updatedAt: string
+}
+
+export interface StatusPatch {
+  kind: 'status'
+  label?: string
+  detail?: string | null
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface ErrorPatch {
+  kind: 'error'
+  message?: string
+  relatedItemId?: string | null
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export type ItemPatch =
+  | MessagePatch
+  | ReasoningPatch
+  | PlanPatch
+  | ToolPatch
+  | UserInputPatch
+  | StatusPatch
+  | ErrorPatch
+
+export type ThreadLifecycleState = 'turn_started' | 'waiting_user_input' | 'turn_completed' | 'turn_failed'
+
+export interface ThreadEventEnvelopeBaseV2 {
+  eventId: string
+  channel: 'thread'
+  projectId: string
+  nodeId: string
+  threadRole: ThreadRole
+  occurredAt: string
+  snapshotVersion: number | null
+}
+
+export interface ThreadSnapshotEventV2 extends ThreadEventEnvelopeBaseV2 {
+  type: 'thread.snapshot'
+  payload: {
+    snapshot: ThreadSnapshotV2
+  }
+}
+
+export interface ConversationItemUpsertEventV2 extends ThreadEventEnvelopeBaseV2 {
+  type: 'conversation.item.upsert'
+  payload: {
+    item: ConversationItem
+  }
+}
+
+export interface ConversationItemPatchEventV2 extends ThreadEventEnvelopeBaseV2 {
+  type: 'conversation.item.patch'
+  payload: {
+    itemId: string
+    patch: ItemPatch
+  }
+}
+
+export interface ThreadLifecycleEventV2 extends ThreadEventEnvelopeBaseV2 {
+  type: 'thread.lifecycle'
+  payload: {
+    activeTurnId: string | null
+    processingState: ProcessingState
+    state: ThreadLifecycleState
+    detail: string | null
+  }
+}
+
+export interface ConversationUserInputRequestedEventV2 extends ThreadEventEnvelopeBaseV2 {
+  type: 'conversation.request.user_input.requested'
+  payload: {
+    requestId: string
+    itemId: string
+    item: UserInputItem
+    pendingRequest: PendingUserInputRequest
+  }
+}
+
+export interface ConversationUserInputResolvedEventV2 extends ThreadEventEnvelopeBaseV2 {
+  type: 'conversation.request.user_input.resolved'
+  payload: {
+    requestId: string
+    itemId: string
+    status: Extract<ItemStatus, 'answer_submitted' | 'answered' | 'stale'>
+    answers: UserInputAnswer[]
+    resolvedAt: string | null
+  }
+}
+
+export interface ThreadResetEventV2 extends ThreadEventEnvelopeBaseV2 {
+  type: 'thread.reset'
+  payload: {
+    threadId: string | null
+  }
+}
+
+export interface ThreadErrorEventV2 extends ThreadEventEnvelopeBaseV2 {
+  type: 'thread.error'
+  payload: {
+    errorItem: ErrorItem
+  }
+}
+
+export type ThreadEventV2 =
+  | ThreadSnapshotEventV2
+  | ConversationItemUpsertEventV2
+  | ConversationItemPatchEventV2
+  | ThreadLifecycleEventV2
+  | ConversationUserInputRequestedEventV2
+  | ConversationUserInputResolvedEventV2
+  | ThreadResetEventV2
+  | ThreadErrorEventV2
+
+export interface WorkflowEventEnvelopeBaseV2 {
+  eventId: string
+  channel: 'workflow'
+  projectId: string
+  nodeId: string
+  occurredAt: string
+}
+
+export interface WorkflowUpdatedEventV2 extends WorkflowEventEnvelopeBaseV2 {
+  type: 'node.workflow.updated'
+  payload: {
+    projectId: string
+    nodeId: string
+    executionState?: string | null
+    reviewState?: string | null
+    occurredAt?: string
+  }
+}
+
+export interface NodeDetailInvalidateEventV2 extends WorkflowEventEnvelopeBaseV2 {
+  type: 'node.detail.invalidate'
+  payload: {
+    projectId: string
+    nodeId: string
+    reason: string
+  }
+}
+
+export type WorkflowEventV2 = WorkflowUpdatedEventV2 | NodeDetailInvalidateEventV2
+
+export interface StartTurnV2Response {
+  accepted: boolean
+  threadId: string | null
+  turnId: string
+  snapshotVersion: number
+  createdItems: ConversationItem[]
+}
+
+export interface ResolveUserInputV2Response {
+  requestId: string
+  itemId: string
+  threadId: string
+  turnId: string | null
+  status: Extract<ItemStatus, 'answer_submitted'>
+  answers: UserInputAnswer[]
+  submittedAt: string
+}
+
+export interface ResetThreadV2Response {
+  threadId: string | null
+  snapshotVersion: number
 }

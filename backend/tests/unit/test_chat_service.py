@@ -20,7 +20,10 @@ from backend.services.chat_service import ChatService
 from backend.services import planningtree_workspace
 from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
-from backend.services.thread_lineage_service import ThreadLineageService
+from backend.services.thread_lineage_service import (
+    ThreadLineageService,
+    _ROLLOUT_BOOTSTRAP_PROMPT,
+)
 from backend.services.tree_service import TreeService
 from backend.services.execution_gating import (
     AUDIT_FRAME_RECORD_MESSAGE_ID,
@@ -65,6 +68,8 @@ class FakeChatCodexClient:
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict:
         thread_id = kwargs.get("thread_id", "")
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            return {"stdout": "READY", "thread_id": thread_id}
         self.turns_run.append(prompt)
         on_delta = kwargs.get("on_delta")
         on_tool_call = kwargs.get("on_tool_call")
@@ -93,6 +98,8 @@ class SlowCheckpointCodexClient(FakeChatCodexClient):
 
     def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict:
         thread_id = kwargs.get("thread_id", "")
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            return {"stdout": "READY", "thread_id": thread_id}
         self.turns_run.append(prompt)
         on_delta = kwargs.get("on_delta")
         if on_delta:

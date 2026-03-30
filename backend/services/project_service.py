@@ -20,11 +20,13 @@ class ProjectService:
         snapshot_view_service: SnapshotViewService | None = None,
         chat_service: Any = None,
         git_checkpoint_service: Any = None,
+        execution_audit_v2_enabled: bool = False,
     ) -> None:
         self.storage = storage
         self._snapshot_view_service = snapshot_view_service
         self._chat_service = chat_service
         self._git_checkpoint_service = git_checkpoint_service
+        self._execution_audit_v2_enabled = bool(execution_audit_v2_enabled)
 
     def bootstrap_status(self) -> dict[str, Any]:
         codex_path = get_codex_cmd()
@@ -33,6 +35,7 @@ class ProjectService:
             "workspace_configured": True,
             "codex_available": codex_path is not None,
             "codex_path": codex_path,
+            "execution_audit_v2_enabled": self._execution_audit_v2_enabled,
         }
 
     def list_projects(self) -> list[dict[str, Any]]:

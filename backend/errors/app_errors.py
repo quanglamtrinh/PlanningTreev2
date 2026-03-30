@@ -219,6 +219,15 @@ class ConversationPersistenceUnavailable(AppError):
         )
 
 
+class ExecutionAuditRehearsalWorkspaceUnsafe(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(
+            "execution_audit_v2_rehearsal_workspace_unsafe",
+            reason,
+            412,
+        )
+
+
 class AuthRequired(AppError):
     def __init__(self) -> None:
         super().__init__("auth_required", "Authentication required.", 401)

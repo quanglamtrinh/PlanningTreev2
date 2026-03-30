@@ -67,10 +67,16 @@ class ChatService:
     ) -> dict[str, Any]:
         thread_role = str(thread_role or "").strip()
         node = self._validate_thread_access(project_id, node_id, thread_role)
+        with self._storage.project_lock(project_id):
+            session = self._load_session_locked(
+                project_id,
+                node_id,
+                thread_role=thread_role,
+            )
+        if session.get("active_turn_id"):
+            return session
         self._bootstrap_task_session_on_read(project_id, node_id, node, thread_role)
         with self._storage.project_lock(project_id):
-            snapshot = self._storage.project_store.load_snapshot(project_id)
-            node = self._require_node_from_snapshot(snapshot, node_id)
             session = self._load_session_locked(
                 project_id,
                 node_id,
@@ -707,9 +713,6 @@ class ChatService:
 
     def _check_thread_writable(self, project_id: str, node_id: str, thread_role: str) -> None:
         """Enforce read-only rules per thread-state-model.md."""
-        if thread_role == "execution":
-            raise ThreadReadOnly("execution", "Execution thread is automated; user cannot send messages.")
-
         if thread_role == "ask_planning":
             if self._storage.execution_state_store.exists(project_id, node_id):
                 raise ThreadReadOnly("ask_planning", "Shaping is frozen after Finish Task.")

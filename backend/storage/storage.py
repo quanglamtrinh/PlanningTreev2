@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from backend.config.app_config import AppPaths
+from backend.conversation.storage.thread_registry_store import ThreadRegistryStore
+from backend.conversation.storage.thread_snapshot_store_v2 import ThreadSnapshotStoreV2
 from backend.storage.config_store import ConfigStore
 from backend.storage.execution_state_store import ExecutionStateStore
 from backend.storage.project_locks import ProjectLockRegistry
@@ -23,6 +25,8 @@ class Storage:
         self.chat_state_store = ChatStateStore(paths, self.workspace_store, self._project_locks)
         self.execution_state_store = ExecutionStateStore(paths, self.workspace_store, self._project_locks)
         self.review_state_store = ReviewStateStore(paths, self.workspace_store, self._project_locks)
+        self.thread_snapshot_store_v2 = ThreadSnapshotStoreV2(paths, self.workspace_store, self._project_locks)
+        self.thread_registry_store = ThreadRegistryStore(paths, self.workspace_store, self._project_locks)
 
     def project_lock(self, project_id: str):
         return self._project_locks.for_project(project_id)

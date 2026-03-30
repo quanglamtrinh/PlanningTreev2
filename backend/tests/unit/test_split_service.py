@@ -13,7 +13,10 @@ from backend.services.node_detail_service import NodeDetailService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.project_service import ProjectService
 from backend.services.split_service import SplitService
-from backend.services.thread_lineage_service import ThreadLineageService
+from backend.services.thread_lineage_service import (
+    ThreadLineageService,
+    _ROLLOUT_BOOTSTRAP_PROMPT,
+)
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
 
@@ -51,6 +54,8 @@ class FakeCodexClient:
         return {"thread_id": thread_id}
 
     def run_turn_streaming(self, *_: object, **__: object) -> dict:
+        if _ and str(_[0]) == _ROLLOUT_BOOTSTRAP_PROMPT:
+            return {"stdout": "READY", "thread_id": str(__.get("thread_id") or "")}
         if _:
             self.turns_run.append(str(_[0]))
         payload = self.payloads.pop(0)

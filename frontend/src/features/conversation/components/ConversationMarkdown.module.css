@@ -1,0 +1,77 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: inherit;
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+.root :global(p) {
+  margin: 0;
+}
+
+.root :global(ul),
+.root :global(ol) {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.root :global(li) {
+  margin: 2px 0;
+}
+
+.root :global(blockquote) {
+  margin: 0;
+  padding: 10px 14px;
+  border-left: 3px solid color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 6%, var(--bg-surface));
+  border-radius: 10px;
+}
+
+.root :global(code) {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.root :global(pre) {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 92%, var(--text-primary) 2%);
+  overflow-x: auto;
+}
+
+.root :global(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.root :global(table) {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.root :global(th),
+.root :global(td) {
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  text-align: left;
+}
+
+.root :global(th) {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.root :global(hr) {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 4px 0;
+}

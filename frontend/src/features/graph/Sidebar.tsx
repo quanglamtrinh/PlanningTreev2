@@ -2,6 +2,11 @@ import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { NodeRecord, ProjectSummary, Snapshot } from '../../api/types'
+import {
+  buildChatV2Url,
+  buildLegacyChatUrl,
+  isExecutionAuditV2SurfaceEnabled,
+} from '../conversation/surfaceRouting'
 import { useCodexStore } from '../../stores/codex-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
@@ -86,11 +91,18 @@ export function Sidebar() {
         latestSnapshot &&
         latestSnapshot.project.id === projectId &&
         !latestSnapshot.tree_state.node_registry.some((node) => node.node_id === nodeId)
-      ) {
+        ) {
         return
       }
 
-      navigate(`/projects/${projectId}/nodes/${nodeId}/chat`)
+      const targetNode = latestSnapshot?.tree_state.node_registry.find((node) => node.node_id === nodeId)
+      navigate(
+        targetNode?.node_kind === 'review'
+          ? (isExecutionAuditV2SurfaceEnabled(latestState.bootstrap)
+              ? buildChatV2Url(projectId, nodeId, 'audit')
+              : buildLegacyChatUrl(projectId, nodeId, 'audit'))
+          : buildLegacyChatUrl(projectId, nodeId, 'ask'),
+      )
       void selectNode(nodeId, true)
     },
     [navigate, selectNode],

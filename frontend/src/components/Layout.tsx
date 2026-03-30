@@ -4,7 +4,10 @@ import { useCodexStore } from '../stores/codex-store'
 import { THEME_OPTIONS, useUIStore } from '../stores/ui-store'
 import styles from './Layout.module.css'
 
-const BREADCRUMB_CHAT_PATH = '/projects/:projectId/nodes/:nodeId/chat'
+const BREADCRUMB_CHAT_PATHS = [
+  '/projects/:projectId/nodes/:nodeId/chat',
+  '/projects/:projectId/nodes/:nodeId/chat-v2',
+]
 
 export function Layout() {
   const location = useLocation()
@@ -39,7 +42,9 @@ export function Layout() {
     }
   }, [])
 
-  const showBackToGraph = matchPath(BREADCRUMB_CHAT_PATH, location.pathname) != null
+  const showBackToGraph = BREADCRUMB_CHAT_PATHS.some(
+    (path) => matchPath(path, location.pathname) != null,
+  )
 
   function handleBackToGraph() {
     setActiveSurface('graph')
