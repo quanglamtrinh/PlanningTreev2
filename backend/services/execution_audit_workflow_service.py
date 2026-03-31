@@ -839,10 +839,17 @@ class ExecutionAuditWorkflowService:
                 )
 
         try:
+            self._codex_client.resume_thread(
+                source_thread_id,
+                cwd=workspace_root,
+                timeout_sec=min(30, self._finish_task_service._chat_timeout),
+                writable_roots=None,
+            )
             review_result = self._codex_client.start_review_streaming(
                 thread_id=source_thread_id,
                 target_sha=review_commit_sha,
                 target_title=f"Review commit {review_commit_sha}",
+                cwd=workspace_root,
                 delivery=delivery_kind if delivery_kind == "detached" else None,
                 client_request_id=client_request_id,
                 timeout_sec=self._finish_task_service._chat_timeout,

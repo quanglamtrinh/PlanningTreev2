@@ -439,6 +439,7 @@ class StdioTransport(CodexTransport):
         target_sha: str,
         target_title: str,
         client_request_id: str,
+        cwd: str | None = None,
         delivery: str | None = None,
         timeout_sec: int = 120,
         on_raw_event: Callable[[dict[str, Any]], None] | None = None,
@@ -449,6 +450,7 @@ class StdioTransport(CodexTransport):
         params: dict[str, Any] = {
             "threadId": thread_id,
             "clientRequestId": client_request_id,
+            "cwd": cwd or None,
             "target": {
                 "type": "commit",
                 "sha": target_sha,
@@ -2136,6 +2138,7 @@ class CodexAppClient:
         target_sha: str,
         target_title: str,
         client_request_id: str,
+        cwd: str | None = None,
         delivery: str | None = None,
         timeout_sec: int = 120,
         on_raw_event: Callable[[dict[str, Any]], None] | None = None,
@@ -2148,6 +2151,7 @@ class CodexAppClient:
             target_sha=target_sha,
             target_title=target_title,
             client_request_id=client_request_id,
+            cwd=cwd,
             delivery=delivery,
             timeout_sec=timeout_sec,
             on_raw_event=on_raw_event,
