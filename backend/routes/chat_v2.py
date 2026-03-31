@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
 from backend.errors.app_errors import AppError
+from backend.storage.file_utils import new_id
 
 router = APIRouter(tags=["conversation-v2"])
 
@@ -160,6 +161,18 @@ async def start_turn_v2(
     body: StartTurnRequest,
 ):
     try:
+        if (
+            thread_role == "execution"
+            and getattr(request.app.state, "execution_audit_v2_enabled", False)
+            and hasattr(request.app.state, "execution_audit_workflow_service_v2")
+        ):
+            payload = request.app.state.execution_audit_workflow_service_v2.start_execution_followup(
+                project_id,
+                node_id,
+                idempotency_key=str(body.metadata.get("idempotencyKey") or new_id("exec_followup")),
+                text=body.text,
+            )
+            return _ok(payload)
         payload = request.app.state.thread_runtime_service_v2.start_turn(
             project_id,
             node_id,

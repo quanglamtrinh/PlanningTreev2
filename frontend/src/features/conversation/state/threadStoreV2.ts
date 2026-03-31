@@ -593,7 +593,8 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
         }
 
         let nextSnapshot = state.snapshot
-        for (const item of response.createdItems) {
+        const responseSnapshotVersion = response.snapshotVersion ?? nextSnapshot.snapshotVersion
+        for (const item of response.createdItems ?? []) {
           nextSnapshot = applyThreadEvent(nextSnapshot, {
             eventId: `local-upsert-${item.id}`,
             channel: 'thread',
@@ -601,7 +602,7 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
             nodeId: activeNodeId,
             threadRole: activeThreadRole,
             occurredAt: item.updatedAt,
-            snapshotVersion: response.snapshotVersion,
+            snapshotVersion: responseSnapshotVersion,
             type: 'conversation.item.upsert',
             payload: { item },
           })
@@ -614,9 +615,9 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
             threadId: response.threadId ?? nextSnapshot.threadId,
             activeTurnId: response.turnId,
             processingState: 'running',
-            snapshotVersion: Math.max(nextSnapshot.snapshotVersion, response.snapshotVersion),
+            snapshotVersion: Math.max(nextSnapshot.snapshotVersion, responseSnapshotVersion),
           },
-          lastSnapshotVersion: Math.max(state.lastSnapshotVersion ?? 0, response.snapshotVersion),
+          lastSnapshotVersion: Math.max(state.lastSnapshotVersion ?? 0, responseSnapshotVersion),
           processingStartedAt: state.processingStartedAt ?? Date.now(),
         }
       })

@@ -2,6 +2,14 @@ export type NodeStatus = 'locked' | 'draft' | 'ready' | 'in_progress' | 'done'
 export type NodeKind = 'root' | 'original' | 'superseded' | 'review'
 export type WorkflowStep = 'frame' | 'clarify' | 'spec'
 export type ThreadRole = 'audit' | 'ask_planning' | 'execution'
+export type WorkflowPhase =
+  | 'idle'
+  | 'execution_running'
+  | 'execution_decision_pending'
+  | 'audit_running'
+  | 'audit_decision_pending'
+  | 'done'
+  | 'failed'
 export type ExecutionStatus = 'idle' | 'executing' | 'completed' | 'failed' | 'review_pending' | 'review_accepted'
 export type RollupStatus = 'pending' | 'ready' | 'accepted'
 export type SplitMode =
@@ -778,6 +786,9 @@ export interface WorkflowUpdatedEventV2 extends WorkflowEventEnvelopeBaseV2 {
     nodeId: string
     executionState?: string | null
     reviewState?: string | null
+    workflowPhase?: WorkflowPhase | null
+    activeExecutionRunId?: string | null
+    activeReviewCycleId?: string | null
     occurredAt?: string
   }
 }
@@ -797,8 +808,10 @@ export interface StartTurnV2Response {
   accepted: boolean
   threadId: string | null
   turnId: string
-  snapshotVersion: number
-  createdItems: ConversationItem[]
+  snapshotVersion?: number
+  createdItems?: ConversationItem[]
+  executionRunId?: string | null
+  workflowPhase?: WorkflowPhase | null
 }
 
 export interface ResolveUserInputV2Response {
@@ -814,4 +827,53 @@ export interface ResolveUserInputV2Response {
 export interface ResetThreadV2Response {
   threadId: string | null
   snapshotVersion: number
+}
+
+export interface ExecutionDecisionView {
+  status: string
+  sourceExecutionRunId: string
+  executionTurnId: string
+  candidateWorkspaceHash: string
+  summaryText: string | null
+  createdAt: string
+}
+
+export interface AuditDecisionView {
+  status: string
+  sourceReviewCycleId: string
+  reviewCommitSha: string
+  finalReviewText: string | null
+  reviewDisposition: string | null
+  createdAt: string
+}
+
+export interface NodeWorkflowView {
+  nodeId: string
+  workflowPhase: WorkflowPhase
+  executionThreadId: string | null
+  auditLineageThreadId: string | null
+  reviewThreadId: string | null
+  activeExecutionRunId: string | null
+  latestExecutionRunId: string | null
+  activeReviewCycleId: string | null
+  latestReviewCycleId: string | null
+  currentExecutionDecision: ExecutionDecisionView | null
+  currentAuditDecision: AuditDecisionView | null
+  acceptedSha: string | null
+  runtimeBlock: Record<string, unknown> | null
+  canSendExecutionMessage: boolean
+  canReviewInAudit: boolean
+  canImproveInExecution: boolean
+  canMarkDoneFromExecution: boolean
+  canMarkDoneFromAudit: boolean
+}
+
+export interface WorkflowActionAcceptedResponse {
+  accepted: boolean
+  threadId?: string | null
+  turnId?: string | null
+  executionRunId?: string | null
+  reviewCycleId?: string | null
+  reviewThreadId?: string | null
+  workflowPhase?: WorkflowPhase | null
 }

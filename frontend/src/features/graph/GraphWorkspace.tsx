@@ -112,9 +112,7 @@ export function GraphWorkspace() {
     const targetNode = latestSnapshot?.tree_state.node_registry.find((item) => item.node_id === nodeId)
     const destination =
       targetNode?.node_kind === 'review'
-        ? (isExecutionAuditV2SurfaceEnabled(latestState.bootstrap)
-            ? buildChatV2Url(projectId, nodeId, 'audit')
-            : buildLegacyChatUrl(projectId, nodeId, 'audit'))
+        ? buildLegacyChatUrl(projectId, nodeId, 'audit')
         : buildLegacyChatUrl(projectId, nodeId, 'ask')
     navigate(destination)
     void selectNode(nodeId, true)

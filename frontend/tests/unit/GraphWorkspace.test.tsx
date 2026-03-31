@@ -302,7 +302,7 @@ describe('GraphWorkspace', () => {
     expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat-v2?thread=execution')
   })
 
-  it('routes review-node breadcrumb entry to /chat-v2 audit', async () => {
+  it('keeps review-node breadcrumb entry on legacy audit even when the V2 flag is enabled', async () => {
     apiMock.getBootstrapStatus.mockResolvedValue({
       ready: true,
       workspace_configured: true,
@@ -335,7 +335,7 @@ describe('GraphWorkspace', () => {
       fireEvent.click(screen.getByText('Open Root Breadcrumb'))
     })
 
-    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat-v2?thread=audit')
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=audit')
   })
 
   it('keeps finish-task entry on legacy chat when the V2 surface flag is disabled', async () => {

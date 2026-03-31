@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { ThreadRole } from '../../api/types'
@@ -17,31 +17,22 @@ import {
 } from './surfaceRouting'
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { ConversationFeed } from './components/ConversationFeed'
-import { useConversationThreadStoreV2 } from './state/threadStoreV2'
+import { useThreadByIdStoreV2 } from './state/threadByIdStoreV2'
 import { useWorkflowEventBridge } from './state/workflowEventBridge'
+import { useWorkflowStateStoreV2 } from './state/workflowStateStoreV2'
 
-function isThreadComposerReadOnly(
-  threadRole: ThreadRole,
-  shapingFrozen: boolean,
-  auditWritable: boolean,
-): boolean {
-  switch (threadRole) {
-    case 'ask_planning':
-      return shapingFrozen
-    case 'execution':
-      return false
-    case 'audit':
-      return !auditWritable
-    default:
-      return true
+function resolveThreadRole(threadTab: ThreadTab): ThreadRole | null {
+  if (threadTab === 'execution') {
+    return 'execution'
   }
-}
-
-function resolveThreadRole(isReviewNode: boolean, threadTab: ThreadTab): ThreadRole {
-  if (isReviewNode) {
+  if (threadTab === 'audit') {
     return 'audit'
   }
-  return threadTab === 'ask' ? 'ask_planning' : threadTab
+  return null
+}
+
+function renderActionLabel(action: string | null, idleLabel: string, busyLabel: string): string {
+  return action ? busyLabel : idleLabel
 }
 
 export function BreadcrumbChatViewV2() {
@@ -55,7 +46,6 @@ export function BreadcrumbChatViewV2() {
     snapshot: conversationSnapshot,
     isLoading,
     isSending,
-    isResetting,
     processingStartedAt,
     lastCompletedAt,
     lastDurationMs,
@@ -63,14 +53,12 @@ export function BreadcrumbChatViewV2() {
     loadThread,
     sendTurn,
     resolveUserInput,
-    resetThread,
     disconnectThread,
-  } = useConversationThreadStoreV2(
+  } = useThreadByIdStoreV2(
     useShallow((state) => ({
       snapshot: state.snapshot,
       isLoading: state.isLoading,
       isSending: state.isSending,
-      isResetting: state.isResetting,
       processingStartedAt: state.processingStartedAt,
       lastCompletedAt: state.lastCompletedAt,
       lastDurationMs: state.lastDurationMs,
@@ -78,7 +66,6 @@ export function BreadcrumbChatViewV2() {
       loadThread: state.loadThread,
       sendTurn: state.sendTurn,
       resolveUserInput: state.resolveUserInput,
-      resetThread: state.resetThread,
       disconnectThread: state.disconnectThread,
     })),
   )
@@ -109,7 +96,33 @@ export function BreadcrumbChatViewV2() {
     detailStateKey ? state.entries[detailStateKey] : undefined,
   )
   const loadDetailState = useDetailStateStore((state) => state.loadDetailState)
-  const acceptLocalReviewAction = useDetailStateStore((state) => state.acceptLocalReview)
+
+  const {
+    workflowState,
+    isWorkflowLoading,
+    workflowError,
+    activeMutation,
+    loadWorkflowState,
+    finishTask,
+    markDoneFromExecution,
+    reviewInAudit,
+    markDoneFromAudit,
+    improveInExecution,
+  } = useWorkflowStateStoreV2(
+    useShallow((state) => ({
+      workflowState: detailStateKey ? state.entries[detailStateKey] : undefined,
+      isWorkflowLoading: detailStateKey ? state.loading[detailStateKey] === true : false,
+      workflowError:
+        detailStateKey && state.errors[detailStateKey] ? state.errors[detailStateKey] : null,
+      activeMutation: detailStateKey ? state.activeMutations[detailStateKey] ?? null : null,
+      loadWorkflowState: state.loadWorkflowState,
+      finishTask: state.finishTask,
+      markDoneFromExecution: state.markDoneFromExecution,
+      reviewInAudit: state.reviewInAudit,
+      markDoneFromAudit: state.markDoneFromAudit,
+      improveInExecution: state.improveInExecution,
+    })),
+  )
 
   const isReviewNode = useMemo(() => {
     if (!projectId || !nodeId || !snapshot || snapshot.project.id !== projectId) {
@@ -127,7 +140,7 @@ export function BreadcrumbChatViewV2() {
     executionAuditV2Enabled,
   })
   const threadTab: ThreadTab = routeTarget.threadTab
-  const threadRole = resolveThreadRole(isReviewNode, threadTab)
+  const threadRole = resolveThreadRole(threadTab)
   const shouldRedirectToLegacy = routeTarget.surface === 'legacy'
   const shouldCanonicalizeV2 =
     routeTarget.surface === 'v2' && requestedThreadTab !== routeTarget.threadTab
@@ -220,9 +233,51 @@ export function BreadcrumbChatViewV2() {
     ) {
       return
     }
-    void loadThread(projectId, nodeId, threadRole)
+    void loadWorkflowState(projectId, nodeId).catch(() => undefined)
   }, [
     detailNode,
+    loadWorkflowState,
+    nodeId,
+    projectId,
+    shouldCanonicalizeV2,
+    shouldRedirectToLegacy,
+    snapshot,
+  ])
+
+  const activeThreadId = useMemo(() => {
+    if (!workflowState) {
+      return null
+    }
+    if (threadTab === 'execution') {
+      return workflowState.executionThreadId
+    }
+    if (threadTab === 'audit') {
+      return workflowState.reviewThreadId
+    }
+    return null
+  }, [threadTab, workflowState])
+
+  useEffect(() => {
+    if (
+      !projectId ||
+      !nodeId ||
+      !detailNode ||
+      !snapshot ||
+      snapshot.project.id !== projectId ||
+      shouldRedirectToLegacy ||
+      shouldCanonicalizeV2
+    ) {
+      return
+    }
+    if (!activeThreadId || !threadRole) {
+      disconnectThread()
+      return
+    }
+    void loadThread(projectId, nodeId, activeThreadId, threadRole).catch(() => undefined)
+  }, [
+    activeThreadId,
+    detailNode,
+    disconnectThread,
     loadThread,
     nodeId,
     projectId,
@@ -268,244 +323,276 @@ export function BreadcrumbChatViewV2() {
     return 'Node details are unavailable for this breadcrumb route.'
   }, [activeProjectId, detailCardState, detailNode, nodeId, projectError, projectId, snapshot])
 
-  const [reviewSummaryDraft, setReviewSummaryDraft] = useState('')
-  const [isAccepting, setIsAccepting] = useState(false)
-  const [acceptReviewError, setAcceptReviewError] = useState<string | null>(null)
-  const reviewInputRef = useRef<HTMLInputElement>(null)
-
-  const canAcceptLocalReview = nodeDetailState?.can_accept_local_review === true
-  const autoReviewStatus = nodeDetailState?.auto_review_status ?? null
-  const showAcceptReview = threadTab === 'audit' && canAcceptLocalReview && !autoReviewStatus
-
-  useEffect(() => {
-    if (!showAcceptReview) {
-      setAcceptReviewError(null)
-    }
-  }, [nodeId, projectId, showAcceptReview])
-
-  const handleAcceptReview = useCallback(async () => {
-    const summary = reviewSummaryDraft.trim()
-    if (!summary || !projectId || !nodeId) {
-      return
-    }
-    setIsAccepting(true)
-    setAcceptReviewError(null)
-    try {
-      const activatedSiblingId = await acceptLocalReviewAction(projectId, nodeId, summary)
-      setReviewSummaryDraft('')
-      setAcceptReviewError(null)
-      if (activatedSiblingId) {
-        void navigate(buildLegacyChatUrl(projectId, activatedSiblingId, 'ask'))
-      }
-    } catch (caughtError) {
-      setAcceptReviewError(caughtError instanceof Error ? caughtError.message : String(caughtError))
-      reviewInputRef.current?.focus()
-    } finally {
-      setIsAccepting(false)
-    }
-  }, [acceptLocalReviewAction, navigate, nodeId, projectId, reviewSummaryDraft])
-
-  const isActiveTurn = !!conversationSnapshot?.activeTurnId
-  const shapingFrozen =
-    nodeDetailState?.shaping_frozen ?? (detailNode?.workflow?.shaping_frozen === true)
-  const auditWritable = nodeDetailState?.audit_writable === true
-  const threadReadOnly = useMemo(
-    () => isThreadComposerReadOnly(threadRole, shapingFrozen, auditWritable),
-    [auditWritable, shapingFrozen, threadRole],
-  )
+  const isActiveTurn = Boolean(conversationSnapshot?.activeTurnId)
+  const showAuditShell = threadTab === 'audit' && !workflowState?.reviewThreadId
   const composerDisabled =
-    threadReadOnly || isActiveTurn || isSending || isLoading || !conversationSnapshot
+    threadTab !== 'execution' ||
+    workflowState?.canSendExecutionMessage !== true ||
+    isActiveTurn ||
+    isSending ||
+    isLoading ||
+    !conversationSnapshot
 
-  const showResetAction = !isReviewNode && threadTab === 'ask' && !threadReadOnly
-  const disableResetAction = isActiveTurn || isLoading || isResetting
+  const combinedError = error ?? workflowError ?? null
+  const currentExecutionDecision = workflowState?.currentExecutionDecision ?? null
+  const currentAuditDecision = workflowState?.currentAuditDecision ?? null
 
-  const handleResetThread = useCallback(async () => {
-    if (!window.confirm('Reset this thread?')) {
+  const handleSend = useCallback(
+    async (content: string) => {
+      if (!projectId || !nodeId) {
+        return
+      }
+      await sendTurn(content)
+      void loadWorkflowState(projectId, nodeId).catch(() => undefined)
+    },
+    [loadWorkflowState, nodeId, projectId, sendTurn],
+  )
+
+  const handleFinishTask = useCallback(async () => {
+    if (!projectId || !nodeId) {
       return
     }
-    await resetThread()
-  }, [resetThread])
+    await finishTask(projectId, nodeId)
+  }, [finishTask, nodeId, projectId])
+
+  const handleMarkDoneFromExecution = useCallback(async () => {
+    if (!projectId || !nodeId || !currentExecutionDecision?.candidateWorkspaceHash) {
+      return
+    }
+    await markDoneFromExecution(projectId, nodeId, currentExecutionDecision.candidateWorkspaceHash)
+  }, [currentExecutionDecision?.candidateWorkspaceHash, markDoneFromExecution, nodeId, projectId])
+
+  const handleReviewInAudit = useCallback(async () => {
+    if (!projectId || !nodeId || !currentExecutionDecision?.candidateWorkspaceHash) {
+      return
+    }
+    await reviewInAudit(projectId, nodeId, currentExecutionDecision.candidateWorkspaceHash)
+    void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
+  }, [currentExecutionDecision?.candidateWorkspaceHash, navigate, nodeId, projectId, reviewInAudit])
+
+  const handleMarkDoneFromAudit = useCallback(async () => {
+    if (!projectId || !nodeId || !currentAuditDecision?.reviewCommitSha) {
+      return
+    }
+    await markDoneFromAudit(projectId, nodeId, currentAuditDecision.reviewCommitSha)
+  }, [currentAuditDecision?.reviewCommitSha, markDoneFromAudit, nodeId, projectId])
+
+  const handleImproveInExecution = useCallback(async () => {
+    if (!projectId || !nodeId || !currentAuditDecision?.reviewCommitSha) {
+      return
+    }
+    await improveInExecution(projectId, nodeId, currentAuditDecision.reviewCommitSha)
+    void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
+  }, [currentAuditDecision?.reviewCommitSha, improveInExecution, navigate, nodeId, projectId])
+
+  const headerActions = useMemo(() => {
+    if (!workflowState) {
+      return null
+    }
+
+    if (threadTab === 'execution') {
+      return (
+        <>
+          {workflowState.workflowPhase === 'idle' ? (
+            <button
+              type="button"
+              className={`${styles.threadHeaderAction} ${styles.threadHeaderActionPrimary}`}
+              disabled={activeMutation !== null || isWorkflowLoading}
+              onClick={() => void handleFinishTask()}
+              data-testid="workflow-finish-task"
+            >
+              {renderActionLabel(activeMutation, 'Finish Task', 'Starting...')}
+            </button>
+          ) : null}
+          {workflowState.canReviewInAudit ? (
+            <button
+              type="button"
+              className={styles.threadHeaderAction}
+              disabled={activeMutation !== null}
+              onClick={() => void handleReviewInAudit()}
+              data-testid="workflow-review-in-audit"
+            >
+              {renderActionLabel(activeMutation, 'Review in Audit', 'Starting Review...')}
+            </button>
+          ) : null}
+          {workflowState.canMarkDoneFromExecution ? (
+            <button
+              type="button"
+              className={`${styles.threadHeaderAction} ${styles.threadHeaderActionPrimary}`}
+              disabled={activeMutation !== null}
+              onClick={() => void handleMarkDoneFromExecution()}
+              data-testid="workflow-mark-done-execution"
+            >
+              {renderActionLabel(activeMutation, 'Mark Done', 'Marking Done...')}
+            </button>
+          ) : null}
+        </>
+      )
+    }
+
+    if (threadTab === 'audit') {
+      return (
+        <>
+          {workflowState.canImproveInExecution ? (
+            <button
+              type="button"
+              className={styles.threadHeaderAction}
+              disabled={activeMutation !== null}
+              onClick={() => void handleImproveInExecution()}
+              data-testid="workflow-improve-in-execution"
+            >
+              {renderActionLabel(activeMutation, 'Improve in Execution', 'Starting Improve...')}
+            </button>
+          ) : null}
+          {workflowState.canMarkDoneFromAudit ? (
+            <button
+              type="button"
+              className={`${styles.threadHeaderAction} ${styles.threadHeaderActionPrimary}`}
+              disabled={activeMutation !== null}
+              onClick={() => void handleMarkDoneFromAudit()}
+              data-testid="workflow-mark-done-audit"
+            >
+              {renderActionLabel(activeMutation, 'Mark Done', 'Marking Done...')}
+            </button>
+          ) : null}
+        </>
+      )
+    }
+
+    return null
+  }, [
+    activeMutation,
+    handleFinishTask,
+    handleImproveInExecution,
+    handleMarkDoneFromAudit,
+    handleMarkDoneFromExecution,
+    handleReviewInAudit,
+    isWorkflowLoading,
+    threadTab,
+    workflowState,
+  ])
 
   return (
     <div className={styles.root}>
-      <div
-        className={`${styles.threadPane} ${isReviewNode ? styles.threadPaneSolo : ''}`}
-        data-testid="breadcrumb-thread-pane"
-      >
+      <div className={styles.threadPane} data-testid="breadcrumb-thread-pane">
         <div className={styles.threadSurface}>
-          {isReviewNode ? (
-            <div className={styles.threadTabBar} data-testid="breadcrumb-review-audit-header">
-              <span
-                className={`${styles.threadTab} ${styles.threadTabActive}`}
-                data-testid="breadcrumb-thread-tab-review-audit"
+          <div
+            className={`${styles.threadTabBar} ${styles.threadTabBarSplit}`}
+            data-testid="breadcrumb-v2-thread-header"
+          >
+            <nav className={styles.threadTabNav} role="tablist" aria-label="Thread mode">
+              <button
+                type="button"
+                role="tab"
+                className={`${styles.threadTab} ${threadTab === 'ask' ? styles.threadTabActive : ''}`}
+                data-testid="breadcrumb-thread-tab-ask"
+                aria-selected={threadTab === 'ask'}
+                onClick={() => {
+                  if (projectId && nodeId) {
+                    void navigate(buildLegacyChatUrl(projectId, nodeId, 'ask'))
+                  }
+                }}
               >
-                Review Audit
-              </span>
-            </div>
-          ) : (
-            <div
-              className={`${styles.threadTabBar} ${styles.threadTabBarSplit}`}
-              data-testid="breadcrumb-v2-thread-header"
-            >
-              <nav className={styles.threadTabNav} role="tablist" aria-label="Thread mode">
-                <button
-                  type="button"
-                  role="tab"
-                  className={`${styles.threadTab} ${threadTab === 'ask' ? styles.threadTabActive : ''}`}
-                  data-testid="breadcrumb-thread-tab-ask"
-                  aria-selected={threadTab === 'ask'}
-                  onClick={() => {
-                    if (projectId && nodeId) {
-                      void navigate(buildLegacyChatUrl(projectId, nodeId, 'ask'))
-                    }
-                  }}
-                >
-                  Ask
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  className={`${styles.threadTab} ${threadTab === 'execution' ? styles.threadTabActive : ''}`}
-                  data-testid="breadcrumb-thread-tab-execution"
-                  aria-selected={threadTab === 'execution'}
-                  onClick={() => {
-                    if (projectId && nodeId) {
-                      void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
-                    }
-                  }}
-                >
-                  Execution
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  className={`${styles.threadTab} ${threadTab === 'audit' ? styles.threadTabActive : ''}`}
-                  data-testid="breadcrumb-thread-tab-audit"
-                  aria-selected={threadTab === 'audit'}
-                  onClick={() => {
-                    if (projectId && nodeId) {
-                      void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
-                    }
-                  }}
-                >
-                  Audit
-                </button>
-              </nav>
+                Ask
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className={`${styles.threadTab} ${threadTab === 'execution' ? styles.threadTabActive : ''}`}
+                data-testid="breadcrumb-thread-tab-execution"
+                aria-selected={threadTab === 'execution'}
+                onClick={() => {
+                  if (projectId && nodeId) {
+                    void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
+                  }
+                }}
+              >
+                Execution
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className={`${styles.threadTab} ${threadTab === 'audit' ? styles.threadTabActive : ''}`}
+                data-testid="breadcrumb-thread-tab-audit"
+                aria-selected={threadTab === 'audit'}
+                onClick={() => {
+                  if (projectId && nodeId) {
+                    void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
+                  }
+                }}
+              >
+                Audit
+              </button>
+            </nav>
 
-              {showResetAction ? (
-                <div className={styles.threadHeaderActions}>
-                  <button
-                    type="button"
-                    className={styles.threadHeaderAction}
-                    disabled={disableResetAction}
-                    onClick={() => void handleResetThread()}
-                    data-testid="breadcrumb-v2-reset-thread"
-                  >
-                    {isResetting ? 'Resetting…' : 'Reset Thread'}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          )}
+            <div className={styles.threadHeaderActions}>{headerActions}</div>
+          </div>
 
           <div className={styles.threadTabBody}>
-            <>
-              {error ? <div className={styles.errorBanner}>{error}</div> : null}
+            {combinedError ? <div className={styles.errorBanner}>{combinedError}</div> : null}
+
+            {showAuditShell ? (
+              <div className={styles.auditShell} data-testid="audit-shell">
+                {snapshot && projectId && nodeId ? (
+                  <FrameContextFeedBlock
+                    projectId={projectId}
+                    nodeId={nodeId}
+                    nodeRegistry={snapshot.tree_state.node_registry}
+                    variant="audit"
+                    specConfirmed={nodeDetailState?.spec_confirmed === true}
+                  />
+                ) : null}
+                <div className={styles.auditShellBody}>
+                  <div className={styles.auditShellTitle}>Audit Review Not Started Yet</div>
+                  <div className={styles.auditShellText}>
+                    Start review from the execution tab once the current execution decision is ready.
+                  </div>
+                </div>
+              </div>
+            ) : (
               <ConversationFeed
                 snapshot={conversationSnapshot}
-                isLoading={isLoading}
+                isLoading={isLoading || isWorkflowLoading}
                 onResolveUserInput={resolveUserInput}
                 processingStartedAt={processingStartedAt}
                 lastCompletedAt={lastCompletedAt}
                 lastDurationMs={lastDurationMs}
                 prefix={
-                  (threadTab === 'ask' || threadTab === 'audit') &&
-                  !isReviewNode &&
-                  snapshot &&
-                  projectId &&
-                  nodeId ? (
+                  threadTab === 'audit' && snapshot && projectId && nodeId ? (
                     <FrameContextFeedBlock
                       projectId={projectId}
                       nodeId={nodeId}
                       nodeRegistry={snapshot.tree_state.node_registry}
-                      variant={threadTab === 'audit' ? 'audit' : 'ask'}
+                      variant="audit"
                       specConfirmed={nodeDetailState?.spec_confirmed === true}
                     />
                   ) : undefined
                 }
               />
-              {showAcceptReview ? (
-                <div className={styles.acceptReviewBar} data-testid="accept-review-bar">
-                  {acceptReviewError ? (
-                    <div
-                      id="accept-review-error"
-                      className={styles.acceptReviewError}
-                      data-testid="accept-review-error"
-                      role="alert"
-                    >
-                      {acceptReviewError}
-                    </div>
-                  ) : null}
-                  <div className={styles.acceptReviewControls}>
-                    <input
-                      ref={reviewInputRef}
-                      type="text"
-                      className={styles.acceptReviewInput}
-                      placeholder="Review summary..."
-                      value={reviewSummaryDraft}
-                      aria-invalid={acceptReviewError ? 'true' : 'false'}
-                      aria-describedby={acceptReviewError ? 'accept-review-error' : undefined}
-                      onChange={(event) => {
-                        setReviewSummaryDraft(event.target.value)
-                        if (acceptReviewError) {
-                          setAcceptReviewError(null)
-                        }
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' && !event.shiftKey) {
-                          event.preventDefault()
-                          void handleAcceptReview()
-                        }
-                      }}
-                      disabled={isAccepting}
-                    />
-                    <button
-                      type="button"
-                      className={styles.acceptReviewButton}
-                      disabled={isAccepting || !reviewSummaryDraft.trim()}
-                      onClick={() => void handleAcceptReview()}
-                      data-testid="accept-review-button"
-                    >
-                      {isAccepting ? 'Accepting...' : 'Accept Review'}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-              <ComposerBar
-                onSend={(content) => {
-                  void sendTurn(content)
-                }}
-                disabled={composerDisabled}
-              />
-            </>
+            )}
+
+            <ComposerBar
+              onSend={(content) => {
+                void handleSend(content)
+              }}
+              disabled={composerDisabled}
+            />
           </div>
         </div>
       </div>
 
-      {!isReviewNode ? (
-        <aside className={styles.detailPane} data-testid="breadcrumb-detail-pane">
-          <div className={styles.detailRail}>
-            <NodeDetailCard
-              projectId={projectId ?? null}
-              node={detailNode}
-              variant="breadcrumb"
-              showClose={false}
-              state={detailCardState}
-              message={detailMessage}
-            />
-          </div>
-        </aside>
-      ) : null}
+      <aside className={styles.detailPane} data-testid="breadcrumb-detail-pane">
+        <div className={styles.detailRail}>
+          <NodeDetailCard
+            projectId={projectId ?? null}
+            node={detailNode}
+            variant="breadcrumb"
+            showClose={false}
+            state={detailCardState}
+            message={detailMessage}
+          />
+        </div>
+      </aside>
     </div>
   )
 }

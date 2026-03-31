@@ -34,16 +34,13 @@ export function resolveLegacyRouteTarget(options: {
   isReviewNode: boolean
   executionAuditV2Enabled: boolean
 }): { surface: 'legacy' | 'v2'; threadTab: ThreadTab } {
-  const { requestedThreadTab, isReviewNode, executionAuditV2Enabled } = options
+  const { requestedThreadTab, isReviewNode } = options
   if (isReviewNode) {
-    return {
-      surface: executionAuditV2Enabled ? 'v2' : 'legacy',
-      threadTab: 'audit',
-    }
+    return { surface: 'legacy', threadTab: 'audit' }
   }
   if (requestedThreadTab === 'execution' || requestedThreadTab === 'audit') {
     return {
-      surface: executionAuditV2Enabled ? 'v2' : 'legacy',
+      surface: options.executionAuditV2Enabled ? 'v2' : 'legacy',
       threadTab: requestedThreadTab,
     }
   }
@@ -65,7 +62,7 @@ export function resolveV2RouteTarget(options: {
   }
 
   if (isReviewNode) {
-    return { surface: 'v2', threadTab: 'audit' }
+    return { surface: 'legacy', threadTab: 'audit' }
   }
   if (requestedThreadTab === 'ask') {
     return { surface: 'legacy', threadTab: 'ask' }

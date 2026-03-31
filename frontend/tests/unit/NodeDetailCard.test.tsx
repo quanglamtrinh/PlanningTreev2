@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { apiMock, MockApiError } = vi.hoisted(() => ({
+const { apiMock, MockApiError, navigateMock } = vi.hoisted(() => ({
   MockApiError: class extends Error {
     status: number
     code: string | null
@@ -59,6 +59,8 @@ const { apiMock, MockApiError } = vi.hoisted(() => ({
     confirmClarify: vi.fn(),
     confirmSpec: vi.fn(),
     finishTask: vi.fn(),
+    getWorkflowStateV2: vi.fn(),
+    finishTaskWorkflowV2: vi.fn(),
     generateFrame: vi.fn(),
     getFrameGenStatus: vi.fn().mockResolvedValue({
       status: 'idle',
@@ -100,6 +102,7 @@ const { apiMock, MockApiError } = vi.hoisted(() => ({
       sha: 'sha256:accepted',
     }),
   },
+  navigateMock: vi.fn(),
 }))
 
 vi.mock('@uiw/react-codemirror', () => ({
@@ -125,6 +128,14 @@ vi.mock('../../src/api/client', () => ({
   api: apiMock,
   ApiError: MockApiError,
 }))
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  }
+})
 
 import type { NodeRecord } from '../../src/api/types'
 import { NodeDetailCard } from '../../src/features/node/NodeDetailCard'
@@ -269,6 +280,32 @@ describe('NodeDetailCard', () => {
       rollup_status: 'accepted',
       summary: 'Accepted rollup summary',
       sha: 'sha256:accepted',
+    })
+    apiMock.finishTaskWorkflowV2.mockResolvedValue({
+      accepted: true,
+      workflowPhase: 'execution_running',
+      threadId: 'thread-execution-1',
+      executionRunId: 'run-1',
+    })
+    apiMock.getWorkflowStateV2.mockResolvedValue({
+      nodeId: 'root',
+      workflowPhase: 'execution_running',
+      executionThreadId: 'thread-execution-1',
+      auditLineageThreadId: 'thread-audit-lineage-1',
+      reviewThreadId: null,
+      activeExecutionRunId: 'run-1',
+      latestExecutionRunId: 'run-1',
+      activeReviewCycleId: null,
+      latestReviewCycleId: null,
+      currentExecutionDecision: null,
+      currentAuditDecision: null,
+      acceptedSha: null,
+      runtimeBlock: null,
+      canSendExecutionMessage: false,
+      canReviewInAudit: false,
+      canImproveInExecution: false,
+      canMarkDoneFromExecution: false,
+      canMarkDoneFromAudit: false,
     })
   })
 
@@ -821,6 +858,107 @@ describe('NodeDetailCard', () => {
     await waitFor(() => {
       expect(apiMock.finishTask).toHaveBeenCalledWith('project-1', 'root')
     })
+  })
+
+  it('routes Confirm and Finish Task through workflow v2 when the execution/audit surface flag is enabled', async () => {
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      bootstrap: {
+        ready: true,
+        workspace_configured: true,
+        codex_available: true,
+        codex_path: 'codex',
+        execution_audit_v2_enabled: true,
+      },
+    })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: false,
+      can_finish_task: true,
+      shaping_frozen: false,
+      git_ready: true,
+    })
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec content',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+    apiMock.putNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'spec',
+      content: '# Spec content',
+      updated_at: '2026-03-21T00:00:02Z',
+    })
+    apiMock.confirmSpec.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: true,
+    })
+    apiMock.getSnapshot.mockResolvedValue({
+      schema_version: 1,
+      project: { id: 'project-1', name: 'Test' },
+      tree_state: { root_node_id: 'root', active_node_id: 'root', node_registry: [] },
+      updated_at: '2026-03-21T00:00:03Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({ status: 'ready' })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Spec' }))
+    await screen.findByDisplayValue('# Spec content')
+
+    fireEvent.click(screen.getByTestId('confirm-and-finish-task-button'))
+
+    await waitFor(() => {
+      expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
+    })
+    await waitFor(() => {
+      expect(apiMock.finishTaskWorkflowV2).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.stringMatching(/^finish_task:/),
+      )
+    })
+    await waitFor(() => {
+      expect(apiMock.getWorkflowStateV2).toHaveBeenCalledWith('project-1', 'root')
+    })
+    expect(apiMock.finishTask).not.toHaveBeenCalled()
+    expect(navigateMock).toHaveBeenCalledWith('/projects/project-1/nodes/root/chat-v2?thread=execution')
   })
 
   it('disables Confirm and Finish Task when finish would still be blocked after confirm', async () => {

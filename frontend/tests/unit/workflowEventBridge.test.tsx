@@ -7,6 +7,7 @@ vi.mock('../../src/api/client', () => ({
 }))
 
 import { useWorkflowEventBridge } from '../../src/features/conversation/state/workflowEventBridge'
+import { useWorkflowStateStoreV2 } from '../../src/features/conversation/state/workflowStateStoreV2'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 
 type EventSourceMockInstance = {
@@ -43,14 +44,27 @@ describe('workflowEventBridge', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
+    useWorkflowStateStoreV2.getState().reset()
   })
 
   afterEach(() => {
     vi.useRealTimers()
   })
 
-  it('refreshes execution state for matching workflow and invalidate events', async () => {
-    const refreshExecutionState = vi.fn().mockResolvedValue(undefined)
+  it('refreshes workflow-state before detail-state for matching workflow and invalidate events', async () => {
+    const callOrder: string[] = []
+    const loadWorkflowState = vi.fn().mockImplementation(async () => {
+      callOrder.push('workflow')
+      return undefined
+    })
+    const refreshExecutionState = vi.fn().mockImplementation(async () => {
+      callOrder.push('detail')
+      return undefined
+    })
+
+    useWorkflowStateStoreV2.setState({
+      loadWorkflowState,
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
     useDetailStateStore.setState({
       refreshExecutionState,
     } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
@@ -75,6 +89,13 @@ describe('workflowEventBridge', () => {
           },
         }),
       )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(callOrder).toEqual(['workflow', 'detail'])
+
+    await act(async () => {
       eventSource.emitMessage(
         JSON.stringify({
           eventId: 'evt-invalidate',
@@ -91,15 +112,24 @@ describe('workflowEventBridge', () => {
         }),
       )
       await Promise.resolve()
+      await Promise.resolve()
     })
 
+    expect(loadWorkflowState).toHaveBeenCalledTimes(2)
+    expect(loadWorkflowState).toHaveBeenNthCalledWith(1, 'project-1', 'node-1')
+    expect(loadWorkflowState).toHaveBeenNthCalledWith(2, 'project-1', 'node-1')
     expect(refreshExecutionState).toHaveBeenCalledTimes(2)
     expect(refreshExecutionState).toHaveBeenNthCalledWith(1, 'project-1', 'node-1')
     expect(refreshExecutionState).toHaveBeenNthCalledWith(2, 'project-1', 'node-1')
+    expect(callOrder).toEqual(['workflow', 'detail', 'workflow', 'detail'])
   })
 
   it('ignores workflow events for other targets or malformed payloads', async () => {
+    const loadWorkflowState = vi.fn().mockResolvedValue(undefined)
     const refreshExecutionState = vi.fn().mockResolvedValue(undefined)
+    useWorkflowStateStoreV2.setState({
+      loadWorkflowState,
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
     useDetailStateStore.setState({
       refreshExecutionState,
     } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
@@ -128,13 +158,18 @@ describe('workflowEventBridge', () => {
       await Promise.resolve()
     })
 
+    expect(loadWorkflowState).not.toHaveBeenCalled()
     expect(refreshExecutionState).not.toHaveBeenCalled()
   })
 
   it('reconnects after workflow stream errors and closes on unmount', async () => {
     vi.useFakeTimers()
 
+    const loadWorkflowState = vi.fn().mockResolvedValue(undefined)
     const refreshExecutionState = vi.fn().mockResolvedValue(undefined)
+    useWorkflowStateStoreV2.setState({
+      loadWorkflowState,
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
     useDetailStateStore.setState({
       refreshExecutionState,
     } as Partial<ReturnType<typeof useDetailStateStore.getState>>)

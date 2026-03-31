@@ -51,6 +51,19 @@ Out of scope:
 - detailed visual design of thread UIs
 - changes to the public conversation item schema beyond review-mode integration
 
+### Supersession note
+
+This doc set supersedes `docs/specs/conversation-streaming-v2.md` for:
+
+- execution after `Finish Task`
+- finished-leaf local audit/review
+
+`docs/specs/conversation-streaming-v2.md` remains authoritative for:
+
+- `ask_planning`
+- the review-node flow
+- legacy or transitional V2 conversation surfaces outside this rework
+
 ## Architectural Model
 
 ### Transcript lane
@@ -88,7 +101,12 @@ Backend remains authoritative for:
 
 Task title, frame/spec context, parent split context, review cycle metadata, commit metadata, and CTA gating are not part of transcript hydration.
 
-They come from backend workflow/detail state and render separately from live thread items.
+They come from backend APIs with distinct authority boundaries and render separately from live thread items:
+
+- `workflow-state` is authoritative for `workflowPhase`, thread ids, runtime block, active request state, CTA gating, decision objects, and artifact references used by workflow validation
+- `detail-state` is non-authoritative node metadata for title, hierarchy, frame/spec context, parent split/clarify context, and other shell display data
+
+If mirrored fields conflict, `workflow-state` wins for thread identity, runtime state, CTA gating, and workflow validation.
 
 This keeps execution and review transcript latency independent from PTM-specific UI metadata.
 
@@ -260,6 +278,8 @@ Notes:
 - `current_candidate_workspace_hash` is the primary artifact identifier before the user chooses `Mark Done` or `Review in Audit`.
 - `audit_lineage_thread_id` is the canonical context thread id for the node.
 - `review_thread_id` is the canonical local-review history thread id for the leaf node once the first detached review has been created.
+- `workflow-state` is the authoritative API for `execution_thread_id`, `audit_lineage_thread_id`, `review_thread_id`, decision objects, runtime-block state, and CTA booleans.
+- `detail-state` may mirror display metadata, but it must not override workflow-state for transcript hydration or transition validation.
 - `latest_review_commit_sha`, `latest_review_cycle_id`, and `latest_review_disposition` are metadata for audit prefix and CTA context. They are not transcript items.
 - top-level candidate and review metadata fields are mirrored metadata for rendering; they must not override current decision objects for CTA gating.
 - `review_disposition` is reviewer metadata, not a workflow decision. `Mark Done` and `Improve in Execution` remain gated by `current_audit_decision` plus the source cycle lifecycle record, not by reviewer disposition alone.
@@ -676,17 +696,31 @@ Execution and local review transcript loading must mirror CodexMonitor:
 
 ### Metadata loading
 
-Execution and audit metadata comes from backend workflow/detail state:
+Execution and audit metadata comes from two backend sources:
 
-- task title
-- frame/spec context
-- parent split and clarify context
-- `review_commit_sha`
-- `cycle_id`
-- CTA enablement
-- workflow phase
+- `workflow-state` provides:
+  - `workflowPhase`
+  - `executionThreadId`
+  - `auditLineageThreadId`
+  - `reviewThreadId`
+  - CTA enablement
+  - runtime block and active request state
+  - current decision objects
+  - candidate and review artifact metadata needed for validation and display
+- `detail-state` provides:
+  - task title
+  - frame/spec context
+  - parent split and clarify context
+  - hierarchy and other PTM shell metadata
 
 These values are fetched separately from transcript loading and must not block transcript rendering.
+
+Rules:
+
+- execution transcript hydrates by `execution_thread_id`
+- audit transcript hydrates by `review_thread_id` once present
+- client must not discover execution or review transcript by `(projectId, nodeId, threadRole)` in the target architecture
+- if mirrored fields conflict, `workflow-state` wins
 
 ### Audit tab loading
 
@@ -697,7 +731,7 @@ Audit UI has two surfaces:
 
 Rules:
 
-- before first local review, audit tab renders metadata from workflow/detail state and does not hydrate a review transcript
+- before first local review, audit tab renders metadata from `workflow-state` and `detail-state` and does not hydrate a review transcript
 - once `review_thread_id` exists, audit tab hydrates from that review thread
 - audit lineage thread is not the main audit transcript surface after the first review thread is created
 
@@ -718,7 +752,7 @@ Rules:
 Execution UI:
 
 - transcript renders from thread items only
-- prefix metadata renders from workflow/detail state
+- prefix metadata renders from `workflow-state` and `detail-state`
 - execution composer is enabled when `can_send_execution_message = true`
 - execution CTA buttons render from workflow state only
 
@@ -726,7 +760,7 @@ Audit UI:
 
 - before the first review, audit tab renders readonly metadata only
 - after `review_thread_id` exists, transcript renders from review-thread items only
-- review metadata prefix renders from workflow/detail state
+- review metadata prefix renders from `workflow-state` and `detail-state`
 - generic composer is disabled in standard workflow mode
 - audit CTA buttons render from workflow state only
 
@@ -770,6 +804,7 @@ This redesign is considered correct when:
 - local review remains review-only and never mutates workspace
 - `Review in Audit` always reviews an immutable `review_commit_sha`
 - `Improve in Execution` uses the latest completed `exitedReviewMode.review` output in v1
+- `workflow-state` is authoritative for phase, thread ids, CTA gating, and runtime state; `detail-state` is display metadata only
 - all backend-started execution and review turns persist `client_request_id` and reconcile by it on retry before issuing a duplicate start
 - `ReviewCycle` lifecycle and reviewer disposition remain separate concepts; CTA gating uses lifecycle plus decision state, not reviewer disposition alone
 - transcript reload for execution and local review comes from `thread/read`, not backend-built `hydratedItems`

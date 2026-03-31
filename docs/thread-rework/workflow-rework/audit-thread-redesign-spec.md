@@ -122,8 +122,8 @@ Browser does not own:
 
 - audit lineage source of truth: app-server audit lineage thread plus backend metadata
 - review transcript source of truth: app-server review thread plus browser reducer state
-- workflow source of truth: backend `ReviewCycle` and node workflow state
-- prefix metadata source of truth: backend workflow and detail state
+- workflow source of truth: backend `ReviewCycle` and `workflow-state`
+- display metadata source of truth: backend `detail-state` plus display mirrors from `workflow-state`
 
 In v1, PTM does not maintain a separate local review transcript archive. Reopen and refresh rely on `thread/read`.
 
@@ -159,13 +159,14 @@ Audit UI bootstrap depends on whether a review thread already exists.
 
 Before first local review:
 
-1. frontend gets `auditLineageThreadId`, `reviewThreadId`, and metadata from workflow-state or detail-state
-2. frontend sees `reviewThreadId = null`
-3. frontend renders readonly audit metadata shell only
+1. frontend gets `auditLineageThreadId`, `reviewThreadId`, workflow phase, and CTA metadata from `workflow-state`
+2. frontend may fetch `detail-state` in parallel for readonly audit shell context
+3. frontend sees `reviewThreadId = null`
+4. frontend renders readonly audit metadata shell only
 
 After first local review exists:
 
-1. frontend gets `reviewThreadId` from workflow-state or detail-state
+1. frontend gets `reviewThreadId` from `workflow-state`
 2. frontend client thread service calls `thread/read`
 3. frontend converts returned thread payload into review items
 4. frontend hydrates local reducer state
@@ -173,24 +174,34 @@ After first local review exists:
 
 ### Metadata bootstrap model
 
-Audit prefix and CTA metadata are fetched separately from backend workflow/detail APIs:
+Audit prefix and CTA metadata are fetched separately from backend APIs:
 
-- task title
-- node-local frame/spec summary
-- parent clarify and split context
-- `latestReviewCycleId`
-- `latestReviewCommitSha`
-- `latestReviewDisposition`
-- workflow phase
-- CTA flags
+- `workflow-state` provides:
+  - `auditLineageThreadId`
+  - `reviewThreadId`
+  - `workflowPhase`
+  - CTA flags
+  - runtime block and active request state
+  - `latestReviewCycleId`
+  - `latestReviewCommitSha`
+  - `latestReviewDisposition`
+  - current audit decision metadata
+- `detail-state` provides:
+  - task title
+  - node-local frame/spec summary
+  - parent clarify and split context
+  - readonly shell metadata that is not workflow control truth
 
 This metadata is rendered separately from transcript and must not block review transcript hydration.
+
+If a mirrored field conflicts across the two APIs, `workflow-state` wins for thread identity, runtime state, CTA gating, and workflow validation.
 
 ### Transport rules
 
 - browser never starts review turns directly against the app-server
 - browser only consumes transcript events directly
 - all review-cycle creation still goes through backend workflow action `Review in Audit`
+- client review thread service is keyed by `reviewThreadId`, not by `(projectId, nodeId, threadRole)`
 - client transport layer owns reconnect and resubscribe behavior
 - PTM workflow API does not own a thread-scoped transport descriptor in v1
 - review turns must run with a runtime-enforced read-only capability profile
@@ -275,16 +286,17 @@ Required trigger points:
 Hydration for the audit tab comes from two independent sources:
 
 - transcript from app-server `thread/read` when `reviewThreadId` exists
-- metadata from backend workflow/detail state
+- metadata from backend `workflow-state` and `detail-state`
 
 The browser must:
 
-1. fetch workflow/detail state to learn `auditLineageThreadId`, `reviewThreadId`, and review metadata
-2. if `reviewThreadId` is `null`, render readonly metadata shell and stop there
-3. if `reviewThreadId` is present, call `thread/read` for that `reviewThreadId`
-4. build review-thread items locally
-5. seed local reducer state
-6. subscribe to live review events if the thread is active
+1. fetch `workflow-state` to learn `auditLineageThreadId`, `reviewThreadId`, CTA metadata, and runtime state
+2. optionally fetch `detail-state` in parallel for audit shell metadata
+3. if `reviewThreadId` is `null`, render readonly metadata shell and stop there
+4. if `reviewThreadId` is present, call `thread/read` for that `reviewThreadId`
+5. build review-thread items locally
+6. seed local reducer state
+7. subscribe to live review events if the thread is active
 
 ### Hydration rules
 
@@ -293,13 +305,14 @@ The browser must:
 - audit CTA state must never be derived from transcript interpretation
 - review metadata prefix must not be injected into transcript hydration
 - audit lineage thread is not the primary transcript surface after first review thread creation
+- once `reviewThreadId` exists, the standard audit transcript surface hydrates exclusively from that `reviewThreadId`
 
 ### Refresh behavior
 
 On browser refresh while review is active:
 
 1. local reducer state is discarded
-2. client refetches workflow/detail state
+2. client refetches `workflow-state` and optionally `detail-state`
 3. client calls `thread/read` for the current `reviewThreadId`
 4. client rebuilds review items locally
 5. client resubscribes to live review events
@@ -351,7 +364,7 @@ Rules:
 - request queue ownership is client-side, matching CodexMonitor-style reducer behavior
 - backend remains authoritative for resolving the request with runtime
 - while `runtimeBlock = "waiting_user_input"`, generic send remains disabled and only the active request may be answered
-- if `thread/read` cannot reconstruct a pending request after refresh, PTM may add a thin fallback request-state endpoint later, but that is not part of the transcript critical path in v1
+- if `thread/read` cannot reconstruct a pending request after refresh, that is a correctness bug for this rework and a blocker for shipping the audit lane; v1 does not define a fallback request-state endpoint
 
 ## 9. Terminal and Error Handling
 
@@ -396,7 +409,7 @@ If browser disconnects or closes:
 1. Keep backend workflow endpoints and decision reconciliation as the authoritative control plane.
 2. Stop treating the audit lineage thread as the live local-review transcript surface.
 3. Add client review-thread hydration from `thread/read` and live raw review events.
-4. Keep audit tab metadata rendering from workflow/detail state even before first local review exists.
+4. Keep audit tab metadata rendering from `workflow-state` and `detail-state` even before first local review exists.
 5. Move review request-user-input queue ownership into the client reducer path.
 6. Keep audit generic composer disabled in standard workflow mode.
 7. Treat any existing backend `thread view` bootstrap endpoint as transitional only, not target architecture.
@@ -408,10 +421,11 @@ If browser disconnects or closes:
 - later local reviews continue on the same review thread
 - audit tab renders readonly metadata when `reviewThreadId` is absent
 - audit tab hydrates transcript from `reviewThreadId` when it exists
+- audit transcript hydration is keyed by `reviewThreadId` from `workflow-state`
 - review transcript live path is `raw event -> client reducer -> UI`
 - review reload path is `client thread service -> thread/read -> hydrate client state`
 - backend no longer builds `hydratedItems` for local review as the target model
-- audit prefix metadata is fetched separately from workflow/detail state
+- audit prefix metadata is fetched separately from `workflow-state` and `detail-state`
 - review runtime remains read-only and never mutates workspace
 - runtime `requestUserInput` queue is client-owned
 - `Improve in Execution` v1 uses `exitedReviewMode.review`

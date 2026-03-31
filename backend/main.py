@@ -36,10 +36,11 @@ from backend.config.app_config import (
 )
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
-from backend.routes import bootstrap, chat, chat_v2, codex, nodes, projects, split
+from backend.routes import bootstrap, chat, chat_v2, codex, nodes, projects, split, workflow_v2
 from backend.services.chat_service import ChatService
 from backend.services.codex_account_service import CodexAccountService
 from backend.services.clarify_generation_service import ClarifyGenerationService
+from backend.services.execution_audit_workflow_service import ExecutionAuditWorkflowService
 from backend.services.frame_generation_service import FrameGenerationService
 from backend.services.finish_task_service import FinishTaskService
 from backend.services.git_checkpoint_service import GitCheckpointService
@@ -193,6 +194,16 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         execution_audit_v2_rehearsal_enabled=rehearsal_enabled,
         rehearsal_workspace_root=rehearsal_workspace_root,
     )
+    execution_audit_workflow_service_v2 = ExecutionAuditWorkflowService(
+        storage=storage,
+        tree_service=tree_service,
+        finish_task_service=finish_task_service,
+        review_service=review_service,
+        thread_runtime_service_v2=thread_runtime_service_v2,
+        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        git_checkpoint_service=git_checkpoint_service,
+        codex_client=codex_client,
+    )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service
     thread_lineage_service.set_thread_registry_service(thread_registry_service_v2)
@@ -258,6 +269,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.thread_transcript_builder_v2 = thread_transcript_builder_v2
     app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2
     app.state.system_message_writer_v2 = system_message_writer_v2
+    app.state.execution_audit_workflow_service_v2 = execution_audit_workflow_service_v2
     app.state.execution_audit_v2_enabled = execution_audit_v2_enabled
     app.state.execution_audit_v2_rehearsal_enabled = rehearsal_enabled
 
@@ -290,6 +302,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.include_router(split.router, prefix="/v1")
     app.include_router(chat.router, prefix="/v1")
     app.include_router(chat_v2.router, prefix="/v2")
+    app.include_router(workflow_v2.router, prefix="/v2")
 
     if getattr(sys, "frozen", False):
         dist = Path(sys._MEIPASS) / "frontend" / "dist"  # type: ignore[attr-defined]

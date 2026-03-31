@@ -19,6 +19,7 @@ import type {
   SendMessageResponse,
   Snapshot,
   StartTurnV2Response,
+  NodeWorkflowView,
   SpecGenAcceptedResponse,
   SpecGenStatusResponse,
   SplitAcceptedResponse,
@@ -26,6 +27,7 @@ import type {
   SplitStatusResponse,
   ThreadSnapshotV2,
   ThreadRole,
+  WorkflowActionAcceptedResponse,
 } from './types'
 
 type JsonBody = Record<string, unknown> | undefined
@@ -65,6 +67,31 @@ function buildThreadPathV2(projectId: string, nodeId: string, threadRole: Thread
   return `/v2/projects/${projectId}/nodes/${nodeId}/threads/${threadRole}`
 }
 
+function buildWorkflowStatePathV2(projectId: string, nodeId: string): string {
+  return `/v2/projects/${projectId}/nodes/${nodeId}/workflow-state`
+}
+
+function buildWorkflowActionPathV2(
+  projectId: string,
+  nodeId: string,
+  action:
+    | 'finish-task'
+    | 'mark-done-from-execution'
+    | 'review-in-audit'
+    | 'mark-done-from-audit'
+    | 'improve-in-execution',
+): string {
+  return `/v2/projects/${projectId}/nodes/${nodeId}/workflow/${action}`
+}
+
+function buildThreadByIdBasePathV2(projectId: string, threadId: string): string {
+  return `/v2/projects/${projectId}/threads/by-id/${threadId}`
+}
+
+function buildThreadByIdPathV2(projectId: string, threadId: string, nodeId: string): string {
+  return `${buildThreadByIdBasePathV2(projectId, threadId)}?node_id=${encodeURIComponent(nodeId)}`
+}
+
 export function buildThreadEventsUrlV2(
   projectId: string,
   nodeId: string,
@@ -76,6 +103,19 @@ export function buildThreadEventsUrlV2(
     return base
   }
   return `${base}?after_snapshot_version=${encodeURIComponent(String(afterSnapshotVersion))}`
+}
+
+export function buildThreadByIdEventsUrlV2(
+  projectId: string,
+  nodeId: string,
+  threadId: string,
+  afterSnapshotVersion?: number | null,
+): string {
+  const base = `${buildThreadByIdBasePathV2(projectId, threadId)}/events?node_id=${encodeURIComponent(nodeId)}`
+  if (afterSnapshotVersion == null) {
+    return base
+  }
+  return `${base}&after_snapshot_version=${encodeURIComponent(String(afterSnapshotVersion))}`
 }
 
 export function buildProjectEventsUrlV2(projectId: string): string {
@@ -292,6 +332,9 @@ export const api = {
   getDetailState(projectId: string, nodeId: string): Promise<DetailState> {
     return jsonFetch<DetailState>(`/v1/projects/${projectId}/nodes/${nodeId}/detail-state`)
   },
+  getWorkflowStateV2(projectId: string, nodeId: string): Promise<NodeWorkflowView> {
+    return jsonFetchV2<NodeWorkflowView>(buildWorkflowStatePathV2(projectId, nodeId))
+  },
   getReviewState(projectId: string, nodeId: string): Promise<ReviewState> {
     return jsonFetch<ReviewState>(`/v1/projects/${projectId}/nodes/${nodeId}/review-state`)
   },
@@ -428,6 +471,16 @@ export const api = {
     )
     return response.snapshot
   },
+  async getThreadSnapshotByIdV2(
+    projectId: string,
+    nodeId: string,
+    threadId: string,
+  ): Promise<ThreadSnapshotV2> {
+    const response = await jsonFetchV2<{ snapshot: ThreadSnapshotV2 }>(
+      buildThreadByIdPathV2(projectId, threadId, nodeId),
+    )
+    return response.snapshot
+  },
   startThreadTurnV2(
     projectId: string,
     nodeId: string,
@@ -462,6 +515,65 @@ export const api = {
     return jsonFetchV2<ResetThreadV2Response>(
       `${buildThreadPathV2(projectId, nodeId, threadRole)}/reset`,
       { method: 'POST' },
+    )
+  },
+  finishTaskWorkflowV2(
+    projectId: string,
+    nodeId: string,
+    idempotencyKey: string,
+  ): Promise<WorkflowActionAcceptedResponse> {
+    return jsonFetchV2<WorkflowActionAcceptedResponse>(
+      buildWorkflowActionPathV2(projectId, nodeId, 'finish-task'),
+      { method: 'POST' },
+      { idempotencyKey },
+    )
+  },
+  markDoneFromExecutionV2(
+    projectId: string,
+    nodeId: string,
+    idempotencyKey: string,
+    expectedWorkspaceHash: string,
+  ): Promise<NodeWorkflowView> {
+    return jsonFetchV2<NodeWorkflowView>(
+      buildWorkflowActionPathV2(projectId, nodeId, 'mark-done-from-execution'),
+      { method: 'POST' },
+      { idempotencyKey, expectedWorkspaceHash },
+    )
+  },
+  reviewInAuditV2(
+    projectId: string,
+    nodeId: string,
+    idempotencyKey: string,
+    expectedWorkspaceHash: string,
+  ): Promise<WorkflowActionAcceptedResponse> {
+    return jsonFetchV2<WorkflowActionAcceptedResponse>(
+      buildWorkflowActionPathV2(projectId, nodeId, 'review-in-audit'),
+      { method: 'POST' },
+      { idempotencyKey, expectedWorkspaceHash },
+    )
+  },
+  markDoneFromAuditV2(
+    projectId: string,
+    nodeId: string,
+    idempotencyKey: string,
+    expectedReviewCommitSha: string,
+  ): Promise<NodeWorkflowView> {
+    return jsonFetchV2<NodeWorkflowView>(
+      buildWorkflowActionPathV2(projectId, nodeId, 'mark-done-from-audit'),
+      { method: 'POST' },
+      { idempotencyKey, expectedReviewCommitSha },
+    )
+  },
+  improveInExecutionV2(
+    projectId: string,
+    nodeId: string,
+    idempotencyKey: string,
+    expectedReviewCommitSha: string,
+  ): Promise<WorkflowActionAcceptedResponse> {
+    return jsonFetchV2<WorkflowActionAcceptedResponse>(
+      buildWorkflowActionPathV2(projectId, nodeId, 'improve-in-execution'),
+      { method: 'POST' },
+      { idempotencyKey, expectedReviewCommitSha },
     )
   },
 }

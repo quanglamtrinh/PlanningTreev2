@@ -415,7 +415,7 @@ describe('BreadcrumbChatView', () => {
     })
   })
 
-  it('redirects review-node breadcrumb routes to /chat-v2 audit', async () => {
+  it('keeps review-node breadcrumb routes on legacy audit', async () => {
     setBootstrapStatus({ execution_audit_v2_enabled: true })
     const snapshot = makeSnapshot('project-1', 'review-1')
     apiMock.getSnapshot.mockResolvedValue({
@@ -451,7 +451,7 @@ describe('BreadcrumbChatView', () => {
     renderBreadcrumbChatView('/projects/project-1/nodes/review-1/chat')
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/review-1/chat-v2?thread=audit')
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/review-1/chat?thread=audit')
     })
   })
 

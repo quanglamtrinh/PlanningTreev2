@@ -73,8 +73,8 @@ Browser does not own:
 ### Source-of-truth split
 
 - transcript source of truth: app-server thread plus browser reducer state
-- workflow source of truth: backend `ExecutionRun` and node workflow state
-- prefix metadata source of truth: backend workflow and detail state
+- workflow source of truth: backend `ExecutionRun` and `workflow-state`
+- display metadata source of truth: backend `detail-state` plus display mirrors from `workflow-state`
 
 In v1, PTM does not maintain a separate local execution transcript archive. Reopen and refresh rely on `thread/read`.
 
@@ -103,7 +103,7 @@ Execution transcript event sources include:
 
 Execution transcript bootstrap is client-owned:
 
-1. frontend gets `executionThreadId` from workflow-state or detail-state
+1. frontend gets `executionThreadId` from `workflow-state`
 2. frontend client thread service calls `thread/read`
 3. frontend converts returned thread payload into execution items
 4. frontend hydrates local reducer state
@@ -111,20 +111,28 @@ Execution transcript bootstrap is client-owned:
 
 ### Metadata bootstrap model
 
-Execution prefix and CTA metadata are fetched separately from backend workflow/detail APIs:
+Execution prefix and CTA metadata are fetched separately from backend APIs:
 
-- task title
-- frame/spec summary
-- workflow phase
-- CTA flags
-- candidate artifact metadata
+- `workflow-state` provides:
+  - `workflowPhase`
+  - `executionThreadId`
+  - CTA flags
+  - runtime block and active request state
+  - current decision and candidate artifact metadata
+- `detail-state` provides:
+  - task title
+  - frame/spec summary
+  - parent context and other PTM shell metadata
 
 This metadata is rendered separately from transcript and must not block execution transcript hydration.
+
+If a mirrored field conflicts across the two APIs, `workflow-state` wins for thread identity, runtime state, CTA gating, and workflow validation.
 
 ### Transport rules
 
 - browser never starts execution turns directly against the app-server
 - all turn creation still goes through backend workflow actions or execution follow-up endpoint
+- client execution thread service is keyed by `executionThreadId`, not by `(projectId, nodeId, threadRole)`
 - client transport layer owns reconnect and resubscribe behavior
 - PTM workflow API does not own a thread-scoped transport descriptor in v1
 
@@ -166,15 +174,16 @@ Per-delta transcript projection remains explicitly out of scope.
 Hydration for execution comes from two independent sources:
 
 - transcript from app-server `thread/read`
-- metadata from backend workflow/detail state
+- metadata from backend `workflow-state` and `detail-state`
 
 The browser must:
 
-1. fetch workflow/detail state to learn `executionThreadId` and CTA metadata
-2. call `thread/read` for that `executionThreadId`
-3. build execution thread items locally
-4. seed local reducer state
-5. subscribe to live execution events if the thread is active
+1. fetch `workflow-state` to learn `executionThreadId`, CTA metadata, and runtime state
+2. optionally fetch `detail-state` in parallel for execution prefix metadata
+3. call `thread/read` for that `executionThreadId`
+4. build execution thread items locally
+5. seed local reducer state
+6. subscribe to live execution events if the thread is active
 
 ### Hydration rules
 
@@ -188,17 +197,18 @@ The browser must:
 On browser refresh while execution is active:
 
 1. client discards in-memory reducer state
-2. client refetches workflow/detail state
-3. client calls `thread/read`
-4. client rebuilds execution items locally
-5. client resubscribes to live execution events
-6. workflow state stays authoritative from backend
+2. client refetches `workflow-state`
+3. client optionally refetches `detail-state`
+4. client calls `thread/read`
+5. client rebuilds execution items locally
+6. client resubscribes to live execution events
+7. workflow state stays authoritative from backend
 
 ### Hydration responsibility boundary
 
 - `thread/read` is responsible for transcript recovery
-- workflow-state is responsible for decision-state recovery
-- detail-state is responsible for PTM-specific execution metadata not embedded in transcript
+- `workflow-state` is responsible for `executionThreadId`, decision-state recovery, runtime block, and CTA truth
+- `detail-state` is responsible only for PTM-specific execution metadata not embedded in transcript
 
 Note:
 
@@ -254,7 +264,7 @@ Rules:
 - request queue ownership is client-side, matching CodexMonitor-style reducer behavior
 - backend remains authoritative for resolving the request with runtime
 - while `runtimeBlock = "waiting_user_input"`, generic execution send is disabled and only the active request may be answered
-- if `thread/read` cannot reconstruct a pending request after refresh, PTM may add a thin fallback request-state endpoint later, but that is not part of the transcript critical path in v1
+- if `thread/read` cannot reconstruct a pending request after refresh, that is a correctness bug for this rework and a blocker for shipping the execution lane; v1 does not define a fallback request-state endpoint
 
 ## 7. Terminal and Error Handling
 
@@ -301,7 +311,7 @@ If browser disconnects or closes:
 2. Remove execution UI dependence on backend-projected per-delta transcript snapshots.
 3. Add a client execution thread service that reads execution transcript from `thread/read` and subscribes to live raw events.
 4. Move execution request-user-input queue ownership into the client reducer path.
-5. Move execution prefix rendering to workflow/detail metadata instead of transcript bootstrap.
+5. Move execution prefix rendering to `workflow-state` and `detail-state` metadata instead of transcript bootstrap.
 6. Keep execution composer enabled for follow-up implement turns in `execution_decision_pending`.
 7. Treat any existing backend `thread view` bootstrap endpoint as transitional only, not target architecture.
 
@@ -309,8 +319,9 @@ If browser disconnects or closes:
 
 - execution transcript live path is `raw event -> client reducer -> UI`
 - execution reload path is `client thread service -> thread/read -> hydrate client state`
+- execution transcript hydration is keyed by `executionThreadId` from `workflow-state`
 - backend no longer builds `hydratedItems` for execution as the target model
-- execution prefix metadata is fetched separately from workflow/detail state
+- execution prefix metadata is fetched separately from `workflow-state` and `detail-state`
 - execution composer remains available for follow-up implement turns
 - runtime `requestUserInput` queue is client-owned
 - backend decision state remains authoritative for workflow correctness

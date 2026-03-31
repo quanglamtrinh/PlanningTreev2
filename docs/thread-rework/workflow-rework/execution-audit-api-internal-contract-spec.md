@@ -36,6 +36,25 @@ Backend remains authoritative for workflow correctness:
 - node state transitions
 - review and improve handoff
 
+## Supersession and Scope
+
+This contract supersedes `docs/specs/conversation-streaming-v2.md` for:
+
+- execution after `Finish Task`
+- finished-leaf local audit/review
+
+`docs/specs/conversation-streaming-v2.md` remains authoritative for:
+
+- `ask_planning`
+- the review-node flow
+- legacy or transitional V2 conversation surfaces outside this rework
+
+For the reworked lanes:
+
+- transcript discovery and hydration are keyed by app-server `threadId`
+- workflow control remains keyed by PTM `projectId` and `nodeId`
+- node/role transcript lookup is not target architecture for execution or finished-leaf local review
+
 ## Public Workflow State
 
 `GET /v2/projects/{project_id}/nodes/{node_id}/workflow-state`
@@ -88,6 +107,7 @@ Response:
 Rules:
 
 - `workflowPhase` is authoritative only for the active top-level lane
+- `workflow-state` is authoritative for lane ownership, thread ids, runtime block, active request id, current decision objects, artifact references used by validation, and CTA flags
 - `runtimeBlock` and `activeRequestId` are lane-local runtime fields; they do not create a new top-level workflow phase
 - `executionStartState` and `auditStartState` expose `starting` and `start_failed` without moving ownership back to another lane
 - `currentExecutionDecision` and `currentAuditDecision` are the authoritative CTA target and gating records for `Mark Done`, `Review in Audit`, and `Improve in Execution`
@@ -102,6 +122,30 @@ Rules:
 - `currentCandidateSha`, `currentCandidateWorkspaceHash`, `latestReviewCommitSha`, `latestReviewCycleId`, and `latestReviewDisposition` are display mirrors only and must not be treated as gating truth
 - if mirrored top-level metadata conflicts with a current decision object, CTA gating must follow the current decision object
 - `latestReviewDisposition` is reviewer metadata only; it does not by itself decide `Mark Done` or `Improve in Execution`
+
+## Public Detail Metadata Contract
+
+`GET /v2/projects/{project_id}/nodes/{node_id}/detail-state` remains the node metadata dossier for execution and audit surfaces.
+
+It is intentionally non-authoritative for workflow control.
+
+Allowed responsibilities:
+
+- task title, hierarchy, and node labels
+- frame/spec summary and parent split/clarify context
+- readonly audit shell context
+- display-oriented metadata mirrors that help render the shell
+
+Forbidden responsibilities:
+
+- deciding `workflowPhase` or CTA enablement
+- deciding `executionThreadId`, `auditLineageThreadId`, or `reviewThreadId` for transcript hydration
+- overriding current decision objects, runtime block, start-state fields, or accepted artifact fields
+
+Conflict rule:
+
+- if `detail-state` mirrors any field also returned by `workflow-state`, `workflow-state` wins
+- clients may fetch `detail-state` in parallel for render, but workflow writes and CTA gating must never validate against `detail-state`
 
 ## Authoritative Decision Rules
 
@@ -196,31 +240,37 @@ Execution and local review transcript are not hydrated by a PTM backend `thread 
 
 Instead, the client follows the same high-level shape as CodexMonitor:
 
-1. client gets thread ids and workflow metadata from `workflow-state` or detail-state
-2. client thread service calls `thread/read`
-3. client converts returned thread payload into thread items
-4. client hydrates local reducer state
-5. client subscribes or resubscribes to live thread events if the turn is still active
+1. client fetches `workflow-state` to get `executionThreadId`, `auditLineageThreadId`, `reviewThreadId`, workflow phase, runtime block, and CTA state
+2. client may fetch `detail-state` in parallel for prefix/context metadata
+3. client thread service calls `thread/read` using the app-server `threadId` chosen from `workflow-state`
+4. client converts returned thread payload into thread items
+5. client hydrates local reducer state
+6. client subscribes or resubscribes to live thread events if the turn is still active
 
 Rules:
 
 - PTM backend does not build `hydratedItems` for execution or local review in the target model
 - PTM backend does not return `prefixItems` as part of transcript bootstrap
-- prefix metadata is rendered from workflow/detail state, not from transcript hydration
-- PTM relies on app-server history via `thread/read`; any Codex-managed local storage backing that history is an implementation detail, not a PTM-owned contract
+- prefix metadata is rendered from `workflow-state` plus `detail-state`, not from transcript hydration
+- client thread service is keyed by app-server `threadId`, not by `(projectId, nodeId, threadRole)`
+- execution transcript hydrates from `executionThreadId`
+- local review transcript hydrates from `reviewThreadId` once it exists
 - before first local review, audit tab may render readonly metadata without hydrating a review transcript because `reviewThreadId` is still `null`
+- PTM relies on app-server history via `thread/read`; any Codex-managed local storage backing that history is an implementation detail, not a PTM-owned contract
+- if `thread/read` cannot reconstruct a pending request after refresh, that is a transcript correctness failure for this rework; v1 does not define a fallback request-state endpoint
 
 ## Client Live Transport Contract
 
 The target model mirrors CodexMonitor:
 
-- client transcript transport subscribes to live events by workspace/thread identity
+- client transcript transport subscribes to live events by app-server `threadId`
 - reconnect and resubscribe are handled by the client transport layer
 - resume and hydrate are handled by the client thread service
 
 Rules:
 
 - PTM workflow APIs do not own a thread-scoped `transportDescriptor` contract in v1
+- PTM workflow APIs do not proxy transcript discovery or transport by node/role in the target architecture for execution or finished-leaf local review
 - if the client transport layer later needs cursors or tokens, that remains an app-server or client-transport concern, not a workflow API concern
 - browser never starts execution or local review turns directly against the app-server
 - all turn creation still goes through backend workflow actions
@@ -707,7 +757,9 @@ App-server requirements:
 
 - detached review creation must return or later emit the resulting `reviewThreadId`
 - app-server must echo `clientRequestId` or equivalent idempotency identifier in detached and inline review lifecycle metadata
+- detached and inline review lifecycle must identify the created `reviewTurnId`
 - review thread transcript must contain `enteredReviewMode` and `exitedReviewMode`
+- `enteredReviewMode` and `exitedReviewMode` must be attributable to that same `reviewTurnId`
 - `exitedReviewMode.review` is the canonical review text for that `reviewTurnId`
 - reviewer disposition metadata, if available, must stay separate from lifecycle completion and from user audit decisions
 
@@ -784,7 +836,7 @@ Done flow:
 - frontend hydration should move from backend-built `hydratedItems` to client-owned `thread/read`
 - frontend live transport should move from backend transcript SSE to app-server thread events
 - audit tab should move from treating the audit lineage thread as the live review surface to treating it as readonly context plus a spawned review thread
-- prefix metadata should move out of transcript bootstrap and into workflow/detail data
+- prefix metadata should move out of transcript bootstrap and into `workflow-state` plus `detail-state`
 - request-user-input queue should be owned by the client reducer path
 - execution generic composer remains enabled for follow-up implement turns
 - audit generic composer remains disabled

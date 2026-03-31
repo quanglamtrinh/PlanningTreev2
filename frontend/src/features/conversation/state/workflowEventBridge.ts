@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { appendAuthToken, buildProjectEventsUrlV2 } from '../../../api/client'
 import { useDetailStateStore } from '../../../stores/detail-state-store'
+import { useWorkflowStateStoreV2 } from './workflowStateStoreV2'
 import { parseWorkflowEventEnvelope } from './threadEventRouter'
 
 const RECONNECT_DELAY_MS = 1000
@@ -19,8 +20,20 @@ export function useWorkflowEventBridge(
     let eventSource: EventSource | null = null
     let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 
-    const refreshDetailState = () => {
-      void useDetailStateStore.getState().refreshExecutionState(projectId, nodeId)
+    const refreshWorkflowAndDetailState = () => {
+      void (async () => {
+        try {
+          await useWorkflowStateStoreV2.getState().loadWorkflowState(projectId, nodeId)
+        } catch {
+          // Keep the event bridge alive even if workflow refresh fails.
+        }
+
+        try {
+          await useDetailStateStore.getState().refreshExecutionState(projectId, nodeId)
+        } catch {
+          // Ignore detail refresh failures; the next workflow event will retry.
+        }
+      })()
     }
 
     const closeEventSource = () => {
@@ -52,7 +65,7 @@ export function useWorkflowEventBridge(
             return
           }
           if (event.type === 'node.workflow.updated' || event.type === 'node.detail.invalidate') {
-            refreshDetailState()
+            refreshWorkflowAndDetailState()
           }
         } catch {
           // Ignore malformed workflow events and keep the bridge alive.

@@ -244,7 +244,7 @@ describe('Sidebar', () => {
     })
   })
 
-  it('opens review nodes on the /chat-v2 audit surface from the sidebar tree', async () => {
+  it('keeps review nodes on the legacy audit surface from the sidebar tree', async () => {
     vi.useRealTimers()
     const selectNode = vi.fn().mockResolvedValue(undefined)
     useProjectStore.setState({
@@ -336,7 +336,7 @@ describe('Sidebar', () => {
     fireEvent.doubleClick(screen.getByRole('button', { name: /1\.R Review/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/review-node/chat-v2?thread=audit')
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/review-node/chat?thread=audit')
     })
   })
 

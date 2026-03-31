@@ -7,6 +7,19 @@ Primary rollout docs:
 - `docs/handoff/conversation-streaming-v2/README.md`
 - `docs/handoff/conversation-streaming-v2/progress.yaml`
 
+## Supersession Note
+
+As of March 30, 2026, this spec is superseded by `docs/thread-rework/workflow-rework/*` for:
+
+- execution after `Finish Task`
+- finished-leaf local audit/review
+
+This spec remains authoritative for:
+
+- `ask_planning`
+- the review-node flow
+- V2-managed legacy or transitional conversation surfaces that have not yet moved to the rework
+
 Reference architecture:
 
 - `C:/Users/Thong/CodexMonitor_tmp/src/types.ts`
@@ -24,7 +37,7 @@ Reference architecture:
 - Make live SSE and reload/resume converge on the same model.
 - Make `message`, `reasoning`, `plan`, `tool`, `userInput`, `status`, and `error` first-class item kinds.
 - Use item-centric `upsert` and `patch` semantics instead of pair-based message events.
-- Unify chat, review, and execution on one thread contract.
+- Unify V2-managed conversation surfaces on one thread contract.
 
 ## Non-Goals
 
@@ -92,6 +105,8 @@ PlanningTreeMain V2 extends the CodexMonitor pattern with:
 - workflow side-channel events
 
 ## Target Architecture
+
+The architecture below applies only to the surfaces still governed by this spec. Reworked execution and finished-leaf local audit/review lanes follow `docs/thread-rework/workflow-rework/*` instead.
 
 Conversation content source of truth:
 
