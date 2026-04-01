@@ -1596,6 +1596,7 @@ class StdioTransport(CodexTransport):
             if resolved is None:
                 return
             state, thread_id, turn_id, item_id = resolved
+            review_exited_with_result = False
             if method == "exitedReviewMode":
                 review_payload = params.get("exitedReviewMode")
                 if not isinstance(review_payload, dict):
@@ -1608,6 +1609,7 @@ class StdioTransport(CodexTransport):
                 disposition = _extract_str(review_payload, "disposition", "result")
                 if disposition:
                     state.review_disposition = disposition
+                review_exited_with_result = bool(state.review_text or state.review_disposition)
             self._record_and_dispatch_raw_event(
                 state,
                 self._build_raw_turn_event(
@@ -1618,6 +1620,10 @@ class StdioTransport(CodexTransport):
                     item_id=item_id,
                 ),
             )
+            if review_exited_with_result:
+                if not state.turn_status:
+                    state.turn_status = "completed"
+                state.event.set()
             return
 
         if method == "serverRequest/resolved":

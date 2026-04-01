@@ -43,13 +43,11 @@ vi.mock('../../src/features/graph/TreeGraph', () => ({
     snapshot,
     selectedNodeId,
     onOpenBreadcrumb,
-    onFinishTask,
     onResetProject,
   }: {
     snapshot: { tree_state: { root_node_id: string } }
     selectedNodeId: string | null
     onOpenBreadcrumb: (nodeId: string) => Promise<void>
-    onFinishTask: (nodeId: string) => Promise<void>
     onResetProject: () => Promise<void>
   }) => (
     <div data-testid="tree-graph">
@@ -59,9 +57,6 @@ vi.mock('../../src/features/graph/TreeGraph', () => ({
       <div data-testid="selected-node-id">{selectedNodeId}</div>
       <button onClick={() => void onOpenBreadcrumb(snapshot.tree_state.root_node_id)}>
         Open Root Breadcrumb
-      </button>
-      <button onClick={() => void onFinishTask(snapshot.tree_state.root_node_id)}>
-        Open Execution Surface
       </button>
       <button onClick={() => void onResetProject()}>Reset to Root</button>
     </div>
@@ -266,42 +261,6 @@ describe('GraphWorkspace', () => {
     expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=ask')
   })
 
-  it('routes finish-task entry to /chat-v2 execution', async () => {
-    apiMock.getBootstrapStatus.mockResolvedValue({
-      ready: true,
-      workspace_configured: true,
-      codex_available: true,
-      codex_path: 'codex',
-      execution_audit_v2_enabled: true,
-    })
-    apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-1')])
-    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1'))
-    apiMock.setActiveNode.mockResolvedValue(makeSnapshot('project-1'))
-    apiMock.getSplitStatus.mockResolvedValue({
-      status: 'idle',
-      job_id: null,
-      node_id: null,
-      mode: null,
-      started_at: null,
-      completed_at: null,
-      error: null,
-    })
-
-    render(
-      <MemoryRouter>
-        <GraphWorkspace />
-        <LocationProbe />
-      </MemoryRouter>,
-    )
-
-    await screen.findByTestId('tree-graph')
-    await act(async () => {
-      fireEvent.click(screen.getByText('Open Execution Surface'))
-    })
-
-    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat-v2?thread=execution')
-  })
-
   it('keeps review-node breadcrumb entry on legacy audit even when the V2 flag is enabled', async () => {
     apiMock.getBootstrapStatus.mockResolvedValue({
       ready: true,
@@ -336,42 +295,6 @@ describe('GraphWorkspace', () => {
     })
 
     expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=audit')
-  })
-
-  it('keeps finish-task entry on legacy chat when the V2 surface flag is disabled', async () => {
-    apiMock.getBootstrapStatus.mockResolvedValue({
-      ready: true,
-      workspace_configured: true,
-      codex_available: true,
-      codex_path: 'codex',
-      execution_audit_v2_enabled: false,
-    })
-    apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-1')])
-    apiMock.getSnapshot.mockResolvedValue(makeSnapshot('project-1'))
-    apiMock.setActiveNode.mockResolvedValue(makeSnapshot('project-1'))
-    apiMock.getSplitStatus.mockResolvedValue({
-      status: 'idle',
-      job_id: null,
-      node_id: null,
-      mode: null,
-      started_at: null,
-      completed_at: null,
-      error: null,
-    })
-
-    render(
-      <MemoryRouter>
-        <GraphWorkspace />
-        <LocationProbe />
-      </MemoryRouter>,
-    )
-
-    await screen.findByTestId('tree-graph')
-    await act(async () => {
-      fireEvent.click(screen.getByText('Open Execution Surface'))
-    })
-
-    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=execution')
   })
 
   it('keeps review-node breadcrumb entry on legacy audit when the V2 surface flag is disabled', async () => {

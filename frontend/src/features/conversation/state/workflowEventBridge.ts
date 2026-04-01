@@ -20,14 +20,18 @@ export function useWorkflowEventBridge(
     let eventSource: EventSource | null = null
     let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 
-    const refreshWorkflowAndDetailState = () => {
+    const refreshWorkflowState = () => {
       void (async () => {
         try {
           await useWorkflowStateStoreV2.getState().loadWorkflowState(projectId, nodeId)
         } catch {
           // Keep the event bridge alive even if workflow refresh fails.
         }
+      })()
+    }
 
+    const refreshDetailState = () => {
+      void (async () => {
         try {
           await useDetailStateStore.getState().refreshExecutionState(projectId, nodeId)
         } catch {
@@ -64,8 +68,13 @@ export function useWorkflowEventBridge(
           if (event.projectId !== projectId || event.nodeId !== nodeId) {
             return
           }
-          if (event.type === 'node.workflow.updated' || event.type === 'node.detail.invalidate') {
-            refreshWorkflowAndDetailState()
+          if (event.type === 'node.workflow.updated') {
+            refreshWorkflowState()
+            return
+          }
+          if (event.type === 'node.detail.invalidate') {
+            refreshWorkflowState()
+            refreshDetailState()
           }
         } catch {
           // Ignore malformed workflow events and keep the bridge alive.

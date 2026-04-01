@@ -330,18 +330,22 @@ class NodeDetailService:
             exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
             project = snapshot.get("project", {})
             raw_project_path = str(project.get("project_path") or "").strip()
-            pp = Path(raw_project_path) if raw_project_path else None
-            return build_detail_state(
-                self._storage,
-                project_id,
-                node_id,
-                node_dir,
-                exec_state=exec_state,
-                node=node,
-                review_state=review_state,
-                git_checkpoint_service=self._git_checkpoint_service,
-                project_path=pp,
-            )
+            node_copy = copy.deepcopy(node)
+            exec_state_copy = copy.deepcopy(exec_state)
+            review_state_copy = copy.deepcopy(review_state)
+
+        pp = Path(raw_project_path) if raw_project_path else None
+        return build_detail_state(
+            self._storage,
+            project_id,
+            node_id,
+            node_dir,
+            exec_state=exec_state_copy,
+            node=node_copy,
+            review_state=review_state_copy,
+            git_checkpoint_service=self._git_checkpoint_service,
+            project_path=pp,
+        )
 
     # ── Confirm frame ─────────────────────────────────────────────
 

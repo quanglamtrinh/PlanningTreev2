@@ -159,7 +159,6 @@ type Props = {
   onCreateChild: (parentId: string) => Promise<void>
   onSplitNode: (nodeId: string, mode: SplitMode) => Promise<void>
   onOpenBreadcrumb: (nodeId: string) => Promise<void>
-  onFinishTask: (nodeId: string) => Promise<void>
   onResetProject: () => Promise<void>
 }
 
@@ -236,7 +235,6 @@ export function TreeGraph({
   onCreateChild,
   onSplitNode,
   onOpenBreadcrumb,
-  onFinishTask,
   onResetProject,
 }: Props) {
   const [collapseOverrides, setCollapseOverrides] = useState<Record<string, boolean>>({})
@@ -259,14 +257,12 @@ export function TreeGraph({
     onCreateChild,
     onSplitNode,
     onOpenBreadcrumb,
-    onFinishTask,
   })
   handlerRef.current = {
     onSelectNode,
     onCreateChild,
     onSplitNode,
     onOpenBreadcrumb,
-    onFinishTask,
   }
 
   const nodeById = useMemo(
@@ -313,9 +309,6 @@ export function TreeGraph({
       },
       openBreadcrumb: (nodeId) => {
         void handlerRef.current.onOpenBreadcrumb(nodeId)
-      },
-      finishTask: (nodeId) => {
-        void handlerRef.current.onFinishTask(nodeId)
       },
       infoClick: (nodeId) => {
         setFocusedNodeId((prev) => {
@@ -597,15 +590,6 @@ export function TreeGraph({
           isCollapsed: collapsedById.get(node.node_id) ?? false,
           directHiddenChildrenCount: directHiddenChildrenById.get(node.node_id) ?? 0,
           canCreateChild: node.status !== 'done' && !node.is_superseded,
-          canFinishTask:
-            codexAvailable &&
-            !node.is_superseded &&
-            (node.workflow?.can_finish_task ??
-              (
-                (activeChildrenById.get(node.node_id) ?? []).length === 0 &&
-                (node.status === 'ready' || node.status === 'in_progress') &&
-                (node.workflow?.spec_confirmed ?? false)
-              )),
           canSplit:
             codexAvailable &&
             !node.is_superseded &&

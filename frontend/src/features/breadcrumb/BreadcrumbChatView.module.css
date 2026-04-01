@@ -59,13 +59,6 @@
   min-width: 0;
 }
 
-.threadHeaderActions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-
 .threadHeaderAction {
   padding: 7px 12px;
   border-radius: var(--radius-pill);

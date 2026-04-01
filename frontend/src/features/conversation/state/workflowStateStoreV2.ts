@@ -44,6 +44,8 @@ function stateKey(projectId: string, nodeId: string): string {
   return `${projectId}::${nodeId}`
 }
 
+const workflowStateInFlight = new Map<string, Promise<NodeWorkflowView>>()
+
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message
@@ -85,6 +87,27 @@ async function reloadWorkflowState(
     },
   }))
   return workflowState
+}
+
+function requestWorkflowState(
+  projectId: string,
+  nodeId: string,
+  set: (
+    partial:
+      | Partial<WorkflowStateStoreV2State>
+      | ((state: WorkflowStateStoreV2State) => Partial<WorkflowStateStoreV2State>),
+  ) => void,
+): Promise<NodeWorkflowView> {
+  const key = stateKey(projectId, nodeId)
+  const existing = workflowStateInFlight.get(key)
+  if (existing) {
+    return existing
+  }
+  const request = reloadWorkflowState(projectId, nodeId, set).finally(() => {
+    workflowStateInFlight.delete(key)
+  })
+  workflowStateInFlight.set(key, request)
+  return request
 }
 
 async function runWorkflowMutation(
@@ -143,6 +166,9 @@ export const useWorkflowStateStoreV2 = create<WorkflowStateStoreV2State>((set) =
 
   async loadWorkflowState(projectId: string, nodeId: string) {
     const key = stateKey(projectId, nodeId)
+    if (workflowStateInFlight.has(key)) {
+      return await workflowStateInFlight.get(key) as NodeWorkflowView
+    }
     set((state) => ({
       loading: {
         ...state.loading,
@@ -155,7 +181,7 @@ export const useWorkflowStateStoreV2 = create<WorkflowStateStoreV2State>((set) =
     }))
 
     try {
-      return await reloadWorkflowState(projectId, nodeId, set)
+      return await requestWorkflowState(projectId, nodeId, set)
     } catch (error) {
       const message = toErrorMessage(error)
       set((state) => ({
@@ -257,6 +283,7 @@ export const useWorkflowStateStoreV2 = create<WorkflowStateStoreV2State>((set) =
   },
 
   reset() {
+    workflowStateInFlight.clear()
     set({
       entries: {},
       loading: {},

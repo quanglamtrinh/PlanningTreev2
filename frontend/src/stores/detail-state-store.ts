@@ -66,6 +66,7 @@ async function syncProjectSnapshot(
 }
 
 const executionPollTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
+const detailStateInFlight = new Map<string, Promise<DetailState>>()
 
 function stopExecutionPolling(key: string) {
   const timer = executionPollTimers.get(key)
@@ -81,6 +82,18 @@ function stopAllExecutionPolling() {
   }
 }
 
+function requestDetailState(key: string, load: () => Promise<DetailState>): Promise<DetailState> {
+  const existing = detailStateInFlight.get(key)
+  if (existing) {
+    return existing
+  }
+  const request = load().finally(() => {
+    detailStateInFlight.delete(key)
+  })
+  detailStateInFlight.set(key, request)
+  return request
+}
+
 export const useDetailStateStore = create<DetailStateStoreState>((set, get) => ({
   entries: {},
   loading: {},
@@ -91,10 +104,16 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
   async loadDetailState(projectId: string, nodeId: string) {
     const key = stateKey(projectId, nodeId)
     if (get().loading[key]) return
+    if (detailStateInFlight.has(key)) {
+      await detailStateInFlight.get(key)
+      return
+    }
     set((s) => ({ loading: { ...s.loading, [key]: true }, errors: { ...s.errors, [key]: '' } }))
     try {
-      const raw = await api.getDetailState(projectId, nodeId)
-      const state = mergeMockDetailState(raw)
+      const state = await requestDetailState(key, async () => {
+        const raw = await api.getDetailState(projectId, nodeId)
+        return mergeMockDetailState(raw)
+      })
       set((s) => ({
         entries: { ...s.entries, [key]: state },
         loading: { ...s.loading, [key]: false },
@@ -124,8 +143,10 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
     const key = stateKey(projectId, nodeId)
     stopExecutionPolling(key)
     try {
-      const raw = await api.getDetailState(projectId, nodeId)
-      const state = mergeMockDetailState(raw)
+      const state = await requestDetailState(key, async () => {
+        const raw = await api.getDetailState(projectId, nodeId)
+        return mergeMockDetailState(raw)
+      })
       set((s) => ({
         entries: { ...s.entries, [key]: state },
         errors: { ...s.errors, [key]: '' },
@@ -266,6 +287,7 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
 
   reset() {
     stopAllExecutionPolling()
+    detailStateInFlight.clear()
     set({ entries: {}, loading: {}, errors: {}, finishingTask: {}, resettingWorkspace: {} })
   },
 }))

@@ -11,10 +11,11 @@ vi.mock('../../src/features/breadcrumb/ComposerBar', () => ({
 }))
 
 vi.mock('../../src/features/conversation/components/ConversationFeed', () => ({
-  ConversationFeed: ({ prefix }: { prefix?: React.ReactNode }) => (
+  ConversationFeed: ({ prefix, suffix }: { prefix?: React.ReactNode; suffix?: React.ReactNode }) => (
     <div data-testid="conversation-feed">
       {prefix ? <div data-testid="conversation-prefix">{prefix}</div> : null}
       feed
+      {suffix ? <div data-testid="conversation-suffix">{suffix}</div> : null}
     </div>
   ),
 }))
@@ -269,6 +270,7 @@ describe('BreadcrumbChatViewV2', () => {
     await waitFor(() => {
       expect(screen.getByTestId('location-probe')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=execution')
     })
+    expect(screen.queryByTestId('workflow-finish-task')).not.toBeInTheDocument()
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
     expect(screen.getByTestId('workflow-review-in-audit')).toBeInTheDocument()
     expect(screen.getByTestId('workflow-mark-done-execution')).toBeInTheDocument()

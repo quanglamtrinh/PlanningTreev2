@@ -188,6 +188,34 @@ def test_codex_app_client_start_review_streaming_forwards_cwd(monkeypatch) -> No
     assert captured["cwd"] == "C:/workspace/project-1"
 
 
+def test_exited_review_mode_marks_review_turn_complete() -> None:
+    transport = StdioTransport()
+    raw_events: list[dict[str, object]] = []
+    state = transport._get_turn_state("review_turn_1")
+    state.thread_id = "review_thread_1"
+    state.on_raw_event = raw_events.append
+    state.callbacks_attached = True
+
+    transport._handle_notification(
+        "review/exitedReviewMode",
+        {
+            "threadId": "review_thread_1",
+            "turnId": "review_turn_1",
+            "exitedReviewMode": {
+                "review": "Looks good to me.",
+                "disposition": "approved",
+            },
+        },
+    )
+
+    assert state.review_text == "Looks good to me."
+    assert state.final_text == "Looks good to me."
+    assert state.review_disposition == "approved"
+    assert state.turn_status == "completed"
+    assert state.event.is_set()
+    assert [event["method"] for event in raw_events] == ["exitedReviewMode"]
+
+
 def test_item_started_and_completed_emit_item_callback() -> None:
     transport = StdioTransport()
     seen: list[tuple[str, dict[str, object]]] = []

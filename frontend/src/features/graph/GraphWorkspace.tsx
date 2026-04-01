@@ -2,11 +2,7 @@ import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { SplitMode } from '../../api/types'
-import {
-  buildChatV2Url,
-  buildLegacyChatUrl,
-  isExecutionAuditV2SurfaceEnabled,
-} from '../conversation/surfaceRouting'
+import { buildLegacyChatUrl } from '../conversation/surfaceRouting'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import { Sidebar } from './Sidebar'
@@ -118,21 +114,6 @@ export function GraphWorkspace() {
     void selectNode(nodeId, true)
   }
 
-  async function handleFinishTask(nodeId: string) {
-    const latestState = useProjectStore.getState()
-    const latestSnapshot = latestState.snapshot
-    const projectId = latestSnapshot?.project.id ?? latestState.activeProjectId
-    if (!projectId) {
-      return
-    }
-    navigate(
-      isExecutionAuditV2SurfaceEnabled(latestState.bootstrap)
-        ? buildChatV2Url(projectId, nodeId, 'execution')
-        : buildLegacyChatUrl(projectId, nodeId, 'execution'),
-    )
-    void selectNode(nodeId, true)
-  }
-
   async function handleSplitNode(nodeId: string, mode: SplitMode) {
     try {
       await splitNode(nodeId, mode)
@@ -198,7 +179,6 @@ export function GraphWorkspace() {
               onCreateChild={handleCreateChild}
               onSplitNode={handleSplitNode}
               onOpenBreadcrumb={handleOpenBreadcrumb}
-              onFinishTask={handleFinishTask}
               onResetProject={handleResetProject}
             />
           ) : (

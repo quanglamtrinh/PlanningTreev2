@@ -679,6 +679,55 @@ describe('NodeDetailCard', () => {
     })
   })
 
+  it('keeps breadcrumb detail rendering without an error banner when stale detail state exists', async () => {
+    apiMock.getDetailState.mockRejectedValue(new Error('Request timed out after 300s'))
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    useDetailStateStore.setState({
+      entries: {
+        'project-1::root': {
+          node_id: 'root',
+          frame_confirmed: true,
+          frame_confirmed_revision: 1,
+          frame_revision: 1,
+          active_step: 'spec',
+          workflow_notice: null,
+          generation_error: null,
+          frame_needs_reconfirm: false,
+          frame_read_only: true,
+          clarify_read_only: true,
+          clarify_confirmed: true,
+          spec_read_only: false,
+          spec_stale: false,
+          spec_confirmed: true,
+        },
+      },
+    } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(useDetailStateStore.getState().errors['project-1::root']).toBe(
+        'Request timed out after 300s',
+      )
+    })
+
+    expect(screen.queryByText(/Failed to load detail state/i)).not.toBeInTheDocument()
+    expect(screen.getByText('Root')).toBeInTheDocument()
+  })
+
   it('does not show a generation error banner when spec is no longer auto-started', async () => {
     apiMock.getDetailState.mockResolvedValue({
       node_id: 'root',
@@ -959,6 +1008,95 @@ describe('NodeDetailCard', () => {
     })
     expect(apiMock.finishTask).not.toHaveBeenCalled()
     expect(navigateMock).toHaveBeenCalledWith('/projects/project-1/nodes/root/chat-v2?thread=execution')
+  })
+
+  it('does not refetch spec generation status on a stable rerender', async () => {
+    useDetailStateStore.setState({
+      entries: {
+        'project-1::root': {
+          node_id: 'root',
+          frame_confirmed: true,
+          frame_confirmed_revision: 1,
+          frame_revision: 1,
+          active_step: 'spec',
+          workflow_notice: null,
+          generation_error: null,
+          frame_needs_reconfirm: false,
+          frame_read_only: true,
+          clarify_read_only: true,
+          clarify_confirmed: true,
+          spec_read_only: false,
+          spec_stale: false,
+          spec_confirmed: false,
+        },
+      },
+    })
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame content',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec content',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+
+    const view = render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({
+          workflow: {
+            frame_confirmed: true,
+            active_step: 'spec',
+            spec_confirmed: false,
+          },
+        })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getSpecGenStatus).toHaveBeenCalledTimes(1)
+    })
+
+    view.rerender(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({
+          workflow: {
+            frame_confirmed: true,
+            active_step: 'spec',
+            spec_confirmed: false,
+          },
+        })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getSpecGenStatus).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('disables Confirm and Finish Task when finish would still be blocked after confirm', async () => {

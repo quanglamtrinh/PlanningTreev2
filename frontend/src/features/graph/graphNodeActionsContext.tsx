@@ -7,7 +7,6 @@ export type GraphNodeActions = {
   createChild: (nodeId: string) => void
   split: (nodeId: string, mode: SplitMode) => void
   openBreadcrumb: (nodeId: string) => void
-  finishTask: (nodeId: string) => void
   infoClick: (nodeId: string) => void
   graphViewRootId: string | null
   setGraphViewRoot: (nodeId: string | null) => void

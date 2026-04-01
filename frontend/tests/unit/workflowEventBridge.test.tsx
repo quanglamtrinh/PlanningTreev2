@@ -51,7 +51,7 @@ describe('workflowEventBridge', () => {
     vi.useRealTimers()
   })
 
-  it('refreshes workflow-state before detail-state for matching workflow and invalidate events', async () => {
+  it('refreshes workflow-state on workflow events and detail-state only on invalidate events', async () => {
     const callOrder: string[] = []
     const loadWorkflowState = vi.fn().mockImplementation(async () => {
       callOrder.push('workflow')
@@ -93,7 +93,7 @@ describe('workflowEventBridge', () => {
       await Promise.resolve()
     })
 
-    expect(callOrder).toEqual(['workflow', 'detail'])
+    expect(callOrder).toEqual(['workflow'])
 
     await act(async () => {
       eventSource.emitMessage(
@@ -118,10 +118,9 @@ describe('workflowEventBridge', () => {
     expect(loadWorkflowState).toHaveBeenCalledTimes(2)
     expect(loadWorkflowState).toHaveBeenNthCalledWith(1, 'project-1', 'node-1')
     expect(loadWorkflowState).toHaveBeenNthCalledWith(2, 'project-1', 'node-1')
-    expect(refreshExecutionState).toHaveBeenCalledTimes(2)
+    expect(refreshExecutionState).toHaveBeenCalledTimes(1)
     expect(refreshExecutionState).toHaveBeenNthCalledWith(1, 'project-1', 'node-1')
-    expect(refreshExecutionState).toHaveBeenNthCalledWith(2, 'project-1', 'node-1')
-    expect(callOrder).toEqual(['workflow', 'detail', 'workflow', 'detail'])
+    expect(callOrder).toEqual(['workflow', 'workflow', 'detail'])
   })
 
   it('ignores workflow events for other targets or malformed payloads', async () => {

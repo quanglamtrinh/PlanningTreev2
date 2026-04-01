@@ -132,9 +132,10 @@ export function NodeDocumentEditor({
     return () => {
       if (pollRef.current !== undefined) {
         globalThis.clearInterval(pollRef.current)
+        pollRef.current = undefined
       }
     }
-  }, [])
+  }, [kind, node.node_id, projectId])
 
   const refreshSnapshot = useCallback(async () => {
     const snapshot = await api.getSnapshot(projectId)
@@ -144,9 +145,14 @@ export function NodeDocumentEditor({
     }))
   }, [projectId])
 
-  const pollGenStatus = kind === 'spec'
-    ? api.getSpecGenStatus.bind(api)
-    : api.getFrameGenStatus.bind(api)
+  const pollGenStatus = useCallback(
+    (activeProjectId: string, activeNodeId: string) => (
+      kind === 'spec'
+        ? api.getSpecGenStatus(activeProjectId, activeNodeId)
+        : api.getFrameGenStatus(activeProjectId, activeNodeId)
+    ),
+    [kind],
+  )
 
   const startPolling = useCallback(() => {
     if (pollRef.current !== undefined) {

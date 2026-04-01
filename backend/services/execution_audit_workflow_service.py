@@ -839,18 +839,34 @@ class ExecutionAuditWorkflowService:
                 )
 
         try:
+            review_runtime_thread_id = source_thread_id
+            if delivery_kind == "detached":
+                forked = self._codex_client.fork_thread(
+                    source_thread_id,
+                    cwd=workspace_root,
+                    timeout_sec=min(30, self._finish_task_service._chat_timeout),
+                    writable_roots=None,
+                )
+                detached_review_thread_id = str(forked.get("thread_id") or "").strip()
+                if not detached_review_thread_id:
+                    raise ReviewNotAllowed("Detached review thread bootstrap did not return a thread id.")
+                review_runtime_thread_id = detached_review_thread_id
+                discovered_review_thread_id = detached_review_thread_id
+                self._adopt_review_thread(project_id, node_id, cycle_id, detached_review_thread_id)
+
             self._codex_client.resume_thread(
-                source_thread_id,
+                review_runtime_thread_id,
                 cwd=workspace_root,
                 timeout_sec=min(30, self._finish_task_service._chat_timeout),
                 writable_roots=None,
             )
+            self._ensure_review_guidance_item(project_id=project_id, node_id=node_id)
             review_result = self._codex_client.start_review_streaming(
-                thread_id=source_thread_id,
+                thread_id=review_runtime_thread_id,
                 target_sha=review_commit_sha,
                 target_title=f"Review commit {review_commit_sha}",
                 cwd=workspace_root,
-                delivery=delivery_kind if delivery_kind == "detached" else None,
+                delivery=None,
                 client_request_id=client_request_id,
                 timeout_sec=self._finish_task_service._chat_timeout,
                 on_raw_event=handle_raw_event,
@@ -1011,6 +1027,30 @@ class ExecutionAuditWorkflowService:
             "audit",
             updated,
             events,
+        )
+
+    def _ensure_review_guidance_item(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+    ) -> None:
+        self._thread_runtime_service_v2.upsert_system_message(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="audit",
+            item_id="review-context:instructions",
+            turn_id=None,
+            text=(
+                "Review workflow guidance:\n\n"
+                "- Use the canonical confirmed frame/spec snapshots already present in this thread as the task contract.\n"
+                "- Start with the target commit diff, changed files, and relevant tests.\n"
+                "- Do not recursively scan `.planningtree` before reviewing.\n"
+                "- Only inspect a specific file under `.planningtree/root/...` if the canonical snapshots in this thread are missing or clearly inconsistent.\n"
+                "- Keep this run read-only."
+            ),
+            tone="neutral",
+            metadata={"workflowReviewGuidance": True},
         )
 
     def _materialize_execution_decision(

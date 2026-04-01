@@ -103,7 +103,6 @@ export function BreadcrumbChatViewV2() {
     workflowError,
     activeMutation,
     loadWorkflowState,
-    finishTask,
     markDoneFromExecution,
     reviewInAudit,
     markDoneFromAudit,
@@ -116,7 +115,6 @@ export function BreadcrumbChatViewV2() {
         detailStateKey && state.errors[detailStateKey] ? state.errors[detailStateKey] : null,
       activeMutation: detailStateKey ? state.activeMutations[detailStateKey] ?? null : null,
       loadWorkflowState: state.loadWorkflowState,
-      finishTask: state.finishTask,
       markDoneFromExecution: state.markDoneFromExecution,
       reviewInAudit: state.reviewInAudit,
       markDoneFromAudit: state.markDoneFromAudit,
@@ -323,8 +321,8 @@ export function BreadcrumbChatViewV2() {
     return 'Node details are unavailable for this breadcrumb route.'
   }, [activeProjectId, detailCardState, detailNode, nodeId, projectError, projectId, snapshot])
 
-  const isActiveTurn = Boolean(conversationSnapshot?.activeTurnId)
   const showAuditShell = threadTab === 'audit' && !workflowState?.reviewThreadId
+  const isActiveTurn = Boolean(conversationSnapshot?.activeTurnId)
   const composerDisabled =
     threadTab !== 'execution' ||
     workflowState?.canSendExecutionMessage !== true ||
@@ -347,13 +345,6 @@ export function BreadcrumbChatViewV2() {
     },
     [loadWorkflowState, nodeId, projectId, sendTurn],
   )
-
-  const handleFinishTask = useCallback(async () => {
-    if (!projectId || !nodeId) {
-      return
-    }
-    await finishTask(projectId, nodeId)
-  }, [finishTask, nodeId, projectId])
 
   const handleMarkDoneFromExecution = useCallback(async () => {
     if (!projectId || !nodeId || !currentExecutionDecision?.candidateWorkspaceHash) {
@@ -385,25 +376,17 @@ export function BreadcrumbChatViewV2() {
     void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
   }, [currentAuditDecision?.reviewCommitSha, improveInExecution, navigate, nodeId, projectId])
 
-  const headerActions = useMemo(() => {
+  const composerWorkflowActions = useMemo(() => {
     if (!workflowState) {
       return null
     }
 
     if (threadTab === 'execution') {
+      if (!workflowState.canReviewInAudit && !workflowState.canMarkDoneFromExecution) {
+        return null
+      }
       return (
         <>
-          {workflowState.workflowPhase === 'idle' ? (
-            <button
-              type="button"
-              className={`${styles.threadHeaderAction} ${styles.threadHeaderActionPrimary}`}
-              disabled={activeMutation !== null || isWorkflowLoading}
-              onClick={() => void handleFinishTask()}
-              data-testid="workflow-finish-task"
-            >
-              {renderActionLabel(activeMutation, 'Finish Task', 'Starting...')}
-            </button>
-          ) : null}
           {workflowState.canReviewInAudit ? (
             <button
               type="button"
@@ -431,6 +414,9 @@ export function BreadcrumbChatViewV2() {
     }
 
     if (threadTab === 'audit') {
+      if (!workflowState.canImproveInExecution && !workflowState.canMarkDoneFromAudit) {
+        return null
+      }
       return (
         <>
           {workflowState.canImproveInExecution ? (
@@ -462,12 +448,10 @@ export function BreadcrumbChatViewV2() {
     return null
   }, [
     activeMutation,
-    handleFinishTask,
     handleImproveInExecution,
     handleMarkDoneFromAudit,
     handleMarkDoneFromExecution,
     handleReviewInAudit,
-    isWorkflowLoading,
     threadTab,
     workflowState,
   ])
@@ -476,10 +460,7 @@ export function BreadcrumbChatViewV2() {
     <div className={styles.root}>
       <div className={styles.threadPane} data-testid="breadcrumb-thread-pane">
         <div className={styles.threadSurface}>
-          <div
-            className={`${styles.threadTabBar} ${styles.threadTabBarSplit}`}
-            data-testid="breadcrumb-v2-thread-header"
-          >
+          <div className={styles.threadTabBar} data-testid="breadcrumb-v2-thread-header">
             <nav className={styles.threadTabNav} role="tablist" aria-label="Thread mode">
               <button
                 type="button"
@@ -524,8 +505,6 @@ export function BreadcrumbChatViewV2() {
                 Audit
               </button>
             </nav>
-
-            <div className={styles.threadHeaderActions}>{headerActions}</div>
           </div>
 
           <div className={styles.threadTabBody}>
@@ -568,6 +547,7 @@ export function BreadcrumbChatViewV2() {
                     />
                   ) : undefined
                 }
+                suffix={composerWorkflowActions ?? undefined}
               />
             )}
 
