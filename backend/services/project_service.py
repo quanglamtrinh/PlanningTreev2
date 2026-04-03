@@ -23,6 +23,8 @@ class ProjectService:
         execution_audit_v2_enabled: bool = False,
         execution_audit_uiux_v3_backend_enabled: bool = False,
         execution_audit_uiux_v3_frontend_enabled: bool = False,
+        execution_uiux_v3_frontend_enabled: bool = False,
+        audit_uiux_v3_frontend_enabled: bool = False,
     ) -> None:
         self.storage = storage
         self._snapshot_view_service = snapshot_view_service
@@ -31,6 +33,8 @@ class ProjectService:
         self._execution_audit_v2_enabled = bool(execution_audit_v2_enabled)
         self._execution_audit_uiux_v3_backend_enabled = bool(execution_audit_uiux_v3_backend_enabled)
         self._execution_audit_uiux_v3_frontend_enabled = bool(execution_audit_uiux_v3_frontend_enabled)
+        self._execution_uiux_v3_frontend_enabled = bool(execution_uiux_v3_frontend_enabled)
+        self._audit_uiux_v3_frontend_enabled = bool(audit_uiux_v3_frontend_enabled)
 
     def bootstrap_status(self) -> dict[str, Any]:
         codex_path = get_codex_cmd()
@@ -42,6 +46,8 @@ class ProjectService:
             "execution_audit_v2_enabled": self._execution_audit_v2_enabled,
             "execution_audit_uiux_v3_backend_enabled": self._execution_audit_uiux_v3_backend_enabled,
             "execution_audit_uiux_v3_frontend_enabled": self._execution_audit_uiux_v3_frontend_enabled,
+            "execution_uiux_v3_frontend_enabled": self._execution_uiux_v3_frontend_enabled,
+            "audit_uiux_v3_frontend_enabled": self._audit_uiux_v3_frontend_enabled,
         }
 
     def list_projects(self) -> list[dict[str, Any]]:

@@ -530,6 +530,85 @@ describe('BreadcrumbChatViewV2', () => {
     })
   })
 
+  it('does not redirect to legacy while bootstrap is unresolved', async () => {
+    useProjectStore.setState({
+      bootstrap: null,
+      activeProjectId: 'project-1',
+      snapshot: makeProjectSnapshot('original'),
+      selectedNodeId: 'root',
+      isLoadingSnapshot: false,
+      error: null,
+      loadProject: vi.fn().mockResolvedValue(undefined),
+      selectNode: vi.fn().mockResolvedValue(undefined),
+    })
+    useDetailStateStore.setState({
+      entries: {
+        'project-1::root': {
+          node_id: 'root',
+          workflow: null,
+          frame_confirmed: true,
+          frame_confirmed_revision: 1,
+          frame_revision: 1,
+          active_step: 'spec',
+          workflow_notice: null,
+          frame_needs_reconfirm: false,
+          frame_read_only: true,
+          clarify_read_only: true,
+          clarify_confirmed: true,
+          spec_read_only: true,
+          spec_stale: false,
+          spec_confirmed: true,
+          shaping_frozen: true,
+          can_accept_local_review: false,
+          execution_status: 'completed',
+          audit_writable: false,
+        },
+      },
+      loadDetailState: vi.fn().mockResolvedValue(undefined),
+    } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
+    useWorkflowStateStoreV2.setState({
+      entries: {
+        'project-1::root': makeWorkflowState(),
+      },
+      loadWorkflowState: vi.fn().mockResolvedValue(undefined),
+      finishTask: vi.fn().mockResolvedValue(undefined),
+      markDoneFromExecution: vi.fn().mockResolvedValue(undefined),
+      reviewInAudit: vi.fn().mockResolvedValue(undefined),
+      markDoneFromAudit: vi.fn().mockResolvedValue(undefined),
+      improveInExecution: vi.fn().mockResolvedValue(undefined),
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+    useThreadByIdStoreV2.setState({
+      snapshot: makeConversationSnapshot(),
+      loadThread: vi.fn().mockResolvedValue(undefined),
+      sendTurn: vi.fn().mockResolvedValue(undefined),
+      resolveUserInput: vi.fn().mockResolvedValue(undefined),
+      disconnectThread: vi.fn(),
+    } as Partial<ReturnType<typeof useThreadByIdStoreV2.getState>>)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<LocationProbe />} />
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat-v2"
+            element={
+              <>
+                <BreadcrumbChatViewV2 />
+                <LocationProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-probe')).toHaveTextContent(
+        '/projects/project-1/nodes/root/chat-v2?thread=execution',
+      )
+    })
+  })
+
   it('falls back to legacy execution when the V2 surface flag is disabled', async () => {
     setBootstrapStatus(false)
     useProjectStore.setState({

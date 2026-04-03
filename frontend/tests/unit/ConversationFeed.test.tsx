@@ -223,6 +223,58 @@ describe('ConversationFeed', () => {
     expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument()
   })
 
+  it('renders command-based file writes as file-change cards when path can be inferred', () => {
+    render(
+      <ConversationFeed
+        snapshot={makeSnapshot({
+          items: [
+            makeCommandTool({
+              id: 'tool-write-1',
+              status: 'completed',
+              argumentsText:
+                '"powershell.exe" -Command "@\'content\'@ | Set-Content -Path tests/session.test.mjs"',
+              outputText: '',
+              outputFiles: [],
+            }),
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn()}
+      />,
+    )
+
+    const toolRow = screen.getByTestId('conversation-item-tool')
+    expect(within(toolRow).getByText('session.test.mjs')).toBeInTheDocument()
+    expect(within(toolRow).getByLabelText('Copy diff')).toBeInTheDocument()
+    expect(screen.queryByTestId('conversation-tool-output-tool-write-1')).not.toBeInTheDocument()
+  })
+
+  it('prefers inferred file payload over raw command output for shell-write commands', () => {
+    render(
+      <ConversationFeed
+        snapshot={makeSnapshot({
+          items: [
+            makeCommandTool({
+              id: 'tool-write-2',
+              status: 'completed',
+              argumentsText:
+                '"powershell.exe" -Command "@\'const ready = true;\'@ | Set-Content -Path src/app.ts"',
+              outputText: 'PS > powershell.exe -Command ...',
+              outputFiles: [],
+            }),
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff' }))
+    const toolRow = screen.getByTestId('conversation-item-tool')
+    expect(toolRow).toHaveTextContent(/const\s+ready\s*=\s*true;/)
+    expect(toolRow).not.toHaveTextContent(/PS > powershell\.exe/i)
+  })
+
   it('shows only the activity spinner while running (no reasoning caption or elapsed timer)', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-03-28T00:01:05Z'))

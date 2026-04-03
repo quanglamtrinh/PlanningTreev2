@@ -14,6 +14,13 @@ const SSE_RECONNECT_RETRY_MS = 1000
 const USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS = 1500
 
 export type ThreadByIdStreamStatusV3 = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'error'
+export type ThreadByIdTelemetryV3 = {
+  streamReconnectCount: number
+  applyErrorCount: number
+  forcedSnapshotReloadCount: number
+  firstFrameLatencyMs: number | null
+  renderErrorCount: number
+}
 
 export type ThreadByIdStoreV3State = {
   snapshot: ThreadSnapshotV3 | null
@@ -29,6 +36,7 @@ export type ThreadByIdStoreV3State = {
   processingStartedAt: number | null
   lastCompletedAt: number | null
   lastDurationMs: number | null
+  telemetry: ThreadByIdTelemetryV3
   error: string | null
 
   loadThread: (
@@ -45,6 +53,7 @@ export type ThreadByIdStoreV3State = {
     revision: number,
     text?: string,
   ) => Promise<void>
+  recordRenderError: (reason: string) => void
   disconnectThread: () => void
 }
 
@@ -57,6 +66,18 @@ type ProcessingTelemetryState = Pick<
   ThreadByIdStoreV3State,
   'processingStartedAt' | 'lastCompletedAt' | 'lastDurationMs'
 >
+
+const DEFAULT_TELEMETRY_V3: ThreadByIdTelemetryV3 = {
+  streamReconnectCount: 0,
+  applyErrorCount: 0,
+  forcedSnapshotReloadCount: 0,
+  firstFrameLatencyMs: null,
+  renderErrorCount: 0,
+}
+
+function resetTelemetryV3(): ThreadByIdTelemetryV3 {
+  return { ...DEFAULT_TELEMETRY_V3 }
+}
 
 function selectProcessingTelemetry(state: ProcessingTelemetryState): ProcessingTelemetryState {
   return {
@@ -195,10 +216,20 @@ async function reloadThreadSnapshot(
   options: {
     setLoading?: boolean
     reason?: string | null
+    countAsForcedReload?: boolean
   } = {},
 ) {
   clearReconnectTimer()
   closeThreadEventSource()
+
+  if (options.countAsForcedReload) {
+    set((state) => ({
+      telemetry: {
+        ...state.telemetry,
+        forcedSnapshotReloadCount: state.telemetry.forcedSnapshotReloadCount + 1,
+      },
+    }))
+  }
 
   if (options.setLoading) {
     set({
@@ -266,7 +297,13 @@ function scheduleStreamReopen(
   generation: number,
 ) {
   clearReconnectTimer()
-  set({ streamStatus: 'reconnecting' })
+  set((state) => ({
+    streamStatus: 'reconnecting',
+    telemetry: {
+      ...state.telemetry,
+      streamReconnectCount: state.telemetry.streamReconnectCount + 1,
+    },
+  }))
   reconnectTimer = globalThis.setTimeout(() => {
     reconnectTimer = null
     const state = get()
@@ -316,6 +353,7 @@ function scheduleResolveFallbackReload(
     void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
       setLoading: false,
       reason: null,
+      countAsForcedReload: true,
     })
   }, USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS)
   resolveFallbackTimers.set(requestId, timer)
@@ -367,13 +405,18 @@ function openThreadEventStream(
       nextSnapshot = applyThreadEventV3(currentState.snapshot, event)
     } catch (error) {
       if (error instanceof ThreadEventApplyErrorV3) {
-        set({
+        set((state) => ({
           error: error.message,
           streamStatus: 'error',
-        })
+          telemetry: {
+            ...state.telemetry,
+            applyErrorCount: state.telemetry.applyErrorCount + 1,
+          },
+        }))
         void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
           setLoading: false,
           reason: error.message,
+          countAsForcedReload: true,
         })
         return
       }
@@ -462,6 +505,7 @@ function openThreadEventStream(
       void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
         setLoading: false,
         reason,
+        countAsForcedReload: true,
       })
     }
   }
@@ -493,6 +537,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
   processingStartedAt: null,
   lastCompletedAt: null,
   lastDurationMs: null,
+  telemetry: resetTelemetryV3(),
   error: null,
 
   async loadThread(projectId: string, nodeId: string, threadId: string, threadRole: ThreadRole) {
@@ -513,6 +558,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     closeThreadEventSource()
 
     const generation = ++threadGeneration
+    const loadStartedAt = Date.now()
     set({
       snapshot: null,
       activeProjectId: projectId,
@@ -525,6 +571,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       lastEventId: null,
       lastSnapshotVersion: null,
       ...resetProcessingTelemetry(),
+      telemetry: resetTelemetryV3(),
       error: null,
     })
 
@@ -537,14 +584,18 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       ) {
         return
       }
-      set({
+      set((state) => ({
         snapshot,
         isLoading: false,
         error: null,
         lastSnapshotVersion: snapshot.snapshotVersion,
         streamStatus: 'connecting',
+        telemetry: {
+          ...state.telemetry,
+          firstFrameLatencyMs: Math.max(0, Date.now() - loadStartedAt),
+        },
         ...seedRunningTelemetry(get(), snapshot),
-      })
+      }))
       reconcileResolveFallbackTimers(snapshot)
       openThreadEventStream(
         get,
@@ -721,6 +772,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           {
             setLoading: isLoading && streamStatus === 'connecting',
             reason: null,
+            countAsForcedReload: true,
           },
         )
         return
@@ -758,6 +810,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         {
           setLoading: false,
           reason,
+          countAsForcedReload: true,
         },
       )
     }
@@ -827,6 +880,16 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     }
   },
 
+  recordRenderError(reason: string) {
+    set((state) => ({
+      error: reason,
+      telemetry: {
+        ...state.telemetry,
+        renderErrorCount: state.telemetry.renderErrorCount + 1,
+      },
+    }))
+  },
+
   disconnectThread() {
     threadGeneration += 1
     clearReconnectTimer()
@@ -844,6 +907,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       lastEventId: null,
       lastSnapshotVersion: null,
       ...resetProcessingTelemetry(),
+      telemetry: resetTelemetryV3(),
       error: null,
     })
   },

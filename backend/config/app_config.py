@@ -128,6 +128,29 @@ def is_execution_audit_uiux_v3_frontend_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _read_optional_bool_env(name: str) -> bool | None:
+    raw = str(os.environ.get(name, "") or "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def is_execution_uiux_v3_frontend_enabled() -> bool:
+    lane_value = _read_optional_bool_env("PLANNINGTREE_EXECUTION_UIUX_V3_FRONTEND")
+    if lane_value is not None:
+        return lane_value
+    return is_execution_audit_uiux_v3_frontend_enabled()
+
+
+def is_audit_uiux_v3_frontend_enabled() -> bool:
+    lane_value = _read_optional_bool_env("PLANNINGTREE_AUDIT_UIUX_V3_FRONTEND")
+    if lane_value is not None:
+        return lane_value
+    return is_execution_audit_uiux_v3_frontend_enabled()
+
+
 def get_rehearsal_workspace_root() -> Optional[Path]:
     raw = str(os.environ.get("PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT", "") or "").strip()
     if not raw:

@@ -26,33 +26,76 @@ export function buildChatV2Url(
 }
 
 export function isExecutionAuditV2SurfaceEnabled(bootstrap: BootstrapStatus | null | undefined): boolean {
-  return bootstrap?.execution_audit_v2_enabled === true
-}
-
-function readV3FrontendEnvOverride(): boolean | null {
-  const raw = String(import.meta.env.VITE_EXECUTION_AUDIT_UIUX_V3_FRONTEND ?? '')
-    .trim()
-    .toLowerCase()
-  if (!raw) {
-    return null
-  }
-  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') {
+  if (!bootstrap) {
     return true
   }
-  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') {
+  return bootstrap.execution_audit_v2_enabled === true
+}
+
+function parseEnvBoolean(raw: string): boolean | null {
+  const normalized = raw.trim().toLowerCase()
+  if (!normalized) {
+    return null
+  }
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
     return false
   }
   return null
 }
 
+function readSharedV3FrontendEnvOverride(): boolean | null {
+  return parseEnvBoolean(String(import.meta.env.VITE_EXECUTION_AUDIT_UIUX_V3_FRONTEND ?? ''))
+}
+
+function readLaneV3FrontendEnvOverride(lane: 'execution' | 'audit'): boolean | null {
+  const laneRaw =
+    lane === 'execution'
+      ? String(import.meta.env.VITE_EXECUTION_UIUX_V3_FRONTEND ?? '')
+      : String(import.meta.env.VITE_AUDIT_UIUX_V3_FRONTEND ?? '')
+  const laneValue = parseEnvBoolean(laneRaw)
+  if (laneValue !== null) {
+    return laneValue
+  }
+  return readSharedV3FrontendEnvOverride()
+}
+
 export function isExecutionAuditUiuxV3FrontendEnabled(
   bootstrap: BootstrapStatus | null | undefined,
 ): boolean {
-  const envOverride = readV3FrontendEnvOverride()
+  const envOverride = readSharedV3FrontendEnvOverride()
   if (envOverride !== null) {
     return envOverride
   }
   return bootstrap?.execution_audit_uiux_v3_frontend_enabled === true
+}
+
+export function isExecutionUiuxV3FrontendEnabled(
+  bootstrap: BootstrapStatus | null | undefined,
+): boolean {
+  const envOverride = readLaneV3FrontendEnvOverride('execution')
+  if (envOverride !== null) {
+    return envOverride
+  }
+  if (bootstrap?.execution_uiux_v3_frontend_enabled != null) {
+    return bootstrap.execution_uiux_v3_frontend_enabled === true
+  }
+  return isExecutionAuditUiuxV3FrontendEnabled(bootstrap)
+}
+
+export function isAuditUiuxV3FrontendEnabled(
+  bootstrap: BootstrapStatus | null | undefined,
+): boolean {
+  const envOverride = readLaneV3FrontendEnvOverride('audit')
+  if (envOverride !== null) {
+    return envOverride
+  }
+  if (bootstrap?.audit_uiux_v3_frontend_enabled != null) {
+    return bootstrap.audit_uiux_v3_frontend_enabled === true
+  }
+  return isExecutionAuditUiuxV3FrontendEnabled(bootstrap)
 }
 
 export function resolveLegacyRouteTarget(options: {

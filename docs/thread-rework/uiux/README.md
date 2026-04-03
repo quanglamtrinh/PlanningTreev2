@@ -4,6 +4,8 @@ Primary blueprint for execution/audit UIUX parity work:
 
 - `docs/thread-rework/uiux/execution-audit-uiux-parity-blueprint.md`
 - `docs/thread-rework/uiux/phase3-8-handoff.md`
+- `docs/thread-rework/uiux/phase5-8-implementation-plan.md`
+- `docs/thread-rework/uiux/artifacts/phase5-parity-gate-report.md`
 
 This directory is reserved for:
 

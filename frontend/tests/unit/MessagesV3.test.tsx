@@ -298,6 +298,283 @@ describe('MessagesV3', () => {
     expect(screen.getByTestId('conversation-v3-item-userInput-inline')).toBeInTheDocument()
   })
 
+  it('keeps V3 stream/pending/plan-ready structural zones stable', () => {
+    const onResolveUserInput = vi.fn().mockResolvedValue(undefined)
+
+    const { rerender } = render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'plan-1',
+              kind: 'review',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 3,
+              createdAt: '2026-04-01T00:00:01Z',
+              updatedAt: '2026-04-01T00:00:01Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: { v2Kind: 'plan' },
+              title: 'Plan',
+              text: 'Plan content',
+              disposition: null,
+            },
+            {
+              id: 'input-1',
+              kind: 'userInput',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 5,
+              createdAt: '2026-04-01T00:00:05Z',
+              updatedAt: '2026-04-01T00:00:05Z',
+              status: 'requested',
+              source: 'upstream',
+              tone: 'info',
+              metadata: {},
+              requestId: 'req-1',
+              title: 'Need input',
+              questions: [],
+              answers: [],
+              requestedAt: '2026-04-01T00:00:05Z',
+              resolvedAt: null,
+            },
+          ],
+          uiSignals: {
+            planReady: {
+              planItemId: 'plan-1',
+              revision: 3,
+              ready: true,
+              failed: false,
+            },
+            activeUserInputRequests: [
+              {
+                requestId: 'req-1',
+                itemId: 'input-1',
+                threadId: 'thread-1',
+                turnId: 'turn-1',
+                status: 'requested',
+                createdAt: '2026-04-01T00:00:05Z',
+                submittedAt: null,
+                resolvedAt: null,
+                answers: [],
+              },
+            ],
+          },
+        })}
+        isLoading={false}
+        onResolveUserInput={onResolveUserInput}
+      />,
+    )
+
+    expect(screen.getByTestId('messages-v3-stream-stack')).toBeInTheDocument()
+    expect(screen.getByTestId('messages-v3-pending-stack')).toBeInTheDocument()
+    expect(screen.queryByTestId('messages-v3-plan-ready-zone')).not.toBeInTheDocument()
+
+    rerender(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'plan-1',
+              kind: 'review',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 3,
+              createdAt: '2026-04-01T00:00:01Z',
+              updatedAt: '2026-04-01T00:00:01Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: { v2Kind: 'plan' },
+              title: 'Plan',
+              text: 'Plan content',
+              disposition: null,
+            },
+          ],
+          uiSignals: {
+            planReady: {
+              planItemId: 'plan-1',
+              revision: 3,
+              ready: true,
+              failed: false,
+            },
+            activeUserInputRequests: [],
+          },
+        })}
+        isLoading={false}
+        onResolveUserInput={onResolveUserInput}
+      />,
+    )
+
+    expect(screen.getByTestId('messages-v3-stream-stack')).toBeInTheDocument()
+    expect(screen.queryByTestId('messages-v3-pending-stack')).not.toBeInTheDocument()
+    expect(screen.getByTestId('messages-v3-plan-ready-zone')).toBeInTheDocument()
+  })
+
+  it('classifies tool edits with output files as file-change cards instead of command cards', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'tool-edit-1',
+              kind: 'tool',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 1,
+              createdAt: '2026-04-01T00:00:01Z',
+              updatedAt: '2026-04-01T00:00:01Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              toolType: 'commandExecution',
+              title: 'apply_patch',
+              toolName: 'apply_patch',
+              callId: 'call-1',
+              argumentsText: '*** Begin Patch',
+              outputText: 'Updated 1 file',
+              outputFiles: [
+                {
+                  path: 'src/app.ts',
+                  changeType: 'updated',
+                  summary: 'Refine UI rendering',
+                },
+              ],
+              exitCode: 0,
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByText('app.ts')).toBeInTheDocument()
+    expect(screen.getByLabelText('Copy diff')).toBeInTheDocument()
+    expect(screen.getByText('UPDATED')).toBeInTheDocument()
+    expect(screen.queryByTestId('conversation-v3-tool-output-tool-edit-1')).not.toBeInTheDocument()
+  })
+
+  it('infers file-change card from shell write command even when outputFiles is empty', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'tool-edit-shell-1',
+              kind: 'tool',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 1,
+              createdAt: '2026-04-01T00:00:01Z',
+              updatedAt: '2026-04-01T00:00:01Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              toolType: 'commandExecution',
+              title: '"powershell.exe" -Command "@\' ... \'@ | Set-Content -Path tests/session.test.mjs"',
+              toolName: 'powershell',
+              callId: 'call-1',
+              argumentsText:
+                '"powershell.exe" -Command "@\' ... \'@ | Set-Content -Path tests/session.test.mjs"',
+              outputText: '',
+              outputFiles: [],
+              exitCode: 0,
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByText('session.test.mjs')).toBeInTheDocument()
+    expect(screen.getByLabelText('Copy diff')).toBeInTheDocument()
+    expect(screen.queryByTestId('conversation-v3-tool-output-tool-edit-shell-1')).not.toBeInTheDocument()
+  })
+
+  it('prefers inferred file content over raw command output for shell-write tools', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'tool-edit-shell-2',
+              kind: 'tool',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 1,
+              createdAt: '2026-04-01T00:00:01Z',
+              updatedAt: '2026-04-01T00:00:01Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              toolType: 'commandExecution',
+              title:
+                '"powershell.exe" -Command "@\'const ready = true;\'@ | Set-Content -Path src/app.ts"',
+              toolName: 'powershell',
+              callId: 'call-2',
+              argumentsText:
+                '"powershell.exe" -Command "@\'const ready = true;\'@ | Set-Content -Path src/app.ts"',
+              outputText: 'PS > powershell.exe -Command ...',
+              outputFiles: [],
+              exitCode: 0,
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff' }))
+    const toolRow = screen.getByTestId('conversation-v3-item-tool')
+    expect(toolRow).toHaveTextContent(/const\s+ready\s*=\s*true;/)
+    expect(toolRow).not.toHaveTextContent(/PS > powershell\.exe/i)
+  })
+
+  it('keeps pure commandExecution tools rendered as command cards', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'tool-cmd-1',
+              kind: 'tool',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 1,
+              createdAt: '2026-04-01T00:00:01Z',
+              updatedAt: '2026-04-01T00:00:01Z',
+              status: 'in_progress',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              toolType: 'commandExecution',
+              title: 'Run tests',
+              toolName: 'powershell',
+              callId: 'call-1',
+              argumentsText: 'npm test',
+              outputText: 'line 1\nline 2',
+              outputFiles: [],
+              exitCode: null,
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByText('Command')).toBeInTheDocument()
+    expect(screen.getByTestId('conversation-v3-tool-output-tool-cmd-1')).toBeInTheDocument()
+  })
+
   it('hydrates and prunes persisted view-state by current snapshot content', () => {
     vi.useFakeTimers()
     try {

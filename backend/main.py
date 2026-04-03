@@ -31,6 +31,8 @@ from backend.config.app_config import (
     get_rehearsal_workspace_root,
     get_spec_gen_timeout,
     get_split_timeout,
+    is_audit_uiux_v3_frontend_enabled,
+    is_execution_uiux_v3_frontend_enabled,
     is_execution_audit_v2_enabled,
     is_execution_audit_v2_rehearsal_enabled,
     is_execution_audit_uiux_v3_backend_enabled,
@@ -70,6 +72,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     execution_audit_v2_enabled = is_execution_audit_v2_enabled()
     execution_audit_uiux_v3_backend_enabled = is_execution_audit_uiux_v3_backend_enabled()
     execution_audit_uiux_v3_frontend_enabled = is_execution_audit_uiux_v3_frontend_enabled()
+    execution_uiux_v3_frontend_enabled = is_execution_uiux_v3_frontend_enabled()
+    audit_uiux_v3_frontend_enabled = is_audit_uiux_v3_frontend_enabled()
     rehearsal_enabled = is_execution_audit_v2_rehearsal_enabled()
     rehearsal_workspace_root = get_rehearsal_workspace_root()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
@@ -79,6 +83,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         execution_audit_v2_enabled=execution_audit_v2_enabled,
         execution_audit_uiux_v3_backend_enabled=execution_audit_uiux_v3_backend_enabled,
         execution_audit_uiux_v3_frontend_enabled=execution_audit_uiux_v3_frontend_enabled,
+        execution_uiux_v3_frontend_enabled=execution_uiux_v3_frontend_enabled,
+        audit_uiux_v3_frontend_enabled=audit_uiux_v3_frontend_enabled,
     )
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
@@ -279,6 +285,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.execution_audit_v2_enabled = execution_audit_v2_enabled
     app.state.execution_audit_uiux_v3_backend_enabled = execution_audit_uiux_v3_backend_enabled
     app.state.execution_audit_uiux_v3_frontend_enabled = execution_audit_uiux_v3_frontend_enabled
+    app.state.execution_uiux_v3_frontend_enabled = execution_uiux_v3_frontend_enabled
+    app.state.audit_uiux_v3_frontend_enabled = audit_uiux_v3_frontend_enabled
     app.state.execution_audit_v2_rehearsal_enabled = rehearsal_enabled
 
     @app.exception_handler(AppError)

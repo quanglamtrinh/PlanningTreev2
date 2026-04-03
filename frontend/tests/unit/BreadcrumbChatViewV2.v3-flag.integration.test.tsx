@@ -155,7 +155,12 @@ function makeWorkflowState(): NodeWorkflowView {
   }
 }
 
-function seedBaseStores(frontendFlag: boolean) {
+function seedBaseStores(options: {
+  sharedFrontendFlag: boolean
+  executionLaneFlag?: boolean
+  auditLaneFlag?: boolean
+}) {
+  const { sharedFrontendFlag, executionLaneFlag, auditLaneFlag } = options
   useProjectStore.setState({
     activeProjectId: 'project-1',
     bootstrap: {
@@ -164,7 +169,9 @@ function seedBaseStores(frontendFlag: boolean) {
       codex_available: true,
       codex_path: 'codex',
       execution_audit_v2_enabled: true,
-      execution_audit_uiux_v3_frontend_enabled: frontendFlag,
+      execution_audit_uiux_v3_frontend_enabled: sharedFrontendFlag,
+      execution_uiux_v3_frontend_enabled: executionLaneFlag,
+      audit_uiux_v3_frontend_enabled: auditLaneFlag,
     },
     snapshot: makeProjectSnapshot(),
     selectedNodeId: 'root',
@@ -222,7 +229,7 @@ describe('BreadcrumbChatViewV2 v3 flag integration', () => {
   })
 
   it('uses V3 pipeline when frontend flag is enabled', async () => {
-    seedBaseStores(true)
+    seedBaseStores({ sharedFrontendFlag: true })
     const loadThreadV2 = vi.fn().mockResolvedValue(undefined)
     const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
 
@@ -258,7 +265,7 @@ describe('BreadcrumbChatViewV2 v3 flag integration', () => {
   })
 
   it('falls back to V2 pipeline when frontend flag is disabled', async () => {
-    seedBaseStores(false)
+    seedBaseStores({ sharedFrontendFlag: false })
     const loadThreadV2 = vi.fn().mockResolvedValue(undefined)
     const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
 
@@ -291,5 +298,114 @@ describe('BreadcrumbChatViewV2 v3 flag integration', () => {
     expect(screen.queryByTestId('messages-v3')).not.toBeInTheDocument()
     expect(loadThreadV2).toHaveBeenCalledWith('project-1', 'root', 'exec-thread-1', 'execution')
     expect(loadThreadV3).not.toHaveBeenCalled()
+  })
+
+  it('routes execution to V3 and audit to V2 with lane-scoped split flags', async () => {
+    seedBaseStores({
+      sharedFrontendFlag: false,
+      executionLaneFlag: true,
+      auditLaneFlag: false,
+    })
+    const loadThreadV2 = vi.fn().mockResolvedValue(undefined)
+    const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
+
+    useThreadByIdStoreV2.setState({
+      snapshot: makeConversationSnapshotV2(),
+      loadThread: loadThreadV2,
+      sendTurn: vi.fn().mockResolvedValue(undefined),
+      resolveUserInput: vi.fn().mockResolvedValue(undefined),
+      disconnectThread: vi.fn(),
+    } as Partial<ReturnType<typeof useThreadByIdStoreV2.getState>>)
+    useThreadByIdStoreV3.setState({
+      snapshot: makeConversationSnapshotV3(),
+      loadThread: loadThreadV3,
+      sendTurn: vi.fn().mockResolvedValue(undefined),
+      resolveUserInput: vi.fn().mockResolvedValue(undefined),
+      disconnectThread: vi.fn(),
+    } as Partial<ReturnType<typeof useThreadByIdStoreV3.getState>>)
+
+    const executionRender = render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
+    })
+    expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'exec-thread-1', 'execution')
+
+    executionRender.unmount()
+    useWorkflowStateStoreV2.setState({
+      entries: {
+        'project-1::root': {
+          ...makeWorkflowState(),
+          reviewThreadId: 'audit-thread-1',
+        },
+      },
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('conversation-feed-v2')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('messages-v3')).not.toBeInTheDocument()
+    expect(loadThreadV2).toHaveBeenCalledWith('project-1', 'root', 'audit-thread-1', 'audit')
+  })
+
+  it('routes audit to V3 when audit lane flag is enabled', async () => {
+    seedBaseStores({
+      sharedFrontendFlag: false,
+      executionLaneFlag: false,
+      auditLaneFlag: true,
+    })
+    const loadThreadV2 = vi.fn().mockResolvedValue(undefined)
+    const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
+
+    useThreadByIdStoreV2.setState({
+      snapshot: makeConversationSnapshotV2({ threadRole: 'audit' }),
+      loadThread: loadThreadV2,
+      sendTurn: vi.fn().mockResolvedValue(undefined),
+      resolveUserInput: vi.fn().mockResolvedValue(undefined),
+      disconnectThread: vi.fn(),
+    } as Partial<ReturnType<typeof useThreadByIdStoreV2.getState>>)
+    useThreadByIdStoreV3.setState({
+      snapshot: makeConversationSnapshotV3({ lane: 'audit' }),
+      loadThread: loadThreadV3,
+      sendTurn: vi.fn().mockResolvedValue(undefined),
+      resolveUserInput: vi.fn().mockResolvedValue(undefined),
+      disconnectThread: vi.fn(),
+    } as Partial<ReturnType<typeof useThreadByIdStoreV3.getState>>)
+    useWorkflowStateStoreV2.setState({
+      entries: {
+        'project-1::root': {
+          ...makeWorkflowState(),
+          reviewThreadId: 'audit-thread-1',
+        },
+      },
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('conversation-feed-v2')).not.toBeInTheDocument()
+    expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'audit-thread-1', 'audit')
   })
 })

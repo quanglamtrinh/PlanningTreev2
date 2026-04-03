@@ -88,6 +88,10 @@ describe('threadByIdStoreV3', () => {
     expect(state.snapshot?.threadId).toBe('thread-1')
     expect(state.snapshot?.lane).toBe('execution')
     expect(state.lastSnapshotVersion).toBe(1)
+    expect(state.telemetry.firstFrameLatencyMs).not.toBeNull()
+    expect(state.telemetry.streamReconnectCount).toBe(0)
+    expect(state.telemetry.applyErrorCount).toBe(0)
+    expect(state.telemetry.forcedSnapshotReloadCount).toBe(0)
     expect(eventSource?.url).toContain(
       '/v3/projects/project-1/threads/by-id/thread-1/events?node_id=node-1&after_snapshot_version=1',
     )
@@ -214,6 +218,8 @@ describe('threadByIdStoreV3', () => {
       expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
       expect(useThreadByIdStoreV3.getState().snapshot?.snapshotVersion).toBe(2)
     })
+    expect(useThreadByIdStoreV3.getState().telemetry.applyErrorCount).toBe(1)
+    expect(useThreadByIdStoreV3.getState().telemetry.forcedSnapshotReloadCount).toBe(1)
   })
 
   it('runs plan action through dedicated V3 endpoint and updates turn state', async () => {
@@ -390,8 +396,48 @@ describe('threadByIdStoreV3', () => {
 
       expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
       expect(useThreadByIdStoreV3.getState().snapshot?.snapshotVersion).toBe(6)
+      expect(useThreadByIdStoreV3.getState().telemetry.forcedSnapshotReloadCount).toBe(1)
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('increments reconnect telemetry when stream errors and schedules reload', async () => {
+    vi.useFakeTimers()
+    try {
+      apiMock.getThreadSnapshotByIdV3
+        .mockResolvedValueOnce(makeSnapshot())
+        .mockResolvedValueOnce(makeSnapshot({ snapshotVersion: 2 }))
+
+      await act(async () => {
+        await useThreadByIdStoreV3
+          .getState()
+          .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+      })
+
+      const eventSource = getEventSourceMock().instances[0]
+      await act(async () => {
+        eventSource.emitError()
+      })
+
+      expect(useThreadByIdStoreV3.getState().streamStatus).toBe('reconnecting')
+      expect(useThreadByIdStoreV3.getState().telemetry.streamReconnectCount).toBe(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1100)
+      })
+
+      expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('records render errors through store telemetry', () => {
+    useThreadByIdStoreV3.getState().recordRenderError('render failed')
+
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.error).toBe('render failed')
+    expect(state.telemetry.renderErrorCount).toBe(1)
   })
 })

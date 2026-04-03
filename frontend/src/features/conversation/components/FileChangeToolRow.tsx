@@ -214,10 +214,12 @@ export function FileChangeToolRow({
   item,
   isExpanded = false,
   onToggle,
+  dataTestId = 'conversation-item-tool',
 }: {
   item: ToolItem
   isExpanded?: boolean
   onToggle?: (itemId: string) => void
+  dataTestId?: string
 }) {
   const headline = getToolHeadline(item)
   const sourceText = useMemo(() => {
@@ -293,7 +295,7 @@ export function FileChangeToolRow({
   }, [primaryFile?.path])
 
   return (
-    <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-item-tool">
+    <article className={`${styles.row} ${styles.rowCard}`} data-testid={dataTestId}>
       <div className={`${styles.card} ${styles.fileChangeCard}`}>
         <header className={styles.fileChangeHeader}>
           <div className={styles.fileChangeHeaderMain}>

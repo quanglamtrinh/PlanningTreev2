@@ -14,14 +14,21 @@ import type {
   PlanActionV3,
   ProcessingState,
   ThreadSnapshotV3,
+  ToolItem as ToolItemV2,
   ToolItemV3,
   UserInputAnswerV3,
   UserInputItemV3,
   UserInputQuestionV3,
 } from '../../../../api/types'
-import styles from '../ConversationFeed.module.css'
+import { AgentSpinner } from '../../../../components/AgentSpinner'
+import { FileChangeToolRow } from '../FileChangeToolRow'
+import {
+  inferFileWritesFromCommandText,
+  inferInlineFileWriteContentFromCommandText,
+  toAddedDiffText,
+} from '../fileChangeInference'
 import { ConversationMarkdown } from '../ConversationMarkdown'
-import { WorkingIndicator } from '../WorkingIndicator'
+import styles from './MessagesV3.module.css'
 import {
   buildToolGroupsV3,
   deriveVisibleMessageStateV3,
@@ -151,6 +158,44 @@ function trailingCommandOutput(outputText: string): string {
   return lines.slice(-MAX_COMMAND_OUTPUT_LINES).join('\n')
 }
 
+function looksLikeDiffText(text: string): boolean {
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  return /^(?:\+\+\+|---|@@)/m.test(normalized) || /^[+-][^\r\n]*/m.test(normalized)
+}
+
+function toolInferenceSource(item: ToolItemV3): string {
+  return [item.argumentsText, item.title, item.toolName, item.outputText]
+    .map((part) => normalizeText(part))
+    .filter(Boolean)
+    .join('\n')
+}
+
+function inferredFilesForTool(item: ToolItemV3): ToolItemV3['outputFiles'] {
+  const inferred = inferFileWritesFromCommandText(toolInferenceSource(item))
+  return inferred.map((file) => ({
+    path: file.path,
+    changeType: file.changeType,
+    summary: file.summary,
+  }))
+}
+
+function inferredFileChangeOutputTextForTool(item: ToolItemV3): string {
+  const inferredContent = inferInlineFileWriteContentFromCommandText(toolInferenceSource(item))
+  if (inferredContent) {
+    return toAddedDiffText(inferredContent)
+  }
+
+  if (!normalizeText(item.outputText)) {
+    return item.outputText
+  }
+
+  if (item.toolType === 'commandExecution' && !looksLikeDiffText(item.outputText)) {
+    return toAddedDiffText(item.outputText)
+  }
+
+  return item.outputText
+}
+
 function effectiveUserInputStatus(
   item: UserInputItemV3,
   requestByRequestId: Map<string, PendingUserInputRequestV3>,
@@ -241,6 +286,64 @@ function toViewState(
   }
 }
 
+function formatDurationV3(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function WorkingIndicatorV3({
+  processingState,
+  activeTurnId,
+  lastCompletedAt,
+  lastDurationMs,
+}: {
+  processingState: ProcessingState
+  activeTurnId: string | null
+  lastCompletedAt?: number | null
+  lastDurationMs?: number | null
+}) {
+  if (processingState === 'running' && activeTurnId) {
+    return (
+      <div className={styles.row} data-testid="conversation-working-indicator">
+        <div className={styles.rowRail}>
+          <div className={styles.workingIndicator}>
+            <AgentSpinner />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (processingState === 'waiting_user_input') {
+    return (
+      <div className={styles.row} data-testid="conversation-working-indicator">
+        <div className={styles.rowRail}>
+          <div className={styles.workingIndicator}>
+            <span className={styles.workingText}>Waiting for user input.</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (lastCompletedAt != null && lastDurationMs != null && Date.now() - lastCompletedAt < 4000) {
+    return (
+      <div className={styles.row} data-testid="conversation-working-indicator">
+        <div className={styles.rowRail}>
+          <div className={styles.workingIndicator}>
+            <span className={styles.workingText}>Completed.</span>
+            <span className={styles.workingMeta}>{formatDurationV3(lastDurationMs)}</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return null
+}
+
 function CommandOutputViewportV3({
   itemId,
   outputText,
@@ -304,11 +407,13 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
 
   return (
     <article className={`${styles.row} ${roleClass}`} data-testid="conversation-v3-item-message">
-      <div
-        className={`${styles.messageShell} ${item.role === 'user' ? styles.messageShellUser : styles.messageShellAssistant}`}
-      >
-        <div className={`${styles.messageBubble} ${bubbleClass}`}>
-          <ConversationMarkdown content={item.text} />
+      <div className={styles.rowRail}>
+        <div
+          className={`${styles.messageShell} ${item.role === 'user' ? styles.messageShellUser : styles.messageShellAssistant}`}
+        >
+          <div className={`${styles.messageBubble} ${bubbleClass}`}>
+            <ConversationMarkdown content={item.text} />
+          </div>
         </div>
       </div>
     </article>
@@ -328,20 +433,22 @@ function ReasoningRowV3({
 }) {
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-reasoning">
-      <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <div>
-            <div className={styles.cardEyebrow}>Reasoning</div>
-            <h3 className={styles.cardTitle}>{meta?.workingLabel ?? 'Reasoning update'}</h3>
+      <div className={styles.rowRail}>
+        <div className={`${styles.card} ${styles.cardSection}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <div className={styles.cardEyebrow}>Reasoning</div>
+              <h3 className={styles.cardTitle}>{meta?.workingLabel ?? 'Reasoning update'}</h3>
+            </div>
+            {meta?.visibleDetail ? (
+              <button type="button" className={styles.inlineToggle} onClick={() => onToggle(item.id)}>
+                {isExpanded ? 'Collapse' : 'Expand'}
+              </button>
+            ) : null}
           </div>
-          {meta?.visibleDetail ? (
-            <button type="button" className={styles.inlineToggle} onClick={() => onToggle(item.id)}>
-              {isExpanded ? 'Collapse' : 'Expand'}
-            </button>
-          ) : null}
+          {meta?.visibleSummary ? <div className={styles.subtleText}>{meta.visibleSummary}</div> : null}
+          {isExpanded && meta?.visibleDetail ? <pre className={styles.plainPre}>{meta.visibleDetail}</pre> : null}
         </div>
-        {meta?.visibleSummary ? <div className={styles.subtleText}>{meta.visibleSummary}</div> : null}
-        {isExpanded && meta?.visibleDetail ? <pre className={styles.plainPre}>{meta.visibleDetail}</pre> : null}
       </div>
     </article>
   )
@@ -371,83 +478,87 @@ function CommandToolRowV3({
 
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-tool">
-      <div className={`${styles.card} ${styles.commandCard}`}>
-        <header className={styles.commandCardHeader}>
-          <div className={styles.commandCardHeaderLeft}>
-            <span className={styles.commandCardEyebrow}>Command</span>
-            <span className={styles.commandHeaderStatusPill}>{item.status.replace(/_/g, ' ')}</span>
-          </div>
-          {hasBody ? (
-            <button
-              type="button"
-              className={styles.commandExpandToggle}
-              onClick={() => onToggle(item.id)}
-              aria-expanded={showBody}
-            >
-              {showBody ? 'Collapse' : 'Expand'}
-            </button>
-          ) : null}
-        </header>
-
-        <div className={styles.commandLineBar}>
-          <span className={styles.commandPrompt}>{prefix}</span>
-          {headline}
-        </div>
-
-        <div className={styles.commandOutputHeader}>
-          <span className={styles.commandOutputEyebrow}>Output</span>
-          <span
-            className={`${styles.exitPill} ${
-              item.exitCode === 0
-                ? styles.exitPillSuccess
-                : item.exitCode != null
-                  ? styles.exitPillFailure
-                  : item.status === 'in_progress'
-                    ? styles.exitPillRunning
-                    : styles.exitPillMuted
-            }`}
-          >
-            <span className={styles.exitPillDot} aria-hidden />
-            {item.exitCode != null
-              ? `exit ${item.exitCode}`
-              : item.status === 'in_progress'
-                ? 'Running'
-                : 'exit -'}
-          </span>
-        </div>
-
-        {showBody && hasOutput ? (
-          <CommandOutputViewportV3
-            itemId={item.id}
-            outputText={item.outputText}
-            onRequestAutoScroll={onRequestAutoScroll}
-          />
-        ) : null}
-
-        {showBody && hasFiles ? (
-          <div className={styles.section}>
-            <div className={styles.sectionTitle}>Files</div>
-            <div className={styles.fileList}>
-              {item.outputFiles.map((file) => (
-                <div key={`${file.path}-${file.changeType}`} className={styles.fileItem}>
-                  <div className={styles.fileMeta}>
-                    <span className={styles.statusPill}>{file.changeType}</span>
-                    <code>{file.path}</code>
-                  </div>
-                  {file.summary ? <div className={styles.subtleText}>{file.summary}</div> : null}
-                </div>
-              ))}
+      <div className={styles.rowRail}>
+        <div className={`${styles.card} ${styles.cardSection} ${styles.commandCard}`}>
+          <header className={styles.commandCardHeader}>
+            <div className={styles.commandCardHeaderLeft}>
+              <span className={styles.commandCardEyebrow}>Command</span>
+              <span className={styles.commandHeaderStatusPill}>{item.status.replace(/_/g, ' ')}</span>
             </div>
-          </div>
-        ) : null}
+            {hasBody ? (
+              <button
+                type="button"
+                className={styles.commandExpandToggle}
+                onClick={() => onToggle(item.id)}
+                aria-expanded={showBody}
+              >
+                {showBody ? 'Collapse' : 'Expand'}
+              </button>
+            ) : null}
+          </header>
 
-        {showBody && !hasBody ? (
-          <div className={styles.subtleText}>
-            {item.status === 'completed'
-              ? 'Command finished without visible output.'
-              : 'Waiting for command output...'}
+          <div className={styles.terminalZone}>
+            <div className={styles.commandLineBar}>
+              <span className={styles.commandPrompt}>{prefix}</span>
+              {headline}
+            </div>
+
+            <div className={styles.commandOutputHeader}>
+              <span className={styles.commandOutputEyebrow}>Output</span>
+              <span
+                className={`${styles.exitPill} ${
+                  item.exitCode === 0
+                    ? styles.exitPillSuccess
+                    : item.exitCode != null
+                      ? styles.exitPillFailure
+                      : item.status === 'in_progress'
+                        ? styles.exitPillRunning
+                        : styles.exitPillMuted
+                }`}
+              >
+                <span className={styles.exitPillDot} aria-hidden />
+                {item.exitCode != null
+                  ? `exit ${item.exitCode}`
+                  : item.status === 'in_progress'
+                    ? 'Running'
+                    : 'exit -'}
+              </span>
+            </div>
+
+            {showBody && hasOutput ? (
+              <CommandOutputViewportV3
+                itemId={item.id}
+                outputText={item.outputText}
+                onRequestAutoScroll={onRequestAutoScroll}
+              />
+            ) : null}
           </div>
-        ) : null}
+
+          {showBody && hasFiles ? (
+            <div className={styles.section}>
+              <div className={styles.sectionTitle}>Files</div>
+              <div className={styles.fileList}>
+                {item.outputFiles.map((file) => (
+                  <div key={`${file.path}-${file.changeType}`} className={styles.fileItem}>
+                    <div className={styles.fileMeta}>
+                      <span className={styles.statusPill}>{file.changeType}</span>
+                      <code>{file.path}</code>
+                    </div>
+                    {file.summary ? <div className={styles.subtleText}>{file.summary}</div> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {showBody && !hasBody ? (
+            <div className={styles.subtleText}>
+              {item.status === 'completed'
+                ? 'Command finished without visible output.'
+                : 'Waiting for command output...'}
+            </div>
+          ) : null}
+        </div>
       </div>
     </article>
   )
@@ -464,6 +575,28 @@ function ToolRowV3({
   onToggle: (itemId: string) => void
   onRequestAutoScroll?: () => void
 }) {
+  const inferredFiles = useMemo(() => inferredFilesForTool(item), [item])
+  const effectiveFiles = item.outputFiles.length ? item.outputFiles : inferredFiles
+  const effectiveOutputText = useMemo(() => inferredFileChangeOutputTextForTool(item), [item])
+
+  if (item.toolType === 'fileChange' || effectiveFiles.length > 0) {
+    const fileChangeItem: ToolItemV2 = {
+      ...item,
+      kind: 'tool',
+      toolType: 'fileChange',
+      outputText: effectiveOutputText,
+      outputFiles: effectiveFiles,
+    }
+    return (
+      <FileChangeToolRow
+        item={fileChangeItem}
+        isExpanded={isExpanded}
+        onToggle={onToggle}
+        dataTestId="conversation-v3-item-tool"
+      />
+    )
+  }
+
   if (item.toolType === 'commandExecution') {
     return (
       <CommandToolRowV3
@@ -484,45 +617,124 @@ function ToolRowV3({
 
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-tool">
-      <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <div>
-            <div className={styles.cardEyebrow}>Tool</div>
-            <div className={styles.cardTitleRow}>
-              <h3 className={styles.cardTitle}>{headline}</h3>
-              {hasBody ? (
-                <button type="button" className={styles.inlineToggle} onClick={() => onToggle(item.id)}>
-                  {showBody ? 'Collapse' : 'Expand'}
-                </button>
-              ) : null}
+      <div className={styles.rowRail}>
+        <div className={`${styles.card} ${styles.cardSection}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <div className={styles.cardEyebrow}>Tool</div>
+              <div className={styles.cardTitleRow}>
+                <h3 className={styles.cardTitle}>{headline}</h3>
+                {hasBody ? (
+                  <button type="button" className={styles.inlineToggle} onClick={() => onToggle(item.id)}>
+                    {showBody ? 'Collapse' : 'Expand'}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div className={styles.cardMeta}>
+              <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
+              {item.toolName ? <span>{item.toolName}</span> : null}
+              {item.exitCode != null ? <span>exit {item.exitCode}</span> : null}
             </div>
           </div>
-          <div className={styles.cardMeta}>
-            <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
-            {item.toolName ? <span>{item.toolName}</span> : null}
-            {item.exitCode != null ? <span>exit {item.exitCode}</span> : null}
-          </div>
+
+          {showBody && hasArguments ? (
+            <div className={styles.section}>
+              <div className={styles.sectionTitle}>Arguments</div>
+              <pre className={styles.plainPre}>{item.argumentsText}</pre>
+            </div>
+          ) : null}
+
+          {showBody && hasOutput ? (
+            <div className={styles.section}>
+              <div className={styles.sectionTitle}>Output</div>
+              <pre className={styles.plainPre}>{item.outputText}</pre>
+            </div>
+          ) : null}
+
+          {showBody && hasFiles ? (
+            <div className={styles.section}>
+              <div className={styles.sectionTitle}>Files</div>
+              <div className={styles.fileList}>
+                {item.outputFiles.map((file) => (
+                  <div key={`${file.path}-${file.changeType}`} className={styles.fileItem}>
+                    <div className={styles.fileMeta}>
+                      <span className={styles.statusPill}>{file.changeType}</span>
+                      <code>{file.path}</code>
+                    </div>
+                    {file.summary ? <div className={styles.subtleText}>{file.summary}</div> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {showBody && !hasBody ? (
+            <div className={styles.subtleText}>
+              {item.status === 'completed' ? 'Tool completed.' : 'Waiting for tool output...'}
+            </div>
+          ) : null}
         </div>
+      </div>
+    </article>
+  )
+}
 
-        {showBody && hasArguments ? (
-          <div className={styles.section}>
-            <div className={styles.sectionTitle}>Arguments</div>
-            <pre className={styles.plainPre}>{item.argumentsText}</pre>
+function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'review' }> }) {
+  return (
+    <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-review">
+      <div className={styles.rowRail}>
+        <div className={`${styles.card} ${styles.cardSection} ${styles.reviewCard}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <div className={styles.cardEyebrow}>Review</div>
+              <h3 className={styles.cardTitle}>{item.title ?? 'Review summary'}</h3>
+            </div>
+            <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-        ) : null}
+          <ConversationMarkdown content={item.text} />
+        </div>
+      </div>
+    </article>
+  )
+}
 
-        {showBody && hasOutput ? (
-          <div className={styles.section}>
-            <div className={styles.sectionTitle}>Output</div>
-            <pre className={styles.plainPre}>{item.outputText}</pre>
+function ExploreRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'explore' }> }) {
+  return (
+    <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-explore">
+      <div className={styles.rowRail}>
+        <div className={`${styles.card} ${styles.cardSection} ${styles.exploreCard}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <div className={styles.cardEyebrow}>Explore</div>
+              <h3 className={styles.cardTitle}>{item.title ?? 'Explore'}</h3>
+            </div>
+            <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-        ) : null}
+          <ConversationMarkdown content={item.text} />
+        </div>
+      </div>
+    </article>
+  )
+}
 
-        {showBody && hasFiles ? (
-          <div className={styles.section}>
-            <div className={styles.sectionTitle}>Files</div>
+function DiffRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'diff' }> }) {
+  return (
+    <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-diff">
+      <div className={styles.rowRail}>
+        <div className={`${styles.card} ${styles.cardSection} ${styles.diffCard}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <div className={styles.cardEyebrow}>Diff</div>
+              <h3 className={styles.cardTitle}>{item.title ?? 'File changes'}</h3>
+            </div>
+            <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
+          </div>
+          {item.summaryText ? <div className={styles.subtleText}>{item.summaryText}</div> : null}
+
+          {item.files.length ? (
             <div className={styles.fileList}>
-              {item.outputFiles.map((file) => (
+              {item.files.map((file) => (
                 <div key={`${file.path}-${file.changeType}`} className={styles.fileItem}>
                   <div className={styles.fileMeta}>
                     <span className={styles.statusPill}>{file.changeType}</span>
@@ -532,80 +744,8 @@ function ToolRowV3({
                 </div>
               ))}
             </div>
-          </div>
-        ) : null}
-
-        {showBody && !hasBody ? (
-          <div className={styles.subtleText}>
-            {item.status === 'completed' ? 'Tool completed.' : 'Waiting for tool output...'}
-          </div>
-        ) : null}
-      </div>
-    </article>
-  )
-}
-
-function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'review' }> }) {
-  return (
-    <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-review">
-      <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <div>
-            <div className={styles.cardEyebrow}>Review</div>
-            <h3 className={styles.cardTitle}>{item.title ?? 'Review summary'}</h3>
-          </div>
-          <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
+          ) : null}
         </div>
-        <ConversationMarkdown content={item.text} />
-      </div>
-    </article>
-  )
-}
-
-function ExploreRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'explore' }> }) {
-  return (
-    <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-explore">
-      <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <div>
-            <div className={styles.cardEyebrow}>Explore</div>
-            <h3 className={styles.cardTitle}>{item.title ?? 'Explore'}</h3>
-          </div>
-          <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
-        </div>
-        <ConversationMarkdown content={item.text} />
-      </div>
-    </article>
-  )
-}
-
-function DiffRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'diff' }> }) {
-  return (
-    <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-diff">
-      <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <div>
-            <div className={styles.cardEyebrow}>Diff</div>
-            <h3 className={styles.cardTitle}>{item.title ?? 'File changes'}</h3>
-          </div>
-          <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
-        </div>
-
-        {item.summaryText ? <div className={styles.subtleText}>{item.summaryText}</div> : null}
-
-        {item.files.length ? (
-          <div className={styles.fileList}>
-            {item.files.map((file) => (
-              <div key={`${file.path}-${file.changeType}`} className={styles.fileItem}>
-                <div className={styles.fileMeta}>
-                  <span className={styles.statusPill}>{file.changeType}</span>
-                  <code>{file.path}</code>
-                </div>
-                {file.summary ? <div className={styles.subtleText}>{file.summary}</div> : null}
-              </div>
-            ))}
-          </div>
-        ) : null}
       </div>
     </article>
   )
@@ -614,15 +754,17 @@ function DiffRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'diff' 
 function StatusRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'status' }> }) {
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-status">
-      <div className={`${styles.card} ${styles.statusCard}`}>
-        <div className={styles.cardHeader}>
-          <div>
-            <div className={styles.cardEyebrow}>Status</div>
-            <h3 className={styles.cardTitle}>{item.label || item.code || 'Status'}</h3>
+      <div className={styles.rowRail}>
+        <div className={`${styles.card} ${styles.cardSection} ${styles.statusCard}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <div className={styles.cardEyebrow}>Status</div>
+              <h3 className={styles.cardTitle}>{item.label || item.code || 'Status'}</h3>
+            </div>
+            <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-          <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
+          {item.detail ? <div className={styles.subtleText}>{item.detail}</div> : null}
         </div>
-        {item.detail ? <div className={styles.subtleText}>{item.detail}</div> : null}
       </div>
     </article>
   )
@@ -631,15 +773,17 @@ function StatusRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'stat
 function ErrorRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'error' }> }) {
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-error">
-      <div className={`${styles.card} ${styles.errorCard}`}>
-        <div className={styles.cardHeader}>
-          <div>
-            <div className={styles.cardEyebrow}>Error</div>
-            <h3 className={styles.cardTitle}>{item.title || item.code || 'Error'}</h3>
+      <div className={styles.rowRail}>
+        <div className={`${styles.card} ${styles.cardSection} ${styles.errorCard}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <div className={styles.cardEyebrow}>Error</div>
+              <h3 className={styles.cardTitle}>{item.title || item.code || 'Error'}</h3>
+            </div>
+            <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-          <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
+          <div className={styles.subtleText}>{item.message}</div>
         </div>
-        <div className={styles.subtleText}>{item.message}</div>
       </div>
     </article>
   )
@@ -656,20 +800,22 @@ function UserInputInlineRowV3({
 }) {
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-userInput-inline">
-      <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <div>
-            <div className={styles.cardEyebrow}>User Input</div>
-            <h3 className={styles.cardTitle}>{item.title ?? 'Input request'}</h3>
+      <div className={styles.rowRail}>
+        <div className={`${styles.card} ${styles.cardSection} ${styles.userInputInlineCard}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <div className={styles.cardEyebrow}>User Input</div>
+              <h3 className={styles.cardTitle}>{item.title ?? 'Input request'}</h3>
+            </div>
+            <span className={`${styles.statusPill} ${toStatusClassName(status)}`}>{status}</span>
           </div>
-          <span className={`${styles.statusPill} ${toStatusClassName(status)}`}>{status}</span>
-        </div>
-        <div className={styles.subtleText}>
-          {answers.length
-            ? `${answers.length} answers recorded.`
-            : status === 'stale'
-              ? 'Previous request became stale.'
-              : 'No answers recorded.'}
+          <div className={styles.subtleText}>
+            {answers.length
+              ? `${answers.length} answers recorded.`
+              : status === 'stale'
+                ? 'Previous request became stale.'
+                : 'No answers recorded.'}
+          </div>
         </div>
       </div>
     </article>
@@ -710,115 +856,117 @@ function PendingUserInputCardV3({
       className={`${styles.row} ${styles.rowCard}`}
       data-testid={`conversation-v3-pending-user-input-${request.requestId}`}
     >
-      <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <div>
-            <div className={styles.cardEyebrow}>User Input</div>
-            <h3 className={styles.cardTitle}>{item?.title ?? 'Additional input needed'}</h3>
+      <div className={styles.rowRail}>
+        <div className={`${styles.card} ${styles.cardSection} ${styles.pendingUserInputCard}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <div className={styles.cardEyebrow}>User Input</div>
+              <h3 className={styles.cardTitle}>{item?.title ?? 'Additional input needed'}</h3>
+            </div>
+            <span className={`${styles.statusPill} ${toStatusClassName(request.status)}`}>
+              {request.status}
+            </span>
           </div>
-          <span className={`${styles.statusPill} ${toStatusClassName(request.status)}`}>
-            {request.status}
-          </span>
-        </div>
 
-        {questions.length > 0 ? (
-          <div className={styles.questionList}>
-            {questions.map((question) => {
-              const selectedValues = draftAnswers[question.id] ?? []
-              return (
-                <div key={question.id} className={styles.questionCard}>
-                  {question.header ? <div className={styles.questionHeader}>{question.header}</div> : null}
-                  <div className={styles.questionPrompt}>{question.prompt}</div>
-                  {question.inputType === 'text' ? (
-                    <textarea
-                      className={styles.textInput}
-                      disabled={isSubmitting}
-                      value={selectedValues[0] ?? ''}
-                      onChange={(event) =>
-                        setDraftAnswers((current) => ({
-                          ...current,
-                          [question.id]: event.target.value.trim() ? [event.target.value] : [],
-                        }))
-                      }
-                    />
-                  ) : (
-                    <div className={styles.optionList}>
-                      {question.options.map((option) => {
-                        const checked = selectedValues.includes(option.label)
-                        const controlType =
-                          question.inputType === 'multi_select' ? 'checkbox' : 'radio'
-                        return (
-                          <label key={option.label} className={styles.optionLabel}>
-                            <input
-                              type={controlType}
-                              name={`${request.requestId}:${question.id}`}
-                              disabled={isSubmitting}
-                              checked={checked}
-                              onChange={(event) => {
-                                const isChecked = event.target.checked
-                                setDraftAnswers((current) => {
-                                  const existing = current[question.id] ?? []
-                                  if (question.inputType === 'single_select') {
+          {questions.length > 0 ? (
+            <div className={styles.questionList}>
+              {questions.map((question) => {
+                const selectedValues = draftAnswers[question.id] ?? []
+                return (
+                  <div key={question.id} className={styles.questionCard}>
+                    {question.header ? <div className={styles.questionHeader}>{question.header}</div> : null}
+                    <div className={styles.questionPrompt}>{question.prompt}</div>
+                    {question.inputType === 'text' ? (
+                      <textarea
+                        className={styles.textInput}
+                        disabled={isSubmitting}
+                        value={selectedValues[0] ?? ''}
+                        onChange={(event) =>
+                          setDraftAnswers((current) => ({
+                            ...current,
+                            [question.id]: event.target.value.trim() ? [event.target.value] : [],
+                          }))
+                        }
+                      />
+                    ) : (
+                      <div className={styles.optionList}>
+                        {question.options.map((option) => {
+                          const checked = selectedValues.includes(option.label)
+                          const controlType =
+                            question.inputType === 'multi_select' ? 'checkbox' : 'radio'
+                          return (
+                            <label key={option.label} className={styles.optionLabel}>
+                              <input
+                                type={controlType}
+                                name={`${request.requestId}:${question.id}`}
+                                disabled={isSubmitting}
+                                checked={checked}
+                                onChange={(event) => {
+                                  const isChecked = event.target.checked
+                                  setDraftAnswers((current) => {
+                                    const existing = current[question.id] ?? []
+                                    if (question.inputType === 'single_select') {
+                                      return {
+                                        ...current,
+                                        [question.id]: isChecked ? [option.label] : [],
+                                      }
+                                    }
                                     return {
                                       ...current,
-                                      [question.id]: isChecked ? [option.label] : [],
+                                      [question.id]: isChecked
+                                        ? [...existing, option.label]
+                                        : existing.filter((value) => value !== option.label),
                                     }
-                                  }
-                                  return {
-                                    ...current,
-                                    [question.id]: isChecked
-                                      ? [...existing, option.label]
-                                      : existing.filter((value) => value !== option.label),
-                                  }
-                                })
-                              }}
-                            />
-                            <span className={styles.optionText}>
-                              <span>{option.label}</span>
-                              {option.description ? (
-                                <span className={styles.optionDescription}>{option.description}</span>
-                              ) : null}
-                            </span>
-                          </label>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <div className={styles.subtleText}>Waiting for question payload.</div>
-        )}
-
-        {currentAnswers.length > 0 ? (
-          <div className={styles.section}>
-            <div className={styles.sectionTitle}>Current answers</div>
-            <div className={styles.answerList}>
-              {currentAnswers.map((answer, index) => (
-                <div
-                  key={`${answer.questionId}-${answer.value}-${index}`}
-                  className={styles.answerItem}
-                >
-                  <div className={styles.subtleText}>
-                    <strong>{answer.questionId}</strong>: {answer.label ?? answer.value}
+                                  })
+                                }}
+                              />
+                              <span className={styles.optionText}>
+                                <span>{option.label}</span>
+                                {option.description ? (
+                                  <span className={styles.optionDescription}>{option.description}</span>
+                                ) : null}
+                              </span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
-          </div>
-        ) : null}
+          ) : (
+            <div className={styles.subtleText}>Waiting for question payload.</div>
+          )}
 
-        <div className={styles.actionRow}>
-          <button
-            type="button"
-            className={styles.primaryButton}
-            disabled={!canSubmit || isSubmitting}
-            onClick={() => void onResolve(request.requestId, answerPayload)}
-          >
-            {isSubmitting ? 'Submitting...' : 'Submit answers'}
-          </button>
+          {currentAnswers.length > 0 ? (
+            <div className={styles.section}>
+              <div className={styles.sectionTitle}>Current answers</div>
+              <div className={styles.answerList}>
+                {currentAnswers.map((answer, index) => (
+                  <div
+                    key={`${answer.questionId}-${answer.value}-${index}`}
+                    className={styles.answerItem}
+                  >
+                    <div className={styles.subtleText}>
+                      <strong>{answer.questionId}</strong>: {answer.label ?? answer.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className={styles.actionRow}>
+            <button
+              type="button"
+              className={styles.primaryButton}
+              disabled={!canSubmit || isSubmitting}
+              onClick={() => void onResolve(request.requestId, answerPayload)}
+            >
+              {isSubmitting ? 'Submitting...' : 'Submit answers'}
+            </button>
+          </div>
         </div>
       </div>
     </article>
@@ -840,41 +988,43 @@ function PlanReadyFollowupCardV3({
 }) {
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-plan-ready-card">
-      <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <div>
-            <div className={styles.cardEyebrow}>Plan Ready</div>
-            <h3 className={styles.cardTitle}>Choose a follow-up action</h3>
+      <div className={styles.rowRail}>
+        <div className={`${styles.card} ${styles.cardSection} ${styles.planReadyCard}`}>
+          <div className={styles.cardHeader}>
+            <div>
+              <div className={styles.cardEyebrow}>Plan Ready</div>
+              <h3 className={styles.cardTitle}>Choose a follow-up action</h3>
+            </div>
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={onDismiss}
+              disabled={isSending}
+            >
+              Dismiss
+            </button>
           </div>
-          <button
-            type="button"
-            className={styles.secondaryButton}
-            onClick={onDismiss}
-            disabled={isSending}
-          >
-            Dismiss
-          </button>
-        </div>
-        <div className={styles.subtleText}>
-          Plan item <code>{planItemId}</code> at revision <code>{revision}</code> is ready.
-        </div>
-        <div className={styles.actionRow}>
-          <button
-            type="button"
-            className={styles.secondaryButton}
-            disabled={isSending}
-            onClick={() => void onPlanAction('send_changes', planItemId, revision)}
-          >
-            Send changes
-          </button>
-          <button
-            type="button"
-            className={styles.primaryButton}
-            disabled={isSending}
-            onClick={() => void onPlanAction('implement_plan', planItemId, revision)}
-          >
-            Implement this plan
-          </button>
+          <div className={styles.subtleText}>
+            Plan item <code>{planItemId}</code> at revision <code>{revision}</code> is ready.
+          </div>
+          <div className={styles.actionRow}>
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              disabled={isSending}
+              onClick={() => void onPlanAction('send_changes', planItemId, revision)}
+            >
+              Send changes
+            </button>
+            <button
+              type="button"
+              className={styles.primaryButton}
+              disabled={isSending}
+              onClick={() => void onPlanAction('implement_plan', planItemId, revision)}
+            >
+              Implement this plan
+            </button>
+          </div>
         </div>
       </div>
     </article>
@@ -1255,7 +1405,7 @@ export function MessagesV3({
             ? visibleState.reasoningMetaById.get(entry.item.id)
             : undefined
         return (
-          <div key={entry.item.id}>
+          <div key={entry.item.id} className={styles.streamEntry}>
             {renderItemRowV3({
               item: entry.item,
               requestMapByRequestId,
@@ -1286,43 +1436,45 @@ export function MessagesV3({
           className={`${styles.row} ${styles.rowCard}`}
           data-testid={`conversation-v3-tool-group-${entry.group.id}`}
         >
-          <div className={styles.groupShell}>
-            <div className={styles.groupHeader}>
-              <div>
-                <div className={styles.cardEyebrow}>Tool Stream</div>
-                <div className={styles.cardTitle}>{groupTitle}</div>
-                <div className={styles.groupCounts}>{groupCounts}</div>
+          <div className={styles.rowRail}>
+            <div className={styles.groupShell}>
+              <div className={styles.groupHeader}>
+                <div>
+                  <div className={styles.cardEyebrow}>Tool Stream</div>
+                  <div className={styles.cardTitle}>{groupTitle}</div>
+                  <div className={styles.groupCounts}>{groupCounts}</div>
+                </div>
+                <button
+                  type="button"
+                  className={styles.groupToggle}
+                  onClick={() => toggleToolGroup(entry.group.id)}
+                >
+                  {isCollapsed ? 'Expand' : 'Collapse'}
+                </button>
               </div>
-              <button
-                type="button"
-                className={styles.groupToggle}
-                onClick={() => toggleToolGroup(entry.group.id)}
-              >
-                {isCollapsed ? 'Expand' : 'Collapse'}
-              </button>
+              {!isCollapsed ? (
+                <div className={styles.groupBody}>
+                  {entry.group.items.map((item) => {
+                    const reasoningMeta =
+                      item.kind === 'reasoning'
+                        ? visibleState.reasoningMetaById.get(item.id)
+                        : undefined
+                    return (
+                      <div key={item.id} className={styles.streamEntry}>
+                        {renderItemRowV3({
+                          item,
+                          requestMapByRequestId,
+                          reasoningMeta,
+                          expandedItemIds,
+                          onToggleExpanded: toggleExpanded,
+                          onRequestAutoScroll: requestAutoScroll,
+                        })}
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : null}
             </div>
-            {!isCollapsed ? (
-              <div className={styles.groupBody}>
-                {entry.group.items.map((item) => {
-                  const reasoningMeta =
-                    item.kind === 'reasoning'
-                      ? visibleState.reasoningMetaById.get(item.id)
-                      : undefined
-                  return (
-                    <div key={item.id}>
-                      {renderItemRowV3({
-                        item,
-                        requestMapByRequestId,
-                        reasoningMeta,
-                        expandedItemIds,
-                        onToggleExpanded: toggleExpanded,
-                        onRequestAutoScroll: requestAutoScroll,
-                      })}
-                    </div>
-                  )
-                })}
-              </div>
-            ) : null}
           </div>
         </section>
       )
@@ -1351,29 +1503,37 @@ export function MessagesV3({
         <div className={styles.empty}>No conversation items yet.</div>
       ) : null}
 
-      {groupedEntries.map(renderGroupedEntry)}
+      <div className={styles.streamStack} data-testid="messages-v3-stream-stack">
+        {groupedEntries.map(renderGroupedEntry)}
+      </div>
 
-      {pendingRequestCards.map((request) => (
-        <PendingUserInputCardV3
-          key={`pending-request-${request.requestId}`}
-          request={request}
-          item={userInputItemByRequestId.get(request.requestId) ?? null}
-          onResolve={onResolveUserInput}
-        />
-      ))}
+      {pendingRequestCards.length > 0 ? (
+        <div className={styles.pendingStack} data-testid="messages-v3-pending-stack">
+          {pendingRequestCards.map((request) => (
+            <PendingUserInputCardV3
+              key={`pending-request-${request.requestId}`}
+              request={request}
+              item={userInputItemByRequestId.get(request.requestId) ?? null}
+              onResolve={onResolveUserInput}
+            />
+          ))}
+        </div>
+      ) : null}
 
       {showPlanReadyCard && planReadySignal?.planItemId && planReadySignal.revision != null ? (
-        <PlanReadyFollowupCardV3
-          planItemId={planReadySignal.planItemId}
-          revision={planReadySignal.revision}
-          isSending={isSending}
-          onDismiss={handleDismissPlanReady}
-          onPlanAction={handlePlanAction}
-        />
+        <div className={styles.planReadyZone} data-testid="messages-v3-plan-ready-zone">
+          <PlanReadyFollowupCardV3
+            planItemId={planReadySignal.planItemId}
+            revision={planReadySignal.revision}
+            isSending={isSending}
+            onDismiss={handleDismissPlanReady}
+            onPlanAction={handlePlanAction}
+          />
+        </div>
       ) : null}
 
       {snapshot ? (
-        <WorkingIndicator
+        <WorkingIndicatorV3
           processingState={snapshot.processingState as ProcessingState}
           activeTurnId={snapshot.activeTurnId}
           lastCompletedAt={lastCompletedAt}
