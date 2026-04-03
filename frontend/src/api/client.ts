@@ -20,11 +20,14 @@ import type {
   Snapshot,
   StartTurnV2Response,
   NodeWorkflowView,
+  PlanActionV3,
+  PlanActionV3Response,
   SpecGenAcceptedResponse,
   SpecGenStatusResponse,
   SplitAcceptedResponse,
   SplitMode,
   SplitStatusResponse,
+  ResolveUserInputV3Response,
   ThreadSnapshotV2,
   ThreadSnapshotV3,
   ThreadRole,
@@ -512,6 +515,37 @@ export const api = {
       buildThreadByIdPathV3(projectId, threadId, nodeId),
     )
     return response.snapshot
+  },
+  resolveThreadUserInputByIdV3(
+    projectId: string,
+    nodeId: string,
+    threadId: string,
+    requestId: string,
+    answers: ResolveUserInputV3Response['answers'],
+  ): Promise<ResolveUserInputV3Response> {
+    return jsonFetchV2<ResolveUserInputV3Response>(
+      `${buildThreadByIdBasePathV3(projectId, threadId)}/requests/${requestId}/resolve?node_id=${encodeURIComponent(nodeId)}`,
+      { method: 'POST' },
+      { answers },
+    )
+  },
+  planActionByIdV3(
+    projectId: string,
+    nodeId: string,
+    threadId: string,
+    payload: {
+      action: PlanActionV3
+      planItemId: string
+      revision: number
+      text?: string
+      idempotencyKey?: string
+    },
+  ): Promise<PlanActionV3Response> {
+    return jsonFetchV2<PlanActionV3Response>(
+      `${buildThreadByIdBasePathV3(projectId, threadId)}/plan-actions?node_id=${encodeURIComponent(nodeId)}`,
+      { method: 'POST' },
+      payload,
+    )
   },
   startThreadTurnV2(
     projectId: string,

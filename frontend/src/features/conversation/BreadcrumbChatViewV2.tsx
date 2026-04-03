@@ -80,6 +80,7 @@ export function BreadcrumbChatViewV2() {
     loadThread: loadThreadV3,
     sendTurn: sendTurnV3,
     resolveUserInput: resolveUserInputV3,
+    runPlanAction: runPlanActionV3,
     disconnectThread: disconnectThreadV3,
   } = useThreadByIdStoreV3(
     useShallow((state) => ({
@@ -92,6 +93,7 @@ export function BreadcrumbChatViewV2() {
       loadThread: state.loadThread,
       sendTurn: state.sendTurn,
       resolveUserInput: state.resolveUserInput,
+      runPlanAction: state.runPlanAction,
       disconnectThread: state.disconnectThread,
     })),
   )
@@ -581,7 +583,9 @@ export function BreadcrumbChatViewV2() {
                 <MessagesV3
                   snapshot={conversationSnapshotV3}
                   isLoading={isLoading || isWorkflowLoading}
+                  isSending={isSending}
                   onResolveUserInput={resolveUserInput}
+                  onPlanAction={runPlanActionV3}
                   lastCompletedAt={lastCompletedAt}
                   lastDurationMs={lastDurationMs}
                   prefix={

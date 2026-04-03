@@ -218,3 +218,192 @@ def test_v3_projection_maps_lifecycle_event() -> None:
             "detail": "running",
         },
     }
+
+
+def test_v3_projection_semantics_cover_review_explore_diff_and_patch_kind_mapping() -> None:
+    snapshot_v2 = default_thread_snapshot("project-1", "node-1", "execution")
+    snapshot_v2["threadId"] = "exec-thread-1"
+    snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+
+    snapshot_v3, review_events = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_UPSERT,
+            "payload": {
+                "item": {
+                    "id": "review-msg-1",
+                    "kind": "message",
+                    "threadId": "exec-thread-1",
+                    "turnId": "turn-1",
+                    "sequence": 1,
+                    "createdAt": "2026-04-01T01:00:00Z",
+                    "updatedAt": "2026-04-01T01:00:00Z",
+                    "status": "in_progress",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {"workflowReviewSummary": True},
+                    "role": "assistant",
+                    "text": "Review summary text",
+                    "format": "markdown",
+                }
+            },
+        },
+    )
+    assert review_events[0]["payload"]["item"]["kind"] == "review"
+    assert review_events[0]["payload"]["item"]["metadata"]["semanticKind"] == "workflowReviewSummary"
+    snapshot_items_by_id = {item["id"]: item for item in snapshot_v3["items"]}
+    assert snapshot_items_by_id["review-msg-1"]["kind"] == "review"
+
+    snapshot_v3, review_patch_events = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_PATCH,
+            "payload": {
+                "itemId": "review-msg-1",
+                "patch": {
+                    "kind": "message",
+                    "textAppend": " appended",
+                    "status": "completed",
+                    "updatedAt": "2026-04-01T01:00:01Z",
+                },
+            },
+        },
+    )
+    assert review_patch_events[0]["type"] == event_types.CONVERSATION_ITEM_PATCH_V3
+    assert review_patch_events[0]["payload"]["patch"]["kind"] == "review"
+    snapshot_items_by_id = {item["id"]: item for item in snapshot_v3["items"]}
+    assert snapshot_items_by_id["review-msg-1"]["text"] == "Review summary text appended"
+
+    snapshot_v3, explore_events = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_UPSERT,
+            "payload": {
+                "item": {
+                    "id": "explore-msg-1",
+                    "kind": "message",
+                    "threadId": "exec-thread-1",
+                    "turnId": None,
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T01:00:02Z",
+                    "updatedAt": "2026-04-01T01:00:02Z",
+                    "status": "completed",
+                    "source": "backend",
+                    "tone": "neutral",
+                    "metadata": {"workflowReviewGuidance": True},
+                    "role": "system",
+                    "text": "Guidance content",
+                    "format": "markdown",
+                }
+            },
+        },
+    )
+    assert explore_events[0]["payload"]["item"]["kind"] == "explore"
+    snapshot_items_by_id = {item["id"]: item for item in snapshot_v3["items"]}
+    assert snapshot_items_by_id["explore-msg-1"]["kind"] == "explore"
+
+    snapshot_v3, explore_patch_events = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_PATCH,
+            "payload": {
+                "itemId": "explore-msg-1",
+                "patch": {
+                    "kind": "message",
+                    "textAppend": " plus",
+                    "status": "completed",
+                    "updatedAt": "2026-04-01T01:00:03Z",
+                },
+            },
+        },
+    )
+    assert explore_patch_events[0]["payload"]["patch"]["kind"] == "explore"
+    snapshot_items_by_id = {item["id"]: item for item in snapshot_v3["items"]}
+    assert snapshot_items_by_id["explore-msg-1"]["text"] == "Guidance content plus"
+
+    snapshot_v3, diff_events = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_UPSERT,
+            "payload": {
+                "item": {
+                    "id": "file-tool-1",
+                    "kind": "tool",
+                    "threadId": "exec-thread-1",
+                    "turnId": "turn-2",
+                    "sequence": 3,
+                    "createdAt": "2026-04-01T01:00:04Z",
+                    "updatedAt": "2026-04-01T01:00:04Z",
+                    "status": "in_progress",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "toolType": "fileChange",
+                    "title": "Apply patch",
+                    "toolName": "apply_patch",
+                    "callId": "call-1",
+                    "argumentsText": None,
+                    "outputText": "Summary",
+                    "outputFiles": [
+                        {
+                            "path": "src/main.ts",
+                            "changeType": "updated",
+                            "summary": "core update",
+                        }
+                    ],
+                    "exitCode": None,
+                }
+            },
+        },
+    )
+    assert diff_events[0]["payload"]["item"]["kind"] == "diff"
+    snapshot_items_by_id = {item["id"]: item for item in snapshot_v3["items"]}
+    assert snapshot_items_by_id["file-tool-1"]["kind"] == "diff"
+    assert snapshot_items_by_id["file-tool-1"]["files"] == [
+        {
+            "path": "src/main.ts",
+            "changeType": "updated",
+            "summary": "core update",
+            "patchText": None,
+        }
+    ]
+
+    snapshot_v3, diff_patch_events = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_PATCH,
+            "payload": {
+                "itemId": "file-tool-1",
+                "patch": {
+                    "kind": "tool",
+                    "outputTextAppend": " delta",
+                    "outputFilesAppend": [
+                        {
+                            "path": "src/new.ts",
+                            "changeType": "created",
+                            "summary": "new file",
+                        }
+                    ],
+                    "status": "completed",
+                    "updatedAt": "2026-04-01T01:00:05Z",
+                },
+            },
+        },
+    )
+    assert diff_patch_events[0]["payload"]["patch"]["kind"] == "diff"
+    snapshot_items_by_id = {item["id"]: item for item in snapshot_v3["items"]}
+    assert snapshot_items_by_id["file-tool-1"]["summaryText"] == "Summary delta"
+    assert snapshot_items_by_id["file-tool-1"]["files"] == [
+        {
+            "path": "src/main.ts",
+            "changeType": "updated",
+            "summary": "core update",
+            "patchText": None,
+        },
+        {
+            "path": "src/new.ts",
+            "changeType": "created",
+            "summary": "new file",
+            "patchText": None,
+        },
+    ]

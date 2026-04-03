@@ -99,6 +99,39 @@ def _render_plan_text(item: dict[str, Any]) -> str:
     return "\n".join(rendered_steps)
 
 
+def _is_truthy_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        return normalized in {"1", "true", "yes", "on"}
+    return False
+
+
+def _diff_files_from_tool_output_files(raw_files: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_files, list):
+        return []
+    files: list[dict[str, Any]] = []
+    for raw_file in raw_files:
+        if not isinstance(raw_file, dict):
+            continue
+        path = _normalize_optional_string(raw_file.get("path"))
+        if not path:
+            continue
+        change_type = str(raw_file.get("changeType") or "updated").strip()
+        if change_type not in {"created", "updated", "deleted"}:
+            change_type = "updated"
+        files.append(
+            {
+                "path": path,
+                "changeType": change_type,
+                "summary": _normalize_optional_string(raw_file.get("summary")),
+                "patchText": None,
+            }
+        )
+    return files
+
+
 def convert_item_v2_to_v3(item: ConversationItem | dict[str, Any]) -> ConversationItemV3:
     source = cast(dict[str, Any], item)
     kind = str(source.get("kind") or "").strip()
@@ -119,6 +152,36 @@ def convert_item_v2_to_v3(item: ConversationItem | dict[str, Any]) -> Conversati
         role = str(source.get("role") or "assistant").strip()
         if role not in {"user", "assistant", "system"}:
             role = "assistant"
+        metadata = cast(dict[str, Any], base.get("metadata") if isinstance(base.get("metadata"), dict) else {})
+        if _is_truthy_flag(metadata.get("workflowReviewSummary")):
+            review_metadata = copy.deepcopy(metadata)
+            review_metadata["v2Kind"] = "message"
+            review_metadata["semanticKind"] = "workflowReviewSummary"
+            return cast(
+                ReviewItemV3,
+                {
+                    **base,
+                    "kind": "review",
+                    "metadata": review_metadata,
+                    "title": "Review summary",
+                    "text": str(source.get("text") or ""),
+                    "disposition": None,
+                },
+            )
+        if role == "system" and _is_truthy_flag(metadata.get("workflowReviewGuidance")):
+            explore_metadata = copy.deepcopy(metadata)
+            explore_metadata["v2Kind"] = "message"
+            explore_metadata["semanticKind"] = "workflowReviewGuidance"
+            return cast(
+                ExploreItemV3,
+                {
+                    **base,
+                    "kind": "explore",
+                    "metadata": explore_metadata,
+                    "title": "Review guidance",
+                    "text": str(source.get("text") or ""),
+                },
+            )
         return cast(
             MessageItemV3,
             {
@@ -143,6 +206,22 @@ def convert_item_v2_to_v3(item: ConversationItem | dict[str, Any]) -> Conversati
         tool_type = str(source.get("toolType") or "generic").strip()
         if tool_type not in {"commandExecution", "fileChange", "generic"}:
             tool_type = "generic"
+        if tool_type == "fileChange":
+            metadata = cast(dict[str, Any], base.get("metadata") if isinstance(base.get("metadata"), dict) else {})
+            metadata = copy.deepcopy(metadata)
+            metadata["v2Kind"] = "tool"
+            metadata["semanticKind"] = "fileChange"
+            return cast(
+                DiffItemV3,
+                {
+                    **base,
+                    "kind": "diff",
+                    "metadata": metadata,
+                    "title": _normalize_optional_string(source.get("title")) or "File changes",
+                    "summaryText": _normalize_optional_string(source.get("outputText")),
+                    "files": _diff_files_from_tool_output_files(source.get("outputFiles")),
+                },
+            )
         output_files: list[dict[str, Any]] = []
         for raw_file in source.get("outputFiles") if isinstance(source.get("outputFiles"), list) else []:
             if not isinstance(raw_file, dict):
@@ -178,6 +257,7 @@ def convert_item_v2_to_v3(item: ConversationItem | dict[str, Any]) -> Conversati
     if kind == "plan":
         metadata = copy.deepcopy(base["metadata"])
         metadata["v2Kind"] = "plan"
+        metadata["semanticKind"] = "plan"
         return cast(
             ReviewItemV3,
             {
@@ -500,6 +580,26 @@ def _map_patch_from_v2(
         return cast(ItemPatchV3, mapped)
 
     if v2_kind == "message":
+        if current_kind == "review":
+            return cast(
+                ItemPatchV3,
+                {
+                    "kind": "review",
+                    "textAppend": str(source.get("textAppend") or ""),
+                    "status": source.get("status"),
+                    "updatedAt": str(source.get("updatedAt") or iso_now()),
+                },
+            )
+        if current_kind == "explore":
+            return cast(
+                ItemPatchV3,
+                {
+                    "kind": "explore",
+                    "textAppend": str(source.get("textAppend") or ""),
+                    "status": source.get("status"),
+                    "updatedAt": str(source.get("updatedAt") or iso_now()),
+                },
+            )
         return cast(
             ItemPatchV3,
             {
@@ -521,6 +621,24 @@ def _map_patch_from_v2(
             },
         )
     if v2_kind == "tool":
+        if current_kind == "diff":
+            mapped_files_append = _diff_files_from_tool_output_files(source.get("outputFilesAppend"))
+            mapped_files_replace = _diff_files_from_tool_output_files(source.get("outputFilesReplace"))
+            mapped_patch: dict[str, Any] = {
+                "kind": "diff",
+                "status": source.get("status"),
+                "updatedAt": str(source.get("updatedAt") or iso_now()),
+            }
+            if "title" in source:
+                mapped_patch["title"] = source.get("title")
+            if "outputFilesAppend" in source:
+                mapped_patch["filesAppend"] = mapped_files_append
+            if "outputFilesReplace" in source:
+                mapped_patch["filesReplace"] = mapped_files_replace
+            if "outputTextAppend" in source:
+                current_summary = _normalize_optional_string(cast(dict[str, Any], current_item).get("summaryText"))
+                mapped_patch["summaryText"] = f"{current_summary or ''}{str(source.get('outputTextAppend') or '')}" or None
+            return cast(ItemPatchV3, mapped_patch)
         return cast(
             ItemPatchV3,
             {

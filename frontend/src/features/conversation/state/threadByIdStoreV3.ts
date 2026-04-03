@@ -1,10 +1,17 @@
 import { create } from 'zustand'
 import { api, appendAuthToken, buildThreadByIdEventsUrlV3 } from '../../../api/client'
-import type { ThreadEventV3, ThreadRole, ThreadSnapshotV3, UserInputAnswer } from '../../../api/types'
+import type {
+  PlanActionV3,
+  ThreadEventV3,
+  ThreadRole,
+  ThreadSnapshotV3,
+  UserInputAnswer,
+} from '../../../api/types'
 import { applyThreadEventV3, ThreadEventApplyErrorV3 } from './applyThreadEventV3'
 import { parseThreadEventEnvelopeV3 } from './threadEventRouter'
 
 const SSE_RECONNECT_RETRY_MS = 1000
+const USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS = 1500
 
 export type ThreadByIdStreamStatusV3 = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'error'
 
@@ -32,11 +39,18 @@ export type ThreadByIdStoreV3State = {
   ) => Promise<void>
   sendTurn: (text: string, metadata?: Record<string, unknown>) => Promise<void>
   resolveUserInput: (requestId: string, answers: UserInputAnswer[]) => Promise<void>
+  runPlanAction: (
+    action: PlanActionV3,
+    planItemId: string,
+    revision: number,
+    text?: string,
+  ) => Promise<void>
   disconnectThread: () => void
 }
 
 let threadEventSource: EventSource | null = null
 let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+const resolveFallbackTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
 let threadGeneration = 0
 
 type ProcessingTelemetryState = Pick<
@@ -98,10 +112,42 @@ function clearReconnectTimer() {
   }
 }
 
+function clearResolveFallbackTimer(requestId: string) {
+  const timer = resolveFallbackTimers.get(requestId)
+  if (timer !== undefined) {
+    globalThis.clearTimeout(timer)
+    resolveFallbackTimers.delete(requestId)
+  }
+}
+
+function clearResolveFallbackTimers() {
+  for (const timer of resolveFallbackTimers.values()) {
+    globalThis.clearTimeout(timer)
+  }
+  resolveFallbackTimers.clear()
+}
+
 function closeThreadEventSource() {
   if (threadEventSource) {
     threadEventSource.close()
     threadEventSource = null
+  }
+}
+
+function reconcileResolveFallbackTimers(snapshot: ThreadSnapshotV3 | null) {
+  if (!snapshot) {
+    clearResolveFallbackTimers()
+    return
+  }
+  const submittedRequestIds = new Set(
+    snapshot.uiSignals.activeUserInputRequests
+      .filter((request) => request.status === 'answer_submitted')
+      .map((request) => request.requestId),
+  )
+  for (const requestId of [...resolveFallbackTimers.keys()]) {
+    if (!submittedRequestIds.has(requestId)) {
+      clearResolveFallbackTimer(requestId)
+    }
   }
 }
 
@@ -125,6 +171,13 @@ function isActiveTarget(
 
 function isCurrentGeneration(generation: number) {
   return generation === threadGeneration
+}
+
+function isStreamHealthy(state: Pick<ThreadByIdStoreV3State, 'streamStatus'>) {
+  return (
+    threadEventSource !== null &&
+    (state.streamStatus === 'open' || state.streamStatus === 'connecting')
+  )
 }
 
 async function reloadThreadSnapshot(
@@ -172,6 +225,7 @@ async function reloadThreadSnapshot(
       streamStatus: 'connecting',
       ...seedRunningTelemetry(get(), snapshot),
     })
+    reconcileResolveFallbackTimers(snapshot)
     openThreadEventStream(
       get,
       set,
@@ -229,6 +283,44 @@ function scheduleStreamReopen(
   }, SSE_RECONNECT_RETRY_MS)
 }
 
+function scheduleResolveFallbackReload(
+  get: () => ThreadByIdStoreV3State,
+  set: (
+    partial:
+      | Partial<ThreadByIdStoreV3State>
+      | ((state: ThreadByIdStoreV3State) => Partial<ThreadByIdStoreV3State>),
+  ) => void,
+  projectId: string,
+  nodeId: string,
+  threadId: string,
+  threadRole: ThreadRole,
+  generation: number,
+  requestId: string,
+) {
+  clearResolveFallbackTimer(requestId)
+  const timer = globalThis.setTimeout(() => {
+    resolveFallbackTimers.delete(requestId)
+    const state = get()
+    if (
+      !isCurrentGeneration(generation) ||
+      !isActiveTarget(state, projectId, nodeId, threadId, threadRole)
+    ) {
+      return
+    }
+    const pending = state.snapshot?.uiSignals.activeUserInputRequests.find(
+      (request) => request.requestId === requestId,
+    )
+    if (!pending || pending.status !== 'answer_submitted') {
+      return
+    }
+    void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
+      setLoading: false,
+      reason: null,
+    })
+  }, USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS)
+  resolveFallbackTimers.set(requestId, timer)
+}
+
 function openThreadEventStream(
   get: () => ThreadByIdStoreV3State,
   set: (
@@ -244,6 +336,7 @@ function openThreadEventStream(
   afterSnapshotVersion: number | null,
 ) {
   clearReconnectTimer()
+  clearResolveFallbackTimers()
   closeThreadEventSource()
 
   const url = appendAuthToken(
@@ -285,6 +378,12 @@ function openThreadEventStream(
         return
       }
       throw error
+    }
+
+    if (event.type === 'thread.snapshot.v3') {
+      reconcileResolveFallbackTimers(nextSnapshot)
+    } else if (event.type === 'conversation.ui.user_input.v3') {
+      reconcileResolveFallbackTimers(nextSnapshot)
     }
 
     set((state) => {
@@ -410,6 +509,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     }
 
     clearReconnectTimer()
+    clearResolveFallbackTimers()
     closeThreadEventSource()
 
     const generation = ++threadGeneration
@@ -445,6 +545,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         streamStatus: 'connecting',
         ...seedRunningTelemetry(get(), snapshot),
       })
+      reconcileResolveFallbackTimers(snapshot)
       openThreadEventStream(
         get,
         set,
@@ -535,13 +636,201 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     }
   },
 
-  async resolveUserInput() {
-    throw new Error('User input requests are unsupported in the V3 execution/audit foundation phase.')
+  async resolveUserInput(requestId: string, answers: UserInputAnswer[]) {
+    const {
+      activeProjectId,
+      activeNodeId,
+      activeThreadId,
+      activeThreadRole,
+      snapshot,
+      isLoading,
+      streamStatus,
+    } = get()
+    if (!activeProjectId || !activeNodeId || !activeThreadId || !activeThreadRole || !snapshot) {
+      return
+    }
+
+    const generation = threadGeneration
+    const submittedAt = new Date().toISOString()
+    set((state) => {
+      if (
+        !state.snapshot ||
+        !state.activeThreadId ||
+        !isActiveTarget(state, activeProjectId, activeNodeId, activeThreadId, activeThreadRole)
+      ) {
+        return {}
+      }
+      return {
+        error: null,
+        snapshot: {
+          ...state.snapshot,
+          updatedAt: submittedAt,
+          items: state.snapshot.items.map((item) => {
+            if (item.kind !== 'userInput' || item.requestId !== requestId) {
+              return item
+            }
+            return {
+              ...item,
+              answers: [...answers],
+              status: 'answer_submitted',
+              updatedAt: submittedAt,
+            }
+          }),
+          uiSignals: {
+            ...state.snapshot.uiSignals,
+            activeUserInputRequests: state.snapshot.uiSignals.activeUserInputRequests.map(
+              (request) =>
+                request.requestId === requestId
+                  ? {
+                      ...request,
+                      status: 'answer_submitted',
+                      answers: [...answers],
+                      submittedAt,
+                    }
+                  : request,
+            ),
+          },
+        },
+      }
+    })
+
+    try {
+      await api.resolveThreadUserInputByIdV3(
+        activeProjectId,
+        activeNodeId,
+        activeThreadId,
+        requestId,
+        answers,
+      )
+      const latestState = get()
+      if (
+        !isCurrentGeneration(generation) ||
+        !isActiveTarget(latestState, activeProjectId, activeNodeId, activeThreadId, activeThreadRole)
+      ) {
+        return
+      }
+      if (!isStreamHealthy(latestState)) {
+        await reloadThreadSnapshot(
+          get,
+          set,
+          activeProjectId,
+          activeNodeId,
+          activeThreadId,
+          activeThreadRole,
+          generation,
+          {
+            setLoading: isLoading && streamStatus === 'connecting',
+            reason: null,
+          },
+        )
+        return
+      }
+      scheduleResolveFallbackReload(
+        get,
+        set,
+        activeProjectId,
+        activeNodeId,
+        activeThreadId,
+        activeThreadRole,
+        generation,
+        requestId,
+      )
+    } catch (error) {
+      const state = get()
+      if (
+        !isCurrentGeneration(generation) ||
+        !isActiveTarget(state, activeProjectId, activeNodeId, activeThreadId, activeThreadRole)
+      ) {
+        return
+      }
+      const reason = error instanceof Error ? error.message : String(error)
+      set({
+        error: reason,
+      })
+      await reloadThreadSnapshot(
+        get,
+        set,
+        activeProjectId,
+        activeNodeId,
+        activeThreadId,
+        activeThreadRole,
+        generation,
+        {
+          setLoading: false,
+          reason,
+        },
+      )
+    }
+  },
+
+  async runPlanAction(
+    action: PlanActionV3,
+    planItemId: string,
+    revision: number,
+    text?: string,
+  ) {
+    const { activeProjectId, activeNodeId, activeThreadId, activeThreadRole, snapshot } = get()
+    if (!activeProjectId || !activeNodeId || !activeThreadId || !snapshot) {
+      return
+    }
+    if (activeThreadRole !== 'execution') {
+      throw new Error('Plan actions are supported only on execution threads.')
+    }
+
+    const generation = threadGeneration
+    set({ isSending: true, error: null })
+    try {
+      const response = await api.planActionByIdV3(activeProjectId, activeNodeId, activeThreadId, {
+        action,
+        planItemId,
+        revision,
+        text,
+      })
+      set((state) => {
+        if (
+          !isCurrentGeneration(generation) ||
+          !state.snapshot ||
+          !state.activeThreadId ||
+          !isActiveTarget(state, activeProjectId, activeNodeId, state.activeThreadId, 'execution')
+        ) {
+          return {}
+        }
+        return {
+          isSending: false,
+          snapshot: {
+            ...state.snapshot,
+            threadId: response.threadId ?? state.snapshot.threadId,
+            activeTurnId: response.turnId ?? state.snapshot.activeTurnId,
+            processingState: 'running',
+            snapshotVersion: Math.max(
+              state.snapshot.snapshotVersion,
+              response.snapshotVersion ?? state.snapshot.snapshotVersion,
+            ),
+          },
+          lastSnapshotVersion: Math.max(state.lastSnapshotVersion ?? 0, response.snapshotVersion ?? 0),
+          processingStartedAt: state.processingStartedAt ?? Date.now(),
+        }
+      })
+    } catch (error) {
+      const state = get()
+      if (
+        !isCurrentGeneration(generation) ||
+        !state.activeThreadId ||
+        !isActiveTarget(state, activeProjectId, activeNodeId, state.activeThreadId, 'execution')
+      ) {
+        return
+      }
+      set({
+        isSending: false,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   },
 
   disconnectThread() {
     threadGeneration += 1
     clearReconnectTimer()
+    clearResolveFallbackTimers()
     closeThreadEventSource()
     set({
       snapshot: null,

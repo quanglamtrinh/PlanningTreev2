@@ -94,7 +94,7 @@ def test_v3_fixture_replay_builds_deterministic_snapshot() -> None:
         "review",
         "reasoning",
         "tool",
-        "tool",
+        "diff",
     ]
     assert snapshot["uiSignals"]["planReady"]["ready"] is True
     assert snapshot["uiSignals"]["planReady"]["planItemId"] == "plan-1"
@@ -135,4 +135,3 @@ def test_v3_fixture_replay_waiting_user_input_and_resolution() -> None:
         {"questionId": "q1", "value": "a", "label": None}
     ]
     assert any(event["type"] == event_types.CONVERSATION_UI_USER_INPUT_V3 for event in resolved_events)
-

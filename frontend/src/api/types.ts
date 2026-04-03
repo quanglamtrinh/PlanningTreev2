@@ -1114,6 +1114,31 @@ export type ThreadEventV3 =
   | ConversationUserInputSignalEventV3
   | ThreadErrorEventV3
 
+export type PlanActionV3 = 'implement_plan' | 'send_changes'
+
+export interface ResolveUserInputV3Response {
+  requestId: string
+  itemId: string
+  threadId: string
+  turnId: string | null
+  status: Extract<ItemStatus, 'answer_submitted'>
+  answers: UserInputAnswerV3[]
+  submittedAt: string
+}
+
+export interface PlanActionV3Response {
+  accepted: boolean
+  threadId: string | null
+  turnId: string
+  snapshotVersion?: number
+  createdItems?: ConversationItem[]
+  executionRunId?: string | null
+  workflowPhase?: WorkflowPhase | null
+  action: PlanActionV3
+  planItemId: string
+  revision: number
+}
+
 export interface WorkflowEventEnvelopeBaseV2 {
   eventId: string
   channel: 'workflow'

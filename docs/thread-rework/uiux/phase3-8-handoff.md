@@ -1,279 +1,219 @@
-# Execution/Audit UIUX V3 Handoff (Phase 3-8)
+# Execution/Audit UIUX V3 Handoff (Phase 5-8 Starter)
 
-Status: handoff after completing Phase 0-2 foundation.
+Status: handoff after completing Phase 3-4.
 
 Last updated: 2026-04-03.
 
 ## 1. Purpose
 
-This document is the execution handoff for the next phases after:
+This handoff captures the real codebase state after:
 
-- Phase 0: contract freeze
-- Phase 1: backend V3 foundation
-- Phase 2: frontend V3 core wiring
+- Phase 3: behavior parity
+- Phase 4: persistence parity
 
-Goal: move from foundation to parity and cutover with clear scope, tests, and rollback.
+Next scope:
 
-## 2. Current baseline
+- Phase 5: parity verification hardening
+- Phase 6: execution cutover
+- Phase 7: audit cutover
+- Phase 8: stabilize + desktop-prep hooks
 
-### 2.1 Parallel flags and routing
+## 2. Completed work (actual implementation)
 
-- Backend flag: `PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_BACKEND`
-- Frontend flag: `PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_FRONTEND`
-- Bootstrap fields available:
-  - `execution_audit_uiux_v3_backend_enabled`
-  - `execution_audit_uiux_v3_frontend_enabled`
-- With flags OFF: execution/audit still use V2 path.
-- Ask lanes are unchanged.
+### 2.1 Contract and boundaries
 
-### 2.2 Backend V3 available now
+- Scope remains as agreed:
+  - execution and audit lanes only
+  - ask legacy lane unchanged
+  - no V2 contract break
+- UI source of truth is still:
+  - `uiSignals.planReady`
+  - `uiSignals.activeUserInputRequests`
+- Plan-ready CTA uses dedicated V3 endpoint, not hidden tags.
 
-- By-id endpoints:
-  - `GET /v3/projects/{project_id}/threads/by-id/{thread_id}?node_id=...`
-  - `GET /v3/projects/{project_id}/threads/by-id/{thread_id}/events?node_id=...`
-- Stream model:
-  - first snapshot frame
-  - incremental replay with `after_snapshot_version`
-  - version guard returns 409 on mismatch
-- Frozen V3 event names:
-  - `thread.snapshot.v3`
-  - `conversation.item.upsert.v3`
-  - `conversation.item.patch.v3`
-  - `conversation.ui.plan_ready.v3`
-  - `conversation.ui.user_input.v3`
-  - `thread.lifecycle.v3`
-  - `thread.error.v3`
+### 2.2 Backend (Phase 3)
 
-### 2.3 Frontend V3 available now
+- Projector semantics now map first-class `review/diff/explore`:
+  - message with `metadata.workflowReviewSummary` -> `review`
+  - system message with `metadata.workflowReviewGuidance` -> `explore`
+  - tool `fileChange` -> `diff` (files + summary)
+  - `plan` -> `review` with metadata trace (`v2Kind`, `semanticKind`)
+- Patch mapping handles converted kinds to avoid mismatch (`review/explore/diff`).
+- Added by-id action endpoints:
+  - `POST /v3/projects/{project_id}/threads/by-id/{thread_id}/requests/{request_id}/resolve?node_id=...`
+  - `POST /v3/projects/{project_id}/threads/by-id/{thread_id}/plan-actions?node_id=...`
+- Added guards:
+  - execution/audit lane only
+  - active thread for node
+  - stale-check by `planItemId + revision + ready/failed`
 
-- V3 by-id store/reducer:
-  - snapshot + patch apply
-  - stale target guard
-  - snapshot reload fallback on apply errors
-- Core render pipeline in place:
-  - `MessagesV3`
-  - `deriveVisibleMessageStateV3`
-  - `buildToolGroupsV3`
-  - row shells for `message/reasoning/tool/explore/userInput/review/diff/status/error`
-- `BreadcrumbChatViewV2` is wired to switch between V2 and V3 via flag.
+### 2.3 Frontend (Phase 3-4)
 
-### 2.4 Foundation tests already added
+- V3 store:
+  - `resolveUserInput` is fully wired with optimistic `answer_submitted`
+  - timeout fallback reload when stream confirmation is missing
+  - `runPlanAction` uses dedicated V3 endpoint
+- `MessagesV3` behavior parity implemented:
+  - reasoning/tool collapse-expand
+  - tool-group collapse-expand
+  - near-bottom auto-scroll
+  - command output pinning
+  - plan-ready follow-up card with suppression + dismiss key `(threadId, planItemId, revision)`
+  - pending requests as dedicated cards, answered requests as compact inline rows
+- Persistence parity implemented:
+  - key: `ptm.uiux.v3.thread.<threadId>.viewState`
+  - versioned payload, stale prune, size cap
+  - per-thread hydrate/persist without cross-thread leakage
+- Important bug fixed:
+  - render loop in pending user-input when request had no linked item.
 
-- Backend:
-  - `test_conversation_v3_projector.py`
-  - `test_conversation_v3_fixture_replay.py`
-  - `test_chat_v3_api_execution_audit.py`
-- Frontend:
-  - `messagesV3.utils.test.ts`
-  - `threadByIdStoreV3.test.ts`
-  - `BreadcrumbChatViewV2.v3-flag.integration.test.tsx`
+## 3. API and contract impact (Phase 3-4)
 
-## 3. Intentionally deferred work
+### 3.1 Added (non-breaking)
 
-- Full micro-behavior parity for plan/user-input is not done yet.
-- Full CodexMonitor interaction parity for reasoning/tool/output pinning is not done yet.
-- Reload persistence for expanded/collapsed/dismissed V3 UI state is not done yet.
-- Desktop affordance parity is deferred.
+- Backend routes:
+  - resolve request by-id
+  - plan-actions by-id
+- Frontend API methods:
+  - `resolveThreadUserInputByIdV3(...)`
+  - `planActionByIdV3(...)`
+- V3 event names remain unchanged.
 
-## 4. Phase 3: Behavior parity
+### 3.2 Unchanged
 
-### 4.1 Goal
+- V2 endpoints and contracts unchanged.
+- Ask lanes unchanged.
 
-Move V3 from core wiring to parity-level behavior for semantics, interactions, and micro-behavior on execution/audit.
+## 4. Test evidence
 
-### 4.2 Workstream A: semantics parity
+### 4.1 Backend
 
-- Normalize projector outputs for first-class:
-  - `explore`
-  - `review`
-  - `diff`
-- Reduce temporary fallback mapping (`plan -> review` via metadata) where possible.
-- Keep `uiSignals.planReady` and `activeUserInputRequests` as source of truth.
+Command:
 
-### 4.3 Workstream B: interaction parity
+```bash
+python -m pytest backend/tests/unit/test_conversation_v3_projector.py backend/tests/unit/test_conversation_v3_fixture_replay.py backend/tests/integration/test_chat_v3_api_execution_audit.py
+```
 
-- Reasoning collapse/expand parity.
-- Tool row collapse/expand parity.
-- Tool-group behavior parity.
-- Near-bottom auto-scroll parity.
-- Command output pinning parity.
+Result: `12 passed`.
 
-### 4.4 Workstream C: plan/user-input parity
+Validated areas:
 
-- Plan follow-up card:
-  - correct show/hide conditions by revision/stale/failed
-  - suppression rules per blueprint
-- Pending request card and answered-inline semantics parity.
-- Implement `resolveUserInput` in V3 store (currently intentionally unsupported).
+- semantic mapping for `review/diff/explore`
+- patch mapping after conversion
+- by-id resolve flow
+- by-id plan action stale validation and dispatch
 
-### 4.5 Exit criteria
+### 4.2 Frontend
 
-- Phase 3 parity behavior suite passes.
-- No V2 regressions.
-- Flags OFF preserve current behavior.
+Command:
 
-## 5. Phase 4: Persistence parity
+```bash
+node frontend/node_modules/vitest/vitest.mjs run tests/unit/messagesV3.viewState.test.ts tests/unit/MessagesV3.test.tsx tests/unit/messagesV3.utils.test.ts tests/unit/threadByIdStoreV3.test.ts tests/unit/BreadcrumbChatViewV2.v3-flag.integration.test.tsx --config vitest.config.ts --root frontend --pool=threads --poolOptions.threads.singleThread=true
+```
 
-### 5.1 Goal
+Result: `5 files passed, 16 tests passed`.
 
-Persist and restore per-thread V3 view state deterministically.
+Validated areas:
 
-### 5.2 Persisted state
+- V3 reducer/store snapshot/patch/fallback behavior
+- optimistic resolve user-input + timeout reload fallback
+- plan-ready visibility/suppression/dismiss behavior
+- pending vs answered user-input rendering
+- persistence hydrate/prune/size-cap behavior
+- V3 integration behind flags in `BreadcrumbChatViewV2`
 
-- Expanded item IDs
-- Collapsed tool-group IDs
-- Dismissed plan-ready state
+## 5. Flags and rollback
 
-Recommended storage key:
+Runtime flags:
 
-`ptm.uiux.v3.thread.<threadId>.viewState`
+- `PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_BACKEND`
+- `PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_FRONTEND`
 
-### 5.3 Rules
+Expected behavior:
 
-- Prune IDs not present in current hydrated snapshot.
-- Include persisted schema version.
-- Enforce payload size cap.
+- both ON: execution/audit run V3 end-to-end
+- frontend OFF: UI falls back to V2
+- backend OFF: V3 by-id read/action path disabled
+- ask lanes: unchanged
 
-### 5.4 Exit criteria
+Rollback order:
 
-- Deterministic reload behavior per thread.
-- No state leak between different execution/audit thread IDs.
+1. Disable frontend flag first (safe UI fallback to V2).
+2. Disable backend flag if deeper rollback is needed.
 
-## 6. Phase 5: Parity verification
+## 6. Known gaps for Phase 5+
 
-### 6.1 Goal
+- No golden parity fixture harness yet against CodexMonitor baseline.
+- No rollout telemetry/dashboard package yet for cutover gates.
+- Desktop affordance parity is still deferred:
+  - open local file
+  - file-link context menu
+  - thread link
+  - image lightbox
+  - copy code block (markdown/render layer)
+- React Router future-flag warnings exist in integration tests (not blocking, should be cleaned in stabilize).
 
-Lock parity with fixture and integration evidence before cutover.
+## 7. Immediate starter tasks for Phase 5
 
-### 6.2 Required test artifacts
+1. Build parity fixture pack for representative execution/audit traces:
+   - stream sequence capture
+   - expected visible-state checkpoints
+2. Add behavior-level compare suite between PT V3 and baseline model:
+   - plan follow-up lifecycle
+   - user-input lifecycle
+   - command pinning + auto-scroll
+3. Define gate report artifact for Phase 6:
+   - pass/fail matrix
+   - divergence severity list
+   - rollback recommendation when divergence is blocking
 
-- Golden fixtures for representative execution/audit traces.
-- Derived view-model compare:
-  - PT V3 output
-  - expected CodexMonitor baseline model
-- Behavior integration tests for:
-  - near-bottom autoscroll
-  - command pinning
-  - plan follow-up lifecycle
-  - user-input queue lifecycle
+## 8. Gates for Phase 6-8
 
-### 6.3 Gate
+### 8.1 Gate into Phase 6 (execution cutover)
 
-Phase 6 is blocked until:
+- Phase 5 parity suite passes with no blocking divergence for plan/user-input.
+- ON/OFF flag safety is proven.
+- Minimum metrics are available:
+  - reconnect rate
+  - apply error + forced snapshot reload rate
+  - render error rate
+  - time-to-first-frame
 
-- parity suites pass
-- no blocking plan/user-input behavior divergence
-
-## 7. Phase 6: Execution cutover
-
-### 7.1 Goal
-
-Enable V3 as default for execution lane.
-
-### 7.2 Rollout stages
-
-- Stage 1: internal flag-on (backend + frontend)
-- Stage 2: canary cohort
-- Stage 3: default-on execution
-
-### 7.3 Minimum observability
-
-- Stream reconnect rate
-- Apply error / reload fallback rate
-- Time-to-first-frame
-- UI render error rate
-
-### 7.4 Rollback
-
-- Disable `execution_audit_uiux_v3_frontend` to return UI to V2.
-- If needed, also disable `execution_audit_uiux_v3_backend`.
-
-## 8. Phase 7: Audit cutover
-
-### 8.1 Goal
-
-Enable V3 as default for audit lane after execution stabilizes.
-
-### 8.2 Audit-specific checks
-
-- `review/diff` semantics must be stable before enabling.
-- Audit read-only policy must remain unchanged.
-
-### 8.3 Gate
+### 8.2 Gate into Phase 7 (audit cutover)
 
 - Execution cutover is stable through monitoring window.
-- Audit parity suite passes.
+- `review/diff` semantics in audit lane remain read-only safe.
 
-## 9. Phase 8: Stabilize and desktop prep
+### 8.3 Gate into Phase 8 (stabilize)
 
-### 9.1 Goal
+- Execution and audit are stable with V3 default-on.
+- Remaining backlog is mainly cleanup and extension hooks.
 
-Remove transitional adapters and prepare extension points for deferred desktop affordances.
+## 9. Suggested PR slicing for Phase 5-8
 
-### 9.2 Deferred desktop prep hooks
+1. PR-5A: parity fixture + compare harness.
+2. PR-5B: parity integration specs (autoscroll/pinning/plan/user-input lifecycle).
+3. PR-6A: execution cutover wiring + observability.
+4. PR-7A: audit cutover wiring + audit-specific regression tests.
+5. PR-8A: stabilize cleanup + desktop-affordance extension hooks/docs.
 
-- Local file opener hooks
-- File link context menu hooks
-- Thread deep-link hooks
-- Image lightbox hooks
-- Copy code block UX hooks
-
-Keep these as render/markdown extension points to avoid V3 contract churn.
-
-## 10. Suggested PR slicing
-
-1. PR-A: Phase 3 semantics/projector
-2. PR-B: Phase 3 interaction + plan/user-input behavior
-3. PR-C: Phase 4 persistence
-4. PR-D: Phase 5 parity fixtures + verification
-5. PR-E: Phase 6 execution cutover
-6. PR-F: Phase 7 audit cutover
-7. PR-G: Phase 8 stabilize + desktop-prep hooks/docs
-
-## 11. Quick start for next team
-
-1. Read:
-   - `docs/thread-rework/uiux/execution-audit-uiux-parity-blueprint.md`
-   - `docs/thread-rework/uiux/phase3-8-handoff.md`
-2. Run V3 foundation tests before phase work.
-3. For every Phase 3+ PR, prove:
-   - flags OFF keep behavior unchanged
-   - V2 tests remain green
-   - V3 tests are expanded only for that phase scope
-
-## 12. Handoff package checklist (required per phase)
-
-Each phase handoff should include all artifacts below before moving to the next phase:
+## 10. Required handoff checklist for each next phase
 
 1. Scope note:
-   - what was in scope
-   - what was explicitly deferred
-2. Contract impact note:
-   - confirm no V2 break
-   - list any V3 contract additions
+   - in scope
+   - deferred
+2. Contract/API impact:
+   - V2 unchanged proof
+   - V3 additions
 3. Test evidence:
-   - exact commands run
+   - exact command list
    - pass/fail summary
-   - new tests added in phase
-4. Flag behavior proof:
-   - behavior when flags ON
-   - behavior when flags OFF
-5. Risk + rollback note:
-   - top regressions to watch
-   - explicit rollback toggle sequence
-6. Next-phase starter list:
-   - first 3 implementation tasks
-   - known blockers/dependencies
-
-## 13. Immediate next actions (start of Phase 3)
-
-1. Expand projector semantics for `explore/review/diff` and reduce metadata fallback mapping.
-2. Implement V3 `resolveUserInput` flow end-to-end in store + API integration.
-3. Add parity behavior tests for:
-   - reasoning/tool collapse-expand
-   - plan follow-up visibility/suppression
-   - pending vs answered user-input rendering
-4. Validate flag safety:
-   - ON: execution/audit uses V3 behavior path
-   - OFF: execution/audit remains V2
-5. Prepare Phase 3 handoff package using section 12 checklist.
+4. Flag proof:
+   - ON behavior
+   - OFF behavior
+5. Risk + rollback:
+   - top regressions to monitor
+   - rollback order
+6. Next-phase starter:
+   - first 3 tasks
+   - blockers/dependencies

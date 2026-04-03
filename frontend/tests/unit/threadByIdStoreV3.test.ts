@@ -5,6 +5,8 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getThreadSnapshotByIdV3: vi.fn(),
     startThreadTurnV2: vi.fn(),
+    resolveThreadUserInputByIdV3: vi.fn(),
+    planActionByIdV3: vi.fn(),
   },
 }))
 
@@ -212,5 +214,184 @@ describe('threadByIdStoreV3', () => {
       expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
       expect(useThreadByIdStoreV3.getState().snapshot?.snapshotVersion).toBe(2)
     })
+  })
+
+  it('runs plan action through dedicated V3 endpoint and updates turn state', async () => {
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeSnapshot())
+    apiMock.planActionByIdV3.mockResolvedValue({
+      accepted: true,
+      threadId: 'thread-1',
+      turnId: 'turn-followup-1',
+      snapshotVersion: 3,
+      action: 'implement_plan',
+      planItemId: 'plan-1',
+      revision: 7,
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().runPlanAction('implement_plan', 'plan-1', 7)
+    })
+
+    expect(apiMock.planActionByIdV3).toHaveBeenCalledWith('project-1', 'node-1', 'thread-1', {
+      action: 'implement_plan',
+      planItemId: 'plan-1',
+      revision: 7,
+      text: undefined,
+    })
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.isSending).toBe(false)
+    expect(state.snapshot?.processingState).toBe('running')
+    expect(state.snapshot?.activeTurnId).toBe('turn-followup-1')
+    expect(state.lastSnapshotVersion).toBe(3)
+  })
+
+  it('optimistically submits user-input answers and falls back to snapshot reload on timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      apiMock.getThreadSnapshotByIdV3
+        .mockResolvedValueOnce(
+          makeSnapshot({
+            snapshotVersion: 5,
+            processingState: 'waiting_user_input',
+            items: [
+              {
+                id: 'input-1',
+                kind: 'userInput',
+                threadId: 'thread-1',
+                turnId: 'turn-1',
+                sequence: 3,
+                createdAt: '2026-04-01T00:00:10Z',
+                updatedAt: '2026-04-01T00:00:10Z',
+                status: 'requested',
+                source: 'upstream',
+                tone: 'info',
+                metadata: {},
+                requestId: 'req-1',
+                title: 'Need answer',
+                questions: [],
+                answers: [],
+                requestedAt: '2026-04-01T00:00:10Z',
+                resolvedAt: null,
+              },
+            ],
+            uiSignals: {
+              planReady: {
+                planItemId: null,
+                revision: null,
+                ready: false,
+                failed: false,
+              },
+              activeUserInputRequests: [
+                {
+                  requestId: 'req-1',
+                  itemId: 'input-1',
+                  threadId: 'thread-1',
+                  turnId: 'turn-1',
+                  status: 'requested',
+                  createdAt: '2026-04-01T00:00:10Z',
+                  submittedAt: null,
+                  resolvedAt: null,
+                  answers: [],
+                },
+              ],
+            },
+          }),
+        )
+        .mockResolvedValueOnce(
+          makeSnapshot({
+            snapshotVersion: 6,
+            processingState: 'idle',
+            items: [
+              {
+                id: 'input-1',
+                kind: 'userInput',
+                threadId: 'thread-1',
+                turnId: 'turn-1',
+                sequence: 3,
+                createdAt: '2026-04-01T00:00:10Z',
+                updatedAt: '2026-04-01T00:00:20Z',
+                status: 'answered',
+                source: 'upstream',
+                tone: 'info',
+                metadata: {},
+                requestId: 'req-1',
+                title: 'Need answer',
+                questions: [],
+                answers: [{ questionId: 'q1', value: 'yes', label: 'Yes' }],
+                requestedAt: '2026-04-01T00:00:10Z',
+                resolvedAt: '2026-04-01T00:00:20Z',
+              },
+            ],
+            uiSignals: {
+              planReady: {
+                planItemId: null,
+                revision: null,
+                ready: false,
+                failed: false,
+              },
+              activeUserInputRequests: [
+                {
+                  requestId: 'req-1',
+                  itemId: 'input-1',
+                  threadId: 'thread-1',
+                  turnId: 'turn-1',
+                  status: 'answered',
+                  createdAt: '2026-04-01T00:00:10Z',
+                  submittedAt: '2026-04-01T00:00:11Z',
+                  resolvedAt: '2026-04-01T00:00:20Z',
+                  answers: [{ questionId: 'q1', value: 'yes', label: 'Yes' }],
+                },
+              ],
+            },
+          }),
+        )
+      apiMock.resolveThreadUserInputByIdV3.mockResolvedValue({
+        requestId: 'req-1',
+        itemId: 'input-1',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        status: 'answer_submitted',
+        answers: [{ questionId: 'q1', value: 'yes', label: 'Yes' }],
+        submittedAt: '2026-04-01T00:00:11Z',
+      })
+
+      await act(async () => {
+        await useThreadByIdStoreV3
+          .getState()
+          .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+      })
+
+      await act(async () => {
+        await useThreadByIdStoreV3.getState().resolveUserInput('req-1', [
+          { questionId: 'q1', value: 'yes', label: 'Yes' },
+        ])
+      })
+
+      expect(apiMock.resolveThreadUserInputByIdV3).toHaveBeenCalledWith(
+        'project-1',
+        'node-1',
+        'thread-1',
+        'req-1',
+        [{ questionId: 'q1', value: 'yes', label: 'Yes' }],
+      )
+      expect(
+        useThreadByIdStoreV3.getState().snapshot?.uiSignals.activeUserInputRequests[0]?.status,
+      ).toBe('answer_submitted')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000)
+      })
+
+      expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
+      expect(useThreadByIdStoreV3.getState().snapshot?.snapshotVersion).toBe(6)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

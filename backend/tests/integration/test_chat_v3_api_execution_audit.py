@@ -105,6 +105,99 @@ def _seed_execution_thread(client: TestClient, project_id: str, node_id: str) ->
     return thread_id
 
 
+def _seed_execution_user_input_pending(
+    client: TestClient,
+    project_id: str,
+    node_id: str,
+    *,
+    thread_id: str,
+    request_id: str = "req-1",
+) -> None:
+    storage = client.app.state.storage
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "execution")
+    snapshot["threadId"] = thread_id
+    snapshot["processingState"] = "waiting_user_input"
+    snapshot["activeTurnId"] = "turn-1"
+    snapshot["snapshotVersion"] = int(snapshot.get("snapshotVersion") or 0) + 1
+    snapshot["items"].append(
+        {
+            "id": "input-1",
+            "kind": "userInput",
+            "threadId": thread_id,
+            "turnId": "turn-1",
+            "sequence": 99,
+            "createdAt": "2026-04-01T10:02:00Z",
+            "updatedAt": "2026-04-01T10:02:00Z",
+            "status": "requested",
+            "source": "upstream",
+            "tone": "info",
+            "metadata": {},
+            "requestId": request_id,
+            "title": "Need confirmation",
+            "questions": [
+                {
+                    "id": "q1",
+                    "header": "Choice",
+                    "prompt": "Pick one",
+                    "inputType": "single_select",
+                    "options": [{"label": "Option A", "description": "A"}],
+                }
+            ],
+            "answers": [],
+            "requestedAt": "2026-04-01T10:02:00Z",
+            "resolvedAt": None,
+        }
+    )
+    snapshot["pendingRequests"] = [
+        {
+            "requestId": request_id,
+            "itemId": "input-1",
+            "threadId": thread_id,
+            "turnId": "turn-1",
+            "status": "requested",
+            "createdAt": "2026-04-01T10:02:00Z",
+            "submittedAt": None,
+            "resolvedAt": None,
+            "answers": [],
+        }
+    ]
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, "execution", snapshot)
+
+
+def _seed_execution_plan_ready(
+    client: TestClient,
+    project_id: str,
+    node_id: str,
+    *,
+    thread_id: str,
+    plan_item_id: str = "plan-1",
+    revision: int = 50,
+) -> None:
+    storage = client.app.state.storage
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "execution")
+    snapshot["threadId"] = thread_id
+    snapshot["snapshotVersion"] = int(snapshot.get("snapshotVersion") or 0) + 1
+    snapshot["items"].append(
+        {
+            "id": plan_item_id,
+            "kind": "plan",
+            "threadId": thread_id,
+            "turnId": "turn-2",
+            "sequence": revision,
+            "createdAt": "2026-04-01T10:03:00Z",
+            "updatedAt": "2026-04-01T10:03:00Z",
+            "status": "completed",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "title": "Execution plan",
+            "text": "Follow this plan",
+            "steps": [{"id": "s1", "text": "Implement", "status": "completed"}],
+        }
+    )
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, "execution", snapshot)
+
+
 def test_v3_execution_snapshot_by_id_returns_wrapped_snapshot(client: TestClient, workspace_root) -> None:
     client.app.state.execution_audit_uiux_v3_backend_enabled = True
     project_id, node_id = _setup_project(client, workspace_root)
@@ -128,6 +221,155 @@ def test_v3_execution_snapshot_by_id_returns_wrapped_snapshot(client: TestClient
         "ready": False,
         "failed": False,
     }
+
+
+def test_v3_execution_resolve_user_input_by_id_updates_snapshot_and_signal(
+    client: TestClient, workspace_root
+) -> None:
+    client.app.state.execution_audit_uiux_v3_backend_enabled = True
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    _seed_execution_user_input_pending(client, project_id, node_id, thread_id=thread_id)
+    storage = client.app.state.storage
+
+    def _fake_resolve_user_input(
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        request_id: str,
+        answers: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, thread_role)
+        snapshot["processingState"] = "idle"
+        snapshot["activeTurnId"] = None
+        snapshot["snapshotVersion"] = int(snapshot.get("snapshotVersion") or 0) + 1
+        for pending in snapshot.get("pendingRequests", []):
+            if str(pending.get("requestId") or "") != request_id:
+                continue
+            pending["status"] = "answered"
+            pending["answers"] = answers
+            pending["submittedAt"] = "2026-04-01T10:02:30Z"
+            pending["resolvedAt"] = "2026-04-01T10:02:31Z"
+        for item in snapshot.get("items", []):
+            if str(item.get("kind") or "") != "userInput":
+                continue
+            if str(item.get("requestId") or "") != request_id:
+                continue
+            item["status"] = "answered"
+            item["answers"] = answers
+            item["resolvedAt"] = "2026-04-01T10:02:31Z"
+            item["updatedAt"] = "2026-04-01T10:02:31Z"
+        storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, thread_role, snapshot)
+        return {
+            "requestId": request_id,
+            "itemId": "input-1",
+            "threadId": thread_id,
+            "turnId": "turn-1",
+            "status": "answer_submitted",
+            "answers": answers,
+            "submittedAt": "2026-04-01T10:02:30Z",
+        }
+
+    client.app.state.thread_runtime_service_v2.resolve_user_input = _fake_resolve_user_input
+
+    resolve_response = client.post(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/requests/req-1/resolve",
+        params={"node_id": node_id},
+        json={"answers": [{"questionId": "q1", "value": "Option A", "label": "Option A"}]},
+    )
+    assert resolve_response.status_code == 200
+    resolve_payload = resolve_response.json()
+    assert resolve_payload["ok"] is True
+    assert resolve_payload["data"]["status"] == "answer_submitted"
+    assert resolve_payload["data"]["requestId"] == "req-1"
+
+    snapshot_response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id},
+    )
+    assert snapshot_response.status_code == 200
+    snapshot_payload = snapshot_response.json()
+    snapshot_v3 = snapshot_payload["data"]["snapshot"]
+    assert snapshot_v3["processingState"] == "idle"
+    assert snapshot_v3["uiSignals"]["activeUserInputRequests"][0]["status"] == "answered"
+    user_input_item = next(item for item in snapshot_v3["items"] if item["id"] == "input-1")
+    assert user_input_item["kind"] == "userInput"
+    assert user_input_item["status"] == "answered"
+    assert user_input_item["answers"] == [{"questionId": "q1", "value": "Option A", "label": "Option A"}]
+
+
+def test_v3_execution_plan_actions_by_id_validate_stale_and_dispatch_followup(
+    client: TestClient, workspace_root
+) -> None:
+    client.app.state.execution_audit_uiux_v3_backend_enabled = True
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    _seed_execution_plan_ready(
+        client,
+        project_id,
+        node_id,
+        thread_id=thread_id,
+        plan_item_id="plan-1",
+        revision=50,
+    )
+
+    captured: dict[str, Any] = {}
+
+    def _fake_start_execution_followup(
+        project_id_arg: str,
+        node_id_arg: str,
+        *,
+        idempotency_key: str,
+        text: str,
+    ) -> dict[str, Any]:
+        captured["projectId"] = project_id_arg
+        captured["nodeId"] = node_id_arg
+        captured["idempotencyKey"] = idempotency_key
+        captured["text"] = text
+        return {
+            "accepted": True,
+            "threadId": thread_id,
+            "turnId": "turn-followup-1",
+            "snapshotVersion": 77,
+        }
+
+    client.app.state.execution_audit_workflow_service_v2.start_execution_followup = (
+        _fake_start_execution_followup
+    )
+
+    ok_response = client.post(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/plan-actions",
+        params={"node_id": node_id},
+        json={
+            "action": "implement_plan",
+            "planItemId": "plan-1",
+            "revision": 50,
+        },
+    )
+    assert ok_response.status_code == 200
+    ok_payload = ok_response.json()
+    assert ok_payload["ok"] is True
+    assert ok_payload["data"]["action"] == "implement_plan"
+    assert ok_payload["data"]["planItemId"] == "plan-1"
+    assert ok_payload["data"]["revision"] == 50
+    assert captured["projectId"] == project_id
+    assert captured["nodeId"] == node_id
+    assert captured["text"] == "Implement this plan."
+
+    stale_response = client.post(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/plan-actions",
+        params={"node_id": node_id},
+        json={
+            "action": "send_changes",
+            "planItemId": "plan-1",
+            "revision": 49,
+        },
+    )
+    assert stale_response.status_code == 400
+    stale_payload = stale_response.json()
+    assert stale_payload["ok"] is False
+    assert stale_payload["error"]["code"] == "invalid_request"
 
 
 @pytest.mark.anyio
