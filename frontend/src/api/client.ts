@@ -13,6 +13,7 @@ import type {
   NodeDocument,
   NodeDocumentKind,
   ResetThreadV2Response,
+  ResetThreadV3Response,
   ResolveUserInputV2Response,
   ProjectSummary,
   ReviewState,
@@ -562,6 +563,16 @@ export const api = {
       buildThreadByIdTurnPathV3(projectId, threadId, nodeId),
       { method: 'POST' },
       { text, metadata },
+    )
+  },
+  resetThreadByIdV3(
+    projectId: string,
+    nodeId: string,
+    threadId: string,
+  ): Promise<ResetThreadV3Response> {
+    return jsonFetchV2<ResetThreadV3Response>(
+      `${buildThreadByIdBasePathV3(projectId, threadId)}/reset?node_id=${encodeURIComponent(nodeId)}`,
+      { method: 'POST' },
     )
   },
   startThreadTurnV2(

@@ -75,7 +75,11 @@ def _normalize_item_tone(value: Any, *, default: str = "neutral") -> str:
 
 
 def _lane_from_thread_role(thread_role: str) -> ThreadLaneV3:
-    return "audit" if thread_role == "audit" else "execution"
+    if thread_role == "ask_planning":
+        return "ask"
+    if thread_role == "audit":
+        return "audit"
+    return "execution"
 
 
 def _render_plan_text(item: dict[str, Any]) -> str:

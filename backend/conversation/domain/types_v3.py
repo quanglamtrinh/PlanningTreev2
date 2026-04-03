@@ -5,7 +5,7 @@ from typing import Any, Literal, TypedDict
 
 from backend.storage.file_utils import iso_now
 
-ThreadLaneV3 = Literal["execution", "audit"]
+ThreadLaneV3 = Literal["ask", "execution", "audit"]
 ProcessingStateV3 = Literal["idle", "running", "waiting_user_input", "failed"]
 ItemStatusV3 = Literal[
     "pending",
@@ -21,7 +21,7 @@ ItemStatusV3 = Literal[
 ItemSourceV3 = Literal["upstream", "backend", "local"]
 ItemToneV3 = Literal["neutral", "info", "success", "warning", "danger", "muted"]
 
-THREAD_LANES_V3: tuple[ThreadLaneV3, ...] = ("execution", "audit")
+THREAD_LANES_V3: tuple[ThreadLaneV3, ...] = ("ask", "execution", "audit")
 PROCESSING_STATES_V3: tuple[ProcessingStateV3, ...] = ("idle", "running", "waiting_user_input", "failed")
 ITEM_STATUSES_V3: tuple[ItemStatusV3, ...] = (
     "pending",

@@ -20,6 +20,7 @@ from backend.storage.file_utils import new_id
 router = APIRouter(tags=["workflow-v3"])
 
 SSE_HEARTBEAT_INTERVAL_SEC = 15
+_THREAD_MISMATCH_ERROR = "Thread id does not match any active route for this node."
 
 
 def _ok(data: dict[str, Any]) -> dict[str, Any]:
@@ -79,6 +80,84 @@ class PlanActionByIdRequest(BaseModel):
     idempotencyKey: str | None = None
 
 
+def _normalize_thread_id(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _resolve_execution_audit_thread_role_by_state(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    thread_id: str,
+) -> str | None:
+    state = request.app.state.storage.workflow_state_store.read_state(project_id, node_id)
+    if not isinstance(state, dict):
+        return None
+    if _normalize_thread_id(state.get("executionThreadId")) == thread_id:
+        return "execution"
+    if _normalize_thread_id(state.get("reviewThreadId")) == thread_id:
+        return "audit"
+    return None
+
+
+def _resolve_ask_thread_role_from_registry(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    thread_id: str,
+) -> str | None:
+    registry_service = request.app.state.thread_registry_service_v2
+    entry = registry_service.read_entry(project_id, node_id, "ask_planning")
+    ask_thread_id = _normalize_thread_id(entry.get("threadId"))
+    if not ask_thread_id:
+        legacy_session = request.app.state.storage.chat_state_store.read_session(
+            project_id,
+            node_id,
+            thread_role="ask_planning",
+        )
+        seeded_entry, _ = registry_service.seed_from_legacy_session(
+            project_id,
+            node_id,
+            "ask_planning",
+            legacy_session,
+        )
+        ask_thread_id = _normalize_thread_id(seeded_entry.get("threadId"))
+    if ask_thread_id == thread_id:
+        return "ask_planning"
+    return None
+
+
+def _resolve_thread_role_by_id_v3(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    thread_id: str,
+) -> str:
+    request.app.state.chat_service._validate_node_exists(project_id, node_id)
+    normalized_thread_id = _normalize_thread_id(thread_id)
+    if not normalized_thread_id:
+        raise InvalidRequest(_THREAD_MISMATCH_ERROR)
+
+    execution_or_audit = _resolve_execution_audit_thread_role_by_state(
+        request,
+        project_id,
+        node_id,
+        normalized_thread_id,
+    )
+    if execution_or_audit is not None:
+        return execution_or_audit
+
+    ask_role = _resolve_ask_thread_role_from_registry(
+        request,
+        project_id,
+        node_id,
+        normalized_thread_id,
+    )
+    if ask_role is not None:
+        return ask_role
+    raise InvalidRequest(_THREAD_MISMATCH_ERROR)
+
+
 @router.get("/projects/{project_id}/threads/by-id/{thread_id}")
 async def get_thread_snapshot_by_id_v3(
     request: Request,
@@ -87,10 +166,18 @@ async def get_thread_snapshot_by_id_v3(
     node_id: str = Query(...),
 ):
     try:
-        snapshot_v2 = request.app.state.execution_audit_workflow_service_v2.get_thread_snapshot_by_id(
+        thread_role = _resolve_thread_role_by_id_v3(
+            request,
             project_id,
             node_id,
             thread_id,
+        )
+        snapshot_v2 = request.app.state.thread_query_service_v2.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=True,
+            ensure_binding=False,
         )
         snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
         return _ok({"snapshot": snapshot_v3})
@@ -112,11 +199,18 @@ async def thread_events_by_id_v3(
     queue = None
     thread_role = ""
     try:
-        thread_role, snapshot_v2 = request.app.state.execution_audit_workflow_service_v2.build_stream_snapshot_by_id(
+        thread_role = _resolve_thread_role_by_id_v3(
+            request,
             project_id,
             node_id,
             thread_id,
+        )
+        snapshot_v2 = request.app.state.thread_query_service_v2.build_stream_snapshot(
+            project_id,
+            node_id,
+            thread_role,
             after_snapshot_version=after_snapshot_version,
+            ensure_binding=False,
         )
         snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
         queue = broker.subscribe(project_id, node_id, thread_role=thread_role)
@@ -192,13 +286,12 @@ async def resolve_user_input_by_id_v3(
     node_id: str = Query(...),
 ):
     try:
-        thread_role = request.app.state.execution_audit_workflow_service_v2.resolve_thread_route(
+        thread_role = _resolve_thread_role_by_id_v3(
+            request,
             project_id,
             node_id,
             thread_id,
         )
-        if thread_role not in {"execution", "audit"}:
-            raise InvalidRequest("V3 by-id user-input resolution supports only execution/audit threads.")
         payload = request.app.state.thread_runtime_service_v2.resolve_user_input(
             project_id=project_id,
             node_id=node_id,
@@ -223,16 +316,25 @@ async def start_turn_by_id_v3(
 ):
     try:
         workflow_service = request.app.state.execution_audit_workflow_service_v2
-        thread_role = workflow_service.resolve_thread_route(project_id, node_id, thread_id)
-        if thread_role != "execution":
+        thread_role = _resolve_thread_role_by_id_v3(request, project_id, node_id, thread_id)
+        if thread_role == "execution":
+            idempotency_key = str(body.metadata.get("idempotencyKey") or new_id("exec_followup"))
+            payload = workflow_service.start_execution_followup(
+                project_id,
+                node_id,
+                idempotency_key=idempotency_key,
+                text=body.text,
+            )
+        elif thread_role == "ask_planning":
+            payload = request.app.state.thread_runtime_service_v2.start_turn(
+                project_id,
+                node_id,
+                thread_role,
+                body.text,
+                metadata=body.metadata,
+            )
+        else:
             raise InvalidRequest("Audit review is read-only in the execution/audit thread flow.")
-        idempotency_key = str(body.metadata.get("idempotencyKey") or new_id("exec_followup"))
-        payload = workflow_service.start_execution_followup(
-            project_id,
-            node_id,
-            idempotency_key=idempotency_key,
-            text=body.text,
-        )
         return _ok(payload)
     except AppError as exc:
         return _error_response(exc)
@@ -250,7 +352,7 @@ async def apply_plan_action_by_id_v3(
 ):
     try:
         workflow_service = request.app.state.execution_audit_workflow_service_v2
-        thread_role = workflow_service.resolve_thread_route(project_id, node_id, thread_id)
+        thread_role = _resolve_thread_role_by_id_v3(request, project_id, node_id, thread_id)
         if thread_role != "execution":
             raise InvalidRequest("Plan-ready actions are supported only on execution threads.")
 
@@ -260,7 +362,13 @@ async def apply_plan_action_by_id_v3(
         if int(body.revision) < 0:
             raise InvalidRequest("revision must be a non-negative integer.")
 
-        snapshot_v2 = workflow_service.get_thread_snapshot_by_id(project_id, node_id, thread_id)
+        snapshot_v2 = request.app.state.thread_query_service_v2.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=True,
+            ensure_binding=False,
+        )
         snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
         plan_ready = snapshot_v3.get("uiSignals", {}).get("planReady", {})
         if not bool(plan_ready.get("ready")) or bool(plan_ready.get("failed")):
@@ -286,6 +394,34 @@ async def apply_plan_action_by_id_v3(
                 "action": body.action,
                 "planItemId": plan_item_id,
                 "revision": int(body.revision),
+            }
+        )
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.post("/projects/{project_id}/threads/by-id/{thread_id}/reset")
+async def reset_thread_by_id_v3(
+    request: Request,
+    project_id: str,
+    thread_id: str,
+    node_id: str = Query(...),
+):
+    try:
+        thread_role = _resolve_thread_role_by_id_v3(request, project_id, node_id, thread_id)
+        if thread_role != "ask_planning":
+            raise InvalidRequest("V3 by-id reset is supported only on ask threads.")
+        snapshot = request.app.state.thread_query_service_v2.reset_thread(
+            project_id,
+            node_id,
+            thread_role,
+        )
+        return _ok(
+            {
+                "threadId": snapshot.get("threadId"),
+                "snapshotVersion": snapshot.get("snapshotVersion"),
             }
         )
     except AppError as exc:

@@ -198,6 +198,159 @@ def _seed_execution_plan_ready(
     storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, "execution", snapshot)
 
 
+def _stub_ask_session_reads(client: TestClient) -> None:
+    storage = client.app.state.storage
+
+    def _get_session(project_id: str, node_id: str, thread_role: str = "ask_planning") -> dict[str, Any]:
+        return storage.chat_state_store.read_session(project_id, node_id, thread_role=thread_role)
+
+    client.app.state.chat_service.get_session = _get_session
+
+
+def _seed_ask_thread(
+    client: TestClient,
+    project_id: str,
+    node_id: str,
+    *,
+    thread_id: str = "ask-thread-v3-1",
+    seed_registry: bool = True,
+) -> str:
+    storage = client.app.state.storage
+
+    ask_session = storage.chat_state_store.read_session(project_id, node_id, thread_role="ask_planning")
+    ask_session["thread_id"] = thread_id
+    ask_session["active_turn_id"] = None
+    storage.chat_state_store.write_session(project_id, node_id, ask_session, thread_role="ask_planning")
+
+    if seed_registry:
+        storage.thread_registry_store.write_entry(
+            project_id,
+            node_id,
+            "ask_planning",
+            {
+                "projectId": project_id,
+                "nodeId": node_id,
+                "threadRole": "ask_planning",
+                "threadId": thread_id,
+                "forkReason": "ask_bootstrap",
+                "lineageRootThreadId": thread_id,
+            },
+        )
+
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "ask_planning")
+    snapshot["threadId"] = thread_id
+    snapshot["processingState"] = "idle"
+    snapshot["snapshotVersion"] = 1
+    snapshot["items"] = [
+        {
+            "id": "ask-msg-1",
+            "kind": "message",
+            "threadId": thread_id,
+            "turnId": "ask-turn-1",
+            "sequence": 1,
+            "createdAt": "2026-04-01T09:00:00Z",
+            "updatedAt": "2026-04-01T09:00:00Z",
+            "status": "completed",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "role": "assistant",
+            "text": "Initial ask summary",
+            "format": "markdown",
+        }
+    ]
+    snapshot["pendingRequests"] = []
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, "ask_planning", snapshot)
+    return thread_id
+
+
+def _seed_audit_thread(client: TestClient, project_id: str, node_id: str, *, thread_id: str = "audit-thread-v3-1") -> str:
+    storage = client.app.state.storage
+
+    storage.thread_registry_store.write_entry(
+        project_id,
+        node_id,
+        "audit",
+        {
+            "projectId": project_id,
+            "nodeId": node_id,
+            "threadRole": "audit",
+            "threadId": thread_id,
+            "forkReason": "local_review_thread",
+            "lineageRootThreadId": thread_id,
+        },
+    )
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "audit")
+    snapshot["threadId"] = thread_id
+    snapshot["snapshotVersion"] = 1
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, "audit", snapshot)
+
+    workflow_state = storage.workflow_state_store.default_state(node_id)
+    workflow_state["reviewThreadId"] = thread_id
+    workflow_state["auditLineageThreadId"] = thread_id
+    storage.workflow_state_store.write_state(project_id, node_id, workflow_state)
+    return thread_id
+
+
+def _seed_ask_user_input_pending(
+    client: TestClient,
+    project_id: str,
+    node_id: str,
+    *,
+    thread_id: str,
+    request_id: str = "ask-req-1",
+) -> None:
+    storage = client.app.state.storage
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "ask_planning")
+    snapshot["threadId"] = thread_id
+    snapshot["processingState"] = "waiting_user_input"
+    snapshot["activeTurnId"] = "ask-turn-1"
+    snapshot["snapshotVersion"] = int(snapshot.get("snapshotVersion") or 0) + 1
+    snapshot["items"].append(
+        {
+            "id": "ask-input-1",
+            "kind": "userInput",
+            "threadId": thread_id,
+            "turnId": "ask-turn-1",
+            "sequence": 99,
+            "createdAt": "2026-04-01T09:02:00Z",
+            "updatedAt": "2026-04-01T09:02:00Z",
+            "status": "requested",
+            "source": "upstream",
+            "tone": "info",
+            "metadata": {},
+            "requestId": request_id,
+            "title": "Need clarification",
+            "questions": [
+                {
+                    "id": "q1",
+                    "header": "Choice",
+                    "prompt": "Pick one",
+                    "inputType": "single_select",
+                    "options": [{"label": "Option A", "description": "A"}],
+                }
+            ],
+            "answers": [],
+            "requestedAt": "2026-04-01T09:02:00Z",
+            "resolvedAt": None,
+        }
+    )
+    snapshot["pendingRequests"] = [
+        {
+            "requestId": request_id,
+            "itemId": "ask-input-1",
+            "threadId": thread_id,
+            "turnId": "ask-turn-1",
+            "status": "requested",
+            "createdAt": "2026-04-01T09:02:00Z",
+            "submittedAt": None,
+            "resolvedAt": None,
+            "answers": [],
+        }
+    ]
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, "ask_planning", snapshot)
+
+
 def test_v3_execution_snapshot_by_id_returns_wrapped_snapshot(client: TestClient, workspace_root) -> None:
     project_id, node_id = _setup_project(client, workspace_root)
     thread_id = _seed_execution_thread(client, project_id, node_id)
@@ -220,6 +373,58 @@ def test_v3_execution_snapshot_by_id_returns_wrapped_snapshot(client: TestClient
         "ready": False,
         "failed": False,
     }
+
+
+def test_v3_ask_snapshot_by_id_returns_wrapped_snapshot(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    snapshot = payload["data"]["snapshot"]
+    assert snapshot["lane"] == "ask"
+    assert snapshot["threadId"] == thread_id
+    assert snapshot["items"][0]["kind"] == "message"
+
+
+def test_v3_ask_snapshot_by_id_seeds_registry_from_legacy_session(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id, seed_registry=False)
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["data"]["snapshot"]["lane"] == "ask"
+
+    seeded_entry = client.app.state.storage.thread_registry_store.read_entry(project_id, node_id, "ask_planning")
+    assert seeded_entry["threadId"] == thread_id
+
+
+def test_v3_by_id_snapshot_rejects_thread_id_mismatch(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _seed_execution_thread(client, project_id, node_id)
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/thread-does-not-match",
+        params={"node_id": node_id},
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_request"
 
 
 def test_v3_execution_resolve_user_input_by_id_updates_snapshot_and_signal(
@@ -297,6 +502,124 @@ def test_v3_execution_resolve_user_input_by_id_updates_snapshot_and_signal(
     assert user_input_item["answers"] == [{"questionId": "q1", "value": "Option A", "label": "Option A"}]
 
 
+def test_v3_ask_turns_by_id_dispatches_to_runtime(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+    captured: dict[str, Any] = {}
+
+    def _fake_start_turn(
+        project_id_arg: str,
+        node_id_arg: str,
+        thread_role: str,
+        text: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        captured["projectId"] = project_id_arg
+        captured["nodeId"] = node_id_arg
+        captured["threadRole"] = thread_role
+        captured["text"] = text
+        captured["metadata"] = metadata or {}
+        return {
+            "accepted": True,
+            "threadId": thread_id,
+            "turnId": "ask-turn-next",
+            "snapshotVersion": 9,
+            "createdItems": [],
+        }
+
+    client.app.state.thread_runtime_service_v2.start_turn = _fake_start_turn
+
+    response = client.post(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/turns",
+        params={"node_id": node_id},
+        json={"text": "Ask follow-up", "metadata": {"idempotencyKey": "ask-1"}},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["data"]["turnId"] == "ask-turn-next"
+    assert captured == {
+        "projectId": project_id,
+        "nodeId": node_id,
+        "threadRole": "ask_planning",
+        "text": "Ask follow-up",
+        "metadata": {"idempotencyKey": "ask-1"},
+    }
+
+
+def test_v3_ask_resolve_user_input_by_id_updates_snapshot_and_signal(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+    _seed_ask_user_input_pending(client, project_id, node_id, thread_id=thread_id)
+    storage = client.app.state.storage
+
+    def _fake_resolve_user_input(
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        request_id: str,
+        answers: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        assert thread_role == "ask_planning"
+        snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, thread_role)
+        snapshot["processingState"] = "idle"
+        snapshot["activeTurnId"] = None
+        snapshot["snapshotVersion"] = int(snapshot.get("snapshotVersion") or 0) + 1
+        for pending in snapshot.get("pendingRequests", []):
+            if str(pending.get("requestId") or "") != request_id:
+                continue
+            pending["status"] = "answered"
+            pending["answers"] = answers
+            pending["submittedAt"] = "2026-04-01T09:02:30Z"
+            pending["resolvedAt"] = "2026-04-01T09:02:31Z"
+        for item in snapshot.get("items", []):
+            if str(item.get("kind") or "") != "userInput":
+                continue
+            if str(item.get("requestId") or "") != request_id:
+                continue
+            item["status"] = "answered"
+            item["answers"] = answers
+            item["resolvedAt"] = "2026-04-01T09:02:31Z"
+            item["updatedAt"] = "2026-04-01T09:02:31Z"
+        storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, thread_role, snapshot)
+        return {
+            "requestId": request_id,
+            "itemId": "ask-input-1",
+            "threadId": thread_id,
+            "turnId": "ask-turn-1",
+            "status": "answer_submitted",
+            "answers": answers,
+            "submittedAt": "2026-04-01T09:02:30Z",
+        }
+
+    client.app.state.thread_runtime_service_v2.resolve_user_input = _fake_resolve_user_input
+
+    resolve_response = client.post(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/requests/ask-req-1/resolve",
+        params={"node_id": node_id},
+        json={"answers": [{"questionId": "q1", "value": "Option A", "label": "Option A"}]},
+    )
+    assert resolve_response.status_code == 200
+    resolve_payload = resolve_response.json()
+    assert resolve_payload["ok"] is True
+    assert resolve_payload["data"]["status"] == "answer_submitted"
+
+    snapshot_response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id},
+    )
+    assert snapshot_response.status_code == 200
+    snapshot_payload = snapshot_response.json()
+    snapshot_v3 = snapshot_payload["data"]["snapshot"]
+    assert snapshot_v3["processingState"] == "idle"
+    assert snapshot_v3["uiSignals"]["activeUserInputRequests"][0]["status"] == "answered"
+
+
 def test_v3_execution_plan_actions_by_id_validate_stale_and_dispatch_followup(
     client: TestClient, workspace_root
 ) -> None:
@@ -369,6 +692,78 @@ def test_v3_execution_plan_actions_by_id_validate_stale_and_dispatch_followup(
     assert stale_payload["error"]["code"] == "invalid_request"
 
 
+def test_v3_plan_actions_on_ask_thread_reject_policy(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+
+    response = client.post(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/plan-actions",
+        params={"node_id": node_id},
+        json={
+            "action": "implement_plan",
+            "planItemId": "plan-1",
+            "revision": 1,
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_request"
+
+
+def test_v3_ask_reset_by_id_clears_thread_snapshot(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+    _seed_ask_user_input_pending(client, project_id, node_id, thread_id=thread_id)
+
+    response = client.post(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/reset",
+        params={"node_id": node_id},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["data"]["threadId"] is None
+    assert int(payload["data"]["snapshotVersion"]) >= 1
+
+    snapshot = client.app.state.storage.thread_snapshot_store_v2.read_snapshot(
+        project_id,
+        node_id,
+        "ask_planning",
+    )
+    assert snapshot["threadId"] is None
+    assert snapshot["items"] == []
+    assert snapshot["pendingRequests"] == []
+
+
+def test_v3_reset_policy_rejects_execution_and_audit_threads(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    execution_thread_id = _seed_execution_thread(client, project_id, node_id)
+    audit_thread_id = _seed_audit_thread(client, project_id, node_id)
+
+    execution_response = client.post(
+        f"/v3/projects/{project_id}/threads/by-id/{execution_thread_id}/reset",
+        params={"node_id": node_id},
+    )
+    assert execution_response.status_code == 400
+    execution_payload = execution_response.json()
+    assert execution_payload["ok"] is False
+    assert execution_payload["error"]["code"] == "invalid_request"
+
+    audit_response = client.post(
+        f"/v3/projects/{project_id}/threads/by-id/{audit_thread_id}/reset",
+        params={"node_id": node_id},
+    )
+    assert audit_response.status_code == 400
+    audit_payload = audit_response.json()
+    assert audit_payload["ok"] is False
+    assert audit_payload["error"]["code"] == "invalid_request"
+
+
 @pytest.mark.anyio
 async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client: TestClient, workspace_root) -> None:
     project_id, node_id = _setup_project(client, workspace_root)
@@ -424,6 +819,67 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
         incremental_payload = await _read_sse_payload(response)
         assert incremental_payload["type"] == event_types.CONVERSATION_ITEM_UPSERT_V3
         assert incremental_payload["payload"]["item"]["id"] == "msg-2"
+    finally:
+        await _close_stream(response, request)
+
+
+@pytest.mark.anyio
+async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.thread_events_by_id_v3(
+        request,
+        project_id,
+        thread_id,
+        node_id=node_id,
+        after_snapshot_version=1,
+    )
+
+    try:
+        first_payload = await _read_sse_payload(response)
+        assert first_payload["type"] == event_types.THREAD_SNAPSHOT_V3
+        assert first_payload["payload"]["snapshot"]["threadId"] == thread_id
+        assert first_payload["payload"]["snapshot"]["lane"] == "ask"
+        first_snapshot_version = int(first_payload.get("snapshotVersion") or 0)
+
+        envelope = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="ask_planning",
+            snapshot_version=max(1, first_snapshot_version + 1),
+            event_type=event_types.CONVERSATION_ITEM_UPSERT,
+            payload={
+                "item": {
+                    "id": "ask-msg-2",
+                    "kind": "message",
+                    "threadId": thread_id,
+                    "turnId": "ask-turn-2",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T09:01:00Z",
+                    "updatedAt": "2026-04-01T09:01:00Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Incremental ask note",
+                    "format": "markdown",
+                }
+            },
+        )
+        client.app.state.conversation_event_broker_v2.publish(
+            project_id,
+            node_id,
+            envelope,
+            thread_role="ask_planning",
+        )
+
+        incremental_payload = await _read_sse_payload(response)
+        assert incremental_payload["type"] == event_types.CONVERSATION_ITEM_UPSERT_V3
+        assert incremental_payload["payload"]["item"]["id"] == "ask-msg-2"
     finally:
         await _close_stream(response, request)
 

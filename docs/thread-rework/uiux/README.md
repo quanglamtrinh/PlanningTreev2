@@ -7,6 +7,8 @@ Primary blueprint for execution/audit UIUX parity work:
 - `docs/thread-rework/uiux/phase5-8-implementation-plan.md`
 - `docs/thread-rework/uiux/artifacts/phase5-parity-gate-report.md`
 - `docs/thread-rework/uiux/execution-audit-hard-cutover.md`
+- `docs/thread-rework/uiux/ask-thread-v3-handoff.md`
+- `docs/thread-rework/uiux/ask-thread-v3-reading-instructions.md`
 
 This directory is reserved for:
 
@@ -19,4 +21,5 @@ Current scope baseline:
 - execution/audit only
 - CodexMonitor-style semantics/interaction/micro-behavior parity
 - execution/audit hard-cutover to V3 (no runtime V2<->V3 gate)
+- ask thread is still on legacy V1 chat surface and is the next migration target
 - desktop-native affordance parity deferred to later phase

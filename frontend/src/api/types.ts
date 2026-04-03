@@ -770,9 +770,9 @@ export type ThreadEventV2 =
   | ThreadResetEventV2
   | ThreadErrorEventV2
 
-// Conversation V3 types (execution/audit only)
+// Conversation V3 types (ask/execution/audit)
 
-export type ThreadLaneV3 = 'execution' | 'audit'
+export type ThreadLaneV3 = 'ask' | 'execution' | 'audit'
 export type ConversationItemKindV3 =
   | 'message'
   | 'reasoning'
@@ -1190,6 +1190,11 @@ export interface ResolveUserInputV2Response {
 }
 
 export interface ResetThreadV2Response {
+  threadId: string | null
+  snapshotVersion: number
+}
+
+export interface ResetThreadV3Response {
   threadId: string | null
   snapshotVersion: number
 }

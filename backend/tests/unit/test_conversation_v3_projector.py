@@ -71,6 +71,16 @@ def test_v3_snapshot_projection_maps_execution_items_and_signals() -> None:
     ]
 
 
+def test_v3_snapshot_projection_maps_ask_planning_to_ask_lane() -> None:
+    snapshot_v2 = default_thread_snapshot("project-1", "node-1", "ask_planning")
+    snapshot_v2["threadId"] = "ask-thread-1"
+
+    snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+
+    assert snapshot_v3["lane"] == "ask"
+    assert snapshot_v3["threadId"] == "ask-thread-1"
+
+
 def test_v3_projection_maps_upsert_and_patch_events() -> None:
     snapshot_v2 = default_thread_snapshot("project-1", "node-1", "audit")
     snapshot_v2["threadId"] = "audit-thread-1"
