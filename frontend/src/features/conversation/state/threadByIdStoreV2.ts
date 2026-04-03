@@ -44,6 +44,14 @@ type ProcessingTelemetryState = Pick<
   'processingStartedAt' | 'lastCompletedAt' | 'lastDurationMs'
 >
 
+function selectProcessingTelemetry(state: ProcessingTelemetryState): ProcessingTelemetryState {
+  return {
+    processingStartedAt: state.processingStartedAt,
+    lastCompletedAt: state.lastCompletedAt,
+    lastDurationMs: state.lastDurationMs,
+  }
+}
+
 function resetProcessingTelemetry(): ProcessingTelemetryState {
   return {
     processingStartedAt: null,
@@ -56,26 +64,30 @@ function seedRunningTelemetry(
   state: ProcessingTelemetryState,
   snapshot: ThreadSnapshotV2 | null,
 ): ProcessingTelemetryState {
+  const telemetry = selectProcessingTelemetry(state)
   if (!snapshot) {
     return resetProcessingTelemetry()
   }
   if (snapshot.processingState === 'running' || snapshot.processingState === 'waiting_user_input') {
     return {
-      processingStartedAt: state.processingStartedAt ?? Date.now(),
-      lastCompletedAt: state.lastCompletedAt,
-      lastDurationMs: state.lastDurationMs,
+      processingStartedAt: telemetry.processingStartedAt ?? Date.now(),
+      lastCompletedAt: telemetry.lastCompletedAt,
+      lastDurationMs: telemetry.lastDurationMs,
     }
   }
-  return state
+  return telemetry
 }
 
 function completeProcessingTelemetry(state: ProcessingTelemetryState): ProcessingTelemetryState {
+  const telemetry = selectProcessingTelemetry(state)
   const completedAt = Date.now()
   return {
     processingStartedAt: null,
     lastCompletedAt: completedAt,
     lastDurationMs:
-      state.processingStartedAt != null ? Math.max(0, completedAt - state.processingStartedAt) : state.lastDurationMs,
+      telemetry.processingStartedAt != null
+        ? Math.max(0, completedAt - telemetry.processingStartedAt)
+        : telemetry.lastDurationMs,
   }
 }
 

@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ItemStatus, ToolItem } from '../../../api/types'
 import styles from './ConversationFeed.module.css'
+import { FileChangeToolRow } from './FileChangeToolRow'
 import {
   getToolHeadline,
   getToolPlaceholderText,
@@ -271,6 +272,10 @@ export function ToolRow({
         onRequestAutoScroll={onRequestAutoScroll}
       />
     )
+  }
+
+  if (item.toolType === 'fileChange') {
+    return <FileChangeToolRow item={item} isExpanded={isExpanded} onToggle={onToggle} />
   }
 
   const headline = getToolHeadline(item)

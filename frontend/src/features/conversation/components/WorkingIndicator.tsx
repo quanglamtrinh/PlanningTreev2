@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useState } from 'react'
 import { AgentSpinner } from '../../../components/AgentSpinner'
 import type { ProcessingState } from '../../../api/types'
 import styles from './ConversationFeed.module.css'
@@ -13,44 +12,19 @@ function formatDuration(durationMs: number): string {
 export function WorkingIndicator({
   processingState,
   activeTurnId,
-  reasoningLabel,
-  processingStartedAt,
   lastCompletedAt,
   lastDurationMs,
 }: {
   processingState: ProcessingState
   activeTurnId: string | null
-  reasoningLabel?: string | null
-  processingStartedAt?: number | null
   lastCompletedAt?: number | null
   lastDurationMs?: number | null
 }) {
-  const [now, setNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    if (!(processingState === 'running' && activeTurnId && processingStartedAt != null)) {
-      return
-    }
-    const timer = globalThis.setInterval(() => {
-      setNow(Date.now())
-    }, 1000)
-    return () => globalThis.clearInterval(timer)
-  }, [activeTurnId, processingStartedAt, processingState])
-
-  const elapsedLabel = useMemo(() => {
-    if (!(processingState === 'running' && activeTurnId && processingStartedAt != null)) {
-      return null
-    }
-    return formatDuration(now - processingStartedAt)
-  }, [activeTurnId, now, processingStartedAt, processingState])
-
   if (processingState === 'running' && activeTurnId) {
     return (
       <div className={styles.row} data-testid="conversation-working-indicator">
         <div className={styles.workingIndicator}>
           <AgentSpinner />
-          <span className={styles.workingText}>{reasoningLabel || 'Working...'}</span>
-          {elapsedLabel ? <span className={styles.workingMeta}>{elapsedLabel}</span> : null}
         </div>
       </div>
     )

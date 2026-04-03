@@ -46,7 +46,6 @@ export function BreadcrumbChatViewV2() {
     snapshot: conversationSnapshot,
     isLoading,
     isSending,
-    processingStartedAt,
     lastCompletedAt,
     lastDurationMs,
     error,
@@ -59,7 +58,6 @@ export function BreadcrumbChatViewV2() {
       snapshot: state.snapshot,
       isLoading: state.isLoading,
       isSending: state.isSending,
-      processingStartedAt: state.processingStartedAt,
       lastCompletedAt: state.lastCompletedAt,
       lastDurationMs: state.lastDurationMs,
       error: state.error,
@@ -533,7 +531,6 @@ export function BreadcrumbChatViewV2() {
                 snapshot={conversationSnapshot}
                 isLoading={isLoading || isWorkflowLoading}
                 onResolveUserInput={resolveUserInput}
-                processingStartedAt={processingStartedAt}
                 lastCompletedAt={lastCompletedAt}
                 lastDurationMs={lastDurationMs}
                 prefix={

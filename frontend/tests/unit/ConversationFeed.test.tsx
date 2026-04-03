@@ -223,7 +223,7 @@ describe('ConversationFeed', () => {
     expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument()
   })
 
-  it('shows the latest reasoning label in the working indicator', () => {
+  it('shows only the activity spinner while running (no reasoning caption or elapsed timer)', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-03-28T00:01:05Z'))
 
@@ -252,34 +252,13 @@ describe('ConversationFeed', () => {
         })}
         isLoading={false}
         onResolveUserInput={vi.fn()}
-        processingStartedAt={Date.parse('2026-03-28T00:00:00Z')}
       />,
     )
 
     const indicator = screen.getByTestId('conversation-working-indicator')
-    expect(indicator).toHaveTextContent('Checking workspace')
-    expect(indicator).toHaveTextContent('1:05')
-  })
-
-  it('falls back to the latest running tool headline when reasoning is absent', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-03-28T00:00:20Z'))
-
-    render(
-      <ConversationFeed
-        snapshot={makeSnapshot({
-          activeTurnId: 'turn-1',
-          processingState: 'running',
-          items: [makeCommandTool({ argumentsText: 'npm test' })],
-        })}
-        isLoading={false}
-        onResolveUserInput={vi.fn()}
-        processingStartedAt={Date.parse('2026-03-28T00:00:00Z')}
-      />,
-    )
-
-    const indicator = screen.getByTestId('conversation-working-indicator')
-    expect(indicator).toHaveTextContent('npm test')
-    expect(indicator).toHaveTextContent('0:20')
+    expect(indicator).toBeInTheDocument()
+    expect(indicator).not.toHaveTextContent('Checking workspace')
+    expect(indicator).not.toHaveTextContent('Working...')
+    expect(indicator.textContent).not.toMatch(/\d+:\d{2}/)
   })
 })

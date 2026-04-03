@@ -71,14 +71,6 @@
   width: min(100%, 100%);
 }
 
-.roleLabel {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
 .messageBubble {
   border-radius: 18px;
   padding: 12px 14px;
@@ -569,6 +561,281 @@
 
 .workingMeta {
   color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+/* File change / diff card (conversation thread) */
+.fileChangeCard {
+  padding: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 82%, transparent);
+  background: var(--bg-surface);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 6%, transparent),
+    0 4px 12px color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.fileChangeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
+}
+
+.fileChangeHeaderMain {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.fileChangeFileIcon {
+  flex-shrink: 0;
+  color: color-mix(in srgb, #7c3d2e 75%, var(--text-secondary));
+}
+
+.fileChangeHeaderText {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.fileChangeFileName {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.fileChangeBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  background: color-mix(in srgb, #0d9488 13%, var(--bg-surface));
+  color: color-mix(in srgb, #0f766e 88%, var(--text-primary));
+}
+
+.fileChangeSep {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.fileChangeStats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.fileChangeStatAdd {
+  color: color-mix(in srgb, #059669 92%, var(--text-primary));
+}
+
+.fileChangeStatDel {
+  color: color-mix(in srgb, #dc2626 88%, var(--text-primary));
+}
+
+.fileChangeHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.fileChangeIconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.fileChangeIconBtn:hover:not(:disabled) {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.fileChangeIconBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.fileChangeIconBtn svg {
+  transition: transform 0.15s ease;
+}
+
+.fileChangeExpandIconOpen {
+  transform: rotate(180deg);
+}
+
+.fileChangeMenuWrap {
+  position: relative;
+}
+
+.fileChangeMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 160px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  z-index: 4;
+}
+
+.fileChangeMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.fileChangeMenuItem:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.fileChangeBody {
+  background: var(--bg-surface);
+}
+
+.fileChangeViewport {
+  max-height: 320px;
+  overflow: auto;
+  scrollbar-width: thin;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.fileChangeDiffRow {
+  display: grid;
+  grid-template-columns: 36px 18px minmax(0, 1fr);
+  align-items: stretch;
+  column-gap: 8px;
+  padding: 0 12px 0 8px;
+  min-height: 1.55em;
+}
+
+.fileChangeLineNum {
+  text-align: right;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  padding: 2px 0;
+}
+
+.fileChangeGutter {
+  text-align: center;
+  font-weight: 700;
+  user-select: none;
+  padding: 2px 0;
+  color: var(--text-tertiary);
+}
+
+.fileChangeCode {
+  margin: 0;
+  padding: 2px 0 2px 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+
+.fileChangeDiffRowCtx .fileChangeCode {
+  color: var(--text-primary);
+}
+
+.fileChangeDiffRowMeta {
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.fileChangeDiffRowMeta .fileChangeGutter {
+  opacity: 0.5;
+}
+
+.fileChangeDiffRowAdd {
+  background: color-mix(in srgb, #0d9488 9%, var(--bg-surface));
+}
+
+.fileChangeDiffRowAdd .fileChangeGutter {
+  color: color-mix(in srgb, #059669 85%, var(--text-primary));
+}
+
+.fileChangeDiffRowDel {
+  background: color-mix(in srgb, #dc2626 7%, var(--bg-surface));
+}
+
+.fileChangeDiffRowDel .fileChangeGutter {
+  color: color-mix(in srgb, #dc2626 85%, var(--text-primary));
+}
+
+.fileChangeTokKeyword {
+  color: color-mix(in srgb, #a35d43 88%, var(--text-primary));
+  font-weight: 500;
+}
+
+.fileChangeTokString {
+  color: color-mix(in srgb, #0d9488 82%, var(--text-primary));
+}
+
+.fileChangeTokPlain {
+  color: inherit;
+}
+
+.fileChangeFileList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 14px;
+}
+
+.fileChangeFileListRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.fileChangeMiniBadge {
+  display: inline-flex;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface));
+  color: var(--text-secondary);
+}
+
+.fileChangeFileListPath {
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 

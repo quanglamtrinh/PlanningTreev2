@@ -25,7 +25,6 @@ export function ConversationFeed({
   prefix,
   suffix,
   onResolveUserInput,
-  processingStartedAt,
   lastCompletedAt,
   lastDurationMs,
 }: {
@@ -35,7 +34,6 @@ export function ConversationFeed({
   /** Rendered at the bottom of the scroll area (after messages / working indicator). */
   suffix?: ReactNode
   onResolveUserInput: (requestId: string, answers: UserInputAnswer[]) => Promise<void> | void
-  processingStartedAt?: number | null
   lastCompletedAt?: number | null
   lastDurationMs?: number | null
 }) {
@@ -54,7 +52,6 @@ export function ConversationFeed({
     toggleExpanded,
     toggleToolGroup,
     groupedEntries,
-    latestReasoningLabel,
     reasoningMetaById,
   } = useConversationViewState({
     items,
@@ -151,8 +148,6 @@ export function ConversationFeed({
         <WorkingIndicator
           processingState={snapshot.processingState as ProcessingState}
           activeTurnId={snapshot.activeTurnId}
-          reasoningLabel={latestReasoningLabel}
-          processingStartedAt={processingStartedAt}
           lastCompletedAt={lastCompletedAt}
           lastDurationMs={lastDurationMs}
         />

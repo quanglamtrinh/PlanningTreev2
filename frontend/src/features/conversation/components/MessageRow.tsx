@@ -2,12 +2,6 @@ import type { ConversationMessageItem } from '../../../api/types'
 import { ConversationMarkdown } from './ConversationMarkdown'
 import styles from './ConversationFeed.module.css'
 
-function roleLabel(role: ConversationMessageItem['role']) {
-  if (role === 'user') return 'You'
-  if (role === 'system') return 'System'
-  return 'Assistant'
-}
-
 export function MessageRow({ item }: { item: ConversationMessageItem }) {
   const hasContent = item.text.trim().length > 0
   if (!hasContent) {
@@ -36,7 +30,6 @@ export function MessageRow({ item }: { item: ConversationMessageItem }) {
   return (
     <article className={`${styles.row} ${rowClass}`} data-testid={`conversation-item-${item.kind}`}>
       <div className={`${styles.messageShell} ${shellClass}`}>
-        <div className={styles.roleLabel}>{roleLabel(item.role)}</div>
         <div className={`${styles.messageBubble} ${bubbleClass}`}>
           <ConversationMarkdown content={item.text} />
         </div>
