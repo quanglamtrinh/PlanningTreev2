@@ -26,6 +26,7 @@ import type {
   SplitMode,
   SplitStatusResponse,
   ThreadSnapshotV2,
+  ThreadSnapshotV3,
   ThreadRole,
   WorkflowActionAcceptedResponse,
 } from './types'
@@ -92,6 +93,14 @@ function buildThreadByIdPathV2(projectId: string, threadId: string, nodeId: stri
   return `${buildThreadByIdBasePathV2(projectId, threadId)}?node_id=${encodeURIComponent(nodeId)}`
 }
 
+function buildThreadByIdBasePathV3(projectId: string, threadId: string): string {
+  return `/v3/projects/${projectId}/threads/by-id/${threadId}`
+}
+
+function buildThreadByIdPathV3(projectId: string, threadId: string, nodeId: string): string {
+  return `${buildThreadByIdBasePathV3(projectId, threadId)}?node_id=${encodeURIComponent(nodeId)}`
+}
+
 export function buildThreadEventsUrlV2(
   projectId: string,
   nodeId: string,
@@ -112,6 +121,19 @@ export function buildThreadByIdEventsUrlV2(
   afterSnapshotVersion?: number | null,
 ): string {
   const base = `${buildThreadByIdBasePathV2(projectId, threadId)}/events?node_id=${encodeURIComponent(nodeId)}`
+  if (afterSnapshotVersion == null) {
+    return base
+  }
+  return `${base}&after_snapshot_version=${encodeURIComponent(String(afterSnapshotVersion))}`
+}
+
+export function buildThreadByIdEventsUrlV3(
+  projectId: string,
+  nodeId: string,
+  threadId: string,
+  afterSnapshotVersion?: number | null,
+): string {
+  const base = `${buildThreadByIdBasePathV3(projectId, threadId)}/events?node_id=${encodeURIComponent(nodeId)}`
   if (afterSnapshotVersion == null) {
     return base
   }
@@ -478,6 +500,16 @@ export const api = {
   ): Promise<ThreadSnapshotV2> {
     const response = await jsonFetchV2<{ snapshot: ThreadSnapshotV2 }>(
       buildThreadByIdPathV2(projectId, threadId, nodeId),
+    )
+    return response.snapshot
+  },
+  async getThreadSnapshotByIdV3(
+    projectId: string,
+    nodeId: string,
+    threadId: string,
+  ): Promise<ThreadSnapshotV3> {
+    const response = await jsonFetchV2<{ snapshot: ThreadSnapshotV3 }>(
+      buildThreadByIdPathV3(projectId, threadId, nodeId),
     )
     return response.snapshot
   },

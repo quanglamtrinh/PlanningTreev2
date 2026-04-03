@@ -33,10 +33,12 @@ from backend.config.app_config import (
     get_split_timeout,
     is_execution_audit_v2_enabled,
     is_execution_audit_v2_rehearsal_enabled,
+    is_execution_audit_uiux_v3_backend_enabled,
+    is_execution_audit_uiux_v3_frontend_enabled,
 )
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
-from backend.routes import bootstrap, chat, chat_v2, codex, nodes, projects, split, workflow_v2
+from backend.routes import bootstrap, chat, chat_v2, codex, nodes, projects, split, workflow_v2, workflow_v3
 from backend.services.chat_service import ChatService
 from backend.services.codex_account_service import CodexAccountService
 from backend.services.clarify_generation_service import ClarifyGenerationService
@@ -66,6 +68,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     tree_service = TreeService()
     git_checkpoint_service = GitCheckpointService()
     execution_audit_v2_enabled = is_execution_audit_v2_enabled()
+    execution_audit_uiux_v3_backend_enabled = is_execution_audit_uiux_v3_backend_enabled()
+    execution_audit_uiux_v3_frontend_enabled = is_execution_audit_uiux_v3_frontend_enabled()
     rehearsal_enabled = is_execution_audit_v2_rehearsal_enabled()
     rehearsal_workspace_root = get_rehearsal_workspace_root()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
@@ -73,6 +77,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         storage, snapshot_view_service, chat_service=None,
         git_checkpoint_service=git_checkpoint_service,
         execution_audit_v2_enabled=execution_audit_v2_enabled,
+        execution_audit_uiux_v3_backend_enabled=execution_audit_uiux_v3_backend_enabled,
+        execution_audit_uiux_v3_frontend_enabled=execution_audit_uiux_v3_frontend_enabled,
     )
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
@@ -271,6 +277,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.system_message_writer_v2 = system_message_writer_v2
     app.state.execution_audit_workflow_service_v2 = execution_audit_workflow_service_v2
     app.state.execution_audit_v2_enabled = execution_audit_v2_enabled
+    app.state.execution_audit_uiux_v3_backend_enabled = execution_audit_uiux_v3_backend_enabled
+    app.state.execution_audit_uiux_v3_frontend_enabled = execution_audit_uiux_v3_frontend_enabled
     app.state.execution_audit_v2_rehearsal_enabled = rehearsal_enabled
 
     @app.exception_handler(AppError)
@@ -303,6 +311,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.include_router(chat.router, prefix="/v1")
     app.include_router(chat_v2.router, prefix="/v2")
     app.include_router(workflow_v2.router, prefix="/v2")
+    app.include_router(workflow_v3.router, prefix="/v3")
 
     if getattr(sys, "frozen", False):
         dist = Path(sys._MEIPASS) / "frontend" / "dist"  # type: ignore[attr-defined]

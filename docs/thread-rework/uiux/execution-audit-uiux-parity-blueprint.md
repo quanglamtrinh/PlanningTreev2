@@ -406,3 +406,111 @@ This blueprint is considered implemented when:
 4. Reload persists view-state invariants.
 5. V2 path is retired for execution/audit only after stability window.
 
+## Contract Appendix (Phase 0 Freeze)
+
+This appendix is frozen for Phase 0-2 implementation.
+No open TODO items are allowed in this section.
+
+### A. V3 snapshot contract (frozen)
+
+```ts
+type ThreadSnapshotV3 = {
+  projectId: string
+  nodeId: string
+  threadId: string | null
+  lane: 'execution' | 'audit'
+  processingState: 'idle' | 'running' | 'waiting_user_input' | 'failed'
+  activeTurnId: string | null
+  snapshotVersion: number
+  createdAt: string
+  updatedAt: string
+  items: ConversationItemV3[]
+  uiSignals: UiSignalsV3
+}
+```
+
+### B. V3 item union (frozen)
+
+```ts
+type ConversationItemV3 =
+  | MessageItemV3
+  | ReasoningItemV3
+  | ToolItemV3
+  | ExploreItemV3
+  | UserInputItemV3
+  | ReviewItemV3
+  | DiffItemV3
+  | StatusItemV3
+  | ErrorItemV3
+```
+
+Required covered kinds for this program:
+
+- `message`
+- `reasoning`
+- `tool`
+- `explore`
+- `userInput`
+- `review`
+- `diff`
+- `status`
+- `error`
+
+### C. Structured UI signals (frozen)
+
+```ts
+type UiSignalsV3 = {
+  planReady: {
+    planItemId: string | null
+    revision: number | null
+    ready: boolean
+    failed: boolean
+  }
+  activeUserInputRequests: PendingUserInputRequestV3[]
+}
+```
+
+Hard rule:
+
+- plan-ready must come from structured projector signal state (never hidden text tags).
+
+### D. Event naming convention (frozen)
+
+Thread channel V3 event names are fixed:
+
+- `thread.snapshot.v3`
+- `conversation.item.upsert.v3`
+- `conversation.item.patch.v3`
+- `conversation.ui.plan_ready.v3`
+- `conversation.ui.user_input.v3`
+- `thread.lifecycle.v3`
+- `thread.error.v3`
+
+### E. Scope boundary freeze
+
+- Scope is execution/audit only.
+- Ask lanes remain on existing contract.
+- V2 behavior and endpoints remain unchanged.
+- V3 is additive, parallel, and flag-gated.
+- Hidden tag inference is prohibited for plan-ready.
+
+### F. Phase-3+ parity gate checklist (frozen for later use)
+
+This gate checklist is prepared in Phase 0 and consumed in Phase 3+:
+
+1. Semantics gate:
+   - visible transcript model parity for message/reasoning/tool/explore/userInput/review/diff
+   - no fallback heuristics that contradict structured `uiSignals`
+2. Interaction gate:
+   - tool grouping + collapse/expand parity
+   - reasoning collapse/expand parity
+   - near-bottom auto-scroll and pinned command output parity
+3. Plan/user-input gate:
+   - plan-ready follow-up visibility and suppression parity
+   - pending request card + answered inline semantics parity
+4. Micro-behavior gate:
+   - clamped/expanded display transitions parity
+   - dismissal scope + reload persistence parity
+5. Safety gate:
+   - flags OFF keeps V2 behavior unchanged for execution/audit
+   - ask lanes unaffected

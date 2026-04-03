@@ -29,6 +29,32 @@ export function isExecutionAuditV2SurfaceEnabled(bootstrap: BootstrapStatus | nu
   return bootstrap?.execution_audit_v2_enabled === true
 }
 
+function readV3FrontendEnvOverride(): boolean | null {
+  const raw = String(import.meta.env.VITE_EXECUTION_AUDIT_UIUX_V3_FRONTEND ?? '')
+    .trim()
+    .toLowerCase()
+  if (!raw) {
+    return null
+  }
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') {
+    return true
+  }
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') {
+    return false
+  }
+  return null
+}
+
+export function isExecutionAuditUiuxV3FrontendEnabled(
+  bootstrap: BootstrapStatus | null | undefined,
+): boolean {
+  const envOverride = readV3FrontendEnvOverride()
+  if (envOverride !== null) {
+    return envOverride
+  }
+  return bootstrap?.execution_audit_uiux_v3_frontend_enabled === true
+}
+
 export function resolveLegacyRouteTarget(options: {
   requestedThreadTab: ThreadTab | null
   isReviewNode: boolean

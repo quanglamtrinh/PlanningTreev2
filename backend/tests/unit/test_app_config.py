@@ -3,6 +3,8 @@ from __future__ import annotations
 from backend.config.app_config import (
     is_execution_audit_v2_enabled,
     is_execution_audit_v2_rehearsal_enabled,
+    is_execution_audit_uiux_v3_backend_enabled,
+    is_execution_audit_uiux_v3_frontend_enabled,
 )
 
 
@@ -26,3 +28,23 @@ def test_execution_audit_v2_enabled_yields_to_rehearsal_when_unset(monkeypatch) 
 
     assert is_execution_audit_v2_rehearsal_enabled() is True
     assert is_execution_audit_v2_enabled() is False
+
+
+def test_execution_audit_uiux_v3_backend_enabled_defaults_to_false(monkeypatch) -> None:
+    monkeypatch.delenv("PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_BACKEND", raising=False)
+
+    assert is_execution_audit_uiux_v3_backend_enabled() is False
+
+
+def test_execution_audit_uiux_v3_frontend_enabled_defaults_to_false(monkeypatch) -> None:
+    monkeypatch.delenv("PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_FRONTEND", raising=False)
+
+    assert is_execution_audit_uiux_v3_frontend_enabled() is False
+
+
+def test_execution_audit_uiux_v3_flags_accept_true_values(monkeypatch) -> None:
+    monkeypatch.setenv("PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_BACKEND", "true")
+    monkeypatch.setenv("PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_FRONTEND", "1")
+
+    assert is_execution_audit_uiux_v3_backend_enabled() is True
+    assert is_execution_audit_uiux_v3_frontend_enabled() is True

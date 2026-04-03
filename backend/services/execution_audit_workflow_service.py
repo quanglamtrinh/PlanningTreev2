@@ -312,6 +312,7 @@ class ExecutionAuditWorkflowService:
             node_id,
             thread_role,
             after_snapshot_version=after_snapshot_version,
+            ensure_binding=False,
         )
         return thread_role, snapshot
 

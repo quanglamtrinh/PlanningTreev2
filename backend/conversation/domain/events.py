@@ -15,6 +15,15 @@ CONVERSATION_REQUEST_USER_INPUT_REQUESTED = "conversation.request.user_input.req
 CONVERSATION_REQUEST_USER_INPUT_RESOLVED = "conversation.request.user_input.resolved"
 THREAD_RESET = "thread.reset"
 THREAD_ERROR = "thread.error"
+
+THREAD_SNAPSHOT_V3 = "thread.snapshot.v3"
+CONVERSATION_ITEM_UPSERT_V3 = "conversation.item.upsert.v3"
+CONVERSATION_ITEM_PATCH_V3 = "conversation.item.patch.v3"
+CONVERSATION_UI_PLAN_READY_V3 = "conversation.ui.plan_ready.v3"
+CONVERSATION_UI_USER_INPUT_V3 = "conversation.ui.user_input.v3"
+THREAD_LIFECYCLE_V3 = "thread.lifecycle.v3"
+THREAD_ERROR_V3 = "thread.error.v3"
+
 NODE_WORKFLOW_UPDATED = "node.workflow.updated"
 NODE_DETAIL_INVALIDATE = "node.detail.invalidate"
 

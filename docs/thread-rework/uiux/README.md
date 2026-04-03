@@ -3,6 +3,7 @@
 Primary blueprint for execution/audit UIUX parity work:
 
 - `docs/thread-rework/uiux/execution-audit-uiux-parity-blueprint.md`
+- `docs/thread-rework/uiux/phase3-8-handoff.md`
 
 This directory is reserved for:
 
@@ -16,4 +17,3 @@ Current scope baseline:
 - CodexMonitor-style semantics/interaction/micro-behavior parity
 - V3 parallel contract and projector path
 - desktop-native affordance parity deferred to later phase
-

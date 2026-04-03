@@ -11,13 +11,16 @@ import {
   buildChatV2Url,
   buildLegacyChatUrl,
   isExecutionAuditV2SurfaceEnabled,
+  isExecutionAuditUiuxV3FrontendEnabled,
   parseThreadTab,
   resolveV2RouteTarget,
   type ThreadTab,
 } from './surfaceRouting'
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { ConversationFeed } from './components/ConversationFeed'
+import { MessagesV3 } from './components/v3/MessagesV3'
 import { useThreadByIdStoreV2 } from './state/threadByIdStoreV2'
+import { useThreadByIdStoreV3 } from './state/threadByIdStoreV3'
 import { useWorkflowEventBridge } from './state/workflowEventBridge'
 import { useWorkflowStateStoreV2 } from './state/workflowStateStoreV2'
 
@@ -43,17 +46,42 @@ export function BreadcrumbChatViewV2() {
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
 
   const {
-    snapshot: conversationSnapshot,
-    isLoading,
-    isSending,
-    lastCompletedAt,
-    lastDurationMs,
-    error,
-    loadThread,
-    sendTurn,
-    resolveUserInput,
-    disconnectThread,
+    snapshot: conversationSnapshotV2,
+    isLoading: isLoadingV2,
+    isSending: isSendingV2,
+    lastCompletedAt: lastCompletedAtV2,
+    lastDurationMs: lastDurationMsV2,
+    error: errorV2,
+    loadThread: loadThreadV2,
+    sendTurn: sendTurnV2,
+    resolveUserInput: resolveUserInputV2,
+    disconnectThread: disconnectThreadV2,
   } = useThreadByIdStoreV2(
+    useShallow((state) => ({
+      snapshot: state.snapshot,
+      isLoading: state.isLoading,
+      isSending: state.isSending,
+      lastCompletedAt: state.lastCompletedAt,
+      lastDurationMs: state.lastDurationMs,
+      error: state.error,
+      loadThread: state.loadThread,
+      sendTurn: state.sendTurn,
+      resolveUserInput: state.resolveUserInput,
+      disconnectThread: state.disconnectThread,
+    })),
+  )
+  const {
+    snapshot: conversationSnapshotV3,
+    isLoading: isLoadingV3,
+    isSending: isSendingV3,
+    lastCompletedAt: lastCompletedAtV3,
+    lastDurationMs: lastDurationMsV3,
+    error: errorV3,
+    loadThread: loadThreadV3,
+    sendTurn: sendTurnV3,
+    resolveUserInput: resolveUserInputV3,
+    disconnectThread: disconnectThreadV3,
+  } = useThreadByIdStoreV3(
     useShallow((state) => ({
       snapshot: state.snapshot,
       isLoading: state.isLoading,
@@ -130,6 +158,18 @@ export function BreadcrumbChatViewV2() {
 
   const requestedThreadTab = parseThreadTab(searchParams.get('thread'))
   const executionAuditV2Enabled = isExecutionAuditV2SurfaceEnabled(bootstrap)
+  const executionAuditUiuxV3FrontendEnabled = isExecutionAuditUiuxV3FrontendEnabled(bootstrap)
+  const useV3Conversation = executionAuditV2Enabled && executionAuditUiuxV3FrontendEnabled
+  const conversationSnapshot = useV3Conversation ? conversationSnapshotV3 : conversationSnapshotV2
+  const isLoading = useV3Conversation ? isLoadingV3 : isLoadingV2
+  const isSending = useV3Conversation ? isSendingV3 : isSendingV2
+  const lastCompletedAt = useV3Conversation ? lastCompletedAtV3 : lastCompletedAtV2
+  const lastDurationMs = useV3Conversation ? lastDurationMsV3 : lastDurationMsV2
+  const error = useV3Conversation ? errorV3 : errorV2
+  const loadThread = useV3Conversation ? loadThreadV3 : loadThreadV2
+  const sendTurn = useV3Conversation ? sendTurnV3 : sendTurnV2
+  const resolveUserInput = useV3Conversation ? resolveUserInputV3 : resolveUserInputV2
+  const disconnectThread = useV3Conversation ? disconnectThreadV3 : disconnectThreadV2
   const routeTarget = resolveV2RouteTarget({
     requestedThreadTab,
     isReviewNode,
@@ -281,11 +321,21 @@ export function BreadcrumbChatViewV2() {
     shouldRedirectToLegacy,
     snapshot,
     threadRole,
+    useV3Conversation,
   ])
 
   useEffect(() => () => {
-    disconnectThread()
-  }, [disconnectThread])
+    disconnectThreadV2()
+    disconnectThreadV3()
+  }, [disconnectThreadV2, disconnectThreadV3])
+
+  useEffect(() => {
+    if (useV3Conversation) {
+      disconnectThreadV2()
+      return
+    }
+    disconnectThreadV3()
+  }, [disconnectThreadV2, disconnectThreadV3, useV3Conversation])
 
   const detailCardState = useMemo(() => {
     if (!projectId || !nodeId) {
@@ -527,25 +577,47 @@ export function BreadcrumbChatViewV2() {
                 </div>
               </div>
             ) : (
-              <ConversationFeed
-                snapshot={conversationSnapshot}
-                isLoading={isLoading || isWorkflowLoading}
-                onResolveUserInput={resolveUserInput}
-                lastCompletedAt={lastCompletedAt}
-                lastDurationMs={lastDurationMs}
-                prefix={
-                  threadTab === 'audit' && snapshot && projectId && nodeId ? (
-                    <FrameContextFeedBlock
-                      projectId={projectId}
-                      nodeId={nodeId}
-                      nodeRegistry={snapshot.tree_state.node_registry}
-                      variant="audit"
-                      specConfirmed={nodeDetailState?.spec_confirmed === true}
-                    />
-                  ) : undefined
-                }
-                suffix={composerWorkflowActions ?? undefined}
-              />
+              useV3Conversation ? (
+                <MessagesV3
+                  snapshot={conversationSnapshotV3}
+                  isLoading={isLoading || isWorkflowLoading}
+                  onResolveUserInput={resolveUserInput}
+                  lastCompletedAt={lastCompletedAt}
+                  lastDurationMs={lastDurationMs}
+                  prefix={
+                    threadTab === 'audit' && snapshot && projectId && nodeId ? (
+                      <FrameContextFeedBlock
+                        projectId={projectId}
+                        nodeId={nodeId}
+                        nodeRegistry={snapshot.tree_state.node_registry}
+                        variant="audit"
+                        specConfirmed={nodeDetailState?.spec_confirmed === true}
+                      />
+                    ) : undefined
+                  }
+                  suffix={composerWorkflowActions ?? undefined}
+                />
+              ) : (
+                <ConversationFeed
+                  snapshot={conversationSnapshotV2}
+                  isLoading={isLoading || isWorkflowLoading}
+                  onResolveUserInput={resolveUserInput}
+                  lastCompletedAt={lastCompletedAt}
+                  lastDurationMs={lastDurationMs}
+                  prefix={
+                    threadTab === 'audit' && snapshot && projectId && nodeId ? (
+                      <FrameContextFeedBlock
+                        projectId={projectId}
+                        nodeId={nodeId}
+                        nodeRegistry={snapshot.tree_state.node_registry}
+                        variant="audit"
+                        specConfirmed={nodeDetailState?.spec_confirmed === true}
+                      />
+                    ) : undefined
+                  }
+                  suffix={composerWorkflowActions ?? undefined}
+                />
+              )
             )}
 
             <ComposerBar
