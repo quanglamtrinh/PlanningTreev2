@@ -624,8 +624,8 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
   },
 
   async sendTurn(text: string, metadata: Record<string, unknown> = {}) {
-    const { activeProjectId, activeNodeId, activeThreadRole, snapshot } = get()
-    if (!activeProjectId || !activeNodeId || !snapshot) {
+    const { activeProjectId, activeNodeId, activeThreadId, activeThreadRole, snapshot } = get()
+    if (!activeProjectId || !activeNodeId || !activeThreadId || !snapshot) {
       return
     }
     if (activeThreadRole !== 'execution') {
@@ -636,10 +636,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     set({ isSending: true, error: null })
 
     try {
-      const response = await api.startThreadTurnV2(
+      const response = await api.startThreadTurnByIdV3(
         activeProjectId,
         activeNodeId,
-        'execution',
+        activeThreadId,
         text,
         metadata,
       )

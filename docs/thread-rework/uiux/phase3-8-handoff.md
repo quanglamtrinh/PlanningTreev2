@@ -1,8 +1,12 @@
 # Execution/Audit UIUX V3 Handoff (Phase 5-8 Starter)
 
-Status: handoff after completing Phase 3-4.
+Status: historical handoff after completing Phase 3-4.
 
 Last updated: 2026-04-03.
+
+Superseded for rollout/cutover decisions by:
+
+- `docs/thread-rework/uiux/execution-audit-hard-cutover.md`
 
 ## 1. Purpose
 

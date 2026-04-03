@@ -31,12 +31,7 @@ from backend.config.app_config import (
     get_rehearsal_workspace_root,
     get_spec_gen_timeout,
     get_split_timeout,
-    is_audit_uiux_v3_frontend_enabled,
-    is_execution_uiux_v3_frontend_enabled,
-    is_execution_audit_v2_enabled,
     is_execution_audit_v2_rehearsal_enabled,
-    is_execution_audit_uiux_v3_backend_enabled,
-    is_execution_audit_uiux_v3_frontend_enabled,
 )
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
@@ -69,22 +64,13 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     storage = Storage(paths)
     tree_service = TreeService()
     git_checkpoint_service = GitCheckpointService()
-    execution_audit_v2_enabled = is_execution_audit_v2_enabled()
-    execution_audit_uiux_v3_backend_enabled = is_execution_audit_uiux_v3_backend_enabled()
-    execution_audit_uiux_v3_frontend_enabled = is_execution_audit_uiux_v3_frontend_enabled()
-    execution_uiux_v3_frontend_enabled = is_execution_uiux_v3_frontend_enabled()
-    audit_uiux_v3_frontend_enabled = is_audit_uiux_v3_frontend_enabled()
+    execution_audit_v2_enabled = True
     rehearsal_enabled = is_execution_audit_v2_rehearsal_enabled()
     rehearsal_workspace_root = get_rehearsal_workspace_root()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
     project_service = ProjectService(
         storage, snapshot_view_service, chat_service=None,
         git_checkpoint_service=git_checkpoint_service,
-        execution_audit_v2_enabled=execution_audit_v2_enabled,
-        execution_audit_uiux_v3_backend_enabled=execution_audit_uiux_v3_backend_enabled,
-        execution_audit_uiux_v3_frontend_enabled=execution_audit_uiux_v3_frontend_enabled,
-        execution_uiux_v3_frontend_enabled=execution_uiux_v3_frontend_enabled,
-        audit_uiux_v3_frontend_enabled=audit_uiux_v3_frontend_enabled,
     )
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
@@ -283,10 +269,6 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.system_message_writer_v2 = system_message_writer_v2
     app.state.execution_audit_workflow_service_v2 = execution_audit_workflow_service_v2
     app.state.execution_audit_v2_enabled = execution_audit_v2_enabled
-    app.state.execution_audit_uiux_v3_backend_enabled = execution_audit_uiux_v3_backend_enabled
-    app.state.execution_audit_uiux_v3_frontend_enabled = execution_audit_uiux_v3_frontend_enabled
-    app.state.execution_uiux_v3_frontend_enabled = execution_uiux_v3_frontend_enabled
-    app.state.audit_uiux_v3_frontend_enabled = audit_uiux_v3_frontend_enabled
     app.state.execution_audit_v2_rehearsal_enabled = rehearsal_enabled
 
     @app.exception_handler(AppError)

@@ -210,20 +210,15 @@ def test_attach_existing_project_backfills_node_folder_projection(
     assert (child_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
 
 
-def test_bootstrap_status_includes_lane_scoped_uiux_v3_flags(storage: Storage) -> None:
-    service = ProjectService(
-        storage,
-        execution_audit_v2_enabled=True,
-        execution_audit_uiux_v3_backend_enabled=True,
-        execution_audit_uiux_v3_frontend_enabled=False,
-        execution_uiux_v3_frontend_enabled=True,
-        audit_uiux_v3_frontend_enabled=False,
-    )
+def test_bootstrap_status_exposes_core_readiness_only(storage: Storage) -> None:
+    service = ProjectService(storage)
 
     status = service.bootstrap_status()
 
-    assert status["execution_audit_v2_enabled"] is True
-    assert status["execution_audit_uiux_v3_backend_enabled"] is True
-    assert status["execution_audit_uiux_v3_frontend_enabled"] is False
-    assert status["execution_uiux_v3_frontend_enabled"] is True
-    assert status["audit_uiux_v3_frontend_enabled"] is False
+    assert status["ready"] is True
+    assert status["workspace_configured"] is True
+    assert "execution_audit_v2_enabled" not in status
+    assert "execution_audit_uiux_v3_backend_enabled" not in status
+    assert "execution_audit_uiux_v3_frontend_enabled" not in status
+    assert "execution_uiux_v3_frontend_enabled" not in status
+    assert "audit_uiux_v3_frontend_enabled" not in status

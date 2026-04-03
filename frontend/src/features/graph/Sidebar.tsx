@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { NodeRecord, ProjectSummary, Snapshot } from '../../api/types'
 import {
+  buildChatV2Url,
   buildLegacyChatUrl,
 } from '../conversation/surfaceRouting'
 import { useCodexStore } from '../../stores/codex-store'
@@ -96,7 +97,7 @@ export function Sidebar() {
       const targetNode = latestSnapshot?.tree_state.node_registry.find((node) => node.node_id === nodeId)
       navigate(
         targetNode?.node_kind === 'review'
-          ? buildLegacyChatUrl(projectId, nodeId, 'audit')
+          ? buildChatV2Url(projectId, nodeId, 'audit')
           : buildLegacyChatUrl(projectId, nodeId, 'ask'),
       )
       void selectNode(nodeId, true)

@@ -219,16 +219,6 @@ def backend_reload_enabled() -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def read_dev_flag(name: str, default: str = "1") -> str:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    value = raw.strip()
-    if not value:
-        return default
-    return value
-
-
 def create_windows_job() -> int | None:
     if os.name != "nt":
         return None
@@ -333,22 +323,6 @@ def main() -> None:
     backend_port = int(os.environ.get("PLANNINGTREE_PORT", str(BACKEND_PORT)))
     frontend_port = int(os.environ.get("PLANNINGTREE_FRONTEND_PORT", str(FRONTEND_PORT)))
     reload_backend = backend_reload_enabled()
-    backend_v3_enabled = read_dev_flag("PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_BACKEND")
-    backend_v3_frontend_shared = read_dev_flag("PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_FRONTEND")
-    backend_v3_frontend_execution = read_dev_flag("PLANNINGTREE_EXECUTION_UIUX_V3_FRONTEND")
-    backend_v3_frontend_audit = read_dev_flag("PLANNINGTREE_AUDIT_UIUX_V3_FRONTEND")
-    frontend_v3_shared = read_dev_flag(
-        "VITE_EXECUTION_AUDIT_UIUX_V3_FRONTEND",
-        default=backend_v3_frontend_shared,
-    )
-    frontend_v3_execution = read_dev_flag(
-        "VITE_EXECUTION_UIUX_V3_FRONTEND",
-        default=backend_v3_frontend_execution,
-    )
-    frontend_v3_audit = read_dev_flag(
-        "VITE_AUDIT_UIUX_V3_FRONTEND",
-        default=backend_v3_frontend_audit,
-    )
 
     ensure_port_available(backend_port, "backend", "PLANNINGTREE_PORT")
     ensure_port_available(frontend_port, "frontend", "PLANNINGTREE_FRONTEND_PORT")
@@ -358,10 +332,6 @@ def main() -> None:
         codex_cmd = get_codex_cmd()
         if codex_cmd:
             print(f"Using Codex binary: {codex_cmd}")
-        print(
-            "V3 flags (backend/frontend shared/execution/audit): "
-            f"{backend_v3_enabled}/{frontend_v3_shared}/{frontend_v3_execution}/{frontend_v3_audit}"
-        )
         backend_command = [
             python,
             "-m",
@@ -383,10 +353,6 @@ def main() -> None:
             env={
                 **os.environ,
                 "PLANNINGTREE_PORT": str(backend_port),
-                "PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_BACKEND": backend_v3_enabled,
-                "PLANNINGTREE_EXECUTION_AUDIT_UIUX_V3_FRONTEND": backend_v3_frontend_shared,
-                "PLANNINGTREE_EXECUTION_UIUX_V3_FRONTEND": backend_v3_frontend_execution,
-                "PLANNINGTREE_AUDIT_UIUX_V3_FRONTEND": backend_v3_frontend_audit,
                 **({"PLANNINGTREE_CODEX_CMD": codex_cmd} if codex_cmd else {}),
             },
             windows_job=windows_job,
@@ -418,9 +384,6 @@ def main() -> None:
                 **os.environ,
                 "PLANNINGTREE_BACKEND_PORT": str(backend_port),
                 "PLANNINGTREE_PORT": str(backend_port),
-                "VITE_EXECUTION_AUDIT_UIUX_V3_FRONTEND": frontend_v3_shared,
-                "VITE_EXECUTION_UIUX_V3_FRONTEND": frontend_v3_execution,
-                "VITE_AUDIT_UIUX_V3_FRONTEND": frontend_v3_audit,
             },
             windows_job=windows_job,
         )

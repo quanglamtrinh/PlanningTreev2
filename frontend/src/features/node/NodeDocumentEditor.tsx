@@ -10,7 +10,7 @@ import { useClarifyStore } from '../../stores/clarify-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { useProjectStore } from '../../stores/project-store'
-import { buildChatV2Url, isExecutionAuditV2SurfaceEnabled } from '../conversation/surfaceRouting'
+import { buildChatV2Url } from '../conversation/surfaceRouting'
 import { useWorkflowStateStoreV2 } from '../conversation/state/workflowStateStoreV2'
 import type { WorkflowTab } from './WorkflowStepper'
 import { vscodeMarkdownSyntaxHighlighting } from './codemirror/vscodeMarkdownHighlight'
@@ -88,12 +88,9 @@ export function NodeDocumentEditor({
   const invalidateDocument = useNodeDocumentStore((state) => state.invalidateEntry)
   const confirmFrame = useDetailStateStore((state) => state.confirmFrame)
   const confirmSpec = useDetailStateStore((state) => state.confirmSpec)
-  const finishTaskLegacy = useDetailStateStore((state) => state.finishTask)
   const loadDetailState = useDetailStateStore((state) => state.loadDetailState)
   const detailState = useDetailStateStore((state) => state.entries[detailStateKey])
-  const isFinishingTaskLegacy = useDetailStateStore((state) => state.finishingTask[detailStateKey] ?? false)
   const invalidateClarify = useClarifyStore((state) => state.invalidateEntry)
-  const bootstrap = useProjectStore((state) => state.bootstrap)
   const finishTaskWorkflowV2 = useWorkflowStateStoreV2((state) => state.finishTask)
   const activeWorkflowMutation = useWorkflowStateStoreV2(
     (state) => state.activeMutations[detailStateKey] ?? null,
@@ -104,11 +101,7 @@ export function NodeDocumentEditor({
   const [genStatus, setGenStatus] = useState<FrameGenJobStatus>('idle')
   const [genError, setGenError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
-  const executionAuditV2Enabled = isExecutionAuditV2SurfaceEnabled(bootstrap)
-  const isFinishingTask =
-    executionAuditV2Enabled
-      ? activeWorkflowMutation === 'finish_task'
-      : isFinishingTaskLegacy
+  const isFinishingTask = activeWorkflowMutation === 'finish_task'
 
   const isGenerating = genStatus === 'active'
   const isInitialFrameStep = kind === 'frame' && workflowTab !== 'frame_updated'
@@ -319,19 +312,8 @@ export function NodeDocumentEditor({
       await flushDocument(projectId, node.node_id, 'spec')
       await confirmSpec(projectId, node.node_id)
       await refreshSnapshot()
-
-      if (executionAuditV2Enabled) {
-        await finishTaskWorkflowV2(projectId, node.node_id)
-        navigate(buildChatV2Url(projectId, node.node_id, 'execution'))
-        return
-      }
-
-      await finishTaskLegacy(projectId, node.node_id)
-
-      const finishError = useDetailStateStore.getState().errors[detailStateKey]
-      if (finishError) {
-        setConfirmError(finishError)
-      }
+      await finishTaskWorkflowV2(projectId, node.node_id)
+      navigate(buildChatV2Url(projectId, node.node_id, 'execution'))
     } catch (error) {
       setConfirmError(error instanceof Error ? error.message : 'Finish task failed')
     } finally {
@@ -340,9 +322,6 @@ export function NodeDocumentEditor({
     }
   }, [
     confirmSpec,
-    detailStateKey,
-    executionAuditV2Enabled,
-    finishTaskLegacy,
     finishTaskWorkflowV2,
     flushDocument,
     navigate,

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
-from backend.errors.app_errors import AppError
+from backend.errors.app_errors import AppError, InvalidRequest
 
 router = APIRouter(tags=["workflow-v2"])
 
@@ -186,12 +186,7 @@ async def get_thread_snapshot_by_id_v2(
     node_id: str = Query(...),
 ):
     try:
-        snapshot = request.app.state.execution_audit_workflow_service_v2.get_thread_snapshot_by_id(
-            project_id,
-            node_id,
-            thread_id,
-        )
-        return _ok({"snapshot": snapshot})
+        raise InvalidRequest("Execution/audit thread by-id snapshot moved to /v3.")
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -206,59 +201,9 @@ async def thread_events_by_id_v2(
     node_id: str = Query(...),
     after_snapshot_version: int | None = Query(None),
 ):
-    broker = request.app.state.conversation_event_broker_v2
-    queue = None
-    thread_role = ""
     try:
-        thread_role, snapshot = request.app.state.execution_audit_workflow_service_v2.build_stream_snapshot_by_id(
-            project_id,
-            node_id,
-            thread_id,
-            after_snapshot_version=after_snapshot_version,
-        )
-        queue = broker.subscribe(project_id, node_id, thread_role=thread_role)
+        raise InvalidRequest("Execution/audit thread by-id events moved to /v3.")
     except AppError as exc:
-        if queue is not None:
-            broker.unsubscribe(project_id, node_id, queue, thread_role=thread_role)
         return _error_response(exc)
     except Exception:
-        if queue is not None:
-            broker.unsubscribe(project_id, node_id, queue, thread_role=thread_role)
         return _unexpected_error_response()
-
-    snapshot_envelope = build_thread_envelope(
-        project_id=project_id,
-        node_id=node_id,
-        thread_role=thread_role,
-        snapshot_version=int(snapshot.get("snapshotVersion") or 0),
-        event_type=event_types.THREAD_SNAPSHOT,
-        payload={"snapshot": snapshot},
-    )
-    first_snapshot_version = int(snapshot.get("snapshotVersion") or 0)
-
-    async def event_generator():
-        try:
-            yield _sse_frame(snapshot_envelope)
-            while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_INTERVAL_SEC)
-                    event_version = int(event.get("snapshotVersion") or 0)
-                    if event_version and event_version <= first_snapshot_version:
-                        continue
-                    yield _sse_frame(event)
-                except asyncio.TimeoutError:
-                    yield ": heartbeat\n\n"
-                if await request.is_disconnected():
-                    break
-        finally:
-            broker.unsubscribe(project_id, node_id, queue, thread_role=thread_role)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )

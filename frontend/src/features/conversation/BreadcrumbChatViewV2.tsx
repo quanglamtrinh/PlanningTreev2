@@ -10,18 +10,13 @@ import { FrameContextFeedBlock } from '../breadcrumb/FrameContextFeedBlock'
 import {
   buildChatV2Url,
   buildLegacyChatUrl,
-  isAuditUiuxV3FrontendEnabled,
-  isExecutionAuditV2SurfaceEnabled,
-  isExecutionUiuxV3FrontendEnabled,
   parseThreadTab,
   resolveV2RouteTarget,
   type ThreadTab,
 } from './surfaceRouting'
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
-import { ConversationFeed } from './components/ConversationFeed'
 import { MessagesV3 } from './components/v3/MessagesV3'
 import { MessagesV3ErrorBoundary } from './components/v3/MessagesV3ErrorBoundary'
-import { useThreadByIdStoreV2 } from './state/threadByIdStoreV2'
 import { useThreadByIdStoreV3 } from './state/threadByIdStoreV3'
 import { useWorkflowEventBridge } from './state/workflowEventBridge'
 import { useWorkflowStateStoreV2 } from './state/workflowStateStoreV2'
@@ -47,31 +42,6 @@ export function BreadcrumbChatViewV2() {
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
 
-  const {
-    snapshot: conversationSnapshotV2,
-    isLoading: isLoadingV2,
-    isSending: isSendingV2,
-    lastCompletedAt: lastCompletedAtV2,
-    lastDurationMs: lastDurationMsV2,
-    error: errorV2,
-    loadThread: loadThreadV2,
-    sendTurn: sendTurnV2,
-    resolveUserInput: resolveUserInputV2,
-    disconnectThread: disconnectThreadV2,
-  } = useThreadByIdStoreV2(
-    useShallow((state) => ({
-      snapshot: state.snapshot,
-      isLoading: state.isLoading,
-      isSending: state.isSending,
-      lastCompletedAt: state.lastCompletedAt,
-      lastDurationMs: state.lastDurationMs,
-      error: state.error,
-      loadThread: state.loadThread,
-      sendTurn: state.sendTurn,
-      resolveUserInput: state.resolveUserInput,
-      disconnectThread: state.disconnectThread,
-    })),
-  )
   const {
     snapshot: conversationSnapshotV3,
     isLoading: isLoadingV3,
@@ -104,7 +74,6 @@ export function BreadcrumbChatViewV2() {
 
   const {
     activeProjectId,
-    bootstrap,
     snapshot,
     selectedNodeId,
     isLoadingSnapshot,
@@ -114,7 +83,6 @@ export function BreadcrumbChatViewV2() {
   } = useProjectStore(
     useShallow((state) => ({
       activeProjectId: state.activeProjectId,
-      bootstrap: state.bootstrap,
       snapshot: state.snapshot,
       selectedNodeId: state.selectedNodeId,
       isLoadingSnapshot: state.isLoadingSnapshot,
@@ -163,34 +131,24 @@ export function BreadcrumbChatViewV2() {
   }, [nodeId, projectId, snapshot])
 
   const requestedThreadTab = parseThreadTab(searchParams.get('thread'))
-  const executionAuditV2Enabled = isExecutionAuditV2SurfaceEnabled(bootstrap)
-  const executionUiuxV3FrontendEnabled = isExecutionUiuxV3FrontendEnabled(bootstrap)
-  const auditUiuxV3FrontendEnabled = isAuditUiuxV3FrontendEnabled(bootstrap)
   const routeTarget = resolveV2RouteTarget({
     requestedThreadTab,
     isReviewNode,
-    executionAuditV2Enabled,
   })
   const threadTab: ThreadTab = routeTarget.threadTab
-  const hasResolvedBootstrap = bootstrap !== null
-  const useV3Conversation =
-    executionAuditV2Enabled &&
-    ((threadTab === 'execution' && executionUiuxV3FrontendEnabled) ||
-      (threadTab === 'audit' && auditUiuxV3FrontendEnabled))
-  const conversationSnapshot = useV3Conversation ? conversationSnapshotV3 : conversationSnapshotV2
-  const isLoading = useV3Conversation ? isLoadingV3 : isLoadingV2
-  const isSending = useV3Conversation ? isSendingV3 : isSendingV2
-  const lastCompletedAt = useV3Conversation ? lastCompletedAtV3 : lastCompletedAtV2
-  const lastDurationMs = useV3Conversation ? lastDurationMsV3 : lastDurationMsV2
-  const error = useV3Conversation ? errorV3 : errorV2
-  const loadThread = useV3Conversation ? loadThreadV3 : loadThreadV2
-  const sendTurn = useV3Conversation ? sendTurnV3 : sendTurnV2
-  const resolveUserInput = useV3Conversation ? resolveUserInputV3 : resolveUserInputV2
-  const disconnectThread = useV3Conversation ? disconnectThreadV3 : disconnectThreadV2
+  const conversationSnapshot = conversationSnapshotV3
+  const isLoading = isLoadingV3
+  const isSending = isSendingV3
+  const lastCompletedAt = lastCompletedAtV3
+  const lastDurationMs = lastDurationMsV3
+  const error = errorV3
+  const loadThread = loadThreadV3
+  const sendTurn = sendTurnV3
+  const resolveUserInput = resolveUserInputV3
+  const disconnectThread = disconnectThreadV3
   const threadRole = resolveThreadRole(threadTab)
-  const shouldRedirectToLegacy = hasResolvedBootstrap && routeTarget.surface === 'legacy'
-  const shouldCanonicalizeV2 =
-    hasResolvedBootstrap && routeTarget.surface === 'v2' && requestedThreadTab !== routeTarget.threadTab
+  const shouldRedirectToLegacy = routeTarget.surface === 'legacy'
+  const shouldCanonicalizeV2 = routeTarget.surface === 'v2' && requestedThreadTab !== routeTarget.threadTab
 
   useWorkflowEventBridge(
     projectId,
@@ -332,21 +290,11 @@ export function BreadcrumbChatViewV2() {
     shouldRedirectToLegacy,
     snapshot,
     threadRole,
-    useV3Conversation,
   ])
 
   useEffect(() => () => {
-    disconnectThreadV2()
     disconnectThreadV3()
-  }, [disconnectThreadV2, disconnectThreadV3])
-
-  useEffect(() => {
-    if (useV3Conversation) {
-      disconnectThreadV2()
-      return
-    }
-    disconnectThreadV3()
-  }, [disconnectThreadV2, disconnectThreadV3, useV3Conversation])
+  }, [disconnectThreadV3])
 
   const detailCardState = useMemo(() => {
     if (!projectId || !nodeId) {
@@ -595,38 +543,16 @@ export function BreadcrumbChatViewV2() {
                 </div>
               </div>
             ) : (
-              useV3Conversation ? (
-                <MessagesV3ErrorBoundary
-                  key={`${threadTab}:${activeThreadId ?? 'none'}`}
-                  onRenderError={handleV3RenderError}
-                >
-                  <MessagesV3
-                    snapshot={conversationSnapshotV3}
-                    isLoading={isLoading || isWorkflowLoading}
-                    isSending={isSending}
-                    onResolveUserInput={resolveUserInput}
-                    onPlanAction={runPlanActionV3}
-                    lastCompletedAt={lastCompletedAt}
-                    lastDurationMs={lastDurationMs}
-                    prefix={
-                      threadTab === 'audit' && snapshot && projectId && nodeId ? (
-                        <FrameContextFeedBlock
-                          projectId={projectId}
-                          nodeId={nodeId}
-                          nodeRegistry={snapshot.tree_state.node_registry}
-                          variant="audit"
-                          specConfirmed={nodeDetailState?.spec_confirmed === true}
-                        />
-                      ) : undefined
-                    }
-                    suffix={composerWorkflowActions ?? undefined}
-                  />
-                </MessagesV3ErrorBoundary>
-              ) : (
-                <ConversationFeed
-                  snapshot={conversationSnapshotV2}
+              <MessagesV3ErrorBoundary
+                key={`${threadTab}:${activeThreadId ?? 'none'}`}
+                onRenderError={handleV3RenderError}
+              >
+                <MessagesV3
+                  snapshot={conversationSnapshotV3}
                   isLoading={isLoading || isWorkflowLoading}
+                  isSending={isSending}
                   onResolveUserInput={resolveUserInput}
+                  onPlanAction={runPlanActionV3}
                   lastCompletedAt={lastCompletedAt}
                   lastDurationMs={lastDurationMs}
                   prefix={
@@ -642,7 +568,7 @@ export function BreadcrumbChatViewV2() {
                   }
                   suffix={composerWorkflowActions ?? undefined}
                 />
-              )
+              </MessagesV3ErrorBoundary>
             )}
 
             <ComposerBar

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getThreadSnapshotByIdV3: vi.fn(),
-    startThreadTurnV2: vi.fn(),
+    startThreadTurnByIdV3: vi.fn(),
     resolveThreadUserInputByIdV3: vi.fn(),
     planActionByIdV3: vi.fn(),
   },

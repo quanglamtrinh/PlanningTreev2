@@ -62,14 +62,13 @@ def _sse_frame(envelope: dict[str, object]) -> str:
     return f"data: {data}\n\n"
 
 
-def _require_v3_backend_enabled(request: Request) -> None:
-    if getattr(request.app.state, "execution_audit_uiux_v3_backend_enabled", False):
-        return
-    raise InvalidRequest("execution_audit_uiux_v3_backend is disabled.")
-
-
 class ResolveUserInputByIdRequest(BaseModel):
     answers: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class StartTurnByIdRequest(BaseModel):
+    text: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class PlanActionByIdRequest(BaseModel):
@@ -88,7 +87,6 @@ async def get_thread_snapshot_by_id_v3(
     node_id: str = Query(...),
 ):
     try:
-        _require_v3_backend_enabled(request)
         snapshot_v2 = request.app.state.execution_audit_workflow_service_v2.get_thread_snapshot_by_id(
             project_id,
             node_id,
@@ -114,7 +112,6 @@ async def thread_events_by_id_v3(
     queue = None
     thread_role = ""
     try:
-        _require_v3_backend_enabled(request)
         thread_role, snapshot_v2 = request.app.state.execution_audit_workflow_service_v2.build_stream_snapshot_by_id(
             project_id,
             node_id,
@@ -195,7 +192,6 @@ async def resolve_user_input_by_id_v3(
     node_id: str = Query(...),
 ):
     try:
-        _require_v3_backend_enabled(request)
         thread_role = request.app.state.execution_audit_workflow_service_v2.resolve_thread_route(
             project_id,
             node_id,
@@ -217,6 +213,33 @@ async def resolve_user_input_by_id_v3(
         return _unexpected_error_response()
 
 
+@router.post("/projects/{project_id}/threads/by-id/{thread_id}/turns")
+async def start_turn_by_id_v3(
+    request: Request,
+    project_id: str,
+    thread_id: str,
+    body: StartTurnByIdRequest,
+    node_id: str = Query(...),
+):
+    try:
+        workflow_service = request.app.state.execution_audit_workflow_service_v2
+        thread_role = workflow_service.resolve_thread_route(project_id, node_id, thread_id)
+        if thread_role != "execution":
+            raise InvalidRequest("Audit review is read-only in the execution/audit thread flow.")
+        idempotency_key = str(body.metadata.get("idempotencyKey") or new_id("exec_followup"))
+        payload = workflow_service.start_execution_followup(
+            project_id,
+            node_id,
+            idempotency_key=idempotency_key,
+            text=body.text,
+        )
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
 @router.post("/projects/{project_id}/threads/by-id/{thread_id}/plan-actions")
 async def apply_plan_action_by_id_v3(
     request: Request,
@@ -226,7 +249,6 @@ async def apply_plan_action_by_id_v3(
     node_id: str = Query(...),
 ):
     try:
-        _require_v3_backend_enabled(request)
         workflow_service = request.app.state.execution_audit_workflow_service_v2
         thread_role = workflow_service.resolve_thread_route(project_id, node_id, thread_id)
         if thread_role != "execution":

@@ -261,13 +261,12 @@ describe('GraphWorkspace', () => {
     expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=ask')
   })
 
-  it('keeps review-node breadcrumb entry on legacy audit even when the V2 flag is enabled', async () => {
+  it('routes review-node breadcrumb entry to chat-v2 audit', async () => {
     apiMock.getBootstrapStatus.mockResolvedValue({
       ready: true,
       workspace_configured: true,
       codex_available: true,
       codex_path: 'codex',
-      execution_audit_v2_enabled: true,
     })
     apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-1')])
     apiMock.getSnapshot.mockResolvedValue(makeReviewSnapshot('project-1'))
@@ -294,16 +293,15 @@ describe('GraphWorkspace', () => {
       fireEvent.click(screen.getByText('Open Root Breadcrumb'))
     })
 
-    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=audit')
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat-v2?thread=audit')
   })
 
-  it('keeps review-node breadcrumb entry on legacy audit when the V2 surface flag is disabled', async () => {
+  it('routes review-node breadcrumb entry to chat-v2 audit without gate flags', async () => {
     apiMock.getBootstrapStatus.mockResolvedValue({
       ready: true,
       workspace_configured: true,
       codex_available: true,
       codex_path: 'codex',
-      execution_audit_v2_enabled: false,
     })
     apiMock.listProjects.mockResolvedValue([makeProjectSummary('project-1')])
     apiMock.getSnapshot.mockResolvedValue(makeReviewSnapshot('project-1'))
@@ -330,6 +328,6 @@ describe('GraphWorkspace', () => {
       fireEvent.click(screen.getByText('Open Root Breadcrumb'))
     })
 
-    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=audit')
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat-v2?thread=audit')
   })
 })

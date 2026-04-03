@@ -10,10 +10,6 @@ vi.mock('../../src/features/breadcrumb/ComposerBar', () => ({
   ),
 }))
 
-vi.mock('../../src/features/conversation/components/ConversationFeed', () => ({
-  ConversationFeed: () => <div data-testid="conversation-feed-v2">V2 Feed</div>,
-}))
-
 vi.mock('../../src/features/conversation/components/v3/MessagesV3', () => ({
   MessagesV3: () => <div data-testid="messages-v3">V3 Feed</div>,
 }))
@@ -30,15 +26,14 @@ vi.mock('../../src/features/conversation/state/workflowEventBridge', () => ({
   useWorkflowEventBridge: vi.fn(),
 }))
 
-import type { NodeWorkflowView, Snapshot, ThreadSnapshotV2, ThreadSnapshotV3 } from '../../src/api/types'
+import type { NodeWorkflowView, Snapshot, ThreadSnapshotV3 } from '../../src/api/types'
 import { BreadcrumbChatViewV2 } from '../../src/features/conversation/BreadcrumbChatViewV2'
-import { useThreadByIdStoreV2 } from '../../src/features/conversation/state/threadByIdStoreV2'
 import { useThreadByIdStoreV3 } from '../../src/features/conversation/state/threadByIdStoreV3'
 import { useWorkflowStateStoreV2 } from '../../src/features/conversation/state/workflowStateStoreV2'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useProjectStore } from '../../src/stores/project-store'
 
-function makeProjectSnapshot(): Snapshot {
+function makeProjectSnapshot(nodeKind: 'original' | 'review' = 'original'): Snapshot {
   return {
     schema_version: 6,
     project: {
@@ -60,7 +55,7 @@ function makeProjectSnapshot(): Snapshot {
           title: 'Root',
           description: 'Root node',
           status: 'draft',
-          node_kind: 'original',
+          node_kind: nodeKind,
           depth: 0,
           display_order: 0,
           hierarchical_number: '1',
@@ -76,32 +71,6 @@ function makeProjectSnapshot(): Snapshot {
       ],
     },
     updated_at: '2026-04-01T00:00:00Z',
-  }
-}
-
-function makeConversationSnapshotV2(
-  overrides: Partial<ThreadSnapshotV2> = {},
-): ThreadSnapshotV2 {
-  return {
-    projectId: 'project-1',
-    nodeId: 'root',
-    threadRole: 'execution',
-    threadId: 'exec-thread-1',
-    activeTurnId: null,
-    processingState: 'idle',
-    snapshotVersion: 1,
-    createdAt: '2026-04-01T00:00:00Z',
-    updatedAt: '2026-04-01T00:00:00Z',
-    lineage: {
-      forkedFromThreadId: null,
-      forkedFromNodeId: null,
-      forkedFromRole: null,
-      forkReason: null,
-      lineageRootThreadId: 'exec-thread-1',
-    },
-    items: [],
-    pendingRequests: [],
-    ...overrides,
   }
 }
 
@@ -132,7 +101,7 @@ function makeConversationSnapshotV3(
   }
 }
 
-function makeWorkflowState(): NodeWorkflowView {
+function makeWorkflowState(overrides: Partial<NodeWorkflowView> = {}): NodeWorkflowView {
   return {
     nodeId: 'root',
     workflowPhase: 'execution_decision_pending',
@@ -152,15 +121,11 @@ function makeWorkflowState(): NodeWorkflowView {
     canImproveInExecution: false,
     canMarkDoneFromExecution: false,
     canMarkDoneFromAudit: false,
+    ...overrides,
   }
 }
 
-function seedBaseStores(options: {
-  sharedFrontendFlag: boolean
-  executionLaneFlag?: boolean
-  auditLaneFlag?: boolean
-}) {
-  const { sharedFrontendFlag, executionLaneFlag, auditLaneFlag } = options
+function seedBaseStores(workflowState: NodeWorkflowView, snapshot: Snapshot) {
   useProjectStore.setState({
     activeProjectId: 'project-1',
     bootstrap: {
@@ -168,12 +133,8 @@ function seedBaseStores(options: {
       workspace_configured: true,
       codex_available: true,
       codex_path: 'codex',
-      execution_audit_v2_enabled: true,
-      execution_audit_uiux_v3_frontend_enabled: sharedFrontendFlag,
-      execution_uiux_v3_frontend_enabled: executionLaneFlag,
-      audit_uiux_v3_frontend_enabled: auditLaneFlag,
     },
-    snapshot: makeProjectSnapshot(),
+    snapshot,
     selectedNodeId: 'root',
     isLoadingSnapshot: false,
     error: null,
@@ -207,7 +168,7 @@ function seedBaseStores(options: {
   } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
   useWorkflowStateStoreV2.setState({
     entries: {
-      'project-1::root': makeWorkflowState(),
+      'project-1::root': workflowState,
     },
     loadWorkflowState: vi.fn().mockResolvedValue(undefined),
     finishTask: vi.fn().mockResolvedValue(undefined),
@@ -218,28 +179,19 @@ function seedBaseStores(options: {
   } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
 }
 
-describe('BreadcrumbChatViewV2 v3 flag integration', () => {
+describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
     useWorkflowStateStoreV2.getState().reset()
-    useThreadByIdStoreV2.getState().disconnectThread()
     useThreadByIdStoreV3.getState().disconnectThread()
   })
 
-  it('uses V3 pipeline when frontend flag is enabled', async () => {
-    seedBaseStores({ sharedFrontendFlag: true })
-    const loadThreadV2 = vi.fn().mockResolvedValue(undefined)
+  it('renders execution lane with V3 pipeline', async () => {
+    seedBaseStores(makeWorkflowState(), makeProjectSnapshot('original'))
     const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
 
-    useThreadByIdStoreV2.setState({
-      snapshot: makeConversationSnapshotV2(),
-      loadThread: loadThreadV2,
-      sendTurn: vi.fn().mockResolvedValue(undefined),
-      resolveUserInput: vi.fn().mockResolvedValue(undefined),
-      disconnectThread: vi.fn(),
-    } as Partial<ReturnType<typeof useThreadByIdStoreV2.getState>>)
     useThreadByIdStoreV3.setState({
       snapshot: makeConversationSnapshotV3(),
       loadThread: loadThreadV3,
@@ -259,140 +211,27 @@ describe('BreadcrumbChatViewV2 v3 flag integration', () => {
     await waitFor(() => {
       expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
     })
-    expect(screen.queryByTestId('conversation-feed-v2')).not.toBeInTheDocument()
     expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'exec-thread-1', 'execution')
-    expect(loadThreadV2).not.toHaveBeenCalled()
   })
 
-  it('falls back to V2 pipeline when frontend flag is disabled', async () => {
-    seedBaseStores({ sharedFrontendFlag: false })
-    const loadThreadV2 = vi.fn().mockResolvedValue(undefined)
+  it('renders audit lane with V3 pipeline when review thread exists', async () => {
+    seedBaseStores(
+      makeWorkflowState({
+        workflowPhase: 'audit_decision_pending',
+        reviewThreadId: 'audit-thread-1',
+        canSendExecutionMessage: false,
+      }),
+      makeProjectSnapshot('original'),
+    )
     const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
 
-    useThreadByIdStoreV2.setState({
-      snapshot: makeConversationSnapshotV2(),
-      loadThread: loadThreadV2,
-      sendTurn: vi.fn().mockResolvedValue(undefined),
-      resolveUserInput: vi.fn().mockResolvedValue(undefined),
-      disconnectThread: vi.fn(),
-    } as Partial<ReturnType<typeof useThreadByIdStoreV2.getState>>)
     useThreadByIdStoreV3.setState({
-      snapshot: makeConversationSnapshotV3(),
+      snapshot: makeConversationSnapshotV3({ threadId: 'audit-thread-1', lane: 'audit' }),
       loadThread: loadThreadV3,
       sendTurn: vi.fn().mockResolvedValue(undefined),
       resolveUserInput: vi.fn().mockResolvedValue(undefined),
       disconnectThread: vi.fn(),
     } as Partial<ReturnType<typeof useThreadByIdStoreV3.getState>>)
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('conversation-feed-v2')).toBeInTheDocument()
-    })
-    expect(screen.queryByTestId('messages-v3')).not.toBeInTheDocument()
-    expect(loadThreadV2).toHaveBeenCalledWith('project-1', 'root', 'exec-thread-1', 'execution')
-    expect(loadThreadV3).not.toHaveBeenCalled()
-  })
-
-  it('routes execution to V3 and audit to V2 with lane-scoped split flags', async () => {
-    seedBaseStores({
-      sharedFrontendFlag: false,
-      executionLaneFlag: true,
-      auditLaneFlag: false,
-    })
-    const loadThreadV2 = vi.fn().mockResolvedValue(undefined)
-    const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
-
-    useThreadByIdStoreV2.setState({
-      snapshot: makeConversationSnapshotV2(),
-      loadThread: loadThreadV2,
-      sendTurn: vi.fn().mockResolvedValue(undefined),
-      resolveUserInput: vi.fn().mockResolvedValue(undefined),
-      disconnectThread: vi.fn(),
-    } as Partial<ReturnType<typeof useThreadByIdStoreV2.getState>>)
-    useThreadByIdStoreV3.setState({
-      snapshot: makeConversationSnapshotV3(),
-      loadThread: loadThreadV3,
-      sendTurn: vi.fn().mockResolvedValue(undefined),
-      resolveUserInput: vi.fn().mockResolvedValue(undefined),
-      disconnectThread: vi.fn(),
-    } as Partial<ReturnType<typeof useThreadByIdStoreV3.getState>>)
-
-    const executionRender = render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
-    })
-    expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'exec-thread-1', 'execution')
-
-    executionRender.unmount()
-    useWorkflowStateStoreV2.setState({
-      entries: {
-        'project-1::root': {
-          ...makeWorkflowState(),
-          reviewThreadId: 'audit-thread-1',
-        },
-      },
-    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('conversation-feed-v2')).toBeInTheDocument()
-    })
-    expect(screen.queryByTestId('messages-v3')).not.toBeInTheDocument()
-    expect(loadThreadV2).toHaveBeenCalledWith('project-1', 'root', 'audit-thread-1', 'audit')
-  })
-
-  it('routes audit to V3 when audit lane flag is enabled', async () => {
-    seedBaseStores({
-      sharedFrontendFlag: false,
-      executionLaneFlag: false,
-      auditLaneFlag: true,
-    })
-    const loadThreadV2 = vi.fn().mockResolvedValue(undefined)
-    const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
-
-    useThreadByIdStoreV2.setState({
-      snapshot: makeConversationSnapshotV2({ threadRole: 'audit' }),
-      loadThread: loadThreadV2,
-      sendTurn: vi.fn().mockResolvedValue(undefined),
-      resolveUserInput: vi.fn().mockResolvedValue(undefined),
-      disconnectThread: vi.fn(),
-    } as Partial<ReturnType<typeof useThreadByIdStoreV2.getState>>)
-    useThreadByIdStoreV3.setState({
-      snapshot: makeConversationSnapshotV3({ lane: 'audit' }),
-      loadThread: loadThreadV3,
-      sendTurn: vi.fn().mockResolvedValue(undefined),
-      resolveUserInput: vi.fn().mockResolvedValue(undefined),
-      disconnectThread: vi.fn(),
-    } as Partial<ReturnType<typeof useThreadByIdStoreV3.getState>>)
-    useWorkflowStateStoreV2.setState({
-      entries: {
-        'project-1::root': {
-          ...makeWorkflowState(),
-          reviewThreadId: 'audit-thread-1',
-        },
-      },
-    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
 
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
@@ -405,7 +244,23 @@ describe('BreadcrumbChatViewV2 v3 flag integration', () => {
     await waitFor(() => {
       expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
     })
-    expect(screen.queryByTestId('conversation-feed-v2')).not.toBeInTheDocument()
     expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'audit-thread-1', 'audit')
+  })
+
+  it('keeps ask lane on legacy chat route', async () => {
+    seedBaseStores(makeWorkflowState(), makeProjectSnapshot('original'))
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<div data-testid="legacy-chat" />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('legacy-chat')).toBeInTheDocument()
+    })
   })
 })

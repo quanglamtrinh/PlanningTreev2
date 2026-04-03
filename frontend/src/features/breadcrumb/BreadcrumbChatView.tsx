@@ -8,7 +8,6 @@ import { useProjectStore } from '../../stores/project-store'
 import {
   buildChatV2Url,
   buildLegacyChatUrl,
-  isExecutionAuditV2SurfaceEnabled,
   parseThreadTab,
   resolveLegacyRouteTarget,
   type ThreadTab,
@@ -64,7 +63,6 @@ export function BreadcrumbChatView() {
 
   const {
     activeProjectId,
-    bootstrap,
     snapshot,
     selectedNodeId,
     isLoadingSnapshot,
@@ -74,7 +72,6 @@ export function BreadcrumbChatView() {
   } = useProjectStore(
     useShallow((state) => ({
       activeProjectId: state.activeProjectId,
-      bootstrap: state.bootstrap,
       snapshot: state.snapshot,
       selectedNodeId: state.selectedNodeId,
       isLoadingSnapshot: state.isLoadingSnapshot,
@@ -98,11 +95,9 @@ export function BreadcrumbChatView() {
   }, [projectId, nodeId, snapshot])
 
   const requestedThreadTab = parseThreadTab(searchParams.get('thread'))
-  const executionAuditV2Enabled = isExecutionAuditV2SurfaceEnabled(bootstrap)
   const routeTarget = resolveLegacyRouteTarget({
     requestedThreadTab,
     isReviewNode,
-    executionAuditV2Enabled,
   })
   const threadTab: ThreadTab = routeTarget.threadTab
   const threadRole: ThreadRole = resolveThreadRole(isReviewNode, threadTab)
@@ -324,11 +319,7 @@ export function BreadcrumbChatView() {
                 aria-selected={threadTab === 'execution'}
                 onClick={() => {
                   if (projectId && nodeId) {
-                    void navigate(
-                      executionAuditV2Enabled
-                        ? buildChatV2Url(projectId, nodeId, 'execution')
-                        : buildLegacyChatUrl(projectId, nodeId, 'execution'),
-                    )
+                    void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
                   }
                 }}
               >
@@ -342,11 +333,7 @@ export function BreadcrumbChatView() {
                 aria-selected={threadTab === 'audit'}
                 onClick={() => {
                   if (projectId && nodeId) {
-                    void navigate(
-                      executionAuditV2Enabled
-                        ? buildChatV2Url(projectId, nodeId, 'audit')
-                        : buildLegacyChatUrl(projectId, nodeId, 'audit'),
-                    )
+                    void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
                   }
                 }}
               >

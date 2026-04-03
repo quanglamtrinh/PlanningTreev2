@@ -814,7 +814,7 @@ describe('NodeDetailCard', () => {
     expect(screen.getByDisplayValue('# Child Frame')).toBeInTheDocument()
   })
 
-  it('calls confirmSpec on spec tab workflow confirm', async () => {
+  it('calls confirmSpec and workflow finish on spec tab confirm', async () => {
     // Set active_step to spec so buttons are visible and spec is not read-only
     apiMock.getDetailState.mockResolvedValue({
       node_id: 'root',
@@ -830,6 +830,9 @@ describe('NodeDetailCard', () => {
       spec_read_only: false,
       spec_stale: false,
       spec_confirmed: false,
+      can_finish_task: true,
+      shaping_frozen: false,
+      git_ready: true,
     })
     apiMock.getNodeDocument
       .mockResolvedValueOnce({
@@ -865,23 +868,6 @@ describe('NodeDetailCard', () => {
       spec_stale: false,
       spec_confirmed: true,
     })
-    apiMock.finishTask.mockResolvedValue({
-      node_id: 'root',
-      frame_confirmed: true,
-      frame_confirmed_revision: 1,
-      frame_revision: 1,
-      active_step: 'spec',
-      workflow_notice: null,
-      frame_needs_reconfirm: false,
-      frame_read_only: true,
-      clarify_read_only: true,
-      clarify_confirmed: true,
-      spec_read_only: false,
-      spec_stale: false,
-      spec_confirmed: true,
-      execution_status: 'executing',
-    })
-
     render(
       <NodeDetailCard
         projectId="project-1"
@@ -905,11 +891,15 @@ describe('NodeDetailCard', () => {
       expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
     })
     await waitFor(() => {
-      expect(apiMock.finishTask).toHaveBeenCalledWith('project-1', 'root')
+      expect(apiMock.finishTaskWorkflowV2).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.stringMatching(/^finish_task:/),
+      )
     })
   })
 
-  it('routes Confirm and Finish Task through workflow v2 when the execution/audit surface flag is enabled', async () => {
+  it('routes Confirm and Finish Task through workflow v2 flow', async () => {
     useProjectStore.setState({
       ...useProjectStore.getInitialState(),
       bootstrap: {
@@ -917,7 +907,6 @@ describe('NodeDetailCard', () => {
         workspace_configured: true,
         codex_available: true,
         codex_path: 'codex',
-        execution_audit_v2_enabled: true,
       },
     })
     apiMock.getDetailState.mockResolvedValue({

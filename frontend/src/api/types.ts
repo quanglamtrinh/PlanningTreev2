@@ -25,11 +25,6 @@ export interface BootstrapStatus {
   workspace_configured: boolean
   codex_available: boolean
   codex_path: string | null
-  execution_audit_v2_enabled?: boolean
-  execution_audit_uiux_v3_backend_enabled?: boolean
-  execution_audit_uiux_v3_frontend_enabled?: boolean
-  execution_uiux_v3_frontend_enabled?: boolean
-  audit_uiux_v3_frontend_enabled?: boolean
 }
 
 export interface CodexAccount {

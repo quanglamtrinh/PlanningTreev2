@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { SplitMode } from '../../api/types'
-import { buildLegacyChatUrl } from '../conversation/surfaceRouting'
+import { buildChatV2Url, buildLegacyChatUrl } from '../conversation/surfaceRouting'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import { Sidebar } from './Sidebar'
@@ -108,7 +108,7 @@ export function GraphWorkspace() {
     const targetNode = latestSnapshot?.tree_state.node_registry.find((item) => item.node_id === nodeId)
     const destination =
       targetNode?.node_kind === 'review'
-        ? buildLegacyChatUrl(projectId, nodeId, 'audit')
+        ? buildChatV2Url(projectId, nodeId, 'audit')
         : buildLegacyChatUrl(projectId, nodeId, 'ask')
     navigate(destination)
     void selectNode(nodeId, true)

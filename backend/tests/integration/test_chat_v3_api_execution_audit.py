@@ -199,7 +199,6 @@ def _seed_execution_plan_ready(
 
 
 def test_v3_execution_snapshot_by_id_returns_wrapped_snapshot(client: TestClient, workspace_root) -> None:
-    client.app.state.execution_audit_uiux_v3_backend_enabled = True
     project_id, node_id = _setup_project(client, workspace_root)
     thread_id = _seed_execution_thread(client, project_id, node_id)
 
@@ -226,7 +225,6 @@ def test_v3_execution_snapshot_by_id_returns_wrapped_snapshot(client: TestClient
 def test_v3_execution_resolve_user_input_by_id_updates_snapshot_and_signal(
     client: TestClient, workspace_root
 ) -> None:
-    client.app.state.execution_audit_uiux_v3_backend_enabled = True
     project_id, node_id = _setup_project(client, workspace_root)
     thread_id = _seed_execution_thread(client, project_id, node_id)
     _seed_execution_user_input_pending(client, project_id, node_id, thread_id=thread_id)
@@ -302,7 +300,6 @@ def test_v3_execution_resolve_user_input_by_id_updates_snapshot_and_signal(
 def test_v3_execution_plan_actions_by_id_validate_stale_and_dispatch_followup(
     client: TestClient, workspace_root
 ) -> None:
-    client.app.state.execution_audit_uiux_v3_backend_enabled = True
     project_id, node_id = _setup_project(client, workspace_root)
     thread_id = _seed_execution_thread(client, project_id, node_id)
     _seed_execution_plan_ready(
@@ -374,7 +371,6 @@ def test_v3_execution_plan_actions_by_id_validate_stale_and_dispatch_followup(
 
 @pytest.mark.anyio
 async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client: TestClient, workspace_root) -> None:
-    client.app.state.execution_audit_uiux_v3_backend_enabled = True
     project_id, node_id = _setup_project(client, workspace_root)
     thread_id = _seed_execution_thread(client, project_id, node_id)
 
@@ -434,7 +430,6 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
 
 @pytest.mark.anyio
 async def test_v3_execution_stream_reconnect_by_version_and_guard(client: TestClient, workspace_root) -> None:
-    client.app.state.execution_audit_uiux_v3_backend_enabled = True
     project_id, node_id = _setup_project(client, workspace_root)
     thread_id = _seed_execution_thread(client, project_id, node_id)
     storage = client.app.state.storage

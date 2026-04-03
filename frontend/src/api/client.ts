@@ -104,6 +104,10 @@ function buildThreadByIdPathV3(projectId: string, threadId: string, nodeId: stri
   return `${buildThreadByIdBasePathV3(projectId, threadId)}?node_id=${encodeURIComponent(nodeId)}`
 }
 
+function buildThreadByIdTurnPathV3(projectId: string, threadId: string, nodeId: string): string {
+  return `${buildThreadByIdBasePathV3(projectId, threadId)}/turns?node_id=${encodeURIComponent(nodeId)}`
+}
+
 export function buildThreadEventsUrlV2(
   projectId: string,
   nodeId: string,
@@ -545,6 +549,19 @@ export const api = {
       `${buildThreadByIdBasePathV3(projectId, threadId)}/plan-actions?node_id=${encodeURIComponent(nodeId)}`,
       { method: 'POST' },
       payload,
+    )
+  },
+  startThreadTurnByIdV3(
+    projectId: string,
+    nodeId: string,
+    threadId: string,
+    text: string,
+    metadata: Record<string, unknown> = {},
+  ): Promise<StartTurnV2Response> {
+    return jsonFetchV2<StartTurnV2Response>(
+      buildThreadByIdTurnPathV3(projectId, threadId, nodeId),
+      { method: 'POST' },
+      { text, metadata },
     )
   },
   startThreadTurnV2(
