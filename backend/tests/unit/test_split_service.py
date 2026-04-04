@@ -328,6 +328,10 @@ def test_split_service_commits_projection_and_updates_k0_git_head(
     assert fake_git.commit_calls
     assert fake_git.commit_calls[0][1].startswith("pt(1): split ")
     assert latest_commit["commitMessage"] == fake_git.commit_calls[0][1]
+    detail_state = NodeDetailService(storage, tree_service).get_detail_state(project_id, root_id)
+    assert detail_state["initial_sha"] == latest_commit["initialSha"]
+    assert detail_state["head_sha"] == latest_commit["headSha"]
+    assert detail_state["commit_message"] == latest_commit["commitMessage"]
 
 
 def test_split_service_records_latest_commit_on_no_diff_without_overwriting_k0_head(
@@ -385,6 +389,10 @@ def test_split_service_records_latest_commit_on_no_diff_without_overwriting_k0_h
     assert isinstance(latest_commit["recordedAt"], str) and latest_commit["recordedAt"]
     assert fake_git.build_commit_calls
     assert fake_git.commit_calls
+    detail_state = NodeDetailService(storage, tree_service).get_detail_state(project_id, root_id)
+    assert detail_state["initial_sha"] == latest_commit["initialSha"]
+    assert detail_state["head_sha"] == latest_commit["headSha"]
+    assert detail_state["commit_message"] == latest_commit["commitMessage"]
 
 
 def test_split_service_rejects_nodes_with_existing_children(

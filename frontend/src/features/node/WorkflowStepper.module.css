@@ -1,20 +1,25 @@
 /*
  * WorkflowStepper — horizontal flowchart
  *
- * 12 columns × 3 rows:
+ * 12 columns × 3 rows (exploration starts at Frame; Describe removed):
  *
- *   Col:  1     2    3      4       5        6         7      8    9      10    11     12
- *  Row1:  .     .    .      .       .        .         .     [TJ]  csArr  spec  cfArr2  finish
- *  Row2:  desc  a1  frame  cfArr  clarify  doneArr  frameUpd [TJ]  .      .     .       .
- *  Row3:  .     .    .      .       .        .        .      [TJ]  spArr  spTask .      .
+ *   Col:  1  2  3      4       5        6         7      8    9      10    11     12
+ *  Row1:  .  .  .      .       .        .         .     [TJ]  csArr  spec  cfArr2  finish
+ *  Row2:  .  .  frame  cfArr  clarify  doneArr  frameUpd [TJ]  .      .     .       .
+ *  Row3:  .  .  .      .       .        .        .      [TJ]  spArr  spTask .      .
  *
  * [TJ] = T-junction, placed with grid-column:8; grid-row:1/4 via inline style.
  */
+/* Breadcrumb: stepper is visual-only; pointer events hit tabs below instead */
+.grid.readOnly {
+  pointer-events: none;
+}
+
 .grid {
   display: grid;
   grid-template-areas:
     ".    .    .      .       .        .          .          .   csArr  spec   cfArr2  finish"
-    "desc a1  frame  cfArr  clarify  doneArr  frameUpd  .   .      .      .       ."
+    ".    .    frame  cfArr  clarify  doneArr  frameUpd  .   .      .      .       ."
     ".    .    .      .       .          .          .          .   spArr  spTask  .       .";
   grid-template-columns: auto 10px auto auto auto auto auto 9px auto auto auto auto;
   grid-template-rows: auto auto auto;
@@ -142,36 +147,6 @@
   opacity: 0.8;
   cursor: default;
   user-select: none;
-}
-
-/* ── Short horizontal arrow (Describe → Frame, col 2) ─────────────── */
-
-/* Fill row height so the stroke sits on the row’s vertical center (matches pill centers). */
-.arrowShort {
-  justify-self: stretch;
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  position: relative;
-}
-
-.arrowShort::before {
-  content: '';
-  display: block;
-  width: 100%;
-  height: 1.5px;
-  background: var(--conn);
-}
-
-.arrowShort::after {
-  content: '';
-  position: absolute;
-  right: -4px;
-  top: 50%;
-  transform: translateY(-50%);
-  border-top: 3px solid transparent;
-  border-bottom: 3px solid transparent;
-  border-left: 5px solid var(--conn);
 }
 
 /* ── Labeled arrow connector (most transitions) ────────────────────── */

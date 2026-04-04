@@ -1,7 +1,7 @@
 ﻿import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorView } from '@codemirror/view'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { FrameGenJobStatus, NodeDocumentKind, NodeRecord } from '../../api/types'
 import { api, ApiError } from '../../api/client'
@@ -50,22 +50,8 @@ type Props = {
   /** Tracks spec vs split commitment after Frame updated (for mutual exclusivity). */
   framePostUpdateBranch?: FramePostUpdateBranch
   onFramePostUpdateCommit?: (branch: 'spec' | 'split') => void
-}
-
-function documentStatusText(entry: EditorEntry, isGenerating: boolean): string {
-  if (isGenerating) {
-    return 'Generating...'
-  }
-  if (entry.isLoading && !entry.hasLoaded) {
-    return 'Loading...'
-  }
-  if (entry.error) {
-    return entry.error
-  }
-  if (entry.isSaving || entry.content !== entry.savedContent) {
-    return 'Saving...'
-  }
-  return 'Saved'
+  /** Breadcrumb: replaces frame.md/spec.md label in the toolbar row */
+  documentToolbarTabs?: ReactNode
 }
 
 export function NodeDocumentEditor({
@@ -78,6 +64,7 @@ export function NodeDocumentEditor({
   readOnly,
   framePostUpdateBranch = 'none',
   onFramePostUpdateCommit,
+  documentToolbarTabs,
 }: Props) {
   const navigate = useNavigate()
   const entryKey = `${projectId}::${node.node_id}::${kind}`
@@ -465,6 +452,7 @@ export function NodeDocumentEditor({
   ])
 
   const isLoadError = Boolean(entry.error) && !entry.hasLoaded
+  const isSaveError = Boolean(entry.error) && entry.hasLoaded
   const isReadOnly =
     Boolean(readOnly) ||
     isGenerating ||
@@ -495,49 +483,26 @@ export function NodeDocumentEditor({
   return (
     <div className={styles.documentPanel}>
       <div className={styles.documentMetaColumn}>
-        <div className={styles.documentStatusRow}>
-          {/* Left cell: file icon + name */}
-          <div className={styles.documentFileLabelCell}>
-            <span className={styles.documentFileLabelIcon} aria-hidden="true">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="13" height="13">
-                <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" />
-                <path d="M10 2v4h3" />
-              </svg>
-            </span>
-            <span className={styles.documentFileLabel}>{kind === 'frame' ? 'frame.md' : 'spec.md'}</span>
-          </div>
-          {/* Middle cells: labeled metadata pairs */}
-          <div className={styles.documentMetaSections}>
-            <div className={styles.documentMetaSection}>
-              <span className={styles.documentMetaSectionLabel}>Step</span>
-              <span className={styles.documentMetaSectionValue}>
-                {kind === 'frame'
-                  ? isInitialFrameStep ? 'Initial Frame' : 'Frame Updated'
-                  : 'Spec Review'}
+        <div
+          className={
+            documentToolbarTabs
+              ? `${styles.documentStatusRow} ${styles.documentStatusRowEmbedTabs}`
+              : styles.documentStatusRow
+          }
+        >
+          {documentToolbarTabs ? (
+            documentToolbarTabs
+          ) : (
+            <div className={styles.documentFileLabelCell}>
+              <span className={styles.documentFileLabelIcon} aria-hidden="true">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="13" height="13">
+                  <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" />
+                  <path d="M10 2v4h3" />
+                </svg>
               </span>
+              <span className={styles.documentFileLabel}>{kind === 'frame' ? 'frame.md' : 'spec.md'}</span>
             </div>
-            <div className={styles.documentMetaSection}>
-              <span className={styles.documentMetaSectionLabel}>Content</span>
-              <span className={styles.documentMetaSectionValue}>
-                {!entry.hasLoaded ? 'Loading\u2026' : hasContent ? 'Ready' : 'Empty'}
-              </span>
-            </div>
-          </div>
-          {/* Right cell: save status */}
-          <div className={styles.documentStatusCell}>
-            <span
-              className={`${styles.documentStatusValue} ${entry.error ? styles.documentStatusError : ''}`}
-              data-testid={`document-status-${kind}`}
-              role="status"
-              aria-live="polite"
-            >
-              {isGenerating ? (
-                <AgentSpinner words={SPINNER_WORDS_GENERATING} />
-              ) : (
-                documentStatusText(entry, false)
-              )}
-            </span>
-          </div>
+          )}
         </div>
 
         {isLoadError ? (
@@ -552,6 +517,12 @@ export function NodeDocumentEditor({
             >
               Retry
             </button>
+          </div>
+        ) : null}
+
+        {isSaveError ? (
+          <div className={styles.documentErrorPanel} data-testid={`save-error-${kind}`} role="alert">
+            <p className={styles.body}>{entry.error}</p>
           </div>
         ) : null}
 

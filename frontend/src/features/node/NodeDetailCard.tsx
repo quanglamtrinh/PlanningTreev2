@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { NodeRecord } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { ClarifyPanel } from './ClarifyPanel'
@@ -7,6 +7,7 @@ import { NodeDocumentEditor, type FramePostUpdateBranch } from './NodeDocumentEd
 import { SplitPanel } from './SplitPanel'
 import { NodeStatusBadge } from './NodeStatusBadge'
 import { ReviewDetailPanel } from './ReviewDetailPanel'
+import { BreadcrumbDetailTabs, breadcrumbActiveTabLabelId } from './BreadcrumbDetailTabs'
 import { WorkflowStepper } from './WorkflowStepper'
 import type { WorkflowTab } from './WorkflowStepper'
 import styles from './NodeDetailCard.module.css'
@@ -52,6 +53,16 @@ const FRAME_POST_UPDATE_STORAGE = 'planningtree:framePostUpdate:'
 
 function framePostUpdateStorageKey(projectId: string, nodeId: string) {
   return `${FRAME_POST_UPDATE_STORAGE}${projectId}:${nodeId}`
+}
+
+/** Breadcrumb: same grey toolbar as document editor; no save line for non-document panels */
+function BreadcrumbNonDocToolbar({ tabs, children }: { tabs: ReactNode; children: ReactNode }) {
+  return (
+    <>
+      <div className={`${styles.documentStatusRow} ${styles.documentStatusRowEmbedTabs}`}>{tabs}</div>
+      {children}
+    </>
+  )
 }
 
 export function NodeDetailCard({
@@ -167,6 +178,10 @@ export function NodeDetailCard({
 
   const showDetailStateError =
     Boolean(detailStateError) && (variant !== 'breadcrumb' || !detailState)
+  const showGitBlockerBanner =
+    detailTab === 'spec' &&
+    detailState?.git_ready === false &&
+    Boolean(detailState.git_blocker_message)
 
   const rootClassName = useMemo(
     () =>
@@ -198,6 +213,120 @@ export function NodeDetailCard({
       </section>
     )
   }
+
+  const breadcrumbPanelId = 'breadcrumb-node-detail-panel'
+
+  const breadcrumbTabsEmbedded =
+    variant === 'breadcrumb' ? (
+      <BreadcrumbDetailTabs
+        embedded
+        detailTab={detailTab}
+        detailState={detailState}
+        onTabChange={handleTabChange}
+        tabDisabled={workflowTabDisabled}
+        panelId={breadcrumbPanelId}
+      />
+    ) : null
+
+  const detailPanelsFragment = !isReviewNode ? (
+    <>
+      {detailTab === 'describe' ? (
+        breadcrumbTabsEmbedded ? (
+          <BreadcrumbNonDocToolbar tabs={breadcrumbTabsEmbedded}>
+            <div className={styles.cardBodyAux}>
+              <NodeDescribePanel
+                node={node}
+                projectId={projectId}
+                detailState={detailState}
+                isResetting={isResettingWorkspace}
+                onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
+                onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
+              />
+            </div>
+          </BreadcrumbNonDocToolbar>
+        ) : (
+          <div className={styles.cardBodyAux}>
+            <NodeDescribePanel
+              node={node}
+              projectId={projectId}
+              detailState={detailState}
+              isResetting={isResettingWorkspace}
+              onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
+              onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
+            />
+          </div>
+        )
+      ) : null}
+
+      {detailTab === 'frame' || detailTab === 'frame_updated' ? (
+        <div className={styles.documentTabStack}>
+          <NodeDocumentEditor
+            projectId={projectId}
+            node={node}
+            kind="frame"
+            workflowTab={detailTab}
+            onWorkflowTabChange={handleTabChange}
+            onConfirm="workflow"
+            readOnly={detailState?.frame_read_only}
+            framePostUpdateBranch={framePostUpdateBranch}
+            onFramePostUpdateCommit={commitFramePostUpdate}
+            documentToolbarTabs={breadcrumbTabsEmbedded ?? undefined}
+          />
+        </div>
+      ) : null}
+
+      {detailTab === 'clarify' ? (
+        breadcrumbTabsEmbedded ? (
+          <BreadcrumbNonDocToolbar tabs={breadcrumbTabsEmbedded}>
+            <ClarifyPanel
+              projectId={projectId}
+              node={node}
+              readOnly={detailState?.clarify_read_only}
+            />
+          </BreadcrumbNonDocToolbar>
+        ) : (
+          <ClarifyPanel
+            projectId={projectId}
+            node={node}
+            readOnly={detailState?.clarify_read_only}
+          />
+        )
+      ) : null}
+
+      {detailTab === 'split' ? (
+        breadcrumbTabsEmbedded ? (
+          <BreadcrumbNonDocToolbar tabs={breadcrumbTabsEmbedded}>
+            <div className={styles.cardBodyAux}>
+              <SplitPanel projectId={projectId} node={node} detailState={detailState} />
+            </div>
+          </BreadcrumbNonDocToolbar>
+        ) : (
+          <div className={styles.cardBodyAux}>
+            <SplitPanel projectId={projectId} node={node} detailState={detailState} />
+          </div>
+        )
+      ) : null}
+
+      {detailTab === 'spec' ? (
+        <div className={styles.documentTabStack}>
+          {detailState?.spec_stale ? (
+            <div className={styles.staleBanner} data-testid="stale-banner-spec" role="status">
+              Frame was updated since spec was last reviewed.
+            </div>
+          ) : null}
+          <NodeDocumentEditor
+            projectId={projectId}
+            node={node}
+            kind="spec"
+            workflowTab="spec"
+            onConfirm="workflow"
+            readOnly={detailState?.spec_read_only}
+            documentToolbarTabs={breadcrumbTabsEmbedded ?? undefined}
+          />
+        </div>
+      ) : null}
+    </>
+  ) : null
 
   return (
     <section
@@ -235,6 +364,7 @@ export function NodeDetailCard({
               detailState={detailState}
               onTabChange={handleTabChange}
               tabDisabled={workflowTabDisabled}
+              readOnly={variant === 'breadcrumb'}
             />
           </div>
         ) : null}
@@ -273,7 +403,7 @@ export function NodeDetailCard({
           </div>
         ) : null}
 
-        {detailState?.git_ready === false && detailState.git_blocker_message ? (
+        {showGitBlockerBanner ? (
           <div className={styles.gitBlockerBanner} role="status">
             {detailState.git_blocker_message}
           </div>
@@ -281,72 +411,18 @@ export function NodeDetailCard({
 
         {isReviewNode ? <ReviewDetailPanel projectId={projectId} node={node} /> : null}
 
-        {!isReviewNode && detailTab === 'describe' ? (
-          <div className={styles.cardBodyAux}>
-            <NodeDescribePanel
-              node={node}
-              projectId={projectId}
-              detailState={detailState}
-              isResetting={isResettingWorkspace}
-              onResetToBefore={() =>
-                void resetWorkspaceAction(projectId, node.node_id, 'initial')
-              }
-              onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
-            />
+        {!isReviewNode && variant === 'breadcrumb' ? (
+          <div
+            id={breadcrumbPanelId}
+            role="tabpanel"
+            aria-labelledby={breadcrumbActiveTabLabelId(detailTab)}
+            className={styles.breadcrumbTabPanel}
+          >
+            {detailPanelsFragment}
           </div>
         ) : null}
 
-        {!isReviewNode && (detailTab === 'frame' || detailTab === 'frame_updated') ? (
-          <div className={styles.documentTabStack}>
-            <NodeDocumentEditor
-              projectId={projectId}
-              node={node}
-              kind="frame"
-              workflowTab={detailTab}
-              onWorkflowTabChange={handleTabChange}
-              onConfirm="workflow"
-              readOnly={detailState?.frame_read_only}
-              framePostUpdateBranch={framePostUpdateBranch}
-              onFramePostUpdateCommit={commitFramePostUpdate}
-            />
-          </div>
-        ) : null}
-
-        {!isReviewNode && detailTab === 'clarify' ? (
-          <ClarifyPanel
-            projectId={projectId}
-            node={node}
-            readOnly={detailState?.clarify_read_only}
-          />
-        ) : null}
-
-        {!isReviewNode && detailTab === 'split' ? (
-          <div className={styles.cardBodyAux}>
-            <SplitPanel
-              projectId={projectId}
-              node={node}
-              detailState={detailState}
-            />
-          </div>
-        ) : null}
-
-        {!isReviewNode && detailTab === 'spec' ? (
-          <div className={styles.documentTabStack}>
-            {detailState?.spec_stale ? (
-              <div className={styles.staleBanner} data-testid="stale-banner-spec" role="status">
-                Frame was updated since spec was last reviewed.
-              </div>
-            ) : null}
-            <NodeDocumentEditor
-              projectId={projectId}
-              node={node}
-              kind="spec"
-              workflowTab="spec"
-              onConfirm="workflow"
-              readOnly={detailState?.spec_read_only}
-            />
-          </div>
-        ) : null}
+        {!isReviewNode && variant !== 'breadcrumb' ? detailPanelsFragment : null}
       </div>
     </section>
   )

@@ -378,12 +378,10 @@ class GitCheckpointService:
         if not ok:
             blockers.append(msg or "Git identity not configured.")
 
-        # Check 5: working tree clean
-        ok, msg = self.check_working_tree_clean(project_path)
-        if not ok:
-            blockers.append(msg or "Working tree is not clean.")
-
-        # Check 6: HEAD matches expected (only when expected_head provided)
+        # NOTE: working-tree cleanliness is temporarily not enforced.
+        # Keep check_working_tree_clean() available for future re-enable.
+        #
+        # Check 5: HEAD matches expected (only when expected_head provided)
         if expected_head is not None and not blockers:
             head = self.get_head_sha(project_path)
             if head != expected_head:

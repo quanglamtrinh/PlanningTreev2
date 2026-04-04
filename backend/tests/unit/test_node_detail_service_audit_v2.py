@@ -8,9 +8,28 @@ from backend.services.project_service import ProjectService
 from backend.services.tree_service import TreeService
 
 
+class _NoopSystemMessageWriter:
+    def upsert_system_message(self, **kwargs: object) -> dict[str, object]:
+        return {}
+
+
 def _create_project(storage, workspace_root: str) -> tuple[str, str]:
     snapshot = ProjectService(storage).attach_project_folder(workspace_root)
     return snapshot["project"]["id"], snapshot["tree_state"]["root_node_id"]
+
+
+def _seed_audit_thread_binding(storage, project_id: str, node_id: str) -> None:
+    storage.thread_registry_store.write_entry(
+        project_id,
+        node_id,
+        "audit",
+        {
+            "projectId": project_id,
+            "nodeId": node_id,
+            "threadRole": "audit",
+            "threadId": "audit-thread-1",
+        },
+    )
 
 
 def _find_snapshot_item(storage, project_id: str, node_id: str, item_id: str) -> dict | None:
@@ -23,6 +42,7 @@ def _find_snapshot_item(storage, project_id: str, node_id: str, item_id: str) ->
 
 def test_confirm_frame_writes_v2_audit_system_item(storage, workspace_root: Path, tree_service: TreeService) -> None:
     project_id, node_id = _create_project(storage, str(workspace_root))
+    _seed_audit_thread_binding(storage, project_id, node_id)
     doc_service = NodeDocumentService(storage)
     detail_service = NodeDetailService(storage, tree_service)
 
@@ -44,6 +64,7 @@ def test_confirm_frame_writes_v2_audit_system_item(storage, workspace_root: Path
 
 def test_confirm_spec_writes_v2_audit_system_item(storage, workspace_root: Path, tree_service: TreeService) -> None:
     project_id, node_id = _create_project(storage, str(workspace_root))
+    _seed_audit_thread_binding(storage, project_id, node_id)
     doc_service = NodeDocumentService(storage)
     detail_service = NodeDetailService(storage, tree_service)
 
@@ -63,3 +84,34 @@ def test_confirm_spec_writes_v2_audit_system_item(storage, workspace_root: Path,
     assert item["kind"] == "message"
     assert item["role"] == "system"
     assert "Canonical confirmed spec snapshot" in item["text"]
+
+
+def test_detail_state_falls_back_to_execution_state_when_latest_commit_missing(
+    storage,
+    workspace_root: Path,
+    tree_service: TreeService,
+) -> None:
+    project_id, node_id = _create_project(storage, str(workspace_root))
+    detail_service = NodeDetailService(
+        storage,
+        tree_service,
+        system_message_writer=_NoopSystemMessageWriter(),
+    )
+
+    storage.execution_state_store.write_state(
+        project_id,
+        node_id,
+        {
+            "status": "completed",
+            "initial_sha": "a" * 40,
+            "head_sha": "b" * 40,
+            "commit_message": "pt(1): legacy execution commit",
+            "changed_files": [],
+        },
+    )
+
+    state = detail_service.get_detail_state(project_id, node_id)
+
+    assert state["initial_sha"] == "a" * 40
+    assert state["head_sha"] == "b" * 40
+    assert state["commit_message"] == "pt(1): legacy execution commit"

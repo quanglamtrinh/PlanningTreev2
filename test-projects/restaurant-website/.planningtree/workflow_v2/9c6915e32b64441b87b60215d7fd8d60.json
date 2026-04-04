@@ -1,0 +1,20 @@
+{
+  "nodeId": "9c6915e32b64441b87b60215d7fd8d60",
+  "workflowPhase": "idle",
+  "askThreadId": null,
+  "executionThreadId": null,
+  "auditLineageThreadId": "019d5a63-92df-7503-b680-6e4b53e24f9b",
+  "reviewThreadId": null,
+  "activeExecutionRunId": null,
+  "latestExecutionRunId": null,
+  "activeReviewCycleId": null,
+  "latestReviewCycleId": null,
+  "currentExecutionDecision": null,
+  "currentAuditDecision": null,
+  "acceptedSha": null,
+  "latestCommit": null,
+  "runtimeBlock": null,
+  "mutationCache": {},
+  "createdAt": "2026-04-04T21:26:16.457879+00:00",
+  "updatedAt": "2026-04-04T21:27:01.184704+00:00"
+}

@@ -67,6 +67,7 @@ export function NodeDescribePanel({
   const taskMissing = present === false
   const canReset =
     !taskMissing &&
+    detailState?.execution_started === true &&
     Boolean(detailState?.initial_sha?.trim()) &&
     Boolean(detailState?.head_sha?.trim())
 

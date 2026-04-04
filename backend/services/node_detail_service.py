@@ -114,12 +114,50 @@ def derive_workflow_summary_from_node_dir(node_dir: Path) -> Dict[str, Any]:
     return derive_workflow_summary_from_artifacts(frame_meta, clarify, spec_meta)
 
 
+def _normalize_optional_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _latest_commit_value(latest_commit: Dict[str, Any] | None, *keys: str) -> str | None:
+    if not isinstance(latest_commit, dict):
+        return None
+    for key in keys:
+        value = _normalize_optional_string(latest_commit.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _resolve_commit_projection(
+    *,
+    workflow_state: Dict[str, Any] | None,
+    exec_state: Dict[str, Any] | None,
+) -> tuple[str | None, str | None, str | None]:
+    latest_commit = None
+    if isinstance(workflow_state, dict):
+        latest_commit = workflow_state.get("latestCommit") or workflow_state.get("latest_commit")
+    initial_sha = _latest_commit_value(latest_commit, "initialSha", "initial_sha")
+    head_sha = _latest_commit_value(latest_commit, "headSha", "head_sha")
+    commit_message = _latest_commit_value(latest_commit, "commitMessage", "commit_message")
+    if initial_sha is None:
+        initial_sha = _normalize_optional_string(exec_state.get("initial_sha")) if exec_state else None
+    if head_sha is None:
+        head_sha = _normalize_optional_string(exec_state.get("head_sha")) if exec_state else None
+    if commit_message is None:
+        commit_message = _normalize_optional_string(exec_state.get("commit_message")) if exec_state else None
+    return initial_sha, head_sha, commit_message
+
+
 def build_detail_state(
     storage: Storage,
     project_id: str,
     node_id: str,
     node_dir: Path,
     *,
+    workflow_state: Dict[str, Any] | None = None,
     exec_state: Dict[str, Any] | None = None,
     node: Dict[str, Any] | None = None,
     review_state: Dict[str, Any] | None = None,
@@ -154,6 +192,11 @@ def build_detail_state(
     if active_step == "spec" and not frame_branch_ready:
         spec_stale = spec_src_frame < frame_conf_rev
 
+    effective_initial_sha, effective_head_sha, effective_commit_message = _resolve_commit_projection(
+        workflow_state=workflow_state,
+        exec_state=exec_state,
+    )
+
     # ── Git-aware fields ────────────────────────────────────────────
     git_ready: bool | None = None
     git_blocker_message: str | None = None
@@ -167,16 +210,14 @@ def build_detail_state(
             current_head_sha = git_checkpoint_service.get_head_sha(project_path)
         except Exception:
             pass  # git fields stay None
-        if current_head_sha and exec_state:
-            head_sha = exec_state.get("head_sha")
-            if head_sha:
-                try:
-                    task_present_in_current_workspace = (
-                        git_checkpoint_service.is_ancestor(project_path, head_sha, current_head_sha)
-                        or current_head_sha == head_sha
-                    )
-                except Exception:
-                    pass
+        if current_head_sha and effective_head_sha:
+            try:
+                task_present_in_current_workspace = (
+                    git_checkpoint_service.is_ancestor(project_path, effective_head_sha, current_head_sha)
+                    or current_head_sha == effective_head_sha
+                )
+            except Exception:
+                pass
 
     # ── Execution-aware derived fields ─────────────────────────────
     execution_fields = derive_execution_workflow_fields(
@@ -216,9 +257,9 @@ def build_detail_state(
         "spec_read_only": shaping_frozen or active_step != "spec" or frame_branch_ready,
         "spec_stale": spec_stale,
         "spec_confirmed": workflow["spec_confirmed"],
-        "initial_sha": exec_state.get("initial_sha") if exec_state else None,
-        "head_sha": exec_state.get("head_sha") if exec_state else None,
-        "commit_message": exec_state.get("commit_message") if exec_state else None,
+        "initial_sha": effective_initial_sha,
+        "head_sha": effective_head_sha,
+        "commit_message": effective_commit_message,
         "current_head_sha": current_head_sha,
         "task_present_in_current_workspace": task_present_in_current_workspace,
         "git_ready": git_ready,
@@ -272,6 +313,7 @@ def build_review_detail_state(
         "spec_confirmed": False,
         "initial_sha": None,
         "head_sha": None,
+        "commit_message": None,
         "changed_files": [],
         "execution_started": False,
         "execution_completed": False,
@@ -327,10 +369,12 @@ class NodeDetailService:
                 )
 
             node_dir = self._resolve_node_dir(snapshot, node_id)
+            workflow_state = self._storage.workflow_state_store.read_state(project_id, node_id)
             exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
             project = snapshot.get("project", {})
             raw_project_path = str(project.get("project_path") or "").strip()
             node_copy = copy.deepcopy(node)
+            workflow_state_copy = copy.deepcopy(workflow_state)
             exec_state_copy = copy.deepcopy(exec_state)
             review_state_copy = copy.deepcopy(review_state)
 
@@ -340,6 +384,7 @@ class NodeDetailService:
             project_id,
             node_id,
             node_dir,
+            workflow_state=workflow_state_copy,
             exec_state=exec_state_copy,
             node=node_copy,
             review_state=review_state_copy,

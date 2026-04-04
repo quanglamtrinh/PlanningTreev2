@@ -628,8 +628,7 @@ describe('NodeDetailCard', () => {
       expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
     })
 
-    // All tabs should be clickable
-    expect(screen.getByRole('button', { name: 'Describe' })).not.toBeDisabled()
+    // Stepper tabs (Describe removed from exploration region; Info stays on breadcrumb tabs)
     expect(screen.getByRole('button', { name: 'Frame' })).not.toBeDisabled()
     expect(screen.getByRole('button', { name: 'Clarify' })).not.toBeDisabled()
     expect(screen.getByRole('button', { name: 'Spec' })).not.toBeDisabled()
@@ -728,6 +727,107 @@ describe('NodeDetailCard', () => {
 
     expect(screen.queryByText(/Failed to load detail state/i)).not.toBeInTheDocument()
     expect(screen.getByText('Root')).toBeInTheDocument()
+  })
+
+  it('breadcrumb shows indicative workflow stepper and document tabs for navigation', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getNodeDocument).toHaveBeenCalledWith('project-1', 'root', 'frame')
+    })
+
+    const stepper = screen.getByTestId('workflow-stepper')
+    expect(stepper).toHaveAttribute('data-stepper-mode', 'indicative')
+    expect(stepper).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.queryByRole('navigation', { name: 'Task workflow steps' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tablist', { name: 'Task document sections' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Info' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Frame' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Split' })).not.toBeInTheDocument()
+  })
+
+  it('breadcrumb shows Split tab when frame_branch_ready', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'frame' as const,
+      frame_branch_ready: true,
+      workflow_notice: null,
+      generation_error: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: false,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    expect(await screen.findByRole('tab', { name: 'Split' })).toBeInTheDocument()
+  })
+
+  it('breadcrumb loads spec.md when the Spec tab is clicked', async () => {
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    const specTab = await screen.findByRole('tab', { name: 'Spec' })
+    fireEvent.click(specTab)
+
+    await waitFor(() => {
+      expect(apiMock.getNodeDocument).toHaveBeenCalledWith('project-1', 'root', 'spec')
+    })
+    expect(screen.getByDisplayValue('# Spec')).toBeInTheDocument()
   })
 
   it('does not show a generation error banner when spec is no longer auto-started', async () => {
@@ -1132,10 +1232,13 @@ describe('NodeDetailCard', () => {
       />,
     )
 
+    expect(screen.queryByText('Workspace has uncommitted changes.')).not.toBeInTheDocument()
+
     const specButton = await screen.findByRole('button', { name: 'Spec' })
     fireEvent.click(specButton)
 
     await screen.findByDisplayValue('# Spec content')
+    expect(screen.getByText('Workspace has uncommitted changes.')).toBeInTheDocument()
     expect(screen.getByTestId('confirm-and-finish-task-button')).toBeDisabled()
   })
 

@@ -451,6 +451,9 @@ class _InMemoryReviewCycleStore:
     def append_cycle(self, _project_id: str, _node_id: str, cycle: dict[str, Any]) -> None:
         self.cycles.append(copy.deepcopy(cycle))
 
+    def read_cycles(self, _project_id: str, _node_id: str) -> list[dict[str, Any]]:
+        return copy.deepcopy(self.cycles)
+
 
 class _InMemoryStorage:
     def __init__(self, *, state: dict[str, Any], runs: list[dict[str, Any]]) -> None:
@@ -467,10 +470,15 @@ class _FlowArtifactService:
         self.commit_result = copy.deepcopy(commit_result)
         self.commit_calls: list[dict[str, Any]] = []
         self.hash_checks: list[tuple[str | None, str]] = []
+        self.head_checks: list[tuple[str | None, str]] = []
 
     def require_workspace_hash(self, workspace_root: str | None, expected_workspace_hash: str) -> str:
         self.hash_checks.append((workspace_root, expected_workspace_hash))
         return expected_workspace_hash
+
+    def require_head_sha(self, workspace_root: str | None, expected_head_sha: str) -> str:
+        self.head_checks.append((workspace_root, expected_head_sha))
+        return expected_head_sha
 
     def commit_workspace(
         self,
@@ -647,3 +655,68 @@ def test_review_in_audit_writes_latest_commit_metadata_and_uses_head_sha(monkeyp
     assert len(runtime_service.begin_turn_calls) == 1
     assert len(scheduled_threads) == 1
     assert scheduled_threads[0]["kwargs"]["kwargs"]["review_commit_sha"] == "c" * 40
+
+
+def test_mark_done_from_audit_keeps_existing_latest_commit_metadata() -> None:
+    existing_latest_commit = {
+        "sourceAction": "review_in_audit",
+        "initialSha": "e" * 40,
+        "headSha": "f" * 40,
+        "commitMessage": "pt(1.3): review verify release",
+        "committed": True,
+        "recordedAt": "2026-04-04T00:00:00Z",
+    }
+    state = {
+        "workflowPhase": "audit_decision_pending",
+        "currentAuditDecision": {"sourceReviewCycleId": "cycle-1"},
+        "latestCommit": copy.deepcopy(existing_latest_commit),
+        "mutationCache": {},
+    }
+    storage = _InMemoryStorage(state=state, runs=[])
+    storage.review_cycle_store.cycles = [
+        {
+            "cycleId": "cycle-1",
+            "finalReviewText": "Final audit summary",
+        }
+    ]
+    artifact_service = _FlowArtifactService(
+        commit_result={
+            "initialSha": "ignored",
+            "headSha": "ignored",
+            "commitMessage": "ignored",
+            "committed": False,
+        }
+    )
+    metadata_service = _FlowMetadataService(
+        workspace_root=r"C:\repo\workspace",
+        hierarchical_number="1.3",
+        title="Verify Release",
+    )
+    progression_calls: list[dict[str, Any]] = []
+
+    service = object.__new__(ExecutionAuditWorkflowService)
+    service._storage = storage  # type: ignore[attr-defined]
+    service._artifact_service = artifact_service  # type: ignore[attr-defined]
+    service._metadata_service = metadata_service  # type: ignore[attr-defined]
+    service._ensure_workflow_state_locked = lambda _project_id, _node_id: storage.workflow_state_store.state  # type: ignore[attr-defined]
+    service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
+    service.get_workflow_state = lambda _project_id, _node_id: copy.deepcopy(storage.workflow_state_store.state)  # type: ignore[attr-defined]
+    service._complete_node_progression = lambda _project_id, _node_id, *, accepted_sha, summary_text: progression_calls.append(  # type: ignore[attr-defined]
+        {"accepted_sha": accepted_sha, "summary_text": summary_text}
+    )
+
+    response = service.mark_done_from_audit(
+        "project-1",
+        "node-1",
+        idempotency_key="idem-audit-1",
+        expected_review_commit_sha="f" * 40,
+    )
+
+    assert response["workflowPhase"] == "done"
+    assert storage.workflow_state_store.state["acceptedSha"] == "f" * 40
+    assert storage.workflow_state_store.state.get("latestCommit") == existing_latest_commit
+    assert artifact_service.head_checks == [(r"C:\repo\workspace", "f" * 40)]
+    assert artifact_service.commit_calls == []
+    assert progression_calls == [{"accepted_sha": "f" * 40, "summary_text": "Final audit summary"}]

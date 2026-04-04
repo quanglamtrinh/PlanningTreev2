@@ -539,19 +539,17 @@ describe('TreeGraph', () => {
     expect(screen.getByText('Workflow').closest('button')).toBeEnabled()
   })
 
-  it('shows Describe -> Frame -> Clarify -> Spec stepper in the detail panel header', async () => {
+  it('shows Frame -> Clarify -> Spec stepper in the detail panel header (no Describe)', async () => {
     const snapshot = buildSnapshot()
 
     renderTreeGraph(snapshot)
     fireEvent.click(screen.getByRole('button', { name: 'Node details' }))
     const detailCard = screen.getByTestId('graph-node-detail-card')
 
-    expect(within(detailCard).getByRole('button', { name: 'Describe' })).toBeInTheDocument()
+    expect(within(detailCard).queryByRole('button', { name: 'Describe' })).not.toBeInTheDocument()
     expect(within(detailCard).getByRole('button', { name: 'Frame' })).toBeInTheDocument()
     expect(await within(detailCard).findByRole('button', { name: 'Clarify' })).toBeInTheDocument()
     expect(within(detailCard).getByRole('button', { name: 'Spec' })).toBeInTheDocument()
-    fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
-    expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
     expect(within(detailCard).queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
     expect(within(detailCard).getByText('Finish Task')).toBeInTheDocument()
     expect(within(detailCard).queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()

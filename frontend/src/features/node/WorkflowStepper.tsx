@@ -9,6 +9,8 @@ type WorkflowStepperProps = {
   onTabChange: (tab: WorkflowTab) => void
   /** After Frame updated: spec path disables Split; split path disables Spec + Finish Task. */
   tabDisabled?: { spec?: boolean; split?: boolean; finish?: boolean }
+  /** When true, shows progress only; use document tabs (breadcrumb) to change views. */
+  readOnly?: boolean
 }
 
 function TickIcon() {
@@ -47,6 +49,7 @@ export function WorkflowStepper({
   detailState,
   onTabChange,
   tabDisabled,
+  readOnly = false,
 }: WorkflowStepperProps) {
   const frameConfirmed = detailState?.frame_confirmed ?? false
   const clarifyConfirmed = detailState?.clarify_confirmed ?? false
@@ -72,7 +75,7 @@ export function WorkflowStepper({
             : id === 'spec'
               ? specConfirmed
               : false)
-    const active = detailTab === id
+    const active = !readOnly && detailTab === id
     return [styles.node, done ? styles.done : '', active ? styles.active : '']
       .filter(Boolean)
       .join(' ')
@@ -87,8 +90,17 @@ export function WorkflowStepper({
     return disabled ? `${base} ${styles.nodeDisabled}` : base
   }
 
+  const stepAriaCurrent = (id: WorkflowTab) =>
+    !readOnly && detailTab === id ? ('step' as const) : undefined
+
   return (
-    <nav className={styles.grid} aria-label="Task workflow steps">
+    <nav
+      className={[styles.grid, readOnly ? styles.readOnly : ''].filter(Boolean).join(' ')}
+      aria-label="Task workflow steps"
+      aria-hidden={readOnly ? true : undefined}
+      data-testid="workflow-stepper"
+      data-stepper-mode={readOnly ? 'indicative' : 'interactive'}
+    >
       <span
         className={styles.tj}
         style={{ gridColumn: '8', gridRow: '1 / 4' }}
@@ -102,10 +114,15 @@ export function WorkflowStepper({
         className={nodeClassDisabled('spec', false, specDisabled)}
         style={{ gridArea: 'spec' }}
         disabled={specDisabled}
-        onClick={() => {
-          if (!specDisabled) onTabChange('spec')
-        }}
-        aria-current={detailTab === 'spec' ? 'step' : undefined}
+        tabIndex={readOnly ? -1 : undefined}
+        onClick={
+          readOnly || specDisabled
+            ? undefined
+            : () => {
+                onTabChange('spec')
+              }
+        }
+        aria-current={stepAriaCurrent('spec')}
         aria-disabled={specDisabled}
         title={specDisabled ? 'Unavailable after choosing Split from Frame updated' : undefined}
       >
@@ -134,23 +151,11 @@ export function WorkflowStepper({
 
       <button
         type="button"
-        className={nodeClass('describe', true)}
-        style={{ gridArea: 'desc' }}
-        onClick={() => onTabChange('describe')}
-        aria-current={detailTab === 'describe' ? 'step' : undefined}
-      >
-        <span>Describe</span>
-        <TickIcon />
-      </button>
-
-      <span className={styles.arrowShort} style={{ gridArea: 'a1' }} aria-hidden="true" />
-
-      <button
-        type="button"
         className={nodeClass('frame')}
         style={{ gridArea: 'frame' }}
-        onClick={() => onTabChange('frame')}
-        aria-current={detailTab === 'frame' ? 'step' : undefined}
+        tabIndex={readOnly ? -1 : undefined}
+        onClick={readOnly ? undefined : () => onTabChange('frame')}
+        aria-current={stepAriaCurrent('frame')}
       >
         <span>Frame</span>
         {frameConfirmed ? <TickIcon /> : null}
@@ -162,8 +167,9 @@ export function WorkflowStepper({
         type="button"
         className={nodeClass('clarify')}
         style={{ gridArea: 'clarify' }}
-        onClick={() => onTabChange('clarify')}
-        aria-current={detailTab === 'clarify' ? 'step' : undefined}
+        tabIndex={readOnly ? -1 : undefined}
+        onClick={readOnly ? undefined : () => onTabChange('clarify')}
+        aria-current={stepAriaCurrent('clarify')}
       >
         <span>Clarify</span>
         {clarifyConfirmed ? <TickIcon /> : null}
@@ -175,8 +181,9 @@ export function WorkflowStepper({
         type="button"
         className={nodeClass('frame_updated')}
         style={{ gridArea: 'frameUpd' }}
-        onClick={() => onTabChange('frame_updated')}
-        aria-current={detailTab === 'frame_updated' ? 'step' : undefined}
+        tabIndex={readOnly ? -1 : undefined}
+        onClick={readOnly ? undefined : () => onTabChange('frame_updated')}
+        aria-current={stepAriaCurrent('frame_updated')}
       >
         <span>Frame Updated</span>
         {frameUpdatedDone ? <TickIcon /> : null}
@@ -189,10 +196,15 @@ export function WorkflowStepper({
         className={nodeClassDisabled('split', false, splitDisabled)}
         style={{ gridArea: 'spTask' }}
         disabled={splitDisabled}
-        onClick={() => {
-          if (!splitDisabled) onTabChange('split')
-        }}
-        aria-current={detailTab === 'split' ? 'step' : undefined}
+        tabIndex={readOnly ? -1 : undefined}
+        onClick={
+          readOnly || splitDisabled
+            ? undefined
+            : () => {
+                onTabChange('split')
+              }
+        }
+        aria-current={stepAriaCurrent('split')}
         aria-disabled={splitDisabled}
         title={splitDisabled ? 'Unavailable after choosing Create Spec from Frame updated' : undefined}
       >

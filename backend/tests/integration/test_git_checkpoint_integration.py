@@ -2,7 +2,7 @@
 
 Covers:
   1. Full flow: init git -> confirm spec -> finish task -> verify commit & detail-state -> reset
-  2. Guardrail blocks dirty tree
+  2. Dirty tree is allowed during finish task
   3. No-diff execution (Codex makes no changes)
   4. Reset to initial and reset to head
   5. probe_git_initialized subfolder behavior
@@ -19,6 +19,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from backend.services import planningtree_workspace
+from backend.services.thread_lineage_service import _ROLLOUT_BOOTSTRAP_PROMPT
 from backend.tests.conftest import init_git_repo
 
 
@@ -49,12 +50,14 @@ class _ExecutionCodex:
         return {"thread_id": tid}
 
     def run_turn_streaming(self, prompt, **kwargs):
+        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
+            return {"stdout": "READY", "thread_id": kwargs.get("thread_id", ""), "turn_status": "completed"}
         if self._fail:
             raise RuntimeError("Codex exploded")
         cwd = kwargs.get("cwd")
         if cwd and self._create_file:
             Path(cwd, self._create_file).write_text("generated content\n")
-        return {"stdout": "Done.", "thread_id": kwargs.get("thread_id", "")}
+        return {"stdout": "Done.", "thread_id": kwargs.get("thread_id", ""), "turn_status": "completed"}
 
 
 class _NoDiffCodex(_ExecutionCodex):
@@ -108,9 +111,28 @@ def _wait_execution(client: TestClient, project_id: str, node_id: str, status: s
     raise AssertionError(f"Execution did not reach status={status} in time.")
 
 
+def _wait_no_live_turns(client: TestClient, project_id: str, timeout: float = 5.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        chat_service = client.app.state.chat_service
+        if chat_service is None or not chat_service.has_live_turns_for_project(project_id):
+            return
+        time.sleep(0.05)
+    raise AssertionError("Live turns did not drain before reset.")
+
+
 def _set_codex(client: TestClient, codex):
+    # Keep this integration suite on the legacy /v1 execution path.
+    client.app.state.finish_task_service._execution_audit_v2_enabled = False
+    client.app.state.finish_task_service._execution_audit_v2_rehearsal_enabled = False
+    client.app.state.codex_client = codex
+    client.app.state.chat_service._codex_client = codex
     client.app.state.finish_task_service._codex_client = codex
     client.app.state.thread_lineage_service._codex_client = codex
+    client.app.state.thread_query_service_v2._codex_client = codex
+    client.app.state.thread_runtime_service_v2._codex_client = codex
+    client.app.state.review_service._codex_client = codex
+    client.app.state.execution_audit_workflow_service_v2._codex_client = codex
 
 
 def _set_temp_global_git_identity(monkeypatch, workspace_root: Path) -> None:
@@ -161,6 +183,8 @@ def test_full_lifecycle(client: TestClient, workspace_root):
     assert detail["task_present_in_current_workspace"] is True
     assert detail["git_ready"] is True
 
+    _wait_no_live_turns(client, project_id)
+
     # Reset to initial
     reset_resp = client.post(
         f"/v1/projects/{project_id}/nodes/{root_id}/reset-workspace",
@@ -186,8 +210,8 @@ def test_full_lifecycle(client: TestClient, workspace_root):
     assert (workspace_root / "output.txt").exists()
 
 
-def test_guardrail_blocks_dirty_tree(client: TestClient, workspace_root):
-    """Dirty working tree -> finish task returns 400."""
+def test_dirty_tree_does_not_block_finish_task(client: TestClient, workspace_root):
+    """Dirty working tree is temporarily allowed during finish task."""
     init_git_repo(workspace_root)
     codex = _ExecutionCodex()
     _set_codex(client, codex)
@@ -199,14 +223,14 @@ def test_guardrail_blocks_dirty_tree(client: TestClient, workspace_root):
     (workspace_root / "uncommitted.txt").write_text("dirty")
 
     resp = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
-    assert resp.status_code == 400
-    body = resp.json()
-    assert "clean" in body["message"].lower() or "not clean" in body["message"].lower()
+    assert resp.status_code == 200
 
-    # Detail state should show git_ready=false
+    _wait_execution(client, project_id, root_id)
+
+    # Detail state should stay git_ready=true even with dirty workspace.
     detail = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/detail-state").json()
-    assert detail["git_ready"] is False
-    assert detail["git_blocker_message"] is not None
+    assert detail["git_ready"] is True
+    assert detail["git_blocker_message"] is None
 
 
 def test_no_diff_execution(client: TestClient, workspace_root):

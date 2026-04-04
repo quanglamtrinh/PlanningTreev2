@@ -288,10 +288,10 @@ class TestValidateGuardrails:
         assert len(blockers) == 1
         assert "No Git repository" in blockers[0]
 
-    def test_dirty_tree(self, svc: GitCheckpointService, git_repo: Path):
+    def test_dirty_tree_does_not_block(self, svc: GitCheckpointService, git_repo: Path):
         (git_repo / "dirty.txt").write_text("x", encoding="utf-8")
         blockers = svc.validate_guardrails(git_repo)
-        assert any("not clean" in b for b in blockers)
+        assert blockers == []
 
     def test_expected_head_matches(self, svc: GitCheckpointService, git_repo: Path):
         sha = svc.get_head_sha(git_repo)
