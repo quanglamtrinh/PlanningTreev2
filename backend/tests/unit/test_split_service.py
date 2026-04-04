@@ -315,9 +315,76 @@ def test_split_service_commits_projection_and_updates_k0_git_head(
     review_state = storage.review_state_store.read_state(project_id, review_node_id)
     assert review_state is not None
     assert review_state["k0_git_head_sha"] == "b" * 40
+    workflow_state = storage.workflow_state_store.read_state(project_id, root_id)
+    assert workflow_state is not None
+    latest_commit = workflow_state.get("latestCommit")
+    assert isinstance(latest_commit, dict)
+    assert latest_commit["sourceAction"] == "split"
+    assert latest_commit["initialSha"] == "a" * 40
+    assert latest_commit["headSha"] == "b" * 40
+    assert latest_commit["committed"] is True
+    assert isinstance(latest_commit["recordedAt"], str) and latest_commit["recordedAt"]
     assert fake_git.build_commit_calls
     assert fake_git.commit_calls
     assert fake_git.commit_calls[0][1].startswith("pt(1): split ")
+    assert latest_commit["commitMessage"] == fake_git.commit_calls[0][1]
+
+
+def test_split_service_records_latest_commit_on_no_diff_without_overwriting_k0_head(
+    storage: Storage,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    make_node_split_ready(storage, tree_service, project_id, root_id)
+    fake_client = FakeCodexClient(
+        payloads=[
+            {
+                "subtasks": [
+                    {"id": "S1", "title": "Prep", "objective": "Prepare the flow.", "why_now": "It starts the work."},
+                    {"id": "S2", "title": "Finish", "objective": "Complete the flow.", "why_now": "It depends on prep."},
+                ]
+            }
+        ]
+    )
+    fake_git = FakeGitCheckpointService(
+        initial_head_sha="c" * 40,
+        split_commit_sha=None,
+    )
+    service = make_split_service(
+        storage,
+        tree_service,
+        fake_client,
+        git_checkpoint_service=fake_git,
+    )
+
+    accepted = service.split_node(project_id, root_id, "workflow")
+    assert accepted["status"] == "accepted"
+    terminal = wait_for_terminal_status(service, project_id)
+    assert terminal["status"] == "idle"
+
+    persisted = storage.project_store.load_snapshot(project_id)
+    root = persisted["tree_state"]["node_index"][root_id]
+    review_node_id = root.get("review_node_id")
+    assert isinstance(review_node_id, str) and review_node_id
+    review_state = storage.review_state_store.read_state(project_id, review_node_id)
+    assert review_state is not None
+    assert review_state["k0_git_head_sha"] == "c" * 40
+    workflow_state = storage.workflow_state_store.read_state(project_id, root_id)
+    assert workflow_state is not None
+    latest_commit = workflow_state.get("latestCommit")
+    assert isinstance(latest_commit, dict)
+    assert latest_commit["sourceAction"] == "split"
+    assert latest_commit["initialSha"] == "c" * 40
+    assert latest_commit["headSha"] == "c" * 40
+    assert latest_commit["committed"] is False
+    assert latest_commit["commitMessage"] == fake_git.commit_calls[0][1]
+    assert isinstance(latest_commit["recordedAt"], str) and latest_commit["recordedAt"]
+    assert fake_git.build_commit_calls
+    assert fake_git.commit_calls
 
 
 def test_split_service_rejects_nodes_with_existing_children(

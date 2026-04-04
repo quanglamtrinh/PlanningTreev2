@@ -5,7 +5,7 @@ import logging
 import re
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from backend.ai.execution_prompt_builder import build_execution_prompt
 from backend.ai.split_context_builder import build_split_context
@@ -22,6 +22,13 @@ from backend.storage.file_utils import iso_now, new_id
 from backend.storage.storage import Storage
 
 logger = logging.getLogger(__name__)
+
+
+class WorkspaceCommitResult(TypedDict):
+    initialSha: str
+    headSha: str
+    commitMessage: str
+    committed: bool
 
 
 class WorkflowDecisionService:
@@ -177,20 +184,31 @@ class GitArtifactService:
         hierarchical_number: str,
         title: str,
         verb: str,
-    ) -> str:
+    ) -> WorkspaceCommitResult:
         if self._git_checkpoint_service is None:
             raise FinishTaskNotAllowed("Git checkpoint service is unavailable.")
         if not isinstance(workspace_root, str) or not workspace_root.strip():
             raise FinishTaskNotAllowed("Project snapshot is missing project_path.")
         project_path = Path(workspace_root).expanduser().resolve()
+        initial_sha = self._git_checkpoint_service.capture_head_sha(project_path)
         commit_message = self._git_checkpoint_service.build_commit_message(
             hierarchical_number,
             f"{verb} {title}".strip(),
         )
         committed_sha = self._git_checkpoint_service.commit_if_changed(project_path, commit_message)
         if committed_sha:
-            return committed_sha
-        return self._git_checkpoint_service.capture_head_sha(project_path)
+            return {
+                "initialSha": initial_sha,
+                "headSha": committed_sha,
+                "commitMessage": commit_message,
+                "committed": True,
+            }
+        return {
+            "initialSha": initial_sha,
+            "headSha": initial_sha,
+            "commitMessage": commit_message,
+            "committed": False,
+        }
 
     def get_worktree_diff(
         self,
@@ -396,12 +414,13 @@ class ExecutionAuditWorkflowService:
                 raise FinishTaskNotAllowed("No current execution decision is available.")
             metadata = self._metadata_service.load_execution_metadata(project_id, node_id)
             self._artifact_service.require_workspace_hash(metadata["workspaceRoot"], expected_workspace_hash)
-            accepted_sha = self._artifact_service.commit_workspace(
+            commit_result = self._artifact_service.commit_workspace(
                 workspace_root=metadata["workspaceRoot"],
                 hierarchical_number=str(metadata["node"].get("hierarchical_number") or "1"),
                 title=str(metadata["node"].get("title") or "task").strip() or "task",
                 verb="done",
             )
+            accepted_sha = commit_result["headSha"]
             run_id = str(current_execution_decision.get("sourceExecutionRunId") or "")
             runs = self._storage.execution_run_store.read_runs(project_id, node_id)
             summary_text: str | None = None
@@ -415,6 +434,10 @@ class ExecutionAuditWorkflowService:
                 break
             self._storage.execution_run_store.write_runs(project_id, node_id, runs)
             state["acceptedSha"] = accepted_sha
+            state["latestCommit"] = self._materialize_latest_commit(
+                source_action="mark_done_from_execution",
+                commit_result=commit_result,
+            )
             state["workflowPhase"] = "done"
             state["activeExecutionRunId"] = None
             self._storage.workflow_state_store.write_state(project_id, node_id, state)
@@ -1026,12 +1049,13 @@ class ExecutionAuditWorkflowService:
             if not isinstance(current_execution_decision, dict):
                 raise ReviewNotAllowed("No current execution decision is available.")
             self._artifact_service.require_workspace_hash(metadata["workspaceRoot"], expected_workspace_hash)
-            review_commit_sha = self._artifact_service.commit_workspace(
+            commit_result = self._artifact_service.commit_workspace(
                 workspace_root=metadata["workspaceRoot"],
                 hierarchical_number=str(metadata["node"].get("hierarchical_number") or "1"),
                 title=str(metadata["node"].get("title") or "task").strip() or "task",
                 verb="review",
             )
+            review_commit_sha = commit_result["headSha"]
             audit_lineage_thread_id = str(state.get("auditLineageThreadId") or "").strip()
             if not audit_lineage_thread_id:
                 audit_lineage_thread_id = self._ensure_audit_lineage_thread_id(project_id, node_id, metadata["workspaceRoot"])
@@ -1072,6 +1096,10 @@ class ExecutionAuditWorkflowService:
             state["activeReviewCycleId"] = cycle_id
             state["latestReviewCycleId"] = cycle_id
             state["activeExecutionRunId"] = None
+            state["latestCommit"] = self._materialize_latest_commit(
+                source_action="review_in_audit",
+                commit_result=commit_result,
+            )
             self._storage.workflow_state_store.write_state(project_id, node_id, state)
 
         if review_thread_id:
@@ -1470,6 +1498,21 @@ class ExecutionAuditWorkflowService:
             "finalReviewText": final_review_text,
             "reviewDisposition": review_disposition,
             "createdAt": iso_now(),
+        }
+
+    def _materialize_latest_commit(
+        self,
+        *,
+        source_action: str,
+        commit_result: WorkspaceCommitResult,
+    ) -> dict[str, Any]:
+        return {
+            "sourceAction": source_action,
+            "initialSha": commit_result["initialSha"],
+            "headSha": commit_result["headSha"],
+            "commitMessage": commit_result["commitMessage"],
+            "committed": commit_result["committed"],
+            "recordedAt": iso_now(),
         }
 
     def _ensure_workflow_state_locked(self, project_id: str, node_id: str) -> dict[str, Any]:

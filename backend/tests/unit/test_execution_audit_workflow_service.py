@@ -348,3 +348,302 @@ def test_hydrate_execution_file_change_diff_from_worktree_matches_same_basename_
     changes_by_path = {str(change.get("path") or ""): change for change in changes if isinstance(change, dict)}
     assert "new-src" in str(changes_by_path[src_render_path].get("diff") or "")
     assert "new-tests" in str(changes_by_path[tests_render_path].get("diff") or "")
+
+
+class _FakeGitCommitService:
+    def __init__(self, *, initial_sha: str, committed_sha: str | None) -> None:
+        self.initial_sha = initial_sha
+        self.committed_sha = committed_sha
+        self.commit_calls: list[tuple[str, str]] = []
+
+    def capture_head_sha(self, project_path: Path) -> str:
+        return self.initial_sha
+
+    def build_commit_message(self, hierarchical_number: str, title: str) -> str:
+        return f"pt({hierarchical_number}): {title.lower()}"
+
+    def commit_if_changed(self, project_path: Path, commit_message: str) -> str | None:
+        self.commit_calls.append((str(project_path), commit_message))
+        return self.committed_sha
+
+
+def test_git_artifact_service_commit_workspace_returns_metadata_when_diff_exists(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    fake_git = _FakeGitCommitService(initial_sha="a" * 40, committed_sha="b" * 40)
+    service = GitArtifactService(fake_git)  # type: ignore[arg-type]
+
+    result = service.commit_workspace(
+        workspace_root=str(workspace_root),
+        hierarchical_number="1.2",
+        title="Build API",
+        verb="done",
+    )
+
+    assert result == {
+        "initialSha": "a" * 40,
+        "headSha": "b" * 40,
+        "commitMessage": "pt(1.2): done build api",
+        "committed": True,
+    }
+    assert fake_git.commit_calls == [(str(workspace_root.resolve()), "pt(1.2): done build api")]
+
+
+def test_git_artifact_service_commit_workspace_records_no_diff_as_non_committed(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    fake_git = _FakeGitCommitService(initial_sha="c" * 40, committed_sha=None)
+    service = GitArtifactService(fake_git)  # type: ignore[arg-type]
+
+    result = service.commit_workspace(
+        workspace_root=str(workspace_root),
+        hierarchical_number="1.3",
+        title="Review API",
+        verb="review",
+    )
+
+    assert result == {
+        "initialSha": "c" * 40,
+        "headSha": "c" * 40,
+        "commitMessage": "pt(1.3): review review api",
+        "committed": False,
+    }
+    assert fake_git.commit_calls == [(str(workspace_root.resolve()), "pt(1.3): review review api")]
+
+
+class _NoopProjectLock:
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+class _InMemoryWorkflowStateStore:
+    def __init__(self, state: dict[str, Any]) -> None:
+        self.state = copy.deepcopy(state)
+        self.write_calls: list[dict[str, Any]] = []
+
+    def read_state(self, _project_id: str, _node_id: str) -> dict[str, Any]:
+        return copy.deepcopy(self.state)
+
+    def write_state(self, _project_id: str, _node_id: str, state: dict[str, Any]) -> dict[str, Any]:
+        self.state = copy.deepcopy(state)
+        self.write_calls.append(copy.deepcopy(state))
+        return copy.deepcopy(self.state)
+
+
+class _InMemoryExecutionRunStore:
+    def __init__(self, runs: list[dict[str, Any]]) -> None:
+        self.runs = copy.deepcopy(runs)
+
+    def read_runs(self, _project_id: str, _node_id: str) -> list[dict[str, Any]]:
+        return copy.deepcopy(self.runs)
+
+    def write_runs(self, _project_id: str, _node_id: str, runs: list[dict[str, Any]]) -> None:
+        self.runs = copy.deepcopy(runs)
+
+
+class _InMemoryReviewCycleStore:
+    def __init__(self) -> None:
+        self.cycles: list[dict[str, Any]] = []
+
+    def append_cycle(self, _project_id: str, _node_id: str, cycle: dict[str, Any]) -> None:
+        self.cycles.append(copy.deepcopy(cycle))
+
+
+class _InMemoryStorage:
+    def __init__(self, *, state: dict[str, Any], runs: list[dict[str, Any]]) -> None:
+        self.workflow_state_store = _InMemoryWorkflowStateStore(state)
+        self.execution_run_store = _InMemoryExecutionRunStore(runs)
+        self.review_cycle_store = _InMemoryReviewCycleStore()
+
+    def project_lock(self, _project_id: str) -> _NoopProjectLock:
+        return _NoopProjectLock()
+
+
+class _FlowArtifactService:
+    def __init__(self, *, commit_result: dict[str, Any]) -> None:
+        self.commit_result = copy.deepcopy(commit_result)
+        self.commit_calls: list[dict[str, Any]] = []
+        self.hash_checks: list[tuple[str | None, str]] = []
+
+    def require_workspace_hash(self, workspace_root: str | None, expected_workspace_hash: str) -> str:
+        self.hash_checks.append((workspace_root, expected_workspace_hash))
+        return expected_workspace_hash
+
+    def commit_workspace(
+        self,
+        *,
+        workspace_root: str | None,
+        hierarchical_number: str,
+        title: str,
+        verb: str,
+    ) -> dict[str, Any]:
+        self.commit_calls.append(
+            {
+                "workspace_root": workspace_root,
+                "hierarchical_number": hierarchical_number,
+                "title": title,
+                "verb": verb,
+            }
+        )
+        return copy.deepcopy(self.commit_result)
+
+
+class _FlowMetadataService:
+    def __init__(self, *, workspace_root: str, hierarchical_number: str, title: str) -> None:
+        self.workspace_root = workspace_root
+        self.hierarchical_number = hierarchical_number
+        self.title = title
+
+    def load_execution_metadata(self, _project_id: str, _node_id: str) -> dict[str, Any]:
+        return {
+            "workspaceRoot": self.workspace_root,
+            "node": {
+                "hierarchical_number": self.hierarchical_number,
+                "title": self.title,
+            },
+        }
+
+
+class _FlowThreadRuntimeService:
+    def __init__(self) -> None:
+        self.begin_turn_calls: list[dict[str, Any]] = []
+
+    def begin_turn(self, **kwargs: Any) -> None:
+        self.begin_turn_calls.append(dict(kwargs))
+
+
+def test_mark_done_from_execution_writes_latest_commit_metadata() -> None:
+    state = {
+        "workflowPhase": "execution_decision_pending",
+        "currentExecutionDecision": {"sourceExecutionRunId": "run-1"},
+        "mutationCache": {},
+    }
+    runs = [{"runId": "run-1", "summaryText": "Execution summary"}]
+    storage = _InMemoryStorage(state=state, runs=runs)
+    artifact_service = _FlowArtifactService(
+        commit_result={
+            "initialSha": "a" * 40,
+            "headSha": "b" * 40,
+            "commitMessage": "pt(1.1): done build feature",
+            "committed": True,
+        }
+    )
+    metadata_service = _FlowMetadataService(
+        workspace_root=r"C:\repo\workspace",
+        hierarchical_number="1.1",
+        title="Build Feature",
+    )
+    progression_calls: list[dict[str, Any]] = []
+
+    service = object.__new__(ExecutionAuditWorkflowService)
+    service._storage = storage  # type: ignore[attr-defined]
+    service._artifact_service = artifact_service  # type: ignore[attr-defined]
+    service._metadata_service = metadata_service  # type: ignore[attr-defined]
+    service._ensure_workflow_state_locked = lambda _project_id, _node_id: storage.workflow_state_store.state  # type: ignore[attr-defined]
+    service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
+    service.get_workflow_state = lambda _project_id, _node_id: copy.deepcopy(storage.workflow_state_store.state)  # type: ignore[attr-defined]
+    service._complete_node_progression = lambda _project_id, _node_id, *, accepted_sha, summary_text: progression_calls.append(  # type: ignore[attr-defined]
+        {"accepted_sha": accepted_sha, "summary_text": summary_text}
+    )
+
+    response = service.mark_done_from_execution(
+        "project-1",
+        "node-1",
+        idempotency_key="idem-1",
+        expected_workspace_hash="workspace-hash-1",
+    )
+
+    assert response["acceptedSha"] == "b" * 40
+    assert response["workflowPhase"] == "done"
+    latest_commit = storage.workflow_state_store.state.get("latestCommit")
+    assert isinstance(latest_commit, dict)
+    assert latest_commit["sourceAction"] == "mark_done_from_execution"
+    assert latest_commit["initialSha"] == "a" * 40
+    assert latest_commit["headSha"] == "b" * 40
+    assert latest_commit["commitMessage"] == "pt(1.1): done build feature"
+    assert latest_commit["committed"] is True
+    assert isinstance(latest_commit["recordedAt"], str) and latest_commit["recordedAt"]
+    assert storage.execution_run_store.runs[0]["committedHeadSha"] == "b" * 40
+    assert storage.execution_run_store.runs[0]["decision"] == "marked_done"
+    assert progression_calls == [{"accepted_sha": "b" * 40, "summary_text": "Execution summary"}]
+
+
+def test_review_in_audit_writes_latest_commit_metadata_and_uses_head_sha(monkeypatch) -> None:
+    state = {
+        "workflowPhase": "execution_decision_pending",
+        "currentExecutionDecision": {"sourceExecutionRunId": "run-2"},
+        "auditLineageThreadId": "audit-lineage-thread-1",
+        "reviewThreadId": None,
+        "mutationCache": {},
+    }
+    runs = [{"runId": "run-2"}]
+    storage = _InMemoryStorage(state=state, runs=runs)
+    artifact_service = _FlowArtifactService(
+        commit_result={
+            "initialSha": "c" * 40,
+            "headSha": "c" * 40,
+            "commitMessage": "pt(1.2): review add tests",
+            "committed": False,
+        }
+    )
+    metadata_service = _FlowMetadataService(
+        workspace_root=r"C:\repo\workspace",
+        hierarchical_number="1.2",
+        title="Add Tests",
+    )
+    runtime_service = _FlowThreadRuntimeService()
+
+    scheduled_threads: list[dict[str, Any]] = []
+
+    class _FakeThread:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            scheduled_threads.append({"args": args, "kwargs": kwargs})
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr("backend.services.execution_audit_workflow_service.threading.Thread", _FakeThread)
+
+    service = object.__new__(ExecutionAuditWorkflowService)
+    service._storage = storage  # type: ignore[attr-defined]
+    service._artifact_service = artifact_service  # type: ignore[attr-defined]
+    service._metadata_service = metadata_service  # type: ignore[attr-defined]
+    service._thread_runtime_service_v2 = runtime_service  # type: ignore[attr-defined]
+    service._ensure_workflow_state_locked = lambda _project_id, _node_id: storage.workflow_state_store.state  # type: ignore[attr-defined]
+    service._ensure_audit_lineage_thread_id = lambda _project_id, _node_id, _workspace_root: "audit-lineage-thread-1"  # type: ignore[attr-defined]
+    service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
+    service._bind_audit_thread_to_review_thread = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+
+    response = service.review_in_audit(
+        "project-1",
+        "node-1",
+        idempotency_key="idem-review-1",
+        expected_workspace_hash="workspace-hash-2",
+    )
+
+    assert response["accepted"] is True
+    assert response["workflowPhase"] == "audit_running"
+    assert len(storage.review_cycle_store.cycles) == 1
+    cycle = storage.review_cycle_store.cycles[0]
+    assert cycle["reviewCommitSha"] == "c" * 40
+    assert cycle["deliveryKind"] == "detached"
+    latest_commit = storage.workflow_state_store.state.get("latestCommit")
+    assert isinstance(latest_commit, dict)
+    assert latest_commit["sourceAction"] == "review_in_audit"
+    assert latest_commit["initialSha"] == "c" * 40
+    assert latest_commit["headSha"] == cycle["reviewCommitSha"]
+    assert latest_commit["commitMessage"] == "pt(1.2): review add tests"
+    assert latest_commit["committed"] is False
+    assert isinstance(latest_commit["recordedAt"], str) and latest_commit["recordedAt"]
+    assert storage.execution_run_store.runs[0]["committedHeadSha"] == "c" * 40
+    assert storage.execution_run_store.runs[0]["decision"] == "sent_to_review"
+    assert len(runtime_service.begin_turn_calls) == 1
+    assert len(scheduled_threads) == 1
+    assert scheduled_threads[0]["kwargs"]["kwargs"]["review_commit_sha"] == "c" * 40

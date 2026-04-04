@@ -30,6 +30,69 @@ This roadmap assumes the following decisions are frozen:
 - no change to retry semantics already defined in workflow rework specs
 - no audit verdict policy changes
 
+## 2A. Current-state gaps (approved baseline)
+
+Gap 1: describe commit fields still read from legacy execution state.
+
+- current behavior: node-detail returns `initial_sha/head_sha/commit_message` from `execution_state`
+- impact: split commits and some workflow commits are not represented as a canonical latest commit record in describe
+
+Gap 2: split commit write-path does not persist a full describe metadata record.
+
+- current behavior: split writes `split_commit_sha` and updates `review_state.k0_git_head_sha` when commit exists
+- impact: missing explicit `initial_sha`, `commit_message`, and no-diff committed flag for parent-node describe
+
+Gap 3: execution/audit commit helper returns SHA only.
+
+- current behavior: workflow `commit_workspace` returns only resulting SHA
+- impact: callers do not persist full metadata tuple (`initial_sha`, `head_sha`, `commit_message`, `committed`)
+
+Gap 4: no-diff semantics are not fully consistent across old/new paths.
+
+- current behavior: core git helper correctly produces no new commit on no-diff, but legacy finish-task path can clear commit message on no-diff
+- impact: violates approved rule for this track where planned commit message must still be persisted
+
+Gap 5: split metadata cannot be stored in execution state.
+
+- reason: execution-state presence/status participates in execution gating and shaping freeze decisions
+- impact if violated: split could falsely mark node as execution-started
+
+Gap 6: reset endpoint still depends on execution-state SHAs.
+
+- current behavior: reset target uses `execution_state.initial_sha/head_sha`
+- scope decision: accepted as known limitation in this track because reset is out-of-scope
+
+## 2B. Workflow examples (must remain true after implementation)
+
+Example 1: split on parent node `2.3`.
+
+- before split commit attempt: `initial_sha = C9`
+- after split with diff: `head_sha = C10`, `committed=true`, message persisted
+- after split with no diff: `head_sha = C9`, `committed=false`, same planned message persisted
+- metadata is recorded on parent node `2.3`
+
+Example 2: `Mark Done from Execution`.
+
+- action commits candidate workspace when diff exists
+- no-diff keeps head unchanged
+- in both cases describe fields must still have planned message and pre/post sha pair
+
+Example 3: `Review in Audit` commit succeeded but review start failed.
+
+- first attempt produces reviewed commit `C1`
+- retry reuses `C1` and does not create `C2`
+- latest commit metadata remains stable for that action attempt
+
+## 2C. Approved implementation approach
+
+1. extend workflow state with normalized `latestCommit` metadata block
+2. enrich commit helper result to return `initialSha`, `headSha`, `commitMessage`, `committed`
+3. write split metadata to parent node workflow state only
+4. write execution/audit action metadata to workflow state on commit attempt
+5. update node-detail read order: `latestCommit` first, `execution_state` fallback second
+6. keep reset route unchanged in this track and document it as out-of-scope
+7. add tests for split, mark-done, review-in-audit, no-diff, and retry/idempotency stability
+
 ## 3. Commit trigger matrix (authoritative for this track)
 
 | Action | Node kind | Creates new commit when diff exists | Metadata target node | Notes |

@@ -4,7 +4,7 @@ import logging
 import threading
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from uuid import uuid4
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
@@ -38,6 +38,13 @@ from backend.storage.storage import Storage
 _RETRY_LIMIT = 2
 _STALE_JOB_MESSAGE = "This split was interrupted because the server restarted before it completed."
 logger = logging.getLogger(__name__)
+
+
+class SplitCommitResult(TypedDict):
+    initialSha: str
+    headSha: str
+    commitMessage: str
+    committed: bool
 
 
 class SplitService:
@@ -321,13 +328,29 @@ class SplitService:
             self._storage.project_store.save_snapshot(project_id, snapshot)
             snapshot["project"] = self._storage.project_store.touch_meta(project_id, now)
             self._sync_snapshot_tree(snapshot)
-            split_commit_sha = self._commit_split_projection(
+            split_commit = self._commit_split_projection(
                 workspace_root=workspace_root,
                 parent_hierarchical_number=parent_hnum,
                 parent_title=parent_title,
             )
+            split_commit_sha: str | None = None
+            if split_commit is not None:
+                workflow_state = self._storage.workflow_state_store.read_state(project_id, node_id)
+                if workflow_state is None:
+                    workflow_state = self._storage.workflow_state_store.default_state(node_id)
+                workflow_state["latestCommit"] = {
+                    "sourceAction": "split",
+                    "initialSha": split_commit["initialSha"],
+                    "headSha": split_commit["headSha"],
+                    "commitMessage": split_commit["commitMessage"],
+                    "committed": split_commit["committed"],
+                    "recordedAt": iso_now(),
+                }
+                self._storage.workflow_state_store.write_state(project_id, node_id, workflow_state)
+                if split_commit["committed"]:
+                    split_commit_sha = split_commit["headSha"]
+                    review_state["k0_git_head_sha"] = split_commit_sha
             if split_commit_sha:
-                review_state["k0_git_head_sha"] = split_commit_sha
                 self._storage.review_state_store.write_state(
                     project_id, review_node_id, review_state
                 )
@@ -590,7 +613,7 @@ class SplitService:
         workspace_root: str | None,
         parent_hierarchical_number: str,
         parent_title: str,
-    ) -> str | None:
+    ) -> SplitCommitResult | None:
         if self._git_checkpoint_service is None:
             return None
         if not isinstance(workspace_root, str) or not workspace_root.strip():
@@ -599,11 +622,25 @@ class SplitService:
         try:
             if not self._git_checkpoint_service.probe_git_initialized(project_path):
                 return None
+            initial_sha = self._git_checkpoint_service.capture_head_sha(project_path)
             commit_message = self._git_checkpoint_service.build_commit_message(
                 parent_hierarchical_number,
                 f"split {parent_title}".strip() or "split task",
             )
-            return self._git_checkpoint_service.commit_if_changed(project_path, commit_message)
+            committed_sha = self._git_checkpoint_service.commit_if_changed(project_path, commit_message)
+            if committed_sha:
+                return {
+                    "initialSha": initial_sha,
+                    "headSha": committed_sha,
+                    "commitMessage": commit_message,
+                    "committed": True,
+                }
+            return {
+                "initialSha": initial_sha,
+                "headSha": initial_sha,
+                "commitMessage": commit_message,
+                "committed": False,
+            }
         except Exception:
             logger.warning(
                 "Failed to commit split projection for %s (%s)",
