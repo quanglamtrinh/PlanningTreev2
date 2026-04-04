@@ -269,10 +269,59 @@ describe('ConversationFeed', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand diff' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff for app.ts' }))
     const toolRow = screen.getByTestId('conversation-item-tool')
     expect(toolRow).toHaveTextContent(/const\s+ready\s*=\s*true;/)
     expect(toolRow).not.toHaveTextContent(/PS > powershell\.exe/i)
+  })
+
+  it('shows per-file diff content and +/- stats for multi-file patch payloads', () => {
+    render(
+      <ConversationFeed
+        snapshot={makeSnapshot({
+          items: [
+            makeCommandTool({
+              id: 'tool-multi-1',
+              status: 'completed',
+              title: 'apply_patch',
+              toolName: 'apply_patch',
+              argumentsText: [
+                '*** Begin Patch',
+                '*** Update File: src/a.ts',
+                '@@',
+                '-const a = 1',
+                '+const a = 2',
+                '*** Update File: src/b.ts',
+                '@@',
+                "-console.log('old')",
+                "+console.log('new')",
+                '*** End Patch',
+              ].join('\n'),
+              outputText: 'Updated 2 files',
+              outputFiles: [
+                { path: 'src/a.ts', changeType: 'updated', summary: null },
+                { path: 'src/b.ts', changeType: 'updated', summary: null },
+              ],
+              exitCode: 0,
+            }),
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn()}
+      />,
+    )
+
+    const toolRow = screen.getByTestId('conversation-item-tool')
+    expect(within(toolRow).getByText('2 files changed')).toBeInTheDocument()
+    expect(within(toolRow).getAllByText('+1').length).toBeGreaterThanOrEqual(2)
+    expect(within(toolRow).getAllByText('-1').length).toBeGreaterThanOrEqual(2)
+
+    fireEvent.click(within(toolRow).getByRole('button', { name: 'Expand diff for a.ts' }))
+    expect(toolRow).toHaveTextContent(/const\s+a\s*=\s*2/)
+
+    fireEvent.click(within(toolRow).getByRole('button', { name: 'Expand diff for b.ts' }))
+    expect(toolRow).toHaveTextContent(/console\.log\('new'\)/)
+    expect(toolRow).not.toHaveTextContent('No diff excerpt for this file.')
   })
 
   it('shows only the activity spinner while running (no reasoning caption or elapsed timer)', () => {

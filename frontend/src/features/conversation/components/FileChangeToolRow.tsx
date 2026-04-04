@@ -17,6 +17,17 @@ function basename(path: string): string {
   return segment?.trim() || path
 }
 
+function fileRowKey(file: ToolOutputFile): string {
+  return `${file.path}\u0000${file.changeType}`
+}
+
+const STRUCTURED_DIFF_MARKER_RE =
+  /^(?:diff --git |\+\+\+|---|@@ |\*\*\* Begin Patch|\*\*\* Update File:|\*\*\* Add File:|\*\*\* Delete File:|\*\*\* Move to:)/m
+
+function hasStructuredDiffMarkers(text: string): boolean {
+  return STRUCTURED_DIFF_MARKER_RE.test(text.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
+}
+
 function diffStatsFromText(text: string): { added: number; removed: number } {
   let added = 0
   let removed = 0
@@ -121,7 +132,32 @@ function extractPathsFromDiffGitLine(line: string): string[] {
   return paths.filter(Boolean)
 }
 
-type UnifiedDiffChunk = { relPaths: string[]; added: number; removed: number }
+function isApplyPatchFileHeader(line: string): boolean {
+  return (
+    line.startsWith('*** Update File: ') ||
+    line.startsWith('*** Add File: ') ||
+    line.startsWith('*** Delete File: ')
+  )
+}
+
+function extractApplyPatchPath(line: string): string | null {
+  const match = line.match(/^\*\*\*\s+(?:Update File|Add File|Delete File|Move to):\s+(.+)$/)
+  if (!match?.[1]) {
+    return null
+  }
+  const raw = stripGitABPrefix(match[1].trim())
+  return raw || null
+}
+
+type UnifiedDiffChunk = {
+  relPaths: string[]
+  added: number
+  removed: number
+  /** Inclusive start index in split lines (the `diff --git` line). */
+  startLine: number
+  /** Exclusive end index (first line after this hunk). */
+  endLine: number
+}
 
 /** Split unified diff into one record per `diff --git` hunk. */
 function parseUnifiedDiffChunks(outputText: string): UnifiedDiffChunk[] {
@@ -134,24 +170,64 @@ function parseUnifiedDiffChunks(outputText: string): UnifiedDiffChunk[] {
   let i = 0
   while (i < lines.length) {
     const line = lines[i]
-    if (!line.startsWith('diff --git ')) {
+    if (line.startsWith('diff --git ')) {
+      const startLine = i
+      const relPaths = extractPathsFromDiffGitLine(line)
+      i += 1
+      let added = 0
+      let removed = 0
+      while (i < lines.length && !lines[i].startsWith('diff --git ') && !isApplyPatchFileHeader(lines[i])) {
+        const L = lines[i]
+        if (L.startsWith('+') && !L.startsWith('+++')) {
+          added += 1
+        } else if (L.startsWith('-') && !L.startsWith('---')) {
+          removed += 1
+        }
+        i += 1
+      }
+      const endLine = i
+      chunks.push({ relPaths, added, removed, startLine, endLine })
+      continue
+    }
+    if (isApplyPatchFileHeader(line)) {
+      const startLine = i
+      const relPaths: string[] = []
+      const headerPath = extractApplyPatchPath(line)
+      if (headerPath) {
+        relPaths.push(headerPath)
+      }
+      i += 1
+      let added = 0
+      let removed = 0
+      while (i < lines.length && !lines[i].startsWith('diff --git ') && !isApplyPatchFileHeader(lines[i])) {
+        const L = lines[i]
+        if (L.startsWith('*** End Patch')) {
+          break
+        }
+        if (L.startsWith('*** Move to: ')) {
+          const movePath = extractApplyPatchPath(L)
+          if (movePath) {
+            relPaths.push(movePath)
+          }
+          i += 1
+          continue
+        }
+        if (L.startsWith('+') && !L.startsWith('+++')) {
+          added += 1
+        } else if (L.startsWith('-') && !L.startsWith('---')) {
+          removed += 1
+        }
+        i += 1
+      }
+      const endLine = i
+      chunks.push({ relPaths, added, removed, startLine, endLine })
+      continue
+    }
+    if (line.startsWith('*** End Patch')) {
       i += 1
       continue
     }
-    const relPaths = extractPathsFromDiffGitLine(line)
     i += 1
-    let added = 0
-    let removed = 0
-    while (i < lines.length && !lines[i].startsWith('diff --git ')) {
-      const L = lines[i]
-      if (L.startsWith('+') && !L.startsWith('+++')) {
-        added += 1
-      } else if (L.startsWith('-') && !L.startsWith('---')) {
-        removed += 1
-      }
-      i += 1
-    }
-    chunks.push({ relPaths, added, removed })
   }
   return chunks
 }
@@ -181,7 +257,10 @@ function scorePathAgainstChunk(relPaths: readonly string[], fileNorm: string): n
   return best
 }
 
-function statsFromChunksForPath(chunks: readonly UnifiedDiffChunk[], filePath: string): { added: number; removed: number } | null {
+function findBestChunkForPath(
+  chunks: readonly UnifiedDiffChunk[],
+  filePath: string,
+): UnifiedDiffChunk | null {
   const fileNorm = normalizePathForMatch(filePath)
   if (!fileNorm) {
     return null
@@ -198,7 +277,33 @@ function statsFromChunksForPath(chunks: readonly UnifiedDiffChunk[], filePath: s
   if (!bestChunk || bestScore < 500) {
     return null
   }
-  return { added: bestChunk.added, removed: bestChunk.removed }
+  return bestChunk
+}
+
+function fallbackChunkByOrder(chunks: readonly UnifiedDiffChunk[], fileIndex: number): UnifiedDiffChunk | null {
+  if (chunks.length === 0) {
+    return null
+  }
+  if (fileIndex >= 0 && fileIndex < chunks.length) {
+    return chunks[fileIndex]
+  }
+  if (chunks.length === 1) {
+    return chunks[0]
+  }
+  return null
+}
+
+function resolveChunkForFile(
+  chunks: readonly UnifiedDiffChunk[],
+  filePath: string,
+  fileIndex: number,
+): UnifiedDiffChunk | null {
+  return findBestChunkForPath(chunks, filePath) ?? fallbackChunkByOrder(chunks, fileIndex)
+}
+
+function statsFromChunksForPath(chunks: readonly UnifiedDiffChunk[], filePath: string): { added: number; removed: number } | null {
+  const ch = findBestChunkForPath(chunks, filePath)
+  return ch ? { added: ch.added, removed: ch.removed } : null
 }
 
 function resolvedStatsForFile(
@@ -206,6 +311,7 @@ function resolvedStatsForFile(
   chunks: readonly UnifiedDiffChunk[],
   outputText: string,
   allowSingleBlobFallback: boolean,
+  fallbackChunk?: UnifiedDiffChunk | null,
 ): { added: number; removed: number } {
   const parsed = parseStatsFromSummary(file.summary)
   if (parsed) {
@@ -214,6 +320,9 @@ function resolvedStatsForFile(
   const fromUnified = statsFromChunksForPath(chunks, file.path)
   if (fromUnified) {
     return fromUnified
+  }
+  if (fallbackChunk) {
+    return { added: fallbackChunk.added, removed: fallbackChunk.removed }
   }
   const trimmed = outputText.replace(/\r\n/g, '\n').trim()
   if (
@@ -304,7 +413,7 @@ function diffLineDisplay(line: string): { gutter: string; body: string; rowClass
     return { gutter: '+', body: line.slice(1), rowClass: styles.fileChangeDiffRowAdd }
   }
   if (line.startsWith('-') && !line.startsWith('---')) {
-    return { gutter: '−', body: line.slice(1), rowClass: styles.fileChangeDiffRowDel }
+    return { gutter: '-', body: line.slice(1), rowClass: styles.fileChangeDiffRowDel }
   }
   return { gutter: ' ', body: line.startsWith(' ') ? line.slice(1) : line, rowClass: styles.fileChangeDiffRowCtx }
 }
@@ -341,7 +450,7 @@ function IconCopy() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
-        d="M8 8V5.2c0-1.12 0-1.68.22-2.11a2 2 0 0 1 .87-.87C9.52 2 10.08 2 11.2 2h5.6c1.12 0 1.68 0 2.11.22a2 2 0 0 1 .87.87C20 3.52 20 4.08 20 5.2v5.6c0 1.12 0 1.68-.22 2.11a2 2 0 0 1-.87.87C18.48 14 17.92 14 16.8 14H14M5.2 22h5.6c1.12 0 1.68 0 2.11-.22a2 2 0 0 0 .87-.87c.22-.43.22-.99.22-2.11v-5.6c0-1.12 0-1.68-.22-2.11a2 2 0 0 0-.87-.87C12.48 10 11.92 10 10.8 10H5.2c-1.12 0-1.68 0-2.11.22a2 2 0 0 0-.87.87C2 11.52 2 12.08 2 13.2v5.6c0 1.12 0 1.68.22 2.11.22.43.87.87.87.87 1.43.22 1.99.22Z"
+        d="M8 8V5.2c0-1.12 0-1.68.22-2.11a2 2 0 0 1 .87-.87C9.52 2 10.08 2 11.2 2h5.6c1.12 0 1.68 0 2.11.22a2 2 0 0 1 .87.87C20 3.52 20 4.08 20 5.2v5.6c0 1.12 0 1.68-.22 2.11a2 2 0 0 1-.87.87C18.48 14 17.92 14 16.8 14H14M5.2 22h5.6c1.12 0 1.68 0 2.11-.22a2 2 0 0 0 .87-.87c.22-.43.22-.99.22-2.11v-5.6c0-1.12 0-1.68-.22-2.11a2 2 0 0 0-.87-.87C12.48 10 11.92 10 10.8 10H5.2c-1.12 0-1.68 0-2.11.22a2 2 0 0 0-.87.87C2 11.52 2 12.08 2 13.2v5.6c0 1.12 0 1.68.22 2.11a2 2 0 0 0 .87.87c.43.22.99.22 2.11.22Z"
         stroke="currentColor"
         strokeWidth="1.5"
         strokeLinecap="round"
@@ -383,6 +492,27 @@ function IconMore() {
   )
 }
 
+function IconChevronDown({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      className={`${styles.fileChangeRowChevron} ${open ? styles.fileChangeRowChevronOpen : ''}`}
+    >
+      <path
+        d="M7 10l5 5 5-5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 export function FileChangeToolRow({
   item,
   isExpanded = false,
@@ -397,11 +527,17 @@ export function FileChangeToolRow({
   const headline = getToolHeadline(item)
   const sourceText = useMemo(() => {
     const out = item.outputText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-    const args = item.argumentsText?.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim() ?? ''
+    const args = item.argumentsText?.replace(/\r\n/g, '\n').replace(/\r/g, '\n') ?? ''
+    if (hasStructuredDiffMarkers(out)) {
+      return out
+    }
+    if (hasStructuredDiffMarkers(args)) {
+      return args
+    }
     if (out.trim()) {
       return out
     }
-    return args
+    return args.trim() ? args : ''
   }, [item.argumentsText, item.outputText])
 
   const hasArguments = Boolean(item.argumentsText?.trim())
@@ -416,10 +552,14 @@ export function FileChangeToolRow({
   const diffChunks = useMemo(() => parseUnifiedDiffChunks(sourceText), [sourceText])
   const multiFileRows = useMemo(
     () =>
-      item.outputFiles.map((file) => ({
-        file,
-        ...resolvedStatsForFile(file, diffChunks, sourceText, item.outputFiles.length <= 1),
-      })),
+      item.outputFiles.map((file, index) => {
+        const chunk = resolveChunkForFile(diffChunks, file.path, index)
+        return {
+          file,
+          chunk,
+          ...resolvedStatsForFile(file, diffChunks, sourceText, item.outputFiles.length <= 1, chunk),
+        }
+      }),
     [diffChunks, item.outputFiles, sourceText],
   )
 
@@ -448,7 +588,12 @@ export function FileChangeToolRow({
   }, [sourceText])
 
   const [menuOpen, setMenuOpen] = useState(false)
+  const [expandedMultiKey, setExpandedMultiKey] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setExpandedMultiKey(null)
+  }, [item.id])
 
   useEffect(() => {
     if (!menuOpen) {
@@ -500,7 +645,7 @@ export function FileChangeToolRow({
                 <span className={styles.fileChangeMultiTitle}>{multiFileLabel}</span>
                 <span className={styles.fileChangeStats}>
                   <span className={styles.fileChangeStatAdd}>+{stats.added}</span>
-                  <span className={styles.fileChangeStatDel}>−{stats.removed}</span>
+                  <span className={styles.fileChangeStatDel}>-{stats.removed}</span>
                 </span>
               </div>
               <div className={styles.fileChangeHeaderActions}>
@@ -513,17 +658,6 @@ export function FileChangeToolRow({
                 >
                   <IconCopy />
                 </button>
-                {canToggle ? (
-                  <button
-                    type="button"
-                    className={styles.fileChangeIconBtn}
-                    aria-expanded={showBody}
-                    aria-label={showBody ? 'Collapse diff' : 'Expand diff'}
-                    onClick={() => onToggle?.(item.id)}
-                  >
-                    <IconExpandVertical expanded={showBody} />
-                  </button>
-                ) : null}
                 <div className={styles.fileChangeMenuWrap} ref={menuRef}>
                   <button
                     type="button"
@@ -560,15 +694,74 @@ export function FileChangeToolRow({
               </div>
             </header>
             <ul className={styles.fileChangeMultiList} aria-label="Changed files">
-              {multiFileRows.map(({ file, added, removed }) => (
-                <li key={`${file.path}-${file.changeType}`} className={styles.fileChangeMultiRow}>
-                  <span className={styles.fileChangeMultiPath}>{file.path}</span>
-                  <span className={styles.fileChangeMultiRowStats}>
-                    <span className={styles.fileChangeStatAdd}>+{added}</span>
-                    <span className={styles.fileChangeStatDel}>−{removed}</span>
-                  </span>
-                </li>
-              ))}
+              {multiFileRows.map(({ file, added, removed, chunk }) => {
+                const rowKey = fileRowKey(file)
+                const rowOpen = expandedMultiKey === rowKey
+                const rowLines =
+                  chunk != null
+                    ? lines.slice(chunk.startLine, chunk.endLine)
+                    : diffChunks.length === 0 && lines.length > 0
+                      ? lines
+                      : []
+                const displayName = basename(file.path)
+                return (
+                  <li key={rowKey} className={styles.fileChangeMultiItem}>
+                    <div className={styles.fileChangeMultiRow}>
+                      <div className={styles.fileChangeMultiLeft}>
+                        <span className={styles.fileChangeMultiPath} title={file.path}>
+                          {displayName}
+                        </span>
+                        <span className={styles.fileChangeMultiRowStats}>
+                          <span className={styles.fileChangeStatAdd}>+{added}</span>
+                          <span className={styles.fileChangeStatDel}>-{removed}</span>
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className={styles.fileChangeMultiChevronBtn}
+                        aria-expanded={rowOpen}
+                        aria-label={rowOpen ? `Collapse diff for ${displayName}` : `Expand diff for ${displayName}`}
+                        onClick={() =>
+                          setExpandedMultiKey((current) => (current === rowKey ? null : rowKey))
+                        }
+                      >
+                        <IconChevronDown open={rowOpen} />
+                      </button>
+                    </div>
+                    {rowOpen ? (
+                      <div className={styles.fileChangeMultiRowPanel}>
+                        {rowLines.length > 0 ? (
+                          <div className={styles.fileChangeViewport}>
+                            {rowLines.map((diffLine, index) => {
+                              const { gutter, body, rowClass } = diffLineDisplay(diffLine)
+                              const isAdd = rowClass === styles.fileChangeDiffRowAdd
+                              const showSyntax = isAdd || rowClass === styles.fileChangeDiffRowCtx
+                              return (
+                                <div
+                                  key={`${rowKey}-${index}-${diffLine.slice(0, 20)}`}
+                                  className={`${styles.fileChangeDiffRow} ${rowClass}`}
+                                >
+                                  <span className={styles.fileChangeLineNum}>{index + 1}</span>
+                                  <span className={styles.fileChangeGutter} aria-hidden>
+                                    {gutter}
+                                  </span>
+                                  <code className={styles.fileChangeCode}>
+                                    {showSyntax && body.trim()
+                                      ? highlightCodeLine(body, `m-${rowKey}-${index}`)
+                                      : body || ' '}
+                                  </code>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        ) : (
+                          <div className={styles.subtleText}>No diff excerpt for this file.</div>
+                        )}
+                      </div>
+                    ) : null}
+                  </li>
+                )
+              })}
             </ul>
           </>
         ) : (
@@ -583,7 +776,7 @@ export function FileChangeToolRow({
                 </span>
                 <span className={styles.fileChangeStats}>
                   <span className={styles.fileChangeStatAdd}>+{stats.added}</span>
-                  <span className={styles.fileChangeStatDel}>−{stats.removed}</span>
+                  <span className={styles.fileChangeStatDel}>-{stats.removed}</span>
                 </span>
               </div>
             </div>
@@ -631,7 +824,7 @@ export function FileChangeToolRow({
           </header>
         )}
 
-        {showBody && lines.length > 0 ? (
+        {showBody && !isMultiFile && lines.length > 0 ? (
           <div className={styles.fileChangeBody}>
             <div className={styles.fileChangeViewport}>
               {lines.map((line, index) => {
@@ -666,7 +859,7 @@ export function FileChangeToolRow({
           </div>
         ) : null}
 
-        {showBody && !hasMeaningfulBody ? (
+        {showBody && !isMultiFile && !hasMeaningfulBody ? (
           <div className={styles.subtleText}>{getToolPlaceholderText(item)}</div>
         ) : null}
       </div>

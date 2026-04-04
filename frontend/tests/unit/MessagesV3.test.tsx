@@ -532,7 +532,7 @@ describe('MessagesV3', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand diff' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff for app.ts' }))
     const toolRow = screen.getByTestId('conversation-v3-item-tool')
     expect(toolRow).toHaveTextContent(/const\s+ready\s*=\s*true;/)
     expect(toolRow).not.toHaveTextContent(/PS > powershell\.exe/i)

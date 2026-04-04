@@ -428,12 +428,7 @@ class ThreadRuntimeService:
             events: list[dict[str, Any]] = []
 
             if method == "item/started":
-                params = raw_event.get("params", {})
-                item = params.get("item", {}) if isinstance(params, dict) else {}
-                if isinstance(item, dict):
-                    call_id = str(item.get("callId") or item.get("call_id") or "").strip()
-                    if call_id and call_id in provisional_tool_calls:
-                        provisional_tool_calls[call_id]["matched"] = True
+                self._enrich_started_item_from_provisional_call(raw_event, provisional_tool_calls)
 
             if method == "turn/completed":
                 params = raw_event.get("params", {})
@@ -498,6 +493,71 @@ class ThreadRuntimeService:
         if normalized in {"failed", "error", "interrupted", "cancelled"}:
             return "failed"
         return "completed"
+
+    @staticmethod
+    def _looks_like_patch_text(text: str) -> bool:
+        normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+        return (
+            "*** Begin Patch" in normalized
+            or "diff --git " in normalized
+            or "\n@@ " in f"\n{normalized}"
+            or "\n+++ " in f"\n{normalized}"
+            or "\n--- " in f"\n{normalized}"
+        )
+
+    @classmethod
+    def _tool_call_arguments_text(cls, arguments: Any) -> str | None:
+        if isinstance(arguments, str):
+            trimmed = arguments.strip()
+            return trimmed or None
+
+        if isinstance(arguments, dict):
+            for key in ("input", "patch", "diff", "content", "text", "value", "body"):
+                raw = arguments.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    return raw
+            for raw in arguments.values():
+                if isinstance(raw, str) and cls._looks_like_patch_text(raw):
+                    return raw
+            if arguments:
+                return json.dumps(arguments, ensure_ascii=True, sort_keys=True)
+
+        return None
+
+    @classmethod
+    def _enrich_started_item_from_provisional_call(
+        cls,
+        raw_event: dict[str, Any],
+        provisional_tool_calls: dict[str, dict[str, Any]],
+    ) -> None:
+        params = raw_event.get("params", {})
+        item = params.get("item", {}) if isinstance(params, dict) else {}
+        if not isinstance(item, dict):
+            return
+
+        call_id = str(item.get("callId") or item.get("call_id") or "").strip()
+        if not call_id:
+            return
+        record = provisional_tool_calls.get(call_id)
+        if not isinstance(record, dict):
+            return
+
+        record["matched"] = True
+
+        if not item.get("toolName") and record.get("toolName"):
+            item["toolName"] = record.get("toolName")
+
+        item_type = str(item.get("type") or "").strip()
+        if item_type != "fileChange":
+            return
+
+        existing = item.get("argumentsText")
+        if isinstance(existing, str) and existing.strip():
+            return
+
+        arguments_text = cls._tool_call_arguments_text(record.get("arguments"))
+        if isinstance(arguments_text, str) and arguments_text.strip():
+            item["argumentsText"] = arguments_text
 
     def build_error_item_for_turn(
         self,
@@ -572,12 +632,7 @@ class ThreadRuntimeService:
             events: list[dict[str, Any]] = []
 
             if method == "item/started":
-                params = raw_event.get("params", {})
-                item = params.get("item", {}) if isinstance(params, dict) else {}
-                if isinstance(item, dict):
-                    call_id = str(item.get("callId") or item.get("call_id") or "").strip()
-                    if call_id and call_id in provisional_tool_calls:
-                        provisional_tool_calls[call_id]["matched"] = True
+                self._enrich_started_item_from_provisional_call(raw_event, provisional_tool_calls)
 
             if method == "turn/completed":
                 params = raw_event.get("params", {})

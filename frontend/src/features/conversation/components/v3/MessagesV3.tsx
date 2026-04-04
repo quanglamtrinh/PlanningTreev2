@@ -726,6 +726,36 @@ function ToolRowV3({
   )
 }
 
+function diffItemV3ToSyntheticFileChangeTool(item: Extract<ConversationItemV3, { kind: 'diff' }>): ToolItemV2 {
+  const patches = item.files.map((f) => (f.patchText ?? '').trim()).filter(Boolean)
+  const outputText = patches.join('\n\n')
+  return {
+    id: item.id,
+    kind: 'tool',
+    threadId: item.threadId,
+    turnId: item.turnId,
+    sequence: item.sequence,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    status: item.status,
+    source: item.source,
+    tone: item.tone,
+    metadata: item.metadata,
+    toolType: 'fileChange',
+    title: item.title ?? 'File changes',
+    toolName: null,
+    callId: null,
+    argumentsText: item.summaryText,
+    outputText,
+    outputFiles: item.files.map((f) => ({
+      path: f.path,
+      changeType: f.changeType,
+      summary: f.summary,
+    })),
+    exitCode: null,
+  }
+}
+
 function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'review' }> }) {
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-review">
@@ -764,7 +794,29 @@ function ExploreRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'exp
   )
 }
 
-function DiffRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'diff' }> }) {
+function DiffRowV3({
+  item,
+  executionLane,
+  isExpanded,
+  onToggle,
+}: {
+  item: Extract<ConversationItemV3, { kind: 'diff' }>
+  executionLane: boolean
+  isExpanded: boolean
+  onToggle: (itemId: string) => void
+}) {
+  if (executionLane && item.files.length > 0) {
+    const synthetic = diffItemV3ToSyntheticFileChangeTool(item)
+    return (
+      <FileChangeToolRow
+        item={synthetic}
+        isExpanded={isExpanded}
+        onToggle={onToggle}
+        dataTestId="conversation-v3-item-diff"
+      />
+    )
+  }
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-diff">
       <div className={styles.rowRail}>
@@ -1084,6 +1136,7 @@ function renderItemRowV3({
   expandedItemIds,
   onToggleExpanded,
   onRequestAutoScroll,
+  executionLane,
 }: {
   item: ConversationItemV3
   requestMapByRequestId: Map<string, PendingUserInputRequestV3>
@@ -1091,6 +1144,7 @@ function renderItemRowV3({
   expandedItemIds: Set<string>
   onToggleExpanded: (itemId: string) => void
   onRequestAutoScroll: () => void
+  executionLane: boolean
 }) {
   if (item.kind === 'message') {
     return <MessageRowV3 item={item} />
@@ -1119,7 +1173,14 @@ function renderItemRowV3({
     return <ReviewRowV3 item={item} />
   }
   if (item.kind === 'diff') {
-    return <DiffRowV3 item={item} />
+    return (
+      <DiffRowV3
+        item={item}
+        executionLane={executionLane}
+        isExpanded={expandedItemIds.has(item.id)}
+        onToggle={onToggleExpanded}
+      />
+    )
   }
   if (item.kind === 'explore') {
     return <ExploreRowV3 item={item} />
@@ -1223,6 +1284,7 @@ export function MessagesV3({
     [requestMapByRequestId, visibleState.visibleItems],
   )
   const groupedEntries = useMemo(() => buildToolGroupsV3(visibleItems), [visibleItems])
+  const executionLane = snapshot?.lane === 'execution'
 
   const requestAutoScroll = useCallback(() => {
     const container = containerRef.current
@@ -1467,6 +1529,7 @@ export function MessagesV3({
               expandedItemIds,
               onToggleExpanded: toggleExpanded,
               onRequestAutoScroll: requestAutoScroll,
+              executionLane,
             })}
           </div>
         )
@@ -1522,6 +1585,7 @@ export function MessagesV3({
                           expandedItemIds,
                           onToggleExpanded: toggleExpanded,
                           onRequestAutoScroll: requestAutoScroll,
+                          executionLane,
                         })}
                       </div>
                     )
@@ -1535,6 +1599,7 @@ export function MessagesV3({
     },
     [
       collapsedToolGroupIds,
+      executionLane,
       expandedItemIds,
       requestMapByRequestId,
       requestAutoScroll,

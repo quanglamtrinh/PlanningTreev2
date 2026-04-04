@@ -607,26 +607,36 @@
   padding: 0;
 }
 
-.fileChangeMultiRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px 12px;
-  padding: 10px 14px;
+.fileChangeMultiItem {
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 38%, transparent);
-  font-size: 12.5px;
-  line-height: 1.45;
 }
 
-.fileChangeMultiRow:last-child {
+.fileChangeMultiItem:last-child {
   border-bottom: none;
 }
 
-.fileChangeMultiPath {
-  font-family: var(--font-mono);
-  flex: 1;
+.fileChangeMultiRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.fileChangeMultiLeft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
   min-width: 0;
+  flex: 1;
+}
+
+.fileChangeMultiPath {
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-weight: 500;
   color: var(--text-primary);
   overflow-wrap: anywhere;
 }
@@ -639,6 +649,47 @@
   font-family: var(--font-mono);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.fileChangeMultiChevronBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.fileChangeMultiChevronBtn:hover {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.fileChangeRowChevron {
+  transition: transform 0.15s ease;
+}
+
+.fileChangeRowChevronOpen {
+  transform: rotate(180deg);
+}
+
+.fileChangeMultiRowPanel {
+  padding: 0 8px 12px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 28%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+}
+
+.fileChangeMultiRowPanel .fileChangeViewport {
+  max-height: 280px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 80%, transparent);
+  background: var(--bg-surface);
 }
 
 .fileChangeHeader {
