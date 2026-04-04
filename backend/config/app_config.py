@@ -105,6 +105,14 @@ def is_execution_audit_v2_rehearsal_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def is_ask_v3_backend_enabled() -> bool:
+    return _bool_env("PLANNINGTREE_ASK_V3_BACKEND_ENABLED", default=True)
+
+
+def is_ask_v3_frontend_enabled() -> bool:
+    return _bool_env("PLANNINGTREE_ASK_V3_FRONTEND_ENABLED", default=True)
+
+
 def get_rehearsal_workspace_root() -> Optional[Path]:
     raw = str(os.environ.get("PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT", "") or "").strip()
     if not raw:
@@ -175,3 +183,14 @@ def _find_windows_vscode_codex() -> Path | None:
         return None
     candidates.sort(key=lambda item: item.stat().st_mtime, reverse=True)
     return candidates[0]
+
+
+def _bool_env(name: str, *, default: bool) -> bool:
+    raw = str(os.environ.get(name, "") or "").strip().lower()
+    if not raw:
+        return bool(default)
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)

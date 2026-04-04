@@ -297,6 +297,9 @@ function scheduleStreamReopen(
   generation: number,
 ) {
   clearReconnectTimer()
+  if (threadRole === 'ask_planning') {
+    void api.reportAskRolloutMetricEvent('stream_reconnect').catch(() => undefined)
+  }
   set((state) => ({
     streamStatus: 'reconnecting',
     telemetry: {
@@ -498,6 +501,9 @@ function openThreadEventStream(
       applyEnvelope(event)
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
+      if (threadRole === 'ask_planning') {
+        void api.reportAskRolloutMetricEvent('stream_error').catch(() => undefined)
+      }
       set({
         error: reason,
         streamStatus: 'error',
@@ -517,6 +523,9 @@ function openThreadEventStream(
     const state = get()
     if (!isActiveTarget(state, projectId, nodeId, threadId, threadRole)) {
       return
+    }
+    if (threadRole === 'ask_planning') {
+      void api.reportAskRolloutMetricEvent('stream_error').catch(() => undefined)
     }
     closeThreadEventSource()
     scheduleStreamReopen(get, set, projectId, nodeId, threadId, threadRole, generation)

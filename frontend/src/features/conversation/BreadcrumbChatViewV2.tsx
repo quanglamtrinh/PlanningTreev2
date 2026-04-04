@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { ThreadRole } from '../../api/types'
-import { api } from '../../api/client'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
 import { NodeDetailCard } from '../node/NodeDetailCard'
@@ -44,7 +43,6 @@ export function BreadcrumbChatViewV2() {
   const [searchParams] = useSearchParams()
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
-  const askBootstrapAttemptedRef = useRef<string | null>(null)
 
   const {
     snapshot: conversationSnapshotV3,
@@ -260,49 +258,6 @@ export function BreadcrumbChatViewV2() {
     }
     return null
   }, [threadTab, workflowState])
-
-  useEffect(() => {
-    if (
-      !projectId ||
-      !nodeId ||
-      !detailNode ||
-      !snapshot ||
-      snapshot.project.id !== projectId ||
-      shouldCanonicalizeV2 ||
-      threadTab !== 'ask' ||
-      !workflowState ||
-      workflowState.askThreadId
-    ) {
-      return
-    }
-    const bootstrapKey = `${projectId}::${nodeId}`
-    if (askBootstrapAttemptedRef.current === bootstrapKey) {
-      return
-    }
-    askBootstrapAttemptedRef.current = bootstrapKey
-    let cancelled = false
-    void api
-      .getThreadSnapshotV2(projectId, nodeId, 'ask_planning')
-      .then(() => {
-        if (cancelled) {
-          return
-        }
-        return loadWorkflowState(projectId, nodeId)
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [
-    detailNode,
-    loadWorkflowState,
-    nodeId,
-    projectId,
-    shouldCanonicalizeV2,
-    snapshot,
-    threadTab,
-    workflowState,
-  ])
 
   useEffect(() => {
     if (

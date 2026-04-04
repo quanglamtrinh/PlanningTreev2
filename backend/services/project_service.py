@@ -4,7 +4,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from backend.config.app_config import get_codex_cmd
+from backend.config.app_config import (
+    get_codex_cmd,
+    is_ask_v3_backend_enabled,
+    is_ask_v3_frontend_enabled,
+)
 from backend.errors.app_errors import ChatNotAllowed, InvalidProjectFolder, InvalidRequest, ProjectNotFound
 from backend.services import planningtree_workspace
 from backend.services.snapshot_view_service import SnapshotViewService
@@ -33,6 +37,8 @@ class ProjectService:
             "workspace_configured": True,
             "codex_available": codex_path is not None,
             "codex_path": codex_path,
+            "ask_v3_backend_enabled": is_ask_v3_backend_enabled(),
+            "ask_v3_frontend_enabled": is_ask_v3_frontend_enabled(),
         }
 
     def list_projects(self) -> list[dict[str, Any]]:

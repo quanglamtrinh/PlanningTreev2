@@ -7,6 +7,7 @@ const { apiMock } = vi.hoisted(() => ({
     startThreadTurnByIdV3: vi.fn(),
     resolveThreadUserInputByIdV3: vi.fn(),
     planActionByIdV3: vi.fn(),
+    reportAskRolloutMetricEvent: vi.fn().mockResolvedValue({ ok: true }),
   },
 }))
 
@@ -428,6 +429,31 @@ describe('threadByIdStoreV3', () => {
       })
 
       expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports ask stream reconnect/error events to rollout metrics API', async () => {
+    vi.useFakeTimers()
+    try {
+      apiMock.getThreadSnapshotByIdV3
+        .mockResolvedValueOnce(makeSnapshot({ threadId: 'ask-thread-1', lane: 'ask' }))
+        .mockResolvedValueOnce(makeSnapshot({ threadId: 'ask-thread-1', lane: 'ask', snapshotVersion: 2 }))
+
+      await act(async () => {
+        await useThreadByIdStoreV3
+          .getState()
+          .loadThread('project-1', 'node-1', 'ask-thread-1', 'ask_planning')
+      })
+
+      const eventSource = getEventSourceMock().instances[0]
+      await act(async () => {
+        eventSource.emitError()
+      })
+
+      expect(apiMock.reportAskRolloutMetricEvent).toHaveBeenCalledWith('stream_error')
+      expect(apiMock.reportAskRolloutMetricEvent).toHaveBeenCalledWith('stream_reconnect')
     } finally {
       vi.useRealTimers()
     }

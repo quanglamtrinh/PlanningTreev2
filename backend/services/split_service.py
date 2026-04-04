@@ -321,10 +321,21 @@ class SplitService:
             self._storage.project_store.save_snapshot(project_id, snapshot)
             snapshot["project"] = self._storage.project_store.touch_meta(project_id, now)
             self._sync_snapshot_tree(snapshot)
+            split_commit_sha = self._commit_split_projection(
+                workspace_root=workspace_root,
+                parent_hierarchical_number=parent_hnum,
+                parent_title=parent_title,
+            )
+            if split_commit_sha:
+                review_state["k0_git_head_sha"] = split_commit_sha
+                self._storage.review_state_store.write_state(
+                    project_id, review_node_id, review_state
+                )
             return {
                 "workspace_root": workspace_root,
                 "review_node_id": review_node_id,
                 "first_child_id": first_child_id,
+                "split_commit_sha": split_commit_sha,
             }
 
     def _ensure_split_thread(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
@@ -572,6 +583,35 @@ class SplitService:
         if not workspace_root:
             return
         planningtree_workspace.sync_snapshot_tree(Path(workspace_root), snapshot)
+
+    def _commit_split_projection(
+        self,
+        *,
+        workspace_root: str | None,
+        parent_hierarchical_number: str,
+        parent_title: str,
+    ) -> str | None:
+        if self._git_checkpoint_service is None:
+            return None
+        if not isinstance(workspace_root, str) or not workspace_root.strip():
+            return None
+        project_path = Path(workspace_root).expanduser().resolve()
+        try:
+            if not self._git_checkpoint_service.probe_git_initialized(project_path):
+                return None
+            commit_message = self._git_checkpoint_service.build_commit_message(
+                parent_hierarchical_number,
+                f"split {parent_title}".strip() or "split task",
+            )
+            return self._git_checkpoint_service.commit_if_changed(project_path, commit_message)
+        except Exception:
+            logger.warning(
+                "Failed to commit split projection for %s (%s)",
+                parent_hierarchical_number,
+                parent_title,
+                exc_info=True,
+            )
+            return None
 
     def _is_missing_thread_error(self, exc: Exception) -> bool:
         message = str(exc).lower()

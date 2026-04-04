@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type Key } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -17,6 +17,43 @@ type DecisionCard = {
   eyebrow: string
   title: string
   body: string
+}
+
+type ShellPiece =
+  | { kind: 'qa'; n: number; label: string; markdown: string }
+  | { kind: 'qa-empty'; n: number; label: string }
+  | { kind: 'body'; markdown: string }
+  | { kind: 'section'; section: Exclude<Section, { kind: 'h1' } | { kind: 'h2' }> }
+
+function buildShellPieces(sections: Section[]): ShellPiece[] {
+  const pieces: ShellPiece[] = []
+  let i = 0
+  let n = 0
+
+  while (i < sections.length) {
+    const s = sections[i]
+    if (s.kind === 'h1' || s.kind === 'h2') {
+      n += 1
+      const next = sections[i + 1]
+      if (next?.kind === 'body') {
+        pieces.push({ kind: 'qa', n, label: s.text, markdown: next.markdown })
+        i += 2
+      } else {
+        pieces.push({ kind: 'qa-empty', n, label: s.text })
+        i += 1
+      }
+      continue
+    }
+    if (s.kind === 'body') {
+      pieces.push({ kind: 'body', markdown: s.markdown })
+      i += 1
+      continue
+    }
+    pieces.push({ kind: 'section', section: s })
+    i += 1
+  }
+
+  return pieces
 }
 
 // ─── Parser ────────────────────────────────────────────────────────
@@ -186,71 +223,562 @@ const mdComponents: Components = {
   ),
 }
 
+// ─── Metadata shell: styled blocks (frame sections) ─
+
+type ShellFrameBlockVariant =
+  | 'userStory'
+  | 'functional'
+  | 'success'
+  | 'outOfScope'
+  | 'taskShaping'
+  | 'default'
+
+function shellFrameBlockVariant(label: string): ShellFrameBlockVariant {
+  const t = label.toLowerCase().replace(/\u00a0/g, ' ')
+  if (t.includes('user story') || (t.includes('problem') && t.includes('user'))) {
+    return 'userStory'
+  }
+  if (t.includes('functional requirement')) {
+    return 'functional'
+  }
+  if (t.includes('success criteria')) {
+    return 'success'
+  }
+  if (t.includes('out of scope')) {
+    return 'outOfScope'
+  }
+  if (t.includes('task-shaping') || t.includes('task shaping')) {
+    return 'taskShaping'
+  }
+  return 'default'
+}
+
+function parseUserStoryItems(md: string): { title: string; description: string }[] {
+  const t = md.trim()
+  if (!t) {
+    return []
+  }
+  if (!/^\s*###\s/m.test(t)) {
+    return [{ title: '', description: t }]
+  }
+  const chunks = t
+    .split(/(?=^###\s)/m)
+    .map((c) => c.trim())
+    .filter(Boolean)
+  return chunks.map((chunk) => {
+    const lines = chunk.split('\n')
+    const title = lines[0].replace(/^###\s*/, '').trim()
+    const description = lines.slice(1).join('\n').trim()
+    return { title, description }
+  })
+}
+
+function splitMarkdownListItems(md: string): string[] {
+  const lines = md.split('\n')
+  const items: string[] = []
+  for (const line of lines) {
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/)
+    const numbered = line.match(/^\s*\d+\.\s+(.*)$/)
+    const m = bullet ?? numbered
+    if (m) {
+      items.push(m[1].trim())
+    }
+  }
+  if (items.length === 0 && md.trim()) {
+    return [md.trim()]
+  }
+  return items
+}
+
+type TaskShapingRow = { label: string; value: string }
+
+function parseTaskShapingFields(md: string): TaskShapingRow[] {
+  const lines = md.split('\n')
+  const rows: TaskShapingRow[] = []
+  const kv = /^\s*[-*]\s*(.+?):\s*(.*)$/
+  for (const line of lines) {
+    const m = line.match(kv)
+    if (m) {
+      rows.push({ label: m[1].trim(), value: m[2].trim() })
+    }
+  }
+  if (rows.length > 0) {
+    return rows
+  }
+  for (const line of lines) {
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/)
+    if (bullet) {
+      rows.push({ label: bullet[1].trim(), value: '' })
+    }
+  }
+  return rows
+}
+
+function formatShapingFieldLabel(key: string): string {
+  return key.replace(/\s+/g, ' ').trim().toUpperCase()
+}
+
+const mdShellStoryDesc: Components = {
+  p: ({ children }) => <p className={styles.shellStoryDescP}>{children}</p>,
+  strong: ({ children }) => <strong className={styles.shellStoryDescStrong}>{children}</strong>,
+  code: ({ className, children }) => {
+    if (className?.startsWith('language-')) {
+      return <code className={styles.codeBlock}>{children}</code>
+    }
+    return <code className={styles.shellInlineAccent}>{children}</code>
+  },
+}
+
+const mdShellFrItem: Components = {
+  p: ({ children }) => <p className={styles.shellFrItemP}>{children}</p>,
+  strong: ({ children }) => <strong className={styles.shellFrItemStrong}>{children}</strong>,
+  code: ({ className, children }) => {
+    if (className?.startsWith('language-')) {
+      return <code className={styles.codeBlock}>{children}</code>
+    }
+    return <code className={styles.shellInlineAccent}>{children}</code>
+  },
+}
+
+const mdShellSuccessItem: Components = {
+  p: ({ children }) => <p className={styles.shellSuccessItemP}>{children}</p>,
+  strong: ({ children }) => <strong className={styles.shellSuccessItemStrong}>{children}</strong>,
+  code: ({ className, children }) => {
+    if (className?.startsWith('language-')) {
+      return <code className={styles.codeBlock}>{children}</code>
+    }
+    return <code className={styles.shellInlineAccent}>{children}</code>
+  },
+}
+
+const mdShellOosItem: Components = {
+  p: ({ children }) => <p className={styles.shellOosMdP}>{children}</p>,
+  strong: ({ children }) => <strong className={styles.shellOosStrong}>{children}</strong>,
+  code: ({ className, children }) => {
+    if (className?.startsWith('language-')) {
+      return <code className={styles.codeBlock}>{children}</code>
+    }
+    return <code className={styles.shellOosCode}>{children}</code>
+  },
+}
+
+function IconUserStories() {
+  return (
+    <svg
+      className={styles.shellSectionIcon}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  )
+}
+
+function IconFunctionalReq() {
+  return (
+    <svg className={styles.shellSectionIcon} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M9 2h6v4H9V2Z"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function IconSuccessCriteria() {
+  return (
+    <svg className={styles.shellSectionIcon} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10Z"
+        stroke="currentColor"
+        strokeWidth="1.75"
+      />
+      <path
+        d="m9 12 2 2 4-4"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function CheckCircleGlyph() {
+  return (
+    <svg className={styles.shellCheckCircleSvg} viewBox="0 0 20 20" fill="none" aria-hidden>
+      <circle cx="10" cy="10" r="9" fill="currentColor" />
+      <path
+        d="M6 10.2 8.5 12.7 14.2 7"
+        stroke="#fff"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function CheckSquareGlyph() {
+  return (
+    <svg className={styles.shellCheckSquareSvg} viewBox="0 0 20 20" fill="none" aria-hidden>
+      <rect x="2.5" y="2.5" width="15" height="15" rx="3" fill="currentColor" />
+      <path
+        d="M6 10.2 8.5 12.7 14.2 7"
+        stroke="#fff"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function IconOutOfScope() {
+  return (
+    <svg
+      className={styles.shellSectionIconMuted}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+      <path d="M8 12h8" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function IconTaskShaping() {
+  return (
+    <svg
+      className={styles.shellSectionIcon}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      aria-hidden
+    >
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </svg>
+  )
+}
+
+function ShellUserStoriesSection({ label, markdown }: { label: string; markdown: string }) {
+  const items = parseUserStoryItems(markdown)
+  return (
+    <section className={styles.shellStyledSection}>
+      <div className={styles.shellSectionHeading}>
+        <IconUserStories />
+        <span className={styles.shellSectionTitle}>{label}</span>
+      </div>
+      {items.length === 0 ? (
+        <span className={styles.shellQaEmpty}>No content</span>
+      ) : (
+        <div className={styles.shellUserStoryList}>
+          {items.map((item, i) => (
+            <div key={i} className={styles.shellUserStoryRow}>
+              <span className={styles.shellUserStoryIndex}>{String(i + 1).padStart(2, '0')}</span>
+              <div className={styles.shellUserStoryBody}>
+                {item.title ? (
+                  <div className={styles.shellUserStoryTitle}>{item.title}</div>
+                ) : null}
+                {item.description ? (
+                  <div className={styles.shellUserStoryDesc}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellStoryDesc}>
+                      {item.description}
+                    </ReactMarkdown>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function ShellFunctionalRequirementsSection({ label, markdown }: { label: string; markdown: string }) {
+  const items = splitMarkdownListItems(markdown)
+  return (
+    <section className={styles.shellStyledSection}>
+      <div className={styles.shellSectionHeading}>
+        <IconFunctionalReq />
+        <span className={styles.shellSectionTitle}>{label}</span>
+      </div>
+      {items.length === 0 ? (
+        <span className={styles.shellQaEmpty}>No content</span>
+      ) : (
+        <div className={styles.shellFrBox}>
+          <ul className={styles.shellFrList}>
+            {items.map((item, i) => (
+              <li key={i} className={styles.shellFrItem}>
+                <span className={styles.shellFrCheck} aria-hidden>
+                  <CheckCircleGlyph />
+                </span>
+                <div className={styles.shellFrItemBody}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellFrItem}>
+                    {item}
+                  </ReactMarkdown>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function ShellSuccessCriteriaSection({ label, markdown }: { label: string; markdown: string }) {
+  const items = splitMarkdownListItems(markdown)
+  return (
+    <section className={styles.shellStyledSection}>
+      <div className={styles.shellSectionHeading}>
+        <IconSuccessCriteria />
+        <span className={styles.shellSectionTitle}>{label}</span>
+      </div>
+      {items.length === 0 ? (
+        <span className={styles.shellQaEmpty}>No content</span>
+      ) : (
+        <ul className={styles.shellSuccessList}>
+          {items.map((item, i) => (
+            <li key={i} className={styles.shellSuccessCard}>
+              <span className={styles.shellSuccessCheck} aria-hidden>
+                <CheckSquareGlyph />
+              </span>
+              <div className={styles.shellSuccessCardBody}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellSuccessItem}>
+                  {item}
+                </ReactMarkdown>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function ShellOutOfScopeSection({ label, markdown }: { label: string; markdown: string }) {
+  const items = splitMarkdownListItems(markdown)
+  return (
+    <section className={styles.shellStyledSection}>
+      <div className={styles.shellSectionHeading}>
+        <IconOutOfScope />
+        <span className={styles.shellSectionTitle}>{label}</span>
+      </div>
+      {items.length === 0 ? (
+        <span className={styles.shellQaEmpty}>No content</span>
+      ) : (
+        <ul className={styles.shellOosList}>
+          {items.map((item, i) => (
+            <li key={i} className={styles.shellOosItem}>
+              <span className={styles.shellOosDash} aria-hidden>
+                —
+              </span>
+              <div className={styles.shellOosText}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellOosItem}>
+                  {item}
+                </ReactMarkdown>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function ShellTaskShapingSection({ label, markdown }: { label: string; markdown: string }) {
+  const rows = parseTaskShapingFields(markdown)
+  return (
+    <section className={styles.shellStyledSection}>
+      <div className={styles.shellSectionHeading}>
+        <IconTaskShaping />
+        <span className={styles.shellSectionTitle}>{label}</span>
+      </div>
+      {rows.length === 0 ? (
+        <span className={styles.shellQaEmpty}>No content</span>
+      ) : (
+        <div className={styles.shellTsfGrid}>
+          {rows.map((row, i) => (
+            <div key={`${row.label}-${i}`} className={styles.shellTsfCard}>
+              <div className={styles.shellTsfLabel}>{formatShapingFieldLabel(row.label)}</div>
+              {row.value ? (
+                <div className={styles.shellTsfValue}>{row.value}</div>
+              ) : (
+                <div className={styles.shellTsfValueEmpty}>Unset</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function renderSectionBlock(section: Section, key: Key) {
+  if (section.kind === 'h1') {
+    return <h1 key={key} className={styles.h1}>{section.text}</h1>
+  }
+
+  if (section.kind === 'h2') {
+    return <h2 key={key} className={styles.h2}>{section.text}</h2>
+  }
+
+  if (section.kind === 'callout') {
+    return (
+      <div key={key} className={styles.callout}>
+        <span className={styles.calloutLabel}>{section.label}</span>
+        {section.body && (
+          <div className={styles.calloutBody}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponentsFlat}>
+              {section.body}
+            </ReactMarkdown>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (section.kind === 'decision-grid') {
+    return (
+      <div key={key} className={styles.decisionGrid}>
+        {section.cards.map((card, j) => (
+          <div key={j} className={styles.decisionCard}>
+            <span className={styles.decisionEyebrow}>{card.eyebrow}</span>
+            {card.title && (
+              <div className={styles.decisionTitle}>{card.title}</div>
+            )}
+            {card.body && (
+              <div className={styles.decisionBody}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponentsFlat}>
+                  {card.body}
+                </ReactMarkdown>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div key={key} className={styles.body}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+        {section.markdown}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
 // ─── Component ─────────────────────────────────────────────────────
 
-export function FrameMarkdownViewer({ content }: { content: string }) {
+export function FrameMarkdownViewer({
+  content,
+  shellStyle = false,
+}: {
+  content: string
+  shellStyle?: boolean
+}) {
   const sections = useMemo(() => parseFrameContent(content), [content])
+  const shellPieces = useMemo(
+    () => (shellStyle ? buildShellPieces(sections) : null),
+    [sections, shellStyle],
+  )
 
   if (!content.trim()) {
     return null
   }
 
-  return (
-    <div className={styles.viewer}>
-      {sections.map((section, i) => {
-        if (section.kind === 'h1') {
-          return <h1 key={i} className={styles.h1}>{section.text}</h1>
-        }
-
-        if (section.kind === 'h2') {
-          return <h2 key={i} className={styles.h2}>{section.text}</h2>
-        }
-
-        if (section.kind === 'callout') {
-          return (
-            <div key={i} className={styles.callout}>
-              <span className={styles.calloutLabel}>{section.label}</span>
-              {section.body && (
-                <div className={styles.calloutBody}>
+  if (shellStyle && shellPieces) {
+    return (
+      <div className={`${styles.viewer} ${styles.viewerShell}`}>
+        {shellPieces.map((piece, i) => {
+          if (piece.kind === 'qa') {
+            const key = `qa-${piece.n}-${piece.label}`
+            const blockVariant = shellFrameBlockVariant(piece.label)
+            if (blockVariant === 'userStory') {
+              return <ShellUserStoriesSection key={key} label={piece.label} markdown={piece.markdown} />
+            }
+            if (blockVariant === 'functional') {
+              return (
+                <ShellFunctionalRequirementsSection key={key} label={piece.label} markdown={piece.markdown} />
+              )
+            }
+            if (blockVariant === 'success') {
+              return <ShellSuccessCriteriaSection key={key} label={piece.label} markdown={piece.markdown} />
+            }
+            if (blockVariant === 'outOfScope') {
+              return <ShellOutOfScopeSection key={key} label={piece.label} markdown={piece.markdown} />
+            }
+            if (blockVariant === 'taskShaping') {
+              return <ShellTaskShapingSection key={key} label={piece.label} markdown={piece.markdown} />
+            }
+            return (
+              <div key={key} className={styles.shellQaItem}>
+                <span className={styles.shellQaLabel}>
+                  {piece.n}. {piece.label}
+                </span>
+                <div className={styles.shellQaValue}>
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponentsFlat}>
-                    {section.body}
+                    {piece.markdown}
                   </ReactMarkdown>
                 </div>
-              )}
-            </div>
-          )
-        }
+              </div>
+            )
+          }
+          if (piece.kind === 'qa-empty') {
+            const qaeKey = `qae-${piece.n}-${piece.label}`
+            const emptyVariant = shellFrameBlockVariant(piece.label)
+            if (emptyVariant === 'outOfScope') {
+              return <ShellOutOfScopeSection key={qaeKey} label={piece.label} markdown="" />
+            }
+            if (emptyVariant === 'taskShaping') {
+              return <ShellTaskShapingSection key={qaeKey} label={piece.label} markdown="" />
+            }
+            return (
+              <div key={qaeKey} className={styles.shellQaItem}>
+                <span className={styles.shellQaLabel}>
+                  {piece.n}. {piece.label}
+                </span>
+                <span className={styles.shellQaEmpty}>No content</span>
+              </div>
+            )
+          }
+          if (piece.kind === 'body') {
+            return (
+              <div key={`body-${i}`} className={styles.shellBody}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponentsFlat}>
+                  {piece.markdown}
+                </ReactMarkdown>
+              </div>
+            )
+          }
+          return renderSectionBlock(piece.section, `sec-${i}`)
+        })}
+      </div>
+    )
+  }
 
-        if (section.kind === 'decision-grid') {
-          return (
-            <div key={i} className={styles.decisionGrid}>
-              {section.cards.map((card, j) => (
-                <div key={j} className={styles.decisionCard}>
-                  <span className={styles.decisionEyebrow}>{card.eyebrow}</span>
-                  {card.title && (
-                    <div className={styles.decisionTitle}>{card.title}</div>
-                  )}
-                  {card.body && (
-                    <div className={styles.decisionBody}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponentsFlat}>
-                        {card.body}
-                      </ReactMarkdown>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )
-        }
-
-        return (
-          <div key={i} className={styles.body}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-              {section.markdown}
-            </ReactMarkdown>
-          </div>
-        )
-      })}
+  return (
+    <div className={styles.viewer}>
+      {sections.map((section, i) => renderSectionBlock(section, i))}
     </div>
   )
 }

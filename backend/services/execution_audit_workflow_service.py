@@ -8,7 +8,7 @@ from typing import Any
 
 from backend.ai.execution_prompt_builder import build_execution_prompt
 from backend.ai.split_context_builder import build_split_context
-from backend.conversation.projector.thread_event_projector import apply_raw_event, upsert_item
+from backend.conversation.projector.thread_event_projector import apply_raw_event, patch_item, upsert_item
 from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.errors.app_errors import FinishTaskNotAllowed, NodeNotFound, ReviewNotAllowed
@@ -190,6 +190,63 @@ class GitArtifactService:
         if committed_sha:
             return committed_sha
         return self._git_checkpoint_service.capture_head_sha(project_path)
+
+    def get_worktree_diff(
+        self,
+        *,
+        workspace_root: str | None,
+        start_sha: str | None,
+        paths: list[str] | None = None,
+    ) -> str:
+        if self._git_checkpoint_service is None:
+            return ""
+        if not isinstance(workspace_root, str) or not workspace_root.strip():
+            return ""
+        if not isinstance(start_sha, str) or not start_sha.strip():
+            return ""
+
+        project_path = Path(workspace_root).expanduser().resolve()
+        normalized_paths: list[str] = []
+        for raw_path in paths or []:
+            candidate = str(raw_path or "").strip()
+            if not candidate:
+                continue
+            path_obj = Path(candidate)
+            if path_obj.is_absolute():
+                try:
+                    rel = path_obj.expanduser().resolve().relative_to(project_path)
+                    normalized_paths.append(rel.as_posix())
+                    continue
+                except Exception:
+                    pass
+            normalized_paths.append(candidate)
+
+        try:
+            if normalized_paths and hasattr(self._git_checkpoint_service, "get_worktree_diff_against_sha_for_paths"):
+                return str(
+                    self._git_checkpoint_service.get_worktree_diff_against_sha_for_paths(
+                        project_path,
+                        start_sha,
+                        normalized_paths,
+                    )
+                    or ""
+                )
+            if hasattr(self._git_checkpoint_service, "get_worktree_diff_against_sha"):
+                return str(
+                    self._git_checkpoint_service.get_worktree_diff_against_sha(
+                        project_path,
+                        start_sha,
+                    )
+                    or ""
+                )
+        except Exception:
+            logger.debug(
+                "Failed to collect worktree diff for %s from %s",
+                str(project_path),
+                start_sha,
+                exc_info=True,
+            )
+        return ""
 
 
 class ExecutionAuditWorkflowService:
@@ -508,6 +565,7 @@ class ExecutionAuditWorkflowService:
                 "thread_id": resolved_execution_thread_id,
                 "prompt": prompt,
                 "workspace_root": workspace_root,
+                "start_sha": start_sha,
             },
             daemon=True,
         ).start()
@@ -529,6 +587,7 @@ class ExecutionAuditWorkflowService:
         thread_id: str,
         prompt: str,
         workspace_root: str | None,
+        start_sha: str,
     ) -> None:
         turn_finalized = False
         try:
@@ -558,6 +617,13 @@ class ExecutionAuditWorkflowService:
                 outcome="completed",
             )
             turn_finalized = True
+            self._hydrate_execution_file_change_diff_from_worktree(
+                project_id=project_id,
+                node_id=node_id,
+                turn_id=turn_id,
+                workspace_root=workspace_root,
+                start_sha=start_sha,
+            )
             summary_text = str(result.get("stdout") or "").strip() or None
             candidate_workspace_hash = self._artifact_service.compute_workspace_hash(workspace_root)
             with self._storage.project_lock(project_id):
@@ -621,6 +687,106 @@ class ExecutionAuditWorkflowService:
                 self._storage.workflow_state_store.write_state(project_id, node_id, state)
         finally:
             self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason="execution_run_settled")
+
+    @staticmethod
+    def _looks_like_structured_diff(text: str | None) -> bool:
+        normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+        if not normalized.strip():
+            return False
+        return (
+            "diff --git " in normalized
+            or "*** Begin Patch" in normalized
+            or "\n@@ " in f"\n{normalized}"
+            or "\n+++ " in f"\n{normalized}"
+            or "\n--- " in f"\n{normalized}"
+        )
+
+    def _hydrate_execution_file_change_diff_from_worktree(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        turn_id: str,
+        workspace_root: str | None,
+        start_sha: str | None,
+    ) -> None:
+        if not isinstance(workspace_root, str) or not workspace_root.strip():
+            return
+        if not isinstance(start_sha, str) or not start_sha.strip():
+            return
+
+        query_service = self._thread_runtime_service_v2._query_service
+        snapshot = query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            "execution",
+            publish_repairs=False,
+            ensure_binding=False,
+            allow_thread_read_hydration=False,
+        )
+
+        updated_snapshot = snapshot
+        pending_events: list[dict[str, Any]] = []
+        for item in list(updated_snapshot.get("items", [])):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("kind") or "") != "tool":
+                continue
+            if str(item.get("toolType") or "") != "fileChange":
+                continue
+            if str(item.get("turnId") or "") != turn_id:
+                continue
+
+            output_text = str(item.get("outputText") or "")
+            arguments_text = str(item.get("argumentsText") or "")
+            if self._looks_like_structured_diff(output_text) or self._looks_like_structured_diff(arguments_text):
+                continue
+
+            output_files = item.get("outputFiles")
+            paths: list[str] = []
+            if isinstance(output_files, list):
+                for raw_file in output_files:
+                    if not isinstance(raw_file, dict):
+                        continue
+                    raw_path = str(raw_file.get("path") or "").strip()
+                    if raw_path:
+                        paths.append(raw_path)
+
+            diff_text = self._artifact_service.get_worktree_diff(
+                workspace_root=workspace_root,
+                start_sha=start_sha,
+                paths=paths,
+            )
+            if not diff_text.strip() and paths:
+                diff_text = self._artifact_service.get_worktree_diff(
+                    workspace_root=workspace_root,
+                    start_sha=start_sha,
+                    paths=None,
+                )
+            trimmed_diff = diff_text.strip()
+            if not trimmed_diff:
+                continue
+
+            append_text = trimmed_diff if not output_text.strip() else f"\n{trimmed_diff}"
+            updated_snapshot, events = patch_item(
+                updated_snapshot,
+                str(item.get("id") or ""),
+                {
+                    "kind": "tool",
+                    "outputTextAppend": append_text,
+                    "updatedAt": iso_now(),
+                },
+            )
+            pending_events.extend(events)
+
+        if pending_events:
+            query_service.persist_thread_mutation(
+                project_id,
+                node_id,
+                "execution",
+                updated_snapshot,
+                pending_events,
+            )
 
     def review_in_audit(
         self,
@@ -1048,7 +1214,7 @@ class ExecutionAuditWorkflowService:
                 "- Use the canonical confirmed frame/spec snapshots already present in this thread as the task contract.\n"
                 "- Start with the target commit diff, changed files, and relevant tests.\n"
                 "- Do not recursively scan `.planningtree` before reviewing.\n"
-                "- Only inspect a specific file under `.planningtree/root/...` if the canonical snapshots in this thread are missing or clearly inconsistent.\n"
+                "- Do not open or inspect files under `.planningtree/`; treat those changes as internal planning metadata and exclude them from review findings.\n"
                 "- Keep this run read-only."
             ),
             tone="neutral",

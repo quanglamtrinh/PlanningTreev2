@@ -19,19 +19,19 @@ describe('surfaceRouting hard cutover defaults', () => {
     expect(isAuditUiuxV3FrontendEnabled(undefined)).toBe(true)
   })
 
-  it('routes legacy execution/audit tabs to chat-v2', () => {
+  it('routes legacy surface to ask tab on chat-v2 for non-review nodes', () => {
     expect(
       resolveLegacyRouteTarget({
         requestedThreadTab: 'execution',
         isReviewNode: false,
       }),
-    ).toEqual({ surface: 'v2', threadTab: 'execution' })
+    ).toEqual({ surface: 'v2', threadTab: 'ask' })
     expect(
       resolveLegacyRouteTarget({
         requestedThreadTab: 'audit',
         isReviewNode: false,
       }),
-    ).toEqual({ surface: 'v2', threadTab: 'audit' })
+    ).toEqual({ surface: 'v2', threadTab: 'ask' })
   })
 
   it('routes review nodes to audit tab on chat-v2', () => {

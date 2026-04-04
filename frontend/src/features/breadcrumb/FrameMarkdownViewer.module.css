@@ -9,6 +9,425 @@
   color: var(--text-primary);
 }
 
+/* Metadata shell (thread context): match Clarify Q/A density */
+.viewerShell {
+  gap: 16px;
+}
+
+/* ─── Shell: User Story / Functional Requirements / Success Criteria ─ */
+
+.shellStyledSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shellSectionHeading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shellSectionIcon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--accent-primary, #3b82f6);
+}
+
+.shellSectionTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.35;
+}
+
+.shellUserStoryList {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.shellUserStoryRow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.shellUserStoryIndex {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-primary);
+  line-height: 1.5;
+  flex-shrink: 0;
+  min-width: 1.75em;
+}
+
+.shellUserStoryBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shellUserStoryTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.45;
+}
+
+.shellUserStoryDesc {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.shellStoryDescP {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.shellStoryDescStrong {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.shellFrBox {
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--text-primary) 4%, var(--bg-subtle, #f4f4f5));
+  border: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
+  padding: 12px 14px;
+}
+
+.shellFrList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shellFrItem {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.shellFrCheck {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+  line-height: 0;
+  margin-top: 2px;
+}
+
+.shellCheckCircleSvg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.shellFrItemBody {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.shellFrItemP {
+  margin: 0;
+}
+
+.shellFrItemStrong {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.shellInlineAccent {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.shellSuccessList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shellSuccessCard {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid color-mix(in srgb, var(--border-default) 75%, transparent);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  padding: 10px 12px;
+}
+
+.shellSuccessCheck {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+  line-height: 0;
+  margin-top: 1px;
+}
+
+.shellCheckSquareSvg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.shellSuccessCardBody {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.shellSuccessItemP {
+  margin: 0;
+}
+
+.shellSuccessItemStrong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.shellSectionIconMuted {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+/* Out of Scope */
+.shellOosList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.shellOosItem {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.shellOosDash {
+  flex-shrink: 0;
+  width: 1em;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  text-align: center;
+}
+
+.shellOosText {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  font-style: italic;
+  color: var(--text-quaternary, var(--text-tertiary));
+}
+
+.shellOosMdP {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  font-style: italic;
+  color: var(--text-quaternary, var(--text-tertiary));
+}
+
+.shellOosStrong {
+  font-style: italic;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.shellOosCode {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+/* Task-Shaping Fields */
+.shellTsfGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 520px) {
+  .shellTsfGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.shellTsfCard {
+  background: color-mix(in srgb, var(--text-primary) 4%, var(--bg-subtle, #f4f4f5));
+  border: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
+  border-left: 4px solid var(--accent-primary);
+  border-radius: var(--radius-md, 8px);
+  padding: 12px 14px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.shellTsfLabel {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  line-height: 1.25;
+}
+
+.shellTsfValue {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.shellTsfValueEmpty {
+  font-size: 12px;
+  font-weight: 500;
+  font-style: italic;
+  color: var(--text-quaternary, var(--text-tertiary));
+  line-height: 1.4;
+}
+
+.shellQaItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.shellQaLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.shellQaValue {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.shellQaValue .p {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.shellQaValue .ul,
+.shellQaValue .ol {
+  margin: 0.25em 0 0;
+  padding-left: 1.15em;
+  list-style: disc;
+}
+
+.shellQaValue .ol {
+  list-style: decimal;
+}
+
+.shellQaValue .li {
+  display: list-item;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
+  padding: 2px 0;
+  border: none;
+}
+
+.shellQaValue .li::before {
+  content: none;
+}
+
+.shellQaValue .inlineCode {
+  font-size: 11px;
+}
+
+.shellQaEmpty {
+  font-size: 12px;
+  color: var(--text-quaternary, var(--text-tertiary));
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.shellBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shellBody .p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.shellBody .ul,
+.shellBody .ol {
+  margin: 0.35em 0 0;
+  padding-left: 1.15em;
+  list-style: disc;
+}
+
+.shellBody .ol {
+  list-style: decimal;
+}
+
+.shellBody .li {
+  display: list-item;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
+  padding: 2px 0;
+  border: none;
+}
+
+.shellBody .li::before {
+  content: none;
+}
+
 /* ─── Headings ────────────────────────────────────────────────────── */
 .h1 {
   margin: 4px 0 0;

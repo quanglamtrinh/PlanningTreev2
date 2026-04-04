@@ -1,8 +1,8 @@
 import type {
   AcceptLocalReviewResponse,
   AcceptRollupReviewResponse,
+  AskRolloutMetricsSnapshot,
   BootstrapStatus,
-  ChatSession,
   ClarifyGenAcceptedResponse,
   ClarifyGenStatusResponse,
   ClarifyState,
@@ -17,7 +17,6 @@ import type {
   ResolveUserInputV2Response,
   ProjectSummary,
   ReviewState,
-  SendMessageResponse,
   Snapshot,
   StartTurnV2Response,
   NodeWorkflowView,
@@ -53,20 +52,6 @@ interface V2FailureEnvelope {
 }
 
 const DEFAULT_TIMEOUT_MS = 300_000
-
-function withThreadRole(path: string, threadRole?: ThreadRole): string {
-  if (!threadRole) return path
-  const sep = path.includes('?') ? '&' : '?'
-  return `${path}${sep}thread_role=${encodeURIComponent(threadRole)}`
-}
-
-export function buildChatEventsUrl(
-  projectId: string,
-  nodeId: string,
-  threadRole?: ThreadRole,
-): string {
-  return withThreadRole(`/v1/projects/${projectId}/nodes/${nodeId}/chat/events`, threadRole)
-}
 
 function buildThreadPathV2(projectId: string, nodeId: string, threadRole: ThreadRole): string {
   return `/v2/projects/${projectId}/nodes/${nodeId}/threads/${threadRole}`
@@ -433,27 +418,14 @@ export const api = {
       `/v1/projects/${projectId}/nodes/${nodeId}/spec-generation-status`,
     )
   },
-  getChatSession(projectId: string, nodeId: string, threadRole?: ThreadRole): Promise<ChatSession> {
-    return jsonFetch<ChatSession>(
-      withThreadRole(`/v1/projects/${projectId}/nodes/${nodeId}/chat/session`, threadRole),
-    )
+  getAskRolloutMetrics(): Promise<AskRolloutMetricsSnapshot> {
+    return jsonFetch<AskRolloutMetricsSnapshot>(`/v1/ask-rollout/metrics`)
   },
-  sendChatMessage(
-    projectId: string,
-    nodeId: string,
-    content: string,
-    threadRole?: ThreadRole,
-  ): Promise<SendMessageResponse> {
-    return jsonFetch<SendMessageResponse>(
-      withThreadRole(`/v1/projects/${projectId}/nodes/${nodeId}/chat/message`, threadRole),
+  reportAskRolloutMetricEvent(event: 'stream_reconnect' | 'stream_error'): Promise<{ ok: boolean }> {
+    return jsonFetch<{ ok: boolean }>(
+      `/v1/ask-rollout/metrics/events`,
       { method: 'POST' },
-      { content },
-    )
-  },
-  resetChatSession(projectId: string, nodeId: string, threadRole?: ThreadRole): Promise<ChatSession> {
-    return jsonFetch<ChatSession>(
-      withThreadRole(`/v1/projects/${projectId}/nodes/${nodeId}/chat/reset`, threadRole),
-      { method: 'POST' },
+      { event },
     )
   },
   finishTask(projectId: string, nodeId: string): Promise<DetailState> {

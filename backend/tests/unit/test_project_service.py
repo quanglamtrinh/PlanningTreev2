@@ -217,6 +217,8 @@ def test_bootstrap_status_exposes_core_readiness_only(storage: Storage) -> None:
 
     assert status["ready"] is True
     assert status["workspace_configured"] is True
+    assert status["ask_v3_backend_enabled"] is True
+    assert status["ask_v3_frontend_enabled"] is True
     assert "execution_audit_v2_enabled" not in status
     assert "execution_audit_uiux_v3_backend_enabled" not in status
     assert "execution_audit_uiux_v3_frontend_enabled" not in status

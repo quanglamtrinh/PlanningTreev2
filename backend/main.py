@@ -31,12 +31,15 @@ from backend.config.app_config import (
     get_rehearsal_workspace_root,
     get_spec_gen_timeout,
     get_split_timeout,
+    is_ask_v3_backend_enabled,
+    is_ask_v3_frontend_enabled,
     is_execution_audit_v2_rehearsal_enabled,
 )
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import bootstrap, chat, chat_v2, codex, nodes, projects, split, workflow_v2, workflow_v3
 from backend.services.chat_service import ChatService
+from backend.services.ask_rollout_metrics_service import AskRolloutMetricsService
 from backend.services.codex_account_service import CodexAccountService
 from backend.services.clarify_generation_service import ClarifyGenerationService
 from backend.services.execution_audit_workflow_service import ExecutionAuditWorkflowService
@@ -65,8 +68,11 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     tree_service = TreeService()
     git_checkpoint_service = GitCheckpointService()
     execution_audit_v2_enabled = True
+    ask_v3_backend_enabled = is_ask_v3_backend_enabled()
+    ask_v3_frontend_enabled = is_ask_v3_frontend_enabled()
     rehearsal_enabled = is_execution_audit_v2_rehearsal_enabled()
     rehearsal_workspace_root = get_rehearsal_workspace_root()
+    ask_rollout_metrics_service = AskRolloutMetricsService()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
     project_service = ProjectService(
         storage, snapshot_view_service, chat_service=None,
@@ -158,6 +164,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         request_ledger_service=request_ledger_service_v2,
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),
+        ask_rollout_metrics_service=ask_rollout_metrics_service,
     )
     system_message_writer_v2.set_runtime_service(thread_runtime_service_v2)
     review_service = ReviewService(
@@ -270,6 +277,9 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.execution_audit_workflow_service_v2 = execution_audit_workflow_service_v2
     app.state.execution_audit_v2_enabled = execution_audit_v2_enabled
     app.state.execution_audit_v2_rehearsal_enabled = rehearsal_enabled
+    app.state.ask_v3_backend_enabled = ask_v3_backend_enabled
+    app.state.ask_v3_frontend_enabled = ask_v3_frontend_enabled
+    app.state.ask_rollout_metrics_service = ask_rollout_metrics_service
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

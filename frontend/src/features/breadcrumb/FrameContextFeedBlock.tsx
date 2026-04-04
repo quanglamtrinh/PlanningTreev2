@@ -330,7 +330,7 @@ export function FrameContextFeedBlock({
                   ) : !frameEntry.content.trim() ? (
                     <div className={styles.stateEmpty}>No frame content yet.</div>
                   ) : (
-                    <FrameMarkdownViewer content={frameEntry.content} />
+                    <FrameMarkdownViewer content={frameEntry.content} shellStyle />
                   )}
                 </NodePanel>
 

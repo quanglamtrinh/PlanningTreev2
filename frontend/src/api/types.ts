@@ -25,6 +25,19 @@ export interface BootstrapStatus {
   workspace_configured: boolean
   codex_available: boolean
   codex_path: string | null
+  ask_v3_backend_enabled?: boolean
+  ask_v3_frontend_enabled?: boolean
+}
+
+export interface AskRolloutMetricsSnapshot {
+  ask_stream_session_total: number
+  ask_stream_reconnect_total: number
+  ask_stream_error_total: number
+  ask_guard_violation_total: number
+  ask_shaping_action_total: number
+  ask_shaping_action_failed_total: number
+  ask_stream_error_rate: number
+  ask_shaping_action_failed_rate: number
 }
 
 export interface CodexAccount {

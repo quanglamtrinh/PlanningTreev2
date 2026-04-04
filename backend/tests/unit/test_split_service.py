@@ -80,6 +80,33 @@ class FakeCodexClient:
         }
 
 
+class FakeGitCheckpointService:
+    def __init__(self, *, initial_head_sha: str, split_commit_sha: str | None) -> None:
+        self.initial_head_sha = initial_head_sha
+        self.split_commit_sha = split_commit_sha
+        self.build_commit_calls: list[tuple[str, str]] = []
+        self.commit_calls: list[tuple[str, str]] = []
+
+    def probe_git_initialized(self, project_path: Path) -> bool:
+        return True
+
+    def capture_head_sha(self, project_path: Path) -> str:
+        return self.initial_head_sha
+
+    def build_commit_message(self, hierarchical_number: str, title: str) -> str:
+        self.build_commit_calls.append((hierarchical_number, title))
+        return f"pt({hierarchical_number}): {title.lower()}"
+
+    def commit_if_changed(self, project_path: Path, commit_message: str) -> str | None:
+        self.commit_calls.append((str(project_path), commit_message))
+        return self.split_commit_sha
+
+
+class NoopSystemMessageWriter:
+    def upsert_system_message(self, **kwargs: object) -> dict[str, object]:
+        return {}
+
+
 def create_project(project_service: ProjectService, workspace_root: str) -> dict:
     return project_service.attach_project_folder(workspace_root)
 
@@ -95,7 +122,11 @@ def make_node_split_ready(
     snapshot = storage.project_store.load_snapshot(project_id)
     title = str(snapshot["tree_state"]["node_index"][node_id]["title"])
     doc_service = NodeDocumentService(storage)
-    detail_service = NodeDetailService(storage, tree_service)
+    detail_service = NodeDetailService(
+        storage,
+        tree_service,
+        system_message_writer=NoopSystemMessageWriter(),
+    )
     doc_service.put_document(
         project_id,
         node_id,
@@ -125,6 +156,8 @@ def make_split_service(
     storage: Storage,
     tree_service: TreeService,
     codex_client: FakeCodexClient,
+    *,
+    git_checkpoint_service: object | None = None,
 ) -> SplitService:
     return SplitService(
         storage,
@@ -132,6 +165,7 @@ def make_split_service(
         codex_client,
         ThreadLineageService(storage, codex_client, tree_service),
         split_timeout=5,
+        git_checkpoint_service=git_checkpoint_service,
     )
 
 
@@ -236,6 +270,54 @@ def test_split_service_creates_children_and_reuses_parent_audit_thread(
     assert second_root_audit_session["thread_id"] == first_child_audit_thread_id
     assert root_audit_thread_id in fake_client.resumed_threads
     assert first_child_audit_thread_id in fake_client.resumed_threads
+
+
+def test_split_service_commits_projection_and_updates_k0_git_head(
+    storage: Storage,
+    workspace_root,
+) -> None:
+    project_service = ProjectService(storage)
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    tree_service = TreeService()
+    make_node_split_ready(storage, tree_service, project_id, root_id)
+    fake_client = FakeCodexClient(
+        payloads=[
+            {
+                "subtasks": [
+                    {"id": "S1", "title": "Prep", "objective": "Prepare the flow.", "why_now": "It starts the work."},
+                    {"id": "S2", "title": "Finish", "objective": "Complete the flow.", "why_now": "It depends on prep."},
+                ]
+            }
+        ]
+    )
+    fake_git = FakeGitCheckpointService(
+        initial_head_sha="a" * 40,
+        split_commit_sha="b" * 40,
+    )
+    service = make_split_service(
+        storage,
+        tree_service,
+        fake_client,
+        git_checkpoint_service=fake_git,
+    )
+
+    accepted = service.split_node(project_id, root_id, "workflow")
+    assert accepted["status"] == "accepted"
+    terminal = wait_for_terminal_status(service, project_id)
+    assert terminal["status"] == "idle"
+
+    persisted = storage.project_store.load_snapshot(project_id)
+    root = persisted["tree_state"]["node_index"][root_id]
+    review_node_id = root.get("review_node_id")
+    assert isinstance(review_node_id, str) and review_node_id
+    review_state = storage.review_state_store.read_state(project_id, review_node_id)
+    assert review_state is not None
+    assert review_state["k0_git_head_sha"] == "b" * 40
+    assert fake_git.build_commit_calls
+    assert fake_git.commit_calls
+    assert fake_git.commit_calls[0][1].startswith("pt(1): split ")
 
 
 def test_split_service_rejects_nodes_with_existing_children(
@@ -393,7 +475,11 @@ def test_split_service_rejects_when_clarify_questions_remain(
     root_id = snapshot["tree_state"]["root_node_id"]
     tree_service = TreeService()
     doc_service = NodeDocumentService(storage)
-    detail_service = NodeDetailService(storage, tree_service)
+    detail_service = NodeDetailService(
+        storage,
+        tree_service,
+        system_message_writer=NoopSystemMessageWriter(),
+    )
     title = str(storage.project_store.load_snapshot(project_id)["tree_state"]["node_index"][root_id]["title"])
     doc_service.put_document(
         project_id,
@@ -420,7 +506,11 @@ def test_split_service_rejects_when_frame_needs_reconfirm(
     root_id = snapshot["tree_state"]["root_node_id"]
     tree_service = TreeService()
     doc_service = NodeDocumentService(storage)
-    detail_service = NodeDetailService(storage, tree_service)
+    detail_service = NodeDetailService(
+        storage,
+        tree_service,
+        system_message_writer=NoopSystemMessageWriter(),
+    )
     title = str(storage.project_store.load_snapshot(project_id)["tree_state"]["node_index"][root_id]["title"])
     doc_service.put_document(
         project_id,

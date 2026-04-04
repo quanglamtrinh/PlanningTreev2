@@ -46,6 +46,7 @@ class ThreadRuntimeService:
         request_ledger_service: RequestLedgerService,
         chat_timeout: int,
         max_message_chars: int = 10000,
+        ask_rollout_metrics_service: Any | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -55,6 +56,7 @@ class ThreadRuntimeService:
         self._request_ledger_service = request_ledger_service
         self._chat_timeout = int(chat_timeout)
         self._max_message_chars = int(max_message_chars)
+        self._ask_rollout_metrics_service = ask_rollout_metrics_service
 
     def start_turn(
         self,
@@ -536,13 +538,27 @@ class ThreadRuntimeService:
             return
 
         call_id = str(item.get("callId") or item.get("call_id") or "").strip()
-        if not call_id:
-            return
-        record = provisional_tool_calls.get(call_id)
-        if not isinstance(record, dict):
+        item_id = str(item.get("id") or "").strip()
+        candidate_ids: list[str] = []
+        if call_id:
+            candidate_ids.append(call_id)
+        if item_id and item_id not in candidate_ids:
+            candidate_ids.append(item_id)
+
+        matched_call_id: str | None = None
+        record: dict[str, Any] | None = None
+        for candidate_id in candidate_ids:
+            candidate_record = provisional_tool_calls.get(candidate_id)
+            if isinstance(candidate_record, dict):
+                matched_call_id = candidate_id
+                record = candidate_record
+                break
+        if record is None:
             return
 
         record["matched"] = True
+        if not call_id and matched_call_id:
+            item["callId"] = matched_call_id
 
         if not item.get("toolName") and record.get("toolName"):
             item["toolName"] = record.get("toolName")
@@ -702,6 +718,7 @@ class ThreadRuntimeService:
                 )
                 if self._ask_turn_contains_file_change_items(policy_snapshot, turn_id):
                     policy_violation_message = _ASK_READ_ONLY_POLICY_ERROR
+                    self._record_ask_guard_violation()
                     final_turn_status = "failed"
             outcome = "completed"
             if final_turn_status in {"waiting_user_input", "waitingforuserinput", "waiting_for_user_input"}:
@@ -833,6 +850,15 @@ class ThreadRuntimeService:
             if isinstance(output_files, list) and len(output_files) > 0:
                 return True
         return False
+
+    def _record_ask_guard_violation(self) -> None:
+        metrics = self._ask_rollout_metrics_service
+        if metrics is None:
+            return
+        try:
+            metrics.record_guard_violation()
+        except Exception:
+            logger.debug("Failed to record ask guard violation metric.", exc_info=True)
 
     def _build_local_user_item(
         self,

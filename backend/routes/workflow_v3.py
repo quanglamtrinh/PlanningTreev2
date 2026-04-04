@@ -14,7 +14,7 @@ from backend.conversation.projector.thread_event_projector_v3 import (
     project_v2_envelope_to_v3,
     project_v2_snapshot_to_v3,
 )
-from backend.errors.app_errors import AppError, InvalidRequest
+from backend.errors.app_errors import AppError, AskV3Disabled, InvalidRequest
 from backend.storage.file_utils import new_id
 
 router = APIRouter(tags=["workflow-v3"])
@@ -84,6 +84,10 @@ def _normalize_thread_id(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _is_ask_v3_backend_enabled(request: Request) -> bool:
+    return bool(getattr(request.app.state, "ask_v3_backend_enabled", True))
+
+
 def _resolve_execution_audit_thread_role_by_state(
     request: Request,
     project_id: str,
@@ -123,6 +127,8 @@ def _resolve_ask_thread_role_from_registry(
         )
         ask_thread_id = _normalize_thread_id(seeded_entry.get("threadId"))
     if ask_thread_id == thread_id:
+        if not _is_ask_v3_backend_enabled(request):
+            raise AskV3Disabled()
         return "ask_planning"
     return None
 
@@ -205,6 +211,10 @@ async def thread_events_by_id_v3(
             node_id,
             thread_id,
         )
+        if thread_role == "ask_planning":
+            metrics = getattr(request.app.state, "ask_rollout_metrics_service", None)
+            if metrics is not None:
+                metrics.record_stream_session()
         snapshot_v2 = request.app.state.thread_query_service_v2.build_stream_snapshot(
             project_id,
             node_id,

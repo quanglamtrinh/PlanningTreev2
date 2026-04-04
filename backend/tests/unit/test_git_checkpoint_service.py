@@ -302,6 +302,15 @@ class TestValidateGuardrails:
         blockers = svc.validate_guardrails(git_repo, expected_head="0" * 40)
         assert any("does not match" in b for b in blockers)
 
+    def test_allows_tracked_planningtree(self, svc: GitCheckpointService, git_repo: Path):
+        pt_dir = git_repo / ".planningtree"
+        pt_dir.mkdir()
+        (pt_dir / "data.json").write_text("{}", encoding="utf-8")
+        subprocess.run(["git", "add", ".planningtree/"], cwd=str(git_repo), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add pt"], cwd=str(git_repo), check=True, capture_output=True)
+        blockers = svc.validate_guardrails(git_repo)
+        assert blockers == []
+
 
 # ------------------------------------------------------------------
 # init_repo
@@ -314,10 +323,12 @@ class TestInitRepo:
         assert len(sha) == 40
         assert svc.probe_git_initialized(empty_dir) is True
 
-    def test_adds_gitignore_entry(self, svc: GitCheckpointService, empty_dir: Path):
+    def test_does_not_force_planningtree_gitignore_entry(self, svc: GitCheckpointService, empty_dir: Path):
         svc.init_repo(empty_dir)
-        gitignore = (empty_dir / ".gitignore").read_text(encoding="utf-8")
-        assert ".planningtree/" in gitignore
+        gitignore_path = empty_dir / ".gitignore"
+        if gitignore_path.exists():
+            gitignore = gitignore_path.read_text(encoding="utf-8")
+            assert ".planningtree/" not in gitignore
 
     def test_already_initialized(self, svc: GitCheckpointService, git_repo: Path):
         from backend.errors.app_errors import GitInitNotAllowed

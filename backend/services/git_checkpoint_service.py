@@ -240,7 +240,7 @@ class GitCheckpointService:
     def check_planningtree_not_tracked(
         self, project_path: Path
     ) -> tuple[bool, str | None]:
-        """Return (True, None) if ``.planningtree/`` is NOT tracked by git."""
+        """Legacy helper for older workflows that excluded ``.planningtree/``."""
         try:
             result = self._run_git(
                 [
@@ -373,22 +373,17 @@ class GitCheckpointService:
             blockers.append(msg or "Git repository root mismatch.")
             return blockers
 
-        # Check 4: .planningtree not tracked
-        ok, msg = self.check_planningtree_not_tracked(project_path)
-        if not ok:
-            blockers.append(msg or ".planningtree/ is tracked by Git.")
-
-        # Check 5: identity configured
+        # Check 4: identity configured
         ok, msg = self.check_git_identity(project_path)
         if not ok:
             blockers.append(msg or "Git identity not configured.")
 
-        # Check 6: working tree clean
+        # Check 5: working tree clean
         ok, msg = self.check_working_tree_clean(project_path)
         if not ok:
             blockers.append(msg or "Working tree is not clean.")
 
-        # Check 7: HEAD matches expected (only when expected_head provided)
+        # Check 6: HEAD matches expected (only when expected_head provided)
         if expected_head is not None and not blockers:
             head = self.get_head_sha(project_path)
             if head != expected_head:
@@ -437,9 +432,6 @@ class GitCheckpointService:
             except GitCheckpointError:
                 pass  # Best-effort rename
 
-        # Ensure .planningtree/ in .gitignore
-        self._ensure_gitignore_entry(project_path, ".planningtree/")
-
         # Stage and create initial commit
         self._run_git(["-C", str(project_path), "add", "-A"], cwd=project_path)
         self._run_git(
@@ -467,7 +459,7 @@ class GitCheckpointService:
 
         This is a critical operation — failures should propagate.
         """
-        # Stage everything (.planningtree/ excluded via .gitignore)
+        # Stage everything currently tracked/untracked in the repo.
         self._run_git(["-C", str(project_path), "add", "-A"], cwd=project_path)
 
         # Check for staged changes
@@ -522,6 +514,56 @@ class GitCheckpointService:
         """
         result = self._run_git(
             ["-C", str(project_path), "diff", from_sha, to_sha],
+            cwd=project_path,
+        )
+        return result.stdout
+
+    def get_diff_for_paths(
+        self,
+        project_path: Path,
+        from_sha: str,
+        to_sha: str,
+        paths: list[str],
+    ) -> str:
+        """Return unified diff between two commits limited to specific paths.
+
+        Best-effort — raises GitCheckpointError on failure.
+        """
+        cleaned = [str(path).strip() for path in paths if str(path).strip()]
+        if not cleaned:
+            return ""
+        result = self._run_git(
+            ["-C", str(project_path), "diff", from_sha, to_sha, "--", *cleaned],
+            cwd=project_path,
+        )
+        return result.stdout
+
+    def get_worktree_diff_against_sha(self, project_path: Path, from_sha: str) -> str:
+        """Return unified diff between a commit and current working tree.
+
+        Best-effort - raises GitCheckpointError on failure.
+        """
+        result = self._run_git(
+            ["-C", str(project_path), "diff", from_sha],
+            cwd=project_path,
+        )
+        return result.stdout
+
+    def get_worktree_diff_against_sha_for_paths(
+        self,
+        project_path: Path,
+        from_sha: str,
+        paths: list[str],
+    ) -> str:
+        """Return unified diff between a commit and working tree limited to paths.
+
+        Best-effort - raises GitCheckpointError on failure.
+        """
+        cleaned = [str(path).strip() for path in paths if str(path).strip()]
+        if not cleaned:
+            return ""
+        result = self._run_git(
+            ["-C", str(project_path), "diff", from_sha, "--", *cleaned],
             cwd=project_path,
         )
         return result.stdout

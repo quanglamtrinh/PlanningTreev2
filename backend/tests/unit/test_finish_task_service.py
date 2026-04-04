@@ -318,6 +318,35 @@ def test_thread_runtime_service_prefers_patch_body_for_tool_call_arguments_text(
     assert ThreadRuntimeService._tool_call_arguments_text(arguments) == patch_body
 
 
+def test_thread_runtime_service_matches_provisional_call_from_item_id_when_call_id_missing() -> None:
+    patch_body = "*** Begin Patch\n*** Update File: src/app.ts\n@@\n+const ok = true\n*** End Patch"
+    raw_event = {
+        "method": "item/started",
+        "params": {
+            "item": {
+                "type": "fileChange",
+                "id": "call_patch_123",
+            }
+        },
+    }
+    provisional_tool_calls = {
+        "call_patch_123": {
+            "callId": "call_patch_123",
+            "toolName": "apply_patch",
+            "arguments": {"input": patch_body, "path": "src/app.ts"},
+            "matched": False,
+        }
+    }
+
+    ThreadRuntimeService._enrich_started_item_from_provisional_call(raw_event, provisional_tool_calls)
+
+    item = raw_event["params"]["item"]
+    assert item["callId"] == "call_patch_123"
+    assert item["toolName"] == "apply_patch"
+    assert item["argumentsText"] == patch_body
+    assert provisional_tool_calls["call_patch_123"]["matched"] is True
+
+
 def _build_v2_runtime(
     *,
     storage,

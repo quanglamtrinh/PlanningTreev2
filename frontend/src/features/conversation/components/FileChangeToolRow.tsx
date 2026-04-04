@@ -21,6 +21,14 @@ function fileRowKey(file: ToolOutputFile): string {
   return `${file.path}\u0000${file.changeType}`
 }
 
+function previewText(text: string | null | undefined, maxChars = 220): string {
+  const normalized = String(text ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
+  if (normalized.length <= maxChars) {
+    return normalized
+  }
+  return `${normalized.slice(0, Math.max(0, maxChars - 3))}...`
+}
+
 const STRUCTURED_DIFF_MARKER_RE =
   /^(?:diff --git |\+\+\+|---|@@ |\*\*\* Begin Patch|\*\*\* Update File:|\*\*\* Add File:|\*\*\* Delete File:|\*\*\* Move to:)/m
 
@@ -590,10 +598,89 @@ export function FileChangeToolRow({
   const [menuOpen, setMenuOpen] = useState(false)
   const [expandedMultiKey, setExpandedMultiKey] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const debugSignatureRef = useRef<string>('')
 
   useEffect(() => {
     setExpandedMultiKey(null)
   }, [item.id])
+
+  useEffect(() => {
+    const signature = [
+      item.id,
+      item.updatedAt,
+      item.status,
+      sourceText.length,
+      lines.length,
+      diffChunks.length,
+      stats.added,
+      stats.removed,
+      item.outputFiles.length,
+    ].join('|')
+    if (debugSignatureRef.current === signature) {
+      return
+    }
+    debugSignatureRef.current = signature
+
+    console.info('file-change-row Render snapshot', {
+      itemId: item.id,
+      status: item.status,
+      toolType: item.toolType,
+      title: item.title,
+      toolName: item.toolName,
+      callId: item.callId,
+      isExpanded,
+      hasArguments,
+      hasOutput,
+      hasFiles,
+      canToggle,
+      showBody,
+      isMultiFile,
+      sourceTextLength: sourceText.length,
+      sourceFromOutputMarkers: hasStructuredDiffMarkers(item.outputText),
+      sourceFromArgsMarkers: hasStructuredDiffMarkers(item.argumentsText ?? ''),
+      outputPreview: previewText(item.outputText, 260),
+      argumentsPreview: previewText(item.argumentsText ?? '', 260),
+      sourcePreview: previewText(sourceText, 260),
+      linesLength: lines.length,
+      diffChunks: diffChunks.slice(0, 8).map((chunk) => ({
+        relPaths: chunk.relPaths,
+        added: chunk.added,
+        removed: chunk.removed,
+        startLine: chunk.startLine,
+        endLine: chunk.endLine,
+      })),
+      stats,
+      outputFiles: item.outputFiles.slice(0, 12).map((file, index) => ({
+        index,
+        path: file.path,
+        changeType: file.changeType,
+        summary: file.summary,
+      })),
+      multiFileRows: multiFileRows.slice(0, 12).map((row, index) => ({
+        index,
+        path: row.file.path,
+        added: row.added,
+        removed: row.removed,
+        hasChunk: Boolean(row.chunk),
+        chunkStartLine: row.chunk?.startLine ?? null,
+        chunkEndLine: row.chunk?.endLine ?? null,
+      })),
+    })
+  }, [
+    canToggle,
+    diffChunks,
+    hasArguments,
+    hasFiles,
+    hasOutput,
+    isExpanded,
+    isMultiFile,
+    item,
+    lines.length,
+    multiFileRows,
+    showBody,
+    sourceText,
+    stats,
+  ])
 
   useEffect(() => {
     if (!menuOpen) {

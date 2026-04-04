@@ -305,6 +305,15 @@ class AskThreadReadOnly(AppError):
         )
 
 
+class AskV3Disabled(AppError):
+    def __init__(self) -> None:
+        super().__init__(
+            "ask_v3_disabled",
+            "Ask V3 APIs are disabled by server configuration.",
+            409,
+        )
+
+
 class ShapingFrozen(AppError):
     def __init__(self, action: str = "shaping action") -> None:
         super().__init__(
