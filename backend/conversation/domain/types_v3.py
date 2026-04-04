@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from backend.storage.file_utils import iso_now
 
@@ -69,6 +69,8 @@ class ToolOutputFileV3(TypedDict):
     path: str
     changeType: Literal["created", "updated", "deleted"]
     summary: str | None
+    kind: NotRequired[Literal["add", "modify", "delete"]]
+    diff: NotRequired[str | None]
 
 
 class ToolItemV3(ItemBaseV3):
@@ -132,10 +134,18 @@ class DiffFileV3(TypedDict):
     patchText: str | None
 
 
+class DiffChangeV3(TypedDict):
+    path: str
+    kind: Literal["add", "modify", "delete"]
+    diff: str | None
+    summary: str | None
+
+
 class DiffItemV3(ItemBaseV3):
     kind: Literal["diff"]
     title: str | None
     summaryText: str | None
+    changes: list[DiffChangeV3]
     files: list[DiffFileV3]
 
 
@@ -262,6 +272,8 @@ class DiffPatchV3(TypedDict, total=False):
     kind: Literal["diff"]
     title: str | None
     summaryText: str | None
+    changesAppend: list[DiffChangeV3]
+    changesReplace: list[DiffChangeV3]
     filesAppend: list[DiffFileV3]
     filesReplace: list[DiffFileV3]
     status: ItemStatusV3

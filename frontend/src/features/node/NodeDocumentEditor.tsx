@@ -1,4 +1,4 @@
-import CodeMirror from '@uiw/react-codemirror'
+﻿import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorView } from '@codemirror/view'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -496,19 +496,48 @@ export function NodeDocumentEditor({
     <div className={styles.documentPanel}>
       <div className={styles.documentMetaColumn}>
         <div className={styles.documentStatusRow}>
-          <span className={styles.documentFileLabel}>{kind === 'frame' ? 'frame.md' : 'spec.md'}</span>
-          <span
-            className={`${styles.documentStatusValue} ${entry.error ? styles.documentStatusError : ''}`}
-            data-testid={`document-status-${kind}`}
-            role="status"
-            aria-live="polite"
-          >
-            {isGenerating ? (
-              <AgentSpinner words={SPINNER_WORDS_GENERATING} />
-            ) : (
-              documentStatusText(entry, false)
-            )}
-          </span>
+          {/* Left cell: file icon + name */}
+          <div className={styles.documentFileLabelCell}>
+            <span className={styles.documentFileLabelIcon} aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="13" height="13">
+                <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" />
+                <path d="M10 2v4h3" />
+              </svg>
+            </span>
+            <span className={styles.documentFileLabel}>{kind === 'frame' ? 'frame.md' : 'spec.md'}</span>
+          </div>
+          {/* Middle cells: labeled metadata pairs */}
+          <div className={styles.documentMetaSections}>
+            <div className={styles.documentMetaSection}>
+              <span className={styles.documentMetaSectionLabel}>Step</span>
+              <span className={styles.documentMetaSectionValue}>
+                {kind === 'frame'
+                  ? isInitialFrameStep ? 'Initial Frame' : 'Frame Updated'
+                  : 'Spec Review'}
+              </span>
+            </div>
+            <div className={styles.documentMetaSection}>
+              <span className={styles.documentMetaSectionLabel}>Content</span>
+              <span className={styles.documentMetaSectionValue}>
+                {!entry.hasLoaded ? 'Loading\u2026' : hasContent ? 'Ready' : 'Empty'}
+              </span>
+            </div>
+          </div>
+          {/* Right cell: save status */}
+          <div className={styles.documentStatusCell}>
+            <span
+              className={`${styles.documentStatusValue} ${entry.error ? styles.documentStatusError : ''}`}
+              data-testid={`document-status-${kind}`}
+              role="status"
+              aria-live="polite"
+            >
+              {isGenerating ? (
+                <AgentSpinner words={SPINNER_WORDS_GENERATING} />
+              ) : (
+                documentStatusText(entry, false)
+              )}
+            </span>
+          </div>
         </div>
 
         {isLoadError ? (

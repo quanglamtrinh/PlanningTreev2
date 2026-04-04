@@ -354,6 +354,14 @@ def test_v3_projection_semantics_cover_review_explore_diff_and_patch_kind_mappin
                     "callId": "call-1",
                     "argumentsText": None,
                     "outputText": "Summary",
+                    "changes": [
+                        {
+                            "path": "src/main.ts",
+                            "kind": "modify",
+                            "summary": "core update",
+                            "diff": "@@ -1 +1 @@\n-old\n+new\n",
+                        }
+                    ],
                     "outputFiles": [
                         {
                             "path": "src/main.ts",
@@ -369,12 +377,20 @@ def test_v3_projection_semantics_cover_review_explore_diff_and_patch_kind_mappin
     assert diff_events[0]["payload"]["item"]["kind"] == "diff"
     snapshot_items_by_id = {item["id"]: item for item in snapshot_v3["items"]}
     assert snapshot_items_by_id["file-tool-1"]["kind"] == "diff"
+    assert snapshot_items_by_id["file-tool-1"]["changes"] == [
+        {
+            "path": "src/main.ts",
+            "kind": "modify",
+            "summary": "core update",
+            "diff": "@@ -1 +1 @@\n-old\n+new\n",
+        }
+    ]
     assert snapshot_items_by_id["file-tool-1"]["files"] == [
         {
             "path": "src/main.ts",
             "changeType": "updated",
             "summary": "core update",
-            "patchText": None,
+            "patchText": "@@ -1 +1 @@\n-old\n+new\n",
         }
     ]
 
@@ -387,11 +403,12 @@ def test_v3_projection_semantics_cover_review_explore_diff_and_patch_kind_mappin
                 "patch": {
                     "kind": "tool",
                     "outputTextAppend": " delta",
-                    "outputFilesAppend": [
+                    "changesAppend": [
                         {
                             "path": "src/new.ts",
-                            "changeType": "created",
+                            "kind": "add",
                             "summary": "new file",
+                            "diff": "@@ -0,0 +1 @@\n+export const v = 1\n",
                         }
                     ],
                     "status": "completed",
@@ -401,19 +418,102 @@ def test_v3_projection_semantics_cover_review_explore_diff_and_patch_kind_mappin
         },
     )
     assert diff_patch_events[0]["payload"]["patch"]["kind"] == "diff"
+    assert diff_patch_events[0]["payload"]["patch"]["changesAppend"] == [
+        {
+            "path": "src/new.ts",
+            "kind": "add",
+            "summary": "new file",
+            "diff": "@@ -0,0 +1 @@\n+export const v = 1\n",
+        }
+    ]
     snapshot_items_by_id = {item["id"]: item for item in snapshot_v3["items"]}
     assert snapshot_items_by_id["file-tool-1"]["summaryText"] == "Summary delta"
+    assert snapshot_items_by_id["file-tool-1"]["changes"] == [
+        {
+            "path": "src/main.ts",
+            "kind": "modify",
+            "summary": "core update",
+            "diff": "@@ -1 +1 @@\n-old\n+new\n",
+        },
+        {
+            "path": "src/new.ts",
+            "kind": "add",
+            "summary": "new file",
+            "diff": "@@ -0,0 +1 @@\n+export const v = 1\n",
+        },
+    ]
     assert snapshot_items_by_id["file-tool-1"]["files"] == [
         {
             "path": "src/main.ts",
             "changeType": "updated",
             "summary": "core update",
-            "patchText": None,
+            "patchText": "@@ -1 +1 @@\n-old\n+new\n",
         },
         {
             "path": "src/new.ts",
             "changeType": "created",
             "summary": "new file",
-            "patchText": None,
+            "patchText": "@@ -0,0 +1 @@\n+export const v = 1\n",
         },
     ]
+
+
+def test_v3_diff_patch_changes_replace_authoritative_empty() -> None:
+    snapshot_v2 = default_thread_snapshot("project-1", "node-1", "execution")
+    snapshot_v2["threadId"] = "exec-thread-1"
+    snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+
+    snapshot_v3, _ = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_UPSERT,
+            "payload": {
+                "item": {
+                    "id": "file-tool-2",
+                    "kind": "tool",
+                    "threadId": "exec-thread-1",
+                    "turnId": "turn-3",
+                    "sequence": 1,
+                    "createdAt": "2026-04-01T01:00:00Z",
+                    "updatedAt": "2026-04-01T01:00:00Z",
+                    "status": "in_progress",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "toolType": "fileChange",
+                    "title": "Apply patch",
+                    "toolName": "apply_patch",
+                    "callId": "call-2",
+                    "argumentsText": None,
+                    "outputText": "",
+                    "changes": [{"path": "preview.txt", "kind": "add", "summary": "preview", "diff": None}],
+                    "outputFiles": [{"path": "preview.txt", "changeType": "created", "summary": "preview"}],
+                    "exitCode": None,
+                }
+            },
+        },
+    )
+
+    snapshot_v3, patch_events = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_PATCH,
+            "payload": {
+                "itemId": "file-tool-2",
+                "patch": {
+                    "kind": "tool",
+                    "changesReplace": [],
+                    "outputFilesReplace": [],
+                    "status": "completed",
+                    "updatedAt": "2026-04-01T01:00:01Z",
+                },
+            },
+        },
+    )
+
+    assert patch_events[0]["payload"]["patch"]["kind"] == "diff"
+    assert patch_events[0]["payload"]["patch"]["changesReplace"] == []
+    assert patch_events[0]["payload"]["patch"]["filesReplace"] == []
+    item = {current["id"]: current for current in snapshot_v3["items"]}["file-tool-2"]
+    assert item["changes"] == []
+    assert item["files"] == []

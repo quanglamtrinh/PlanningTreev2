@@ -1,5 +1,6 @@
 import type {
   ConversationItemV3,
+  DiffChangeV3,
   DiffItemV3,
   DiffPatchV3,
   ErrorItemV3,
@@ -125,17 +126,106 @@ function patchReviewItem(item: ReviewItemV3, patch: ReviewPatchV3): ReviewItemV3
   }
 }
 
+function normalizeDiffChangeKind(value: string | null | undefined): DiffChangeV3['kind'] {
+  const normalized = (value ?? '').trim().toLowerCase()
+  if (normalized === 'add' || normalized === 'create' || normalized === 'created' || normalized === 'new') {
+    return 'add'
+  }
+  if (
+    normalized === 'delete' ||
+    normalized === 'deleted' ||
+    normalized === 'remove' ||
+    normalized === 'removed'
+  ) {
+    return 'delete'
+  }
+  return 'modify'
+}
+
+function diffChangeKindToChangeType(kind: DiffChangeV3['kind']): 'created' | 'updated' | 'deleted' {
+  if (kind === 'add') {
+    return 'created'
+  }
+  if (kind === 'delete') {
+    return 'deleted'
+  }
+  return 'updated'
+}
+
+function diffChangeTypeToKind(value: string | null | undefined): DiffChangeV3['kind'] {
+  const normalized = (value ?? '').trim().toLowerCase()
+  if (normalized === 'created' || normalized === 'create' || normalized === 'add') {
+    return 'add'
+  }
+  if (normalized === 'deleted' || normalized === 'delete' || normalized === 'remove' || normalized === 'removed') {
+    return 'delete'
+  }
+  return 'modify'
+}
+
+function normalizePatchText(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+  return value.trim() ? value : null
+}
+
+function diffChangesFromFiles(files: DiffItemV3['files']): DiffChangeV3[] {
+  return files
+    .map((file) => {
+      const path = file.path?.trim()
+      if (!path) {
+        return null
+      }
+      return {
+        path,
+        kind: diffChangeTypeToKind(file.changeType),
+        diff: normalizePatchText(file.patchText),
+        summary: file.summary ?? null,
+      }
+    })
+    .filter((change): change is DiffChangeV3 => change !== null)
+}
+
+function diffFilesFromChanges(changes: DiffChangeV3[]): DiffItemV3['files'] {
+  return changes
+    .map((change) => {
+      const path = change.path?.trim()
+      if (!path) {
+        return null
+      }
+      const kind = normalizeDiffChangeKind(change.kind)
+      return {
+        path,
+        changeType: diffChangeKindToChangeType(kind),
+        summary: change.summary ?? null,
+        patchText: normalizePatchText(change.diff),
+      }
+    })
+    .filter((file): file is DiffItemV3['files'][number] => file !== null)
+}
+
 function patchDiffItem(item: DiffItemV3, patch: DiffPatchV3): DiffItemV3 {
-  const files = patch.filesReplace
-    ? [...patch.filesReplace]
-    : patch.filesAppend
-      ? [...item.files, ...patch.filesAppend]
-      : item.files
+  const currentChanges =
+    item.changes && item.changes.length > 0 ? [...item.changes] : diffChangesFromFiles(item.files)
+
+  let nextChanges = currentChanges
+  if (patch.changesReplace !== undefined) {
+    nextChanges = [...patch.changesReplace]
+  } else if (patch.changesAppend && patch.changesAppend.length > 0) {
+    nextChanges = [...currentChanges, ...patch.changesAppend]
+  } else if (patch.filesReplace !== undefined) {
+    nextChanges = diffChangesFromFiles(patch.filesReplace)
+  } else if (patch.filesAppend && patch.filesAppend.length > 0) {
+    nextChanges = [...currentChanges, ...diffChangesFromFiles(patch.filesAppend)]
+  }
+
   return {
     ...item,
     title: patch.title !== undefined ? patch.title : item.title,
     summaryText: patch.summaryText !== undefined ? patch.summaryText : item.summaryText,
-    files,
+    changes: nextChanges,
+    files: diffFilesFromChanges(nextChanges),
     status: patch.status ?? item.status,
     updatedAt: patch.updatedAt,
   }

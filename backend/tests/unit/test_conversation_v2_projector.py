@@ -79,7 +79,218 @@ def test_tool_output_files_replace_overrides_preview_append() -> None:
     assert tool["outputFiles"] == [
         {"path": "final.txt", "changeType": "updated", "summary": "final"}
     ]
+    assert tool["changes"] == [
+        {"path": "final.txt", "kind": "modify", "diff": None, "summary": "final"}
+    ]
     assert tool["status"] == "completed"
+
+
+def test_file_change_completed_replace_preserves_kind_and_diff() -> None:
+    snapshot = default_thread_snapshot("project-1", "node-1", "execution")
+    snapshot["threadId"] = "thread-1"
+    snapshot, _ = upsert_item(
+        snapshot,
+        {
+            "id": "file-tool-1",
+            "kind": "tool",
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-03-28T10:00:00Z",
+            "updatedAt": "2026-03-28T10:00:00Z",
+            "status": "in_progress",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "toolType": "fileChange",
+            "title": "file change",
+            "toolName": "apply_patch",
+            "callId": None,
+            "argumentsText": None,
+            "outputText": "",
+            "outputFiles": [],
+            "exitCode": None,
+        },
+    )
+
+    snapshot, _ = apply_raw_event(
+        snapshot,
+        {
+            "method": "item/fileChange/outputDelta",
+            "received_at": "2026-03-28T10:00:01Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "file-tool-1",
+            "params": {
+                "files": [
+                    {"path": "preview.txt", "changeType": "created", "summary": "preview"},
+                ]
+            },
+        },
+    )
+    snapshot, _ = apply_raw_event(
+        snapshot,
+        {
+            "method": "item/completed",
+            "received_at": "2026-03-28T10:00:02Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "file-tool-1",
+            "params": {
+                "item": {
+                    "id": "file-tool-1",
+                    "type": "fileChange",
+                    "changes": [
+                        {
+                            "path": "src/main.ts",
+                            "kind": "add",
+                            "summary": "new file",
+                            "diff": "@@ -0,0 +1 @@\n+console.log('ok')\n",
+                        }
+                    ],
+                }
+            },
+        },
+    )
+
+    tool = snapshot["items"][0]
+    assert tool["status"] == "completed"
+    assert tool["callId"] is None
+    assert tool["changes"] == [
+        {
+            "path": "src/main.ts",
+            "kind": "add",
+            "summary": "new file",
+            "diff": "@@ -0,0 +1 @@\n+console.log('ok')\n",
+        }
+    ]
+    assert tool["outputFiles"] == [
+        {
+            "path": "src/main.ts",
+            "changeType": "created",
+            "summary": "new file",
+            "diff": "@@ -0,0 +1 @@\n+console.log('ok')\n",
+        }
+    ]
+
+
+def test_file_change_completed_explicit_empty_changes_replaces_preview() -> None:
+    snapshot = default_thread_snapshot("project-1", "node-1", "execution")
+    snapshot["threadId"] = "thread-1"
+    snapshot, _ = upsert_item(
+        snapshot,
+        {
+            "id": "file-tool-2",
+            "kind": "tool",
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-03-28T10:00:00Z",
+            "updatedAt": "2026-03-28T10:00:00Z",
+            "status": "in_progress",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "toolType": "fileChange",
+            "title": "file change",
+            "toolName": "apply_patch",
+            "callId": "call-2",
+            "argumentsText": None,
+            "outputText": "",
+            "outputFiles": [],
+            "exitCode": None,
+        },
+    )
+    snapshot, _ = patch_item(
+        snapshot,
+        "file-tool-2",
+        {
+            "kind": "tool",
+            "outputFilesAppend": [
+                {"path": "preview.txt", "changeType": "created", "summary": "preview"}
+            ],
+            "updatedAt": "2026-03-28T10:00:01Z",
+        },
+    )
+
+    snapshot, _ = apply_raw_event(
+        snapshot,
+        {
+            "method": "item/completed",
+            "received_at": "2026-03-28T10:00:02Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "file-tool-2",
+            "params": {"item": {"id": "file-tool-2", "type": "fileChange", "changes": []}},
+        },
+    )
+
+    tool = snapshot["items"][0]
+    assert tool["changes"] == []
+    assert tool["outputFiles"] == []
+
+
+def test_file_change_completed_without_changes_keeps_preview_data() -> None:
+    snapshot = default_thread_snapshot("project-1", "node-1", "execution")
+    snapshot["threadId"] = "thread-1"
+    snapshot, _ = upsert_item(
+        snapshot,
+        {
+            "id": "file-tool-3",
+            "kind": "tool",
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-03-28T10:00:00Z",
+            "updatedAt": "2026-03-28T10:00:00Z",
+            "status": "in_progress",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "toolType": "fileChange",
+            "title": "file change",
+            "toolName": "apply_patch",
+            "callId": "call-3",
+            "argumentsText": None,
+            "outputText": "",
+            "outputFiles": [],
+            "exitCode": None,
+        },
+    )
+    snapshot, _ = apply_raw_event(
+        snapshot,
+        {
+            "method": "item/fileChange/outputDelta",
+            "received_at": "2026-03-28T10:00:01Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "file-tool-3",
+            "params": {
+                "files": [
+                    {"path": "preview.txt", "changeType": "created", "summary": "preview"},
+                ]
+            },
+        },
+    )
+    snapshot, _ = apply_raw_event(
+        snapshot,
+        {
+            "method": "item/completed",
+            "received_at": "2026-03-28T10:00:02Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "file-tool-3",
+            "params": {"item": {"id": "file-tool-3", "type": "fileChange"}},
+        },
+    )
+
+    tool = snapshot["items"][0]
+    assert tool["outputFiles"] == [
+        {"path": "preview.txt", "changeType": "created", "summary": "preview"}
+    ]
+    assert tool["changes"] == [
+        {"path": "preview.txt", "kind": "add", "diff": None, "summary": "preview"}
+    ]
 
 
 def test_turn_completed_finalizes_open_items_for_active_turn() -> None:

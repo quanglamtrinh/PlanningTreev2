@@ -12,6 +12,7 @@ from backend.conversation.domain.types import (
 )
 from backend.conversation.domain.types_v3 import (
     ConversationItemV3,
+    DiffChangeV3,
     DiffItemV3,
     ErrorItemV3,
     ExploreItemV3,
@@ -38,6 +39,12 @@ def _normalize_optional_string(value: Any) -> str | None:
         cleaned = value.strip()
         return cleaned or None
     return None
+
+
+def _normalize_optional_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value if value.strip() else None
 
 
 def _normalize_item_status(value: Any, *, default: str = "pending") -> str:
@@ -112,28 +119,140 @@ def _is_truthy_flag(value: Any) -> bool:
     return False
 
 
-def _diff_files_from_tool_output_files(raw_files: Any) -> list[dict[str, Any]]:
+def _normalize_diff_change_kind(
+    value: Any,
+    *,
+    fallback: str = "modify",
+) -> str:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"add", "create", "created", "new"}:
+            return "add"
+        if normalized in {"delete", "deleted", "remove", "removed"}:
+            return "delete"
+        if normalized in {"modify", "modified", "update", "updated", "change", "changed"}:
+            return "modify"
+    return fallback
+
+
+def _diff_change_kind_to_change_type(kind: str) -> str:
+    if kind == "add":
+        return "created"
+    if kind == "delete":
+        return "deleted"
+    return "updated"
+
+
+def _diff_change_type_to_kind(value: Any, *, fallback: str = "modify") -> str:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"created", "create", "add"}:
+            return "add"
+        if normalized in {"deleted", "delete", "remove", "removed"}:
+            return "delete"
+        if normalized in {"updated", "update", "modify", "modified", "change", "changed"}:
+            return "modify"
+    return fallback
+
+
+def _normalize_diff_change(raw: Any) -> DiffChangeV3 | None:
+    if not isinstance(raw, dict):
+        return None
+    path = _normalize_optional_string(raw.get("path"))
+    if not path:
+        return None
+    kind = _normalize_diff_change_kind(
+        raw.get("kind")
+        or raw.get("changeKind")
+        or raw.get("change_kind")
+        or raw.get("changeType")
+        or raw.get("change_type"),
+        fallback="modify",
+    )
+    diff_text = _normalize_optional_text(raw.get("diff") if "diff" in raw else raw.get("patchText") or raw.get("patch_text"))
+    return cast(
+        DiffChangeV3,
+        {
+            "path": path,
+            "kind": kind,
+            "diff": diff_text,
+            "summary": _normalize_optional_string(raw.get("summary")),
+        },
+    )
+
+
+def _diff_changes_from_raw(raw_changes: Any) -> list[DiffChangeV3]:
+    if not isinstance(raw_changes, list):
+        return []
+    changes: list[DiffChangeV3] = []
+    for raw_change in raw_changes:
+        normalized = _normalize_diff_change(raw_change)
+        if normalized is not None:
+            changes.append(normalized)
+    return changes
+
+
+def _diff_changes_from_tool_output_files(raw_files: Any) -> list[DiffChangeV3]:
     if not isinstance(raw_files, list):
         return []
-    files: list[dict[str, Any]] = []
+    changes: list[DiffChangeV3] = []
     for raw_file in raw_files:
         if not isinstance(raw_file, dict):
             continue
         path = _normalize_optional_string(raw_file.get("path"))
         if not path:
             continue
-        change_type = str(raw_file.get("changeType") or "updated").strip()
-        if change_type not in {"created", "updated", "deleted"}:
-            change_type = "updated"
+        kind = _normalize_diff_change_kind(
+            raw_file.get("kind")
+            or raw_file.get("changeKind")
+            or raw_file.get("change_kind")
+            or raw_file.get("changeType")
+            or raw_file.get("change_type"),
+            fallback=_diff_change_type_to_kind(raw_file.get("changeType"), fallback="modify"),
+        )
+        diff_text = _normalize_optional_text(raw_file.get("diff") if "diff" in raw_file else raw_file.get("patchText") or raw_file.get("patch_text"))
+        changes.append(
+            cast(
+                DiffChangeV3,
+                {
+                    "path": path,
+                    "kind": kind,
+                    "diff": diff_text,
+                    "summary": _normalize_optional_string(raw_file.get("summary")),
+                },
+            )
+        )
+    return changes
+
+
+def _diff_files_from_changes(changes: list[DiffChangeV3]) -> list[dict[str, Any]]:
+    files: list[dict[str, Any]] = []
+    for change in changes:
+        path = _normalize_optional_string(change.get("path"))
+        if not path:
+            continue
+        kind = _normalize_diff_change_kind(change.get("kind"), fallback="modify")
         files.append(
             {
                 "path": path,
-                "changeType": change_type,
-                "summary": _normalize_optional_string(raw_file.get("summary")),
-                "patchText": None,
+                "changeType": _diff_change_kind_to_change_type(kind),
+                "summary": _normalize_optional_string(change.get("summary")),
+                "patchText": _normalize_optional_text(change.get("diff")),
             }
         )
     return files
+
+
+def _diff_files_from_tool_output_files(raw_files: Any) -> list[dict[str, Any]]:
+    return _diff_files_from_changes(_diff_changes_from_tool_output_files(raw_files))
+
+
+def _diff_changes_from_v2_file_change_tool(source: dict[str, Any]) -> list[DiffChangeV3]:
+    if isinstance(source.get("changes"), list):
+        return _diff_changes_from_raw(source.get("changes"))
+    if isinstance(source.get("files"), list):
+        return _diff_changes_from_raw(source.get("files"))
+    return _diff_changes_from_tool_output_files(source.get("outputFiles"))
 
 
 def convert_item_v2_to_v3(item: ConversationItem | dict[str, Any]) -> ConversationItemV3:
@@ -215,6 +334,7 @@ def convert_item_v2_to_v3(item: ConversationItem | dict[str, Any]) -> Conversati
             metadata = copy.deepcopy(metadata)
             metadata["v2Kind"] = "tool"
             metadata["semanticKind"] = "fileChange"
+            changes = _diff_changes_from_v2_file_change_tool(source)
             return cast(
                 DiffItemV3,
                 {
@@ -223,7 +343,8 @@ def convert_item_v2_to_v3(item: ConversationItem | dict[str, Any]) -> Conversati
                     "metadata": metadata,
                     "title": _normalize_optional_string(source.get("title")) or "File changes",
                     "summaryText": _normalize_optional_string(source.get("outputText")),
-                    "files": _diff_files_from_tool_output_files(source.get("outputFiles")),
+                    "changes": changes,
+                    "files": _diff_files_from_changes(changes),
                 },
             )
         output_files: list[dict[str, Any]] = []
@@ -236,13 +357,20 @@ def convert_item_v2_to_v3(item: ConversationItem | dict[str, Any]) -> Conversati
             change_type = str(raw_file.get("changeType") or "updated").strip()
             if change_type not in {"created", "updated", "deleted"}:
                 change_type = "updated"
-            output_files.append(
-                {
-                    "path": path,
-                    "changeType": change_type,
-                    "summary": _normalize_optional_string(raw_file.get("summary")),
-                }
-            )
+            output_file: dict[str, Any] = {
+                "path": path,
+                "changeType": change_type,
+                "summary": _normalize_optional_string(raw_file.get("summary")),
+            }
+            if any(key in raw_file for key in ("kind", "changeKind", "change_kind")):
+                output_file["kind"] = _normalize_diff_change_kind(
+                    raw_file.get("kind") or raw_file.get("changeKind") or raw_file.get("change_kind"),
+                    fallback=_diff_change_type_to_kind(change_type, fallback="modify"),
+                )
+            diff_text = _normalize_optional_text(raw_file.get("diff") if "diff" in raw_file else raw_file.get("patchText") or raw_file.get("patch_text"))
+            if diff_text is not None:
+                output_file["diff"] = diff_text
+            output_files.append(output_file)
         return cast(
             ToolItemV3,
             {
@@ -485,10 +613,22 @@ def _apply_patch_to_item(item: ConversationItemV3, patch: ItemPatchV3) -> Conver
             updated["title"] = cast(Any, patch.get("title"))
         if "summaryText" in patch:
             updated["summaryText"] = cast(Any, patch.get("summaryText"))
-        if patch.get("filesAppend"):
-            updated["files"] = list(updated.get("files") or []) + list(cast(Any, patch.get("filesAppend") or []))
-        if "filesReplace" in patch:
-            updated["files"] = list(cast(Any, patch.get("filesReplace") or []))
+        current_changes = _diff_changes_from_raw(updated.get("changes"))
+        if not current_changes:
+            current_changes = _diff_changes_from_tool_output_files(updated.get("files"))
+
+        next_changes = current_changes
+        if "changesReplace" in patch:
+            next_changes = _diff_changes_from_raw(patch.get("changesReplace"))
+        elif patch.get("changesAppend"):
+            next_changes = current_changes + _diff_changes_from_raw(patch.get("changesAppend"))
+        elif "filesReplace" in patch:
+            next_changes = _diff_changes_from_tool_output_files(patch.get("filesReplace"))
+        elif patch.get("filesAppend"):
+            next_changes = current_changes + _diff_changes_from_tool_output_files(patch.get("filesAppend"))
+
+        updated["changes"] = next_changes
+        updated["files"] = _diff_files_from_changes(next_changes)
     elif kind == "status":
         if "label" in patch:
             updated["label"] = str(patch.get("label") or "")
@@ -626,8 +766,6 @@ def _map_patch_from_v2(
         )
     if v2_kind == "tool":
         if current_kind == "diff":
-            mapped_files_append = _diff_files_from_tool_output_files(source.get("outputFilesAppend"))
-            mapped_files_replace = _diff_files_from_tool_output_files(source.get("outputFilesReplace"))
             mapped_patch: dict[str, Any] = {
                 "kind": "diff",
                 "status": source.get("status"),
@@ -635,28 +773,48 @@ def _map_patch_from_v2(
             }
             if "title" in source:
                 mapped_patch["title"] = source.get("title")
-            if "outputFilesAppend" in source:
-                mapped_patch["filesAppend"] = mapped_files_append
-            if "outputFilesReplace" in source:
-                mapped_patch["filesReplace"] = mapped_files_replace
+            append_changes: list[DiffChangeV3] | None = None
+            if "changesAppend" in source:
+                append_changes = _diff_changes_from_raw(source.get("changesAppend"))
+            elif "outputFilesAppend" in source:
+                append_changes = _diff_changes_from_tool_output_files(source.get("outputFilesAppend"))
+            if append_changes is not None:
+                mapped_patch["changesAppend"] = append_changes
+                mapped_patch["filesAppend"] = _diff_files_from_changes(append_changes)
+
+            replace_changes: list[DiffChangeV3] | None = None
+            if "changesReplace" in source:
+                replace_changes = _diff_changes_from_raw(source.get("changesReplace"))
+            elif "outputFilesReplace" in source:
+                replace_changes = _diff_changes_from_tool_output_files(source.get("outputFilesReplace"))
+            if replace_changes is not None:
+                mapped_patch["changesReplace"] = replace_changes
+                mapped_patch["filesReplace"] = _diff_files_from_changes(replace_changes)
             if "outputTextAppend" in source:
                 current_summary = _normalize_optional_string(cast(dict[str, Any], current_item).get("summaryText"))
                 mapped_patch["summaryText"] = f"{current_summary or ''}{str(source.get('outputTextAppend') or '')}" or None
             return cast(ItemPatchV3, mapped_patch)
-        return cast(
-            ItemPatchV3,
+        mapped_patch = cast(
+            dict[str, Any],
             {
                 "kind": "tool",
-                "title": source.get("title"),
-                "argumentsText": source.get("argumentsText"),
-                "outputTextAppend": str(source.get("outputTextAppend") or ""),
-                "outputFilesAppend": copy.deepcopy(source.get("outputFilesAppend") or []),
-                "outputFilesReplace": copy.deepcopy(source.get("outputFilesReplace") or []),
-                "exitCode": source.get("exitCode"),
                 "status": source.get("status"),
                 "updatedAt": str(source.get("updatedAt") or iso_now()),
             },
         )
+        if "title" in source:
+            mapped_patch["title"] = source.get("title")
+        if "argumentsText" in source:
+            mapped_patch["argumentsText"] = source.get("argumentsText")
+        if "outputTextAppend" in source:
+            mapped_patch["outputTextAppend"] = str(source.get("outputTextAppend") or "")
+        if "outputFilesAppend" in source:
+            mapped_patch["outputFilesAppend"] = copy.deepcopy(source.get("outputFilesAppend") or [])
+        if "outputFilesReplace" in source:
+            mapped_patch["outputFilesReplace"] = copy.deepcopy(source.get("outputFilesReplace") or [])
+        if "exitCode" in source:
+            mapped_patch["exitCode"] = source.get("exitCode")
+        return cast(ItemPatchV3, mapped_patch)
     if v2_kind == "userInput":
         return cast(
             ItemPatchV3,

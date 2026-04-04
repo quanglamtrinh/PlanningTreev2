@@ -523,6 +523,15 @@ export interface ToolOutputFile {
   path: string
   changeType: 'created' | 'updated' | 'deleted'
   summary: string | null
+  kind?: 'add' | 'modify' | 'delete'
+  diff?: string | null
+}
+
+export interface ToolChange {
+  path: string
+  kind: 'add' | 'modify' | 'delete'
+  diff: string | null
+  summary: string | null
 }
 
 export interface ToolItem extends ItemBase {
@@ -534,6 +543,7 @@ export interface ToolItem extends ItemBase {
   argumentsText: string | null
   outputText: string
   outputFiles: ToolOutputFile[]
+  changes?: ToolChange[]
   exitCode: number | null
 }
 
@@ -656,6 +666,8 @@ export interface ToolPatch {
   outputTextAppend?: string
   outputFilesAppend?: ToolOutputFile[]
   outputFilesReplace?: ToolOutputFile[]
+  changesAppend?: ToolChange[]
+  changesReplace?: ToolChange[]
   exitCode?: number | null
   status?: ItemStatus
   updatedAt: string
@@ -828,6 +840,8 @@ export interface ToolOutputFileV3 {
   path: string
   changeType: 'created' | 'updated' | 'deleted'
   summary: string | null
+  kind?: 'add' | 'modify' | 'delete'
+  diff?: string | null
 }
 
 export interface ToolItemV3 extends ItemBaseV3 {
@@ -891,10 +905,18 @@ export interface DiffFileV3 {
   patchText: string | null
 }
 
+export interface DiffChangeV3 {
+  path: string
+  kind: 'add' | 'modify' | 'delete'
+  diff: string | null
+  summary: string | null
+}
+
 export interface DiffItemV3 extends ItemBaseV3 {
   kind: 'diff'
   title: string | null
   summaryText: string | null
+  changes: DiffChangeV3[]
   files: DiffFileV3[]
 }
 
@@ -1019,6 +1041,8 @@ export interface DiffPatchV3 {
   kind: 'diff'
   title?: string | null
   summaryText?: string | null
+  changesAppend?: DiffChangeV3[]
+  changesReplace?: DiffChangeV3[]
   filesAppend?: DiffFileV3[]
   filesReplace?: DiffFileV3[]
   status?: ItemStatus
