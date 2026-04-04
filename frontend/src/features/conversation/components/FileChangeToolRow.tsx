@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { ToolItem, ToolOutputFile } from '../../../api/types'
+import type { ToolChange, ToolItem, ToolOutputFile } from '../../../api/types'
 import styles from './ConversationFeed.module.css'
 import {
   getToolHeadline,
@@ -17,16 +17,61 @@ function basename(path: string): string {
   return segment?.trim() || path
 }
 
-function fileRowKey(file: ToolOutputFile): string {
-  return `${file.path}\u0000${file.changeType}`
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
 }
 
-function previewText(text: string | null | undefined, maxChars = 220): string {
-  const normalized = String(text ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
-  if (normalized.length <= maxChars) {
-    return normalized
+function normalizeChangeKind(
+  value: string | null | undefined,
+  fallback: ToolChange['kind'] = 'modify',
+): ToolChange['kind'] {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (normalized === 'add' || normalized === 'create' || normalized === 'created' || normalized === 'new') {
+    return 'add'
   }
-  return `${normalized.slice(0, Math.max(0, maxChars - 3))}...`
+  if (
+    normalized === 'delete' ||
+    normalized === 'deleted' ||
+    normalized === 'remove' ||
+    normalized === 'removed'
+  ) {
+    return 'delete'
+  }
+  if (
+    normalized === 'modify' ||
+    normalized === 'modified' ||
+    normalized === 'update' ||
+    normalized === 'updated' ||
+    normalized === 'change' ||
+    normalized === 'changed'
+  ) {
+    return 'modify'
+  }
+  return fallback
+}
+
+function changeTypeToKind(changeType: ToolOutputFile['changeType']): ToolChange['kind'] {
+  if (changeType === 'created') {
+    return 'add'
+  }
+  if (changeType === 'deleted') {
+    return 'delete'
+  }
+  return 'modify'
+}
+
+function changeKindToChangeType(kind: ToolChange['kind']): ToolOutputFile['changeType'] {
+  if (kind === 'add') {
+    return 'created'
+  }
+  if (kind === 'delete') {
+    return 'deleted'
+  }
+  return 'updated'
 }
 
 const STRUCTURED_DIFF_MARKER_RE =
@@ -75,26 +120,111 @@ function parseStatsFromSummary(summary: string | null | undefined): { added: num
   return null
 }
 
-function aggregateDiffStats(outputText: string, files: ToolOutputFile[]): { added: number; removed: number } {
-  const fromText = diffStatsFromText(outputText)
-  if (fromText.added > 0 || fromText.removed > 0) {
-    return fromText
+type FileChangeRow = {
+  key: string
+  path: string
+  changeType: ToolOutputFile['changeType']
+  kind: ToolChange['kind']
+  summary: string | null
+  diff: string | null
+}
+
+function normalizeToolChangesFromItem(item: ToolItem): ToolChange[] {
+  const rawChanges = (item as { changes?: ToolChange[] }).changes
+  if (!Array.isArray(rawChanges)) {
+    return []
   }
+  const rows: ToolChange[] = []
+  for (const raw of rawChanges) {
+    if (!raw || typeof raw !== 'object') {
+      continue
+    }
+    const path = String(raw.path ?? '').trim()
+    if (!path) {
+      continue
+    }
+    rows.push({
+      path,
+      kind: normalizeChangeKind(raw.kind, 'modify'),
+      diff: normalizeOptionalText(raw.diff),
+      summary: normalizeOptionalText(raw.summary),
+    })
+  }
+  return rows
+}
+
+function resolveCanonicalFileRows(item: ToolItem): FileChangeRow[] {
+  const normalizedChanges = normalizeToolChangesFromItem(item)
+  const normalizedFiles = item.outputFiles
+    .map((file) => {
+      const path = String(file.path ?? '').trim()
+      if (!path) {
+        return null
+      }
+      const changeType: ToolOutputFile['changeType'] =
+        file.changeType === 'created' || file.changeType === 'deleted' ? file.changeType : 'updated'
+      const kind = normalizeChangeKind(file.kind, changeTypeToKind(changeType))
+      return {
+        path,
+        changeType,
+        kind,
+        summary: normalizeOptionalText(file.summary),
+        diff: normalizeOptionalText(file.diff),
+      }
+    })
+    .filter((row): row is Omit<FileChangeRow, 'key'> => row !== null)
+
+  const rows: FileChangeRow[] = []
+  const consumedFileIndexes = new Set<number>()
+  normalizedChanges.forEach((change, index) => {
+    const normalizedPath = normalizePathForMatch(change.path)
+    const fileIndex = normalizedFiles.findIndex((file) => normalizePathForMatch(file.path) === normalizedPath)
+    const matchedFile = fileIndex >= 0 ? normalizedFiles[fileIndex] : null
+    if (fileIndex >= 0) {
+      consumedFileIndexes.add(fileIndex)
+    }
+    const kind = normalizeChangeKind(
+      change.kind,
+      matchedFile ? matchedFile.kind : changeTypeToKind('updated'),
+    )
+    rows.push({
+      key: `${change.path}\u0000${kind}\u0000${index}`,
+      path: change.path,
+      changeType: changeKindToChangeType(kind),
+      kind,
+      summary: change.summary ?? matchedFile?.summary ?? null,
+      diff: change.diff ?? matchedFile?.diff ?? null,
+    })
+  })
+
+  normalizedFiles.forEach((file, index) => {
+    if (consumedFileIndexes.has(index)) {
+      return
+    }
+    rows.push({
+      key: `${file.path}\u0000${file.changeType}\u0000file-${index}`,
+      path: file.path,
+      changeType: file.changeType,
+      kind: normalizeChangeKind(file.kind, changeTypeToKind(file.changeType)),
+      summary: file.summary,
+      diff: file.diff,
+    })
+  })
+  return rows
+}
+
+function fileRowKey(row: FileChangeRow): string {
+  return row.key
+}
+
+function aggregateStatsFromRows(rows: readonly { added: number; removed: number }[]): { added: number; removed: number } {
   let added = 0
   let removed = 0
-  let any = false
-  for (const file of files) {
-    const parsed = parseStatsFromSummary(file.summary)
-    if (parsed) {
-      any = true
-      added += parsed.added
-      removed += parsed.removed
-    }
+  for (const row of rows) {
+    added += row.added
+    removed += row.removed
   }
-  if (any) {
-    return { added, removed }
-  }
-  return { added: 0, removed: 0 }
+  return { added, removed }
 }
 
 function normalizePathForMatch(p: string): string {
@@ -314,18 +444,24 @@ function statsFromChunksForPath(chunks: readonly UnifiedDiffChunk[], filePath: s
   return ch ? { added: ch.added, removed: ch.removed } : null
 }
 
-function resolvedStatsForFile(
-  file: ToolOutputFile,
+function resolvedStatsForRow(
+  row: FileChangeRow,
   chunks: readonly UnifiedDiffChunk[],
   outputText: string,
   allowSingleBlobFallback: boolean,
   fallbackChunk?: UnifiedDiffChunk | null,
 ): { added: number; removed: number } {
-  const parsed = parseStatsFromSummary(file.summary)
+  if (row.diff) {
+    const parsedDiff = diffStatsFromText(row.diff)
+    if (parsedDiff.added > 0 || parsedDiff.removed > 0 || hasStructuredDiffMarkers(row.diff)) {
+      return parsedDiff
+    }
+  }
+  const parsed = parseStatsFromSummary(row.summary)
   if (parsed) {
     return parsed
   }
-  const fromUnified = statsFromChunksForPath(chunks, file.path)
+  const fromUnified = statsFromChunksForPath(chunks, row.path)
   if (fromUnified) {
     return fromUnified
   }
@@ -337,17 +473,17 @@ function resolvedStatsForFile(
     allowSingleBlobFallback &&
     trimmed &&
     chunks.length === 0 &&
-    (file.changeType === 'updated' || file.changeType === 'created')
+    (row.changeType === 'updated' || row.changeType === 'created')
   ) {
     const singleFileGuess = diffStatsFromText(trimmed)
     if (singleFileGuess.added > 0 || singleFileGuess.removed > 0) {
       return singleFileGuess
     }
   }
-  if (file.changeType === 'created') {
+  if (row.changeType === 'created') {
     return { added: 1, removed: 0 }
   }
-  if (file.changeType === 'deleted') {
+  if (row.changeType === 'deleted') {
     return { added: 0, removed: 1 }
   }
   return { added: 0, removed: 0 }
@@ -458,7 +594,14 @@ function IconCopy() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
-        d="M8 8V5.2c0-1.12 0-1.68.22-2.11a2 2 0 0 1 .87-.87C9.52 2 10.08 2 11.2 2h5.6c1.12 0 1.68 0 2.11.22a2 2 0 0 1 .87.87C20 3.52 20 4.08 20 5.2v5.6c0 1.12 0 1.68-.22 2.11a2 2 0 0 1-.87.87C18.48 14 17.92 14 16.8 14H14M5.2 22h5.6c1.12 0 1.68 0 2.11-.22a2 2 0 0 0 .87-.87c.22-.43.22-.99.22-2.11v-5.6c0-1.12 0-1.68-.22-2.11a2 2 0 0 0-.87-.87C12.48 10 11.92 10 10.8 10H5.2c-1.12 0-1.68 0-2.11.22a2 2 0 0 0-.87.87C2 11.52 2 12.08 2 13.2v5.6c0 1.12 0 1.68.22 2.11a2 2 0 0 0 .87.87c.43.22.99.22 2.11.22Z"
+        d="M9 9h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"
         stroke="currentColor"
         strokeWidth="1.5"
         strokeLinecap="round"
@@ -533,7 +676,11 @@ export function FileChangeToolRow({
   dataTestId?: string
 }) {
   const headline = getToolHeadline(item)
-  const sourceText = useMemo(() => {
+  const fileRows = useMemo(() => resolveCanonicalFileRows(item), [item])
+  const primaryRow = fileRows[0]
+  const isMultiFile = fileRows.length > 1
+
+  const blobSourceText = useMemo(() => {
     const out = item.outputText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
     const args = item.argumentsText?.replace(/\r\n/g, '\n').replace(/\r/g, '\n') ?? ''
     if (hasStructuredDiffMarkers(out)) {
@@ -547,140 +694,105 @@ export function FileChangeToolRow({
     }
     return args.trim() ? args : ''
   }, [item.argumentsText, item.outputText])
+  const canonicalDiffText = useMemo(
+    () =>
+      fileRows
+        .map((row) => normalizeOptionalText(row.diff))
+        .filter((diff): diff is string => Boolean(diff))
+        .join('\n\n'),
+    [fileRows],
+  )
+  const sourceText = canonicalDiffText || blobSourceText
 
   const hasArguments = Boolean(item.argumentsText?.trim())
   const hasOutput = Boolean(item.outputText.trim())
-  const hasFiles = item.outputFiles.length > 0
+  const hasFiles = fileRows.length > 0
   const hasMeaningfulBody = hasMeaningfulToolContent(item)
   const canToggle = hasArguments || hasOutput || hasFiles
   const showBody = !canToggle || isExpanded
 
-  const primaryFile = item.outputFiles[0]
-  const isMultiFile = item.outputFiles.length > 1
-  const diffChunks = useMemo(() => parseUnifiedDiffChunks(sourceText), [sourceText])
+  const diffChunks = useMemo(() => parseUnifiedDiffChunks(blobSourceText), [blobSourceText])
+  const blobLines = useMemo(() => {
+    if (!blobSourceText.trim()) {
+      return [] as string[]
+    }
+    return blobSourceText.split('\n')
+  }, [blobSourceText])
   const multiFileRows = useMemo(
     () =>
-      item.outputFiles.map((file, index) => {
-        const chunk = resolveChunkForFile(diffChunks, file.path, index)
+      fileRows.map((row, index) => {
+        const chunk = row.diff ? null : resolveChunkForFile(diffChunks, row.path, index)
+        const baseStats = resolvedStatsForRow(row, diffChunks, blobSourceText, fileRows.length <= 1, chunk)
+        const fallbackBlobStats =
+          index === 0 &&
+          !row.diff &&
+          chunk == null &&
+          diffChunks.length === 0 &&
+          blobSourceText.trim().length > 0 &&
+          baseStats.added === 0 &&
+          baseStats.removed === 0
+            ? diffStatsFromText(blobSourceText)
+            : null
         return {
-          file,
+          row,
           chunk,
-          ...resolvedStatsForFile(file, diffChunks, sourceText, item.outputFiles.length <= 1, chunk),
+          index,
+          diffText: normalizeOptionalText(row.diff),
+          ...(fallbackBlobStats ?? baseStats),
         }
       }),
-    [diffChunks, item.outputFiles, sourceText],
+    [blobSourceText, diffChunks, fileRows],
   )
 
   const fileName = useMemo(() => {
     if (isMultiFile) {
-      return `${item.outputFiles.length} files`
+      return `${fileRows.length} files`
     }
-    if (primaryFile) {
-      return basename(primaryFile.path)
+    if (primaryRow) {
+      return basename(primaryRow.path)
     }
     const t = normalizeText(item.title)
     if (t && (t.includes('/') || t.includes('\\'))) {
       return basename(t)
     }
     return t || headline || 'File'
-  }, [headline, isMultiFile, item.outputFiles.length, item.title, primaryFile])
+  }, [fileRows.length, headline, isMultiFile, item.title, primaryRow])
 
-  const badgeLabel = primaryFile ? changeTypeLabel(primaryFile.changeType) : 'UPDATED'
-  const stats = useMemo(() => aggregateDiffStats(sourceText, item.outputFiles), [item.outputFiles, sourceText])
+  const badgeLabel = primaryRow ? changeTypeLabel(primaryRow.changeType) : 'UPDATED'
+  const stats = useMemo(() => {
+    if (multiFileRows.length > 0) {
+      return aggregateStatsFromRows(multiFileRows)
+    }
+    const fromSource = diffStatsFromText(sourceText)
+    if (fromSource.added > 0 || fromSource.removed > 0) {
+      return fromSource
+    }
+    return { added: 0, removed: 0 }
+  }, [multiFileRows, sourceText])
 
+  const singleBodyText = useMemo(() => {
+    if (isMultiFile) {
+      return ''
+    }
+    if (primaryRow?.diff) {
+      return primaryRow.diff.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    }
+    return sourceText
+  }, [isMultiFile, primaryRow?.diff, sourceText])
   const lines = useMemo(() => {
-    if (!sourceText.trim()) {
+    if (!singleBodyText.trim()) {
       return [] as string[]
     }
-    return sourceText.split('\n')
-  }, [sourceText])
+    return singleBodyText.split('\n')
+  }, [singleBodyText])
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [expandedMultiKey, setExpandedMultiKey] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-  const debugSignatureRef = useRef<string>('')
 
   useEffect(() => {
     setExpandedMultiKey(null)
   }, [item.id])
-
-  useEffect(() => {
-    const signature = [
-      item.id,
-      item.updatedAt,
-      item.status,
-      sourceText.length,
-      lines.length,
-      diffChunks.length,
-      stats.added,
-      stats.removed,
-      item.outputFiles.length,
-    ].join('|')
-    if (debugSignatureRef.current === signature) {
-      return
-    }
-    debugSignatureRef.current = signature
-
-    console.info('file-change-row Render snapshot', {
-      itemId: item.id,
-      status: item.status,
-      toolType: item.toolType,
-      title: item.title,
-      toolName: item.toolName,
-      callId: item.callId,
-      isExpanded,
-      hasArguments,
-      hasOutput,
-      hasFiles,
-      canToggle,
-      showBody,
-      isMultiFile,
-      sourceTextLength: sourceText.length,
-      sourceFromOutputMarkers: hasStructuredDiffMarkers(item.outputText),
-      sourceFromArgsMarkers: hasStructuredDiffMarkers(item.argumentsText ?? ''),
-      outputPreview: previewText(item.outputText, 260),
-      argumentsPreview: previewText(item.argumentsText ?? '', 260),
-      sourcePreview: previewText(sourceText, 260),
-      linesLength: lines.length,
-      diffChunks: diffChunks.slice(0, 8).map((chunk) => ({
-        relPaths: chunk.relPaths,
-        added: chunk.added,
-        removed: chunk.removed,
-        startLine: chunk.startLine,
-        endLine: chunk.endLine,
-      })),
-      stats,
-      outputFiles: item.outputFiles.slice(0, 12).map((file, index) => ({
-        index,
-        path: file.path,
-        changeType: file.changeType,
-        summary: file.summary,
-      })),
-      multiFileRows: multiFileRows.slice(0, 12).map((row, index) => ({
-        index,
-        path: row.file.path,
-        added: row.added,
-        removed: row.removed,
-        hasChunk: Boolean(row.chunk),
-        chunkStartLine: row.chunk?.startLine ?? null,
-        chunkEndLine: row.chunk?.endLine ?? null,
-      })),
-    })
-  }, [
-    canToggle,
-    diffChunks,
-    hasArguments,
-    hasFiles,
-    hasOutput,
-    isExpanded,
-    isMultiFile,
-    item,
-    lines.length,
-    multiFileRows,
-    showBody,
-    sourceText,
-    stats,
-  ])
 
   useEffect(() => {
     if (!menuOpen) {
@@ -696,29 +808,29 @@ export function FileChangeToolRow({
   }, [menuOpen])
 
   const copyDiff = useCallback(() => {
-    const text = sourceText.trim() || normalizeText(item.argumentsText)
+    const text = canonicalDiffText.trim() || sourceText.trim() || normalizeText(item.argumentsText)
     if (text) {
       void navigator.clipboard.writeText(text)
     }
-  }, [item.argumentsText, sourceText])
+  }, [canonicalDiffText, item.argumentsText, sourceText])
 
   const copyPath = useCallback(() => {
-    const path = primaryFile?.path ?? ''
+    const path = primaryRow?.path ?? ''
     if (path) {
       void navigator.clipboard.writeText(path)
     }
     setMenuOpen(false)
-  }, [primaryFile?.path])
+  }, [primaryRow?.path])
 
   const copyAllPaths = useCallback(() => {
-    const text = item.outputFiles.map((f) => f.path).join('\n')
+    const text = fileRows.map((f) => f.path).join('\n')
     if (text.trim()) {
       void navigator.clipboard.writeText(text)
     }
     setMenuOpen(false)
-  }, [item.outputFiles])
+  }, [fileRows])
 
-  const multiFileLabel = `${item.outputFiles.length} files changed`
+  const multiFileLabel = `${fileRows.length} files changed`
 
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid={dataTestId}>
@@ -741,7 +853,7 @@ export function FileChangeToolRow({
                   className={styles.fileChangeIconBtn}
                   aria-label="Copy diff"
                   onClick={copyDiff}
-                  disabled={!sourceText.trim() && !normalizeText(item.argumentsText)}
+                  disabled={!canonicalDiffText.trim() && !sourceText.trim() && !normalizeText(item.argumentsText)}
                 >
                   <IconCopy />
                 </button>
@@ -757,7 +869,7 @@ export function FileChangeToolRow({
                   </button>
                   {menuOpen ? (
                     <div className={styles.fileChangeMenu} role="menu">
-                      {primaryFile?.path ? (
+                      {primaryRow?.path ? (
                         <button
                           type="button"
                           className={styles.fileChangeMenuItem}
@@ -781,21 +893,23 @@ export function FileChangeToolRow({
               </div>
             </header>
             <ul className={styles.fileChangeMultiList} aria-label="Changed files">
-              {multiFileRows.map(({ file, added, removed, chunk }) => {
-                const rowKey = fileRowKey(file)
+              {multiFileRows.map(({ row, added, removed, chunk, diffText, index }) => {
+                const rowKey = fileRowKey(row)
                 const rowOpen = expandedMultiKey === rowKey
                 const rowLines =
-                  chunk != null
-                    ? lines.slice(chunk.startLine, chunk.endLine)
-                    : diffChunks.length === 0 && lines.length > 0
-                      ? lines
+                  diffText != null
+                    ? diffText.split('\n')
+                    : chunk != null
+                      ? blobLines.slice(chunk.startLine, chunk.endLine)
+                      : index === 0 && diffChunks.length === 0 && blobLines.length > 0
+                        ? blobLines
                       : []
-                const displayName = basename(file.path)
+                const displayName = basename(row.path)
                 return (
                   <li key={rowKey} className={styles.fileChangeMultiItem}>
                     <div className={styles.fileChangeMultiRow}>
                       <div className={styles.fileChangeMultiLeft}>
-                        <span className={styles.fileChangeMultiPath} title={file.path}>
+                        <span className={styles.fileChangeMultiPath} title={row.path}>
                           {displayName}
                         </span>
                         <span className={styles.fileChangeMultiRowStats}>
@@ -868,15 +982,15 @@ export function FileChangeToolRow({
               </div>
             </div>
             <div className={styles.fileChangeHeaderActions}>
-              <button
-                type="button"
-                className={styles.fileChangeIconBtn}
-                aria-label="Copy diff"
-                onClick={copyDiff}
-                disabled={!sourceText.trim() && !normalizeText(item.argumentsText)}
-              >
-                <IconCopy />
-              </button>
+                <button
+                  type="button"
+                  className={styles.fileChangeIconBtn}
+                  aria-label="Copy diff"
+                  onClick={copyDiff}
+                  disabled={!canonicalDiffText.trim() && !sourceText.trim() && !normalizeText(item.argumentsText)}
+                >
+                  <IconCopy />
+                </button>
               {canToggle ? (
                 <button
                   type="button"
@@ -895,11 +1009,11 @@ export function FileChangeToolRow({
                   aria-label="More actions"
                   aria-expanded={menuOpen}
                   onClick={() => setMenuOpen((open) => !open)}
-                  disabled={!primaryFile?.path}
+                  disabled={!primaryRow?.path}
                 >
                   <IconMore />
                 </button>
-                {menuOpen && primaryFile?.path ? (
+                {menuOpen && primaryRow?.path ? (
                   <div className={styles.fileChangeMenu} role="menu">
                     <button type="button" className={styles.fileChangeMenuItem} role="menuitem" onClick={copyPath}>
                       Copy file path
@@ -936,17 +1050,17 @@ export function FileChangeToolRow({
 
         {showBody && lines.length === 0 && hasFiles && !isMultiFile ? (
           <div className={styles.fileChangeFileList}>
-            {item.outputFiles.map((file) => (
-              <div key={`${file.path}-${file.changeType}`} className={styles.fileChangeFileListRow}>
-                <span className={styles.fileChangeMiniBadge}>{changeTypeLabel(file.changeType)}</span>
-                <code className={styles.fileChangeFileListPath}>{file.path}</code>
-                {file.summary ? <span className={styles.subtleText}>{file.summary}</span> : null}
+            {fileRows.map((row) => (
+              <div key={row.key} className={styles.fileChangeFileListRow}>
+                <span className={styles.fileChangeMiniBadge}>{changeTypeLabel(row.changeType)}</span>
+                <code className={styles.fileChangeFileListPath}>{row.path}</code>
+                {row.summary ? <span className={styles.subtleText}>{row.summary}</span> : null}
               </div>
             ))}
           </div>
         ) : null}
 
-        {showBody && !isMultiFile && !hasMeaningfulBody ? (
+        {showBody && !isMultiFile && !hasMeaningfulBody && !hasFiles ? (
           <div className={styles.subtleText}>{getToolPlaceholderText(item)}</div>
         ) : null}
       </div>

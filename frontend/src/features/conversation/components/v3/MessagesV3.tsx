@@ -14,6 +14,7 @@ import type {
   PlanActionV3,
   ProcessingState,
   ThreadSnapshotV3,
+  ToolChange,
   ToolItem as ToolItemV2,
   ToolItemV3,
   UserInputAnswerV3,
@@ -229,6 +230,81 @@ function inferredFileChangeOutputTextForTool(item: ToolItemV3): string {
   }
 
   return item.outputText
+}
+
+function normalizeDiffKind(
+  value: string | null | undefined,
+  fallback: ToolChange['kind'] = 'modify',
+): ToolChange['kind'] {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (normalized === 'add' || normalized === 'create' || normalized === 'created' || normalized === 'new') {
+    return 'add'
+  }
+  if (
+    normalized === 'delete' ||
+    normalized === 'deleted' ||
+    normalized === 'remove' ||
+    normalized === 'removed'
+  ) {
+    return 'delete'
+  }
+  if (
+    normalized === 'modify' ||
+    normalized === 'modified' ||
+    normalized === 'update' ||
+    normalized === 'updated' ||
+    normalized === 'change' ||
+    normalized === 'changed'
+  ) {
+    return 'modify'
+  }
+  return fallback
+}
+
+function changeTypeToDiffKind(changeType: 'created' | 'updated' | 'deleted'): ToolChange['kind'] {
+  if (changeType === 'created') {
+    return 'add'
+  }
+  if (changeType === 'deleted') {
+    return 'delete'
+  }
+  return 'modify'
+}
+
+function diffKindToChangeType(kind: ToolChange['kind']): 'created' | 'updated' | 'deleted' {
+  if (kind === 'add') {
+    return 'created'
+  }
+  if (kind === 'delete') {
+    return 'deleted'
+  }
+  return 'updated'
+}
+
+function normalizeDiffText(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
+function toolChangesFromOutputFiles(files: ToolItemV3['outputFiles']): ToolChange[] {
+  return files
+    .map((file) => {
+      const path = normalizeText(file.path)
+      if (!path) {
+        return null
+      }
+      const kind = normalizeDiffKind(file.kind, changeTypeToDiffKind(file.changeType))
+      return {
+        path,
+        kind,
+        diff: normalizeDiffText(file.diff),
+        summary: file.summary ?? null,
+      }
+    })
+    .filter((change): change is ToolChange => change !== null)
 }
 
 function effectiveUserInputStatus(
@@ -624,6 +700,7 @@ function ToolRowV3({
   const inferredFiles = useMemo(() => inferredFilesForTool(item), [item])
   const effectiveFiles = item.outputFiles.length ? item.outputFiles : inferredFiles
   const effectiveOutputText = useMemo(() => inferredFileChangeOutputTextForTool(item), [item])
+  const effectiveChanges = useMemo(() => toolChangesFromOutputFiles(effectiveFiles), [effectiveFiles])
 
   if (item.toolType === 'fileChange' || effectiveFiles.length > 0) {
     const fileChangeItem: ToolItemV2 = {
@@ -631,7 +708,14 @@ function ToolRowV3({
       kind: 'tool',
       toolType: 'fileChange',
       outputText: effectiveOutputText,
-      outputFiles: effectiveFiles,
+      outputFiles: effectiveFiles.map((file) => ({
+        path: file.path,
+        changeType: file.changeType,
+        summary: file.summary,
+        kind: normalizeDiffKind(file.kind, changeTypeToDiffKind(file.changeType)),
+        diff: normalizeDiffText(file.diff),
+      })),
+      changes: effectiveChanges,
     }
     return (
       <FileChangeToolRow
@@ -727,8 +811,50 @@ function ToolRowV3({
 }
 
 function diffItemV3ToSyntheticFileChangeTool(item: Extract<ConversationItemV3, { kind: 'diff' }>): ToolItemV2 {
-  const patches = item.files.map((f) => (f.patchText ?? '').trim()).filter(Boolean)
-  const outputText = patches.join('\n\n')
+  const canonicalChanges: ToolChange[] =
+    item.changes.length > 0
+      ? item.changes
+          .map((change) => {
+            const path = normalizeText(change.path)
+            if (!path) {
+              return null
+            }
+            const kind = normalizeDiffKind(change.kind, 'modify')
+            return {
+              path,
+              kind,
+              diff: normalizeDiffText(change.diff),
+              summary: change.summary ?? null,
+            }
+          })
+          .filter((change): change is ToolChange => change !== null)
+      : item.files
+          .map((file) => {
+            const path = normalizeText(file.path)
+            if (!path) {
+              return null
+            }
+            const kind = changeTypeToDiffKind(file.changeType)
+            return {
+              path,
+              kind,
+              diff: normalizeDiffText(file.patchText),
+              summary: file.summary ?? null,
+            }
+          })
+          .filter((change): change is ToolChange => change !== null)
+
+  const outputFiles = canonicalChanges.map((change) => ({
+    path: change.path,
+    changeType: diffKindToChangeType(change.kind),
+    summary: change.summary,
+    kind: change.kind,
+    diff: change.diff,
+  }))
+  const outputText = canonicalChanges
+    .map((change) => normalizeDiffText(change.diff))
+    .filter((diff): diff is string => Boolean(diff))
+    .join('\n\n')
   return {
     id: item.id,
     kind: 'tool',
@@ -747,11 +873,8 @@ function diffItemV3ToSyntheticFileChangeTool(item: Extract<ConversationItemV3, {
     callId: null,
     argumentsText: item.summaryText,
     outputText,
-    outputFiles: item.files.map((f) => ({
-      path: f.path,
-      changeType: f.changeType,
-      summary: f.summary,
-    })),
+    outputFiles,
+    changes: canonicalChanges,
     exitCode: null,
   }
 }

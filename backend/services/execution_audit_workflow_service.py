@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -701,6 +702,195 @@ class ExecutionAuditWorkflowService:
             or "\n--- " in f"\n{normalized}"
         )
 
+    @staticmethod
+    def _normalize_path_for_diff_match(path: str | None) -> str:
+        candidate = str(path or "").replace("\\", "/").strip()
+        if not candidate:
+            return ""
+        if len(candidate) >= 2 and candidate[1] == ":":
+            candidate = candidate[2:]
+        candidate = candidate.lstrip("/")
+        candidate = re.sub(r"^\./+", "", candidate)
+        return candidate.lower()
+
+    @staticmethod
+    def _strip_git_ab_prefix(path: str) -> str:
+        candidate = str(path or "").strip().replace("\\", "/")
+        if candidate.startswith(("a/", "b/")) and len(candidate) > 2:
+            return candidate[2:]
+        return candidate
+
+    @staticmethod
+    def _extract_paths_from_diff_git_header(line: str) -> list[str]:
+        payload = line[len("diff --git ") :].strip()
+        if not payload:
+            return []
+        paths: list[str] = []
+        rest = payload
+        while rest:
+            if rest.startswith('"'):
+                end = rest.find('"', 1)
+                if end < 0:
+                    break
+                token = rest[1:end]
+                rest = rest[end + 1 :].lstrip()
+            else:
+                space = rest.find(" ")
+                token = rest if space < 0 else rest[:space]
+                rest = "" if space < 0 else rest[space + 1 :].lstrip()
+            normalized = ExecutionAuditWorkflowService._strip_git_ab_prefix(token)
+            if normalized:
+                paths.append(normalized)
+        return paths
+
+    @staticmethod
+    def _parse_unified_diff_blocks(diff_text: str) -> list[dict[str, Any]]:
+        normalized = str(diff_text or "").replace("\r\n", "\n").replace("\r", "\n")
+        if not normalized.strip():
+            return []
+        lines = normalized.split("\n")
+        starts: list[tuple[int, list[str]]] = []
+        for index, line in enumerate(lines):
+            if line.startswith("diff --git "):
+                paths = ExecutionAuditWorkflowService._extract_paths_from_diff_git_header(line)
+                starts.append((index, paths))
+        if not starts:
+            return [{"paths": [], "text": normalized.strip()}]
+        blocks: list[dict[str, Any]] = []
+        for idx, (start, paths) in enumerate(starts):
+            end = starts[idx + 1][0] if idx + 1 < len(starts) else len(lines)
+            block_text = "\n".join(lines[start:end]).strip()
+            if not block_text:
+                continue
+            blocks.append({"paths": paths, "text": block_text})
+        return blocks
+
+    @staticmethod
+    def _normalize_change_kind(value: Any, *, fallback: str = "modify") -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"add", "create", "created", "new"}:
+            return "add"
+        if normalized in {"delete", "deleted", "remove", "removed"}:
+            return "delete"
+        if normalized in {"modify", "modified", "update", "updated", "change", "changed"}:
+            return "modify"
+        return fallback
+
+    @staticmethod
+    def _change_type_to_kind(value: Any, *, fallback: str = "modify") -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"created", "create", "add"}:
+            return "add"
+        if normalized in {"deleted", "delete", "remove", "removed"}:
+            return "delete"
+        if normalized in {"updated", "update", "modify", "modified", "change", "changed"}:
+            return "modify"
+        return fallback
+
+    @staticmethod
+    def _change_kind_to_change_type(kind: str) -> str:
+        if kind == "add":
+            return "created"
+        if kind == "delete":
+            return "deleted"
+        return "updated"
+
+    @staticmethod
+    def _extract_file_change_changes(item: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_changes = item.get("changes") if isinstance(item.get("changes"), list) else None
+        rows = raw_changes if raw_changes else item.get("outputFiles") if isinstance(item.get("outputFiles"), list) else []
+        extracted: list[dict[str, Any]] = []
+        for raw in rows:
+            if not isinstance(raw, dict):
+                continue
+            path = str(raw.get("path") or "").strip()
+            if not path:
+                continue
+            kind = ExecutionAuditWorkflowService._normalize_change_kind(
+                raw.get("kind"),
+                fallback=ExecutionAuditWorkflowService._change_type_to_kind(raw.get("changeType"), fallback="modify"),
+            )
+            diff_value = raw.get("diff")
+            if not isinstance(diff_value, str):
+                diff_value = raw.get("patchText")
+            diff_text = str(diff_value or "").strip() or None
+            summary_value = raw.get("summary")
+            summary = str(summary_value).strip() if isinstance(summary_value, str) and str(summary_value).strip() else None
+            extracted.append(
+                {
+                    "path": path,
+                    "kind": kind,
+                    "diff": diff_text,
+                    "summary": summary,
+                }
+            )
+        return extracted
+
+    @staticmethod
+    def _output_files_from_changes(changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        files: list[dict[str, Any]] = []
+        for change in changes:
+            path = str(change.get("path") or "").strip()
+            if not path:
+                continue
+            kind = ExecutionAuditWorkflowService._normalize_change_kind(change.get("kind"), fallback="modify")
+            file_entry: dict[str, Any] = {
+                "path": path,
+                "changeType": ExecutionAuditWorkflowService._change_kind_to_change_type(kind),
+                "summary": str(change.get("summary")).strip() if isinstance(change.get("summary"), str) and str(change.get("summary")).strip() else None,
+                "kind": kind,
+            }
+            diff_text = str(change.get("diff") or "").strip()
+            if diff_text:
+                file_entry["diff"] = diff_text
+            files.append(file_entry)
+        return files
+
+    @staticmethod
+    def _score_paths_for_match(candidate_paths: list[str], target_path: str) -> int:
+        if not target_path:
+            return 0
+        target_base = Path(target_path).name.lower()
+        best = 0
+        for candidate in candidate_paths:
+            normalized = ExecutionAuditWorkflowService._normalize_path_for_diff_match(candidate)
+            if not normalized:
+                continue
+            if normalized == target_path:
+                return 10000 + len(normalized)
+            if target_path.endswith(f"/{normalized}") or normalized.endswith(f"/{target_path}"):
+                best = max(best, 5000 + min(len(normalized), len(target_path)))
+                continue
+            if normalized.endswith(target_base) and target_base:
+                best = max(best, 500 + len(normalized))
+        return best
+
+    @staticmethod
+    def _resolve_diff_block_for_path(
+        blocks: list[dict[str, Any]],
+        *,
+        path: str,
+        file_index: int,
+    ) -> dict[str, Any] | None:
+        normalized_target = ExecutionAuditWorkflowService._normalize_path_for_diff_match(path)
+        best_index = -1
+        best_score = 0
+        for idx, block in enumerate(blocks):
+            block_paths = block.get("paths")
+            if not isinstance(block_paths, list):
+                continue
+            score = ExecutionAuditWorkflowService._score_paths_for_match(block_paths, normalized_target)
+            if score > best_score:
+                best_score = score
+                best_index = idx
+        if best_index >= 0 and best_score >= 500:
+            return blocks[best_index]
+        if 0 <= file_index < len(blocks):
+            return blocks[file_index]
+        if len(blocks) == 1:
+            return blocks[0]
+        return None
+
     def _hydrate_execution_file_change_diff_from_worktree(
         self,
         *,
@@ -742,15 +932,17 @@ class ExecutionAuditWorkflowService:
             if self._looks_like_structured_diff(output_text) or self._looks_like_structured_diff(arguments_text):
                 continue
 
-            output_files = item.get("outputFiles")
+            baseline_changes = self._extract_file_change_changes(item)
+            if not baseline_changes:
+                continue
+            if any(str(change.get("diff") or "").strip() for change in baseline_changes):
+                continue
+
             paths: list[str] = []
-            if isinstance(output_files, list):
-                for raw_file in output_files:
-                    if not isinstance(raw_file, dict):
-                        continue
-                    raw_path = str(raw_file.get("path") or "").strip()
-                    if raw_path:
-                        paths.append(raw_path)
+            for change in baseline_changes:
+                raw_path = str(change.get("path") or "").strip()
+                if raw_path:
+                    paths.append(raw_path)
 
             diff_text = self._artifact_service.get_worktree_diff(
                 workspace_root=workspace_root,
@@ -767,13 +959,32 @@ class ExecutionAuditWorkflowService:
             if not trimmed_diff:
                 continue
 
-            append_text = trimmed_diff if not output_text.strip() else f"\n{trimmed_diff}"
+            blocks = self._parse_unified_diff_blocks(trimmed_diff)
+            hydrated_changes: list[dict[str, Any]] = []
+            did_hydrate = False
+            for index, change in enumerate(baseline_changes):
+                block = self._resolve_diff_block_for_path(
+                    blocks,
+                    path=str(change.get("path") or ""),
+                    file_index=index,
+                )
+                diff_value = str(block.get("text") or "").strip() if isinstance(block, dict) else ""
+                next_change = copy.deepcopy(change)
+                next_change["diff"] = diff_value or None
+                hydrated_changes.append(next_change)
+                if diff_value:
+                    did_hydrate = True
+
+            if not did_hydrate:
+                continue
+
             updated_snapshot, events = patch_item(
                 updated_snapshot,
                 str(item.get("id") or ""),
                 {
                     "kind": "tool",
-                    "outputTextAppend": append_text,
+                    "changesReplace": hydrated_changes,
+                    "outputFilesReplace": self._output_files_from_changes(hydrated_changes),
                     "updatedAt": iso_now(),
                 },
             )

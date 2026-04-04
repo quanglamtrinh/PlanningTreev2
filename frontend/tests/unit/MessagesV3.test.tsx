@@ -458,6 +458,121 @@ describe('MessagesV3', () => {
     expect(screen.queryByTestId('conversation-v3-tool-output-tool-edit-1')).not.toBeInTheDocument()
   })
 
+  it('renders execution diff rows from canonical changes even when files.patchText is empty', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'diff-1',
+              kind: 'diff',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 2,
+              createdAt: '2026-04-01T00:00:02Z',
+              updatedAt: '2026-04-01T00:00:02Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              title: 'File changes',
+              summaryText: null,
+              changes: [
+                {
+                  path: 'src/app.ts',
+                  kind: 'modify',
+                  summary: null,
+                  diff: ['diff --git a/src/app.ts b/src/app.ts', '@@ -1 +1 @@', '-const a = 1', '+const a = 2'].join(
+                    '\n',
+                  ),
+                },
+              ],
+              files: [
+                {
+                  path: 'src/app.ts',
+                  changeType: 'updated',
+                  summary: null,
+                  patchText: null,
+                },
+              ],
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const diffRow = screen.getByTestId('conversation-v3-item-diff')
+    expect(diffRow).toHaveTextContent('+1')
+    expect(diffRow).toHaveTextContent('-1')
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff' }))
+    expect(diffRow).toHaveTextContent(/const\s+a\s*=\s*2/)
+  })
+
+  it('expands per-file canonical diff content without duplicating a shared blob', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'diff-multi-1',
+              kind: 'diff',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 3,
+              createdAt: '2026-04-01T00:00:03Z',
+              updatedAt: '2026-04-01T00:00:03Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              title: 'File changes',
+              summaryText: null,
+              changes: [
+                {
+                  path: 'src/a.ts',
+                  kind: 'modify',
+                  summary: null,
+                  diff: ['diff --git a/src/a.ts b/src/a.ts', '@@ -1 +1 @@', '-const a = 1', '+const a = 2'].join(
+                    '\n',
+                  ),
+                },
+                {
+                  path: 'src/b.ts',
+                  kind: 'modify',
+                  summary: null,
+                  diff: [
+                    'diff --git a/src/b.ts b/src/b.ts',
+                    '@@ -1 +1 @@',
+                    "-console.log('old')",
+                    "+console.log('new')",
+                  ].join('\n'),
+                },
+              ],
+              files: [
+                { path: 'src/a.ts', changeType: 'updated', summary: null, patchText: null },
+                { path: 'src/b.ts', changeType: 'updated', summary: null, patchText: null },
+              ],
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const diffRow = screen.getByTestId('conversation-v3-item-diff')
+    expect(diffRow).toHaveTextContent('2 files changed')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff for a.ts' }))
+    expect(diffRow).toHaveTextContent(/const\s+a\s*=\s*2/)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff for b.ts' }))
+    expect(diffRow).toHaveTextContent(/console\.log\('new'\)/)
+    expect(diffRow).not.toHaveTextContent('No diff excerpt for this file.')
+  })
+
   it('infers file-change card from shell write command even when outputFiles is empty', () => {
     render(
       <MessagesV3
