@@ -613,8 +613,9 @@ def _apply_patch_to_item(item: ConversationItemV3, patch: ItemPatchV3) -> Conver
             updated["title"] = cast(Any, patch.get("title"))
         if "summaryText" in patch:
             updated["summaryText"] = cast(Any, patch.get("summaryText"))
-        current_changes = _diff_changes_from_raw(updated.get("changes"))
-        if not current_changes:
+        has_current_changes = isinstance(updated.get("changes"), list)
+        current_changes = _diff_changes_from_raw(updated.get("changes")) if has_current_changes else []
+        if not has_current_changes:
             current_changes = _diff_changes_from_tool_output_files(updated.get("files"))
 
         next_changes = current_changes

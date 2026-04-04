@@ -151,8 +151,10 @@ describe('applyThreadEventV3', () => {
   })
 
   it('keeps compatibility when patch uses filesAppend only', () => {
+    const legacyItem = makeDiffItem({ changes: [] })
+    delete (legacyItem as { changes?: unknown }).changes
     const snapshot = makeSnapshot({
-      items: [makeDiffItem({ changes: [] })],
+      items: [legacyItem as DiffItemV3],
     })
     const event: ThreadEventV3 = {
       eventId: 'evt-3',
@@ -254,6 +256,69 @@ describe('applyThreadEventV3', () => {
         changeType: 'created',
         patchText: '@@ -0,0 +1 @@\\n+export const canonical = true\\n',
         summary: 'canonical',
+      },
+    ])
+  })
+
+  it('does not rebuild canonical changes from legacy files when current changes is explicitly empty', () => {
+    const snapshot = makeSnapshot({
+      items: [
+        makeDiffItem({
+          changes: [],
+          files: [
+            {
+              path: 'src/stale.ts',
+              changeType: 'updated',
+              patchText: '@@ -1 +1 @@\\n-old\\n+stale\\n',
+              summary: 'stale',
+            },
+          ],
+        }),
+      ],
+    })
+    const event: ThreadEventV3 = {
+      eventId: 'evt-5',
+      channel: 'thread',
+      projectId: 'project-1',
+      nodeId: 'node-1',
+      threadRole: 'execution',
+      occurredAt: '2026-04-01T00:05:00Z',
+      snapshotVersion: 6,
+      type: 'conversation.item.patch.v3',
+      payload: {
+        itemId: 'diff-1',
+        patch: {
+          kind: 'diff',
+          changesAppend: [
+            {
+              path: 'src/new.ts',
+              kind: 'add',
+              diff: '@@ -0,0 +1 @@\\n+export const value = 2\\n',
+              summary: 'new file',
+            },
+          ],
+          updatedAt: '2026-04-01T00:05:00Z',
+        },
+      },
+    }
+
+    const next = applyThreadEventV3(snapshot, event)
+    const item = next.items[0] as DiffItemV3
+
+    expect(item.changes).toEqual([
+      {
+        path: 'src/new.ts',
+        kind: 'add',
+        diff: '@@ -0,0 +1 @@\\n+export const value = 2\\n',
+        summary: 'new file',
+      },
+    ])
+    expect(item.files).toEqual([
+      {
+        path: 'src/new.ts',
+        changeType: 'created',
+        patchText: '@@ -0,0 +1 @@\\n+export const value = 2\\n',
+        summary: 'new file',
       },
     ])
   })

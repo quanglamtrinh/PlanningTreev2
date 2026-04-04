@@ -1,8 +1,8 @@
 # FilesChanged Rework Phased Roadmap
 
-Status: planning skeleton for implementation.
+Status: execution track implemented through Phase 7 (compat harden).
 
-Last updated: 2026-04-03.
+Last updated: 2026-04-04.
 
 ## 1. Scope and locked decisions
 
@@ -42,8 +42,8 @@ Total effort baseline: 100%.
 | 3 | Frontend execution fileChange renderer cutover | 23% | FE |
 | 4 | Parity and regression hardening (execution) | 16% | FE + BE + QA |
 | 5 | Audit-lane onboarding (optional after execution stable) | 8% | FE + BE |
-| 6 | Rollout gate and stabilization | 9% | BE + FE + QA |
-| 7 | Hard cleanup and legacy path removal | 5% | BE + FE |
+| 6 | Observe-only rollout stabilization | 9% | BE + FE + QA |
+| 7 | Compat hard cleanup | 5% | BE + FE |
 
 ## 5. Detailed phase skeleton
 
@@ -183,51 +183,53 @@ Exit criteria:
 
 - audit behavior is aligned or explicitly documented if intentionally different
 
-## Phase 6 (9%) - Rollout gate and stabilization
+## Phase 6 (9%) - Observe-only rollout stabilization
 
 Goals:
 
-- roll out safely with clear fallback and observability
-- keep impact limited to new turns while gate is active
+- roll out safely with release-level fallback and observability
+- keep impact limited to new turns while preserving compatibility wire fields
 
 Implementation checklist:
 
-- add/enable rollout gate for execution file-change migration
-- stage rollout: internal -> canary -> broader
-- monitor metrics:
-  - file-change cards with empty patch on new turns
-  - render failures in file-change components
-  - mismatch rate between file count and rendered rows
-- define rollback triggers and fallback path
+- no new runtime gate or flag introduced
+- stage rollout: internal -> canary -> broad
+- monitor existing signals:
+  - file-change render failures and apply errors
+  - snapshot reload/reconnect anomalies already present in store telemetry
+  - empty-card smoke checks for new-turn file-change rows
+- define release rollback triggers and procedure
 
 Outputs:
 
-- rollout runbook and stabilization notes
+- rollout runbook, smoke evidence, rollback notes
 
 Exit criteria:
 
 - stabilization window passes without blocking regressions
 
-## Phase 7 (5%) - Hard cleanup and legacy path removal
+## Phase 7 (5%) - Compat hard cleanup
 
 Goals:
 
-- remove transitional compatibility code no longer needed
-- finalize maintainable ownership boundaries
+- harden canonical-first behavior and remove migration heuristics
+- keep compatibility wire contract in this cycle while finalizing ownership boundaries
 
 Implementation checklist:
 
-- remove legacy-only heuristics tied to path-only payloads
-- remove temporary guards and migration-only feature flags where approved
-- finalize docs and ownership notes
+- remove command-text heuristics that infer file-change from commandExecution output
+- enforce semantic file-change rendering for new turns (`toolType=fileChange` / semantic markers)
+- ensure canonical-empty `changes[]` remains authoritative in projector/reducer paths
+- retain mirror `outputFiles`/`files*` sync from canonical at one point
+- finalize cleanup docs and closure notes with deferred wire-removal decision
 
 Outputs:
 
-- cleanup handoff and final migration closure notes
+- cleanup checklist and closeout summary
 
 Exit criteria:
 
-- execution path defaults to migrated model with no operational dependency on legacy renderer
+- execution path defaults to migrated canonical model for new turns; wire-field removal deferred by policy
 
 ## 6. Recommended staffing split
 
@@ -243,4 +245,3 @@ Exit criteria:
 3. Phase 2 should land before Phase 3 expansion/parity is evaluated.
 4. Phase 4 must be green before broad rollout in Phase 6.
 5. Phase 7 starts only after rollout stabilization sign-off.
-

@@ -23,11 +23,6 @@ import type {
 } from '../../../../api/types'
 import { AgentSpinner } from '../../../../components/AgentSpinner'
 import { FileChangeToolRow } from '../FileChangeToolRow'
-import {
-  inferFileWritesFromCommandText,
-  inferInlineFileWriteContentFromCommandText,
-  toAddedDiffText,
-} from '../fileChangeInference'
 import { ConversationMarkdown } from '../ConversationMarkdown'
 import styles from './MessagesV3.module.css'
 import {
@@ -192,44 +187,6 @@ function trailingCommandOutput(outputText: string): string {
     return normalized
   }
   return lines.slice(-MAX_COMMAND_OUTPUT_LINES).join('\n')
-}
-
-function looksLikeDiffText(text: string): boolean {
-  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  return /^(?:\+\+\+|---|@@)/m.test(normalized) || /^[+-][^\r\n]*/m.test(normalized)
-}
-
-function toolInferenceSource(item: ToolItemV3): string {
-  return [item.argumentsText, item.title, item.toolName, item.outputText]
-    .map((part) => normalizeText(part))
-    .filter(Boolean)
-    .join('\n')
-}
-
-function inferredFilesForTool(item: ToolItemV3): ToolItemV3['outputFiles'] {
-  const inferred = inferFileWritesFromCommandText(toolInferenceSource(item))
-  return inferred.map((file) => ({
-    path: file.path,
-    changeType: file.changeType,
-    summary: file.summary,
-  }))
-}
-
-function inferredFileChangeOutputTextForTool(item: ToolItemV3): string {
-  const inferredContent = inferInlineFileWriteContentFromCommandText(toolInferenceSource(item))
-  if (inferredContent) {
-    return toAddedDiffText(inferredContent)
-  }
-
-  if (!normalizeText(item.outputText)) {
-    return item.outputText
-  }
-
-  if (item.toolType === 'commandExecution' && !looksLikeDiffText(item.outputText)) {
-    return toAddedDiffText(item.outputText)
-  }
-
-  return item.outputText
 }
 
 function normalizeDiffKind(
@@ -697,18 +654,14 @@ function ToolRowV3({
   onToggle: (itemId: string) => void
   onRequestAutoScroll?: () => void
 }) {
-  const inferredFiles = useMemo(() => inferredFilesForTool(item), [item])
-  const effectiveFiles = item.outputFiles.length ? item.outputFiles : inferredFiles
-  const effectiveOutputText = useMemo(() => inferredFileChangeOutputTextForTool(item), [item])
-  const effectiveChanges = useMemo(() => toolChangesFromOutputFiles(effectiveFiles), [effectiveFiles])
+  const effectiveChanges = useMemo(() => toolChangesFromOutputFiles(item.outputFiles), [item.outputFiles])
 
-  if (item.toolType === 'fileChange' || effectiveFiles.length > 0) {
+  if (item.toolType === 'fileChange') {
     const fileChangeItem: ToolItemV2 = {
       ...item,
       kind: 'tool',
       toolType: 'fileChange',
-      outputText: effectiveOutputText,
-      outputFiles: effectiveFiles.map((file) => ({
+      outputFiles: item.outputFiles.map((file) => ({
         path: file.path,
         changeType: file.changeType,
         summary: file.summary,
@@ -893,7 +846,7 @@ function isFileChangeSemanticDiff(item: Extract<ConversationItemV3, { kind: 'dif
   if (v2Kind) {
     return v2Kind === 'tool'
   }
-  return item.changes.length > 0 || item.files.length > 0
+  return false
 }
 
 function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'review' }> }) {

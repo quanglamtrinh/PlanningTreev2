@@ -286,6 +286,29 @@ def test_hydrate_execution_file_change_diff_from_worktree_skips_when_item_alread
     assert query_service.persist_calls == []
 
 
+def test_hydrate_execution_file_change_diff_from_worktree_treats_explicit_empty_changes_as_authoritative() -> None:
+    workspace_root = r"C:\Users\Thong\Tic tac toe"
+    render_path = rf"{workspace_root}\src\render.js"
+    snapshot = _make_snapshot_for_file_change_item(
+        turn_id="exec_turn_1",
+        workspace_root=workspace_root,
+        output_files=[{"path": render_path, "changeType": "updated", "summary": None}],
+        changes=[],
+    )
+    artifact_service = _RecordingArtifactService(
+        path_diff="diff --git a/src/render.js b/src/render.js\n@@ -1 +1 @@\n-old\n+new\n",
+    )
+
+    query_service = _run_hydration(
+        snapshot=snapshot,
+        artifact_service=artifact_service,
+        workspace_root=workspace_root,
+    )
+
+    assert artifact_service.calls == []
+    assert query_service.persist_calls == []
+
+
 def test_hydrate_execution_file_change_diff_from_worktree_matches_same_basename_by_path_suffix() -> None:
     workspace_root = r"C:\Users\Thong\Tic tac toe"
     src_render_path = rf"{workspace_root}\src\render.js"

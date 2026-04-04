@@ -798,7 +798,13 @@ class ExecutionAuditWorkflowService:
     @staticmethod
     def _extract_file_change_changes(item: dict[str, Any]) -> list[dict[str, Any]]:
         raw_changes = item.get("changes") if isinstance(item.get("changes"), list) else None
-        rows = raw_changes if raw_changes else item.get("outputFiles") if isinstance(item.get("outputFiles"), list) else []
+        rows = (
+            raw_changes
+            if raw_changes is not None
+            else item.get("outputFiles")
+            if isinstance(item.get("outputFiles"), list)
+            else []
+        )
         extracted: list[dict[str, Any]] = []
         for raw in rows:
             if not isinstance(raw, dict):

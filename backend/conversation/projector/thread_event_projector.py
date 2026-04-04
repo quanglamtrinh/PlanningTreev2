@@ -629,8 +629,9 @@ def _apply_patch_to_item(item: ConversationItem, patch: dict[str, Any]) -> Conve
             updated["argumentsText"] = patch.get("argumentsText")
         if patch.get("outputTextAppend"):
             updated["outputText"] = str(updated.get("outputText") or "") + str(patch["outputTextAppend"])
-        current_changes = _extract_tool_changes(updated.get("changes"))
-        if not current_changes:
+        has_current_changes = isinstance(updated.get("changes"), list)
+        current_changes = _extract_tool_changes(updated.get("changes")) if has_current_changes else []
+        if not has_current_changes:
             current_changes = _tool_changes_from_output_files(_extract_output_files(updated.get("outputFiles")))
 
         next_changes = current_changes

@@ -230,6 +230,76 @@ def test_file_change_completed_explicit_empty_changes_replaces_preview() -> None
     assert tool["outputFiles"] == []
 
 
+def test_tool_patch_changes_append_respects_explicit_empty_changes_without_falling_back_to_output_files() -> None:
+    snapshot = default_thread_snapshot("project-1", "node-1", "execution")
+    snapshot["threadId"] = "thread-1"
+    snapshot, _ = upsert_item(
+        snapshot,
+        {
+            "id": "file-tool-empty-canonical",
+            "kind": "tool",
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-03-28T10:00:00Z",
+            "updatedAt": "2026-03-28T10:00:00Z",
+            "status": "in_progress",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "toolType": "fileChange",
+            "title": "file change",
+            "toolName": "apply_patch",
+            "callId": "call-empty",
+            "argumentsText": None,
+            "outputText": "",
+            "outputFiles": [
+                {"path": "stale.txt", "changeType": "updated", "summary": "stale"},
+            ],
+            "changes": [],
+            "exitCode": None,
+        },
+    )
+    # Simulate canonical-empty state drift from persisted snapshots:
+    # keep legacy outputFiles but force canonical changes to explicit empty.
+    snapshot["items"][0]["changes"] = []
+
+    snapshot, _ = patch_item(
+        snapshot,
+        "file-tool-empty-canonical",
+        {
+            "kind": "tool",
+            "changesAppend": [
+                {
+                    "path": "canonical.txt",
+                    "kind": "add",
+                    "summary": "canonical",
+                    "diff": "@@ -0,0 +1 @@\n+ok\n",
+                }
+            ],
+            "updatedAt": "2026-03-28T10:00:01Z",
+        },
+    )
+
+    tool = snapshot["items"][0]
+    assert tool["changes"] == [
+        {
+            "path": "canonical.txt",
+            "kind": "add",
+            "summary": "canonical",
+            "diff": "@@ -0,0 +1 @@\n+ok\n",
+        }
+    ]
+    assert tool["outputFiles"] == [
+        {
+            "path": "canonical.txt",
+            "changeType": "created",
+            "summary": "canonical",
+            "diff": "@@ -0,0 +1 @@\n+ok\n",
+        }
+    ]
+
+
 def test_file_change_completed_without_changes_keeps_preview_data() -> None:
     snapshot = default_thread_snapshot("project-1", "node-1", "execution")
     snapshot["threadId"] = "thread-1"

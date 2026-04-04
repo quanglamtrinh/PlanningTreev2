@@ -1,57 +1,82 @@
-# FilesChanged Rework - Phase 6-7 Handoff (Planning Skeleton)
+# FilesChanged Rework - Phase 6-7 Handoff (Implemented)
 
-Status: planning skeleton.
+Date: 2026-04-04
 
-Date: 2026-04-03.
+## Scope locked for this handoff
 
-Owner scope: rollout stabilization and hard cleanup.
+- Phase 6: observe-only rollout stabilization for execution/audit file-change migration.
+- Phase 7: compat hard cleanup with canonical `changes[]` as authoritative behavior.
+- Keep migration policy: new turns only, no historical backfill.
+- Keep wire compatibility fields (`outputFiles`, `files*`) in this cycle.
 
-## 1. Goal and boundary recap
+## Phase 6 completion (Observe-only rollout + stabilization)
 
-Phase 6 target:
+Status: PASS
 
-- roll out migrated file-change path safely with gate control and monitoring
+- No new feature flag or rollout API was introduced.
+- Rollout procedure is release-driven with staged checklist:
+  - internal
+  - canary
+  - broad
+- Monitoring uses existing signals:
+  - file-change render errors and apply errors
+  - forced snapshot reload/reconnect counters already present in V3 store telemetry
+  - empty file-change cards on new turns via regression and smoke checks
+- Rollback policy is release rollback (revert/deploy), not runtime toggles.
 
-Phase 7 target:
+## Phase 7 completion (Compat hard cleanup)
 
-- remove transitional legacy dependencies and close migration track
+Status: PASS
 
-Out of scope for this handoff:
+- Frontend file-change semantics hardening:
+  - removed command-text inference path that auto-promoted `commandExecution` to file-change
+  - file-change card now requires explicit semantic payload:
+    - tool item with `toolType = fileChange`, or
+    - diff item with semantic file-change markers (`semanticKind=fileChange` / `v2Kind=tool`)
+  - command tools with incidental `outputFiles` remain command cards
+- Canonical-first behavior hardening:
+  - explicit canonical empty arrays are now authoritative and do not fallback to mirror fields
+  - patch reducers/projectors use canonical `changes*` as source of truth when present
+  - mirror fields stay synchronized from canonical output
+- Migration-only compatibility retained:
+  - legacy `filesAppend/filesReplace` and `outputFiles*` patch paths remain supported
+  - no public API/type removals in this phase
 
-- additional product-scope changes outside file-change migration
+## Test evidence
 
-## 2. Rollout checklist (Phase 6)
+### Frontend
 
-- [ ] add/enable execution file-change migration gate
-- [ ] stage rollout internal -> canary -> broad
-- [ ] confirm gate applies only to new turns
-- [ ] monitor key signals:
-  - [ ] empty-diff cards on new turns
-  - [ ] render exceptions in file-change row
-  - [ ] mismatch between emitted changed files and rendered rows
-- [ ] prepare documented rollback procedure
+```bash
+npm --prefix frontend run typecheck
+npm --prefix frontend run test:unit -- tests/unit/MessagesV3.test.tsx tests/unit/applyThreadEventV3.test.ts
+```
 
-## 3. Cleanup checklist (Phase 7)
+Result:
 
-- [ ] remove temporary fallback branches no longer needed for active turns
-- [ ] remove migration-only telemetry/debug logs
-- [ ] remove obsolete contract fields where approved
-- [ ] finalize docs with final architecture and ownership
-- [ ] publish closeout report and residual risk notes
+- Typecheck PASS
+- Unit suite PASS (`34 passed`, `186 tests`)
 
-## 4. Expected write scope (planned)
+### Backend
 
-- `frontend/src/features/conversation/components/*`
-- `frontend/src/features/conversation/state/*`
-- `backend/conversation/projector/*`
-- `backend/conversation/domain/*`
-- `backend/tests/*` and `frontend/tests/*` cleanup updates
-- `docs/thread-rework/fileschanged/*`
+```bash
+python -m pytest -q backend/tests/unit/test_execution_audit_workflow_service.py backend/tests/unit/test_conversation_v2_projector.py backend/tests/unit/test_conversation_v3_projector.py backend/tests/unit/test_conversation_v3_fileschanged_parity_fixtures.py
+python -m pytest -q backend/tests/integration/test_phase5_execution_audit_rehearsal.py backend/tests/integration/test_phase6_execution_audit_cutover.py
+```
 
-## 5. Acceptance evidence expected before closing Phase 6-7
+Result:
 
-- [ ] rollout window completes without blocking regressions
-- [ ] new-turn file-change behavior is stable and observable
-- [ ] no operational dependency remains on legacy execution file-change rendering path
-- [ ] migration docs are complete and handoff-ready
+- Targeted backend unit suite PASS (`27 passed`)
+- Strict phase5/phase6 integration suite PASS (`3 passed`)
 
+## Artifacts
+
+- `docs/thread-rework/fileschanged/artifacts/phase-6/cutover-checklist.md`
+- `docs/thread-rework/fileschanged/artifacts/phase-6/smoke-results.md`
+- `docs/thread-rework/fileschanged/artifacts/phase-6/rollback-notes.md`
+- `docs/thread-rework/fileschanged/artifacts/phase-7/cleanup-checklist.md`
+- `docs/thread-rework/fileschanged/artifacts/phase-7/closeout-summary.md`
+
+## Notes
+
+- Wire field hard removal (`outputFiles`/`files*`) is deferred to a later cycle after compat window closes.
+- Existing unrelated React Router future-flag warnings still appear in frontend tests but are non-blocking for this migration.

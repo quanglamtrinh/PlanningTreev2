@@ -413,7 +413,7 @@ describe('MessagesV3', () => {
     expect(screen.getByTestId('messages-v3-plan-ready-zone')).toBeInTheDocument()
   })
 
-  it('classifies tool edits with output files as file-change cards instead of command cards', () => {
+  it('keeps commandExecution tools on command card even when outputFiles exists', () => {
     render(
       <MessagesV3
         snapshot={makeSnapshot({
@@ -452,10 +452,11 @@ describe('MessagesV3', () => {
       />,
     )
 
-    expect(screen.getByText('app.ts')).toBeInTheDocument()
-    expect(screen.getByLabelText('Copy diff')).toBeInTheDocument()
-    expect(screen.getByText('UPDATED')).toBeInTheDocument()
-    expect(screen.queryByTestId('conversation-v3-tool-output-tool-edit-1')).not.toBeInTheDocument()
+    expect(screen.getByText('Command')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
+    expect(screen.getByText('src/app.ts')).toBeInTheDocument()
+    expect(screen.getByTestId('conversation-v3-tool-output-tool-edit-1')).toBeInTheDocument()
   })
 
   it('renders execution diff rows from canonical changes even when files.patchText is empty', () => {
@@ -474,7 +475,10 @@ describe('MessagesV3', () => {
               status: 'completed',
               source: 'upstream',
               tone: 'neutral',
-              metadata: {},
+              metadata: {
+                semanticKind: 'fileChange',
+                v2Kind: 'tool',
+              },
               title: 'File changes',
               summaryText: null,
               changes: [
@@ -776,7 +780,10 @@ describe('MessagesV3', () => {
               status: 'completed',
               source: 'upstream',
               tone: 'neutral',
-              metadata: {},
+              metadata: {
+                semanticKind: 'fileChange',
+                v2Kind: 'tool',
+              },
               title: 'File changes',
               summaryText: null,
               changes: [
@@ -823,7 +830,7 @@ describe('MessagesV3', () => {
     expect(diffRow).not.toHaveTextContent('No diff excerpt for this file.')
   })
 
-  it('infers file-change card from shell write command even when outputFiles is empty', () => {
+  it('does not infer file-change card from shell write command when semantic payload is absent', () => {
     render(
       <MessagesV3
         snapshot={makeSnapshot({
@@ -857,12 +864,13 @@ describe('MessagesV3', () => {
       />,
     )
 
-    expect(screen.getByText('session.test.mjs')).toBeInTheDocument()
-    expect(screen.getByLabelText('Copy diff')).toBeInTheDocument()
-    expect(screen.queryByTestId('conversation-v3-tool-output-tool-edit-shell-1')).not.toBeInTheDocument()
+    expect(screen.getByText('Command')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
+    expect(screen.getByText(/Set-Content -Path tests\/session\.test\.mjs/)).toBeInTheDocument()
   })
 
-  it('prefers inferred file content over raw command output for shell-write tools', () => {
+  it('keeps raw command output for shell-write commandExecution tools', () => {
     render(
       <MessagesV3
         snapshot={makeSnapshot({
@@ -897,10 +905,10 @@ describe('MessagesV3', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand diff for app.ts' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
     const toolRow = screen.getByTestId('conversation-v3-item-tool')
-    expect(toolRow).toHaveTextContent(/const\s+ready\s*=\s*true;/)
-    expect(toolRow).not.toHaveTextContent(/PS > powershell\.exe/i)
+    expect(toolRow).toHaveTextContent(/PS > powershell\.exe/i)
+    expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
   })
 
   it('keeps pure commandExecution tools rendered as command cards', () => {

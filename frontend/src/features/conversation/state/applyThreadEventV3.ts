@@ -206,8 +206,9 @@ function diffFilesFromChanges(changes: DiffChangeV3[]): DiffItemV3['files'] {
 }
 
 function patchDiffItem(item: DiffItemV3, patch: DiffPatchV3): DiffItemV3 {
-  const currentChanges =
-    item.changes && item.changes.length > 0 ? [...item.changes] : diffChangesFromFiles(item.files)
+  const currentChanges = Array.isArray(item.changes)
+    ? [...item.changes]
+    : diffChangesFromFiles(item.files)
 
   let nextChanges = currentChanges
   if (patch.changesReplace !== undefined) {

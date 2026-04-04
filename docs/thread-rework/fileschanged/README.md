@@ -13,6 +13,17 @@ Execution parity fixtures (Phase 4 hardening):
 - `docs/thread-rework/fileschanged/artifacts/execution-fileschanged-parity-fixtures.json`
 - `docs/thread-rework/fileschanged/artifacts/phase4-5-parity-report.md`
 
+Phase 6 rollout artifacts:
+
+- `docs/thread-rework/fileschanged/artifacts/phase-6/cutover-checklist.md`
+- `docs/thread-rework/fileschanged/artifacts/phase-6/smoke-results.md`
+- `docs/thread-rework/fileschanged/artifacts/phase-6/rollback-notes.md`
+
+Phase 7 cleanup artifacts:
+
+- `docs/thread-rework/fileschanged/artifacts/phase-7/cleanup-checklist.md`
+- `docs/thread-rework/fileschanged/artifacts/phase-7/closeout-summary.md`
+
 This directory is reserved for:
 
 - file-change contract and migration decisions

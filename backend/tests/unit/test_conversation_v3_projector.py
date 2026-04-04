@@ -519,6 +519,92 @@ def test_v3_diff_patch_changes_replace_authoritative_empty() -> None:
     assert item["files"] == []
 
 
+def test_v3_diff_patch_changes_append_respects_explicit_empty_changes_without_files_fallback() -> None:
+    snapshot_v2 = default_thread_snapshot("project-1", "node-1", "execution")
+    snapshot_v2["threadId"] = "exec-thread-1"
+    snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+
+    snapshot_v3, _ = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_UPSERT,
+            "payload": {
+                "item": {
+                    "id": "file-tool-empty-1",
+                    "kind": "tool",
+                    "threadId": "exec-thread-1",
+                    "turnId": "turn-3",
+                    "sequence": 1,
+                    "createdAt": "2026-04-01T01:00:00Z",
+                    "updatedAt": "2026-04-01T01:00:00Z",
+                    "status": "in_progress",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "toolType": "fileChange",
+                    "title": "Apply patch",
+                    "toolName": "apply_patch",
+                    "callId": "call-empty-1",
+                    "argumentsText": None,
+                    "outputText": "",
+                    "changes": [],
+                    "outputFiles": [{"path": "stale.txt", "changeType": "updated", "summary": "stale"}],
+                    "exitCode": None,
+                }
+            },
+        },
+    )
+
+    snapshot_v3, patch_events = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_PATCH,
+            "payload": {
+                "itemId": "file-tool-empty-1",
+                "patch": {
+                    "kind": "tool",
+                    "changesAppend": [
+                        {
+                            "path": "canonical.txt",
+                            "kind": "add",
+                            "summary": "canonical",
+                            "diff": "@@ -0,0 +1 @@\n+ok\n",
+                        }
+                    ],
+                    "updatedAt": "2026-04-01T01:00:01Z",
+                },
+            },
+        },
+    )
+
+    assert patch_events[0]["payload"]["patch"]["kind"] == "diff"
+    assert patch_events[0]["payload"]["patch"]["changesAppend"] == [
+        {
+            "path": "canonical.txt",
+            "kind": "add",
+            "summary": "canonical",
+            "diff": "@@ -0,0 +1 @@\n+ok\n",
+        }
+    ]
+    updated_item = {current["id"]: current for current in snapshot_v3["items"]}["file-tool-empty-1"]
+    assert updated_item["changes"] == [
+        {
+            "path": "canonical.txt",
+            "kind": "add",
+            "summary": "canonical",
+            "diff": "@@ -0,0 +1 @@\n+ok\n",
+        }
+    ]
+    assert updated_item["files"] == [
+        {
+            "path": "canonical.txt",
+            "changeType": "created",
+            "summary": "canonical",
+            "patchText": "@@ -0,0 +1 @@\n+ok\n",
+        }
+    ]
+
+
 def test_v3_diff_projection_prefers_canonical_changes_and_keeps_output_files_fallback() -> None:
     snapshot_v2 = default_thread_snapshot("project-1", "node-1", "execution")
     snapshot_v2["threadId"] = "exec-thread-1"
