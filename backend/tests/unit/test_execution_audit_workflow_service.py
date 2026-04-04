@@ -284,3 +284,44 @@ def test_hydrate_execution_file_change_diff_from_worktree_skips_when_item_alread
 
     assert artifact_service.calls == []
     assert query_service.persist_calls == []
+
+
+def test_hydrate_execution_file_change_diff_from_worktree_matches_same_basename_by_path_suffix() -> None:
+    workspace_root = r"C:\Users\Thong\Tic tac toe"
+    src_render_path = rf"{workspace_root}\src\render.js"
+    tests_render_path = rf"{workspace_root}\tests\render.js"
+    snapshot = _make_snapshot_for_file_change_item(
+        turn_id="exec_turn_1",
+        workspace_root=workspace_root,
+        output_files=[
+            {"path": src_render_path, "changeType": "updated", "summary": None},
+            {"path": tests_render_path, "changeType": "updated", "summary": None},
+        ],
+    )
+    artifact_service = _RecordingArtifactService(
+        path_diff=(
+            "diff --git a/src/render.js b/src/render.js\n"
+            "@@ -1 +1 @@\n"
+            "-old-src\n"
+            "+new-src\n"
+            "diff --git a/tests/render.js b/tests/render.js\n"
+            "@@ -1 +1 @@\n"
+            "-old-tests\n"
+            "+new-tests\n"
+        ),
+    )
+
+    query_service = _run_hydration(
+        snapshot=snapshot,
+        artifact_service=artifact_service,
+        workspace_root=workspace_root,
+    )
+
+    assert len(query_service.persist_calls) == 1
+    updated_snapshot, _events = query_service.persist_calls[0]
+    updated_item = updated_snapshot["items"][0]
+    changes = updated_item.get("changes") if isinstance(updated_item.get("changes"), list) else []
+    assert len(changes) == 2
+    changes_by_path = {str(change.get("path") or ""): change for change in changes if isinstance(change, dict)}
+    assert "new-src" in str(changes_by_path[src_render_path].get("diff") or "")
+    assert "new-tests" in str(changes_by_path[tests_render_path].get("diff") or "")

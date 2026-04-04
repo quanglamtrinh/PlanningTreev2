@@ -879,6 +879,23 @@ function diffItemV3ToSyntheticFileChangeTool(item: Extract<ConversationItemV3, {
   }
 }
 
+function metadataTextValue(item: Extract<ConversationItemV3, { kind: 'diff' }>, key: string): string {
+  const value = item.metadata?.[key]
+  return String(value ?? '').trim().toLowerCase()
+}
+
+function isFileChangeSemanticDiff(item: Extract<ConversationItemV3, { kind: 'diff' }>): boolean {
+  const semanticKind = metadataTextValue(item, 'semanticKind')
+  if (semanticKind) {
+    return semanticKind === 'filechange'
+  }
+  const v2Kind = metadataTextValue(item, 'v2Kind')
+  if (v2Kind) {
+    return v2Kind === 'tool'
+  }
+  return item.changes.length > 0 || item.files.length > 0
+}
+
 function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'review' }> }) {
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-review">
@@ -919,16 +936,14 @@ function ExploreRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'exp
 
 function DiffRowV3({
   item,
-  executionLane,
   isExpanded,
   onToggle,
 }: {
   item: Extract<ConversationItemV3, { kind: 'diff' }>
-  executionLane: boolean
   isExpanded: boolean
   onToggle: (itemId: string) => void
 }) {
-  if (executionLane && item.files.length > 0) {
+  if (isFileChangeSemanticDiff(item)) {
     const synthetic = diffItemV3ToSyntheticFileChangeTool(item)
     return (
       <FileChangeToolRow
@@ -1259,7 +1274,6 @@ function renderItemRowV3({
   expandedItemIds,
   onToggleExpanded,
   onRequestAutoScroll,
-  executionLane,
 }: {
   item: ConversationItemV3
   requestMapByRequestId: Map<string, PendingUserInputRequestV3>
@@ -1267,7 +1281,6 @@ function renderItemRowV3({
   expandedItemIds: Set<string>
   onToggleExpanded: (itemId: string) => void
   onRequestAutoScroll: () => void
-  executionLane: boolean
 }) {
   if (item.kind === 'message') {
     return <MessageRowV3 item={item} />
@@ -1299,7 +1312,6 @@ function renderItemRowV3({
     return (
       <DiffRowV3
         item={item}
-        executionLane={executionLane}
         isExpanded={expandedItemIds.has(item.id)}
         onToggle={onToggleExpanded}
       />
@@ -1407,7 +1419,6 @@ export function MessagesV3({
     [requestMapByRequestId, visibleState.visibleItems],
   )
   const groupedEntries = useMemo(() => buildToolGroupsV3(visibleItems), [visibleItems])
-  const executionLane = snapshot?.lane === 'execution'
 
   const requestAutoScroll = useCallback(() => {
     const container = containerRef.current
@@ -1652,7 +1663,6 @@ export function MessagesV3({
               expandedItemIds,
               onToggleExpanded: toggleExpanded,
               onRequestAutoScroll: requestAutoScroll,
-              executionLane,
             })}
           </div>
         )
@@ -1708,7 +1718,6 @@ export function MessagesV3({
                           expandedItemIds,
                           onToggleExpanded: toggleExpanded,
                           onRequestAutoScroll: requestAutoScroll,
-                          executionLane,
                         })}
                       </div>
                     )
@@ -1722,7 +1731,6 @@ export function MessagesV3({
     },
     [
       collapsedToolGroupIds,
-      executionLane,
       expandedItemIds,
       requestMapByRequestId,
       requestAutoScroll,

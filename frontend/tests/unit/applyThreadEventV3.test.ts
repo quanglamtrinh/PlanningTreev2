@@ -198,4 +198,63 @@ describe('applyThreadEventV3', () => {
       },
     ])
   })
+
+  it('prefers canonical changesReplace over filesReplace when both are present', () => {
+    const snapshot = makeSnapshot({
+      items: [makeDiffItem()],
+    })
+    const event: ThreadEventV3 = {
+      eventId: 'evt-4',
+      channel: 'thread',
+      projectId: 'project-1',
+      nodeId: 'node-1',
+      threadRole: 'execution',
+      occurredAt: '2026-04-01T00:04:00Z',
+      snapshotVersion: 5,
+      type: 'conversation.item.patch.v3',
+      payload: {
+        itemId: 'diff-1',
+        patch: {
+          kind: 'diff',
+          changesReplace: [
+            {
+              path: 'src/canonical.ts',
+              kind: 'add',
+              diff: '@@ -0,0 +1 @@\\n+export const canonical = true\\n',
+              summary: 'canonical',
+            },
+          ],
+          filesReplace: [
+            {
+              path: 'src/legacy.ts',
+              changeType: 'deleted',
+              patchText: '@@ -1 +0,0 @@\\n-old\\n',
+              summary: 'legacy',
+            },
+          ],
+          updatedAt: '2026-04-01T00:04:00Z',
+        },
+      },
+    }
+
+    const next = applyThreadEventV3(snapshot, event)
+    const item = next.items[0] as DiffItemV3
+
+    expect(item.changes).toEqual([
+      {
+        path: 'src/canonical.ts',
+        kind: 'add',
+        diff: '@@ -0,0 +1 @@\\n+export const canonical = true\\n',
+        summary: 'canonical',
+      },
+    ])
+    expect(item.files).toEqual([
+      {
+        path: 'src/canonical.ts',
+        changeType: 'created',
+        patchText: '@@ -0,0 +1 @@\\n+export const canonical = true\\n',
+        summary: 'canonical',
+      },
+    ])
+  })
 })

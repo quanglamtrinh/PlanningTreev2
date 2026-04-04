@@ -81,7 +81,10 @@ function hasStructuredDiffMarkers(text: string): boolean {
   return STRUCTURED_DIFF_MARKER_RE.test(text.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
 }
 
-function diffStatsFromText(text: string): { added: number; removed: number } {
+type DiffStats = { added: number; removed: number }
+type ResolvedDiffStats = DiffStats & { known: boolean }
+
+function diffStatsFromText(text: string): DiffStats {
   let added = 0
   let removed = 0
   for (const line of text.split('\n')) {
@@ -217,7 +220,7 @@ function fileRowKey(row: FileChangeRow): string {
   return row.key
 }
 
-function aggregateStatsFromRows(rows: readonly { added: number; removed: number }[]): { added: number; removed: number } {
+function aggregateStatsFromRows(rows: readonly DiffStats[]): DiffStats {
   let added = 0
   let removed = 0
   for (const row of rows) {
@@ -225,6 +228,18 @@ function aggregateStatsFromRows(rows: readonly { added: number; removed: number 
     removed += row.removed
   }
   return { added, removed }
+}
+
+function resolvedDiffStatsFromText(text: string): ResolvedDiffStats {
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const stats = diffStatsFromText(normalized)
+  const hasEvidence =
+    normalized.trim().length > 0 &&
+    (stats.added > 0 || stats.removed > 0 || hasStructuredDiffMarkers(normalized))
+  return {
+    ...stats,
+    known: hasEvidence,
+  }
 }
 
 function normalizePathForMatch(p: string): string {
@@ -450,23 +465,29 @@ function resolvedStatsForRow(
   outputText: string,
   allowSingleBlobFallback: boolean,
   fallbackChunk?: UnifiedDiffChunk | null,
-): { added: number; removed: number } {
+): ResolvedDiffStats {
   if (row.diff) {
-    const parsedDiff = diffStatsFromText(row.diff)
-    if (parsedDiff.added > 0 || parsedDiff.removed > 0 || hasStructuredDiffMarkers(row.diff)) {
+    const parsedDiff = resolvedDiffStatsFromText(row.diff)
+    if (parsedDiff.known) {
       return parsedDiff
     }
   }
   const parsed = parseStatsFromSummary(row.summary)
   if (parsed) {
-    return parsed
+    return {
+      ...parsed,
+      known: true,
+    }
   }
   const fromUnified = statsFromChunksForPath(chunks, row.path)
   if (fromUnified) {
-    return fromUnified
+    return {
+      ...fromUnified,
+      known: true,
+    }
   }
   if (fallbackChunk) {
-    return { added: fallbackChunk.added, removed: fallbackChunk.removed }
+    return { added: fallbackChunk.added, removed: fallbackChunk.removed, known: true }
   }
   const trimmed = outputText.replace(/\r\n/g, '\n').trim()
   if (
@@ -475,18 +496,12 @@ function resolvedStatsForRow(
     chunks.length === 0 &&
     (row.changeType === 'updated' || row.changeType === 'created')
   ) {
-    const singleFileGuess = diffStatsFromText(trimmed)
-    if (singleFileGuess.added > 0 || singleFileGuess.removed > 0) {
+    const singleFileGuess = resolvedDiffStatsFromText(trimmed)
+    if (singleFileGuess.known) {
       return singleFileGuess
     }
   }
-  if (row.changeType === 'created') {
-    return { added: 1, removed: 0 }
-  }
-  if (row.changeType === 'deleted') {
-    return { added: 0, removed: 1 }
-  }
-  return { added: 0, removed: 0 }
+  return { added: 0, removed: 0, known: false }
 }
 
 function changeTypeLabel(changeType: ToolOutputFile['changeType']): string {
@@ -729,16 +744,17 @@ export function FileChangeToolRow({
           chunk == null &&
           diffChunks.length === 0 &&
           blobSourceText.trim().length > 0 &&
-          baseStats.added === 0 &&
-          baseStats.removed === 0
-            ? diffStatsFromText(blobSourceText)
+          !baseStats.known
+            ? resolvedDiffStatsFromText(blobSourceText)
             : null
         return {
           row,
           chunk,
           index,
           diffText: normalizeOptionalText(row.diff),
-          ...(fallbackBlobStats ?? baseStats),
+          added: (fallbackBlobStats ?? baseStats).added,
+          removed: (fallbackBlobStats ?? baseStats).removed,
+          statsKnown: (fallbackBlobStats ?? baseStats).known,
         }
       }),
     [blobSourceText, diffChunks, fileRows],
@@ -761,13 +777,18 @@ export function FileChangeToolRow({
   const badgeLabel = primaryRow ? changeTypeLabel(primaryRow.changeType) : 'UPDATED'
   const stats = useMemo(() => {
     if (multiFileRows.length > 0) {
-      return aggregateStatsFromRows(multiFileRows)
+      const knownRows = multiFileRows.filter((row) => row.statsKnown)
+      if (knownRows.length === 0) {
+        return { added: 0, removed: 0, known: false }
+      }
+      const aggregate = aggregateStatsFromRows(knownRows)
+      return { ...aggregate, known: true }
     }
-    const fromSource = diffStatsFromText(sourceText)
-    if (fromSource.added > 0 || fromSource.removed > 0) {
+    const fromSource = resolvedDiffStatsFromText(sourceText)
+    if (fromSource.known) {
       return fromSource
     }
-    return { added: 0, removed: 0 }
+    return { added: 0, removed: 0, known: false }
   }, [multiFileRows, sourceText])
 
   const singleBodyText = useMemo(() => {
@@ -842,10 +863,12 @@ export function FileChangeToolRow({
             <header className={`${styles.fileChangeHeader} ${styles.fileChangeMultiHeader}`}>
               <div className={styles.fileChangeMultiTitleRow}>
                 <span className={styles.fileChangeMultiTitle}>{multiFileLabel}</span>
-                <span className={styles.fileChangeStats}>
-                  <span className={styles.fileChangeStatAdd}>+{stats.added}</span>
-                  <span className={styles.fileChangeStatDel}>-{stats.removed}</span>
-                </span>
+                {stats.known ? (
+                  <span className={styles.fileChangeStats}>
+                    <span className={styles.fileChangeStatAdd}>+{stats.added}</span>
+                    <span className={styles.fileChangeStatDel}>-{stats.removed}</span>
+                  </span>
+                ) : null}
               </div>
               <div className={styles.fileChangeHeaderActions}>
                 <button
@@ -893,7 +916,7 @@ export function FileChangeToolRow({
               </div>
             </header>
             <ul className={styles.fileChangeMultiList} aria-label="Changed files">
-              {multiFileRows.map(({ row, added, removed, chunk, diffText, index }) => {
+              {multiFileRows.map(({ row, added, removed, statsKnown, chunk, diffText, index }) => {
                 const rowKey = fileRowKey(row)
                 const rowOpen = expandedMultiKey === rowKey
                 const rowLines =
@@ -912,10 +935,12 @@ export function FileChangeToolRow({
                         <span className={styles.fileChangeMultiPath} title={row.path}>
                           {displayName}
                         </span>
-                        <span className={styles.fileChangeMultiRowStats}>
-                          <span className={styles.fileChangeStatAdd}>+{added}</span>
-                          <span className={styles.fileChangeStatDel}>-{removed}</span>
-                        </span>
+                        {statsKnown ? (
+                          <span className={styles.fileChangeMultiRowStats}>
+                            <span className={styles.fileChangeStatAdd}>+{added}</span>
+                            <span className={styles.fileChangeStatDel}>-{removed}</span>
+                          </span>
+                        ) : null}
                       </div>
                       <button
                         type="button"
@@ -975,10 +1000,12 @@ export function FileChangeToolRow({
                 <span className={styles.fileChangeSep} aria-hidden>
                   |
                 </span>
-                <span className={styles.fileChangeStats}>
-                  <span className={styles.fileChangeStatAdd}>+{stats.added}</span>
-                  <span className={styles.fileChangeStatDel}>-{stats.removed}</span>
-                </span>
+                {stats.known ? (
+                  <span className={styles.fileChangeStats}>
+                    <span className={styles.fileChangeStatAdd}>+{stats.added}</span>
+                    <span className={styles.fileChangeStatDel}>-{stats.removed}</span>
+                  </span>
+                ) : null}
               </div>
             </div>
             <div className={styles.fileChangeHeaderActions}>

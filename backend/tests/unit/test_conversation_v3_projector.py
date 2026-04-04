@@ -517,3 +517,116 @@ def test_v3_diff_patch_changes_replace_authoritative_empty() -> None:
     item = {current["id"]: current for current in snapshot_v3["items"]}["file-tool-2"]
     assert item["changes"] == []
     assert item["files"] == []
+
+
+def test_v3_diff_projection_prefers_canonical_changes_and_keeps_output_files_fallback() -> None:
+    snapshot_v2 = default_thread_snapshot("project-1", "node-1", "execution")
+    snapshot_v2["threadId"] = "exec-thread-1"
+    snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+
+    snapshot_v3, _ = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_UPSERT,
+            "payload": {
+                "item": {
+                    "id": "file-tool-3",
+                    "kind": "tool",
+                    "threadId": "exec-thread-1",
+                    "turnId": "turn-4",
+                    "sequence": 1,
+                    "createdAt": "2026-04-01T01:10:00Z",
+                    "updatedAt": "2026-04-01T01:10:00Z",
+                    "status": "in_progress",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "toolType": "fileChange",
+                    "title": "Apply patch",
+                    "toolName": "apply_patch",
+                    "callId": "call-3",
+                    "argumentsText": None,
+                    "outputText": "",
+                    "changes": [
+                        {
+                            "path": "src/canonical.ts",
+                            "kind": "modify",
+                            "summary": "canonical",
+                            "diff": "@@ -1 +1 @@\n-old\n+new\n",
+                        }
+                    ],
+                    "outputFiles": [
+                        {
+                            "path": "src/legacy.ts",
+                            "changeType": "deleted",
+                            "summary": "legacy",
+                        }
+                    ],
+                    "exitCode": None,
+                }
+            },
+        },
+    )
+
+    item = {current["id"]: current for current in snapshot_v3["items"]}["file-tool-3"]
+    assert item["kind"] == "diff"
+    assert item["changes"] == [
+        {
+            "path": "src/canonical.ts",
+            "kind": "modify",
+            "summary": "canonical",
+            "diff": "@@ -1 +1 @@\n-old\n+new\n",
+        }
+    ]
+    assert item["files"] == [
+        {
+            "path": "src/canonical.ts",
+            "changeType": "updated",
+            "summary": "canonical",
+            "patchText": "@@ -1 +1 @@\n-old\n+new\n",
+        }
+    ]
+
+    snapshot_v3, patch_events = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_PATCH,
+            "payload": {
+                "itemId": "file-tool-3",
+                "patch": {
+                    "kind": "tool",
+                    "outputFilesReplace": [
+                        {
+                            "path": "src/fallback.ts",
+                            "changeType": "created",
+                            "summary": "fallback",
+                            "diff": "@@ -0,0 +1 @@\n+export const fallback = true\n",
+                        }
+                    ],
+                    "updatedAt": "2026-04-01T01:10:01Z",
+                    "status": "completed",
+                },
+            },
+        },
+    )
+
+    assert patch_events[0]["payload"]["patch"]["kind"] == "diff"
+    assert patch_events[0]["payload"]["patch"]["changesReplace"] == [
+        {
+            "path": "src/fallback.ts",
+            "kind": "add",
+            "summary": "fallback",
+            "diff": "@@ -0,0 +1 @@\n+export const fallback = true\n",
+        }
+    ]
+    assert patch_events[0]["payload"]["patch"]["filesReplace"] == [
+        {
+            "path": "src/fallback.ts",
+            "changeType": "created",
+            "summary": "fallback",
+            "patchText": "@@ -0,0 +1 @@\n+export const fallback = true\n",
+        }
+    ]
+    updated_item = {current["id"]: current for current in snapshot_v3["items"]}["file-tool-3"]
+    assert updated_item["changes"] == patch_events[0]["payload"]["patch"]["changesReplace"]
+    assert updated_item["files"] == patch_events[0]["payload"]["patch"]["filesReplace"]

@@ -510,6 +510,256 @@ describe('MessagesV3', () => {
     expect(diffRow).toHaveTextContent(/const\s+a\s*=\s*2/)
   })
 
+  it('renders audit diff rows with file-change semantic through the same file-change renderer', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          lane: 'audit',
+          items: [
+            {
+              id: 'audit-diff-1',
+              kind: 'diff',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 2,
+              createdAt: '2026-04-01T00:00:02Z',
+              updatedAt: '2026-04-01T00:00:02Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {
+                semanticKind: 'fileChange',
+                v2Kind: 'tool',
+              },
+              title: 'File changes',
+              summaryText: null,
+              changes: [
+                {
+                  path: 'src/audit.ts',
+                  kind: 'modify',
+                  summary: null,
+                  diff: ['diff --git a/src/audit.ts b/src/audit.ts', '@@ -1 +1 @@', '-old', '+new'].join(
+                    '\n',
+                  ),
+                },
+              ],
+              files: [
+                {
+                  path: 'src/audit.ts',
+                  changeType: 'updated',
+                  summary: null,
+                  patchText: null,
+                },
+              ],
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const diffRow = screen.getByTestId('conversation-v3-item-diff')
+    expect(diffRow).toHaveTextContent('+1')
+    expect(diffRow).toHaveTextContent('-1')
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff' }))
+    expect(diffRow).toHaveTextContent(/new/)
+  })
+
+  it('falls back to files.patchText in audit lane when canonical changes are absent', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          lane: 'audit',
+          items: [
+            {
+              id: 'audit-diff-legacy-1',
+              kind: 'diff',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 2,
+              createdAt: '2026-04-01T00:00:02Z',
+              updatedAt: '2026-04-01T00:00:02Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {
+                semanticKind: 'fileChange',
+                v2Kind: 'tool',
+              },
+              title: 'File changes',
+              summaryText: null,
+              changes: [],
+              files: [
+                {
+                  path: 'src/legacy.ts',
+                  changeType: 'updated',
+                  summary: null,
+                  patchText: ['diff --git a/src/legacy.ts b/src/legacy.ts', '@@ -1 +1 @@', '-old', '+new'].join(
+                    '\n',
+                  ),
+                },
+              ],
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const diffRow = screen.getByTestId('conversation-v3-item-diff')
+    expect(diffRow).toHaveTextContent('+1')
+    expect(diffRow).toHaveTextContent('-1')
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff' }))
+    expect(diffRow).toHaveTextContent(/new/)
+  })
+
+  it('keeps non-fileChange diff semantics on the generic diff card', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          lane: 'audit',
+          items: [
+            {
+              id: 'diff-generic-1',
+              kind: 'diff',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 2,
+              createdAt: '2026-04-01T00:00:02Z',
+              updatedAt: '2026-04-01T00:00:02Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {
+                semanticKind: 'workflowReviewDiff',
+                v2Kind: 'message',
+              },
+              title: 'Diff Summary',
+              summaryText: 'Review diff only',
+              changes: [],
+              files: [{ path: 'src/audit.ts', changeType: 'updated', summary: 'metadata-only', patchText: null }],
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const diffRow = screen.getByTestId('conversation-v3-item-diff')
+    expect(diffRow).toHaveTextContent('Diff')
+    expect(diffRow).toHaveTextContent('Diff Summary')
+    expect(diffRow).toHaveTextContent('metadata-only')
+    expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
+  })
+
+  it('does not synthesize +0/-0 stats when only path metadata is available', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'diff-path-only-1',
+              kind: 'diff',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 2,
+              createdAt: '2026-04-01T00:00:02Z',
+              updatedAt: '2026-04-01T00:00:02Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {
+                semanticKind: 'fileChange',
+                v2Kind: 'tool',
+              },
+              title: 'File changes',
+              summaryText: null,
+              changes: [{ path: 'src/path-only.ts', kind: 'modify', summary: null, diff: null }],
+              files: [{ path: 'src/path-only.ts', changeType: 'updated', summary: null, patchText: null }],
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const diffRow = screen.getByTestId('conversation-v3-item-diff')
+    expect(diffRow).not.toHaveTextContent('+0')
+    expect(diffRow).not.toHaveTextContent('-0')
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff' }))
+    expect(diffRow).toHaveTextContent('path-only.ts')
+  })
+
+  it('does not emit file-change render loop or malformed SVG path errors', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      render(
+        <MessagesV3
+          snapshot={makeSnapshot({
+            lane: 'audit',
+            items: [
+              {
+                id: 'diff-regression-1',
+                kind: 'diff',
+                threadId: 'thread-1',
+                turnId: 'turn-1',
+                sequence: 3,
+                createdAt: '2026-04-01T00:00:03Z',
+                updatedAt: '2026-04-01T00:00:03Z',
+                status: 'completed',
+                source: 'upstream',
+                tone: 'neutral',
+                metadata: {
+                  semanticKind: 'fileChange',
+                  v2Kind: 'tool',
+                },
+                title: 'File changes',
+                summaryText: null,
+                changes: [
+                  {
+                    path: 'src/a.ts',
+                    kind: 'modify',
+                    summary: null,
+                    diff: ['diff --git a/src/a.ts b/src/a.ts', '@@ -1 +1 @@', '-a', '+aa'].join('\n'),
+                  },
+                  {
+                    path: 'src/b.ts',
+                    kind: 'modify',
+                    summary: null,
+                    diff: ['diff --git a/src/b.ts b/src/b.ts', '@@ -1 +1 @@', '-b', '+bb'].join('\n'),
+                  },
+                ],
+                files: [
+                  { path: 'src/a.ts', changeType: 'updated', summary: null, patchText: null },
+                  { path: 'src/b.ts', changeType: 'updated', summary: null, patchText: null },
+                ],
+              },
+            ],
+          })}
+          isLoading={false}
+          onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+        />,
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Expand diff for a.ts' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Expand diff for b.ts' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Expand diff for a.ts' }))
+
+      const joined = consoleError.mock.calls
+        .flat()
+        .map((entry) => String(entry))
+        .join('\n')
+      expect(joined).not.toContain('Maximum update depth exceeded')
+      expect(joined).not.toContain('<path> attribute d: Expected number')
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
   it('expands per-file canonical diff content without duplicating a shared blob', () => {
     render(
       <MessagesV3
