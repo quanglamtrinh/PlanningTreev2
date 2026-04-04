@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GenJobStatus, NodeRecord } from '../../api/types'
 import { AgentSpinner, SPINNER_WORDS_APPLYING, SPINNER_WORDS_GENERATING } from '../../components/AgentSpinner'
 import { api, ApiError } from '../../api/client'
+import { useAskShellActionStore } from '../../stores/ask-shell-action-store'
 import { useClarifyStore } from '../../stores/clarify-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
@@ -27,6 +28,9 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
   const loadDetailState = useDetailStateStore((s) => s.loadDetailState)
+  const markActionRunning = useAskShellActionStore((state) => state.markRunning)
+  const markActionSucceeded = useAskShellActionStore((state) => state.markSucceeded)
+  const markActionFailed = useAskShellActionStore((state) => state.markFailed)
   const [genStatus, setGenStatus] = useState<GenJobStatus>('idle')
   const [genError, setGenError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
@@ -61,8 +65,11 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
           }
           setGenStatus(status.status)
           if (status.status === 'failed') {
-            setGenError(status.error ?? 'Generation failed')
+            const message = status.error ?? 'Generation failed'
+            setGenError(message)
+            markActionFailed(projectId, node.node_id, 'clarify', 'generate', message)
           } else {
+            markActionSucceeded(projectId, node.node_id, 'clarify', 'generate')
             // Reload clarify data and detail state after successful generation.
             // Detail state refresh is needed because zero-question generation
             // auto-confirms clarify on the backend, which unlocks the Spec tab.
@@ -75,7 +82,15 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
         // Keep polling on transient errors
       })
     }, 2000)
-  }, [projectId, node.node_id, invalidateClarify, loadClarify, loadDetailState])
+  }, [
+    projectId,
+    node.node_id,
+    invalidateClarify,
+    loadClarify,
+    loadDetailState,
+    markActionFailed,
+    markActionSucceeded,
+  ])
 
   // Recover generation status on mount
   useEffect(() => {
@@ -84,16 +99,19 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
       if (cancelled) return
       if (status.status === 'active') {
         setGenStatus('active')
+        markActionRunning(projectId, node.node_id, 'clarify', 'generate')
         startPolling()
       } else if (status.status === 'failed') {
         setGenStatus('failed')
-        setGenError(status.error ?? 'Generation failed')
+        const message = status.error ?? 'Generation failed'
+        setGenError(message)
+        markActionFailed(projectId, node.node_id, 'clarify', 'generate', message)
       }
     }).catch(() => {
       // Ignore — status check is best-effort
     })
     return () => { cancelled = true }
-  }, [projectId, node.node_id, startPolling])
+  }, [projectId, node.node_id, startPolling, markActionFailed, markActionRunning])
 
   const handleGenerate = useCallback(async () => {
     setGenError(null)
@@ -106,6 +124,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
       return
     }
     setGenStatus('active')
+    markActionRunning(projectId, node.node_id, 'clarify', 'generate')
     try {
       await api.generateClarify(projectId, node.node_id)
       startPolling()
@@ -116,9 +135,11 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
         return
       }
       setGenStatus('failed')
-      setGenError(error instanceof Error ? error.message : 'Generate failed')
+      const message = error instanceof Error ? error.message : 'Generate failed'
+      setGenError(message)
+      markActionFailed(projectId, node.node_id, 'clarify', 'generate', message)
     }
-  }, [projectId, node.node_id, flushAnswers, startPolling])
+  }, [projectId, node.node_id, flushAnswers, startPolling, markActionFailed, markActionRunning])
 
   // ── Derived state ───────────────────────────────────────────
 
@@ -143,15 +164,32 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
     setIsConfirming(true)
     setConfirmError(null)
     try {
+      markActionRunning(projectId, node.node_id, 'clarify', 'confirm')
       await confirmClarify(projectId, node.node_id)
+      markActionSucceeded(projectId, node.node_id, 'clarify', 'confirm')
       // Invalidate frame document cache so the editor reloads the patched frame.md
       invalidateFrameDoc(projectId, node.node_id, 'frame')
     } catch (error) {
+      markActionFailed(
+        projectId,
+        node.node_id,
+        'clarify',
+        'confirm',
+        error instanceof Error ? error.message : 'Confirm failed',
+      )
       setConfirmError(error instanceof Error ? error.message : 'Confirm failed')
     } finally {
       setIsConfirming(false)
     }
-  }, [projectId, node.node_id, confirmClarify, invalidateFrameDoc])
+  }, [
+    projectId,
+    node.node_id,
+    confirmClarify,
+    invalidateFrameDoc,
+    markActionFailed,
+    markActionRunning,
+    markActionSucceeded,
+  ])
 
   // Flush pending saves on unmount
   useEffect(() => {

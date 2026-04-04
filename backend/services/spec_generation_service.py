@@ -26,6 +26,7 @@ from backend.services import planningtree_workspace
 from backend.services.execution_gating import require_shaping_not_frozen
 from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
+from backend.services.workflow_artifact_write_guard import ensure_allowed_workflow_artifact_write
 from backend.storage.file_utils import atomic_write_json, iso_now, load_json, new_id
 from backend.storage.storage import Storage
 
@@ -131,7 +132,10 @@ class SpecGenerationService:
             }
             gen_state["last_error"] = None
             self._save_gen_state(node_dir, gen_state)
-            spec_meta_path = node_dir / planningtree_workspace.SPEC_META_FILE_NAME
+            spec_meta_path = self._guard_artifact_write(
+                node_dir,
+                node_dir / planningtree_workspace.SPEC_META_FILE_NAME,
+            )
             atomic_write_json(
                 spec_meta_path,
                 {
@@ -233,6 +237,8 @@ class SpecGenerationService:
             thread_id=thread_id,
             timeout_sec=self._timeout,
             cwd=workspace_root,
+            writable_roots=None,
+            sandbox_profile="read_only",
             output_schema=build_spec_output_schema(),
         )
 
@@ -275,7 +281,7 @@ class SpecGenerationService:
             # Stale-job guard: if frame was re-confirmed while this job ran,
             # the source_frame_revision is outdated — skip writing.
             from backend.services.node_detail_service import SPEC_META_FILE
-            spec_meta_path = node_dir / SPEC_META_FILE
+            spec_meta_path = self._guard_artifact_write(node_dir, node_dir / SPEC_META_FILE)
             existing_spec_meta = load_json(spec_meta_path, default=None)
             if isinstance(existing_spec_meta, dict):
                 disk_src_rev = existing_spec_meta.get("source_frame_revision", 0)
@@ -293,7 +299,10 @@ class SpecGenerationService:
             # Write spec.md
             # This overwrite behavior is intentional for the workflow: every
             # generation replaces the current spec draft and clears confirmation.
-            spec_path = node_dir / planningtree_workspace.SPEC_FILE_NAME
+            spec_path = self._guard_artifact_write(
+                node_dir,
+                node_dir / planningtree_workspace.SPEC_FILE_NAME,
+            )
             spec_path.write_text(content, encoding="utf-8")
 
             # Update spec.meta.json — does NOT auto-confirm
@@ -344,7 +353,7 @@ class SpecGenerationService:
         }
 
     def _save_gen_state(self, node_dir: Path, state: dict[str, Any]) -> None:
-        path = node_dir / SPEC_GEN_STATE_FILE
+        path = self._guard_artifact_write(node_dir, node_dir / SPEC_GEN_STATE_FILE)
         atomic_write_json(path, state)
 
     def _reconcile_stale_job(
@@ -495,3 +504,9 @@ class SpecGenerationService:
         if isinstance(workspace_root, str) and workspace_root.strip():
             return workspace_root
         return None
+
+    def _guard_artifact_write(self, node_dir: Path, target_path: Path) -> Path:
+        try:
+            return ensure_allowed_workflow_artifact_write(node_dir, target_path)
+        except ValueError as exc:
+            raise SpecGenerationNotAllowed(str(exc)) from exc

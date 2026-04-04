@@ -49,18 +49,18 @@ describe('surfaceRouting hard cutover defaults', () => {
     ).toEqual({ surface: 'v2', threadTab: 'audit' })
   })
 
-  it('keeps ask lane on legacy surface', () => {
+  it('routes ask lane to chat-v2 surface', () => {
     expect(
       resolveLegacyRouteTarget({
         requestedThreadTab: 'ask',
         isReviewNode: false,
       }),
-    ).toEqual({ surface: 'legacy', threadTab: 'ask' })
+    ).toEqual({ surface: 'v2', threadTab: 'ask' })
     expect(
       resolveV2RouteTarget({
         requestedThreadTab: 'ask',
         isReviewNode: false,
       }),
-    ).toEqual({ surface: 'legacy', threadTab: 'ask' })
+    ).toEqual({ surface: 'v2', threadTab: 'ask' })
   })
 })

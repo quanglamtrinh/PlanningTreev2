@@ -625,14 +625,15 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
 
   async sendTurn(text: string, metadata: Record<string, unknown> = {}) {
     const { activeProjectId, activeNodeId, activeThreadId, activeThreadRole, snapshot } = get()
-    if (!activeProjectId || !activeNodeId || !activeThreadId || !snapshot) {
+    if (!activeProjectId || !activeNodeId || !activeThreadId || !activeThreadRole || !snapshot) {
       return
     }
-    if (activeThreadRole !== 'execution') {
-      throw new Error('Audit review is read-only in the V1 execution/audit flow.')
+    if (activeThreadRole !== 'execution' && activeThreadRole !== 'ask_planning') {
+      throw new Error('Audit review is read-only in the V3 execution/audit flow.')
     }
 
     const generation = threadGeneration
+    const sendingRole = activeThreadRole
     set({ isSending: true, error: null })
 
     try {
@@ -648,7 +649,13 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           !isCurrentGeneration(generation) ||
           !state.snapshot ||
           !state.activeThreadId ||
-          !isActiveTarget(state, activeProjectId, activeNodeId, state.activeThreadId, 'execution')
+          !isActiveTarget(
+            state,
+            activeProjectId,
+            activeNodeId,
+            state.activeThreadId,
+            sendingRole,
+          )
         ) {
           return {}
         }
@@ -676,7 +683,13 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       if (
         !isCurrentGeneration(generation) ||
         !state.activeThreadId ||
-        !isActiveTarget(state, activeProjectId, activeNodeId, state.activeThreadId, 'execution')
+        !isActiveTarget(
+          state,
+          activeProjectId,
+          activeNodeId,
+          state.activeThreadId,
+          sendingRole,
+        )
       ) {
         return
       }

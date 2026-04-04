@@ -29,6 +29,10 @@ from backend.storage.file_utils import iso_now, new_id
 
 logger = logging.getLogger(__name__)
 
+_ASK_READ_ONLY_POLICY_ERROR = (
+    "Ask lane is read-only. File-change output is not allowed in ask turns."
+)
+
 
 class ThreadRuntimeService:
     def __init__(
@@ -618,6 +622,8 @@ class ThreadRuntimeService:
                 thread_id=thread_id,
                 timeout_sec=self._chat_timeout,
                 cwd=workspace_root,
+                writable_roots=None,
+                sandbox_profile="read_only" if thread_role == "ask_planning" else None,
                 on_raw_event=handle_raw_event,
             )
             returned_status = str(result.get("turn_status") or "").strip().lower()
@@ -629,17 +635,45 @@ class ThreadRuntimeService:
                 thread_role=thread_role,
                 provisional_tool_calls=provisional_tool_calls,
             )
+            policy_violation_message: str | None = None
+            if thread_role == "ask_planning":
+                policy_snapshot = self._query_service.get_thread_snapshot(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    publish_repairs=False,
+                    ensure_binding=False,
+                    allow_thread_read_hydration=False,
+                )
+                if self._ask_turn_contains_file_change_items(policy_snapshot, turn_id):
+                    policy_violation_message = _ASK_READ_ONLY_POLICY_ERROR
+                    final_turn_status = "failed"
             outcome = "completed"
             if final_turn_status in {"waiting_user_input", "waitingforuserinput", "waiting_for_user_input"}:
                 outcome = "waiting_user_input"
             elif final_turn_status in {"failed", "error", "interrupted", "cancelled"}:
                 outcome = "failed"
+            error_item = None
+            if outcome == "failed" and policy_violation_message:
+                current_snapshot = self._query_service.get_thread_snapshot(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    publish_repairs=False,
+                )
+                error_item = self._build_error_item(
+                    turn_id=turn_id,
+                    thread_id=thread_id,
+                    message=policy_violation_message,
+                    sequence=self._next_sequence(current_snapshot),
+                )
             self.complete_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role=thread_role,
                 turn_id=turn_id,
                 outcome=outcome,
+                error_item=error_item,
             )
             waiting_for_user_input = final_turn_status in {
                 "waiting_user_input",
@@ -728,6 +762,22 @@ class ThreadRuntimeService:
                         thread_id=thread_id,
                     )
                 self._chat_service.clear_external_live_turn(project_id, node_id, thread_role, turn_id)
+
+    @staticmethod
+    def _ask_turn_contains_file_change_items(snapshot: ThreadSnapshotV2, turn_id: str) -> bool:
+        for item in snapshot.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("turnId") or "") != str(turn_id):
+                continue
+            if str(item.get("kind") or "").strip() != "tool":
+                continue
+            if str(item.get("toolType") or "").strip() == "fileChange":
+                return True
+            output_files = item.get("outputFiles")
+            if isinstance(output_files, list) and len(output_files) > 0:
+                return True
+        return False
 
     def _build_local_user_item(
         self,

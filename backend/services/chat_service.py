@@ -713,10 +713,6 @@ class ChatService:
 
     def _check_thread_writable(self, project_id: str, node_id: str, thread_role: str) -> None:
         """Enforce read-only rules per thread-state-model.md."""
-        if thread_role == "ask_planning":
-            if self._storage.execution_state_store.exists(project_id, node_id):
-                raise ThreadReadOnly("ask_planning", "Shaping is frozen after Finish Task.")
-
         if thread_role == "audit":
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_index = snapshot.get("tree_state", {}).get("node_index", {})

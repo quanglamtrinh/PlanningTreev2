@@ -3,6 +3,9 @@
 Primary planning docs for migrating ask thread from legacy V1 to V3:
 
 - `docs/thread-rework/askthread/ask-thread-v3-phased-roadmap.md`
+- `docs/thread-rework/askthread/ask-thread-v3-phase0-1-handoff.md`
+- `docs/thread-rework/askthread/ask-thread-v3-phase2-3-handoff.md`
+- `docs/thread-rework/askthread/ask-thread-v3-phase4-5-handoff.md`
 
 This directory is reserved for:
 

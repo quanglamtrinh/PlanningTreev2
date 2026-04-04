@@ -31,6 +31,7 @@ class WorkflowDecisionService:
         return {
             "nodeId": state.get("nodeId"),
             "workflowPhase": phase,
+            "askThreadId": state.get("askThreadId"),
             "executionThreadId": state.get("executionThreadId"),
             "auditLineageThreadId": state.get("auditLineageThreadId"),
             "reviewThreadId": state.get("reviewThreadId"),
@@ -1102,6 +1103,10 @@ class ExecutionAuditWorkflowService:
             state["workflowPhase"] = "done" if str(node.get("status") or "") == "done" else "idle"
             state["auditLineageThreadId"] = audit_lineage_thread_id
         execution_entry = self._storage.thread_registry_store.read_entry(project_id, node_id, "execution")
+        if not state.get("askThreadId"):
+            ask_thread_id = self._resolve_ask_thread_id(project_id, node_id)
+            if ask_thread_id:
+                state["askThreadId"] = ask_thread_id
         if not state.get("executionThreadId"):
             execution_thread_id = str(execution_entry.get("threadId") or "").strip()
             if execution_thread_id:
@@ -1112,6 +1117,48 @@ class ExecutionAuditWorkflowService:
             if audit_thread_id:
                 state["auditLineageThreadId"] = audit_thread_id
         return state
+
+    def _resolve_ask_thread_id(self, project_id: str, node_id: str) -> str | None:
+        ask_entry = self._storage.thread_registry_store.read_entry(
+            project_id,
+            node_id,
+            "ask_planning",
+        )
+        ask_thread_id = str(ask_entry.get("threadId") or "").strip()
+        if ask_thread_id:
+            return ask_thread_id
+        legacy_session = self._storage.chat_state_store.read_session(
+            project_id,
+            node_id,
+            thread_role="ask_planning",
+        )
+        legacy_thread_id = str(legacy_session.get("thread_id") or "").strip()
+        if not legacy_thread_id:
+            return None
+        seeded_entry = dict(ask_entry)
+        seeded_entry["threadId"] = legacy_thread_id
+        seeded_entry["forkedFromThreadId"] = (
+            str(legacy_session.get("forked_from_thread_id") or "").strip() or None
+        )
+        seeded_entry["forkedFromNodeId"] = (
+            str(legacy_session.get("forked_from_node_id") or "").strip() or None
+        )
+        seeded_entry["forkedFromRole"] = (
+            str(legacy_session.get("forked_from_role") or "").strip() or None
+        )
+        seeded_entry["forkReason"] = (
+            str(legacy_session.get("fork_reason") or "").strip() or None
+        )
+        seeded_entry["lineageRootThreadId"] = (
+            str(legacy_session.get("lineage_root_thread_id") or "").strip() or None
+        )
+        self._storage.thread_registry_store.write_entry(
+            project_id,
+            node_id,
+            "ask_planning",
+            seeded_entry,
+        )
+        return legacy_thread_id
 
     def _ensure_audit_lineage_thread_id(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
         entry = self._finish_task_service._thread_lineage_service.ensure_thread_binding_v2(

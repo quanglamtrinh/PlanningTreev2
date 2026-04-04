@@ -115,7 +115,7 @@ export function BreadcrumbChatView() {
     if (!snapshot || snapshot.project.id !== projectId) {
       return
     }
-    if (shouldRedirectToV2 && threadTab !== 'ask') {
+    if (shouldRedirectToV2) {
       void navigate(buildChatV2Url(projectId, nodeId, threadTab), { replace: true })
       return
     }

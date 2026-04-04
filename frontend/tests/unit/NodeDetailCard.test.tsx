@@ -139,6 +139,7 @@ vi.mock('react-router-dom', async () => {
 
 import type { NodeRecord } from '../../src/api/types'
 import { NodeDetailCard } from '../../src/features/node/NodeDetailCard'
+import { askShellNodeActionStateKey, useAskShellActionStore } from '../../src/stores/ask-shell-action-store'
 import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useClarifyStore } from '../../src/stores/clarify-store'
@@ -205,6 +206,7 @@ describe('NodeDetailCard', () => {
     useNodeDocumentStore.getState().reset()
     useDetailStateStore.getState().reset()
     useClarifyStore.getState().reset()
+    useAskShellActionStore.getState().reset()
     useProjectStore.setState(useProjectStore.getInitialState())
     apiMock.getFrameGenStatus.mockResolvedValue({
       status: 'idle',
@@ -1563,6 +1565,10 @@ describe('NodeDetailCard', () => {
       expect(within(genBtn).getByRole('status', { name: 'Generating' })).toBeInTheDocument()
     })
     expect(apiMock.generateFrame).toHaveBeenCalledWith('project-1', 'root')
+    const actionState = useAskShellActionStore.getState().entries[
+      askShellNodeActionStateKey('project-1', 'root')
+    ]
+    expect(actionState?.frame.generate.status).toBe('running')
   })
 
   it('shows error when generateFrame fails', async () => {
@@ -1589,6 +1595,10 @@ describe('NodeDetailCard', () => {
     await waitFor(() => {
       expect(screen.getByTestId('generate-error-frame')).toHaveTextContent('Codex unavailable')
     })
+    const actionState = useAskShellActionStore.getState().entries[
+      askShellNodeActionStateKey('project-1', 'root')
+    ]
+    expect(actionState?.frame.generate.status).toBe('failed')
   })
 
   it('recovers active generation state on mount', async () => {

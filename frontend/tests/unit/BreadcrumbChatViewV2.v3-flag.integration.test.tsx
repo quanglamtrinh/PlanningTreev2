@@ -105,6 +105,7 @@ function makeWorkflowState(overrides: Partial<NodeWorkflowView> = {}): NodeWorkf
   return {
     nodeId: 'root',
     workflowPhase: 'execution_decision_pending',
+    askThreadId: 'ask-thread-1',
     executionThreadId: 'exec-thread-1',
     auditLineageThreadId: 'audit-lineage-1',
     reviewThreadId: null,
@@ -247,20 +248,28 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'audit-thread-1', 'audit')
   })
 
-  it('keeps ask lane on legacy chat route', async () => {
+  it('keeps ask lane on chat-v2', async () => {
     seedBaseStores(makeWorkflowState(), makeProjectSnapshot('original'))
+    const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
+    useThreadByIdStoreV3.setState({
+      snapshot: makeConversationSnapshotV3({ threadId: 'ask-thread-1', lane: 'ask' }),
+      loadThread: loadThreadV3,
+      sendTurn: vi.fn().mockResolvedValue(undefined),
+      resolveUserInput: vi.fn().mockResolvedValue(undefined),
+      disconnectThread: vi.fn(),
+    } as Partial<ReturnType<typeof useThreadByIdStoreV3.getState>>)
 
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<div data-testid="legacy-chat" />} />
           <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('legacy-chat')).toBeInTheDocument()
+      expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
     })
+    expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'ask-thread-1', 'ask_planning')
   })
 })

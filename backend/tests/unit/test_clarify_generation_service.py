@@ -82,6 +82,20 @@ def _make_service(
     )
 
 
+def _seed_audit_thread(storage: Storage, project_id: str, node_id: str, *, thread_id: str = "audit-thread-clarify-seeded") -> None:
+    session = storage.chat_state_store.read_session(project_id, node_id, thread_role="audit")
+    session["thread_id"] = thread_id
+    storage.chat_state_store.write_session(project_id, node_id, session, thread_role="audit")
+
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "audit")
+    snapshot["threadId"] = thread_id
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, "audit", snapshot)
+
+    entry = storage.thread_registry_store.read_entry(project_id, node_id, "audit")
+    entry["threadId"] = thread_id
+    storage.thread_registry_store.write_entry(project_id, node_id, "audit", entry)
+
+
 def test_generate_clarify_returns_accepted(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
@@ -102,6 +116,29 @@ def test_generate_clarify_returns_accepted(
     state = load_json(workspace_root / ".planningtree" / "tasks" / root_id / CLARIFY_GEN_STATE_FILE, default={})
     assert "thread_id" not in state
     codex_mock.fork_thread.assert_called_once()
+
+
+def test_generate_clarify_runs_in_read_only_sandbox(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    codex_mock = _make_codex_mock()
+    service = _make_service(storage, tree_service, codex_mock)
+
+    service._generate_clarify_questions(
+        project_id,
+        root_id,
+        "ask-thread-456",
+        "# Task Title\nFrame",
+    )
+
+    kwargs = codex_mock.run_turn_streaming.call_args.kwargs
+    assert kwargs["thread_id"] == "ask-thread-456"
+    assert kwargs["writable_roots"] is None
+    assert kwargs["sandbox_profile"] == "read_only"
 
 
 def test_generate_clarify_rejects_double_start(
@@ -283,6 +320,7 @@ def test_generate_clarify_zero_questions_auto_confirms(
     detail_service = NodeDetailService(storage, tree_service)
     doc_service = NodeDocumentService(storage)
     doc_service.put_document(project_id, root_id, "frame", "# Task Title\nTest\n")
+    _seed_audit_thread(storage, project_id, root_id)
     detail_service.confirm_frame(project_id, root_id)
 
     codex_mock = _make_codex_mock(questions=[])
@@ -316,6 +354,7 @@ def test_generate_clarify_uses_confirmed_content_not_draft(
     # Write and confirm frame
     confirmed_text = "# Task Title\nConfirmed Content\n"
     doc_service.put_document(project_id, root_id, "frame", confirmed_text)
+    _seed_audit_thread(storage, project_id, root_id)
     detail_service.confirm_frame(project_id, root_id)
 
     # Write draft edit AFTER confirm (this changes frame.md but not confirmed_content)
@@ -365,6 +404,7 @@ def test_generate_clarify_preserves_custom_answer_on_regenerate(
         project_id, root_id, "frame",
         "# Task Title\nTest\n\n# Task-Shaping Fields\n- auth_provider:\n",
     )
+    _seed_audit_thread(storage, project_id, root_id)
     detail_service.confirm_frame(project_id, root_id)
 
     # Seed initial clarify with a question
@@ -412,6 +452,7 @@ def test_generate_clarify_preserves_selected_option_when_still_available(
         project_id, root_id, "frame",
         "# Task Title\nTest\n\n# Task-Shaping Fields\n- auth_provider:\n",
     )
+    _seed_audit_thread(storage, project_id, root_id)
     detail_service.confirm_frame(project_id, root_id)
 
     # First generation with options
@@ -473,6 +514,7 @@ def test_write_clarify_skips_when_disk_already_confirmed(
     all_resolved = "# Task Title\nTest\n\n# Task-Shaping Fields\n- platform: web\n- db: postgres\n"
     doc_service.put_document(project_id, root_id, "frame", all_resolved)
     detail_service.bump_frame_revision(project_id, root_id)
+    _seed_audit_thread(storage, project_id, root_id)
     detail_service.confirm_frame(project_id, root_id)
 
     # Verify auto-confirmed
@@ -528,6 +570,7 @@ def test_write_clarify_skips_when_frame_revision_advanced(
     # Write and confirm frame (revision 1, confirmed_revision 1)
     doc_service.put_document(project_id, root_id, "frame", "# Task Title\nTest\n")
     detail_service.bump_frame_revision(project_id, root_id)
+    _seed_audit_thread(storage, project_id, root_id)
     detail_service.confirm_frame(project_id, root_id)
 
     barrier = threading.Event()
@@ -581,6 +624,7 @@ def test_stale_job_does_not_overwrite_newer_clarify(
     # Write and confirm frame (revision 1)
     doc_service.put_document(project_id, root_id, "frame", "# Task Title\nFirst\n")
     detail_service.bump_frame_revision(project_id, root_id)
+    _seed_audit_thread(storage, project_id, root_id)
     detail_service.confirm_frame(project_id, root_id)
 
     barrier = threading.Event()

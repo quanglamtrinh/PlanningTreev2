@@ -23,6 +23,7 @@ _VALID_PHASES = {
 _DEFAULT_STATE: dict[str, Any] = {
     "nodeId": "",
     "workflowPhase": "idle",
+    "askThreadId": None,
     "executionThreadId": None,
     "auditLineageThreadId": None,
     "reviewThreadId": None,
@@ -105,6 +106,7 @@ class WorkflowStateStore:
         return {
             "nodeId": str(source.get("nodeId") or source.get("node_id") or node_id),
             "workflowPhase": phase,
+            "askThreadId": _normalize_optional_string(source.get("askThreadId") or source.get("ask_thread_id")),
             "executionThreadId": _normalize_optional_string(source.get("executionThreadId") or source.get("execution_thread_id")),
             "auditLineageThreadId": _normalize_optional_string(source.get("auditLineageThreadId") or source.get("audit_lineage_thread_id")),
             "reviewThreadId": _normalize_optional_string(source.get("reviewThreadId") or source.get("review_thread_id")),

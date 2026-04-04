@@ -121,6 +121,101 @@
   justify-content: flex-start;
 }
 
+.reasoningRow {
+  justify-content: flex-start;
+}
+
+.reasoningRail {
+  position: relative;
+  display: flex;
+  width: min(100%, 100%);
+  min-width: 0;
+  padding-inline-start: 22px;
+  padding-block: 14px 16px;
+}
+
+.reasoningRail::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 22px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--v3-border-soft) 82%, var(--v3-text-tertiary) 18%);
+}
+
+.reasoningRail::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--v3-text-tertiary) 38%, var(--v3-border-soft) 62%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--v3-surface) 55%, transparent);
+}
+
+.reasoningInner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.reasoningHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reasoningKicker {
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, #e68a6e 88%, var(--v3-accent) 12%);
+  line-height: 1.3;
+}
+
+.reasoningExpandToggle {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--v3-accent) 80%, var(--v3-text-primary));
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.reasoningExpandToggle:hover {
+  color: color-mix(in srgb, var(--v3-accent) 70%, var(--v3-text-primary));
+}
+
+.reasoningExpandToggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--v3-accent) 25%, transparent);
+  outline-offset: 2px;
+}
+
+.reasoningBody {
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.58;
+  color: color-mix(in srgb, var(--v3-text-secondary) 52%, var(--v3-text-primary) 48%);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reasoningDetailPre {
+  margin-top: 2px;
+}
+
 .messageShell {
   display: flex;
   flex-direction: column;
@@ -139,8 +234,6 @@
 }
 
 .messageBubble {
-  border-radius: 14px;
-  border: 1px solid transparent;
   padding: 10px 12px;
   line-height: 1.5;
 }
@@ -153,8 +246,6 @@
 
 .messageBubbleAssistant {
   background: var(--v3-surface-soft);
-  border-color: var(--v3-border);
-  color: var(--v3-text-primary);
 }
 
 .messageBubbleSystem {
@@ -169,8 +260,6 @@
   flex-direction: column;
   gap: 8px;
   width: min(100%, 100%);
-  border: 1px solid var(--v3-border);
-  border-radius: 12px;
   background: linear-gradient(
       180deg,
       color-mix(in srgb, var(--v3-surface) 98%, var(--v3-accent) 2%) 0%,
@@ -384,31 +473,66 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border: 1px solid var(--v3-border-soft);
-  border-radius: 10px;
   background: color-mix(in srgb, var(--v3-surface) 92%, var(--v3-text-primary) 8%);
   padding: 8px;
 }
 
 .commandLineBar {
   margin: 0;
-  padding: 8px 9px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--v3-border-soft) 88%, transparent);
-  background: color-mix(in srgb, var(--v3-bg-app) 82%, var(--v3-text-primary) 18%);
+  padding: 8px 10px;
   font-family: var(--v3-mono);
   font-size: 12px;
-  line-height: 1.5;
-  color: var(--v3-text-primary);
+  line-height: 1.45;
+}
+
+.commandLineBarCollapsed {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  background: color-mix(
+    in srgb,
+    var(--v3-surface) 88%,
+    var(--v3-accent) 6%,
+    var(--v3-text-primary) 6%
+  );
+}
+
+.commandLineBarExpanded {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  background: color-mix(in srgb, var(--v3-bg-app) 82%, var(--v3-text-primary) 18%);
+}
+
+.commandRanLabel {
+  flex-shrink: 0;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: color-mix(in srgb, var(--v3-text-secondary) 38%, var(--v3-text-primary) 62%);
+}
+
+.commandLineTextCollapsed {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: color-mix(in srgb, var(--v3-text-secondary) 82%, var(--v3-text-primary) 18%);
+}
+
+.commandLineTextExpanded {
+  width: 100%;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
-}
-
-.commandPrompt {
-  color: color-mix(in srgb, var(--v3-text-secondary) 58%, var(--v3-text-primary) 42%);
-  font-weight: 600;
-  margin-right: 6px;
+  color: color-mix(in srgb, var(--v3-text-secondary) 72%, var(--v3-text-primary) 28%);
 }
 
 .commandOutputHeader {
@@ -737,6 +861,10 @@
   padding-inline-start: 10px;
 }
 
+.groupBody > .streamEntry > .row .reasoningRail {
+  padding-inline-start: 18px;
+}
+
 .workingIndicator {
   display: inline-flex;
   align-items: center;
@@ -777,5 +905,9 @@
 
   .groupBody > .streamEntry > .row .rowRail {
     padding-inline-start: 8px;
+  }
+
+  .groupBody > .streamEntry > .row .reasoningRail {
+    padding-inline-start: 16px;
   }
 }

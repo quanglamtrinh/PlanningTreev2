@@ -10,6 +10,7 @@ import { useClarifyStore } from '../../stores/clarify-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { useProjectStore } from '../../stores/project-store'
+import { useAskShellActionStore } from '../../stores/ask-shell-action-store'
 import { buildChatV2Url } from '../conversation/surfaceRouting'
 import { useWorkflowStateStoreV2 } from '../conversation/state/workflowStateStoreV2'
 import type { WorkflowTab } from './WorkflowStepper'
@@ -90,6 +91,9 @@ export function NodeDocumentEditor({
   const confirmSpec = useDetailStateStore((state) => state.confirmSpec)
   const loadDetailState = useDetailStateStore((state) => state.loadDetailState)
   const detailState = useDetailStateStore((state) => state.entries[detailStateKey])
+  const markActionRunning = useAskShellActionStore((state) => state.markRunning)
+  const markActionSucceeded = useAskShellActionStore((state) => state.markSucceeded)
+  const markActionFailed = useAskShellActionStore((state) => state.markFailed)
   const invalidateClarify = useClarifyStore((state) => state.invalidateEntry)
   const finishTaskWorkflowV2 = useWorkflowStateStoreV2((state) => state.finishTask)
   const activeWorkflowMutation = useWorkflowStateStoreV2(
@@ -164,8 +168,21 @@ export function NodeDocumentEditor({
           setGenStatus(status.status)
           if (status.status === 'failed') {
             setGenError(status.error ?? 'Generation failed')
+            markActionFailed(
+              projectId,
+              node.node_id,
+              kind === 'spec' ? 'spec' : 'frame',
+              'generate',
+              status.error ?? 'Generation failed',
+            )
             return
           }
+          markActionSucceeded(
+            projectId,
+            node.node_id,
+            kind === 'spec' ? 'spec' : 'frame',
+            'generate',
+          )
           invalidateDocument(projectId, node.node_id, kind)
           void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
           void loadDetailState(projectId, node.node_id).catch(() => undefined)
@@ -174,7 +191,17 @@ export function NodeDocumentEditor({
           // Keep polling on transient errors.
         })
     }, 2000)
-  }, [invalidateDocument, kind, loadDetailState, loadDocument, node.node_id, pollGenStatus, projectId])
+  }, [
+    invalidateDocument,
+    kind,
+    loadDetailState,
+    loadDocument,
+    markActionFailed,
+    markActionSucceeded,
+    node.node_id,
+    pollGenStatus,
+    projectId,
+  ])
 
   useEffect(() => {
     if (kind !== 'frame' && kind !== 'spec') {
@@ -188,10 +215,23 @@ export function NodeDocumentEditor({
         }
         if (status.status === 'active') {
           setGenStatus('active')
+          markActionRunning(
+            projectId,
+            node.node_id,
+            kind === 'spec' ? 'spec' : 'frame',
+            'generate',
+          )
           startPolling()
         } else if (status.status === 'failed') {
           setGenStatus('failed')
           setGenError(status.error ?? 'Generation failed')
+          markActionFailed(
+            projectId,
+            node.node_id,
+            kind === 'spec' ? 'spec' : 'frame',
+            'generate',
+            status.error ?? 'Generation failed',
+          )
         }
       })
       .catch(() => {
@@ -200,7 +240,15 @@ export function NodeDocumentEditor({
     return () => {
       cancelled = true
     }
-  }, [kind, node.node_id, pollGenStatus, projectId, startPolling])
+  }, [
+    kind,
+    markActionFailed,
+    markActionRunning,
+    node.node_id,
+    pollGenStatus,
+    projectId,
+    startPolling,
+  ])
 
   const handleGenerateFrame = useCallback(async () => {
     setGenError(null)
@@ -212,6 +260,7 @@ export function NodeDocumentEditor({
     }
 
     setGenStatus('active')
+    markActionRunning(projectId, node.node_id, 'frame', 'generate')
     try {
       await api.generateFrame(projectId, node.node_id)
       startPolling()
@@ -221,22 +270,48 @@ export function NodeDocumentEditor({
         return
       }
       setGenStatus('failed')
-      setGenError(error instanceof Error ? error.message : 'Generate failed')
+      const message = error instanceof Error ? error.message : 'Generate failed'
+      setGenError(message)
+      markActionFailed(projectId, node.node_id, 'frame', 'generate', message)
     }
-  }, [flushDocument, kind, node.node_id, projectId, startPolling])
+  }, [
+    flushDocument,
+    kind,
+    markActionFailed,
+    markActionRunning,
+    node.node_id,
+    projectId,
+    startPolling,
+  ])
 
   const handleConfirmFrame = useCallback(async () => {
-    await flushDocument(projectId, node.node_id, 'frame')
-    const nextState = await confirmFrame(projectId, node.node_id)
-    invalidateClarify(projectId, node.node_id)
-    invalidateDocument(projectId, node.node_id, 'spec')
-    await refreshSnapshot()
-    return nextState
+    markActionRunning(projectId, node.node_id, 'frame', 'confirm')
+    try {
+      await flushDocument(projectId, node.node_id, 'frame')
+      const nextState = await confirmFrame(projectId, node.node_id)
+      invalidateClarify(projectId, node.node_id)
+      invalidateDocument(projectId, node.node_id, 'spec')
+      await refreshSnapshot()
+      markActionSucceeded(projectId, node.node_id, 'frame', 'confirm')
+      return nextState
+    } catch (error) {
+      markActionFailed(
+        projectId,
+        node.node_id,
+        'frame',
+        'confirm',
+        error instanceof Error ? error.message : 'Confirm failed',
+      )
+      throw error
+    }
   }, [
     confirmFrame,
     flushDocument,
     invalidateClarify,
     invalidateDocument,
+    markActionFailed,
+    markActionRunning,
+    markActionSucceeded,
     node.node_id,
     projectId,
     refreshSnapshot,
@@ -257,9 +332,17 @@ export function NodeDocumentEditor({
       invalidateDocument(projectId, node.node_id, 'spec')
 
       try {
+        markActionRunning(projectId, node.node_id, 'spec', 'generate')
         await api.generateSpec(projectId, node.node_id)
       } catch (error) {
         if (!(error instanceof ApiError && error.code === 'spec_generation_not_allowed')) {
+          markActionFailed(
+            projectId,
+            node.node_id,
+            'spec',
+            'generate',
+            error instanceof Error ? error.message : 'Generate spec failed',
+          )
           throw error
         }
       }
@@ -280,6 +363,8 @@ export function NodeDocumentEditor({
     handleConfirmFrame,
     invalidateDocument,
     loadDetailState,
+    markActionFailed,
+    markActionRunning,
     node.node_id,
     onWorkflowTabChange,
     onFramePostUpdateCommit,
@@ -310,7 +395,20 @@ export function NodeDocumentEditor({
 
     try {
       await flushDocument(projectId, node.node_id, 'spec')
-      await confirmSpec(projectId, node.node_id)
+      markActionRunning(projectId, node.node_id, 'spec', 'confirm')
+      try {
+        await confirmSpec(projectId, node.node_id)
+        markActionSucceeded(projectId, node.node_id, 'spec', 'confirm')
+      } catch (error) {
+        markActionFailed(
+          projectId,
+          node.node_id,
+          'spec',
+          'confirm',
+          error instanceof Error ? error.message : 'Confirm spec failed',
+        )
+        throw error
+      }
       await refreshSnapshot()
       await finishTaskWorkflowV2(projectId, node.node_id)
       navigate(buildChatV2Url(projectId, node.node_id, 'execution'))
@@ -324,6 +422,9 @@ export function NodeDocumentEditor({
     confirmSpec,
     finishTaskWorkflowV2,
     flushDocument,
+    markActionFailed,
+    markActionRunning,
+    markActionSucceeded,
     navigate,
     node.node_id,
     projectId,

@@ -223,7 +223,7 @@ describe('GraphWorkspace', () => {
       fireEvent.click(screen.getByText('Open Root Breadcrumb'))
     })
 
-    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=ask')
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat-v2?thread=ask')
   })
 
   it('still navigates to breadcrumb when persisting the active node fails', async () => {
@@ -258,7 +258,7 @@ describe('GraphWorkspace', () => {
       fireEvent.click(screen.getByText('Open Root Breadcrumb'))
     })
 
-    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat?thread=ask')
+    expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat-v2?thread=ask')
   })
 
   it('routes review-node breadcrumb entry to chat-v2 audit', async () => {

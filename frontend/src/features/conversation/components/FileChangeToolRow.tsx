@@ -34,11 +34,26 @@ function parseStatsFromSummary(summary: string | null | undefined): { added: num
   if (!summary) {
     return null
   }
-  const m = summary.match(/\+\s*(\d+)[^\d-]*-\s*(\d+)/)
-  if (!m) {
-    return null
+  const s = summary.trim()
+  const minus = '[\\-\\u2212]'
+  const pairLoose = new RegExp(`\\+(\\d+)\\s*${minus}\\s*(\\d+)`)
+  const mLoose = s.match(pairLoose)
+  if (mLoose) {
+    return { added: Number(mLoose[1]), removed: Number(mLoose[2]) }
   }
-  return { added: Number(m[1]), removed: Number(m[2]) }
+  const mLegacy = s.match(/\+\s*(\d+)[^\d-]*-\s*(\d+)/)
+  if (mLegacy) {
+    return { added: Number(mLegacy[1]), removed: Number(mLegacy[2]) }
+  }
+  const ins = s.match(/(\d+)\s+insertions?\b/i)
+  const dels = s.match(/(\d+)\s+deletions?\b/i)
+  if (ins || dels) {
+    return {
+      added: ins ? Number(ins[1]) : 0,
+      removed: dels ? Number(dels[1]) : 0,
+    }
+  }
+  return null
 }
 
 function aggregateDiffStats(outputText: string, files: ToolOutputFile[]): { added: number; removed: number } {
@@ -59,6 +74,164 @@ function aggregateDiffStats(outputText: string, files: ToolOutputFile[]): { adde
   }
   if (any) {
     return { added, removed }
+  }
+  return { added: 0, removed: 0 }
+}
+
+function normalizePathForMatch(p: string): string {
+  return p
+    .replace(/\\/g, '/')
+    .replace(/^\.\/+/, '')
+    .replace(/^\/+/, '')
+    .toLowerCase()
+}
+
+function stripGitABPrefix(segment: string): string {
+  let s = segment.trim()
+  if ((s.startsWith('a/') || s.startsWith('b/')) && s.length > 2) {
+    s = s.slice(2)
+  }
+  return s.replace(/\\/g, '/')
+}
+
+/** Paths from `diff --git a/x b/y` (supports quoted segments). */
+function extractPathsFromDiffGitLine(line: string): string[] {
+  const payload = line.slice('diff --git '.length).trimEnd()
+  if (!payload) {
+    return []
+  }
+  const paths: string[] = []
+  let rest = payload
+  while (rest.length > 0) {
+    if (rest[0] === '"') {
+      const end = rest.indexOf('"', 1)
+      if (end < 0) {
+        break
+      }
+      const raw = rest.slice(1, end)
+      paths.push(stripGitABPrefix(raw))
+      rest = rest.slice(end + 1).trimStart()
+    } else {
+      const sp = rest.indexOf(' ')
+      const token = sp >= 0 ? rest.slice(0, sp) : rest
+      paths.push(stripGitABPrefix(token))
+      rest = sp >= 0 ? rest.slice(sp + 1).trimStart() : ''
+    }
+  }
+  return paths.filter(Boolean)
+}
+
+type UnifiedDiffChunk = { relPaths: string[]; added: number; removed: number }
+
+/** Split unified diff into one record per `diff --git` hunk. */
+function parseUnifiedDiffChunks(outputText: string): UnifiedDiffChunk[] {
+  const trimmed = outputText.replace(/\r\n/g, '\n')
+  if (!trimmed.trim()) {
+    return []
+  }
+  const lines = trimmed.split('\n')
+  const chunks: UnifiedDiffChunk[] = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    if (!line.startsWith('diff --git ')) {
+      i += 1
+      continue
+    }
+    const relPaths = extractPathsFromDiffGitLine(line)
+    i += 1
+    let added = 0
+    let removed = 0
+    while (i < lines.length && !lines[i].startsWith('diff --git ')) {
+      const L = lines[i]
+      if (L.startsWith('+') && !L.startsWith('+++')) {
+        added += 1
+      } else if (L.startsWith('-') && !L.startsWith('---')) {
+        removed += 1
+      }
+      i += 1
+    }
+    chunks.push({ relPaths, added, removed })
+  }
+  return chunks
+}
+
+function scorePathAgainstChunk(relPaths: readonly string[], fileNorm: string): number {
+  const fileBase = basename(fileNorm).toLowerCase()
+  let best = 0
+  for (const rp of relPaths) {
+    const pn = normalizePathForMatch(rp)
+    if (!pn) {
+      continue
+    }
+    if (pn === fileNorm) {
+      return 10000 + pn.length
+    }
+    if (fileNorm === pn || fileNorm.endsWith(`/${pn}`) || fileNorm.endsWith(pn)) {
+      best = Math.max(best, 5000 + pn.length)
+    } else if (pn.endsWith(`/${fileNorm}`) || fileNorm.includes(`/${pn}/`) || pn.includes(`/${fileNorm}/`)) {
+      best = Math.max(best, 2000 + Math.min(pn.length, fileNorm.length))
+    } else {
+      const chunkBase = basename(pn).toLowerCase()
+      if (chunkBase && chunkBase === fileBase) {
+        best = Math.max(best, 500 + pn.length)
+      }
+    }
+  }
+  return best
+}
+
+function statsFromChunksForPath(chunks: readonly UnifiedDiffChunk[], filePath: string): { added: number; removed: number } | null {
+  const fileNorm = normalizePathForMatch(filePath)
+  if (!fileNorm) {
+    return null
+  }
+  let bestChunk: UnifiedDiffChunk | null = null
+  let bestScore = 0
+  for (const ch of chunks) {
+    const sc = scorePathAgainstChunk(ch.relPaths, fileNorm)
+    if (sc > bestScore) {
+      bestScore = sc
+      bestChunk = ch
+    }
+  }
+  if (!bestChunk || bestScore < 500) {
+    return null
+  }
+  return { added: bestChunk.added, removed: bestChunk.removed }
+}
+
+function resolvedStatsForFile(
+  file: ToolOutputFile,
+  chunks: readonly UnifiedDiffChunk[],
+  outputText: string,
+  allowSingleBlobFallback: boolean,
+): { added: number; removed: number } {
+  const parsed = parseStatsFromSummary(file.summary)
+  if (parsed) {
+    return parsed
+  }
+  const fromUnified = statsFromChunksForPath(chunks, file.path)
+  if (fromUnified) {
+    return fromUnified
+  }
+  const trimmed = outputText.replace(/\r\n/g, '\n').trim()
+  if (
+    allowSingleBlobFallback &&
+    trimmed &&
+    chunks.length === 0 &&
+    (file.changeType === 'updated' || file.changeType === 'created')
+  ) {
+    const singleFileGuess = diffStatsFromText(trimmed)
+    if (singleFileGuess.added > 0 || singleFileGuess.removed > 0) {
+      return singleFileGuess
+    }
+  }
+  if (file.changeType === 'created') {
+    return { added: 1, removed: 0 }
+  }
+  if (file.changeType === 'deleted') {
+    return { added: 0, removed: 1 }
   }
   return { added: 0, removed: 0 }
 }
@@ -239,8 +412,19 @@ export function FileChangeToolRow({
   const showBody = !canToggle || isExpanded
 
   const primaryFile = item.outputFiles[0]
+  const isMultiFile = item.outputFiles.length > 1
+  const diffChunks = useMemo(() => parseUnifiedDiffChunks(sourceText), [sourceText])
+  const multiFileRows = useMemo(
+    () =>
+      item.outputFiles.map((file) => ({
+        file,
+        ...resolvedStatsForFile(file, diffChunks, sourceText, item.outputFiles.length <= 1),
+      })),
+    [diffChunks, item.outputFiles, sourceText],
+  )
+
   const fileName = useMemo(() => {
-    if (item.outputFiles.length > 1) {
+    if (isMultiFile) {
       return `${item.outputFiles.length} files`
     }
     if (primaryFile) {
@@ -251,7 +435,7 @@ export function FileChangeToolRow({
       return basename(t)
     }
     return t || headline || 'File'
-  }, [headline, item.outputFiles.length, item.title, primaryFile])
+  }, [headline, isMultiFile, item.outputFiles.length, item.title, primaryFile])
 
   const badgeLabel = primaryFile ? changeTypeLabel(primaryFile.changeType) : 'UPDATED'
   const stats = useMemo(() => aggregateDiffStats(sourceText, item.outputFiles), [item.outputFiles, sourceText])
@@ -294,66 +478,158 @@ export function FileChangeToolRow({
     setMenuOpen(false)
   }, [primaryFile?.path])
 
+  const copyAllPaths = useCallback(() => {
+    const text = item.outputFiles.map((f) => f.path).join('\n')
+    if (text.trim()) {
+      void navigator.clipboard.writeText(text)
+    }
+    setMenuOpen(false)
+  }, [item.outputFiles])
+
+  const multiFileLabel = `${item.outputFiles.length} files changed`
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid={dataTestId}>
-      <div className={`${styles.card} ${styles.fileChangeCard}`}>
-        <header className={styles.fileChangeHeader}>
-          <div className={styles.fileChangeHeaderMain}>
-            <IconFile />
-            <div className={styles.fileChangeHeaderText}>
-              <span className={styles.fileChangeFileName}>{fileName}</span>
-              <span className={styles.fileChangeBadge}>{badgeLabel}</span>
-              <span className={styles.fileChangeSep} aria-hidden>
-                |
-              </span>
-              <span className={styles.fileChangeStats}>
-                <span className={styles.fileChangeStatAdd}>+{stats.added}</span>
-                <span className={styles.fileChangeStatDel}>−{stats.removed}</span>
-              </span>
-            </div>
-          </div>
-          <div className={styles.fileChangeHeaderActions}>
-            <button
-              type="button"
-              className={styles.fileChangeIconBtn}
-              aria-label="Copy diff"
-              onClick={copyDiff}
-              disabled={!sourceText.trim() && !normalizeText(item.argumentsText)}
-            >
-              <IconCopy />
-            </button>
-            {canToggle ? (
-              <button
-                type="button"
-                className={styles.fileChangeIconBtn}
-                aria-expanded={showBody}
-                aria-label={showBody ? 'Collapse diff' : 'Expand diff'}
-                onClick={() => onToggle?.(item.id)}
-              >
-                <IconExpandVertical expanded={showBody} />
-              </button>
-            ) : null}
-            <div className={styles.fileChangeMenuWrap} ref={menuRef}>
-              <button
-                type="button"
-                className={styles.fileChangeIconBtn}
-                aria-label="More actions"
-                aria-expanded={menuOpen}
-                onClick={() => setMenuOpen((open) => !open)}
-                disabled={!primaryFile?.path}
-              >
-                <IconMore />
-              </button>
-              {menuOpen && primaryFile?.path ? (
-                <div className={styles.fileChangeMenu} role="menu">
-                  <button type="button" className={styles.fileChangeMenuItem} role="menuitem" onClick={copyPath}>
-                    Copy file path
+      <div
+        className={`${styles.card} ${styles.fileChangeCard} ${isMultiFile ? styles.fileChangeMultiCard : ''}`}
+      >
+        {isMultiFile ? (
+          <>
+            <header className={`${styles.fileChangeHeader} ${styles.fileChangeMultiHeader}`}>
+              <div className={styles.fileChangeMultiTitleRow}>
+                <span className={styles.fileChangeMultiTitle}>{multiFileLabel}</span>
+                <span className={styles.fileChangeStats}>
+                  <span className={styles.fileChangeStatAdd}>+{stats.added}</span>
+                  <span className={styles.fileChangeStatDel}>−{stats.removed}</span>
+                </span>
+              </div>
+              <div className={styles.fileChangeHeaderActions}>
+                <button
+                  type="button"
+                  className={styles.fileChangeIconBtn}
+                  aria-label="Copy diff"
+                  onClick={copyDiff}
+                  disabled={!sourceText.trim() && !normalizeText(item.argumentsText)}
+                >
+                  <IconCopy />
+                </button>
+                {canToggle ? (
+                  <button
+                    type="button"
+                    className={styles.fileChangeIconBtn}
+                    aria-expanded={showBody}
+                    aria-label={showBody ? 'Collapse diff' : 'Expand diff'}
+                    onClick={() => onToggle?.(item.id)}
+                  >
+                    <IconExpandVertical expanded={showBody} />
                   </button>
+                ) : null}
+                <div className={styles.fileChangeMenuWrap} ref={menuRef}>
+                  <button
+                    type="button"
+                    className={styles.fileChangeIconBtn}
+                    aria-label="More actions"
+                    aria-expanded={menuOpen}
+                    onClick={() => setMenuOpen((open) => !open)}
+                  >
+                    <IconMore />
+                  </button>
+                  {menuOpen ? (
+                    <div className={styles.fileChangeMenu} role="menu">
+                      {primaryFile?.path ? (
+                        <button
+                          type="button"
+                          className={styles.fileChangeMenuItem}
+                          role="menuitem"
+                          onClick={copyPath}
+                        >
+                          Copy file path
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className={styles.fileChangeMenuItem}
+                        role="menuitem"
+                        onClick={copyAllPaths}
+                      >
+                        Copy all paths
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
+              </div>
+            </header>
+            <ul className={styles.fileChangeMultiList} aria-label="Changed files">
+              {multiFileRows.map(({ file, added, removed }) => (
+                <li key={`${file.path}-${file.changeType}`} className={styles.fileChangeMultiRow}>
+                  <span className={styles.fileChangeMultiPath}>{file.path}</span>
+                  <span className={styles.fileChangeMultiRowStats}>
+                    <span className={styles.fileChangeStatAdd}>+{added}</span>
+                    <span className={styles.fileChangeStatDel}>−{removed}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <header className={styles.fileChangeHeader}>
+            <div className={styles.fileChangeHeaderMain}>
+              <IconFile />
+              <div className={styles.fileChangeHeaderText}>
+                <span className={styles.fileChangeFileName}>{fileName}</span>
+                <span className={styles.fileChangeBadge}>{badgeLabel}</span>
+                <span className={styles.fileChangeSep} aria-hidden>
+                  |
+                </span>
+                <span className={styles.fileChangeStats}>
+                  <span className={styles.fileChangeStatAdd}>+{stats.added}</span>
+                  <span className={styles.fileChangeStatDel}>−{stats.removed}</span>
+                </span>
+              </div>
             </div>
-          </div>
-        </header>
+            <div className={styles.fileChangeHeaderActions}>
+              <button
+                type="button"
+                className={styles.fileChangeIconBtn}
+                aria-label="Copy diff"
+                onClick={copyDiff}
+                disabled={!sourceText.trim() && !normalizeText(item.argumentsText)}
+              >
+                <IconCopy />
+              </button>
+              {canToggle ? (
+                <button
+                  type="button"
+                  className={styles.fileChangeIconBtn}
+                  aria-expanded={showBody}
+                  aria-label={showBody ? 'Collapse diff' : 'Expand diff'}
+                  onClick={() => onToggle?.(item.id)}
+                >
+                  <IconExpandVertical expanded={showBody} />
+                </button>
+              ) : null}
+              <div className={styles.fileChangeMenuWrap} ref={menuRef}>
+                <button
+                  type="button"
+                  className={styles.fileChangeIconBtn}
+                  aria-label="More actions"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((open) => !open)}
+                  disabled={!primaryFile?.path}
+                >
+                  <IconMore />
+                </button>
+                {menuOpen && primaryFile?.path ? (
+                  <div className={styles.fileChangeMenu} role="menu">
+                    <button type="button" className={styles.fileChangeMenuItem} role="menuitem" onClick={copyPath}>
+                      Copy file path
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </header>
+        )}
 
         {showBody && lines.length > 0 ? (
           <div className={styles.fileChangeBody}>
@@ -378,7 +654,7 @@ export function FileChangeToolRow({
           </div>
         ) : null}
 
-        {showBody && lines.length === 0 && hasFiles ? (
+        {showBody && lines.length === 0 && hasFiles && !isMultiFile ? (
           <div className={styles.fileChangeFileList}>
             {item.outputFiles.map((file) => (
               <div key={`${file.path}-${file.changeType}`} className={styles.fileChangeFileListRow}>

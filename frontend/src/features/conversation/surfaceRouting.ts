@@ -20,7 +20,7 @@ export function buildLegacyChatUrl(
 export function buildChatV2Url(
   projectId: string,
   nodeId: string,
-  threadTab: Exclude<ThreadTab, 'ask'>,
+  threadTab: ThreadTab,
 ): string {
   return `/projects/${projectId}/nodes/${nodeId}/chat-v2?thread=${threadTab}`
 }
@@ -55,10 +55,14 @@ export function resolveLegacyRouteTarget(options: {
   if (isReviewNode) {
     return { surface: 'v2', threadTab: 'audit' }
   }
-  if (requestedThreadTab === 'execution' || requestedThreadTab === 'audit') {
+  if (
+    requestedThreadTab === 'ask' ||
+    requestedThreadTab === 'execution' ||
+    requestedThreadTab === 'audit'
+  ) {
     return { surface: 'v2', threadTab: requestedThreadTab }
   }
-  return { surface: 'legacy', threadTab: 'ask' }
+  return { surface: 'v2', threadTab: 'ask' }
 }
 
 export function resolveV2RouteTarget(options: {
@@ -71,7 +75,7 @@ export function resolveV2RouteTarget(options: {
     return { surface: 'v2', threadTab: 'audit' }
   }
   if (requestedThreadTab === 'ask') {
-    return { surface: 'legacy', threadTab: 'ask' }
+    return { surface: 'v2', threadTab: 'ask' }
   }
   if (requestedThreadTab === 'execution' || requestedThreadTab === 'audit') {
     return { surface: 'v2', threadTab: requestedThreadTab }

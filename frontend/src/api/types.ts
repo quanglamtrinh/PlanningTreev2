@@ -1220,6 +1220,7 @@ export interface AuditDecisionView {
 export interface NodeWorkflowView {
   nodeId: string
   workflowPhase: WorkflowPhase
+  askThreadId?: string | null
   executionThreadId: string | null
   auditLineageThreadId: string | null
   reviewThreadId: string | null

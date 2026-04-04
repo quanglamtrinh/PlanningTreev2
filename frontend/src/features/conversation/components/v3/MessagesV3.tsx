@@ -132,21 +132,56 @@ function isLargeCommandOutput(item: ToolItemV3): boolean {
   )
 }
 
+/** Keeps persisted expand state from being cleared by auto-expand/collapse sync on thread load. */
+function primeManualExpandedIdsFromSavedView(
+  savedExpandedIds: readonly string[],
+  snap: ThreadSnapshotV3 | null,
+  threadId: string,
+  target: Set<string>,
+): void {
+  if (!snap || snap.threadId !== threadId) {
+    return
+  }
+  const itemById = new Map(snap.items.map((i) => [i.id, i]))
+  const derived = deriveVisibleMessageStateV3(snap)
+  for (const id of savedExpandedIds) {
+    const item = itemById.get(id)
+    if (!item) {
+      continue
+    }
+    if (item.kind === 'tool') {
+      if (item.toolType === 'commandExecution') {
+        const shouldAutoExpand = item.status === 'in_progress' || isLargeCommandOutput(item)
+        if (!shouldAutoExpand) {
+          target.add(id)
+        }
+      } else {
+        const hasArguments = Boolean(normalizeText(item.argumentsText))
+        const hasOutput = Boolean(normalizeText(item.outputText))
+        const hasFiles = item.outputFiles.length > 0
+        if (hasArguments || hasOutput || hasFiles) {
+          target.add(id)
+        }
+      }
+      continue
+    }
+    if (item.kind === 'reasoning') {
+      const meta = derived.reasoningMetaById.get(id)
+      const shouldAutoExpand =
+        item.status === 'in_progress' && Boolean(meta?.visibleDetail)
+      if (!shouldAutoExpand) {
+        target.add(id)
+      }
+    }
+  }
+}
+
 function isNearBottom(node: HTMLDivElement): boolean {
   return node.scrollHeight - node.scrollTop - node.clientHeight <= SCROLL_THRESHOLD_PX
 }
 
-function shellPrefixForCommand(commandLine: string): string {
-  const normalized = commandLine.toLowerCase()
-  if (
-    normalized.includes('powershell') ||
-    normalized.includes('pwsh') ||
-    normalized.includes('.ps1') ||
-    normalized.includes('cmd.exe')
-  ) {
-    return 'PS >'
-  }
-  return '$'
+function commandRanLabel(status: ItemStatus): string {
+  return status === 'in_progress' ? 'Running' : 'Ran'
 }
 
 function trailingCommandOutput(outputText: string): string {
@@ -432,22 +467,21 @@ function ReasoningRowV3({
   onToggle: (itemId: string) => void
 }) {
   return (
-    <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-reasoning">
-      <div className={styles.rowRail}>
-        <div className={`${styles.card} ${styles.cardSection}`}>
-          <div className={styles.cardHeader}>
-            <div>
-              <div className={styles.cardEyebrow}>Reasoning</div>
-              <h3 className={styles.cardTitle}>{meta?.workingLabel ?? 'Reasoning update'}</h3>
-            </div>
+    <article className={`${styles.row} ${styles.reasoningRow}`} data-testid="conversation-v3-item-reasoning">
+      <div className={styles.reasoningRail}>
+        <div className={styles.reasoningInner}>
+          <div className={styles.reasoningHeader}>
+            <span className={styles.reasoningKicker}>Reasoning update</span>
             {meta?.visibleDetail ? (
-              <button type="button" className={styles.inlineToggle} onClick={() => onToggle(item.id)}>
+              <button type="button" className={styles.reasoningExpandToggle} onClick={() => onToggle(item.id)}>
                 {isExpanded ? 'Collapse' : 'Expand'}
               </button>
             ) : null}
           </div>
-          {meta?.visibleSummary ? <div className={styles.subtleText}>{meta.visibleSummary}</div> : null}
-          {isExpanded && meta?.visibleDetail ? <pre className={styles.plainPre}>{meta.visibleDetail}</pre> : null}
+          {meta?.visibleSummary ? <div className={styles.reasoningBody}>{meta.visibleSummary}</div> : null}
+          {isExpanded && meta?.visibleDetail ? (
+            <pre className={`${styles.plainPre} ${styles.reasoningDetailPre}`}>{meta.visibleDetail}</pre>
+          ) : null}
         </div>
       </div>
     </article>
@@ -474,7 +508,7 @@ function CommandToolRowV3({
   const hasFiles = item.outputFiles.length > 0
   const hasBody = Boolean(normalizeText(item.argumentsText) || hasOutput || hasFiles)
   const showBody = !hasBody || isExpanded
-  const prefix = shellPrefixForCommand(headline)
+  const ranLabel = commandRanLabel(item.status)
 
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-tool">
@@ -498,39 +532,51 @@ function CommandToolRowV3({
           </header>
 
           <div className={styles.terminalZone}>
-            <div className={styles.commandLineBar}>
-              <span className={styles.commandPrompt}>{prefix}</span>
-              {headline}
-            </div>
-
-            <div className={styles.commandOutputHeader}>
-              <span className={styles.commandOutputEyebrow}>Output</span>
+            <div
+              className={`${styles.commandLineBar} ${
+                showBody ? styles.commandLineBarExpanded : styles.commandLineBarCollapsed
+              }`}
+            >
+              <span className={styles.commandRanLabel}>{ranLabel}</span>
               <span
-                className={`${styles.exitPill} ${
-                  item.exitCode === 0
-                    ? styles.exitPillSuccess
-                    : item.exitCode != null
-                      ? styles.exitPillFailure
-                      : item.status === 'in_progress'
-                        ? styles.exitPillRunning
-                        : styles.exitPillMuted
-                }`}
+                className={showBody ? styles.commandLineTextExpanded : styles.commandLineTextCollapsed}
               >
-                <span className={styles.exitPillDot} aria-hidden />
-                {item.exitCode != null
-                  ? `exit ${item.exitCode}`
-                  : item.status === 'in_progress'
-                    ? 'Running'
-                    : 'exit -'}
+                {headline}
               </span>
             </div>
 
-            {showBody && hasOutput ? (
-              <CommandOutputViewportV3
-                itemId={item.id}
-                outputText={item.outputText}
-                onRequestAutoScroll={onRequestAutoScroll}
-              />
+            {showBody ? (
+              <>
+                <div className={styles.commandOutputHeader}>
+                  <span className={styles.commandOutputEyebrow}>Output</span>
+                  <span
+                    className={`${styles.exitPill} ${
+                      item.exitCode === 0
+                        ? styles.exitPillSuccess
+                        : item.exitCode != null
+                          ? styles.exitPillFailure
+                          : item.status === 'in_progress'
+                            ? styles.exitPillRunning
+                            : styles.exitPillMuted
+                    }`}
+                  >
+                    <span className={styles.exitPillDot} aria-hidden />
+                    {item.exitCode != null
+                      ? `exit ${item.exitCode}`
+                      : item.status === 'in_progress'
+                        ? 'Running'
+                        : 'exit -'}
+                  </span>
+                </div>
+
+                {hasOutput ? (
+                  <CommandOutputViewportV3
+                    itemId={item.id}
+                    outputText={item.outputText}
+                    onRequestAutoScroll={onRequestAutoScroll}
+                  />
+                ) : null}
+              </>
             ) : null}
           </div>
 
@@ -1123,6 +1169,8 @@ export function MessagesV3({
   const autoScrollRef = useRef(true)
   const manuallyToggledExpandedRef = useRef<Set<string>>(new Set())
   const manuallyToggledGroupsRef = useRef<Set<string>>(new Set())
+  const snapshotRef = useRef(snapshot)
+  snapshotRef.current = snapshot
 
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
   const [collapsedToolGroupIds, setCollapsedToolGroupIds] = useState<Set<string>>(new Set())
@@ -1210,6 +1258,12 @@ export function MessagesV3({
     setExpandedItemIds(new Set(saved.expandedItemIds))
     setCollapsedToolGroupIds(new Set(saved.collapsedToolGroupIds))
     setDismissedPlanReadyKeys(new Set(saved.dismissedPlanReadyKeys))
+    primeManualExpandedIdsFromSavedView(
+      saved.expandedItemIds,
+      snapshotRef.current,
+      threadId,
+      manuallyToggledExpandedRef.current,
+    )
   }, [threadId])
 
   useEffect(() => {

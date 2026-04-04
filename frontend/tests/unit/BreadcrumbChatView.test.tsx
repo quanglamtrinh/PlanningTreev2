@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -219,24 +219,20 @@ describe('BreadcrumbChatView', () => {
     })
   })
 
-  it('keeps ask lane on legacy /chat surface', async () => {
+  it('redirects ask lane from legacy /chat to /chat-v2', async () => {
     renderBreadcrumbChatView('/projects/project-1/nodes/root/chat?thread=ask')
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat?thread=ask')
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=ask')
     })
-    expect(screen.getByTestId('message-feed')).toBeInTheDocument()
-    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+    expect(screen.getByTestId('chat-v2-route')).toBeInTheDocument()
   })
 
-  it('redirects execution tab selection to /chat-v2', async () => {
+  it('redirects bare legacy /chat route to /chat-v2 ask', async () => {
     renderBreadcrumbChatView('/projects/project-1/nodes/root/chat')
-    await screen.findByTestId('breadcrumb-node-detail-card')
-
-    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-execution'))
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=execution')
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=ask')
     })
   })
 

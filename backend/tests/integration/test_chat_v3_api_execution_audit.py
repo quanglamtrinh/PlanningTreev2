@@ -427,6 +427,41 @@ def test_v3_by_id_snapshot_rejects_thread_id_mismatch(client: TestClient, worksp
     assert payload["error"]["code"] == "invalid_request"
 
 
+def test_v2_workflow_state_includes_ask_thread_id_from_registry(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    ask_thread_id = _seed_ask_thread(client, project_id, node_id, seed_registry=True)
+
+    response = client.get(
+        f"/v2/projects/{project_id}/nodes/{node_id}/workflow-state",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["data"]["askThreadId"] == ask_thread_id
+
+
+def test_v2_workflow_state_seeds_ask_thread_id_from_legacy_session(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    ask_thread_id = _seed_ask_thread(client, project_id, node_id, seed_registry=False)
+
+    response = client.get(
+        f"/v2/projects/{project_id}/nodes/{node_id}/workflow-state",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["data"]["askThreadId"] == ask_thread_id
+
+    seeded_entry = client.app.state.storage.thread_registry_store.read_entry(
+        project_id,
+        node_id,
+        "ask_planning",
+    )
+    assert seeded_entry["threadId"] == ask_thread_id
+
+
 def test_v3_execution_resolve_user_input_by_id_updates_snapshot_and_signal(
     client: TestClient, workspace_root
 ) -> None:

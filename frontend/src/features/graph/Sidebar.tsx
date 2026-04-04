@@ -4,7 +4,6 @@ import { useShallow } from 'zustand/react/shallow'
 import type { NodeRecord, ProjectSummary, Snapshot } from '../../api/types'
 import {
   buildChatV2Url,
-  buildLegacyChatUrl,
 } from '../conversation/surfaceRouting'
 import { useCodexStore } from '../../stores/codex-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
@@ -98,7 +97,7 @@ export function Sidebar() {
       navigate(
         targetNode?.node_kind === 'review'
           ? buildChatV2Url(projectId, nodeId, 'audit')
-          : buildLegacyChatUrl(projectId, nodeId, 'ask'),
+          : buildChatV2Url(projectId, nodeId, 'ask'),
       )
       void selectNode(nodeId, true)
     },

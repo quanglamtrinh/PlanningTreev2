@@ -240,7 +240,7 @@ describe('Sidebar', () => {
     fireEvent.doubleClick(screen.getByRole('button', { name: /1\.1 Completed task/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/done-node/chat?thread=ask')
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/done-node/chat-v2?thread=ask')
     })
   })
 

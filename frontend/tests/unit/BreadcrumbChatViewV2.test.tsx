@@ -115,6 +115,7 @@ function makeWorkflowState(overrides: Partial<NodeWorkflowView> = {}): NodeWorkf
   return {
     nodeId: 'root',
     workflowPhase: 'idle',
+    askThreadId: 'ask-thread-1',
     executionThreadId: 'exec-thread-1',
     auditLineageThreadId: 'audit-lineage-1',
     reviewThreadId: null,
@@ -326,21 +327,77 @@ describe('BreadcrumbChatViewV2', () => {
     })
   })
 
-  it('redirects /chat-v2 ask requests back to legacy /chat ask', async () => {
-    seedStores({})
+  it('keeps ask lane on /chat-v2 and loads ask thread by id', async () => {
+    const loadThread = vi.fn().mockResolvedValue(undefined)
+    seedStores({
+      workflowState: makeWorkflowState({
+        askThreadId: 'ask-thread-1',
+      }),
+      threadSnapshot: makeConversationSnapshot({ threadId: 'ask-thread-1', lane: 'ask' }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      loadThread,
+    })
 
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<LocationProbe />} />
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat-v2"
+            element={
+              <>
+                <BreadcrumbChatViewV2 />
+                <LocationProbe />
+              </>
+            }
+          />
         </Routes>
       </MemoryRouter>,
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-probe')).toHaveTextContent('/projects/project-1/nodes/root/chat?thread=ask')
+      expect(screen.getByTestId('location-probe')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=ask')
     })
+    expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'ask-thread-1', 'ask_planning')
+    expect(screen.getByTestId('frame-context-ask')).toBeInTheDocument()
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+  })
+
+  it('keeps ask metadata shell visible when ask transcript is empty', async () => {
+    const loadThread = vi.fn().mockResolvedValue(undefined)
+    seedStores({
+      workflowState: makeWorkflowState({
+        askThreadId: 'ask-thread-1',
+      }),
+      threadSnapshot: null,
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      loadThread,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat-v2"
+            element={
+              <>
+                <BreadcrumbChatViewV2 />
+                <LocationProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'ask-thread-1', 'ask_planning')
+    })
+    expect(screen.getByTestId('frame-context-ask')).toBeInTheDocument()
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
   })
 
   it('keeps review-node routes inside chat-v2 audit lane', async () => {
