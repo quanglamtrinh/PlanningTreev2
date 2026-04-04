@@ -26,6 +26,7 @@ from backend.services import planningtree_workspace
 from backend.services.execution_gating import require_shaping_not_frozen
 from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
+from backend.services.workflow_artifact_write_guard import ensure_allowed_workflow_artifact_write
 from backend.storage.file_utils import atomic_write_json, iso_now, load_json, new_id
 from backend.storage.storage import Storage
 
@@ -193,6 +194,8 @@ class FrameGenerationService:
             thread_id=thread_id,
             timeout_sec=self._timeout,
             cwd=workspace_root,
+            writable_roots=None,
+            sandbox_profile="read_only",
             output_schema=build_frame_output_schema(),
         )
 
@@ -224,13 +227,16 @@ class FrameGenerationService:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
             node_dir = self._resolve_node_dir(snapshot, node_id)
-            frame_path = node_dir / planningtree_workspace.FRAME_FILE_NAME
+            frame_path = self._guard_artifact_write(
+                node_dir,
+                node_dir / planningtree_workspace.FRAME_FILE_NAME,
+            )
             frame_path.write_text(content, encoding="utf-8")
 
             # Bump frame revision so confirm_frame picks up a new revision,
             # matching the behavior of the normal save path (PUT /documents/frame).
             from backend.services.node_detail_service import FRAME_META_FILE, _DEFAULT_FRAME_META
-            meta_path = node_dir / FRAME_META_FILE
+            meta_path = self._guard_artifact_write(node_dir, node_dir / FRAME_META_FILE)
             meta = load_json(meta_path, default=None)
             if not isinstance(meta, dict):
                 meta = dict(_DEFAULT_FRAME_META)
@@ -277,7 +283,7 @@ class FrameGenerationService:
         }
 
     def _save_gen_state(self, node_dir: Path, state: dict[str, Any]) -> None:
-        path = node_dir / FRAME_GEN_STATE_FILE
+        path = self._guard_artifact_write(node_dir, node_dir / FRAME_GEN_STATE_FILE)
         atomic_write_json(path, state)
 
     def _reconcile_stale_job(
@@ -433,3 +439,9 @@ class FrameGenerationService:
         if isinstance(workspace_root, str) and workspace_root.strip():
             return workspace_root
         return None
+
+    def _guard_artifact_write(self, node_dir: Path, target_path: Path) -> Path:
+        try:
+            return ensure_allowed_workflow_artifact_write(node_dir, target_path)
+        except ValueError as exc:
+            raise FrameGenerationNotAllowed(str(exc)) from exc

@@ -165,6 +165,9 @@ export function NodeDetailCard({
     [detailState, specTabBlocked, splitTabBlocked],
   )
 
+  const showDetailStateError =
+    Boolean(detailStateError) && (variant !== 'breadcrumb' || !detailState)
+
   const rootClassName = useMemo(
     () =>
       `${styles.card} ${variant === 'breadcrumb' ? styles.cardBreadcrumb : styles.cardGraph}`,
@@ -238,7 +241,7 @@ export function NodeDetailCard({
       </div>
 
       <div className={styles.cardBody}>
-        {detailStateError ? (
+        {showDetailStateError ? (
           <div className={styles.detailStateError}>
             <p className={styles.body}>Failed to load detail state: {detailStateError}</p>
             <button

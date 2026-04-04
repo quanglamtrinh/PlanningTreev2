@@ -184,6 +184,28 @@ describe('detail-state-store', () => {
     expect(useProjectStore.getState().snapshot?.project.id).toBe('project-1')
   })
 
+  it('dedupes concurrent execution-state refreshes for the same node', async () => {
+    let resolveDetailState: ((value: ReturnType<typeof makeDetailState>) => void) | null = null
+    apiMock.getDetailState.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDetailState = resolve
+        }),
+    )
+
+    const firstRefresh = useDetailStateStore.getState().refreshExecutionState('project-1', 'root')
+    const secondRefresh = useDetailStateStore.getState().refreshExecutionState('project-1', 'root')
+
+    expect(apiMock.getDetailState).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveDetailState?.(makeDetailState())
+      await Promise.all([firstRefresh, secondRefresh])
+    })
+
+    expect(useDetailStateStore.getState().entries['project-1::root']?.node_id).toBe('root')
+  })
+
   it('acceptLocalReview refreshes detail-state and selects the activated sibling', async () => {
     apiMock.acceptLocalReview.mockResolvedValue({
       node_id: 'root',

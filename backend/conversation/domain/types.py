@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from backend.storage.file_utils import iso_now
 
@@ -82,6 +82,15 @@ class ToolOutputFile(TypedDict):
     path: str
     changeType: Literal["created", "updated", "deleted"]
     summary: str | None
+    kind: NotRequired[Literal["add", "modify", "delete"]]
+    diff: NotRequired[str | None]
+
+
+class ToolChange(TypedDict):
+    path: str
+    kind: Literal["add", "modify", "delete"]
+    diff: str | None
+    summary: str | None
 
 
 class ToolItem(ItemBase):
@@ -93,6 +102,7 @@ class ToolItem(ItemBase):
     argumentsText: str | None
     outputText: str
     outputFiles: list[ToolOutputFile]
+    changes: NotRequired[list[ToolChange]]
     exitCode: int | None
 
 
@@ -223,6 +233,8 @@ class ToolPatch(TypedDict, total=False):
     outputTextAppend: str
     outputFilesAppend: list[ToolOutputFile]
     outputFilesReplace: list[ToolOutputFile]
+    changesAppend: list[ToolChange]
+    changesReplace: list[ToolChange]
     exitCode: int | None
     status: ItemStatus
     updatedAt: str
@@ -260,6 +272,32 @@ def _normalize_optional_string(value: Any) -> str | None:
         value = value.strip()
         return value or None
     return None
+
+
+def _normalize_optional_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value if value.strip() else None
+
+
+def _normalize_tool_change_kind(value: Any, *, fallback: Literal["add", "modify", "delete"] = "modify") -> Literal["add", "modify", "delete"]:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"add", "create", "created", "new"}:
+            return "add"
+        if normalized in {"delete", "deleted", "remove", "removed"}:
+            return "delete"
+        if normalized in {"modify", "modified", "update", "updated", "change", "changed"}:
+            return "modify"
+    return fallback
+
+
+def _tool_change_kind_to_change_type(kind: str) -> Literal["created", "updated", "deleted"]:
+    if kind == "add":
+        return "created"
+    if kind == "delete":
+        return "deleted"
+    return "updated"
 
 
 def normalize_thread_role(value: Any, *, default: ThreadRole = "ask_planning") -> ThreadRole:
@@ -384,12 +422,46 @@ def normalize_tool_output_file(raw: Any) -> ToolOutputFile | None:
     path = _normalize_optional_string(raw.get("path"))
     if not path:
         return None
-    change_type = str(raw.get("changeType") or raw.get("change_type") or "updated").strip()
+    inferred_kind = _normalize_tool_change_kind(
+        raw.get("kind") or raw.get("changeKind") or raw.get("change_kind"),
+        fallback="modify",
+    )
+    change_type = str(raw.get("changeType") or raw.get("change_type") or "").strip()
     if change_type not in {"created", "updated", "deleted"}:
-        change_type = "updated"
-    return {
+        change_type = _tool_change_kind_to_change_type(inferred_kind)
+    output_file: ToolOutputFile = {
         "path": path,
         "changeType": change_type,  # type: ignore[typeddict-item]
+        "summary": _normalize_optional_string(raw.get("summary")),
+    }
+    raw_kind = raw.get("kind") or raw.get("changeKind") or raw.get("change_kind")
+    if raw_kind is not None:
+        output_file["kind"] = _normalize_tool_change_kind(raw_kind, fallback="modify")
+    diff_text = _normalize_optional_text(raw.get("diff") if "diff" in raw else raw.get("patchText") or raw.get("patch_text"))
+    if diff_text is not None:
+        output_file["diff"] = diff_text
+    return output_file
+
+
+def normalize_tool_change(raw: Any) -> ToolChange | None:
+    if not isinstance(raw, dict):
+        return None
+    path = _normalize_optional_string(raw.get("path"))
+    if not path:
+        return None
+    kind = _normalize_tool_change_kind(
+        raw.get("kind")
+        or raw.get("changeKind")
+        or raw.get("change_kind")
+        or raw.get("changeType")
+        or raw.get("change_type"),
+        fallback="modify",
+    )
+    diff_text = _normalize_optional_text(raw.get("diff") if "diff" in raw else raw.get("patchText") or raw.get("patch_text"))
+    return {
+        "path": path,
+        "kind": kind,  # type: ignore[typeddict-item]
+        "diff": diff_text,
         "summary": _normalize_optional_string(raw.get("summary")),
     }
 
@@ -523,6 +595,37 @@ def normalize_item(raw: Any, *, thread_id: str | None = None) -> ConversationIte
                 normalized = normalize_tool_output_file(file_item)
                 if normalized is not None:
                     output_files.append(normalized)
+        changes: list[ToolChange] = []
+        raw_changes = raw.get("changes")
+        if not isinstance(raw_changes, list):
+            raw_files = raw.get("files")
+            raw_changes = raw_files if isinstance(raw_files, list) else None
+        if isinstance(raw_changes, list):
+            for change_item in raw_changes:
+                normalized_change = normalize_tool_change(change_item)
+                if normalized_change is not None:
+                    changes.append(normalized_change)
+        if not output_files and changes:
+            output_files = []
+            for change in changes:
+                output_file: ToolOutputFile = {
+                    "path": change["path"],
+                    "changeType": _tool_change_kind_to_change_type(str(change.get("kind") or "modify")),
+                    "summary": change.get("summary"),
+                }
+                if isinstance(change.get("diff"), str) and str(change.get("diff") or "").strip():
+                    output_file["diff"] = str(change.get("diff"))
+                output_files.append(output_file)
+        if not changes and output_files:
+            changes = [
+                {
+                    "path": output_file["path"],
+                    "kind": cast(Any, _normalize_tool_change_kind(output_file.get("kind") or output_file.get("changeType"), fallback="modify")),
+                    "diff": output_file.get("diff"),
+                    "summary": output_file.get("summary"),
+                }
+                for output_file in output_files
+            ]
         return ToolItem(
             **base,
             kind="tool",
@@ -533,6 +636,7 @@ def normalize_item(raw: Any, *, thread_id: str | None = None) -> ConversationIte
             argumentsText=_normalize_optional_string(raw.get("argumentsText")),
             outputText=str(raw.get("outputText") or ""),
             outputFiles=output_files,
+            changes=changes,
             exitCode=raw.get("exitCode") if isinstance(raw.get("exitCode"), int) else None,
         )
     if kind == "userInput":

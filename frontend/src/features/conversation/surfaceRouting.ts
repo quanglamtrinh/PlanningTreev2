@@ -20,55 +20,55 @@ export function buildLegacyChatUrl(
 export function buildChatV2Url(
   projectId: string,
   nodeId: string,
-  threadTab: Exclude<ThreadTab, 'ask'>,
+  threadTab: ThreadTab,
 ): string {
   return `/projects/${projectId}/nodes/${nodeId}/chat-v2?thread=${threadTab}`
 }
 
-export function isExecutionAuditV2SurfaceEnabled(bootstrap: BootstrapStatus | null | undefined): boolean {
-  return bootstrap?.execution_audit_v2_enabled === true
+export function isExecutionAuditV2SurfaceEnabled(_bootstrap: BootstrapStatus | null | undefined): boolean {
+  return true
+}
+
+export function isExecutionAuditUiuxV3FrontendEnabled(
+  _bootstrap: BootstrapStatus | null | undefined,
+): boolean {
+  return true
+}
+
+export function isExecutionUiuxV3FrontendEnabled(
+  _bootstrap: BootstrapStatus | null | undefined,
+): boolean {
+  return true
+}
+
+export function isAuditUiuxV3FrontendEnabled(
+  _bootstrap: BootstrapStatus | null | undefined,
+): boolean {
+  return true
 }
 
 export function resolveLegacyRouteTarget(options: {
   requestedThreadTab: ThreadTab | null
   isReviewNode: boolean
-  executionAuditV2Enabled: boolean
 }): { surface: 'legacy' | 'v2'; threadTab: ThreadTab } {
-  const { requestedThreadTab, isReviewNode, executionAuditV2Enabled } = options
+  const { isReviewNode } = options
   if (isReviewNode) {
-    return {
-      surface: executionAuditV2Enabled ? 'v2' : 'legacy',
-      threadTab: 'audit',
-    }
+    return { surface: 'v2', threadTab: 'audit' }
   }
-  if (requestedThreadTab === 'execution' || requestedThreadTab === 'audit') {
-    return {
-      surface: executionAuditV2Enabled ? 'v2' : 'legacy',
-      threadTab: requestedThreadTab,
-    }
-  }
-  return { surface: 'legacy', threadTab: 'ask' }
+  return { surface: 'v2', threadTab: 'ask' }
 }
 
 export function resolveV2RouteTarget(options: {
   requestedThreadTab: ThreadTab | null
   isReviewNode: boolean
-  executionAuditV2Enabled: boolean
 }): { surface: 'legacy' | 'v2'; threadTab: ThreadTab } {
-  const { requestedThreadTab, isReviewNode, executionAuditV2Enabled } = options
-
-  if (!executionAuditV2Enabled) {
-    if (isReviewNode) {
-      return { surface: 'legacy', threadTab: 'audit' }
-    }
-    return { surface: 'legacy', threadTab: requestedThreadTab ?? 'ask' }
-  }
+  const { requestedThreadTab, isReviewNode } = options
 
   if (isReviewNode) {
     return { surface: 'v2', threadTab: 'audit' }
   }
   if (requestedThreadTab === 'ask') {
-    return { surface: 'legacy', threadTab: 'ask' }
+    return { surface: 'v2', threadTab: 'ask' }
   }
   if (requestedThreadTab === 'execution' || requestedThreadTab === 'audit') {
     return { surface: 'v2', threadTab: requestedThreadTab }

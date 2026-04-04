@@ -173,76 +173,8 @@ class FakeConversationV2CodexClient:
             )
             on_raw_event(
                 {
-                    "method": "item/tool/call",
-                    "received_at": "2026-03-28T10:00:03Z",
-                    "thread_id": thread_id,
-                    "turn_id": turn_id,
-                    "item_id": None,
-                    "request_id": None,
-                    "call_id": "call-1",
-                    "params": {
-                        "toolName": "apply_patch",
-                        "tool_name": "apply_patch",
-                        "arguments": {"path": "preview.txt"},
-                    },
-                }
-            )
-            on_raw_event(
-                {
-                    "method": "item/started",
-                    "received_at": "2026-03-28T10:00:04Z",
-                    "thread_id": thread_id,
-                    "turn_id": turn_id,
-                    "item_id": "file-1",
-                    "request_id": None,
-                    "call_id": None,
-                    "params": {
-                        "item": {
-                            "type": "fileChange",
-                            "id": "file-1",
-                            "callId": "call-1",
-                            "toolName": "apply_patch",
-                        }
-                    },
-                }
-            )
-            on_raw_event(
-                {
-                    "method": "item/fileChange/outputDelta",
-                    "received_at": "2026-03-28T10:00:05Z",
-                    "thread_id": thread_id,
-                    "turn_id": turn_id,
-                    "item_id": "file-1",
-                    "request_id": None,
-                    "call_id": None,
-                    "params": {
-                        "delta": "preview",
-                        "files": [{"path": "preview.txt", "changeType": "created", "summary": "preview"}],
-                    },
-                }
-            )
-            on_raw_event(
-                {
-                    "method": "item/completed",
-                    "received_at": "2026-03-28T10:00:06Z",
-                    "thread_id": thread_id,
-                    "turn_id": turn_id,
-                    "item_id": "file-1",
-                    "request_id": None,
-                    "call_id": None,
-                    "params": {
-                        "item": {
-                            "type": "fileChange",
-                            "id": "file-1",
-                            "changes": [{"path": "final.txt", "changeType": "updated", "summary": "final"}],
-                        }
-                    },
-                }
-            )
-            on_raw_event(
-                {
                     "method": "turn/completed",
-                    "received_at": "2026-03-28T10:00:07Z",
+                    "received_at": "2026-03-28T10:00:03Z",
                     "thread_id": thread_id,
                     "turn_id": turn_id,
                     "item_id": None,
@@ -393,6 +325,130 @@ class FakeUserInputV2CodexClient(FakeConversationV2CodexClient):
         record.status = "answered"
         record.answers = dict(answers)
         return record
+
+
+class FileChangeAskV2CodexClient(FakeConversationV2CodexClient):
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        del prompt
+        on_raw_event = kwargs.get("on_raw_event")
+        thread_id = str(kwargs.get("thread_id") or "thread-1")
+        turn_id = str(self._turn_id_resolver() or "turn-1")
+        if callable(on_raw_event):
+            on_raw_event(
+                {
+                    "method": "item/started",
+                    "received_at": "2026-03-28T10:00:01Z",
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "item_id": "msg-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"item": {"type": "agentMessage", "id": "msg-1"}},
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/agentMessage/delta",
+                    "received_at": "2026-03-28T10:00:02Z",
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "item_id": "msg-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"delta": "Attempting file change"},
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/tool/call",
+                    "received_at": "2026-03-28T10:00:03Z",
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "item_id": None,
+                    "request_id": None,
+                    "call_id": "call-1",
+                    "params": {
+                        "toolName": "apply_patch",
+                        "tool_name": "apply_patch",
+                        "arguments": {"path": "preview.txt"},
+                    },
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/started",
+                    "received_at": "2026-03-28T10:00:04Z",
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "item_id": "file-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {
+                        "item": {
+                            "type": "fileChange",
+                            "id": "file-1",
+                            "callId": "call-1",
+                            "toolName": "apply_patch",
+                        }
+                    },
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/fileChange/outputDelta",
+                    "received_at": "2026-03-28T10:00:05Z",
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "item_id": "file-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {
+                        "delta": "preview",
+                        "files": [{"path": "preview.txt", "changeType": "created", "summary": "preview"}],
+                    },
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "item/completed",
+                    "received_at": "2026-03-28T10:00:06Z",
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "item_id": "file-1",
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {
+                        "item": {
+                            "type": "fileChange",
+                            "id": "file-1",
+                            "changes": [{"path": "final.txt", "changeType": "updated", "summary": "final"}],
+                        }
+                    },
+                }
+            )
+            on_raw_event(
+                {
+                    "method": "turn/completed",
+                    "received_at": "2026-03-28T10:00:07Z",
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "item_id": None,
+                    "request_id": None,
+                    "call_id": None,
+                    "params": {"turn": {"id": turn_id, "status": "completed"}},
+                }
+            )
+        return {"stdout": "Attempting file change", "thread_id": thread_id, "turn_id": turn_id, "turn_status": "completed"}
+
+
+class CapturingAskSandboxV2CodexClient(FakeConversationV2CodexClient):
+    def __init__(self, turn_id_resolver: Callable[[], str | None]) -> None:
+        super().__init__(turn_id_resolver)
+        self.run_kwargs: list[dict[str, Any]] = []
+
+    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
+        self.run_kwargs.append(dict(kwargs))
+        return super().run_turn_streaming(prompt, **kwargs)
 
 
 class FakeIncompleteItemsV2CodexClient(FakeConversationV2CodexClient):
@@ -646,7 +702,7 @@ async def test_v2_thread_events_stream_open_repairs_metadata_and_publishes_to_ex
         await _close_stream(response_a, request_a)
 
 
-def test_v2_start_turn_persists_items_and_authoritative_file_list(client: TestClient, workspace_root) -> None:
+def test_v2_start_turn_persists_items(client: TestClient, workspace_root) -> None:
     project_id, root_id = _setup_project(client, workspace_root)
     codex = FakeConversationV2CodexClient(
         lambda: client.app.state.storage.chat_state_store.read_session(
@@ -675,61 +731,85 @@ def test_v2_start_turn_persists_items_and_authoritative_file_list(client: TestCl
         root_id,
         "ask_planning",
         lambda snap: snap["processingState"] == "idle"
-        and any(item["id"] == "msg-1" for item in snap["items"])
-        and any(item["id"] == "file-1" and item["status"] == "completed" for item in snap["items"]),
+        and any(item["id"] == "msg-1" for item in snap["items"]),
     )
 
     assistant = next(item for item in snapshot["items"] if item["id"] == "msg-1")
-    file_tool = next(item for item in snapshot["items"] if item["id"] == "file-1")
     assert assistant["text"] == "Hello from V2"
-    assert file_tool["outputFiles"] == [
-        {"path": "final.txt", "changeType": "updated", "summary": "final"}
-    ]
 
 
-def test_v2_start_turn_allows_execution_thread_messages(client: TestClient, workspace_root) -> None:
+def test_v2_ask_turn_runs_with_read_only_sandbox(client: TestClient, workspace_root) -> None:
     project_id, root_id = _setup_project(client, workspace_root)
-    codex = FakeConversationV2CodexClient(
-        lambda: client.app.state.storage.thread_snapshot_store_v2.read_snapshot(
+    codex = CapturingAskSandboxV2CodexClient(
+        lambda: client.app.state.storage.chat_state_store.read_session(
             project_id,
             root_id,
-            "execution",
-        ).get("activeTurnId")
+            thread_role="ask_planning",
+        )["active_turn_id"]
     )
     _set_v2_codex_client(client, codex)
+
+    response = client.post(
+        f"/v2/projects/{project_id}/nodes/{root_id}/threads/ask_planning/turns",
+        json={"text": "Hello read-only ask"},
+    )
+    assert response.status_code == 200
+    _wait_for_snapshot(
+        client,
+        project_id,
+        root_id,
+        "ask_planning",
+        lambda snap: snap["processingState"] == "idle",
+    )
+
+    assert codex.run_kwargs
+    run_kwargs = codex.run_kwargs[-1]
+    assert run_kwargs.get("sandbox_profile") == "read_only"
+    assert run_kwargs.get("writable_roots") is None
+
+
+def test_v2_ask_turn_fails_when_file_change_item_is_emitted(client: TestClient, workspace_root) -> None:
+    project_id, root_id = _setup_project(client, workspace_root)
+    codex = FileChangeAskV2CodexClient(
+        lambda: client.app.state.storage.chat_state_store.read_session(
+            project_id,
+            root_id,
+            thread_role="ask_planning",
+        )["active_turn_id"]
+    )
+    _set_v2_codex_client(client, codex)
+
+    response = client.post(
+        f"/v2/projects/{project_id}/nodes/{root_id}/threads/ask_planning/turns",
+        json={"text": "Try changing files"},
+    )
+    assert response.status_code == 200
+
+    snapshot = _wait_for_snapshot(
+        client,
+        project_id,
+        root_id,
+        "ask_planning",
+        lambda snap: snap["processingState"] == "idle"
+        and any(item["kind"] == "error" for item in snap["items"]),
+    )
+    error_item = next(item for item in snapshot["items"] if item["kind"] == "error")
+    assert "Ask lane is read-only" in error_item["message"]
+
+
+def test_v2_start_turn_rejects_execution_thread_messages(client: TestClient, workspace_root) -> None:
+    project_id, root_id = _setup_project(client, workspace_root)
 
     response = client.post(
         f"/v2/projects/{project_id}/nodes/{root_id}/threads/execution/turns",
         json={"text": "Hello execution"},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 400
     payload = response.json()
-    assert payload["ok"] is True
-    created = payload["data"]["createdItems"]
-    assert len(created) == 1
-    assert created[0]["role"] == "user"
-
-    snapshot = _wait_for_snapshot(
-        client,
-        project_id,
-        root_id,
-        "execution",
-        lambda snap: snap["processingState"] == "idle"
-        and any(item["id"] == "msg-1" for item in snap["items"])
-        and any(item["id"] == "file-1" and item["status"] == "completed" for item in snap["items"]),
-    )
-
-    user_item = next(item for item in snapshot["items"] if item["id"] == created[0]["id"])
-    assistant = next(item for item in snapshot["items"] if item["id"] == "msg-1")
-    file_tool = next(item for item in snapshot["items"] if item["id"] == "file-1")
-
-    assert snapshot["threadRole"] == "execution"
-    assert user_item["text"] == "Hello execution"
-    assert assistant["text"] == "Hello from V2"
-    assert file_tool["outputFiles"] == [
-        {"path": "final.txt", "changeType": "updated", "summary": "final"}
-    ]
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_request"
+    assert "Use /v3 by-id APIs." in payload["error"]["message"]
 
 
 def test_v2_terminal_success_finalizes_open_items_when_upstream_omits_item_completed(
@@ -934,41 +1014,16 @@ def test_v2_resolve_user_input_updates_item_and_ledger(client: TestClient, works
     ]
 
 
-def test_v2_execution_snapshot_backfills_empty_items_from_thread_read(client: TestClient, workspace_root) -> None:
+def test_v2_execution_snapshot_is_rejected(client: TestClient, workspace_root) -> None:
     project_id, root_id = _setup_project(client, workspace_root)
-    storage = client.app.state.storage
-    thread_id = "019d38ba-9fe3-7f52-a773-41a2df4b55af"
-
-    storage.thread_registry_store.write_entry(
-        project_id,
-        root_id,
-        "execution",
-        {
-            "projectId": project_id,
-            "nodeId": root_id,
-            "threadRole": "execution",
-            "threadId": thread_id,
-            "forkReason": "execution_bootstrap",
-            "lineageRootThreadId": "019d38b3-36db-7663-8e4f-30450576f505",
-        },
-    )
-    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, root_id, "execution")
-    snapshot["threadId"] = thread_id
-    snapshot["activeTurnId"] = "exec_local_turn_1"
-    snapshot["processingState"] = "running"
-    snapshot["updatedAt"] = "2026-03-29T08:35:43Z"
-    storage.thread_snapshot_store_v2.write_snapshot(project_id, root_id, "execution", snapshot)
-
-    _set_v2_codex_client(client, FakeThreadReadBackfillCodexClient())
 
     response = client.get(f"/v2/projects/{project_id}/nodes/{root_id}/threads/execution")
 
-    assert response.status_code == 200
+    assert response.status_code == 400
     payload = response.json()
-    assert payload["ok"] is True
-    execution_snapshot = payload["data"]["snapshot"]
-    assert [item["id"] for item in execution_snapshot["items"]] == ["exec-commentary", "exec-final"]
-    assert execution_snapshot["items"][0]["metadata"]["phase"] == "commentary"
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_request"
+    assert "Use /v3 by-id APIs." in payload["error"]["message"]
 
 
 @pytest.mark.anyio
@@ -1002,6 +1057,9 @@ async def test_v2_workflow_stream_emits_wrapped_v2_workflow_envelopes(client: Te
         "nodeId": root_id,
         "executionState": "completed",
         "reviewState": "running",
+        "activeExecutionRunId": None,
+        "activeReviewCycleId": None,
+        "workflowPhase": None,
     }
     assert invalidate_payload["channel"] == event_types.WORKFLOW_CHANNEL
     assert invalidate_payload["type"] == event_types.NODE_DETAIL_INVALIDATE

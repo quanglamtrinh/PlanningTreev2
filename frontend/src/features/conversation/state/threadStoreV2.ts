@@ -54,6 +54,14 @@ type ProcessingTelemetryState = Pick<
   'processingStartedAt' | 'lastCompletedAt' | 'lastDurationMs'
 >
 
+function selectProcessingTelemetry(state: ProcessingTelemetryState): ProcessingTelemetryState {
+  return {
+    processingStartedAt: state.processingStartedAt,
+    lastCompletedAt: state.lastCompletedAt,
+    lastDurationMs: state.lastDurationMs,
+  }
+}
+
 function resetProcessingTelemetry(): ProcessingTelemetryState {
   return {
     processingStartedAt: null,
@@ -66,30 +74,34 @@ function seedRunningTelemetry(
   state: ProcessingTelemetryState,
   snapshot: ThreadSnapshotV2 | null,
 ): ProcessingTelemetryState {
+  const telemetry = selectProcessingTelemetry(state)
   if (!snapshot) {
     return resetProcessingTelemetry()
   }
   if (snapshot.processingState === 'running' || snapshot.processingState === 'waiting_user_input') {
     return {
-      processingStartedAt: state.processingStartedAt ?? Date.now(),
-      lastCompletedAt: state.lastCompletedAt,
-      lastDurationMs: state.lastDurationMs,
+      processingStartedAt: telemetry.processingStartedAt ?? Date.now(),
+      lastCompletedAt: telemetry.lastCompletedAt,
+      lastDurationMs: telemetry.lastDurationMs,
     }
   }
   return {
-    processingStartedAt: state.processingStartedAt,
-    lastCompletedAt: state.lastCompletedAt,
-    lastDurationMs: state.lastDurationMs,
+    processingStartedAt: telemetry.processingStartedAt,
+    lastCompletedAt: telemetry.lastCompletedAt,
+    lastDurationMs: telemetry.lastDurationMs,
   }
 }
 
 function completeProcessingTelemetry(state: ProcessingTelemetryState): ProcessingTelemetryState {
+  const telemetry = selectProcessingTelemetry(state)
   const completedAt = Date.now()
   return {
     processingStartedAt: null,
     lastCompletedAt: completedAt,
     lastDurationMs:
-      state.processingStartedAt != null ? Math.max(0, completedAt - state.processingStartedAt) : state.lastDurationMs,
+      telemetry.processingStartedAt != null
+        ? Math.max(0, completedAt - telemetry.processingStartedAt)
+        : telemetry.lastDurationMs,
   }
 }
 
@@ -593,7 +605,8 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
         }
 
         let nextSnapshot = state.snapshot
-        for (const item of response.createdItems) {
+        const responseSnapshotVersion = response.snapshotVersion ?? nextSnapshot.snapshotVersion
+        for (const item of response.createdItems ?? []) {
           nextSnapshot = applyThreadEvent(nextSnapshot, {
             eventId: `local-upsert-${item.id}`,
             channel: 'thread',
@@ -601,7 +614,7 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
             nodeId: activeNodeId,
             threadRole: activeThreadRole,
             occurredAt: item.updatedAt,
-            snapshotVersion: response.snapshotVersion,
+            snapshotVersion: responseSnapshotVersion,
             type: 'conversation.item.upsert',
             payload: { item },
           })
@@ -614,9 +627,9 @@ export const useConversationThreadStoreV2 = create<ConversationThreadStoreV2Stat
             threadId: response.threadId ?? nextSnapshot.threadId,
             activeTurnId: response.turnId,
             processingState: 'running',
-            snapshotVersion: Math.max(nextSnapshot.snapshotVersion, response.snapshotVersion),
+            snapshotVersion: Math.max(nextSnapshot.snapshotVersion, responseSnapshotVersion),
           },
-          lastSnapshotVersion: Math.max(state.lastSnapshotVersion ?? 0, response.snapshotVersion),
+          lastSnapshotVersion: Math.max(state.lastSnapshotVersion ?? 0, responseSnapshotVersion),
           processingStartedAt: state.processingStartedAt ?? Date.now(),
         }
       })

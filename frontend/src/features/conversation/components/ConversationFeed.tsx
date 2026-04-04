@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import type {
   PendingUserInputRequest,
   ProcessingState,
@@ -23,16 +23,17 @@ export function ConversationFeed({
   snapshot,
   isLoading,
   prefix,
+  suffix,
   onResolveUserInput,
-  processingStartedAt,
   lastCompletedAt,
   lastDurationMs,
 }: {
   snapshot: ThreadSnapshotV2 | null
   isLoading: boolean
-  prefix?: React.ReactNode
+  prefix?: ReactNode
+  /** Rendered at the bottom of the scroll area (after messages / working indicator). */
+  suffix?: ReactNode
   onResolveUserInput: (requestId: string, answers: UserInputAnswer[]) => Promise<void> | void
-  processingStartedAt?: number | null
   lastCompletedAt?: number | null
   lastDurationMs?: number | null
 }) {
@@ -51,7 +52,6 @@ export function ConversationFeed({
     toggleExpanded,
     toggleToolGroup,
     groupedEntries,
-    latestReasoningLabel,
     reasoningMetaById,
   } = useConversationViewState({
     items,
@@ -148,8 +148,6 @@ export function ConversationFeed({
         <WorkingIndicator
           processingState={snapshot.processingState as ProcessingState}
           activeTurnId={snapshot.activeTurnId}
-          reasoningLabel={latestReasoningLabel}
-          processingStartedAt={processingStartedAt}
           lastCompletedAt={lastCompletedAt}
           lastDurationMs={lastDurationMs}
         />
@@ -157,6 +155,7 @@ export function ConversationFeed({
       {isLoading && groupedEntries.length === 0 ? (
         <div className={styles.empty}>Loading conversation...</div>
       ) : null}
+      {suffix ? <div className={styles.feedSuffix}>{suffix}</div> : null}
       <div ref={bottomRef} />
     </div>
   )

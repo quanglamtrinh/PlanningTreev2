@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ConversationItem, ProcessingState, ReasoningItem, ToolItem } from '../../../api/types'
-import { getToolHeadline } from './toolPresentation'
 
 export const SCROLL_THRESHOLD_PX = 120
 export const MAX_COMMAND_OUTPUT_LINES = 200
@@ -77,22 +76,6 @@ function isLargeCommandOutput(item: ToolItem): boolean {
   }
   const lineCount = output.split('\n').length
   return output.length >= LARGE_COMMAND_OUTPUT_CHAR_THRESHOLD || lineCount >= LARGE_COMMAND_OUTPUT_LINE_THRESHOLD
-}
-
-function getPlanWorkingLabel(item: Extract<ConversationItem, { kind: 'plan' }>): string | null {
-  const title = normalizeBlockText(item.title)
-  if (title) {
-    return title
-  }
-  const text = normalizeBlockText(item.text)
-  if (!text) {
-    return null
-  }
-  const firstLine = text.split('\n').map((line) => line.trim()).find(Boolean)
-  if (!firstLine) {
-    return null
-  }
-  return firstLine.length > 80 ? `${firstLine.slice(0, 77).trimEnd()}...` : firstLine
 }
 
 function isVisibleConversationItem(
@@ -216,28 +199,6 @@ export function useConversationViewState({
 
   const groupedEntries = useMemo(() => buildGroupedEntries(visibleItems), [visibleItems])
 
-  const latestReasoningLabel = useMemo(() => {
-    for (let index = visibleItems.length - 1; index >= 0; index -= 1) {
-      const item = visibleItems[index]
-      if (item.kind === 'reasoning' && item.status === 'in_progress') {
-        const label = reasoningMetaById.get(item.id)?.workingLabel
-        if (label) {
-          return label
-        }
-      }
-      if (item.kind === 'tool' && item.status === 'in_progress') {
-        return getToolHeadline(item)
-      }
-      if (item.kind === 'plan' && item.status === 'in_progress') {
-        const label = getPlanWorkingLabel(item)
-        if (label) {
-          return label
-        }
-      }
-    }
-    return null
-  }, [reasoningMetaById, visibleItems])
-
   const scrollKey = useMemo(
     () =>
       visibleItems
@@ -348,7 +309,6 @@ export function useConversationViewState({
     toggleExpanded,
     toggleToolGroup,
     groupedEntries,
-    latestReasoningLabel,
     reasoningMetaById,
     visibleItems,
   }

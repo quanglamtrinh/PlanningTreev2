@@ -7,11 +7,18 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from backend.errors.app_errors import InvalidRequest
+
 router = APIRouter(tags=["chat"])
 
 
 class SendMessageRequest(BaseModel):
     content: str
+
+
+def _reject_legacy_ask_handlers(thread_role: str) -> None:
+    if thread_role == "ask_planning":
+        raise InvalidRequest("Ask lane is no longer served on /v1 chat APIs. Use /v3 by-id APIs.")
 
 
 @router.get("/projects/{project_id}/nodes/{node_id}/chat/session")
@@ -21,6 +28,7 @@ async def get_chat_session(
     node_id: str,
     thread_role: str = Query("ask_planning"),
 ) -> dict:
+    _reject_legacy_ask_handlers(thread_role)
     return request.app.state.chat_service.get_session(project_id, node_id, thread_role=thread_role)
 
 
@@ -32,6 +40,7 @@ async def send_chat_message(
     body: SendMessageRequest,
     thread_role: str = Query("ask_planning"),
 ) -> dict:
+    _reject_legacy_ask_handlers(thread_role)
     return request.app.state.chat_service.create_message(
         project_id,
         node_id,
@@ -47,6 +56,7 @@ async def reset_chat_session(
     node_id: str,
     thread_role: str = Query("ask_planning"),
 ) -> dict:
+    _reject_legacy_ask_handlers(thread_role)
     return request.app.state.chat_service.reset_session(project_id, node_id, thread_role=thread_role)
 
 
@@ -57,6 +67,7 @@ async def chat_events(
     node_id: str,
     thread_role: str = Query("ask_planning"),
 ) -> StreamingResponse:
+    _reject_legacy_ask_handlers(thread_role)
     request.app.state.chat_service.get_session(project_id, node_id, thread_role=thread_role)
     broker = request.app.state.chat_event_broker
     queue = broker.subscribe(project_id, node_id, thread_role=thread_role)

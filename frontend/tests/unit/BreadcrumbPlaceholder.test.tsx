@@ -1,31 +1,34 @@
-import { render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { BreadcrumbPlaceholder } from '../../src/features/breadcrumb/BreadcrumbPlaceholder'
-import { useChatStore } from '../../src/stores/chat-store'
 import { useUIStore } from '../../src/stores/ui-store'
 
-vi.mock('../../src/features/breadcrumb/BreadcrumbChatView', () => ({
-  BreadcrumbChatView: () => <div>Breadcrumb chat stub</div>,
-}))
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location-path">{`${location.pathname}${location.search}`}</div>
+}
 
 describe('BreadcrumbPlaceholder', () => {
   beforeEach(() => {
     useUIStore.setState({ ...useUIStore.getInitialState(), activeSurface: 'graph' })
-    useChatStore.setState(useChatStore.getInitialState())
   })
 
-  it('renders chat and marks breadcrumb as the active surface', () => {
-    render(
+  it('marks breadcrumb as active and redirects /chat to /chat-v2 ask', async () => {
+    const { getByTestId } = render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat']}>
+        <LocationProbe />
         <Routes>
           <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<BreadcrumbPlaceholder />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<div />} />
         </Routes>
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('Breadcrumb chat stub')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat-v2?thread=ask')
+    })
     expect(useUIStore.getState().activeSurface).toBe('breadcrumb')
   })
 })

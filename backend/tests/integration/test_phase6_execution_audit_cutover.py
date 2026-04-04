@@ -11,6 +11,7 @@ from backend.main import create_app
 from backend.services.thread_lineage_service import _ROLLOUT_BOOTSTRAP_PROMPT
 from backend.tests.conftest import init_git_repo
 from backend.tests.integration.test_phase5_execution_audit_rehearsal import (
+    _assert_file_change_item_strict,
     _confirm_spec,
     _do_lazy_split,
     _set_phase5_codex_client as _set_phase6_codex_client,
@@ -560,9 +561,7 @@ def test_phase6_production_finish_task_cuts_execution_auto_review_and_rollup_to_
         file_change_item = next(item for item in tool_items if item["id"] == "file-1")
         assert "[stdin]\ny\n" in command_item["outputText"]
         assert command_item["exitCode"] == 0
-        assert file_change_item["outputFiles"] == [
-            {"path": "final.txt", "changeType": "updated", "summary": "final"}
-        ]
+        _assert_file_change_item_strict(file_change_item)
         reasoning_items = [item for item in execution_snapshot["items"] if item.get("kind") == "reasoning"]
         assert len(reasoning_items) == 1
         assert reasoning_items[0]["summaryText"] == "Checking workspace state"

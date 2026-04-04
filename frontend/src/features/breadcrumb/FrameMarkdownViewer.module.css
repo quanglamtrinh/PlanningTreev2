@@ -2,17 +2,438 @@
 .viewer {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   font-family: var(--font-sans);
-  font-size: 13.5px;
-  line-height: 1.7;
+  font-size: 12.5px;
+  line-height: 1.55;
   color: var(--text-primary);
+}
+
+/* Metadata shell (thread context): match Clarify Q/A density */
+.viewerShell {
+  gap: 25px;
+}
+
+/* ─── Shell: User Story / Functional Requirements / Success Criteria ─ */
+
+.shellStyledSection {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.shellSectionHeading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shellSectionIcon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--accent-primary, #3b82f6);
+}
+
+.shellSectionTitle {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.shellUserStoryList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shellUserStoryRow {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.shellUserStoryIndex {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-primary);
+  line-height: 1.45;
+  flex-shrink: 0;
+  min-width: 1.5em;
+}
+
+.shellUserStoryBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.shellUserStoryTitle {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.shellUserStoryDesc {
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.shellStoryDescP {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.shellStoryDescStrong {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.shellFrBox {
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--text-primary) 4%, var(--bg-subtle, #f4f4f5));
+  border: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
+  padding: 8px 12px;
+}
+
+.shellFrList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.shellFrItem {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.shellFrCheck {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+  line-height: 0;
+  margin-top: 2px;
+}
+
+.shellCheckCircleSvg {
+  margin-top: 5px;
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+.shellFrItemBody {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.shellFrItemP {
+  margin-top: 5px;
+}
+
+.shellFrItemStrong {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.shellInlineAccent {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.shellSuccessList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shellSuccessCard {
+  margin-top: 5px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  border: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-surface);
+  padding: 7px 10px;
+}
+
+.shellSuccessCheck {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+  line-height: 0;
+  margin-top: 1px;
+}
+
+.shellCheckSquareSvg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+.shellSuccessCardBody {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.shellSuccessItemP {
+  margin: 0;
+}
+
+.shellSuccessItemStrong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.shellSectionIconMuted {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+/* Out of Scope */
+.shellOosList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shellOosItem {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.shellOosDash {
+  margin-top: 5px;
+  flex-shrink: 0;
+  width: 1em;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  text-align: center;
+}
+
+.shellOosText {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  font-style: italic;
+  color: var(--text-quaternary, var(--text-tertiary));
+}
+
+.shellOosMdP {
+  margin-top: 5px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  font-style: italic;
+  color: var(--text-quaternary, var(--text-tertiary));
+}
+
+.shellOosStrong {
+  font-style: italic;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.shellOosCode {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+/* Task-Shaping Fields */
+.shellTsfGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 520px) {
+  .shellTsfGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.shellTsfCard {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--border-default) 55%, transparent);
+  border-radius: var(--radius-sm, 6px);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.shellTsfLabel {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-quaternary, var(--text-tertiary));
+  line-height: 1.2;
+}
+
+.shellTsfValue {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.shellTsfValueEmpty {
+  font-size: 11px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--text-quaternary, var(--text-tertiary));
+  line-height: 1.4;
+}
+
+.shellQaItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.shellQaLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.shellQaValue {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.shellQaValue .p {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.shellQaValue .ul,
+.shellQaValue .ol {
+  margin: 0.25em 0 0;
+  padding-left: 1.15em;
+  list-style: disc;
+}
+
+.shellQaValue .ol {
+  list-style: decimal;
+}
+
+.shellQaValue .li {
+  display: list-item;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
+  padding: 2px 0;
+  border: none;
+}
+
+.shellQaValue .li::before {
+  content: none;
+}
+
+.shellQaValue .inlineCode {
+  font-size: 11px;
+}
+
+.shellQaEmpty {
+  font-size: 12px;
+  color: var(--text-quaternary, var(--text-tertiary));
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.shellBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shellBody .p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.shellBody .ul,
+.shellBody .ol {
+  margin: 0.35em 0 0;
+  padding-left: 1.15em;
+  list-style: disc;
+}
+
+.shellBody .ol {
+  list-style: decimal;
+}
+
+.shellBody .li {
+  display: list-item;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
+  padding: 2px 0;
+  border: none;
+}
+
+.shellBody .li::before {
+  content: none;
 }
 
 /* ─── Headings ────────────────────────────────────────────────────── */
 .h1 {
   margin: 4px 0 0;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--accent-primary);
   letter-spacing: -0.015em;
@@ -53,8 +474,8 @@
 
 .p {
   margin: 0;
-  font-size: 13.5px;
-  line-height: 1.7;
+  font-size: 12.5px;
+  line-height: 1.55;
   color: var(--text-secondary);
 }
 
@@ -68,7 +489,7 @@
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md, 8px);
   background: var(--bg-surface);
-  padding: 10px 14px;
+  padding: 8px 12px;
 }
 
 .paraCard .p {
@@ -80,7 +501,7 @@
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md, 8px);
   background: var(--bg-surface);
-  padding: 10px 14px;
+  padding: 8px 12px;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -97,13 +518,13 @@
 }
 
 .li {
-  font-size: 13.5px;
-  line-height: 1.65;
+  font-size: 12.5px;
+  line-height: 1.5;
   color: var(--text-secondary);
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 5px 0;
+  gap: 7px;
+  padding: 4px 0;
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
 }
 
@@ -120,8 +541,8 @@
 .li::before {
   content: '•';
   color: var(--accent-primary);
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: 13px;
+  line-height: 1.5;
   flex-shrink: 0;
   opacity: 0.7;
 }

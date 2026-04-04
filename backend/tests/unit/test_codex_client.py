@@ -105,6 +105,117 @@ def test_codex_app_client_run_turn_streaming_forwards_on_raw_event(monkeypatch) 
     assert captured["on_raw_event"] is callback
 
 
+def test_start_review_streaming_forwards_cwd_to_review_start(monkeypatch) -> None:
+    transport = StdioTransport()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(transport, "is_alive", lambda: True)
+    monkeypatch.setattr(transport, "_initialize_session", lambda timeout_sec: None)
+
+    def fake_rpc(method: str, params: dict[str, object], timeout: int = 30) -> dict[str, object]:
+        captured["method"] = method
+        captured["params"] = params
+        captured["timeout"] = timeout
+        return {
+            "review": {
+                "threadId": "review_thread_1",
+                "turnId": "review_turn_1",
+            }
+        }
+
+    monkeypatch.setattr(transport, "_rpc", fake_rpc)
+    monkeypatch.setattr(
+        transport,
+        "_wait_for_turn_result",
+        lambda turn_id, timeout_sec: ("review complete", [], "completed", None, []),
+    )
+
+    response = transport.start_review_streaming(
+        thread_id="thread_1",
+        target_sha="abc123",
+        target_title="Review commit abc123",
+        client_request_id="req-1",
+        cwd="C:/workspace/project-1",
+        timeout_sec=5,
+    )
+
+    assert response == {
+        "review_thread_id": "review_thread_1",
+        "review_turn_id": "review_turn_1",
+        "review": "review complete",
+        "review_disposition": None,
+        "turn_status": "completed",
+    }
+    assert captured["method"] == "review/start"
+    assert captured["params"] == {
+        "threadId": "thread_1",
+        "clientRequestId": "req-1",
+        "cwd": "C:/workspace/project-1",
+        "target": {
+            "type": "commit",
+            "sha": "abc123",
+            "title": "Review commit abc123",
+        },
+    }
+
+
+def test_codex_app_client_start_review_streaming_forwards_cwd(monkeypatch) -> None:
+    from backend.ai.codex_client import CodexAppClient
+
+    transport = StdioTransport()
+    client = CodexAppClient(transport)
+    client._started = True
+    monkeypatch.setattr(transport, "is_alive", lambda: True)
+
+    captured: dict[str, object] = {}
+
+    def fake_start_review_streaming(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"review_thread_id": "review_thread_1", "review_turn_id": "review_turn_1"}
+
+    monkeypatch.setattr(transport, "start_review_streaming", fake_start_review_streaming)
+
+    response = client.start_review_streaming(
+        thread_id="thread_1",
+        target_sha="abc123",
+        target_title="Review commit abc123",
+        client_request_id="req-1",
+        cwd="C:/workspace/project-1",
+    )
+
+    assert response == {"review_thread_id": "review_thread_1", "review_turn_id": "review_turn_1"}
+    assert captured["thread_id"] == "thread_1"
+    assert captured["cwd"] == "C:/workspace/project-1"
+
+
+def test_exited_review_mode_marks_review_turn_complete() -> None:
+    transport = StdioTransport()
+    raw_events: list[dict[str, object]] = []
+    state = transport._get_turn_state("review_turn_1")
+    state.thread_id = "review_thread_1"
+    state.on_raw_event = raw_events.append
+    state.callbacks_attached = True
+
+    transport._handle_notification(
+        "review/exitedReviewMode",
+        {
+            "threadId": "review_thread_1",
+            "turnId": "review_turn_1",
+            "exitedReviewMode": {
+                "review": "Looks good to me.",
+                "disposition": "approved",
+            },
+        },
+    )
+
+    assert state.review_text == "Looks good to me."
+    assert state.final_text == "Looks good to me."
+    assert state.review_disposition == "approved"
+    assert state.turn_status == "completed"
+    assert state.event.is_set()
+    assert [event["method"] for event in raw_events] == ["exitedReviewMode"]
+
+
 def test_item_started_and_completed_emit_item_callback() -> None:
     transport = StdioTransport()
     seen: list[tuple[str, dict[str, object]]] = []

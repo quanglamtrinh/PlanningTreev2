@@ -14,6 +14,7 @@ export default defineConfig({
     proxy: {
       '/v1': backendTarget,
       '/v2': backendTarget,
+      '/v3': backendTarget,
       '/health': backendTarget,
     },
   },

@@ -10,6 +10,20 @@ from pydantic import BaseModel, Field
 router = APIRouter(tags=["nodes"])
 
 
+def _record_ask_shaping_action_started(request: Request) -> None:
+    metrics = getattr(request.app.state, "ask_rollout_metrics_service", None)
+    if metrics is None:
+        return
+    metrics.record_shaping_action_started()
+
+
+def _record_ask_shaping_action_failed(request: Request) -> None:
+    metrics = getattr(request.app.state, "ask_rollout_metrics_service", None)
+    if metrics is None:
+        return
+    metrics.record_shaping_action_failed()
+
+
 class CreateChildRequest(BaseModel):
     parent_id: str
 
@@ -89,14 +103,19 @@ async def finish_task(request: Request, project_id: str, node_id: str) -> dict:
 
 @router.post("/projects/{project_id}/nodes/{node_id}/confirm-frame")
 async def confirm_frame(request: Request, project_id: str, node_id: str) -> dict:
-    detail_state = request.app.state.node_detail_service.confirm_frame(project_id, node_id)
-    if detail_state["active_step"] == "clarify":
-        # Non-fatal: deterministic seed already created by confirm_frame.
-        try:
-            request.app.state.clarify_generation_service.generate_clarify(project_id, node_id)
-        except Exception:
-            pass
-    return detail_state
+    _record_ask_shaping_action_started(request)
+    try:
+        detail_state = request.app.state.node_detail_service.confirm_frame(project_id, node_id)
+        if detail_state["active_step"] == "clarify":
+            # Non-fatal: deterministic seed already created by confirm_frame.
+            try:
+                request.app.state.clarify_generation_service.generate_clarify(project_id, node_id)
+            except Exception:
+                pass
+        return detail_state
+    except Exception:
+        _record_ask_shaping_action_failed(request)
+        raise
 
 
 @router.get("/projects/{project_id}/nodes/{node_id}/clarify")
@@ -115,24 +134,44 @@ async def update_clarify(
 
 @router.post("/projects/{project_id}/nodes/{node_id}/confirm-clarify")
 async def confirm_clarify(request: Request, project_id: str, node_id: str) -> dict:
-    return request.app.state.node_detail_service.apply_clarify_to_frame(project_id, node_id)
+    _record_ask_shaping_action_started(request)
+    try:
+        return request.app.state.node_detail_service.apply_clarify_to_frame(project_id, node_id)
+    except Exception:
+        _record_ask_shaping_action_failed(request)
+        raise
 
 
 @router.post("/projects/{project_id}/nodes/{node_id}/confirm-spec")
 async def confirm_spec(request: Request, project_id: str, node_id: str) -> dict:
-    return request.app.state.node_detail_service.confirm_spec(project_id, node_id)
+    _record_ask_shaping_action_started(request)
+    try:
+        return request.app.state.node_detail_service.confirm_spec(project_id, node_id)
+    except Exception:
+        _record_ask_shaping_action_failed(request)
+        raise
 
 
 @router.post("/projects/{project_id}/nodes/{node_id}/generate-frame")
 async def generate_frame(request: Request, project_id: str, node_id: str) -> JSONResponse:
-    payload = request.app.state.frame_generation_service.generate_frame(project_id, node_id)
-    return JSONResponse(status_code=202, content=payload)
+    _record_ask_shaping_action_started(request)
+    try:
+        payload = request.app.state.frame_generation_service.generate_frame(project_id, node_id)
+        return JSONResponse(status_code=202, content=payload)
+    except Exception:
+        _record_ask_shaping_action_failed(request)
+        raise
 
 
 @router.post("/projects/{project_id}/nodes/{node_id}/generate-clarify")
 async def generate_clarify(request: Request, project_id: str, node_id: str) -> JSONResponse:
-    payload = request.app.state.clarify_generation_service.generate_clarify(project_id, node_id)
-    return JSONResponse(status_code=202, content=payload)
+    _record_ask_shaping_action_started(request)
+    try:
+        payload = request.app.state.clarify_generation_service.generate_clarify(project_id, node_id)
+        return JSONResponse(status_code=202, content=payload)
+    except Exception:
+        _record_ask_shaping_action_failed(request)
+        raise
 
 
 @router.get("/projects/{project_id}/nodes/{node_id}/clarify-generation-status")
@@ -147,8 +186,13 @@ async def get_frame_generation_status(request: Request, project_id: str, node_id
 
 @router.post("/projects/{project_id}/nodes/{node_id}/generate-spec")
 async def generate_spec(request: Request, project_id: str, node_id: str) -> JSONResponse:
-    payload = request.app.state.spec_generation_service.generate_spec(project_id, node_id)
-    return JSONResponse(status_code=202, content=payload)
+    _record_ask_shaping_action_started(request)
+    try:
+        payload = request.app.state.spec_generation_service.generate_spec(project_id, node_id)
+        return JSONResponse(status_code=202, content=payload)
+    except Exception:
+        _record_ask_shaping_action_failed(request)
+        raise
 
 
 @router.get("/projects/{project_id}/nodes/{node_id}/spec-generation-status")

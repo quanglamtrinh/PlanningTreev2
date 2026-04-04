@@ -15,6 +15,9 @@ class WorkflowEventPublisher:
         node_id: str,
         execution_state: str | None = None,
         review_state: str | None = None,
+        workflow_phase: str | None = None,
+        active_execution_run_id: str | None = None,
+        active_review_cycle_id: str | None = None,
     ) -> dict:
         envelope = build_workflow_envelope(
             project_id=project_id,
@@ -25,6 +28,9 @@ class WorkflowEventPublisher:
                 "nodeId": node_id,
                 "executionState": execution_state,
                 "reviewState": review_state,
+                "workflowPhase": workflow_phase,
+                "activeExecutionRunId": active_execution_run_id,
+                "activeReviewCycleId": active_review_cycle_id,
             },
         )
         self._broker.publish(envelope)

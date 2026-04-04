@@ -13,6 +13,7 @@ from backend.ai.auto_review_prompt_builder import (
     extract_auto_review_result,
 )
 from backend.ai.codex_client import CodexAppClient
+from backend.conversation.projector.thread_event_projector import patch_item
 from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.ai.execution_prompt_builder import (
@@ -407,6 +408,130 @@ class FinishTaskService:
                 thread_role="execution",
             )
         return detail_state
+
+    @staticmethod
+    def _looks_like_structured_diff(text: str | None) -> bool:
+        normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+        if not normalized.strip():
+            return False
+        return (
+            "diff --git " in normalized
+            or "*** Begin Patch" in normalized
+            or "\n@@ " in f"\n{normalized}"
+            or "\n+++ " in f"\n{normalized}"
+            or "\n--- " in f"\n{normalized}"
+        )
+
+    def _hydrate_execution_file_change_diff_v2(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        turn_id: str,
+        workspace_root: str | None,
+        initial_sha: str | None,
+        head_sha: str | None,
+    ) -> None:
+        runtime = self._thread_runtime_service_v2
+        if (
+            runtime is None
+            or self._git_checkpoint_service is None
+            or not isinstance(workspace_root, str)
+            or not workspace_root.strip()
+            or not initial_sha
+            or not head_sha
+            or initial_sha == head_sha
+        ):
+            return
+
+        project_path = Path(workspace_root)
+        query_service = runtime._query_service
+        snapshot = query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            "execution",
+            publish_repairs=False,
+            ensure_binding=False,
+            allow_thread_read_hydration=False,
+        )
+
+        updated_snapshot = snapshot
+        pending_events: list[dict[str, Any]] = []
+        for item in list(updated_snapshot.get("items", [])):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("kind") or "") != "tool":
+                continue
+            if str(item.get("toolType") or "") != "fileChange":
+                continue
+            if str(item.get("turnId") or "") != turn_id:
+                continue
+
+            output_text = str(item.get("outputText") or "")
+            arguments_text = str(item.get("argumentsText") or "")
+            if self._looks_like_structured_diff(output_text) or self._looks_like_structured_diff(arguments_text):
+                continue
+
+            output_files = item.get("outputFiles")
+            paths: list[str] = []
+            if isinstance(output_files, list):
+                for raw_file in output_files:
+                    if not isinstance(raw_file, dict):
+                        continue
+                    raw_path = str(raw_file.get("path") or "").strip()
+                    if raw_path:
+                        paths.append(raw_path)
+
+            diff_text = ""
+            try:
+                if paths and hasattr(self._git_checkpoint_service, "get_diff_for_paths"):
+                    diff_text = str(
+                        self._git_checkpoint_service.get_diff_for_paths(
+                            project_path,
+                            initial_sha,
+                            head_sha,
+                            paths,
+                        )
+                        or ""
+                    )
+                if not diff_text.strip():
+                    diff_text = str(
+                        self._git_checkpoint_service.get_diff(project_path, initial_sha, head_sha) or ""
+                    )
+            except Exception:
+                logger.debug(
+                    "Failed to hydrate execution diff text for %s/%s item %s",
+                    project_id,
+                    node_id,
+                    str(item.get("id") or ""),
+                    exc_info=True,
+                )
+                continue
+
+            trimmed_diff = diff_text.strip()
+            if not trimmed_diff:
+                continue
+
+            append_text = trimmed_diff if not output_text.strip() else f"\n{trimmed_diff}"
+            updated_snapshot, events = patch_item(
+                updated_snapshot,
+                str(item.get("id") or ""),
+                {
+                    "kind": "tool",
+                    "outputTextAppend": append_text,
+                    "updatedAt": iso_now(),
+                },
+            )
+            pending_events.extend(events)
+
+        if pending_events:
+            query_service.persist_thread_mutation(
+                project_id,
+                node_id,
+                "execution",
+                updated_snapshot,
+                pending_events,
+            )
 
     def fail_execution(
         self,
@@ -935,6 +1060,14 @@ class FinishTaskService:
                 commit_message=commit_msg,
                 changed_files=changed,
                 publish_legacy_event=False,
+            )
+            self._hydrate_execution_file_change_diff_v2(
+                project_id=project_id,
+                node_id=node_id,
+                turn_id=turn_id,
+                workspace_root=workspace_root,
+                initial_sha=initial_sha,
+                head_sha=head_sha,
             )
             self._thread_runtime_service_v2.complete_turn(
                 project_id=project_id,

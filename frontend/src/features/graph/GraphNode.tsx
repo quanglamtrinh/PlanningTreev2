@@ -81,7 +81,6 @@ function GraphNodeActionsDropdown({
   anchorRef,
   nodeId,
   canCreateChild,
-  canFinishTask,
   canSplit,
   canOpenBreadcrumb,
   isSplitting,
@@ -91,7 +90,6 @@ function GraphNodeActionsDropdown({
   anchorRef: RefObject<HTMLDivElement | null>
   nodeId: string
   canCreateChild: boolean
-  canFinishTask: boolean
   canSplit: boolean
   canOpenBreadcrumb: boolean
   isSplitting: boolean
@@ -190,18 +188,6 @@ function GraphNodeActionsDropdown({
               : 'Show only this node and its descendants in the graph.'}
           </span>
         </button>
-        <button
-          type="button"
-          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-          disabled={!canFinishTask}
-          onClick={() => {
-            onClose()
-            actions.finishTask(nodeId)
-          }}
-        >
-          <span className={styles.menuTitle}>Finish Task</span>
-          <span className={styles.menuDesc}>Jump to the breadcrumb placeholder for this leaf node.</span>
-        </button>
       </div>
 
       <div className={styles.dropdownSection}>
@@ -245,7 +231,6 @@ export type GraphNodeData = {
   isCollapsed: boolean
   directHiddenChildrenCount: number
   canCreateChild: boolean
-  canFinishTask: boolean
   canSplit: boolean
   canOpenBreadcrumb: boolean
   isSplitting: boolean
@@ -274,7 +259,6 @@ function graphNodePropsAreEqual(prev: NodeProps, next: NodeProps): boolean {
     a.isCollapsed === b.isCollapsed &&
     a.directHiddenChildrenCount === b.directHiddenChildrenCount &&
     a.canCreateChild === b.canCreateChild &&
-    a.canFinishTask === b.canFinishTask &&
     a.canSplit === b.canSplit &&
     a.canOpenBreadcrumb === b.canOpenBreadcrumb &&
     a.isSplitting === b.isSplitting &&
@@ -468,7 +452,6 @@ function GraphNodeComponent({ data }: NodeProps) {
             anchorRef={menuRef}
             nodeId={d.node.node_id}
             canCreateChild={d.canCreateChild}
-            canFinishTask={d.canFinishTask}
             canSplit={d.canSplit}
             canOpenBreadcrumb={d.canOpenBreadcrumb}
             isSplitting={d.isSplitting}

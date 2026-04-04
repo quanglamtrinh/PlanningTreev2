@@ -26,6 +26,7 @@ from backend.services import planningtree_workspace
 from backend.services.execution_gating import require_shaping_not_frozen
 from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
+from backend.services.workflow_artifact_write_guard import ensure_allowed_workflow_artifact_write
 from backend.storage.file_utils import atomic_write_json, iso_now, load_json, new_id
 from backend.storage.storage import Storage
 
@@ -221,6 +222,8 @@ class ClarifyGenerationService:
             thread_id=thread_id,
             timeout_sec=self._timeout,
             cwd=workspace_root,
+            writable_roots=None,
+            sandbox_profile="read_only",
             output_schema=build_clarify_output_schema(),
         )
 
@@ -266,7 +269,7 @@ class ClarifyGenerationService:
             # the on-disk clarify may have been re-seeded with a newer
             # source_frame_revision. Skip writing to avoid overwriting it.
             from backend.services.node_detail_service import CLARIFY_FILE, FRAME_META_FILE
-            clarify_path = node_dir / CLARIFY_FILE
+            clarify_path = self._guard_artifact_write(node_dir, node_dir / CLARIFY_FILE)
             existing = load_json(clarify_path, default=None)
             if isinstance(existing, dict):
                 disk_rev = existing.get("source_frame_revision", 0)
@@ -385,7 +388,7 @@ class ClarifyGenerationService:
         }
 
     def _save_gen_state(self, node_dir: Path, state: dict[str, Any]) -> None:
-        path = node_dir / CLARIFY_GEN_STATE_FILE
+        path = self._guard_artifact_write(node_dir, node_dir / CLARIFY_GEN_STATE_FILE)
         atomic_write_json(path, state)
 
     def _reconcile_stale_job(
@@ -536,3 +539,9 @@ class ClarifyGenerationService:
         if isinstance(workspace_root, str) and workspace_root.strip():
             return workspace_root
         return None
+
+    def _guard_artifact_write(self, node_dir: Path, target_path: Path) -> Path:
+        try:
+            return ensure_allowed_workflow_artifact_write(node_dir, target_path)
+        except ValueError as exc:
+            raise ClarifyGenerationNotAllowed(str(exc)) from exc

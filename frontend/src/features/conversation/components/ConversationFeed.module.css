@@ -11,6 +11,20 @@
   scrollbar-width: thin;
 }
 
+/* Sticky to end of scroll content (workflow actions below messages, above bottom anchor) */
+.feedSuffix {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 24px 8px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
 .empty {
   display: flex;
   flex: 1;
@@ -55,14 +69,6 @@
 .messageShellAssistant,
 .messageShellSystem {
   width: min(100%, 100%);
-}
-
-.roleLabel {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
 }
 
 .messageBubble {
@@ -214,6 +220,165 @@
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;
+}
+
+/* Command execution card (breadcrumb / conversation thread) */
+.commandCard {
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.commandCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.commandCardHeaderLeft {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.commandCardEyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text-secondary) 82%, var(--accent-primary) 18%);
+}
+
+.commandHeaderStatusPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface));
+  color: color-mix(in srgb, var(--text-secondary) 70%, var(--text-primary) 30%);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.commandExpandToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--command-expand, #a35d43);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.commandExpandToggle:hover {
+  color: color-mix(in srgb, var(--command-expand, #a35d43) 85%, black);
+}
+
+.commandChevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.commandChevronExpanded {
+  transform: rotate(180deg);
+}
+
+.commandLineBar {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-primary) 4%, var(--bg-app));
+  border: 1px solid color-mix(in srgb, var(--border-default) 75%, transparent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.commandPrompt {
+  color: color-mix(in srgb, var(--text-secondary) 65%, var(--text-primary) 35%);
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.commandOutputHeader {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.commandOutputEyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text-secondary) 82%, var(--accent-primary) 18%);
+}
+
+.exitPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.exitPillDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.exitPillSuccess {
+  background: color-mix(in srgb, var(--success, #0d9488) 10%, var(--bg-surface));
+  color: color-mix(in srgb, var(--success, #0f766e) 92%, black);
+}
+
+.exitPillSuccess .exitPillDot {
+  background: color-mix(in srgb, var(--success, #0f766e) 95%, black);
+}
+
+.exitPillFailure {
+  background: color-mix(in srgb, var(--danger, #dc2626) 10%, var(--bg-surface));
+  color: var(--danger, #b91c1c);
+}
+
+.exitPillFailure .exitPillDot {
+  background: var(--danger, #dc2626);
+}
+
+.exitPillRunning {
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-surface));
+  color: var(--accent-primary);
+}
+
+.exitPillRunning .exitPillDot {
+  background: var(--accent-primary);
+}
+
+.exitPillMuted {
+  background: color-mix(in srgb, var(--text-primary) 6%, var(--bg-surface));
+  color: var(--text-secondary);
+}
+
+.exitPillMuted .exitPillDot {
+  background: var(--text-tertiary);
 }
 
 .section {
@@ -396,6 +561,398 @@
 
 .workingMeta {
   color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+/* File change / diff card (conversation thread) */
+.fileChangeCard {
+  padding: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 82%, transparent);
+  background: var(--bg-surface);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 6%, transparent),
+    0 4px 12px color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.fileChangeMultiCard {
+  background: color-mix(in srgb, #f7f2e8 38%, var(--bg-surface) 62%);
+  border-color: color-mix(in srgb, var(--border-default) 72%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.fileChangeMultiHeader {
+  align-items: flex-start;
+}
+
+.fileChangeMultiTitleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  min-width: 0;
+  flex: 1;
+}
+
+.fileChangeMultiTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.fileChangeMultiList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fileChangeMultiItem {
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 38%, transparent);
+}
+
+.fileChangeMultiItem:last-child {
+  border-bottom: none;
+}
+
+.fileChangeMultiRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.fileChangeMultiLeft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.fileChangeMultiPath {
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.fileChangeMultiRowStats {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.fileChangeMultiChevronBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.fileChangeMultiChevronBtn:hover {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.fileChangeRowChevron {
+  transition: transform 0.15s ease;
+}
+
+.fileChangeRowChevronOpen {
+  transform: rotate(180deg);
+}
+
+.fileChangeMultiRowPanel {
+  padding: 0 8px 12px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 28%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+}
+
+.fileChangeMultiRowPanel .fileChangeViewport {
+  max-height: 280px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 80%, transparent);
+  background: var(--bg-surface);
+}
+
+.fileChangeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
+}
+
+.fileChangeHeaderMain {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.fileChangeFileIcon {
+  flex-shrink: 0;
+  color: color-mix(in srgb, #7c3d2e 75%, var(--text-secondary));
+}
+
+.fileChangeHeaderText {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.fileChangeFileName {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.fileChangeBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  background: color-mix(in srgb, #0d9488 13%, var(--bg-surface));
+  color: color-mix(in srgb, #0f766e 88%, var(--text-primary));
+}
+
+.fileChangeSep {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.fileChangeStats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.fileChangeStatAdd {
+  color: color-mix(in srgb, #059669 92%, var(--text-primary));
+}
+
+.fileChangeStatDel {
+  color: color-mix(in srgb, #dc2626 88%, var(--text-primary));
+}
+
+.fileChangeHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.fileChangeIconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.fileChangeIconBtn:hover:not(:disabled) {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.fileChangeIconBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.fileChangeIconBtn svg {
+  transition: transform 0.15s ease;
+}
+
+.fileChangeExpandIconOpen {
+  transform: rotate(180deg);
+}
+
+.fileChangeMenuWrap {
+  position: relative;
+}
+
+.fileChangeMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 160px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  z-index: 4;
+}
+
+.fileChangeMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.fileChangeMenuItem:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.fileChangeBody {
+  background: var(--bg-surface);
+}
+
+.fileChangeViewport {
+  max-height: 320px;
+  overflow: auto;
+  scrollbar-width: thin;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.fileChangeDiffRow {
+  display: grid;
+  grid-template-columns: 36px 18px minmax(0, 1fr);
+  align-items: stretch;
+  column-gap: 8px;
+  padding: 0 12px 0 8px;
+  min-height: 1.55em;
+}
+
+.fileChangeLineNum {
+  text-align: right;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  padding: 2px 0;
+}
+
+.fileChangeGutter {
+  text-align: center;
+  font-weight: 700;
+  user-select: none;
+  padding: 2px 0;
+  color: var(--text-tertiary);
+}
+
+.fileChangeCode {
+  margin: 0;
+  padding: 2px 0 2px 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+
+.fileChangeDiffRowCtx .fileChangeCode {
+  color: var(--text-primary);
+}
+
+.fileChangeDiffRowMeta {
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.fileChangeDiffRowMeta .fileChangeGutter {
+  opacity: 0.5;
+}
+
+.fileChangeDiffRowAdd {
+  background: color-mix(in srgb, #0d9488 9%, var(--bg-surface));
+}
+
+.fileChangeDiffRowAdd .fileChangeGutter {
+  color: color-mix(in srgb, #059669 85%, var(--text-primary));
+}
+
+.fileChangeDiffRowDel {
+  background: color-mix(in srgb, #dc2626 7%, var(--bg-surface));
+}
+
+.fileChangeDiffRowDel .fileChangeGutter {
+  color: color-mix(in srgb, #dc2626 85%, var(--text-primary));
+}
+
+.fileChangeTokKeyword {
+  color: color-mix(in srgb, #a35d43 88%, var(--text-primary));
+  font-weight: 500;
+}
+
+.fileChangeTokString {
+  color: color-mix(in srgb, #0d9488 82%, var(--text-primary));
+}
+
+.fileChangeTokPlain {
+  color: inherit;
+}
+
+.fileChangeFileList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 14px;
+}
+
+.fileChangeFileListRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.fileChangeMiniBadge {
+  display: inline-flex;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface));
+  color: var(--text-secondary);
+}
+
+.fileChangeFileListPath {
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 

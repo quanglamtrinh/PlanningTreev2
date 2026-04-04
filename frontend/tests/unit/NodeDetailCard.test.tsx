@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { apiMock, MockApiError } = vi.hoisted(() => ({
+const { apiMock, MockApiError, navigateMock } = vi.hoisted(() => ({
   MockApiError: class extends Error {
     status: number
     code: string | null
@@ -59,6 +59,8 @@ const { apiMock, MockApiError } = vi.hoisted(() => ({
     confirmClarify: vi.fn(),
     confirmSpec: vi.fn(),
     finishTask: vi.fn(),
+    getWorkflowStateV2: vi.fn(),
+    finishTaskWorkflowV2: vi.fn(),
     generateFrame: vi.fn(),
     getFrameGenStatus: vi.fn().mockResolvedValue({
       status: 'idle',
@@ -100,6 +102,7 @@ const { apiMock, MockApiError } = vi.hoisted(() => ({
       sha: 'sha256:accepted',
     }),
   },
+  navigateMock: vi.fn(),
 }))
 
 vi.mock('@uiw/react-codemirror', () => ({
@@ -126,8 +129,17 @@ vi.mock('../../src/api/client', () => ({
   ApiError: MockApiError,
 }))
 
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  }
+})
+
 import type { NodeRecord } from '../../src/api/types'
 import { NodeDetailCard } from '../../src/features/node/NodeDetailCard'
+import { askShellNodeActionStateKey, useAskShellActionStore } from '../../src/stores/ask-shell-action-store'
 import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useClarifyStore } from '../../src/stores/clarify-store'
@@ -194,6 +206,7 @@ describe('NodeDetailCard', () => {
     useNodeDocumentStore.getState().reset()
     useDetailStateStore.getState().reset()
     useClarifyStore.getState().reset()
+    useAskShellActionStore.getState().reset()
     useProjectStore.setState(useProjectStore.getInitialState())
     apiMock.getFrameGenStatus.mockResolvedValue({
       status: 'idle',
@@ -269,6 +282,32 @@ describe('NodeDetailCard', () => {
       rollup_status: 'accepted',
       summary: 'Accepted rollup summary',
       sha: 'sha256:accepted',
+    })
+    apiMock.finishTaskWorkflowV2.mockResolvedValue({
+      accepted: true,
+      workflowPhase: 'execution_running',
+      threadId: 'thread-execution-1',
+      executionRunId: 'run-1',
+    })
+    apiMock.getWorkflowStateV2.mockResolvedValue({
+      nodeId: 'root',
+      workflowPhase: 'execution_running',
+      executionThreadId: 'thread-execution-1',
+      auditLineageThreadId: 'thread-audit-lineage-1',
+      reviewThreadId: null,
+      activeExecutionRunId: 'run-1',
+      latestExecutionRunId: 'run-1',
+      activeReviewCycleId: null,
+      latestReviewCycleId: null,
+      currentExecutionDecision: null,
+      currentAuditDecision: null,
+      acceptedSha: null,
+      runtimeBlock: null,
+      canSendExecutionMessage: false,
+      canReviewInAudit: false,
+      canImproveInExecution: false,
+      canMarkDoneFromExecution: false,
+      canMarkDoneFromAudit: false,
     })
   })
 
@@ -642,6 +681,55 @@ describe('NodeDetailCard', () => {
     })
   })
 
+  it('keeps breadcrumb detail rendering without an error banner when stale detail state exists', async () => {
+    apiMock.getDetailState.mockRejectedValue(new Error('Request timed out after 300s'))
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    useDetailStateStore.setState({
+      entries: {
+        'project-1::root': {
+          node_id: 'root',
+          frame_confirmed: true,
+          frame_confirmed_revision: 1,
+          frame_revision: 1,
+          active_step: 'spec',
+          workflow_notice: null,
+          generation_error: null,
+          frame_needs_reconfirm: false,
+          frame_read_only: true,
+          clarify_read_only: true,
+          clarify_confirmed: true,
+          spec_read_only: false,
+          spec_stale: false,
+          spec_confirmed: true,
+        },
+      },
+    } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(useDetailStateStore.getState().errors['project-1::root']).toBe(
+        'Request timed out after 300s',
+      )
+    })
+
+    expect(screen.queryByText(/Failed to load detail state/i)).not.toBeInTheDocument()
+    expect(screen.getByText('Root')).toBeInTheDocument()
+  })
+
   it('does not show a generation error banner when spec is no longer auto-started', async () => {
     apiMock.getDetailState.mockResolvedValue({
       node_id: 'root',
@@ -728,7 +816,7 @@ describe('NodeDetailCard', () => {
     expect(screen.getByDisplayValue('# Child Frame')).toBeInTheDocument()
   })
 
-  it('calls confirmSpec on spec tab workflow confirm', async () => {
+  it('calls confirmSpec and workflow finish on spec tab confirm', async () => {
     // Set active_step to spec so buttons are visible and spec is not read-only
     apiMock.getDetailState.mockResolvedValue({
       node_id: 'root',
@@ -744,6 +832,9 @@ describe('NodeDetailCard', () => {
       spec_read_only: false,
       spec_stale: false,
       spec_confirmed: false,
+      can_finish_task: true,
+      shaping_frozen: false,
+      git_ready: true,
     })
     apiMock.getNodeDocument
       .mockResolvedValueOnce({
@@ -779,23 +870,6 @@ describe('NodeDetailCard', () => {
       spec_stale: false,
       spec_confirmed: true,
     })
-    apiMock.finishTask.mockResolvedValue({
-      node_id: 'root',
-      frame_confirmed: true,
-      frame_confirmed_revision: 1,
-      frame_revision: 1,
-      active_step: 'spec',
-      workflow_notice: null,
-      frame_needs_reconfirm: false,
-      frame_read_only: true,
-      clarify_read_only: true,
-      clarify_confirmed: true,
-      spec_read_only: false,
-      spec_stale: false,
-      spec_confirmed: true,
-      execution_status: 'executing',
-    })
-
     render(
       <NodeDetailCard
         projectId="project-1"
@@ -819,7 +893,200 @@ describe('NodeDetailCard', () => {
       expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
     })
     await waitFor(() => {
-      expect(apiMock.finishTask).toHaveBeenCalledWith('project-1', 'root')
+      expect(apiMock.finishTaskWorkflowV2).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.stringMatching(/^finish_task:/),
+      )
+    })
+  })
+
+  it('routes Confirm and Finish Task through workflow v2 flow', async () => {
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      bootstrap: {
+        ready: true,
+        workspace_configured: true,
+        codex_available: true,
+        codex_path: 'codex',
+      },
+    })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: false,
+      can_finish_task: true,
+      shaping_frozen: false,
+      git_ready: true,
+    })
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec content',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+    apiMock.putNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'spec',
+      content: '# Spec content',
+      updated_at: '2026-03-21T00:00:02Z',
+    })
+    apiMock.confirmSpec.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: true,
+    })
+    apiMock.getSnapshot.mockResolvedValue({
+      schema_version: 1,
+      project: { id: 'project-1', name: 'Test' },
+      tree_state: { root_node_id: 'root', active_node_id: 'root', node_registry: [] },
+      updated_at: '2026-03-21T00:00:03Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({ status: 'ready' })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Spec' }))
+    await screen.findByDisplayValue('# Spec content')
+
+    fireEvent.click(screen.getByTestId('confirm-and-finish-task-button'))
+
+    await waitFor(() => {
+      expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
+    })
+    await waitFor(() => {
+      expect(apiMock.finishTaskWorkflowV2).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.stringMatching(/^finish_task:/),
+      )
+    })
+    await waitFor(() => {
+      expect(apiMock.getWorkflowStateV2).toHaveBeenCalledWith('project-1', 'root')
+    })
+    expect(apiMock.finishTask).not.toHaveBeenCalled()
+    expect(navigateMock).toHaveBeenCalledWith('/projects/project-1/nodes/root/chat-v2?thread=execution')
+  })
+
+  it('does not refetch spec generation status on a stable rerender', async () => {
+    useDetailStateStore.setState({
+      entries: {
+        'project-1::root': {
+          node_id: 'root',
+          frame_confirmed: true,
+          frame_confirmed_revision: 1,
+          frame_revision: 1,
+          active_step: 'spec',
+          workflow_notice: null,
+          generation_error: null,
+          frame_needs_reconfirm: false,
+          frame_read_only: true,
+          clarify_read_only: true,
+          clarify_confirmed: true,
+          spec_read_only: false,
+          spec_stale: false,
+          spec_confirmed: false,
+        },
+      },
+    })
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame content',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec content',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+
+    const view = render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({
+          workflow: {
+            frame_confirmed: true,
+            active_step: 'spec',
+            spec_confirmed: false,
+          },
+        })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getSpecGenStatus).toHaveBeenCalledTimes(1)
+    })
+
+    view.rerender(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({
+          workflow: {
+            frame_confirmed: true,
+            active_step: 'spec',
+            spec_confirmed: false,
+          },
+        })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getSpecGenStatus).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -1298,6 +1565,10 @@ describe('NodeDetailCard', () => {
       expect(within(genBtn).getByRole('status', { name: 'Generating' })).toBeInTheDocument()
     })
     expect(apiMock.generateFrame).toHaveBeenCalledWith('project-1', 'root')
+    const actionState = useAskShellActionStore.getState().entries[
+      askShellNodeActionStateKey('project-1', 'root')
+    ]
+    expect(actionState?.frame.generate.status).toBe('running')
   })
 
   it('shows error when generateFrame fails', async () => {
@@ -1324,6 +1595,10 @@ describe('NodeDetailCard', () => {
     await waitFor(() => {
       expect(screen.getByTestId('generate-error-frame')).toHaveTextContent('Codex unavailable')
     })
+    const actionState = useAskShellActionStore.getState().entries[
+      askShellNodeActionStateKey('project-1', 'root')
+    ]
+    expect(actionState?.frame.generate.status).toBe('failed')
   })
 
   it('recovers active generation state on mount', async () => {

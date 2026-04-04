@@ -51,6 +51,20 @@ def _make_service(storage: Storage, tree_service: TreeService, codex_mock: Magic
     )
 
 
+def _seed_audit_thread(storage: Storage, project_id: str, node_id: str, *, thread_id: str = "audit-thread-spec-seeded") -> None:
+    session = storage.chat_state_store.read_session(project_id, node_id, thread_role="audit")
+    session["thread_id"] = thread_id
+    storage.chat_state_store.write_session(project_id, node_id, session, thread_role="audit")
+
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "audit")
+    snapshot["threadId"] = thread_id
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, "audit", snapshot)
+
+    entry = storage.thread_registry_store.read_entry(project_id, node_id, "audit")
+    entry["threadId"] = thread_id
+    storage.thread_registry_store.write_entry(project_id, node_id, "audit", entry)
+
+
 def _setup_confirmed_frame(
     storage: Storage,
     workspace_root: Path,
@@ -69,6 +83,7 @@ def _setup_confirmed_frame(
         "# Task Title\nBuild login page\n\n# Task-Shaping Fields\n- target platform: web\n",
     )
     detail_service.bump_frame_revision(project_id, root_id)
+    _seed_audit_thread(storage, project_id, root_id)
     detail_service.confirm_frame(project_id, root_id)
     return project_id, root_id, detail_service, doc_service
 
@@ -92,6 +107,28 @@ def test_generate_spec_returns_accepted(
     state = load_json(workspace_root / ".planningtree" / "tasks" / root_id / SPEC_GEN_STATE_FILE, default={})
     assert "thread_id" not in state
     codex_mock.fork_thread.assert_called_once()
+
+
+def test_generate_spec_runs_in_read_only_sandbox(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    project_id, root_id, _detail_service, _doc_service = _setup_confirmed_frame(
+        storage, workspace_root, tree_service
+    )
+    codex_mock = _make_codex_mock()
+    service = _make_service(storage, tree_service, codex_mock)
+
+    service._generate_spec_content(
+        project_id,
+        root_id,
+        "ask-thread-spec-123",
+        "# Task Title\nFrame",
+    )
+
+    kwargs = codex_mock.run_turn_streaming.call_args.kwargs
+    assert kwargs["thread_id"] == "ask-thread-spec-123"
+    assert kwargs["writable_roots"] is None
+    assert kwargs["sandbox_profile"] == "read_only"
 
 
 def test_generate_spec_rejects_double_start(

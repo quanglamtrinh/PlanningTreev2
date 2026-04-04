@@ -84,6 +84,24 @@ def test_generate_frame_content_builds_prompt_from_transcript_builder(
     )
 
 
+def test_generate_frame_content_runs_in_read_only_sandbox(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    codex_mock = _make_codex_mock()
+    service = _make_service(storage, tree_service, codex_mock)
+
+    service._generate_frame_content(project_id, root_id, "ask-thread-123")
+
+    kwargs = codex_mock.run_turn_streaming.call_args.kwargs
+    assert kwargs["thread_id"] == "ask-thread-123"
+    assert kwargs["writable_roots"] is None
+    assert kwargs["sandbox_profile"] == "read_only"
+
+
 def test_generate_frame_returns_accepted(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:

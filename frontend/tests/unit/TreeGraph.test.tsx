@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { useEffect, type ComponentType, type ReactNode } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { apiMock } = vi.hoisted(() => ({
@@ -253,30 +254,29 @@ function renderTreeGraph(
   const onCreateChild = vi.fn(async () => undefined)
   const onSplitNode = vi.fn(async () => undefined)
   const onOpenBreadcrumb = vi.fn(async () => undefined)
-  const onFinishTask = vi.fn(async () => undefined)
   const onResetProject = vi.fn(async () => undefined)
   const view = render(
-    <TreeGraph
-      snapshot={snapshot}
-      selectedNodeId={options.selectedNodeId ?? snapshot.tree_state.active_node_id}
-      splitStatus="idle"
-      splittingNodeId={null}
-      isCreatingNode={false}
-      isResettingProject={false}
-      isResetDisabled={false}
-      codexAvailable={options.codexAvailable ?? true}
-      onSelectNode={onSelectNode}
-      onCreateChild={onCreateChild}
-      onSplitNode={onSplitNode}
-      onOpenBreadcrumb={onOpenBreadcrumb}
-      onFinishTask={onFinishTask}
-      onResetProject={onResetProject}
-    />,
+    <MemoryRouter>
+      <TreeGraph
+        snapshot={snapshot}
+        selectedNodeId={options.selectedNodeId ?? snapshot.tree_state.active_node_id}
+        splitStatus="idle"
+        splittingNodeId={null}
+        isCreatingNode={false}
+        isResettingProject={false}
+        isResetDisabled={false}
+        codexAvailable={options.codexAvailable ?? true}
+        onSelectNode={onSelectNode}
+        onCreateChild={onCreateChild}
+        onSplitNode={onSplitNode}
+        onOpenBreadcrumb={onOpenBreadcrumb}
+        onResetProject={onResetProject}
+      />
+    </MemoryRouter>,
   )
   return {
     ...view,
     onCreateChild,
-    onFinishTask,
     onOpenBreadcrumb,
     onResetProject,
     onSelectNode,
@@ -441,6 +441,7 @@ describe('TreeGraph', () => {
     fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
     expect(screen.getByText('Create Child')).toBeInTheDocument()
     expect(screen.getByText('Open Breadcrumb')).toBeInTheDocument()
+    expect(screen.queryByText('Finish Task')).not.toBeInTheDocument()
     expect(screen.getByText('AI Split')).toBeInTheDocument()
     expect(screen.getByText('Workflow')).toBeInTheDocument()
     expect(screen.getByText('Phase Breakdown')).toBeInTheDocument()
@@ -486,32 +487,6 @@ describe('TreeGraph', () => {
     expect(onOpenBreadcrumb).toHaveBeenCalledWith('root')
   })
 
-  it('disables Finish Task until spec is confirmed', () => {
-    const snapshot = buildSnapshot({
-      tree_state: {
-        root_node_id: 'root',
-        active_node_id: 'root',
-        node_registry: [
-          buildNode({
-            node_id: 'root',
-            status: 'ready',
-            workflow: {
-              frame_confirmed: true,
-              active_step: 'spec',
-              spec_confirmed: false,
-            },
-          }),
-        ],
-      },
-    })
-
-    renderTreeGraph(snapshot)
-
-    const rootWrapper = screen.getByTestId('rf-node-root')
-    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
-    expect(screen.getByText('Finish Task').closest('button')).toBeDisabled()
-  })
-
   it('disables Split until the node reaches the Spec workflow step', () => {
     const snapshot = buildSnapshot({
       tree_state: {
@@ -538,7 +513,7 @@ describe('TreeGraph', () => {
     expect(screen.getByText('Workflow').closest('button')).toBeDisabled()
   })
 
-  it('enables Finish Task and Split only when workflow readiness is met', () => {
+  it('enables Split when workflow readiness is met', () => {
     const snapshot = buildSnapshot({
       tree_state: {
         root_node_id: 'root',
@@ -561,7 +536,6 @@ describe('TreeGraph', () => {
 
     const rootWrapper = screen.getByTestId('rf-node-root')
     fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
-    expect(screen.getByText('Finish Task').closest('button')).toBeEnabled()
     expect(screen.getByText('Workflow').closest('button')).toBeEnabled()
   })
 

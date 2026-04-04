@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
-from backend.errors.app_errors import AppError
+from backend.errors.app_errors import AppError, InvalidRequest
 
 router = APIRouter(tags=["conversation-v2"])
 
@@ -66,6 +66,11 @@ def _sse_frame(envelope: dict[str, Any]) -> str:
     return f"data: {data}\n\n"
 
 
+def _reject_legacy_thread_role_v2(thread_role: str) -> None:
+    if thread_role in {"ask_planning", "execution", "audit"}:
+        raise InvalidRequest("Thread role is no longer served on /v2. Use /v3 by-id APIs.")
+
+
 @router.get("/projects/{project_id}/nodes/{node_id}/threads/{thread_role}")
 async def get_thread_snapshot_v2(
     request: Request,
@@ -74,6 +79,7 @@ async def get_thread_snapshot_v2(
     thread_role: str,
 ):
     try:
+        _reject_legacy_thread_role_v2(thread_role)
         snapshot = request.app.state.thread_query_service_v2.get_thread_snapshot(
             project_id,
             node_id,
@@ -97,6 +103,7 @@ async def thread_events_v2(
     broker = request.app.state.conversation_event_broker_v2
     queue = None
     try:
+        _reject_legacy_thread_role_v2(thread_role)
         queue = broker.subscribe(project_id, node_id, thread_role=thread_role)
         snapshot = request.app.state.thread_query_service_v2.build_stream_snapshot(
             project_id,
@@ -160,6 +167,7 @@ async def start_turn_v2(
     body: StartTurnRequest,
 ):
     try:
+        _reject_legacy_thread_role_v2(thread_role)
         payload = request.app.state.thread_runtime_service_v2.start_turn(
             project_id,
             node_id,
@@ -184,6 +192,7 @@ async def resolve_user_input_v2(
     body: ResolveUserInputRequest,
 ):
     try:
+        _reject_legacy_thread_role_v2(thread_role)
         payload = request.app.state.thread_runtime_service_v2.resolve_user_input(
             project_id=project_id,
             node_id=node_id,
@@ -206,6 +215,7 @@ async def reset_thread_v2(
     thread_role: str,
 ):
     try:
+        _reject_legacy_thread_role_v2(thread_role)
         snapshot = request.app.state.thread_query_service_v2.reset_thread(
             project_id,
             node_id,

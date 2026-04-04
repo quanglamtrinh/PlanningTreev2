@@ -223,7 +223,108 @@ describe('ConversationFeed', () => {
     expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument()
   })
 
-  it('shows the latest reasoning label in the working indicator', () => {
+  it('renders command-based file writes as file-change cards when path can be inferred', () => {
+    render(
+      <ConversationFeed
+        snapshot={makeSnapshot({
+          items: [
+            makeCommandTool({
+              id: 'tool-write-1',
+              status: 'completed',
+              argumentsText:
+                '"powershell.exe" -Command "@\'content\'@ | Set-Content -Path tests/session.test.mjs"',
+              outputText: '',
+              outputFiles: [],
+            }),
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn()}
+      />,
+    )
+
+    const toolRow = screen.getByTestId('conversation-item-tool')
+    expect(within(toolRow).getByText('session.test.mjs')).toBeInTheDocument()
+    expect(within(toolRow).getByLabelText('Copy diff')).toBeInTheDocument()
+    expect(screen.queryByTestId('conversation-tool-output-tool-write-1')).not.toBeInTheDocument()
+  })
+
+  it('prefers inferred file payload over raw command output for shell-write commands', () => {
+    render(
+      <ConversationFeed
+        snapshot={makeSnapshot({
+          items: [
+            makeCommandTool({
+              id: 'tool-write-2',
+              status: 'completed',
+              argumentsText:
+                '"powershell.exe" -Command "@\'const ready = true;\'@ | Set-Content -Path src/app.ts"',
+              outputText: 'PS > powershell.exe -Command ...',
+              outputFiles: [],
+            }),
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand diff for app.ts' }))
+    const toolRow = screen.getByTestId('conversation-item-tool')
+    expect(toolRow).toHaveTextContent(/const\s+ready\s*=\s*true;/)
+    expect(toolRow).not.toHaveTextContent(/PS > powershell\.exe/i)
+  })
+
+  it('shows per-file diff content and +/- stats for multi-file patch payloads', () => {
+    render(
+      <ConversationFeed
+        snapshot={makeSnapshot({
+          items: [
+            makeCommandTool({
+              id: 'tool-multi-1',
+              status: 'completed',
+              title: 'apply_patch',
+              toolName: 'apply_patch',
+              argumentsText: [
+                '*** Begin Patch',
+                '*** Update File: src/a.ts',
+                '@@',
+                '-const a = 1',
+                '+const a = 2',
+                '*** Update File: src/b.ts',
+                '@@',
+                "-console.log('old')",
+                "+console.log('new')",
+                '*** End Patch',
+              ].join('\n'),
+              outputText: 'Updated 2 files',
+              outputFiles: [
+                { path: 'src/a.ts', changeType: 'updated', summary: null },
+                { path: 'src/b.ts', changeType: 'updated', summary: null },
+              ],
+              exitCode: 0,
+            }),
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn()}
+      />,
+    )
+
+    const toolRow = screen.getByTestId('conversation-item-tool')
+    expect(within(toolRow).getByText('2 files changed')).toBeInTheDocument()
+    expect(within(toolRow).getAllByText('+1').length).toBeGreaterThanOrEqual(2)
+    expect(within(toolRow).getAllByText('-1').length).toBeGreaterThanOrEqual(2)
+
+    fireEvent.click(within(toolRow).getByRole('button', { name: 'Expand diff for a.ts' }))
+    expect(toolRow).toHaveTextContent(/const\s+a\s*=\s*2/)
+
+    fireEvent.click(within(toolRow).getByRole('button', { name: 'Expand diff for b.ts' }))
+    expect(toolRow).toHaveTextContent(/console\.log\('new'\)/)
+    expect(toolRow).not.toHaveTextContent('No diff excerpt for this file.')
+  })
+
+  it('shows only the activity spinner while running (no reasoning caption or elapsed timer)', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-03-28T00:01:05Z'))
 
@@ -252,34 +353,13 @@ describe('ConversationFeed', () => {
         })}
         isLoading={false}
         onResolveUserInput={vi.fn()}
-        processingStartedAt={Date.parse('2026-03-28T00:00:00Z')}
       />,
     )
 
     const indicator = screen.getByTestId('conversation-working-indicator')
-    expect(indicator).toHaveTextContent('Checking workspace')
-    expect(indicator).toHaveTextContent('1:05')
-  })
-
-  it('falls back to the latest running tool headline when reasoning is absent', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-03-28T00:00:20Z'))
-
-    render(
-      <ConversationFeed
-        snapshot={makeSnapshot({
-          activeTurnId: 'turn-1',
-          processingState: 'running',
-          items: [makeCommandTool({ argumentsText: 'npm test' })],
-        })}
-        isLoading={false}
-        onResolveUserInput={vi.fn()}
-        processingStartedAt={Date.parse('2026-03-28T00:00:00Z')}
-      />,
-    )
-
-    const indicator = screen.getByTestId('conversation-working-indicator')
-    expect(indicator).toHaveTextContent('npm test')
-    expect(indicator).toHaveTextContent('0:20')
+    expect(indicator).toBeInTheDocument()
+    expect(indicator).not.toHaveTextContent('Checking workspace')
+    expect(indicator).not.toHaveTextContent('Working...')
+    expect(indicator.textContent).not.toMatch(/\d+:\d{2}/)
   })
 })

@@ -9,6 +9,24 @@ Related docs:
 - `docs/thread-rework/workflow-rework/execution-thread-redesign-spec.md`
 - `docs/thread-rework/workflow-rework/audit-thread-redesign-spec.md`
 
+## Scope and Supersession
+
+This doc set supersedes `docs/specs/conversation-streaming-v2.md` for:
+
+- execution after `Finish Task`
+- finished-leaf local audit/review
+
+`docs/specs/conversation-streaming-v2.md` remains authoritative for:
+
+- `ask_planning`
+- the review-node flow
+- legacy or transitional V2 conversation surfaces that have not yet moved to this rework
+
+For the reworked execution and finished-leaf audit lanes:
+
+- transcript discovery and live transport are keyed by app-server `threadId`
+- node/role transcript lookup is transitional only and is not target architecture
+
 ## Why This Redesign Exists
 
 The current PTM model mixes two concerns too tightly:
@@ -82,9 +100,19 @@ Workflow source of truth is:
 
 Task title, frame/spec context, parent split context, review commit metadata, cycle IDs, and CTA state are not transcript data.
 
-They are fetched separately from backend workflow/detail state and rendered independently from thread items.
+They are fetched separately from backend APIs and rendered independently from thread items:
+
+- `workflow-state` is authoritative for phase, thread ids, CTA gating, current decision objects, runtime block, and artifact references used by workflow validation
+- `detail-state` is non-authoritative node metadata for title, hierarchy, frame/spec context, parent context, and other shell display data
 
 This keeps PTM-specific metadata from slowing down transcript hydration or live streaming.
+
+### Authority boundary
+
+- `workflow-state` decides what lane is active, what thread should hydrate, and which actions are allowed now
+- `detail-state` tells the UI what task context to show around that lane
+- transcript loaded by `threadId` tells the UI what happened inside that thread
+- if mirrored fields conflict, `workflow-state` wins for thread identity, CTA gating, runtime state, and workflow validation
 
 ## Audit Lane Model
 
@@ -117,6 +145,7 @@ Rules:
 - later local reviews call `review/start` again on the same review thread
 - the review thread inherits context from the audit lineage thread, so normal local reviews do not add extra input at `review/start`
 - canonical local review output is `exitedReviewMode.review`
+- client transcript hydration and live transport use `reviewThreadId`
 
 This split lets PTM keep audit lineage semantics while using app-server review mode for actual code review.
 

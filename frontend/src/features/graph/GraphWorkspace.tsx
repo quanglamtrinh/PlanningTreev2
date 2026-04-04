@@ -2,11 +2,7 @@ import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { SplitMode } from '../../api/types'
-import {
-  buildChatV2Url,
-  buildLegacyChatUrl,
-  isExecutionAuditV2SurfaceEnabled,
-} from '../conversation/surfaceRouting'
+import { buildChatV2Url } from '../conversation/surfaceRouting'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import { Sidebar } from './Sidebar'
@@ -112,26 +108,9 @@ export function GraphWorkspace() {
     const targetNode = latestSnapshot?.tree_state.node_registry.find((item) => item.node_id === nodeId)
     const destination =
       targetNode?.node_kind === 'review'
-        ? (isExecutionAuditV2SurfaceEnabled(latestState.bootstrap)
-            ? buildChatV2Url(projectId, nodeId, 'audit')
-            : buildLegacyChatUrl(projectId, nodeId, 'audit'))
-        : buildLegacyChatUrl(projectId, nodeId, 'ask')
+        ? buildChatV2Url(projectId, nodeId, 'audit')
+        : buildChatV2Url(projectId, nodeId, 'ask')
     navigate(destination)
-    void selectNode(nodeId, true)
-  }
-
-  async function handleFinishTask(nodeId: string) {
-    const latestState = useProjectStore.getState()
-    const latestSnapshot = latestState.snapshot
-    const projectId = latestSnapshot?.project.id ?? latestState.activeProjectId
-    if (!projectId) {
-      return
-    }
-    navigate(
-      isExecutionAuditV2SurfaceEnabled(latestState.bootstrap)
-        ? buildChatV2Url(projectId, nodeId, 'execution')
-        : buildLegacyChatUrl(projectId, nodeId, 'execution'),
-    )
     void selectNode(nodeId, true)
   }
 
@@ -200,7 +179,6 @@ export function GraphWorkspace() {
               onCreateChild={handleCreateChild}
               onSplitNode={handleSplitNode}
               onOpenBreadcrumb={handleOpenBreadcrumb}
-              onFinishTask={handleFinishTask}
               onResetProject={handleResetProject}
             />
           ) : (

@@ -59,13 +59,6 @@
   min-width: 0;
 }
 
-.threadHeaderActions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-
 .threadHeaderAction {
   padding: 7px 12px;
   border-radius: var(--radius-pill);
@@ -80,6 +73,18 @@
 .threadHeaderAction:hover:not(:disabled) {
   border-color: var(--border-strong);
   color: var(--text-primary);
+}
+
+.threadHeaderActionPrimary {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+}
+
+.threadHeaderActionPrimary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-primary) 90%, black);
+  border-color: color-mix(in srgb, var(--accent-primary) 88%, black);
+  color: #fff;
 }
 
 .threadHeaderAction:disabled {
@@ -253,6 +258,37 @@
   padding: 12px 24px;
   color: var(--text-error, #dc2626);
   font-size: 13px;
+}
+
+.auditShell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.auditShellBody {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 32px 24px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.auditShellTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.auditShellText {
+  max-width: 480px;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 /* ─── Row ─────────────────────────────────────────────────────────── */

@@ -1,11 +1,11 @@
 .wrap {
   flex-shrink: 0;
-  padding: 16px 0 24px;
+  padding: 16px 20px 24px;
   background: var(--bg-app);
 }
 
 .composer {
-  max-width: 760px;
+  max-width: 860px;
   margin: 0 auto;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-xl);

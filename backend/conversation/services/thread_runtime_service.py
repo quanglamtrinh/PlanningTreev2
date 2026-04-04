@@ -29,6 +29,10 @@ from backend.storage.file_utils import iso_now, new_id
 
 logger = logging.getLogger(__name__)
 
+_ASK_READ_ONLY_POLICY_ERROR = (
+    "Ask lane is read-only. File-change output is not allowed in ask turns."
+)
+
 
 class ThreadRuntimeService:
     def __init__(
@@ -42,6 +46,7 @@ class ThreadRuntimeService:
         request_ledger_service: RequestLedgerService,
         chat_timeout: int,
         max_message_chars: int = 10000,
+        ask_rollout_metrics_service: Any | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -51,6 +56,7 @@ class ThreadRuntimeService:
         self._request_ledger_service = request_ledger_service
         self._chat_timeout = int(chat_timeout)
         self._max_message_chars = int(max_message_chars)
+        self._ask_rollout_metrics_service = ask_rollout_metrics_service
 
     def start_turn(
         self,
@@ -424,12 +430,7 @@ class ThreadRuntimeService:
             events: list[dict[str, Any]] = []
 
             if method == "item/started":
-                params = raw_event.get("params", {})
-                item = params.get("item", {}) if isinstance(params, dict) else {}
-                if isinstance(item, dict):
-                    call_id = str(item.get("callId") or item.get("call_id") or "").strip()
-                    if call_id and call_id in provisional_tool_calls:
-                        provisional_tool_calls[call_id]["matched"] = True
+                self._enrich_started_item_from_provisional_call(raw_event, provisional_tool_calls)
 
             if method == "turn/completed":
                 params = raw_event.get("params", {})
@@ -494,6 +495,85 @@ class ThreadRuntimeService:
         if normalized in {"failed", "error", "interrupted", "cancelled"}:
             return "failed"
         return "completed"
+
+    @staticmethod
+    def _looks_like_patch_text(text: str) -> bool:
+        normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+        return (
+            "*** Begin Patch" in normalized
+            or "diff --git " in normalized
+            or "\n@@ " in f"\n{normalized}"
+            or "\n+++ " in f"\n{normalized}"
+            or "\n--- " in f"\n{normalized}"
+        )
+
+    @classmethod
+    def _tool_call_arguments_text(cls, arguments: Any) -> str | None:
+        if isinstance(arguments, str):
+            trimmed = arguments.strip()
+            return trimmed or None
+
+        if isinstance(arguments, dict):
+            for key in ("input", "patch", "diff", "content", "text", "value", "body"):
+                raw = arguments.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    return raw
+            for raw in arguments.values():
+                if isinstance(raw, str) and cls._looks_like_patch_text(raw):
+                    return raw
+            if arguments:
+                return json.dumps(arguments, ensure_ascii=True, sort_keys=True)
+
+        return None
+
+    @classmethod
+    def _enrich_started_item_from_provisional_call(
+        cls,
+        raw_event: dict[str, Any],
+        provisional_tool_calls: dict[str, dict[str, Any]],
+    ) -> None:
+        params = raw_event.get("params", {})
+        item = params.get("item", {}) if isinstance(params, dict) else {}
+        if not isinstance(item, dict):
+            return
+
+        call_id = str(item.get("callId") or item.get("call_id") or "").strip()
+        item_id = str(item.get("id") or "").strip()
+        candidate_ids: list[str] = []
+        if call_id:
+            candidate_ids.append(call_id)
+        if item_id and item_id not in candidate_ids:
+            candidate_ids.append(item_id)
+
+        matched_call_id: str | None = None
+        record: dict[str, Any] | None = None
+        for candidate_id in candidate_ids:
+            candidate_record = provisional_tool_calls.get(candidate_id)
+            if isinstance(candidate_record, dict):
+                matched_call_id = candidate_id
+                record = candidate_record
+                break
+        if record is None:
+            return
+
+        record["matched"] = True
+        if not call_id and matched_call_id:
+            item["callId"] = matched_call_id
+
+        if not item.get("toolName") and record.get("toolName"):
+            item["toolName"] = record.get("toolName")
+
+        item_type = str(item.get("type") or "").strip()
+        if item_type != "fileChange":
+            return
+
+        existing = item.get("argumentsText")
+        if isinstance(existing, str) and existing.strip():
+            return
+
+        arguments_text = cls._tool_call_arguments_text(record.get("arguments"))
+        if isinstance(arguments_text, str) and arguments_text.strip():
+            item["argumentsText"] = arguments_text
 
     def build_error_item_for_turn(
         self,
@@ -568,12 +648,7 @@ class ThreadRuntimeService:
             events: list[dict[str, Any]] = []
 
             if method == "item/started":
-                params = raw_event.get("params", {})
-                item = params.get("item", {}) if isinstance(params, dict) else {}
-                if isinstance(item, dict):
-                    call_id = str(item.get("callId") or item.get("call_id") or "").strip()
-                    if call_id and call_id in provisional_tool_calls:
-                        provisional_tool_calls[call_id]["matched"] = True
+                self._enrich_started_item_from_provisional_call(raw_event, provisional_tool_calls)
 
             if method == "turn/completed":
                 params = raw_event.get("params", {})
@@ -618,6 +693,8 @@ class ThreadRuntimeService:
                 thread_id=thread_id,
                 timeout_sec=self._chat_timeout,
                 cwd=workspace_root,
+                writable_roots=None,
+                sandbox_profile="read_only" if thread_role == "ask_planning" else None,
                 on_raw_event=handle_raw_event,
             )
             returned_status = str(result.get("turn_status") or "").strip().lower()
@@ -629,17 +706,46 @@ class ThreadRuntimeService:
                 thread_role=thread_role,
                 provisional_tool_calls=provisional_tool_calls,
             )
+            policy_violation_message: str | None = None
+            if thread_role == "ask_planning":
+                policy_snapshot = self._query_service.get_thread_snapshot(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    publish_repairs=False,
+                    ensure_binding=False,
+                    allow_thread_read_hydration=False,
+                )
+                if self._ask_turn_contains_file_change_items(policy_snapshot, turn_id):
+                    policy_violation_message = _ASK_READ_ONLY_POLICY_ERROR
+                    self._record_ask_guard_violation()
+                    final_turn_status = "failed"
             outcome = "completed"
             if final_turn_status in {"waiting_user_input", "waitingforuserinput", "waiting_for_user_input"}:
                 outcome = "waiting_user_input"
             elif final_turn_status in {"failed", "error", "interrupted", "cancelled"}:
                 outcome = "failed"
+            error_item = None
+            if outcome == "failed" and policy_violation_message:
+                current_snapshot = self._query_service.get_thread_snapshot(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    publish_repairs=False,
+                )
+                error_item = self._build_error_item(
+                    turn_id=turn_id,
+                    thread_id=thread_id,
+                    message=policy_violation_message,
+                    sequence=self._next_sequence(current_snapshot),
+                )
             self.complete_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role=thread_role,
                 turn_id=turn_id,
                 outcome=outcome,
+                error_item=error_item,
             )
             waiting_for_user_input = final_turn_status in {
                 "waiting_user_input",
@@ -728,6 +834,31 @@ class ThreadRuntimeService:
                         thread_id=thread_id,
                     )
                 self._chat_service.clear_external_live_turn(project_id, node_id, thread_role, turn_id)
+
+    @staticmethod
+    def _ask_turn_contains_file_change_items(snapshot: ThreadSnapshotV2, turn_id: str) -> bool:
+        for item in snapshot.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("turnId") or "") != str(turn_id):
+                continue
+            if str(item.get("kind") or "").strip() != "tool":
+                continue
+            if str(item.get("toolType") or "").strip() == "fileChange":
+                return True
+            output_files = item.get("outputFiles")
+            if isinstance(output_files, list) and len(output_files) > 0:
+                return True
+        return False
+
+    def _record_ask_guard_violation(self) -> None:
+        metrics = self._ask_rollout_metrics_service
+        if metrics is None:
+            return
+        try:
+            metrics.record_guard_violation()
+        except Exception:
+            logger.debug("Failed to record ask guard violation metric.", exc_info=True)
 
     def _build_local_user_item(
         self,

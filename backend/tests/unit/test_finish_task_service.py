@@ -312,6 +312,41 @@ def _wait_for_condition(predicate, timeout: float = 2.0):
     raise AssertionError("Condition did not become true in time")
 
 
+def test_thread_runtime_service_prefers_patch_body_for_tool_call_arguments_text() -> None:
+    patch_body = "*** Begin Patch\n*** Update File: src/app.ts\n@@\n+const ok = true\n*** End Patch"
+    arguments = {"input": patch_body, "path": "src/app.ts"}
+    assert ThreadRuntimeService._tool_call_arguments_text(arguments) == patch_body
+
+
+def test_thread_runtime_service_matches_provisional_call_from_item_id_when_call_id_missing() -> None:
+    patch_body = "*** Begin Patch\n*** Update File: src/app.ts\n@@\n+const ok = true\n*** End Patch"
+    raw_event = {
+        "method": "item/started",
+        "params": {
+            "item": {
+                "type": "fileChange",
+                "id": "call_patch_123",
+            }
+        },
+    }
+    provisional_tool_calls = {
+        "call_patch_123": {
+            "callId": "call_patch_123",
+            "toolName": "apply_patch",
+            "arguments": {"input": patch_body, "path": "src/app.ts"},
+            "matched": False,
+        }
+    }
+
+    ThreadRuntimeService._enrich_started_item_from_provisional_call(raw_event, provisional_tool_calls)
+
+    item = raw_event["params"]["item"]
+    assert item["callId"] == "call_patch_123"
+    assert item["toolName"] == "apply_patch"
+    assert item["argumentsText"] == patch_body
+    assert provisional_tool_calls["call_patch_123"]["matched"] is True
+
+
 def _build_v2_runtime(
     *,
     storage,
@@ -857,6 +892,7 @@ def test_finish_task_v2_rehearsal_uses_v2_snapshot_without_legacy_conversation_e
     assert len(tool_items) == 1
     tool_item = tool_items[0]
     assert tool_item["id"] == "file-1"
+    assert tool_item["argumentsText"] == '{"path": "execution-output.txt"}'
     assert tool_item["outputFiles"] == [{"path": "final.txt", "changeType": "updated", "summary": "final"}]
     assert all(item.get("id") != "tool-call:call-1" for item in execution_snapshot["items"])
     assert Path(storage.workspace_store.get_folder_path(project_id), "execution-output.txt").exists()

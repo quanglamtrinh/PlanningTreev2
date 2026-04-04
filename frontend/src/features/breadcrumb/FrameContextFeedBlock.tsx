@@ -1,35 +1,53 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ClarifyQuestion, NodeRecord } from '../../api/types'
+import {
+  askShellNodeActionStateKey,
+  type AskShellNodeActionState,
+  type ShapingArtifact,
+  useAskShellActionStore,
+} from '../../stores/ask-shell-action-store'
 import { useClarifyStore } from '../../stores/clarify-store'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { FrameMarkdownViewer } from './FrameMarkdownViewer'
 import styles from './FrameContextFeedBlock.module.css'
 
-// ─── Types ─────────────────────────────────────────────────────────
-
 type PanelId = 'frame' | 'clarify' | 'split' | 'spec'
-
 type FrameContextVariant = 'ask' | 'audit'
 
 type Props = {
   projectId: string
   nodeId: string
   nodeRegistry: NodeRecord[]
-  /** Ask: current node has Frame+Clarify only; Audit: current node can add Spec when confirmed. */
   variant?: FrameContextVariant
-  /** From detail state for the breadcrumb node; only used when variant is audit. */
   specConfirmed?: boolean
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────
+type ActionChipTone = 'running' | 'success' | 'error'
+
+type ActionChip = {
+  artifact: ShapingArtifact
+  text: string
+  tone: ActionChipTone
+}
+
+type PanelProps = {
+  label: string
+  panelId: PanelId
+  nodeId: string
+  expanded: boolean
+  onToggle: (nodeId: string, panelId: PanelId) => void
+  children: React.ReactNode
+}
 
 function buildAncestorChain(nodeId: string, registry: NodeRecord[]): NodeRecord[] {
-  const byId = new Map(registry.map((n) => [n.node_id, n]))
+  const byId = new Map(registry.map((node) => [node.node_id, node]))
   const chain: NodeRecord[] = []
   let cursor: string | null = nodeId
   while (cursor) {
     const node = byId.get(cursor)
-    if (!node) break
+    if (!node) {
+      break
+    }
     chain.unshift(node)
     cursor = node.parent_id
   }
@@ -42,24 +60,48 @@ function panelKey(nodeId: string, panelId: PanelId): string {
 
 function defaultExpanded(panelId: PanelId, isCurrent: boolean): boolean {
   if (isCurrent) {
-    if (panelId === 'spec') return false
     return panelId === 'frame'
   }
   return panelId === 'split'
 }
 
-function resolveAnswer(q: ClarifyQuestion): string | null {
-  if (q.selected_option_id) {
-    const opt = q.options.find((o) => o.id === q.selected_option_id)
-    return opt?.label ?? null
+function resolveAnswer(question: ClarifyQuestion): string | null {
+  if (question.selected_option_id) {
+    const selected = question.options.find((option) => option.id === question.selected_option_id)
+    return selected?.label ?? null
   }
-  if (q.custom_answer.trim()) {
-    return q.custom_answer.trim()
+  const custom = question.custom_answer.trim()
+  return custom || null
+}
+
+function summarizeArtifactAction(
+  actionState: AskShellNodeActionState,
+  artifact: ShapingArtifact,
+): ActionChip | null {
+  const artifactState = actionState[artifact]
+  const confirmState = artifactState.confirm
+  const generateState = artifactState.generate
+
+  if (confirmState.status === 'running') {
+    return { artifact, text: 'Confirming', tone: 'running' }
+  }
+  if (generateState.status === 'running') {
+    return { artifact, text: 'Generating', tone: 'running' }
+  }
+  if (confirmState.status === 'failed') {
+    return { artifact, text: 'Confirm failed', tone: 'error' }
+  }
+  if (generateState.status === 'failed') {
+    return { artifact, text: 'Generate failed', tone: 'error' }
+  }
+  if (confirmState.status === 'succeeded') {
+    return { artifact, text: 'Confirmed', tone: 'success' }
+  }
+  if (generateState.status === 'succeeded') {
+    return { artifact, text: 'Generated', tone: 'success' }
   }
   return null
 }
-
-// ─── Chevron icon ───────────────────────────────────────────────────
 
 function Chevron({ expanded }: { expanded: boolean }) {
   return (
@@ -81,8 +123,6 @@ function Chevron({ expanded }: { expanded: boolean }) {
   )
 }
 
-// ─── Read-only clarify Q/A view ─────────────────────────────────────
-
 function ContextClarifyView({ questions }: { questions: ClarifyQuestion[] }) {
   if (questions.length === 0) {
     return <div className={styles.stateEmpty}>No clarify questions.</div>
@@ -90,12 +130,12 @@ function ContextClarifyView({ questions }: { questions: ClarifyQuestion[] }) {
 
   return (
     <div className={styles.qaList}>
-      {questions.map((q, idx) => {
-        const answer = resolveAnswer(q)
+      {questions.map((question, index) => {
+        const answer = resolveAnswer(question)
         return (
-          <div key={q.field_name} className={styles.qaItem}>
+          <div key={question.field_name} className={styles.qaItem}>
             <span className={styles.qaQuestion}>
-              {idx + 1}. {q.question}
+              {index + 1}. {question.question}
             </span>
             {answer ? (
               <span className={styles.qaAnswer}>{answer}</span>
@@ -109,8 +149,6 @@ function ContextClarifyView({ questions }: { questions: ClarifyQuestion[] }) {
   )
 }
 
-// ─── Child node list (split view) ───────────────────────────────────
-
 function ContextSplitView({
   node,
   nodeRegistry,
@@ -120,17 +158,10 @@ function ContextSplitView({
   nodeRegistry: NodeRecord[]
   currentNodeId: string
 }) {
-  const byId = useMemo(
-    () => new Map(nodeRegistry.map((n) => [n.node_id, n])),
-    [nodeRegistry],
-  )
-
+  const byId = useMemo(() => new Map(nodeRegistry.map((item) => [item.node_id, item])), [nodeRegistry])
   const children = useMemo(
-    () =>
-      node.child_ids
-        .map((id) => byId.get(id))
-        .filter((n): n is NodeRecord => n !== undefined),
-    [node.child_ids, byId],
+    () => node.child_ids.map((id) => byId.get(id)).filter((item): item is NodeRecord => item !== undefined),
+    [byId, node.child_ids],
   )
 
   if (children.length === 0) {
@@ -143,9 +174,9 @@ function ContextSplitView({
         const isCurrent = child.node_id === currentNodeId
         return (
           <div key={child.node_id} className={styles.childItem}>
-            {child.hierarchical_number && (
+            {child.hierarchical_number ? (
               <span className={styles.childNumber}>{child.hierarchical_number}</span>
-            )}
+            ) : null}
             <span className={`${styles.childTitle} ${isCurrent ? styles.childTitleCurrent : ''}`}>
               {child.title}
             </span>
@@ -154,17 +185,6 @@ function ContextSplitView({
       })}
     </div>
   )
-}
-
-// ─── Individual panel (Frame / Clarify / Split) ─────────────────────
-
-type PanelProps = {
-  label: string
-  panelId: PanelId
-  nodeId: string
-  expanded: boolean
-  onToggle: (nodeId: string, panelId: PanelId) => void
-  children: React.ReactNode
 }
 
 function NodePanel({ label, panelId, nodeId, expanded, onToggle, children }: PanelProps) {
@@ -179,12 +199,10 @@ function NodePanel({ label, panelId, nodeId, expanded, onToggle, children }: Pan
         <Chevron expanded={expanded} />
         <span className={styles.panelLabel}>{label}</span>
       </button>
-      {expanded && <div className={styles.panelBody}>{children}</div>}
+      {expanded ? <div className={styles.panelBody}>{children}</div> : null}
     </div>
   )
 }
-
-// ─── Main component ─────────────────────────────────────────────────
 
 export function FrameContextFeedBlock({
   projectId,
@@ -193,58 +211,62 @@ export function FrameContextFeedBlock({
   variant = 'ask',
   specConfirmed = false,
 }: Props) {
-  const chain = useMemo(
-    () => buildAncestorChain(nodeId, nodeRegistry),
-    [nodeId, nodeRegistry],
+  const chain = useMemo(() => buildAncestorChain(nodeId, nodeRegistry), [nodeId, nodeRegistry])
+  const actionState = useAskShellActionStore(
+    (state) => state.entries[askShellNodeActionStateKey(projectId, nodeId)],
   )
+  const currentNodeActionChips = useMemo(() => {
+    if (!actionState) {
+      return []
+    }
+    return (['frame', 'clarify', 'spec'] as ShapingArtifact[])
+      .map((artifact) => summarizeArtifactAction(actionState, artifact))
+      .filter((chip): chip is ActionChip => chip !== null)
+  }, [actionState])
 
-  // Per-panel expand state: key = "${nodeId}::${panelId}"
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({})
 
-  const isPanelExpanded = (nId: string, pId: PanelId, isCurrent: boolean): boolean => {
-    const key = panelKey(nId, pId)
-    return key in expandedMap ? expandedMap[key] : defaultExpanded(pId, isCurrent)
+  const isPanelExpanded = (nodePanelId: string, panelId: PanelId, isCurrent: boolean): boolean => {
+    const key = panelKey(nodePanelId, panelId)
+    return key in expandedMap ? expandedMap[key] : defaultExpanded(panelId, isCurrent)
   }
 
-  const togglePanel = (nId: string, pId: PanelId) => {
+  const togglePanel = (nodePanelId: string, panelId: PanelId) => {
     setExpandedMap((prev) => {
-      const key = panelKey(nId, pId)
-      // Determine current effective value including default
-      const isCurrent = nId === nodeId
-      const current = key in prev ? prev[key] : defaultExpanded(pId, isCurrent)
+      const key = panelKey(nodePanelId, panelId)
+      const current = key in prev ? prev[key] : defaultExpanded(panelId, nodePanelId === nodeId)
       return { ...prev, [key]: !current }
     })
   }
 
-  // Reset expanded state when navigating to a different node
   useEffect(() => {
     setExpandedMap({})
   }, [nodeId])
 
-  // Load frame documents
-  const loadDocument = useNodeDocumentStore((s) => s.loadDocument)
-  const frameEntries = useNodeDocumentStore((s) => s.entries)
+  const loadDocument = useNodeDocumentStore((state) => state.loadDocument)
+  const frameEntries = useNodeDocumentStore((state) => state.entries)
 
   useEffect(() => {
     for (const node of chain) {
       void loadDocument(projectId, node.node_id, 'frame').catch(() => undefined)
     }
-  }, [chain, projectId, loadDocument])
+  }, [chain, loadDocument, projectId])
 
   useEffect(() => {
-    if (variant !== 'audit' || !specConfirmed) return
+    if (variant !== 'audit' || !specConfirmed) {
+      return
+    }
     void loadDocument(projectId, nodeId, 'spec').catch(() => undefined)
-  }, [variant, specConfirmed, projectId, nodeId, loadDocument])
+  }, [loadDocument, nodeId, projectId, specConfirmed, variant])
 
-  // Load clarify data
-  const loadClarify = useClarifyStore((s) => s.loadClarify)
-  const clarifyEntries = useClarifyStore((s) => s.entries)
+  const loadClarify = useClarifyStore((state) => state.loadClarify)
+  const clarifyEntries = useClarifyStore((state) => state.entries)
 
   useEffect(() => {
     for (const node of chain) {
       void loadClarify(projectId, node.node_id).catch(() => undefined)
     }
-  }, [chain, projectId, loadClarify])
+  }, [chain, loadClarify, projectId])
 
   return (
     <div className={styles.feedBlock}>
@@ -253,113 +275,113 @@ export function FrameContextFeedBlock({
       <div className={styles.nodeList}>
         {chain.map((node) => {
           const isCurrent = node.node_id === nodeId
-          const shapingFrozen = node.workflow?.shaping_frozen === true
-
           const frameEntry = frameEntries[`${projectId}::${node.node_id}::frame`]
           const specEntry = frameEntries[`${projectId}::${node.node_id}::spec`]
           const clarifyEntry = clarifyEntries[`${projectId}::${node.node_id}`]
           const clarifyQuestions = clarifyEntry?.clarify?.questions ?? []
 
           return (
-            <div
-              key={node.node_id}
-              className={`${styles.nodeCard} ${isCurrent ? styles.nodeCardCurrent : ''}`}
-            >
-              {/* Always-visible node header */}
+            <div key={node.node_id} className={`${styles.nodeCard} ${isCurrent ? styles.nodeCardCurrent : ''}`}>
               <div className={styles.nodeCardHeader}>
-                {node.hierarchical_number && (
+                {node.hierarchical_number ? (
                   <span className={`${styles.nodeNumber} ${isCurrent ? styles.nodeNumberCurrent : ''}`}>
                     {node.hierarchical_number}
                   </span>
-                )}
+                ) : null}
                 <span className={`${styles.nodeTitle} ${isCurrent ? styles.nodeTitleCurrent : ''}`}>
                   {node.title}
                 </span>
-                {isCurrent && <span className={styles.currentBadge}>current</span>}
+                {isCurrent ? <span className={styles.currentBadge}>current</span> : null}
               </div>
 
-              {/* Gate: current node panels only shown when shaping is frozen */}
-              {isCurrent && !shapingFrozen ? (
-                <div className={styles.shapingGate}>
-                  Frame context will appear once clarify is confirmed.
-                </div>
-              ) : (
-                <div className={styles.panelList}>
-                  {/* Frame panel */}
-                  <NodePanel
-                    label="Frame"
-                    panelId="frame"
-                    nodeId={node.node_id}
-                    expanded={isPanelExpanded(node.node_id, 'frame', isCurrent)}
-                    onToggle={togglePanel}
-                  >
-                    {!frameEntry || frameEntry.isLoading ? (
-                      <div className={styles.stateLoading}>Loading…</div>
-                    ) : frameEntry.error ? (
-                      <div className={styles.stateError}>{frameEntry.error}</div>
-                    ) : !frameEntry.content.trim() ? (
-                      <div className={styles.stateEmpty}>No frame content yet.</div>
-                    ) : (
-                      <FrameMarkdownViewer content={frameEntry.content} />
-                    )}
-                  </NodePanel>
-
-                  {/* Clarify panel */}
-                  <NodePanel
-                    label="Clarify"
-                    panelId="clarify"
-                    nodeId={node.node_id}
-                    expanded={isPanelExpanded(node.node_id, 'clarify', isCurrent)}
-                    onToggle={togglePanel}
-                  >
-                    {!clarifyEntry || clarifyEntry.isLoading ? (
-                      <div className={styles.stateLoading}>Loading…</div>
-                    ) : clarifyEntry.loadError ? (
-                      <div className={styles.stateError}>{clarifyEntry.loadError}</div>
-                    ) : (
-                      <ContextClarifyView questions={clarifyQuestions} />
-                    )}
-                  </NodePanel>
-
-                  {/* Split — ancestors only (ask + audit) */}
-                  {!isCurrent && (
-                    <NodePanel
-                      label="Split"
-                      panelId="split"
-                      nodeId={node.node_id}
-                      expanded={isPanelExpanded(node.node_id, 'split', isCurrent)}
-                      onToggle={togglePanel}
+              {isCurrent && currentNodeActionChips.length > 0 ? (
+                <div className={styles.actionStatusRow} data-testid="frame-context-action-status-row">
+                  {currentNodeActionChips.map((chip) => (
+                    <span
+                      key={chip.artifact}
+                      className={`${styles.actionStatusChip} ${
+                        chip.tone === 'running'
+                          ? styles.actionStatusChipRunning
+                          : chip.tone === 'success'
+                            ? styles.actionStatusChipSuccess
+                            : styles.actionStatusChipError
+                      }`}
+                      data-testid={`frame-context-action-${chip.artifact}`}
                     >
-                      <ContextSplitView
-                        node={node}
-                        nodeRegistry={nodeRegistry}
-                        currentNodeId={nodeId}
-                      />
-                    </NodePanel>
+                      <span className={styles.actionStatusArtifact}>{chip.artifact}</span>
+                      <span>{chip.text}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className={styles.panelList}>
+                <NodePanel
+                  label="Frame"
+                  panelId="frame"
+                  nodeId={node.node_id}
+                  expanded={isPanelExpanded(node.node_id, 'frame', isCurrent)}
+                  onToggle={togglePanel}
+                >
+                  {!frameEntry || frameEntry.isLoading ? (
+                    <div className={styles.stateLoading}>Loading...</div>
+                  ) : frameEntry.error ? (
+                    <div className={styles.stateError}>{frameEntry.error}</div>
+                  ) : !frameEntry.content.trim() ? (
+                    <div className={styles.stateEmpty}>No frame content yet.</div>
+                  ) : (
+                    <FrameMarkdownViewer content={frameEntry.content} shellStyle />
                   )}
+                </NodePanel>
 
-                  {/* Spec — audit + current only, after spec confirmed */}
-                  {isCurrent && variant === 'audit' && specConfirmed ? (
-                    <NodePanel
-                      label="Spec"
-                      panelId="spec"
-                      nodeId={node.node_id}
-                      expanded={isPanelExpanded(node.node_id, 'spec', isCurrent)}
-                      onToggle={togglePanel}
-                    >
-                      {!specEntry || specEntry.isLoading ? (
-                        <div className={styles.stateLoading}>Loading…</div>
-                      ) : specEntry.error ? (
-                        <div className={styles.stateError}>{specEntry.error}</div>
-                      ) : !specEntry.content.trim() ? (
-                        <div className={styles.stateEmpty}>No spec content yet.</div>
-                      ) : (
-                        <FrameMarkdownViewer content={specEntry.content} />
-                      )}
-                    </NodePanel>
-                  ) : null}
-                </div>
-              )}
+                <NodePanel
+                  label="Clarify"
+                  panelId="clarify"
+                  nodeId={node.node_id}
+                  expanded={isPanelExpanded(node.node_id, 'clarify', isCurrent)}
+                  onToggle={togglePanel}
+                >
+                  {!clarifyEntry || clarifyEntry.isLoading ? (
+                    <div className={styles.stateLoading}>Loading...</div>
+                  ) : clarifyEntry.loadError ? (
+                    <div className={styles.stateError}>{clarifyEntry.loadError}</div>
+                  ) : (
+                    <ContextClarifyView questions={clarifyQuestions} />
+                  )}
+                </NodePanel>
+
+                {!isCurrent ? (
+                  <NodePanel
+                    label="Split"
+                    panelId="split"
+                    nodeId={node.node_id}
+                    expanded={isPanelExpanded(node.node_id, 'split', isCurrent)}
+                    onToggle={togglePanel}
+                  >
+                    <ContextSplitView node={node} nodeRegistry={nodeRegistry} currentNodeId={nodeId} />
+                  </NodePanel>
+                ) : null}
+
+                {isCurrent && variant === 'audit' && specConfirmed ? (
+                  <NodePanel
+                    label="Spec"
+                    panelId="spec"
+                    nodeId={node.node_id}
+                    expanded={isPanelExpanded(node.node_id, 'spec', isCurrent)}
+                    onToggle={togglePanel}
+                  >
+                    {!specEntry || specEntry.isLoading ? (
+                      <div className={styles.stateLoading}>Loading...</div>
+                    ) : specEntry.error ? (
+                      <div className={styles.stateError}>{specEntry.error}</div>
+                    ) : !specEntry.content.trim() ? (
+                      <div className={styles.stateEmpty}>No spec content yet.</div>
+                    ) : (
+                      <FrameMarkdownViewer content={specEntry.content} />
+                    )}
+                  </NodePanel>
+                ) : null}
+              </div>
             </div>
           )
         })}

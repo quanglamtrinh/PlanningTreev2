@@ -88,6 +88,8 @@ class _TurnState:
     stdout_parts: list[str] = field(default_factory=list)
     final_text: str | None = None
     final_plan_item: dict[str, Any] | None = None
+    review_text: str | None = None
+    review_disposition: str | None = None
     error_message: str | None = None
     turn_status: str | None = None
     thread_id: str | None = None
@@ -429,6 +431,59 @@ class StdioTransport(CodexTransport):
             output_schema=output_schema,
             initialize_session=True,
         )
+
+    def start_review_streaming(
+        self,
+        *,
+        thread_id: str,
+        target_sha: str,
+        target_title: str,
+        client_request_id: str,
+        cwd: str | None = None,
+        delivery: str | None = None,
+        timeout_sec: int = 120,
+        on_raw_event: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        if not self.is_alive():
+            raise CodexTransportNotFound("StdioTransport process is not alive")
+        self._initialize_session(timeout_sec)
+        params: dict[str, Any] = {
+            "threadId": thread_id,
+            "clientRequestId": client_request_id,
+            "cwd": cwd or None,
+            "target": {
+                "type": "commit",
+                "sha": target_sha,
+                "title": target_title,
+            },
+        }
+        if isinstance(delivery, str) and delivery.strip():
+            params["delivery"] = delivery.strip()
+        response = self._rpc("review/start", params, timeout=min(30, timeout_sec))
+        review_turn_id = self._extract_review_turn_id(response)
+        if not review_turn_id:
+            raise CodexTransportError("review/start did not return a review turn id", "rpc_error")
+        review_thread_id = self._extract_review_thread_id(response) or thread_id
+        state = self._get_turn_state(review_turn_id)
+        state.thread_id = review_thread_id
+        state.on_delta = None
+        state.on_tool_call = None
+        state.on_plan_delta = None
+        state.on_request_user_input = None
+        state.on_request_resolved = None
+        state.on_thread_status = None
+        state.on_item_event = None
+        state.on_raw_event = on_raw_event
+        state.callbacks_attached = on_raw_event is not None
+        self._replay_buffered_raw_events(state)
+        stdout, _, turn_status, _, _ = self._wait_for_turn_result(review_turn_id, timeout_sec)
+        return {
+            "review_thread_id": review_thread_id,
+            "review_turn_id": review_turn_id,
+            "review": state.review_text or stdout or state.final_text or "",
+            "review_disposition": state.review_disposition,
+            "turn_status": turn_status,
+        }
 
     def _command_args(self) -> list[str]:
         command = str(self.codex_cmd or "").strip()
@@ -896,6 +951,38 @@ class StdioTransport(CodexTransport):
             return thread_id
         raise CodexTransportError("App server did not return a thread id", "rpc_error")
 
+    def _extract_review_thread_id(self, payload: dict[str, Any]) -> str | None:
+        review = payload.get("review")
+        candidates = [
+            payload.get("reviewThreadId"),
+            payload.get("review_thread_id"),
+        ]
+        if isinstance(review, dict):
+            candidates.extend([review.get("threadId"), review.get("reviewThreadId")])
+        for value in candidates:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        try:
+            return self._extract_thread_id(payload)
+        except CodexTransportError:
+            return None
+
+    def _extract_review_turn_id(self, payload: dict[str, Any]) -> str | None:
+        review = payload.get("review")
+        turn = payload.get("turn")
+        candidates = [
+            payload.get("reviewTurnId"),
+            payload.get("review_turn_id"),
+        ]
+        if isinstance(review, dict):
+            candidates.extend([review.get("turnId"), review.get("reviewTurnId")])
+        if isinstance(turn, dict):
+            candidates.extend([turn.get("id"), turn.get("turnId")])
+        for value in candidates:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
     def _get_turn_state(self, turn_id: str) -> _TurnState:
         with self._lock:
             state = self._turn_states.get(turn_id)
@@ -1110,19 +1197,25 @@ class StdioTransport(CodexTransport):
     def _extract_notification_thread_id(self, params: dict[str, Any]) -> str | None:
         turn_payload = params.get("turn")
         item_payload = params.get("item")
+        review_payload = params.get("review")
         return (
             _extract_str(params, "threadId", "thread_id")
+            or _extract_str(params, "reviewThreadId", "review_thread_id")
             or _extract_str(turn_payload if isinstance(turn_payload, dict) else None, "threadId", "thread_id")
             or _extract_str(item_payload if isinstance(item_payload, dict) else None, "threadId", "thread_id")
+            or _extract_str(review_payload if isinstance(review_payload, dict) else None, "threadId", "reviewThreadId")
         )
 
     def _extract_notification_turn_id(self, params: dict[str, Any]) -> str | None:
         turn_payload = params.get("turn")
         item_payload = params.get("item")
+        review_payload = params.get("review")
         return (
             _extract_str(params, "turnId", "turn_id")
+            or _extract_str(params, "reviewTurnId", "review_turn_id")
             or _extract_str(turn_payload if isinstance(turn_payload, dict) else None, "id", "turnId", "turn_id")
             or _extract_str(item_payload if isinstance(item_payload, dict) else None, "turnId", "turn_id")
+            or _extract_str(review_payload if isinstance(review_payload, dict) else None, "turnId", "reviewTurnId")
         )
 
     def _extract_notification_item_id(self, params: dict[str, Any]) -> str | None:
@@ -1137,6 +1230,10 @@ class StdioTransport(CodexTransport):
             return "item/reasoning/summaryDelta"
         if method == "item/reasoning/textDelta":
             return "item/reasoning/detailDelta"
+        if method == "review/enteredReviewMode":
+            return "enteredReviewMode"
+        if method == "review/exitedReviewMode":
+            return "exitedReviewMode"
         if method == "item/reasoning/summaryPartAdded":
             logger.debug("Ignoring app-server reasoning boundary event %s", method)
             return None
@@ -1492,6 +1589,41 @@ class StdioTransport(CodexTransport):
                 self._build_raw_turn_event(method, params, thread_id=thread_id, turn_id=turn_id),
             )
             state.event.set()
+            return
+
+        if method in {"enteredReviewMode", "exitedReviewMode"}:
+            resolved = self._resolve_turn_state_for_notification(method=method, params=params)
+            if resolved is None:
+                return
+            state, thread_id, turn_id, item_id = resolved
+            review_exited_with_result = False
+            if method == "exitedReviewMode":
+                review_payload = params.get("exitedReviewMode")
+                if not isinstance(review_payload, dict):
+                    review_payload = params
+                review_text = _extract_str(review_payload, "review", "text")
+                if review_text:
+                    state.review_text = review_text
+                    if not state.final_text:
+                        state.final_text = review_text
+                disposition = _extract_str(review_payload, "disposition", "result")
+                if disposition:
+                    state.review_disposition = disposition
+                review_exited_with_result = bool(state.review_text or state.review_disposition)
+            self._record_and_dispatch_raw_event(
+                state,
+                self._build_raw_turn_event(
+                    method,
+                    params,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    item_id=item_id,
+                ),
+            )
+            if review_exited_with_result:
+                if not state.turn_status:
+                    state.turn_status = "completed"
+                state.event.set()
             return
 
         if method == "serverRequest/resolved":
@@ -2004,6 +2136,32 @@ class CodexAppClient:
             writable_roots=writable_roots,
         )
         return {"thread_id": transport._extract_thread_id(response)}
+
+    def start_review_streaming(
+        self,
+        *,
+        thread_id: str,
+        target_sha: str,
+        target_title: str,
+        client_request_id: str,
+        cwd: str | None = None,
+        delivery: str | None = None,
+        timeout_sec: int = 120,
+        on_raw_event: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        if not self.is_alive():
+            self.start()
+        transport = self._require_stdio_transport()
+        return transport.start_review_streaming(
+            thread_id=thread_id,
+            target_sha=target_sha,
+            target_title=target_title,
+            client_request_id=client_request_id,
+            cwd=cwd,
+            delivery=delivery,
+            timeout_sec=timeout_sec,
+            on_raw_event=on_raw_event,
+        )
 
     def run_turn_streaming(
         self,

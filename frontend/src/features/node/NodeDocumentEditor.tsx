@@ -1,7 +1,8 @@
-import CodeMirror from '@uiw/react-codemirror'
+﻿import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorView } from '@codemirror/view'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { FrameGenJobStatus, NodeDocumentKind, NodeRecord } from '../../api/types'
 import { api, ApiError } from '../../api/client'
 import { AgentSpinner, SPINNER_WORDS_GENERATING } from '../../components/AgentSpinner'
@@ -9,6 +10,9 @@ import { useClarifyStore } from '../../stores/clarify-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { useProjectStore } from '../../stores/project-store'
+import { useAskShellActionStore } from '../../stores/ask-shell-action-store'
+import { buildChatV2Url } from '../conversation/surfaceRouting'
+import { useWorkflowStateStoreV2 } from '../conversation/state/workflowStateStoreV2'
 import type { WorkflowTab } from './WorkflowStepper'
 import { vscodeMarkdownSyntaxHighlighting } from './codemirror/vscodeMarkdownHighlight'
 import styles from './NodeDetailCard.module.css'
@@ -75,6 +79,7 @@ export function NodeDocumentEditor({
   framePostUpdateBranch = 'none',
   onFramePostUpdateCommit,
 }: Props) {
+  const navigate = useNavigate()
   const entryKey = `${projectId}::${node.node_id}::${kind}`
   const detailStateKey = `${projectId}::${node.node_id}`
   const entry = useNodeDocumentStore((state) => state.entries[entryKey] ?? EMPTY_ENTRY)
@@ -84,17 +89,23 @@ export function NodeDocumentEditor({
   const invalidateDocument = useNodeDocumentStore((state) => state.invalidateEntry)
   const confirmFrame = useDetailStateStore((state) => state.confirmFrame)
   const confirmSpec = useDetailStateStore((state) => state.confirmSpec)
-  const finishTask = useDetailStateStore((state) => state.finishTask)
   const loadDetailState = useDetailStateStore((state) => state.loadDetailState)
   const detailState = useDetailStateStore((state) => state.entries[detailStateKey])
-  const isFinishingTask = useDetailStateStore((state) => state.finishingTask[detailStateKey] ?? false)
+  const markActionRunning = useAskShellActionStore((state) => state.markRunning)
+  const markActionSucceeded = useAskShellActionStore((state) => state.markSucceeded)
+  const markActionFailed = useAskShellActionStore((state) => state.markFailed)
   const invalidateClarify = useClarifyStore((state) => state.invalidateEntry)
+  const finishTaskWorkflowV2 = useWorkflowStateStoreV2((state) => state.finishTask)
+  const activeWorkflowMutation = useWorkflowStateStoreV2(
+    (state) => state.activeMutations[detailStateKey] ?? null,
+  )
   const [isConfirming, setIsConfirming] = useState(false)
   const [pendingAction, setPendingAction] = useState<'confirm' | 'split' | 'create_spec' | 'finish' | null>(null)
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [genStatus, setGenStatus] = useState<FrameGenJobStatus>('idle')
   const [genError, setGenError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
+  const isFinishingTask = activeWorkflowMutation === 'finish_task'
 
   const isGenerating = genStatus === 'active'
   const isInitialFrameStep = kind === 'frame' && workflowTab !== 'frame_updated'
@@ -118,9 +129,10 @@ export function NodeDocumentEditor({
     return () => {
       if (pollRef.current !== undefined) {
         globalThis.clearInterval(pollRef.current)
+        pollRef.current = undefined
       }
     }
-  }, [])
+  }, [kind, node.node_id, projectId])
 
   const refreshSnapshot = useCallback(async () => {
     const snapshot = await api.getSnapshot(projectId)
@@ -130,9 +142,14 @@ export function NodeDocumentEditor({
     }))
   }, [projectId])
 
-  const pollGenStatus = kind === 'spec'
-    ? api.getSpecGenStatus.bind(api)
-    : api.getFrameGenStatus.bind(api)
+  const pollGenStatus = useCallback(
+    (activeProjectId: string, activeNodeId: string) => (
+      kind === 'spec'
+        ? api.getSpecGenStatus(activeProjectId, activeNodeId)
+        : api.getFrameGenStatus(activeProjectId, activeNodeId)
+    ),
+    [kind],
+  )
 
   const startPolling = useCallback(() => {
     if (pollRef.current !== undefined) {
@@ -151,8 +168,21 @@ export function NodeDocumentEditor({
           setGenStatus(status.status)
           if (status.status === 'failed') {
             setGenError(status.error ?? 'Generation failed')
+            markActionFailed(
+              projectId,
+              node.node_id,
+              kind === 'spec' ? 'spec' : 'frame',
+              'generate',
+              status.error ?? 'Generation failed',
+            )
             return
           }
+          markActionSucceeded(
+            projectId,
+            node.node_id,
+            kind === 'spec' ? 'spec' : 'frame',
+            'generate',
+          )
           invalidateDocument(projectId, node.node_id, kind)
           void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
           void loadDetailState(projectId, node.node_id).catch(() => undefined)
@@ -161,7 +191,17 @@ export function NodeDocumentEditor({
           // Keep polling on transient errors.
         })
     }, 2000)
-  }, [invalidateDocument, kind, loadDetailState, loadDocument, node.node_id, pollGenStatus, projectId])
+  }, [
+    invalidateDocument,
+    kind,
+    loadDetailState,
+    loadDocument,
+    markActionFailed,
+    markActionSucceeded,
+    node.node_id,
+    pollGenStatus,
+    projectId,
+  ])
 
   useEffect(() => {
     if (kind !== 'frame' && kind !== 'spec') {
@@ -175,10 +215,23 @@ export function NodeDocumentEditor({
         }
         if (status.status === 'active') {
           setGenStatus('active')
+          markActionRunning(
+            projectId,
+            node.node_id,
+            kind === 'spec' ? 'spec' : 'frame',
+            'generate',
+          )
           startPolling()
         } else if (status.status === 'failed') {
           setGenStatus('failed')
           setGenError(status.error ?? 'Generation failed')
+          markActionFailed(
+            projectId,
+            node.node_id,
+            kind === 'spec' ? 'spec' : 'frame',
+            'generate',
+            status.error ?? 'Generation failed',
+          )
         }
       })
       .catch(() => {
@@ -187,7 +240,15 @@ export function NodeDocumentEditor({
     return () => {
       cancelled = true
     }
-  }, [kind, node.node_id, pollGenStatus, projectId, startPolling])
+  }, [
+    kind,
+    markActionFailed,
+    markActionRunning,
+    node.node_id,
+    pollGenStatus,
+    projectId,
+    startPolling,
+  ])
 
   const handleGenerateFrame = useCallback(async () => {
     setGenError(null)
@@ -199,6 +260,7 @@ export function NodeDocumentEditor({
     }
 
     setGenStatus('active')
+    markActionRunning(projectId, node.node_id, 'frame', 'generate')
     try {
       await api.generateFrame(projectId, node.node_id)
       startPolling()
@@ -208,22 +270,48 @@ export function NodeDocumentEditor({
         return
       }
       setGenStatus('failed')
-      setGenError(error instanceof Error ? error.message : 'Generate failed')
+      const message = error instanceof Error ? error.message : 'Generate failed'
+      setGenError(message)
+      markActionFailed(projectId, node.node_id, 'frame', 'generate', message)
     }
-  }, [flushDocument, kind, node.node_id, projectId, startPolling])
+  }, [
+    flushDocument,
+    kind,
+    markActionFailed,
+    markActionRunning,
+    node.node_id,
+    projectId,
+    startPolling,
+  ])
 
   const handleConfirmFrame = useCallback(async () => {
-    await flushDocument(projectId, node.node_id, 'frame')
-    const nextState = await confirmFrame(projectId, node.node_id)
-    invalidateClarify(projectId, node.node_id)
-    invalidateDocument(projectId, node.node_id, 'spec')
-    await refreshSnapshot()
-    return nextState
+    markActionRunning(projectId, node.node_id, 'frame', 'confirm')
+    try {
+      await flushDocument(projectId, node.node_id, 'frame')
+      const nextState = await confirmFrame(projectId, node.node_id)
+      invalidateClarify(projectId, node.node_id)
+      invalidateDocument(projectId, node.node_id, 'spec')
+      await refreshSnapshot()
+      markActionSucceeded(projectId, node.node_id, 'frame', 'confirm')
+      return nextState
+    } catch (error) {
+      markActionFailed(
+        projectId,
+        node.node_id,
+        'frame',
+        'confirm',
+        error instanceof Error ? error.message : 'Confirm failed',
+      )
+      throw error
+    }
   }, [
     confirmFrame,
     flushDocument,
     invalidateClarify,
     invalidateDocument,
+    markActionFailed,
+    markActionRunning,
+    markActionSucceeded,
     node.node_id,
     projectId,
     refreshSnapshot,
@@ -244,9 +332,17 @@ export function NodeDocumentEditor({
       invalidateDocument(projectId, node.node_id, 'spec')
 
       try {
+        markActionRunning(projectId, node.node_id, 'spec', 'generate')
         await api.generateSpec(projectId, node.node_id)
       } catch (error) {
         if (!(error instanceof ApiError && error.code === 'spec_generation_not_allowed')) {
+          markActionFailed(
+            projectId,
+            node.node_id,
+            'spec',
+            'generate',
+            error instanceof Error ? error.message : 'Generate spec failed',
+          )
           throw error
         }
       }
@@ -267,6 +363,8 @@ export function NodeDocumentEditor({
     handleConfirmFrame,
     invalidateDocument,
     loadDetailState,
+    markActionFailed,
+    markActionRunning,
     node.node_id,
     onWorkflowTabChange,
     onFramePostUpdateCommit,
@@ -297,21 +395,41 @@ export function NodeDocumentEditor({
 
     try {
       await flushDocument(projectId, node.node_id, 'spec')
-      await confirmSpec(projectId, node.node_id)
-      await refreshSnapshot()
-      await finishTask(projectId, node.node_id)
-
-      const finishError = useDetailStateStore.getState().errors[detailStateKey]
-      if (finishError) {
-        setConfirmError(finishError)
+      markActionRunning(projectId, node.node_id, 'spec', 'confirm')
+      try {
+        await confirmSpec(projectId, node.node_id)
+        markActionSucceeded(projectId, node.node_id, 'spec', 'confirm')
+      } catch (error) {
+        markActionFailed(
+          projectId,
+          node.node_id,
+          'spec',
+          'confirm',
+          error instanceof Error ? error.message : 'Confirm spec failed',
+        )
+        throw error
       }
+      await refreshSnapshot()
+      await finishTaskWorkflowV2(projectId, node.node_id)
+      navigate(buildChatV2Url(projectId, node.node_id, 'execution'))
     } catch (error) {
       setConfirmError(error instanceof Error ? error.message : 'Finish task failed')
     } finally {
       setPendingAction(null)
       setIsConfirming(false)
     }
-  }, [confirmSpec, detailStateKey, finishTask, flushDocument, node.node_id, projectId, refreshSnapshot])
+  }, [
+    confirmSpec,
+    finishTaskWorkflowV2,
+    flushDocument,
+    markActionFailed,
+    markActionRunning,
+    markActionSucceeded,
+    navigate,
+    node.node_id,
+    projectId,
+    refreshSnapshot,
+  ])
 
   const handleConfirm = useCallback(async () => {
     if (onConfirm !== 'workflow') {
@@ -378,19 +496,48 @@ export function NodeDocumentEditor({
     <div className={styles.documentPanel}>
       <div className={styles.documentMetaColumn}>
         <div className={styles.documentStatusRow}>
-          <span className={styles.documentFileLabel}>{kind === 'frame' ? 'frame.md' : 'spec.md'}</span>
-          <span
-            className={`${styles.documentStatusValue} ${entry.error ? styles.documentStatusError : ''}`}
-            data-testid={`document-status-${kind}`}
-            role="status"
-            aria-live="polite"
-          >
-            {isGenerating ? (
-              <AgentSpinner words={SPINNER_WORDS_GENERATING} />
-            ) : (
-              documentStatusText(entry, false)
-            )}
-          </span>
+          {/* Left cell: file icon + name */}
+          <div className={styles.documentFileLabelCell}>
+            <span className={styles.documentFileLabelIcon} aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="13" height="13">
+                <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" />
+                <path d="M10 2v4h3" />
+              </svg>
+            </span>
+            <span className={styles.documentFileLabel}>{kind === 'frame' ? 'frame.md' : 'spec.md'}</span>
+          </div>
+          {/* Middle cells: labeled metadata pairs */}
+          <div className={styles.documentMetaSections}>
+            <div className={styles.documentMetaSection}>
+              <span className={styles.documentMetaSectionLabel}>Step</span>
+              <span className={styles.documentMetaSectionValue}>
+                {kind === 'frame'
+                  ? isInitialFrameStep ? 'Initial Frame' : 'Frame Updated'
+                  : 'Spec Review'}
+              </span>
+            </div>
+            <div className={styles.documentMetaSection}>
+              <span className={styles.documentMetaSectionLabel}>Content</span>
+              <span className={styles.documentMetaSectionValue}>
+                {!entry.hasLoaded ? 'Loading\u2026' : hasContent ? 'Ready' : 'Empty'}
+              </span>
+            </div>
+          </div>
+          {/* Right cell: save status */}
+          <div className={styles.documentStatusCell}>
+            <span
+              className={`${styles.documentStatusValue} ${entry.error ? styles.documentStatusError : ''}`}
+              data-testid={`document-status-${kind}`}
+              role="status"
+              aria-live="polite"
+            >
+              {isGenerating ? (
+                <AgentSpinner words={SPINNER_WORDS_GENERATING} />
+              ) : (
+                documentStatusText(entry, false)
+              )}
+            </span>
+          </div>
         </div>
 
         {isLoadError ? (

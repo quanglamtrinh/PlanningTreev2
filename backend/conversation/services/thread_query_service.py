@@ -242,8 +242,15 @@ class ThreadQueryService:
         thread_role: ThreadRole,
         *,
         after_snapshot_version: int | None,
+        ensure_binding: bool = True,
     ) -> ThreadSnapshotV2:
-        snapshot = self.get_thread_snapshot(project_id, node_id, thread_role, publish_repairs=True)
+        snapshot = self.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=True,
+            ensure_binding=ensure_binding,
+        )
         if after_snapshot_version is not None and int(after_snapshot_version) > int(snapshot.get("snapshotVersion") or 0):
             from backend.errors.app_errors import ConversationStreamMismatch
 

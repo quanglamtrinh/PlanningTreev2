@@ -9,11 +9,13 @@ from backend.conversation.domain.types import (
     ItemPatch,
     PendingUserInputRequest,
     ThreadSnapshotV2,
+    ToolChange,
     ToolOutputFile,
     UserInputAnswer,
     copy_snapshot,
     normalize_item,
     normalize_item_status,
+    normalize_tool_change,
     normalize_tool_output_file,
     normalize_user_input_answer,
 )
@@ -324,9 +326,10 @@ def apply_raw_event(snapshot: ThreadSnapshotV2, raw_event: dict[str, Any]) -> tu
             "status": "in_progress",
             "updatedAt": str(raw_event.get("received_at") or iso_now()),
         }
-        preview_files = _extract_output_files(raw_event.get("params", {}).get("files"))
-        if preview_files:
-            patch["outputFilesAppend"] = preview_files
+        preview_changes = _extract_tool_changes(raw_event.get("params", {}).get("files"))
+        if preview_changes:
+            patch["changesAppend"] = preview_changes
+            patch["outputFilesAppend"] = _output_files_from_tool_changes(preview_changes)
         return patch_item(snapshot, str(raw_event["item_id"]), patch)
     if method == "item/tool/requestUserInput":
         return _apply_request_user_input(snapshot, raw_event)
@@ -414,6 +417,7 @@ def _apply_item_started(snapshot: ThreadSnapshotV2, raw_event: dict[str, Any]) -
                 "argumentsText": str(item.get("argumentsText") or item.get("command") or "") or None,
                 "outputText": "",
                 "outputFiles": [],
+                "changes": [],
                 "exitCode": None,
             },
         )
@@ -441,9 +445,13 @@ def _apply_item_completed(snapshot: ThreadSnapshotV2, raw_event: dict[str, Any])
         return patch_item(snapshot, item_id, patch)
     if item_type == "fileChange":
         patch = {"kind": "tool", "status": "completed", "updatedAt": now}
-        output_files = _extract_output_files(item.get("changes") or item.get("files"))
-        if output_files:
-            patch["outputFilesReplace"] = output_files
+        has_changes_key = "changes" in item
+        has_files_key = "files" in item
+        if has_changes_key or has_files_key:
+            raw_changes = item.get("changes") if has_changes_key else item.get("files")
+            normalized_changes = _extract_tool_changes(raw_changes)
+            patch["changesReplace"] = normalized_changes
+            patch["outputFilesReplace"] = _output_files_from_tool_changes(normalized_changes)
         return patch_item(snapshot, item_id, patch)
     return snapshot, []
 
@@ -621,10 +629,23 @@ def _apply_patch_to_item(item: ConversationItem, patch: dict[str, Any]) -> Conve
             updated["argumentsText"] = patch.get("argumentsText")
         if patch.get("outputTextAppend"):
             updated["outputText"] = str(updated.get("outputText") or "") + str(patch["outputTextAppend"])
-        if patch.get("outputFilesAppend"):
-            updated["outputFiles"] = list(updated.get("outputFiles") or []) + list(patch["outputFilesAppend"])
-        if "outputFilesReplace" in patch:
-            updated["outputFiles"] = list(patch.get("outputFilesReplace") or [])
+        has_current_changes = isinstance(updated.get("changes"), list)
+        current_changes = _extract_tool_changes(updated.get("changes")) if has_current_changes else []
+        if not has_current_changes:
+            current_changes = _tool_changes_from_output_files(_extract_output_files(updated.get("outputFiles")))
+
+        next_changes = current_changes
+        if "changesReplace" in patch:
+            next_changes = _extract_tool_changes(patch.get("changesReplace"))
+        elif patch.get("changesAppend"):
+            next_changes = current_changes + _extract_tool_changes(patch.get("changesAppend"))
+        elif "outputFilesReplace" in patch:
+            next_changes = _tool_changes_from_output_files(_extract_output_files(patch.get("outputFilesReplace")))
+        elif patch.get("outputFilesAppend"):
+            next_changes = current_changes + _tool_changes_from_output_files(_extract_output_files(patch.get("outputFilesAppend")))
+
+        updated["changes"] = next_changes
+        updated["outputFiles"] = _output_files_from_tool_changes(next_changes)
         if "exitCode" in patch:
             updated["exitCode"] = patch.get("exitCode")
     elif kind == "userInput":
@@ -703,6 +724,68 @@ def _extract_output_files(raw: Any) -> list[ToolOutputFile]:
         if normalized is not None:
             files.append(normalized)
     return files
+
+
+def _tool_change_kind_to_change_type(kind: str) -> str:
+    if kind == "add":
+        return "created"
+    if kind == "delete":
+        return "deleted"
+    return "updated"
+
+
+def _tool_changes_from_output_files(files: list[ToolOutputFile]) -> list[ToolChange]:
+    changes: list[ToolChange] = []
+    for file in files:
+        kind = str(file.get("kind") or "").strip().lower()
+        if kind not in {"add", "modify", "delete"}:
+            change_type = str(file.get("changeType") or "updated").strip().lower()
+            if change_type in {"created", "create", "add"}:
+                kind = "add"
+            elif change_type in {"deleted", "delete", "remove", "removed"}:
+                kind = "delete"
+            else:
+                kind = "modify"
+        changes.append(
+            {
+                "path": str(file.get("path") or ""),
+                "kind": kind,  # type: ignore[typeddict-item]
+                "diff": file.get("diff") if isinstance(file.get("diff"), str) else None,
+                "summary": file.get("summary") if isinstance(file.get("summary"), str) else None,
+            }
+        )
+    return [change for change in changes if str(change.get("path") or "").strip()]
+
+
+def _output_files_from_tool_changes(changes: list[ToolChange]) -> list[ToolOutputFile]:
+    files: list[ToolOutputFile] = []
+    for change in changes:
+        path = str(change.get("path") or "").strip()
+        if not path:
+            continue
+        kind = str(change.get("kind") or "modify").strip().lower()
+        if kind not in {"add", "modify", "delete"}:
+            kind = "modify"
+        file_entry: ToolOutputFile = {
+            "path": path,
+            "changeType": _tool_change_kind_to_change_type(kind),  # type: ignore[typeddict-item]
+            "summary": change.get("summary") if isinstance(change.get("summary"), str) else None,
+        }
+        if isinstance(change.get("diff"), str) and str(change.get("diff") or "").strip():
+            file_entry["diff"] = str(change.get("diff"))
+        files.append(file_entry)
+    return files
+
+
+def _extract_tool_changes(raw: Any) -> list[ToolChange]:
+    changes: list[ToolChange] = []
+    if not isinstance(raw, list):
+        return changes
+    for item in raw:
+        normalized = normalize_tool_change(item)
+        if normalized is not None:
+            changes.append(normalized)
+    return changes
 
 
 def _extract_terminal_interaction_text(payload: Any) -> str:

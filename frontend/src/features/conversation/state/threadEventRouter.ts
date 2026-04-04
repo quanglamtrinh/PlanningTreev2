@@ -1,4 +1,4 @@
-import type { ThreadEventV2, WorkflowEventV2 } from '../../../api/types'
+import type { ThreadEventV2, ThreadEventV3, WorkflowEventV2 } from '../../../api/types'
 
 function ensureParsedRecord(data: string): Record<string, unknown> {
   const parsed = JSON.parse(data) as unknown
@@ -14,6 +14,14 @@ export function parseThreadEventEnvelope(data: string): ThreadEventV2 {
     throw new Error('Expected a thread event envelope.')
   }
   return parsed as unknown as ThreadEventV2
+}
+
+export function parseThreadEventEnvelopeV3(data: string): ThreadEventV3 {
+  const parsed = ensureParsedRecord(data)
+  if (parsed.channel !== 'thread' || typeof parsed.type !== 'string') {
+    throw new Error('Expected a thread event envelope.')
+  }
+  return parsed as unknown as ThreadEventV3
 }
 
 export function parseWorkflowEventEnvelope(data: string): WorkflowEventV2 {

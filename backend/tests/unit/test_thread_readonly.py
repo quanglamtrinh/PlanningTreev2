@@ -122,7 +122,7 @@ def test_ask_planning_writable_before_execution(chat_service, project_id, root_n
     assert session["thread_role"] == "ask_planning"
 
 
-def test_ask_planning_readonly_after_execution(chat_service, storage, project_id, root_node_id):
+def test_ask_planning_writable_after_execution(chat_service, storage, project_id, root_node_id):
     storage.execution_state_store.write_state(
         project_id,
         root_node_id,
@@ -134,11 +134,10 @@ def test_ask_planning_readonly_after_execution(chat_service, storage, project_id
             "completed_at": None,
         },
     )
-    with pytest.raises(ThreadReadOnly, match="ask_planning"):
-        chat_service.create_message(project_id, root_node_id, "test", thread_role="ask_planning")
+    chat_service.create_message(project_id, root_node_id, "test", thread_role="ask_planning")
 
 
-def test_ask_planning_reset_readonly_after_execution(chat_service, storage, project_id, root_node_id):
+def test_ask_planning_reset_allowed_after_execution(chat_service, storage, project_id, root_node_id):
     storage.execution_state_store.write_state(
         project_id,
         root_node_id,
@@ -150,8 +149,8 @@ def test_ask_planning_reset_readonly_after_execution(chat_service, storage, proj
             "completed_at": None,
         },
     )
-    with pytest.raises(ThreadReadOnly, match="ask_planning"):
-        chat_service.reset_session(project_id, root_node_id, thread_role="ask_planning")
+    session = chat_service.reset_session(project_id, root_node_id, thread_role="ask_planning")
+    assert session["thread_role"] == "ask_planning"
 
 
 def test_audit_readonly_before_execution(chat_service, project_id, root_node_id):

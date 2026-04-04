@@ -240,11 +240,11 @@ describe('Sidebar', () => {
     fireEvent.doubleClick(screen.getByRole('button', { name: /1\.1 Completed task/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/done-node/chat?thread=ask')
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/done-node/chat-v2?thread=ask')
     })
   })
 
-  it('opens review nodes on the /chat-v2 audit surface from the sidebar tree', async () => {
+  it('routes review nodes to chat-v2 audit from the sidebar tree', async () => {
     vi.useRealTimers()
     const selectNode = vi.fn().mockResolvedValue(undefined)
     useProjectStore.setState({
@@ -264,7 +264,6 @@ describe('Sidebar', () => {
         workspace_configured: true,
         codex_available: true,
         codex_path: 'codex',
-        execution_audit_v2_enabled: true,
       },
       selectedNodeId: 'review-node',
       selectNode,
@@ -340,7 +339,7 @@ describe('Sidebar', () => {
     })
   })
 
-  it('keeps review nodes on the legacy audit surface when the V2 flag is disabled', async () => {
+  it('routes review nodes to chat-v2 audit even without legacy gate flags', async () => {
     vi.useRealTimers()
     const selectNode = vi.fn().mockResolvedValue(undefined)
     useProjectStore.setState({
@@ -360,7 +359,6 @@ describe('Sidebar', () => {
         workspace_configured: true,
         codex_available: true,
         codex_path: 'codex',
-        execution_audit_v2_enabled: false,
       },
       selectedNodeId: 'review-node',
       selectNode,
@@ -432,7 +430,7 @@ describe('Sidebar', () => {
     fireEvent.doubleClick(screen.getByRole('button', { name: /1\.R Review/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/review-node/chat?thread=audit')
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/project-1/nodes/review-node/chat-v2?thread=audit')
     })
   })
 })

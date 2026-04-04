@@ -2,6 +2,14 @@ export type NodeStatus = 'locked' | 'draft' | 'ready' | 'in_progress' | 'done'
 export type NodeKind = 'root' | 'original' | 'superseded' | 'review'
 export type WorkflowStep = 'frame' | 'clarify' | 'spec'
 export type ThreadRole = 'audit' | 'ask_planning' | 'execution'
+export type WorkflowPhase =
+  | 'idle'
+  | 'execution_running'
+  | 'execution_decision_pending'
+  | 'audit_running'
+  | 'audit_decision_pending'
+  | 'done'
+  | 'failed'
 export type ExecutionStatus = 'idle' | 'executing' | 'completed' | 'failed' | 'review_pending' | 'review_accepted'
 export type RollupStatus = 'pending' | 'ready' | 'accepted'
 export type SplitMode =
@@ -17,7 +25,19 @@ export interface BootstrapStatus {
   workspace_configured: boolean
   codex_available: boolean
   codex_path: string | null
-  execution_audit_v2_enabled?: boolean
+  ask_v3_backend_enabled?: boolean
+  ask_v3_frontend_enabled?: boolean
+}
+
+export interface AskRolloutMetricsSnapshot {
+  ask_stream_session_total: number
+  ask_stream_reconnect_total: number
+  ask_stream_error_total: number
+  ask_guard_violation_total: number
+  ask_shaping_action_total: number
+  ask_shaping_action_failed_total: number
+  ask_stream_error_rate: number
+  ask_shaping_action_failed_rate: number
 }
 
 export interface CodexAccount {
@@ -503,6 +523,15 @@ export interface ToolOutputFile {
   path: string
   changeType: 'created' | 'updated' | 'deleted'
   summary: string | null
+  kind?: 'add' | 'modify' | 'delete'
+  diff?: string | null
+}
+
+export interface ToolChange {
+  path: string
+  kind: 'add' | 'modify' | 'delete'
+  diff: string | null
+  summary: string | null
 }
 
 export interface ToolItem extends ItemBase {
@@ -514,6 +543,7 @@ export interface ToolItem extends ItemBase {
   argumentsText: string | null
   outputText: string
   outputFiles: ToolOutputFile[]
+  changes?: ToolChange[]
   exitCode: number | null
 }
 
@@ -636,6 +666,8 @@ export interface ToolPatch {
   outputTextAppend?: string
   outputFilesAppend?: ToolOutputFile[]
   outputFilesReplace?: ToolOutputFile[]
+  changesAppend?: ToolChange[]
+  changesReplace?: ToolChange[]
   exitCode?: number | null
   status?: ItemStatus
   updatedAt: string
@@ -763,6 +795,384 @@ export type ThreadEventV2 =
   | ThreadResetEventV2
   | ThreadErrorEventV2
 
+// Conversation V3 types (ask/execution/audit)
+
+export type ThreadLaneV3 = 'ask' | 'execution' | 'audit'
+export type ConversationItemKindV3 =
+  | 'message'
+  | 'reasoning'
+  | 'tool'
+  | 'explore'
+  | 'userInput'
+  | 'review'
+  | 'diff'
+  | 'status'
+  | 'error'
+
+export interface ItemBaseV3 {
+  id: string
+  kind: ConversationItemKindV3
+  threadId: string
+  turnId: string | null
+  sequence: number
+  createdAt: string
+  updatedAt: string
+  status: ItemStatus
+  source: ItemSource
+  tone: ItemTone
+  metadata: Record<string, unknown>
+}
+
+export interface ConversationMessageItemV3 extends ItemBaseV3 {
+  kind: 'message'
+  role: 'user' | 'assistant' | 'system'
+  text: string
+  format: 'markdown'
+}
+
+export interface ReasoningItemV3 extends ItemBaseV3 {
+  kind: 'reasoning'
+  summaryText: string
+  detailText: string | null
+}
+
+export interface ToolOutputFileV3 {
+  path: string
+  changeType: 'created' | 'updated' | 'deleted'
+  summary: string | null
+  kind?: 'add' | 'modify' | 'delete'
+  diff?: string | null
+}
+
+export interface ToolItemV3 extends ItemBaseV3 {
+  kind: 'tool'
+  toolType: 'commandExecution' | 'fileChange' | 'generic'
+  title: string
+  toolName: string | null
+  callId: string | null
+  argumentsText: string | null
+  outputText: string
+  outputFiles: ToolOutputFileV3[]
+  exitCode: number | null
+}
+
+export interface ExploreItemV3 extends ItemBaseV3 {
+  kind: 'explore'
+  title: string | null
+  text: string
+}
+
+export interface UserInputAnswerV3 {
+  questionId: string
+  value: string
+  label: string | null
+}
+
+export interface UserInputQuestionOptionV3 {
+  label: string
+  description: string | null
+}
+
+export interface UserInputQuestionV3 {
+  id: string
+  header: string | null
+  prompt: string
+  inputType: 'single_select' | 'multi_select' | 'text'
+  options: UserInputQuestionOptionV3[]
+}
+
+export interface UserInputItemV3 extends ItemBaseV3 {
+  kind: 'userInput'
+  requestId: string
+  title: string | null
+  questions: UserInputQuestionV3[]
+  answers: UserInputAnswerV3[]
+  requestedAt: string
+  resolvedAt: string | null
+}
+
+export interface ReviewItemV3 extends ItemBaseV3 {
+  kind: 'review'
+  title: string | null
+  text: string
+  disposition: 'approved' | 'changes_requested' | 'commented' | null
+}
+
+export interface DiffFileV3 {
+  path: string
+  changeType: 'created' | 'updated' | 'deleted'
+  summary: string | null
+  patchText: string | null
+}
+
+export interface DiffChangeV3 {
+  path: string
+  kind: 'add' | 'modify' | 'delete'
+  diff: string | null
+  summary: string | null
+}
+
+export interface DiffItemV3 extends ItemBaseV3 {
+  kind: 'diff'
+  title: string | null
+  summaryText: string | null
+  changes: DiffChangeV3[]
+  files: DiffFileV3[]
+}
+
+export interface StatusItemV3 extends ItemBaseV3 {
+  kind: 'status'
+  code: string
+  label: string
+  detail: string | null
+}
+
+export interface ErrorItemV3 extends ItemBaseV3 {
+  kind: 'error'
+  code: string
+  title: string
+  message: string
+  recoverable: boolean
+  relatedItemId: string | null
+}
+
+export type ConversationItemV3 =
+  | ConversationMessageItemV3
+  | ReasoningItemV3
+  | ToolItemV3
+  | ExploreItemV3
+  | UserInputItemV3
+  | ReviewItemV3
+  | DiffItemV3
+  | StatusItemV3
+  | ErrorItemV3
+
+export interface PendingUserInputRequestV3 {
+  requestId: string
+  itemId: string
+  threadId: string
+  turnId: string | null
+  status: 'requested' | 'answer_submitted' | 'answered' | 'stale'
+  createdAt: string
+  submittedAt: string | null
+  resolvedAt: string | null
+  answers: UserInputAnswerV3[]
+}
+
+export interface PlanReadySignalV3 {
+  planItemId: string | null
+  revision: number | null
+  ready: boolean
+  failed: boolean
+}
+
+export interface UiSignalsV3 {
+  planReady: PlanReadySignalV3
+  activeUserInputRequests: PendingUserInputRequestV3[]
+}
+
+export interface ThreadSnapshotV3 {
+  projectId: string
+  nodeId: string
+  threadId: string | null
+  lane: ThreadLaneV3
+  activeTurnId: string | null
+  processingState: ProcessingState
+  snapshotVersion: number
+  createdAt: string
+  updatedAt: string
+  items: ConversationItemV3[]
+  uiSignals: UiSignalsV3
+}
+
+export interface MessagePatchV3 {
+  kind: 'message'
+  textAppend?: string
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface ReasoningPatchV3 {
+  kind: 'reasoning'
+  summaryTextAppend?: string
+  detailTextAppend?: string
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface ToolPatchV3 {
+  kind: 'tool'
+  title?: string
+  argumentsText?: string | null
+  outputTextAppend?: string
+  outputFilesAppend?: ToolOutputFileV3[]
+  outputFilesReplace?: ToolOutputFileV3[]
+  exitCode?: number | null
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface ExplorePatchV3 {
+  kind: 'explore'
+  title?: string | null
+  textAppend?: string
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface UserInputPatchV3 {
+  kind: 'userInput'
+  answersReplace?: UserInputAnswerV3[]
+  resolvedAt?: string | null
+  status?: Extract<ItemStatus, 'requested' | 'answer_submitted' | 'answered' | 'stale'>
+  updatedAt: string
+}
+
+export interface ReviewPatchV3 {
+  kind: 'review'
+  title?: string | null
+  textAppend?: string
+  disposition?: 'approved' | 'changes_requested' | 'commented' | null
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface DiffPatchV3 {
+  kind: 'diff'
+  title?: string | null
+  summaryText?: string | null
+  changesAppend?: DiffChangeV3[]
+  changesReplace?: DiffChangeV3[]
+  filesAppend?: DiffFileV3[]
+  filesReplace?: DiffFileV3[]
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface StatusPatchV3 {
+  kind: 'status'
+  label?: string
+  detail?: string | null
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export interface ErrorPatchV3 {
+  kind: 'error'
+  message?: string
+  relatedItemId?: string | null
+  status?: ItemStatus
+  updatedAt: string
+}
+
+export type ItemPatchV3 =
+  | MessagePatchV3
+  | ReasoningPatchV3
+  | ToolPatchV3
+  | ExplorePatchV3
+  | UserInputPatchV3
+  | ReviewPatchV3
+  | DiffPatchV3
+  | StatusPatchV3
+  | ErrorPatchV3
+
+export interface ThreadEventEnvelopeBaseV3 {
+  eventId: string
+  channel: 'thread'
+  projectId: string
+  nodeId: string
+  threadRole: ThreadRole
+  occurredAt: string
+  snapshotVersion: number | null
+}
+
+export interface ThreadSnapshotEventV3 extends ThreadEventEnvelopeBaseV3 {
+  type: 'thread.snapshot.v3'
+  payload: {
+    snapshot: ThreadSnapshotV3
+  }
+}
+
+export interface ConversationItemUpsertEventV3 extends ThreadEventEnvelopeBaseV3 {
+  type: 'conversation.item.upsert.v3'
+  payload: {
+    item: ConversationItemV3
+  }
+}
+
+export interface ConversationItemPatchEventV3 extends ThreadEventEnvelopeBaseV3 {
+  type: 'conversation.item.patch.v3'
+  payload: {
+    itemId: string
+    patch: ItemPatchV3
+  }
+}
+
+export interface ThreadLifecycleEventV3 extends ThreadEventEnvelopeBaseV3 {
+  type: 'thread.lifecycle.v3'
+  payload: {
+    activeTurnId: string | null
+    processingState: ProcessingState
+    state: string | null
+    detail: string | null
+  }
+}
+
+export interface ConversationPlanReadyEventV3 extends ThreadEventEnvelopeBaseV3 {
+  type: 'conversation.ui.plan_ready.v3'
+  payload: {
+    planReady: PlanReadySignalV3
+  }
+}
+
+export interface ConversationUserInputSignalEventV3 extends ThreadEventEnvelopeBaseV3 {
+  type: 'conversation.ui.user_input.v3'
+  payload: {
+    activeUserInputRequests: PendingUserInputRequestV3[]
+  }
+}
+
+export interface ThreadErrorEventV3 extends ThreadEventEnvelopeBaseV3 {
+  type: 'thread.error.v3'
+  payload: {
+    errorItem: ErrorItemV3
+  }
+}
+
+export type ThreadEventV3 =
+  | ThreadSnapshotEventV3
+  | ConversationItemUpsertEventV3
+  | ConversationItemPatchEventV3
+  | ThreadLifecycleEventV3
+  | ConversationPlanReadyEventV3
+  | ConversationUserInputSignalEventV3
+  | ThreadErrorEventV3
+
+export type PlanActionV3 = 'implement_plan' | 'send_changes'
+
+export interface ResolveUserInputV3Response {
+  requestId: string
+  itemId: string
+  threadId: string
+  turnId: string | null
+  status: Extract<ItemStatus, 'answer_submitted'>
+  answers: UserInputAnswerV3[]
+  submittedAt: string
+}
+
+export interface PlanActionV3Response {
+  accepted: boolean
+  threadId: string | null
+  turnId: string
+  snapshotVersion?: number
+  createdItems?: ConversationItem[]
+  executionRunId?: string | null
+  workflowPhase?: WorkflowPhase | null
+  action: PlanActionV3
+  planItemId: string
+  revision: number
+}
+
 export interface WorkflowEventEnvelopeBaseV2 {
   eventId: string
   channel: 'workflow'
@@ -778,6 +1188,9 @@ export interface WorkflowUpdatedEventV2 extends WorkflowEventEnvelopeBaseV2 {
     nodeId: string
     executionState?: string | null
     reviewState?: string | null
+    workflowPhase?: WorkflowPhase | null
+    activeExecutionRunId?: string | null
+    activeReviewCycleId?: string | null
     occurredAt?: string
   }
 }
@@ -797,8 +1210,10 @@ export interface StartTurnV2Response {
   accepted: boolean
   threadId: string | null
   turnId: string
-  snapshotVersion: number
-  createdItems: ConversationItem[]
+  snapshotVersion?: number
+  createdItems?: ConversationItem[]
+  executionRunId?: string | null
+  workflowPhase?: WorkflowPhase | null
 }
 
 export interface ResolveUserInputV2Response {
@@ -814,4 +1229,59 @@ export interface ResolveUserInputV2Response {
 export interface ResetThreadV2Response {
   threadId: string | null
   snapshotVersion: number
+}
+
+export interface ResetThreadV3Response {
+  threadId: string | null
+  snapshotVersion: number
+}
+
+export interface ExecutionDecisionView {
+  status: string
+  sourceExecutionRunId: string
+  executionTurnId: string
+  candidateWorkspaceHash: string
+  summaryText: string | null
+  createdAt: string
+}
+
+export interface AuditDecisionView {
+  status: string
+  sourceReviewCycleId: string
+  reviewCommitSha: string
+  finalReviewText: string | null
+  reviewDisposition: string | null
+  createdAt: string
+}
+
+export interface NodeWorkflowView {
+  nodeId: string
+  workflowPhase: WorkflowPhase
+  askThreadId?: string | null
+  executionThreadId: string | null
+  auditLineageThreadId: string | null
+  reviewThreadId: string | null
+  activeExecutionRunId: string | null
+  latestExecutionRunId: string | null
+  activeReviewCycleId: string | null
+  latestReviewCycleId: string | null
+  currentExecutionDecision: ExecutionDecisionView | null
+  currentAuditDecision: AuditDecisionView | null
+  acceptedSha: string | null
+  runtimeBlock: Record<string, unknown> | null
+  canSendExecutionMessage: boolean
+  canReviewInAudit: boolean
+  canImproveInExecution: boolean
+  canMarkDoneFromExecution: boolean
+  canMarkDoneFromAudit: boolean
+}
+
+export interface WorkflowActionAcceptedResponse {
+  accepted: boolean
+  threadId?: string | null
+  turnId?: string | null
+  executionRunId?: string | null
+  reviewCycleId?: string | null
+  reviewThreadId?: string | null
+  workflowPhase?: WorkflowPhase | null
 }

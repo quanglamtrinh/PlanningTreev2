@@ -208,3 +208,19 @@ def test_attach_existing_project_backfills_node_folder_projection(
     assert child_dir.is_dir()
     assert (root_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == ""
     assert (child_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
+
+
+def test_bootstrap_status_exposes_core_readiness_only(storage: Storage) -> None:
+    service = ProjectService(storage)
+
+    status = service.bootstrap_status()
+
+    assert status["ready"] is True
+    assert status["workspace_configured"] is True
+    assert status["ask_v3_backend_enabled"] is True
+    assert status["ask_v3_frontend_enabled"] is True
+    assert "execution_audit_v2_enabled" not in status
+    assert "execution_audit_uiux_v3_backend_enabled" not in status
+    assert "execution_audit_uiux_v3_frontend_enabled" not in status
+    assert "execution_uiux_v3_frontend_enabled" not in status
+    assert "audit_uiux_v3_frontend_enabled" not in status
