@@ -353,24 +353,6 @@
   line-height: 1.58;
 }
 
-.inlineToggle,
-.groupToggle {
-  border: 0;
-  background: transparent;
-  color: var(--v3-accent);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 0;
-}
-
-.inlineToggle:hover,
-.groupToggle:hover {
-  color: color-mix(in srgb, var(--v3-accent) 82%, var(--v3-text-primary));
-}
-
-.inlineToggle:focus-visible,
-.groupToggle:focus-visible,
 .primaryButton:focus-visible,
 .secondaryButton:focus-visible,
 .textInput:focus-visible {
@@ -414,21 +396,6 @@
   padding: 11px 12px;
 }
 
-.commandCardHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.commandCardHeaderLeft {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 7px;
-  min-width: 0;
-}
-
 .commandCardEyebrow {
   font-size: 10px;
   font-weight: 700;
@@ -450,23 +417,60 @@
   text-transform: uppercase;
 }
 
-.commandExpandToggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
+.commandLineBarButton {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
   border: 0;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--v3-accent) 9%, transparent);
-  color: color-mix(in srgb, var(--v3-accent) 80%, var(--v3-text-primary));
-  font-size: 11px;
-  font-weight: 600;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
-  padding: 3px 9px;
 }
 
-.commandExpandToggle:hover {
-  background: color-mix(in srgb, var(--v3-accent) 14%, transparent);
+.commandLineBarButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--v3-accent) 25%, transparent);
+  outline-offset: 2px;
+}
+
+.commandLineBarTop {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.commandChevronSlot {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.commandChevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+  color: color-mix(in srgb, var(--v3-text-secondary) 62%, var(--v3-accent) 38%);
+}
+
+.commandChevronExpanded {
+  transform: rotate(180deg);
+}
+
+.toolLineMeta {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--v3-text-tertiary);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .terminalZone {
@@ -487,9 +491,9 @@
 
 .commandLineBarCollapsed {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
   min-width: 0;
   overflow: hidden;
   background: color-mix(
@@ -503,8 +507,8 @@
 .commandLineBarExpanded {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+  align-items: stretch;
+  gap: 6px;
   min-width: 0;
   background: color-mix(in srgb, var(--v3-bg-app) 82%, var(--v3-text-primary) 18%);
 }
@@ -833,16 +837,9 @@
   box-shadow: var(--v3-card-shadow);
 }
 
-.groupHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.groupCounts {
-  color: var(--v3-text-secondary);
-  font-size: 12px;
+.groupShellStream {
+  gap: 0;
+  padding: 8px 10px;
 }
 
 .groupBody {
@@ -944,7 +941,8 @@
   background: var(--v3-canvas);
 }
 
-.feedThreadChatCanvas .groupShell {
+.feedThreadChatCanvas .groupShell,
+.feedThreadChatCanvas .groupShellStream {
   background: var(--v3-canvas);
   border-color: color-mix(in srgb, var(--v3-border-strong) 45%, var(--v3-canvas));
   box-shadow: none;

@@ -15,12 +15,74 @@ const INFO_TAB_DOCS_PATHS = [
   'workflows/development-rules.md',
 ] as const
 
-function InfoPathList({ paths, 'data-testid': testId }: { paths: readonly string[]; 'data-testid'?: string }) {
+function IconInfoDoc() {
+  return (
+    <svg className={styles.infoPathIconSvg} viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path fill="currentColor" d="M4 1.75h6.93l3.82 3.82V15.25H4.75V1.75H4z" />
+      <path
+        fill="currentColor"
+        fillOpacity="0.38"
+        d="M10.93 1.75 14.75 5.57h-3.82V1.75z"
+      />
+      <rect x="5.1" y="8.05" width="7.8" height="1.1" rx="0.3" fill="#fff" fillOpacity="0.9" />
+      <rect x="5.1" y="10.25" width="7.8" height="1.1" rx="0.3" fill="#fff" fillOpacity="0.9" />
+      <rect x="5.1" y="12.45" width="4.9" height="1.1" rx="0.3" fill="#fff" fillOpacity="0.9" />
+    </svg>
+  )
+}
+
+function IconInfoSkill() {
+  return (
+    <svg className={styles.infoPathIconSvg} viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path
+        fill="currentColor"
+        d="m9 1.8 1.05 2.7 2.88.4-2.2 1.9.68 2.8L9 8.55 5.59 9.6l.68-2.8-2.2-1.9 2.88-.4L9 1.8Z"
+      />
+      <path
+        fill="currentColor"
+        fillOpacity="0.55"
+        d="m14.2 10.35.55 1.42 1.52.2-1.15 1 .35 1.48-1.27-.72-1.27.72.35-1.48-1.15-1 1.52-.2.55-1.42Z"
+      />
+      <path
+        fill="currentColor"
+        fillOpacity="0.45"
+        d="m3.35 11.5.45 1.15 1.22.18-.92.78.28 1.2-1.03-.58-1.03.58.28-1.2-.92-.78 1.22-.18.45-1.15Z"
+      />
+    </svg>
+  )
+}
+
+function InfoPathList({
+  paths,
+  variant,
+  'data-testid': testId,
+}: {
+  paths: readonly string[]
+  variant: 'docs' | 'skills'
+  'data-testid'?: string
+}) {
   return (
     <ul className={styles.infoPathList} data-testid={testId}>
       {paths.map((path) => (
         <li key={path} className={styles.infoPathItem}>
+          <span
+            className={variant === 'docs' ? styles.infoPathIconDoc : styles.infoPathIconSkill}
+            aria-hidden
+          >
+            {variant === 'docs' ? <IconInfoDoc /> : <IconInfoSkill />}
+          </span>
           <code className={styles.infoPathCode}>{path}</code>
+          <span className={styles.infoPathChevron} aria-hidden>
+            <svg viewBox="0 0 8 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path
+                d="M1.5 1.5 6.5 7l-5 5.5"
+                stroke="currentColor"
+                strokeWidth="1.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
         </li>
       ))}
     </ul>
@@ -115,7 +177,7 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeDocsSection}>
               <h2 className={styles.describeSectionTitle}>Docs</h2>
-              <InfoPathList paths={INFO_TAB_DOCS_PATHS} data-testid="info-tab-docs-paths" />
+              <InfoPathList variant="docs" paths={INFO_TAB_DOCS_PATHS} data-testid="info-tab-docs-paths" />
             </div>
           </div>
 
@@ -129,7 +191,7 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeSkillsSection}>
               <h2 className={styles.describeSectionTitle}>Skills</h2>
-              <InfoPathList paths={INFO_TAB_SKILLS_PATHS} data-testid="info-tab-skills-paths" />
+              <InfoPathList variant="skills" paths={INFO_TAB_SKILLS_PATHS} data-testid="info-tab-skills-paths" />
             </div>
           </div>
 

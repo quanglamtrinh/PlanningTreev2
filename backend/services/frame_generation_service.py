@@ -93,12 +93,10 @@ class FrameGenerationService:
 
             workspace_root = self._workspace_root_from_snapshot(snapshot)
 
-        # Ensure generation thread (outside project lock — may do network I/O)
-        thread_id = self._ensure_ask_thread(project_id, node_id, workspace_root)
-
+        # Mark active immediately so status endpoints can show progress while
+        # ask-thread lineage bootstrap is still in flight.
         job_id = new_id("fgen")
         started_at = iso_now()
-        job_key = self._job_key(project_id, node_id)
 
         with self._storage.project_lock(project_id):
             # Re-read to guard against races
@@ -117,6 +115,12 @@ class FrameGenerationService:
             gen_state["last_error"] = None
             self._save_gen_state(node_dir, gen_state)
             self._mark_live_job(project_id, node_id, job_id)
+
+        try:
+            thread_id = self._ensure_ask_thread(project_id, node_id, workspace_root)
+        except Exception as exc:
+            self._mark_job_failed(project_id, node_id, job_id, started_at, str(exc))
+            raise
 
         threading.Thread(
             target=self._run_background_generation,

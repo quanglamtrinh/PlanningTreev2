@@ -339,6 +339,27 @@ describe('NodeDetailCard', () => {
     expect(apiMock.getNodeDocument).not.toHaveBeenCalled()
   })
 
+  it('normalizes nodeMetaRow index by stripping init prefix for task nodes', () => {
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({
+          node_id: 'task-1',
+          parent_id: 'init-1',
+          node_kind: 'original',
+          title: 'Task 1',
+          hierarchical_number: '1.1',
+        })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    const card = screen.getByTestId('graph-node-detail-card')
+    expect(within(card).getByText('1')).toBeInTheDocument()
+    expect(within(card).queryByText('1.1')).not.toBeInTheDocument()
+  })
+
   it('loads frame.md on the default Frame tab', async () => {
     apiMock.getNodeDocument.mockResolvedValue({
       node_id: 'root',

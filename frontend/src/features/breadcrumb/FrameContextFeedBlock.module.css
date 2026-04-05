@@ -111,10 +111,10 @@
 /* Title — large, bold (all nodes) */
 .nodeTitle {
   font-family: var(--fc-font);
-  font-size: 19px;
+  font-size: 17px;
   font-weight: 800;
   line-height: 1.25;
-  color: var(--fc-mock-fg);
+  color: #000000a1;
   flex: 1;
   min-width: 0;
   letter-spacing: -0.02em;
@@ -234,7 +234,7 @@
 }
 
 .nodeCardBody .panelToggle {
-  padding: 20px 30px;
+  padding: 17px 25px;
 }
 
 .panelToggle:hover {
@@ -284,7 +284,7 @@
 }
 
 .nodeCardBody .panelBody:not(.framePanelBody) {
-  padding: 4px 20px 18px;
+  padding: 15px 20px 18px;
 }
 
 .nodeCardBody .panelBody.framePanelBody {
@@ -353,152 +353,86 @@
   gap: 0;
 }
 
-.docSection {
-  margin: 0;
-  padding: 0;
-}
-
-.docSectionSpaced {
-  margin-top: 28px;
-  padding-top: 28px;
-  border-top: 1px solid var(--fc-border-soft);
-}
-
-.sectionLabelRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.sectionLabelIcon {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  color: var(--fc-mock-label);
-}
-
-.sectionLabelText {
-  font-family: var(--fc-font);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--fc-mock-label);
-  line-height: 1.3;
-}
-
-.userStoryBody {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-}
-
-.storyIndex {
-  font-family: var(--fc-mono);
-  font-size: 12px;
-  font-weight: 600;
-  color: color-mix(in srgb, var(--fc-mock-label) 85%, var(--fc-mock-fg));
-  letter-spacing: 0.04em;
-  line-height: 1.5;
-  flex-shrink: 0;
-  padding-top: 2px;
-}
-
-.storyContent {
+/* Clarify Q&A blocks (flat list — no frame section labels) */
+.clarifyQaStack {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
+  gap: 20px;
 }
 
-.storyAnswer {
+.clarifyQaBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+.clarifyQaQuestion {
   font-family: var(--fc-font);
   font-size: var(--fc-size-body);
-  font-weight: var(--fc-w-body);
+  font-weight: 700;
+  color: var(--fc-mock-fg);
   line-height: var(--fc-lh-body);
-  color: color-mix(in srgb, var(--fc-mock-fg) 88%, var(--fc-mock-label));
+  letter-spacing: -0.01em;
+  display: block;
   margin: 0;
 }
 
-.requirementList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+.clarifyQaDivider {
+  height: 1px;
+  margin: 10px 0 12px;
+  border: none;
+  background: var(--fc-border-soft);
 }
 
-.requirementItem {
+.clarifyQaAnswerBox {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  margin: 0;
-  padding: 0;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  box-sizing: border-box;
 }
 
-.reqCheck {
+.clarifyQaAnswerBoxUnset {
+  background: color-mix(in srgb, var(--text-primary) 2.5%, var(--surface-container-lowest, #fff));
+  border: 1px dashed color-mix(in srgb, #3b82f6 38%, var(--fc-border-soft));
+}
+
+.clarifyQaReplyIcon {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  margin-top: 3px;
   display: flex;
   align-items: center;
   justify-content: center;
+  margin-top: 1px;
+  color: #2563eb;
 }
 
-.reqCheck svg {
+.clarifyQaReplySvg {
   width: 18px;
   height: 18px;
   display: block;
 }
 
-.requirementText {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-}
-
-.qaQuestion {
+.clarifyQaAnswerText {
   font-family: var(--fc-font);
   font-size: var(--fc-size-body);
-  font-weight: var(--fc-w-label);
+  font-weight: 400;
+  line-height: var(--fc-lh-body);
   color: var(--fc-mock-fg);
-  line-height: var(--fc-lh-body);
-  letter-spacing: -0.01em;
+  flex: 1;
+  min-width: 0;
 }
 
-.qaAnswer {
-  font-family: var(--fc-font);
-  font-size: var(--fc-size-body);
-  font-weight: var(--fc-w-body);
-  color: var(--fc-fg-muted);
-  line-height: var(--fc-lh-body);
-  padding: 5px 8px;
-  margin: 0;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-  border: 1px solid var(--fc-border-soft);
-  box-sizing: border-box;
-}
-
-.qaAnswerEmpty {
+.clarifyQaAnswerEmpty {
   font-family: var(--fc-font);
   font-size: var(--fc-size-body);
   font-weight: var(--fc-w-body);
   line-height: var(--fc-lh-body);
   color: var(--fc-fg-quiet);
   font-style: italic;
-  padding: 5px 8px;
-  margin: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: 1px dashed var(--fc-border-soft);
-  box-sizing: border-box;
 }
 
 /* ─── Child node list (Split panel) ──────────────────────────────── */

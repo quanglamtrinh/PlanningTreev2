@@ -9,7 +9,11 @@ from unittest.mock import ANY, MagicMock
 import pytest
 
 from backend.ai.codex_client import CodexTransportError
-from backend.errors.app_errors import FrameGenerationNotAllowed, NodeNotFound
+from backend.errors.app_errors import (
+    FrameGenerationBackendUnavailable,
+    FrameGenerationNotAllowed,
+    NodeNotFound,
+)
 from backend.services.frame_generation_service import FRAME_GEN_STATE_FILE, FrameGenerationService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.node_service import NodeService
@@ -204,6 +208,65 @@ def test_generate_frame_rebuilds_missing_root_audit_source_before_forking_ask(
         dynamic_tools=ANY,
         writable_roots=None,
     )
+
+
+def test_generate_frame_sets_active_status_while_ask_thread_bootstraps(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    codex_mock = _make_codex_mock()
+    fork_started = threading.Event()
+    release_fork = threading.Event()
+
+    def slow_fork(*args: Any, **kwargs: Any) -> dict[str, str]:
+        fork_started.set()
+        release_fork.wait(timeout=5)
+        return {"thread_id": "ask-thread-123"}
+
+    codex_mock.fork_thread.side_effect = slow_fork
+    service = _make_service(storage, tree_service, codex_mock)
+
+    error_box: list[Exception] = []
+
+    def invoke_generate() -> None:
+        try:
+            service.generate_frame(project_id, root_id)
+        except Exception as exc:  # pragma: no cover - asserted by test
+            error_box.append(exc)
+
+    worker = threading.Thread(target=invoke_generate, daemon=True)
+    worker.start()
+
+    assert fork_started.wait(timeout=2), "Expected ask-thread bootstrap to reach fork step."
+    status = service.get_generation_status(project_id, root_id)
+    assert status["status"] == "active"
+    assert status["job_id"] is not None
+
+    release_fork.set()
+    worker.join(timeout=5)
+    assert not error_box
+
+
+def test_generate_frame_marks_failed_when_ask_thread_bootstrap_fails(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    codex_mock = _make_codex_mock()
+    codex_mock.fork_thread.side_effect = CodexTransportError("thread bootstrap failed", "not_found")
+    service = _make_service(storage, tree_service, codex_mock)
+
+    with pytest.raises(FrameGenerationBackendUnavailable, match="thread bootstrap failed"):
+        service.generate_frame(project_id, root_id)
+
+    status = service.get_generation_status(project_id, root_id)
+    assert status["status"] == "failed"
+    assert status["error"] is not None
 
 
 def test_generate_frame_rejects_double_start(

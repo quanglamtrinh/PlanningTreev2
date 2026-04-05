@@ -49,6 +49,22 @@ function resolveRequestedDetailTab(
   return detailState?.active_step ?? 'frame'
 }
 
+function normalizeDetailNodeNumber(rawNumber: string | null | undefined, isInitNode: boolean): string | null {
+  const value = String(rawNumber ?? '').trim()
+  if (!value) {
+    return null
+  }
+  if (isInitNode) {
+    return value
+  }
+  const dotIndex = value.indexOf('.')
+  if (dotIndex <= -1 || dotIndex >= value.length - 1) {
+    return value
+  }
+  const normalized = value.slice(dotIndex + 1).trim()
+  return normalized || null
+}
+
 const FRAME_POST_UPDATE_STORAGE = 'planningtree:framePostUpdate:'
 
 function framePostUpdateStorageKey(projectId: string, nodeId: string) {
@@ -218,6 +234,11 @@ export function NodeDetailCard({
     )
   }
 
+  const displayNodeNumber = useMemo(
+    () => normalizeDetailNodeNumber(node.hierarchical_number, node.is_init_node === true),
+    [node.hierarchical_number, node.is_init_node],
+  )
+
   const breadcrumbPanelId = 'breadcrumb-node-detail-panel'
 
   const breadcrumbTabsEmbedded =
@@ -342,7 +363,7 @@ export function NodeDetailCard({
         <div className={styles.cardHeaderTop}>
           <div className={styles.nodeTitleBlock}>
             <div className={styles.nodeMetaRow}>
-              <span className={styles.nodeHier}>{node.hierarchical_number}</span>
+              {displayNodeNumber ? <span className={styles.nodeHier}>{displayNodeNumber}</span> : null}
               <NodeStatusBadge status={node.status} />
             </div>
             <h2 className={styles.nodeHeading}>{node.title}</h2>

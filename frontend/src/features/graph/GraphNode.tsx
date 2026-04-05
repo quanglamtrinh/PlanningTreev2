@@ -326,6 +326,12 @@ function GraphNodeComponent({ data }: NodeProps) {
   const descriptionText = d.node.description.trim()
   const hasDescription = descriptionText.length > 0
 
+  useEffect(() => {
+    if (!d.isInitNode && menuOpen) {
+      setMenuOpen(false)
+    }
+  }, [d.isInitNode, menuOpen])
+
   return (
     <div className={styles.wrapper}>
       <Handle
@@ -471,37 +477,39 @@ function GraphNodeComponent({ data }: NodeProps) {
         </div>
       </div>
 
-      <div className={`${styles.menuAnchor} ${CONTROL_CLASS_NAME}`} ref={menuRef}>
-        <button
-          type="button"
-          className={`${styles.badge} ${CONTROL_CLASS_NAME} ${menuOpen ? styles.badgeOpen : ''}`}
-          onClick={(event) => {
-            event.stopPropagation()
-            setMenuOpen((value) => !value)
-          }}
-          aria-label="Node actions"
-          title="Node actions"
-        >
-          <svg viewBox="0 0 20 20" className={styles.badgeIcon} aria-hidden="true">
-            <path d="M11 2 4 11h5l-1 7 8-10h-5z" fill="currentColor" />
-          </svg>
-        </button>
+      {d.isInitNode ? (
+        <div className={`${styles.menuAnchor} ${CONTROL_CLASS_NAME}`} ref={menuRef}>
+          <button
+            type="button"
+            className={`${styles.badge} ${CONTROL_CLASS_NAME} ${menuOpen ? styles.badgeOpen : ''}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              setMenuOpen((value) => !value)
+            }}
+            aria-label="Node actions"
+            title="Node actions"
+          >
+            <svg viewBox="0 0 20 20" className={styles.badgeIcon} aria-hidden="true">
+              <path d="M11 2 4 11h5l-1 7 8-10h-5z" fill="currentColor" />
+            </svg>
+          </button>
 
-        {menuOpen ? (
-          <GraphNodeActionsDropdown
-            anchorRef={menuRef}
-            nodeId={d.node.node_id}
-            isInitNode={d.isInitNode}
-            canCreateChild={d.canCreateChild}
-            canCreateTask={d.canCreateTask}
-            canSplit={d.canSplit}
-            canOpenBreadcrumb={d.canOpenBreadcrumb}
-            isSplitting={d.isSplitting}
-            isSplitDisabled={d.isSplitDisabled}
-            onClose={closeMenu}
-          />
-        ) : null}
-      </div>
+          {menuOpen ? (
+            <GraphNodeActionsDropdown
+              anchorRef={menuRef}
+              nodeId={d.node.node_id}
+              isInitNode={d.isInitNode}
+              canCreateChild={d.canCreateChild}
+              canCreateTask={d.canCreateTask}
+              canSplit={d.canSplit}
+              canOpenBreadcrumb={d.canOpenBreadcrumb}
+              isSplitting={d.isSplitting}
+              isSplitDisabled={d.isSplitDisabled}
+              onClose={closeMenu}
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       <Handle
         className={styles.handle}

@@ -80,11 +80,8 @@ function panelKey(nodeId: string, panelId: PanelId): string {
   return `${nodeId}::${panelId}`
 }
 
-function defaultExpanded(panelId: PanelId, isCurrent: boolean): boolean {
-  if (isCurrent) {
-    return panelId === 'frame'
-  }
-  return panelId === 'split'
+function defaultExpanded(_panelId: PanelId, _isCurrent: boolean): boolean {
+  return false
 }
 
 function resolveAnswer(question: ClarifyQuestion): string | null {
@@ -145,113 +142,52 @@ function Chevron({ expanded }: { expanded: boolean }) {
   )
 }
 
-function IconUsers({ className }: { className?: string }) {
+/** Reply / return curve — clarify answer row (reference UI). */
+function IconClarifyReply() {
   return (
-    <svg className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <circle cx="8" cy="5.25" r="2.75" stroke="currentColor" strokeWidth="1.25" />
-      <path
-        d="M3.25 13.25c0-2.35 2.13-4.25 4.75-4.25s4.75 1.9 4.75 4.25"
-        stroke="currentColor"
-        strokeWidth="1.25"
-        strokeLinecap="round"
-      />
+    <svg className={styles.clarifyQaReplySvg} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" />
     </svg>
   )
 }
 
-function IconClipboard({ className }: { className?: string }) {
+function ClarifyQABlock({ n, question }: { n: number; question: ClarifyQuestion }) {
+  const answer = resolveAnswer(question)
   return (
-    <svg className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <path
-        d="M5.5 2.75h5a.75.75 0 01.75.75V4H4.75V3.5a.75.75 0 01.75-.75zM4 4.75h8a1.25 1.25 0 011.25 1.25v6.5A1.25 1.25 0 0112 13.75H4A1.25 1.25 0 012.75 12.5v-6.5A1.25 1.25 0 014 4.75z"
-        stroke="currentColor"
-        strokeWidth="1.25"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <div className={styles.clarifyQaBlock}>
+      <span className={styles.clarifyQaQuestion}>
+        {n}. {question.question}
+      </span>
+      <div className={styles.clarifyQaDivider} aria-hidden />
+      {answer ? (
+        <div className={styles.clarifyQaAnswerBox}>
+          <span className={styles.clarifyQaReplyIcon} aria-hidden>
+            <IconClarifyReply />
+          </span>
+          <span className={styles.clarifyQaAnswerText}>{answer}</span>
+        </div>
+      ) : (
+        <div className={`${styles.clarifyQaAnswerBox} ${styles.clarifyQaAnswerBoxUnset}`}>
+          <span className={styles.clarifyQaAnswerEmpty}>Not answered</span>
+        </div>
+      )}
+    </div>
   )
 }
 
+/** Clarify metadata: flat numbered Q/A only (no frame-style section labels or IconUsers). */
 function ContextClarifyView({ questions }: { questions: ClarifyQuestion[] }) {
   if (questions.length === 0) {
     return <div className={styles.stateEmpty}>No clarify questions.</div>
   }
 
-  const [first, ...rest] = questions
-  const firstAnswer = resolveAnswer(first)
-
   return (
     <div className={styles.clarifyDoc}>
-      <section className={styles.docSection}>
-        <div className={styles.sectionLabelRow}>
-          <IconUsers className={styles.sectionLabelIcon} />
-          <span className={styles.sectionLabelText}>User story</span>
-        </div>
-        <div className={styles.userStoryBody}>
-          <span className={styles.storyIndex}>01</span>
-          <div className={styles.storyContent}>
-            <span className={styles.qaQuestion}>
-              1. {first.question}
-            </span>
-            {firstAnswer ? (
-              <p className={styles.storyAnswer}>{firstAnswer}</p>
-            ) : (
-              <span className={styles.qaAnswerEmpty}>Not answered</span>
-            )}
-          </div>
-        </div>
-      </section>
-
-      {rest.length > 0 ? (
-        <section className={`${styles.docSection} ${styles.docSectionSpaced}`}>
-          <div className={styles.sectionLabelRow}>
-            <IconClipboard className={styles.sectionLabelIcon} />
-            <span className={styles.sectionLabelText}>Functional requirements</span>
-          </div>
-          <ul className={styles.requirementList}>
-            {rest.map((question, index) => {
-              const answer = resolveAnswer(question)
-              const n = index + 2
-              return (
-                <li key={question.field_name} className={styles.requirementItem}>
-                  <span
-                    className={styles.reqCheck}
-                    data-checked={answer ? 'true' : 'false'}
-                    aria-hidden
-                  >
-                    {answer ? (
-                      <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="8" cy="8" r="8" fill="#059669" />
-                        <path
-                          d="M4.75 8.35 6.85 10.4 11.35 5.65"
-                          stroke="#ffffff"
-                          strokeWidth="1.35"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    ) : (
-                      <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="8" cy="8" r="7.25" stroke="#c4c4c4" strokeWidth="1.35" />
-                      </svg>
-                    )}
-                  </span>
-                  <div className={styles.requirementText}>
-                    <span className={styles.qaQuestion}>
-                      {n}. {question.question}
-                    </span>
-                    {answer ? (
-                      <span className={styles.qaAnswer}>{answer}</span>
-                    ) : (
-                      <span className={styles.qaAnswerEmpty}>Not answered</span>
-                    )}
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        </section>
-      ) : null}
+      <div className={styles.clarifyQaStack}>
+        {questions.map((question, index) => (
+          <ClarifyQABlock key={question.field_name} n={index + 1} question={question} />
+        ))}
+      </div>
     </div>
   )
 }

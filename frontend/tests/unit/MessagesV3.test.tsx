@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ThreadSnapshotV3 } from '../../src/api/types'
@@ -452,9 +452,9 @@ describe('MessagesV3', () => {
       />,
     )
 
-    expect(screen.getByText('Command')).toBeInTheDocument()
+    expect(screen.getByText('Ran')).toBeInTheDocument()
     expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Expand command details' }))
     expect(screen.getByText('src/app.ts')).toBeInTheDocument()
     expect(screen.getByTestId('conversation-v3-tool-output-tool-edit-1')).toBeInTheDocument()
   })
@@ -864,9 +864,9 @@ describe('MessagesV3', () => {
       />,
     )
 
-    expect(screen.getByText('Command')).toBeInTheDocument()
+    expect(screen.getByText('Ran')).toBeInTheDocument()
     expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Expand command details' }))
     expect(screen.getByText(/Set-Content -Path tests\/session\.test\.mjs/)).toBeInTheDocument()
   })
 
@@ -905,7 +905,7 @@ describe('MessagesV3', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Expand command details' }))
     const toolRow = screen.getByTestId('conversation-v3-item-tool')
     expect(toolRow).toHaveTextContent(/PS > powershell\.exe/i)
     expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
@@ -944,7 +944,8 @@ describe('MessagesV3', () => {
       />,
     )
 
-    expect(screen.getByText('Command')).toBeInTheDocument()
+    const toolRow = screen.getByTestId('conversation-v3-item-tool')
+    expect(within(toolRow).getByText('npm test')).toBeInTheDocument()
     expect(screen.getByTestId('conversation-v3-tool-output-tool-cmd-1')).toBeInTheDocument()
   })
 

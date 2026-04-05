@@ -702,7 +702,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 .infoPathItem {
   margin: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   padding: 10px 12px 10px 14px;
   border-radius: 0;
@@ -712,14 +712,27 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   min-width: 0;
 }
 
-.infoPathItem::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  margin-top: 6px;
-  border-radius: 0;
+.infoPathIconSvg {
+  display: block;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
-  background: color-mix(in srgb, var(--color-accent) 50%, var(--color-text-tertiary));
+}
+
+.infoPathIconDoc {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #047857;
+}
+
+.infoPathIconSkill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #0d9488;
 }
 
 .infoPathCode {
@@ -730,6 +743,22 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   line-height: 1.55;
   word-break: break-all;
   color: var(--color-text-secondary);
+}
+
+.infoPathChevron {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: color-mix(in srgb, var(--color-text-tertiary) 72%, var(--color-border-subtle));
+}
+
+.infoPathChevron svg {
+  width: 7px;
+  height: 12px;
+  display: block;
 }
 
 .shaFieldRow {
