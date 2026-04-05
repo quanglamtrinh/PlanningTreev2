@@ -308,6 +308,12 @@ export const api = {
       parent_id: parentId,
     })
   },
+  createTask(projectId: string, parentId: string, description: string): Promise<Snapshot> {
+    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes/create-task`, { method: 'POST' }, {
+      parent_id: parentId,
+      description,
+    })
+  },
   splitNode(projectId: string, nodeId: string, mode: SplitMode): Promise<SplitAcceptedResponse> {
     return jsonFetch<SplitAcceptedResponse>(
       `/v1/projects/${projectId}/nodes/${nodeId}/split`,

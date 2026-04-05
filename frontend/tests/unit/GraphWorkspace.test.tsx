@@ -12,6 +12,8 @@ const { apiMock } = vi.hoisted(() => ({
     resetProjectToRoot: vi.fn(),
     setActiveNode: vi.fn(),
     createChild: vi.fn(),
+    createTask: vi.fn(),
+    generateFrame: vi.fn(),
     splitNode: vi.fn(),
     getSplitStatus: vi.fn(),
     updateNode: vi.fn(),

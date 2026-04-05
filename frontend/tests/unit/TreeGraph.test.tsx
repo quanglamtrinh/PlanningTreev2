@@ -252,6 +252,7 @@ function renderTreeGraph(
 ) {
   const onSelectNode = options.onSelectNode ?? vi.fn(async () => undefined)
   const onCreateChild = vi.fn(async () => undefined)
+  const onCreateTask = vi.fn(async () => 'child-created')
   const onSplitNode = vi.fn(async () => undefined)
   const onOpenBreadcrumb = vi.fn(async () => undefined)
   const onResetProject = vi.fn(async () => undefined)
@@ -268,6 +269,7 @@ function renderTreeGraph(
         codexAvailable={options.codexAvailable ?? true}
         onSelectNode={onSelectNode}
         onCreateChild={onCreateChild}
+        onCreateTask={onCreateTask}
         onSplitNode={onSplitNode}
         onOpenBreadcrumb={onOpenBreadcrumb}
         onResetProject={onResetProject}
@@ -277,6 +279,7 @@ function renderTreeGraph(
   return {
     ...view,
     onCreateChild,
+    onCreateTask,
     onOpenBreadcrumb,
     onResetProject,
     onSelectNode,
@@ -461,6 +464,32 @@ describe('TreeGraph', () => {
     const rootWrapper = screen.getByTestId('rf-node-root')
     fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
     expect(screen.getByText('Open Breadcrumb').closest('button')).toBeEnabled()
+  })
+
+  it('renders init-node actions only when the node is marked as init', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({
+            node_id: 'root',
+            child_ids: [],
+            is_init_node: true,
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    const rootWrapper = screen.getByTestId('rf-node-root')
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
+
+    expect(screen.getByText('Init Docs For Project')).toBeInTheDocument()
+    expect(screen.getByText('Create A Task')).toBeInTheDocument()
+    expect(screen.queryByText('Open Breadcrumb')).not.toBeInTheDocument()
+    expect(screen.queryByText('AI Split')).not.toBeInTheDocument()
   })
 
   it('opens breadcrumb from the action menu for a done node', () => {

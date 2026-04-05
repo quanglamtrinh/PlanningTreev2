@@ -28,6 +28,11 @@ class CreateChildRequest(BaseModel):
     parent_id: str
 
 
+class CreateTaskRequest(BaseModel):
+    parent_id: str
+    description: str = Field(..., min_length=1)
+
+
 class UpdateNodeRequest(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
@@ -50,6 +55,15 @@ class UpdateClarifyRequest(BaseModel):
 @router.post("/projects/{project_id}/nodes")
 async def create_child_node(request: Request, project_id: str, body: CreateChildRequest) -> dict:
     return request.app.state.node_service.create_child(project_id, body.parent_id)
+
+
+@router.post("/projects/{project_id}/nodes/create-task")
+async def create_task_node(request: Request, project_id: str, body: CreateTaskRequest) -> dict:
+    return request.app.state.node_service.create_task(
+        project_id,
+        body.parent_id,
+        body.description,
+    )
 
 
 @router.patch("/projects/{project_id}/nodes/{node_id}")

@@ -9,9 +9,22 @@
   color: var(--text-primary);
 }
 
-/* Metadata shell (thread context): match Clarify Q/A density */
+/* Metadata shell (thread context): one label + value scale (task-shaping as source of truth) */
 .viewerShell {
   gap: 25px;
+  font-size: 13px;
+  line-height: 1.45;
+  --shell-field-label-fs: 10px;
+  --shell-field-label-fw: 700;
+  --shell-field-label-lh: 1.2;
+  --shell-field-label-track: 0.09em;
+  --shell-field-label-fg: var(--text-quaternary, var(--text-tertiary));
+  --shell-field-value-fs: 13px;
+  --shell-field-value-fw: 600;
+  --shell-field-value-lh: 1.45;
+  --shell-field-value-fg: var(--text-primary);
+  --shell-field-code-fs: 12px;
+  --shell-field-code-fw: 600;
 }
 
 /* ─── Shell: User Story / Functional Requirements / Success Criteria ─ */
@@ -36,10 +49,12 @@
 }
 
 .shellSectionTitle {
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1.3;
+  font-size: var(--shell-field-label-fs);
+  font-weight: var(--shell-field-label-fw);
+  letter-spacing: var(--shell-field-label-track);
+  text-transform: uppercase;
+  color: var(--shell-field-label-fg);
+  line-height: var(--shell-field-label-lh);
 }
 
 .shellUserStoryList {
@@ -55,13 +70,14 @@
 }
 
 .shellUserStoryIndex {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent-primary);
-  line-height: 1.45;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-label-fg);
+  line-height: var(--shell-field-value-lh);
   flex-shrink: 0;
-  min-width: 1.5em;
+  min-width: 1.75em;
+  letter-spacing: 0.02em;
 }
 
 .shellUserStoryBody {
@@ -73,28 +89,31 @@
 }
 
 .shellUserStoryTitle {
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1.4;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellUserStoryDesc {
-  font-size: 11.5px;
-  line-height: 1.45;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellStoryDescP {
   margin: 0;
-  font-size: 11.5px;
-  font-weight: 400;
-  color: var(--text-secondary);
-  line-height: 1.45;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellStoryDescStrong {
-  font-weight: 700;
-  color: var(--text-primary);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
 }
 
 .shellFrBox {
@@ -136,9 +155,11 @@
 .shellFrItemBody {
   flex: 1;
   min-width: 0;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  line-height: var(--shell-field-value-lh);
+  color: var(--shell-field-value-fg);
 }
 
 .shellFrItemP {
@@ -146,18 +167,18 @@
 }
 
 .shellFrItemStrong {
-  font-weight: 700;
-  color: var(--text-primary);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
 }
 
 .shellInlineAccent {
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--accent-primary);
-  background: transparent;
-  padding: 0;
-  border-radius: 0;
+  font-size: var(--shell-field-code-fs);
+  font-weight: var(--shell-field-code-fw);
+  color: var(--shell-field-value-fg);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  padding: 1px 4px;
+  border-radius: 4px;
 }
 
 .shellSuccessList {
@@ -196,10 +217,11 @@
 .shellSuccessCardBody {
   flex: 1;
   min-width: 0;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--text-secondary);
-  font-weight: 400;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  line-height: var(--shell-field-value-lh);
+  color: var(--shell-field-value-fg);
 }
 
 .shellSuccessItemP {
@@ -207,8 +229,8 @@
 }
 
 .shellSuccessItemStrong {
-  font-weight: 600;
-  color: var(--text-primary);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
 }
 
 .shellSectionIconMuted {
@@ -235,48 +257,53 @@
 }
 
 .shellOosDash {
-  margin-top: 5px;
+  margin-top: 4px;
   flex-shrink: 0;
   width: 1em;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--text-tertiary);
-  font-weight: 500;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  line-height: var(--shell-field-value-lh);
+  color: var(--shell-field-label-fg);
+  font-weight: var(--shell-field-value-fw);
   text-align: center;
 }
 
 .shellOosText {
   flex: 1;
   min-width: 0;
-  font-size: 11.5px;
-  line-height: 1.45;
-  font-style: italic;
-  color: var(--text-quaternary, var(--text-tertiary));
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  line-height: var(--shell-field-value-lh);
+  font-style: normal;
+  color: var(--shell-field-value-fg);
 }
 
 .shellOosMdP {
   margin-top: 5px;
-  font-size: 11.5px;
-  line-height: 1.45;
-  font-style: italic;
-  color: var(--text-quaternary, var(--text-tertiary));
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  line-height: var(--shell-field-value-lh);
+  font-style: normal;
+  color: var(--shell-field-value-fg);
 }
 
 .shellOosStrong {
-  font-style: italic;
-  font-weight: 700;
-  color: var(--text-secondary);
+  font-style: normal;
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
 }
 
 .shellOosCode {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--shell-field-code-fs);
   font-style: normal;
-  font-weight: 500;
-  color: var(--text-tertiary);
+  font-weight: var(--shell-field-code-fw);
+  color: var(--shell-field-value-fg);
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   padding: 1px 4px;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 /* Task-Shaping Fields */
@@ -304,27 +331,30 @@
 }
 
 .shellTsfLabel {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-label-fs);
+  font-weight: var(--shell-field-label-fw);
+  letter-spacing: var(--shell-field-label-track);
   text-transform: uppercase;
-  color: var(--text-quaternary, var(--text-tertiary));
-  line-height: 1.2;
+  color: var(--shell-field-label-fg);
+  line-height: var(--shell-field-label-lh);
 }
 
 .shellTsfValue {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.4;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellTsfValueEmpty {
-  font-size: 11px;
-  font-weight: 400;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: 500;
   font-style: italic;
-  color: var(--text-quaternary, var(--text-tertiary));
-  line-height: 1.4;
+  color: var(--text-secondary);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellQaItem {
@@ -334,25 +364,30 @@
 }
 
 .shellQaLabel {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-label-fs);
+  font-weight: var(--shell-field-label-fw);
+  letter-spacing: var(--shell-field-label-track);
+  text-transform: uppercase;
+  color: var(--shell-field-label-fg);
+  line-height: var(--shell-field-label-lh);
 }
 
 .shellQaValue {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellQaValue .p {
   margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellQaValue .ul,
@@ -368,10 +403,11 @@
 
 .shellQaValue .li {
   display: list-item;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
+  line-height: var(--shell-field-value-lh);
   padding: 2px 0;
   border: none;
 }
@@ -381,14 +417,17 @@
 }
 
 .shellQaValue .inlineCode {
-  font-size: 11px;
+  font-size: var(--shell-field-code-fs);
+  font-weight: var(--shell-field-code-fw);
 }
 
 .shellQaEmpty {
-  font-size: 12px;
-  color: var(--text-quaternary, var(--text-tertiary));
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: 500;
+  color: var(--text-secondary);
   font-style: italic;
-  line-height: 1.5;
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellBody {
@@ -399,10 +438,11 @@
 
 .shellBody .p {
   margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-primary);
-  font-weight: 600;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  line-height: var(--shell-field-value-lh);
+  color: var(--shell-field-value-fg);
+  font-weight: var(--shell-field-value-fw);
 }
 
 .shellBody .ul,
@@ -418,10 +458,11 @@
 
 .shellBody .li {
   display: list-item;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
+  line-height: var(--shell-field-value-lh);
   padding: 2px 0;
   border: none;
 }

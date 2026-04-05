@@ -105,3 +105,42 @@ def test_create_child_under_done_node_is_blocked(
 
     with pytest.raises(NodeCreateNotAllowed):
         node_service.create_child(project_id, root_id)
+
+
+def test_create_task_from_init_node_uses_description_and_keeps_locking_rules(
+    project_service: ProjectService,
+    node_service: NodeService,
+    workspace_root,
+) -> None:
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    first = node_service.create_task(project_id, root_id, "Build task breakdown from prompt")
+    second = node_service.create_task(project_id, root_id, "Prepare rollout checklist")
+
+    first_task_id = first["tree_state"]["active_node_id"]
+    second_task_id = second["tree_state"]["active_node_id"]
+    nodes = internal_nodes(second)
+
+    assert first_task_id != second_task_id
+    assert nodes[first_task_id]["title"] == "New Task"
+    assert nodes[first_task_id]["description"] == "Build task breakdown from prompt"
+    assert nodes[first_task_id]["status"] == "ready"
+    assert nodes[second_task_id]["description"] == "Prepare rollout checklist"
+    assert nodes[second_task_id]["status"] == "locked"
+
+
+def test_create_task_rejects_non_init_parent(
+    project_service: ProjectService,
+    node_service: NodeService,
+    workspace_root,
+) -> None:
+    snapshot = create_project(project_service, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    first = node_service.create_child(project_id, root_id)
+    child_id = first["tree_state"]["active_node_id"]
+
+    with pytest.raises(NodeCreateNotAllowed):
+        node_service.create_task(project_id, child_id, "Should fail")

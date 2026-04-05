@@ -1,6 +1,32 @@
 import type { ChangedFileRecord, DetailState, NodeRecord } from '../../api/types'
 import styles from './NodeDetailCard.module.css'
 
+const INFO_TAB_SKILLS_PATHS = [
+  'structured-output/SKILL.md',
+  'progress-updates/SKILL.md',
+  'planning/SKILL.md',
+  'tool-selection/SKILL.md',
+] as const
+
+const INFO_TAB_DOCS_PATHS = [
+  'docs/codebase-summary.md',
+  'docs/project-roadmap.md',
+  'workflows/handoff',
+  'workflows/development-rules.md',
+] as const
+
+function InfoPathList({ paths, 'data-testid': testId }: { paths: readonly string[]; 'data-testid'?: string }) {
+  return (
+    <ul className={styles.infoPathList} data-testid={testId}>
+      {paths.map((path) => (
+        <li key={path} className={styles.infoPathItem}>
+          <code className={styles.infoPathCode}>{path}</code>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 type Props = {
   node: NodeRecord
   projectId: string
@@ -46,26 +72,6 @@ function statusLabel(status: ChangedFileRecord['status']): string {
   }
 }
 
-function InfoViewToolbarIcon() {
-  return (
-    <span className={styles.documentFileLabelIcon} aria-hidden="true">
-      <svg
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        width="13"
-        height="13"
-      >
-        <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" />
-        <path d="M10 2v4h3" />
-      </svg>
-    </span>
-  )
-}
-
 export function NodeDescribePanel({
   node,
   projectId,
@@ -93,15 +99,6 @@ export function NodeDescribePanel({
 
   return (
     <div className={styles.describeDocumentRoot}>
-      <div className={styles.documentMetaColumn}>
-        <div className={styles.documentStatusRow}>
-          <div className={styles.documentFileLabelCell}>
-            <InfoViewToolbarIcon />
-            <span className={styles.documentFileLabel}>Info view</span>
-          </div>
-        </div>
-      </div>
-
       <div className={styles.describeDocumentSheet}>
         <div className={styles.describePanel}>
           <div className={styles.describeDocHero}>
@@ -118,7 +115,7 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeDocsSection}>
               <h2 className={styles.describeSectionTitle}>Docs</h2>
-              <p className={styles.changedFilesEmpty}>No linked documentation for this task yet.</p>
+              <InfoPathList paths={INFO_TAB_DOCS_PATHS} data-testid="info-tab-docs-paths" />
             </div>
           </div>
 
@@ -132,7 +129,7 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeSkillsSection}>
               <h2 className={styles.describeSectionTitle}>Skills</h2>
-              <p className={styles.changedFilesEmpty}>No skills attached.</p>
+              <InfoPathList paths={INFO_TAB_SKILLS_PATHS} data-testid="info-tab-skills-paths" />
             </div>
           </div>
 
@@ -258,16 +255,6 @@ export function NodeDescribePanel({
               </div>
             </div>
           </div>
-
-          <p className={styles.describeDocumentFooter}>
-            Task <span className={styles.describeDocumentFooterMono}>{node.node_id}</span>
-            {node.hierarchical_number ? (
-              <>
-                {' '}
-                · Outline <span className={styles.describeDocumentFooterMono}>{node.hierarchical_number}</span>
-              </>
-            ) : null}
-          </p>
         </div>
       </div>
     </div>

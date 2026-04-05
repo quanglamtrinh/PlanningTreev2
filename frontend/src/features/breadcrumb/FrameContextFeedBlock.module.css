@@ -9,6 +9,27 @@
   );
   --shell-panel-hover: color-mix(in srgb, var(--text-primary) 4%, transparent);
 
+  /* Thread context block: one type scale + field chrome (contrast-forward) */
+  --fc-font: var(--font-sans);
+  --fc-mono: var(--font-mono);
+  --fc-size-body: var(--font-size-sm);
+  --fc-size-label: 11px;
+  --fc-size-meta: 10px;
+  --fc-lh-body: 1.55;
+  --fc-lh-tight: 1.4;
+  --fc-w-body: 400;
+  --fc-w-body-strong: 500;
+  --fc-w-label: 600;
+  --fc-radius-field: var(--radius-sm);
+  --fc-fg: var(--text-primary);
+  --fc-fg-muted: var(--text-secondary);
+  --fc-fg-quiet: var(--text-tertiary);
+  --fc-border: color-mix(in srgb, var(--border-strong) 88%, var(--text-primary) 6%);
+  --fc-border-soft: color-mix(in srgb, var(--border-default) 75%, var(--text-primary) 12%);
+  --fc-surface-field: color-mix(in srgb, var(--bg-surface) 90%, var(--text-primary) 5%);
+  --fc-surface-inset: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  --fc-accent-border: color-mix(in srgb, var(--accent-primary) 45%, var(--border-strong));
+
   max-width: 860px;
   width: 100%;
   margin: 0 auto;
@@ -19,12 +40,12 @@
 
 /* ─── Eyebrow label ───────────────────────────────────────────────── */
 .eyebrow {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
+  font-family: var(--fc-mono);
+  font-size: var(--fc-size-meta);
+  font-weight: var(--fc-w-label);
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--text-quaternary, var(--text-tertiary));
+  color: var(--fc-fg-quiet);
   margin-bottom: 10px;
 }
 
@@ -57,11 +78,11 @@
 }
 
 .nodeNumber {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--fc-mono);
+  font-size: var(--fc-size-label);
+  font-weight: var(--fc-w-label);
   letter-spacing: 0.04em;
-  color: var(--text-tertiary);
+  color: var(--fc-fg-quiet);
   flex-shrink: 0;
 }
 
@@ -70,9 +91,11 @@
 }
 
 .nodeTitle {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-body);
+  font-weight: var(--fc-w-label);
+  line-height: var(--fc-lh-tight);
+  color: var(--fc-fg-muted);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -81,21 +104,21 @@
 }
 
 .nodeTitleCurrent {
-  color: var(--text-primary);
+  color: var(--fc-fg);
 }
 
 .currentBadge {
   flex-shrink: 0;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 600;
+  font-family: var(--fc-mono);
+  font-size: var(--fc-size-meta);
+  font-weight: var(--fc-w-label);
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--accent-primary) 88%, var(--text-primary));
+  color: color-mix(in srgb, var(--accent-primary) 72%, var(--fc-fg));
   border: none;
   border-radius: var(--radius-pill);
   padding: 3px 8px;
-  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
 }
 
 .actionStatusRow {
@@ -112,25 +135,28 @@
   border-radius: 999px;
   border: none;
   padding: 4px 10px;
-  font-size: 10px;
-  line-height: 1.3;
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-label);
+  font-weight: var(--fc-w-body-strong);
+  line-height: var(--fc-lh-tight);
 }
 
 .actionStatusArtifact {
-  font-family: var(--font-mono);
-  font-weight: 600;
+  font-family: var(--fc-mono);
+  font-weight: var(--fc-w-label);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  font-size: var(--fc-size-meta);
 }
 
 .actionStatusChipRunning {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--bg-surface) 70%, var(--text-primary) 5%);
+  color: var(--fc-fg-muted);
+  background: color-mix(in srgb, var(--bg-surface) 72%, var(--text-primary) 7%);
 }
 
 .actionStatusChipSuccess {
-  color: color-mix(in srgb, var(--accent-primary) 72%, var(--text-primary));
-  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+  color: color-mix(in srgb, var(--accent-primary) 58%, var(--fc-fg));
+  background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
 }
 
 .actionStatusChipError {
@@ -166,7 +192,7 @@
   background: transparent;
   cursor: pointer;
   text-align: left;
-  font-family: inherit;
+  font-family: var(--fc-font);
   transition: background 0.1s ease;
 }
 
@@ -184,7 +210,7 @@
   width: 11px;
   height: 11px;
   flex-shrink: 0;
-  color: var(--text-tertiary);
+  color: var(--fc-fg-quiet);
   transition: transform 0.14s ease;
 }
 
@@ -194,112 +220,183 @@
 
 /* ─── Panel label (Frame / Clarify / Split) ───────────────────────── */
 .panelLabel {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-tertiary);
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-label);
+  font-weight: var(--fc-w-label);
+  color: var(--fc-fg-muted);
   letter-spacing: 0.02em;
+  line-height: var(--fc-lh-tight);
 }
 
 /* ─── Panel body ──────────────────────────────────────────────────── */
 .panelBody {
-  padding: 2px 12px 14px 28px;
+  padding: 12px 14px 14px 16px;
+  margin: 0 0 2px;
+  box-sizing: border-box;
+  border-left: 2px solid var(--fc-accent-border);
+  background: var(--fc-surface-inset);
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-body);
+  line-height: var(--fc-lh-body);
+  color: var(--fc-fg);
 }
 
 /* ─── Shaping gate placeholder ────────────────────────────────────── */
 .shapingGate {
   padding: 10px 16px 12px;
-  font-size: 12px;
-  color: var(--text-quaternary, var(--text-tertiary));
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-body);
+  font-weight: var(--fc-w-body);
+  line-height: var(--fc-lh-body);
+  color: var(--fc-fg-muted);
   font-style: italic;
   border-top: none;
 }
 
 /* ─── States ───────────────────────────────────────────────────────── */
 .stateLoading {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  padding: 2px 0;
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-body);
+  font-weight: var(--fc-w-body);
+  line-height: var(--fc-lh-body);
+  color: var(--fc-fg-muted);
+  padding: 12px 14px;
+  margin: 0;
+  border-radius: var(--fc-radius-field);
+  background: var(--fc-surface-field);
+  border: 1px solid var(--fc-border-soft);
 }
 
 .stateEmpty {
-  font-size: 12px;
-  color: var(--text-quaternary, var(--text-tertiary));
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-body);
+  font-weight: var(--fc-w-body);
+  line-height: var(--fc-lh-body);
+  color: var(--fc-fg-muted);
   font-style: italic;
-  padding: 2px 0;
+  padding: 12px 14px;
+  margin: 0;
+  border-radius: var(--fc-radius-field);
+  background: var(--fc-surface-field);
+  border: 1px dashed var(--fc-border);
 }
 
 .stateError {
-  font-size: 12px;
-  color: var(--text-error, #b91c1c);
-  padding: 2px 0;
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-body);
+  font-weight: var(--fc-w-body-strong);
+  line-height: var(--fc-lh-body);
+  color: color-mix(in srgb, var(--text-error, #b91c1c) 92%, var(--fc-fg));
+  padding: 12px 14px;
+  margin: 0;
+  border-radius: var(--fc-radius-field);
+  background: color-mix(in srgb, var(--text-error, #b91c1c) 10%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--text-error, #b91c1c) 35%, var(--border-strong));
 }
 
 /* ─── Q/A list (Clarify panel) ────────────────────────────────────── */
 .qaList {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .qaItem {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--fc-radius-field);
+  background: var(--fc-surface-field);
+  border: 1px solid var(--fc-border-soft);
+  box-sizing: border-box;
 }
 
 .qaQuestion {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  line-height: 1.5;
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-body);
+  font-weight: var(--fc-w-label);
+  color: var(--fc-fg);
+  line-height: var(--fc-lh-body);
+  letter-spacing: -0.01em;
 }
 
 .qaAnswer {
-  font-size: 12px;
-  color: var(--text-primary);
-  font-weight: 600;
-  line-height: 1.5;
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-body);
+  font-weight: var(--fc-w-body);
+  color: var(--fc-fg);
+  line-height: var(--fc-lh-body);
+  padding: 10px 12px;
+  margin: 0;
+  border-radius: var(--fc-radius-field);
+  background: color-mix(in srgb, var(--accent-primary) 11%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 22%, var(--fc-border-soft));
+  border-left: 3px solid var(--fc-accent-border);
+  box-sizing: border-box;
 }
 
 .qaAnswerEmpty {
-  font-size: 12px;
-  color: var(--text-quaternary, var(--text-tertiary));
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-body);
+  font-weight: var(--fc-w-body);
+  line-height: var(--fc-lh-body);
+  color: var(--fc-fg-muted);
   font-style: italic;
+  padding: 10px 12px;
+  margin: 0;
+  border-radius: var(--fc-radius-field);
+  background: var(--fc-surface-inset);
+  border: 1px dashed var(--fc-border);
+  box-sizing: border-box;
 }
 
 /* ─── Child node list (Split panel) ──────────────────────────────── */
 .childList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .childItem {
   display: flex;
-  align-items: baseline;
-  gap: 7px;
-  padding: 2px 0;
-  border-bottom: none;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--fc-radius-field);
+  background: var(--fc-surface-field);
+  border: 1px solid var(--fc-border-soft);
+  box-sizing: border-box;
 }
 
 .childNumber {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-tertiary);
+  font-family: var(--fc-mono);
+  font-size: var(--fc-size-label);
+  font-weight: var(--fc-w-label);
+  color: color-mix(in srgb, var(--accent-primary) 55%, var(--fc-fg));
   flex-shrink: 0;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
+  line-height: var(--fc-lh-tight);
+  padding: 3px 8px;
+  margin-top: 1px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent-primary) 14%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 28%, var(--fc-border-soft));
 }
 
 .childTitle {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  line-height: 1.45;
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-body);
+  font-weight: var(--fc-w-body);
+  color: var(--fc-fg-muted);
+  line-height: var(--fc-lh-body);
+  flex: 1;
+  min-width: 0;
 }
 
 .childTitleCurrent {
-  color: var(--text-primary);
-  font-weight: 500;
+  color: var(--fc-fg);
+  font-weight: var(--fc-w-label);
 }
 
 /* ─── Footer spacer (no rule — blends into thread scroll) ─────────── */

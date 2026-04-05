@@ -10,10 +10,12 @@ from backend.services.clarify_generation_service import ClarifyGenerationService
 from backend.services.frame_generation_service import FrameGenerationService
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.node_document_service import NodeDocumentService
+from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
 from backend.services.spec_generation_service import SpecGenerationService
 from backend.services.split_service import SplitService
 from backend.services.thread_lineage_service import ThreadLineageService
+from backend.services.tree_service import TreeService
 from backend.streaming.sse_broker import ChatEventBroker
 
 
@@ -26,7 +28,13 @@ def project_id(storage, workspace_root):
 @pytest.fixture
 def root_node_id(storage, project_id):
     snap = storage.project_store.load_snapshot(project_id)
-    return snap["tree_state"]["root_node_id"]
+    init_node_id = snap["tree_state"]["root_node_id"]
+    snapshot = NodeService(storage, TreeService()).create_task(
+        project_id,
+        init_node_id,
+        "Shaping freeze task",
+    )
+    return snapshot["tree_state"]["active_node_id"]
 
 
 @pytest.fixture

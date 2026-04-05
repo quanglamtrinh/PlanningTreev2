@@ -11,6 +11,8 @@ const { apiMock } = vi.hoisted(() => ({
     resetProjectToRoot: vi.fn(),
     setActiveNode: vi.fn(),
     createChild: vi.fn(),
+    createTask: vi.fn(),
+    generateFrame: vi.fn(),
     splitNode: vi.fn(),
     getSplitStatus: vi.fn(),
     updateNode: vi.fn(),
@@ -142,6 +144,66 @@ describe('project-store', () => {
     expect(apiMock.attachProjectFolder).toHaveBeenCalledWith('C:/workspace/project-3')
     expect(state.activeProjectId).toBe('project-3')
     expect(state.snapshot?.project.id).toBe('project-3')
+  })
+
+  it('creates a task from init node and auto-starts frame generation', async () => {
+    const baseSnapshot = makeSnapshot('project-1')
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      activeProjectId: 'project-1',
+      snapshot: baseSnapshot,
+      selectedNodeId: 'root',
+    })
+
+    const taskSnapshot = {
+      ...baseSnapshot,
+      tree_state: {
+        ...baseSnapshot.tree_state,
+        active_node_id: 'task-1',
+        node_registry: [
+          {
+            ...baseSnapshot.tree_state.node_registry[0],
+            child_ids: ['task-1'],
+          },
+          {
+            node_id: 'task-1',
+            parent_id: 'root',
+            child_ids: [],
+            title: 'New Task',
+            description: 'Implement auth flow',
+            status: 'ready',
+            node_kind: 'original',
+            depth: 1,
+            display_order: 0,
+            hierarchical_number: '1.1',
+            is_superseded: false,
+            created_at: '2026-03-20T00:00:10Z',
+            workflow: {
+              frame_confirmed: false,
+              active_step: 'frame',
+              spec_confirmed: false,
+            },
+          },
+        ],
+      },
+    }
+
+    apiMock.createTask.mockResolvedValue(taskSnapshot)
+    apiMock.generateFrame.mockResolvedValue({
+      status: 'accepted',
+      job_id: 'fgen_1',
+      node_id: 'task-1',
+    })
+
+    let createdNodeId: string | null = null
+    await act(async () => {
+      createdNodeId = await useProjectStore.getState().createTask('root', 'Implement auth flow')
+    })
+
+    expect(apiMock.createTask).toHaveBeenCalledWith('project-1', 'root', 'Implement auth flow')
+    expect(apiMock.generateFrame).toHaveBeenCalledWith('project-1', 'task-1')
+    expect(createdNodeId).toBe('task-1')
+    expect(useProjectStore.getState().selectedNodeId).toBe('task-1')
   })
 
   it('flushes staged node edits through the snapshot update route', async () => {

@@ -80,7 +80,9 @@ function placeDropdownNearAnchor(anchorEl: HTMLElement, dropdownEl: HTMLElement)
 function GraphNodeActionsDropdown({
   anchorRef,
   nodeId,
+  isInitNode,
   canCreateChild,
+  canCreateTask,
   canSplit,
   canOpenBreadcrumb,
   isSplitting,
@@ -89,7 +91,9 @@ function GraphNodeActionsDropdown({
 }: {
   anchorRef: RefObject<HTMLDivElement | null>
   nodeId: string
+  isInitNode: boolean
   canCreateChild: boolean
+  canCreateTask: boolean
   canSplit: boolean
   canOpenBreadcrumb: boolean
   isSplitting: boolean
@@ -143,73 +147,105 @@ function GraphNodeActionsDropdown({
     <div ref={dropdownRef} className={`${styles.dropdown} ${CONTROL_CLASS_NAME}`}>
       <div className={styles.dropdownSection}>
         <p className={styles.dropdownLabel}>Actions</p>
-        <button
-          type="button"
-          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-          disabled={!canCreateChild}
-          onClick={() => {
-            onClose()
-            actions.createChild(nodeId)
-          }}
-        >
-          <span className={styles.menuTitle}>Create Child</span>
-          <span className={styles.menuDesc}>Append a new child node under this card.</span>
-        </button>
-        <button
-          type="button"
-          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-          disabled={!canOpenBreadcrumb}
-          onClick={() => {
-            onClose()
-            actions.openBreadcrumb(nodeId)
-          }}
-        >
-          <span className={styles.menuTitle}>Open Breadcrumb</span>
-          <span className={styles.menuDesc}>Open the breadcrumb route for this node.</span>
-        </button>
-        <button
-          type="button"
-          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-          onClick={() => {
-            onClose()
-            if (actions.graphViewRootId === nodeId) {
-              actions.setGraphViewRoot(null)
-            } else {
-              actions.setGraphViewRoot(nodeId)
-            }
-          }}
-        >
-          <span className={styles.menuTitle}>
-            {actions.graphViewRootId === nodeId ? 'Unset current root' : 'Set as current root'}
-          </span>
-          <span className={styles.menuDesc}>
-            {actions.graphViewRootId === nodeId
-              ? 'Show the full project tree again.'
-              : 'Show only this node and its descendants in the graph.'}
-          </span>
-        </button>
+        {isInitNode ? (
+          <>
+            <button
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              onClick={() => {
+                onClose()
+                actions.initDocsForProject(nodeId)
+              }}
+            >
+              <span className={styles.menuTitle}>Init Docs For Project</span>
+              <span className={styles.menuDesc}>Placeholder action. Project docs bootstrap is coming next.</span>
+            </button>
+            <button
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              disabled={!canCreateTask}
+              onClick={() => {
+                onClose()
+                actions.createTask(nodeId)
+              }}
+            >
+              <span className={styles.menuTitle}>Create A Task</span>
+              <span className={styles.menuDesc}>Describe one task, then auto-generate its frame draft.</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              disabled={!canCreateChild}
+              onClick={() => {
+                onClose()
+                actions.createChild(nodeId)
+              }}
+            >
+              <span className={styles.menuTitle}>Create Child</span>
+              <span className={styles.menuDesc}>Append a new child node under this card.</span>
+            </button>
+            <button
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              disabled={!canOpenBreadcrumb}
+              onClick={() => {
+                onClose()
+                actions.openBreadcrumb(nodeId)
+              }}
+            >
+              <span className={styles.menuTitle}>Open Breadcrumb</span>
+              <span className={styles.menuDesc}>Open the breadcrumb route for this node.</span>
+            </button>
+            <button
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              onClick={() => {
+                onClose()
+                if (actions.graphViewRootId === nodeId) {
+                  actions.setGraphViewRoot(null)
+                } else {
+                  actions.setGraphViewRoot(nodeId)
+                }
+              }}
+            >
+              <span className={styles.menuTitle}>
+                {actions.graphViewRootId === nodeId ? 'Unset current root' : 'Set as current root'}
+              </span>
+              <span className={styles.menuDesc}>
+                {actions.graphViewRootId === nodeId
+                  ? 'Show the full project tree again.'
+                  : 'Show only this node and its descendants in the graph.'}
+              </span>
+            </button>
+          </>
+        )}
       </div>
 
-      <div className={styles.dropdownSection}>
-        <p className={styles.dropdownLabel}>AI Split</p>
-        {GRAPH_SPLIT_OPTIONS.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-            disabled={!canSplit || isSplitDisabled}
-            onClick={() => {
-              onClose()
-              actions.split(nodeId, option.id)
-            }}
-          >
-            <span className={styles.menuTitle}>
-              {isSplitting ? 'Splitting...' : option.label}
-            </span>
-            <span className={styles.menuDesc}>{option.description}</span>
-          </button>
-        ))}
-      </div>
+      {!isInitNode ? (
+        <div className={styles.dropdownSection}>
+          <p className={styles.dropdownLabel}>AI Split</p>
+          {GRAPH_SPLIT_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              disabled={!canSplit || isSplitDisabled}
+              onClick={() => {
+                onClose()
+                actions.split(nodeId, option.id)
+              }}
+            >
+              <span className={styles.menuTitle}>
+                {isSplitting ? 'Splitting...' : option.label}
+              </span>
+              <span className={styles.menuDesc}>{option.description}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>,
     document.body,
   )
@@ -226,11 +262,13 @@ export type GraphNodeData = {
     is_superseded: boolean
     hierarchical_number: string
   }
+  isInitNode: boolean
   isCurrent: boolean
   isSelected: boolean
   isCollapsed: boolean
   directHiddenChildrenCount: number
   canCreateChild: boolean
+  canCreateTask: boolean
   canSplit: boolean
   canOpenBreadcrumb: boolean
   isSplitting: boolean
@@ -256,9 +294,11 @@ function graphNodePropsAreEqual(prev: NodeProps, next: NodeProps): boolean {
   return (
     a.isCurrent === b.isCurrent &&
     a.isSelected === b.isSelected &&
+    a.isInitNode === b.isInitNode &&
     a.isCollapsed === b.isCollapsed &&
     a.directHiddenChildrenCount === b.directHiddenChildrenCount &&
     a.canCreateChild === b.canCreateChild &&
+    a.canCreateTask === b.canCreateTask &&
     a.canSplit === b.canSplit &&
     a.canOpenBreadcrumb === b.canOpenBreadcrumb &&
     a.isSplitting === b.isSplitting &&
@@ -451,7 +491,9 @@ function GraphNodeComponent({ data }: NodeProps) {
           <GraphNodeActionsDropdown
             anchorRef={menuRef}
             nodeId={d.node.node_id}
+            isInitNode={d.isInitNode}
             canCreateChild={d.canCreateChild}
+            canCreateTask={d.canCreateTask}
             canSplit={d.canSplit}
             canOpenBreadcrumb={d.canOpenBreadcrumb}
             isSplitting={d.isSplitting}

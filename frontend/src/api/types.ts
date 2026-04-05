@@ -117,6 +117,7 @@ export interface NodeRecord {
   display_order: number
   hierarchical_number: string
   created_at: string
+  is_init_node?: boolean
   is_superseded: boolean
   workflow: NodeWorkflowSummary | null
   review_node_id?: string | null

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,10 @@ class FrameGenerationService:
             node = node_by_id.get(node_id)
             if node is None:
                 raise NodeNotFound(node_id)
+            if self._is_init_node(snapshot, node):
+                raise FrameGenerationNotAllowed(
+                    "Frame generation is unavailable on the init node. Create a task first."
+                )
             require_shaping_not_frozen(self._storage, project_id, node_id, "generate frame")
 
             node_dir = self._resolve_node_dir(snapshot, node_id)
@@ -226,6 +231,10 @@ class FrameGenerationService:
     ) -> None:
         with self._storage.project_lock(project_id):
             snapshot = self._storage.project_store.load_snapshot(project_id)
+            node_by_id = self._tree_service.node_index(snapshot)
+            node = node_by_id.get(node_id)
+            if node is None:
+                raise NodeNotFound(node_id)
             node_dir = self._resolve_node_dir(snapshot, node_id)
             frame_path = self._guard_artifact_write(
                 node_dir,
@@ -242,6 +251,12 @@ class FrameGenerationService:
                 meta = dict(_DEFAULT_FRAME_META)
             meta["revision"] = (meta.get("revision") or 0) + 1
             atomic_write_json(meta_path, meta)
+
+            extracted_title = self._extract_task_title(content)
+            if extracted_title and node.get("title") != extracted_title:
+                node["title"] = extracted_title
+                snapshot = self._persist_snapshot(project_id, snapshot)
+                self._sync_snapshot_tree(snapshot)
 
     # ── Thread management ──────────────────────────────────────────
 
@@ -439,6 +454,45 @@ class FrameGenerationService:
         if isinstance(workspace_root, str) and workspace_root.strip():
             return workspace_root
         return None
+
+    def _is_init_node(self, snapshot: dict[str, Any], node: dict[str, Any]) -> bool:
+        node_id = str(node.get("node_id") or "").strip()
+        if not node_id:
+            return False
+        root_node_id = str(snapshot.get("tree_state", {}).get("root_node_id") or "").strip()
+        if root_node_id and node_id == root_node_id:
+            return True
+        return str(node.get("node_kind") or "").strip() == "root"
+
+    def _extract_task_title(self, markdown_content: str) -> str | None:
+        pattern = r"^#\s+Task\s+Title\s*$"
+        lines = markdown_content.split("\n")
+        for i, line in enumerate(lines):
+            if re.match(pattern, line.strip(), re.IGNORECASE):
+                for j in range(i + 1, len(lines)):
+                    candidate = lines[j].strip()
+                    if candidate.startswith("#"):
+                        break
+                    if candidate:
+                        return candidate
+                break
+        return None
+
+    def _persist_snapshot(self, project_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+        snapshot["updated_at"] = iso_now()
+        self._storage.project_store.save_snapshot(project_id, snapshot)
+        meta = self._storage.project_store.touch_meta(project_id, snapshot["updated_at"])
+        snapshot["project"] = meta
+        return snapshot
+
+    def _sync_snapshot_tree(self, snapshot: dict[str, Any]) -> None:
+        project = snapshot.get("project", {})
+        if not isinstance(project, dict):
+            return
+        project_path = str(project.get("project_path") or "").strip()
+        if not project_path:
+            return
+        planningtree_workspace.sync_snapshot_tree(Path(project_path), snapshot)
 
     def _guard_artifact_write(self, node_dir: Path, target_path: Path) -> Path:
         try:

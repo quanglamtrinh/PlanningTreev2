@@ -17,6 +17,7 @@ export function GraphWorkspace() {
     resetProjectToRoot,
     selectNode,
     createChild,
+    createTask,
     splitNode,
     hasInitialized,
     isInitializing,
@@ -37,6 +38,7 @@ export function GraphWorkspace() {
       resetProjectToRoot: state.resetProjectToRoot,
       selectNode: state.selectNode,
       createChild: state.createChild,
+      createTask: state.createTask,
       splitNode: state.splitNode,
       hasInitialized: state.hasInitialized,
       isInitializing: state.isInitializing,
@@ -86,6 +88,14 @@ export function GraphWorkspace() {
       await createChild(parentId)
     } catch {
       return
+    }
+  }
+
+  async function handleCreateTask(parentId: string, description: string) {
+    try {
+      return await createTask(parentId, description)
+    } catch {
+      return null
     }
   }
 
@@ -177,6 +187,7 @@ export function GraphWorkspace() {
               codexAvailable={bootstrap?.codex_available ?? false}
               onSelectNode={handleSelectNode}
               onCreateChild={handleCreateChild}
+              onCreateTask={handleCreateTask}
               onSplitNode={handleSplitNode}
               onOpenBreadcrumb={handleOpenBreadcrumb}
               onResetProject={handleResetProject}
