@@ -1298,12 +1298,15 @@ export function MessagesV3({
   onPlanAction,
   lastCompletedAt,
   lastDurationMs,
+  threadChatFlatCanvas = false,
 }: {
   snapshot: ThreadSnapshotV3 | null
   isLoading: boolean
   isSending?: boolean
   prefix?: ReactNode
   suffix?: ReactNode
+  /** Breadcrumb thread: one #fcf9f7 canvas (no gray “cards” in the scroll area). */
+  threadChatFlatCanvas?: boolean
   onResolveUserInput: (requestId: string, answers: UserInputAnswerV3[]) => Promise<void> | void
   onPlanAction?: (
     action: PlanActionV3,
@@ -1696,7 +1699,7 @@ export function MessagesV3({
   return (
     <div
       ref={containerRef}
-      className={styles.feed}
+      className={`${styles.feed} ${threadChatFlatCanvas ? styles.feedThreadChatCanvas : ''}`}
       data-testid="messages-v3-feed"
       onScroll={updateAutoScroll}
     >

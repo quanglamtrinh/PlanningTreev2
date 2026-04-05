@@ -4,8 +4,6 @@
   flex-direction: column;
   overflow: hidden;
   padding: 14px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-xl);
   background: color-mix(in srgb, var(--color-bg-panel) 97%, transparent);
   box-shadow: var(--shadow-float);
   backdrop-filter: blur(12px);
@@ -18,7 +16,12 @@
 
 .cardBreadcrumb {
   width: 100%;
-  background: color-mix(in srgb, var(--color-bg-panel) 98%, transparent);
+  background: #f6f3f1;
+}
+
+section[data-variant='breadcrumb'] .cardHeader {
+  background: #f6f3f1;
+  backdrop-filter: none;
 }
 
 .cardHeader {
@@ -179,7 +182,7 @@
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
-/* Segmented tabs: no inner frame — parent .documentStatusRow is the only border */
+/* Underline-tab strip: transparent, flush with parent — matches screenshot nav */
 .breadcrumbDetailTablistEmbedded {
   padding: 0;
   margin: 0;
@@ -197,18 +200,22 @@
 }
 
 .breadcrumbDetailTablistEmbedded .breadcrumbDetailTab {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
   justify-content: center;
-  padding: 6px 8px;
-  font-size: 10px;
-  font-weight: 600;
+  padding: 0 14px;
+  height: 100%;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   border-radius: 0;
   border: none;
-  border-right: 1px solid var(--color-border-subtle);
+  border-bottom: 2px solid transparent;
   background: transparent;
   box-shadow: none;
-  color: var(--color-text-secondary);
+  color: var(--text-tertiary, var(--color-text-secondary));
+  transition: color 0.12s ease, border-color 0.12s ease;
 }
 
 .breadcrumbDetailTablistEmbedded .breadcrumbDetailTab:last-child {
@@ -216,16 +223,17 @@
 }
 
 .breadcrumbDetailTablistEmbedded .breadcrumbDetailTab:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-text-primary) 7%, var(--color-bg-panel-alt));
-  color: var(--color-text-primary);
+  background: transparent;
+  color: var(--text-secondary, var(--color-text-primary));
 }
 
 .breadcrumbDetailTablistEmbedded .breadcrumbDetailTabActive {
-  color: var(--color-text-primary);
-  background: var(--color-bg-panel);
+  color: var(--accent-primary, var(--color-accent));
+  background: transparent;
   font-weight: 700;
   box-shadow: none;
-  border-color: var(--color-border-subtle);
+  border-color: transparent;
+  border-bottom-color: var(--accent-primary, var(--color-accent));
 }
 
 .breadcrumbDetailTab {
@@ -644,6 +652,10 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   --editor-vscode-button-hover: var(--color-accent-hover);
   --editor-vscode-button-secondary: var(--chip-bg);
   --editor-vscode-button-secondary-hover: color-mix(in srgb, var(--color-text-primary) 10%, var(--chip-bg));
+  /* Spec-style markdown: readable monospace for long-form text (mockup-style vs dense UI mono) */
+  --font-markdown-editor:
+    'Source Code Pro', ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -654,22 +666,22 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 /* Syntax token classes — colors from tokens.css (--syntax-*) */
 .documentPanel :global(.pt-sx-md-h1) {
   color: var(--syntax-md-h1);
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .documentPanel :global(.pt-sx-md-h2) {
   color: var(--syntax-md-h2);
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .documentPanel :global(.pt-sx-md-h3) {
   color: var(--syntax-md-h3);
-  font-weight: 650;
+  font-weight: 700;
 }
 
 .documentPanel :global(.pt-sx-md-h4) {
   color: var(--syntax-md-h4);
-  font-weight: 650;
+  font-weight: 700;
 }
 
 .documentPanel :global(.pt-sx-md-h5) {
@@ -689,7 +701,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 
 .documentPanel :global(.pt-sx-strong) {
   color: var(--syntax-strong);
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .documentPanel :global(.pt-sx-em) {
@@ -870,11 +882,17 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 6%, transparent);
 }
 
-/* Tab strip fills this row edge-to-edge — avoids nested box inside .documentStatusRow */
+/* Tab strip fills this row edge-to-edge — transparent underline nav */
 .documentStatusRowEmbedTabs {
-  padding: 0;
+  padding: 0 4px;
   overflow: hidden;
   align-items: stretch;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle, var(--color-border-subtle));
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 38px;
 }
 
 .documentStatusRowEmbedTabs > * {
@@ -986,7 +1004,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 .editorSurface {
   flex: 1;
   min-height: 0;
-  /* overflow:hidden here clips the line-number gutter; scroll + clip live in .cm-scroller */
+  /* overflow:visible avoids clipping the line-number gutter; scroll lives in .cm-scroller */
   overflow: visible;
   display: flex;
   flex-direction: column;
@@ -994,8 +1012,72 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   border-radius: var(--radius-md);
   background: var(--editor-vscode-bg);
   box-sizing: border-box;
-  padding: 6px 8px 6px 12px;
+  padding: 0;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+}
+
+.editorSurfaceHeader {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid var(--editor-vscode-border);
+  background: color-mix(in srgb, var(--editor-vscode-bg) 72%, var(--color-text-primary) 5%);
+  box-sizing: border-box;
+}
+
+.editorSurfaceTitle {
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--editor-vscode-text) 58%, var(--color-text-tertiary));
+  line-height: 1.2;
+  user-select: none;
+}
+
+.editorSurfaceHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.editorSurfaceHeaderIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: color-mix(in srgb, var(--editor-vscode-text) 52%, var(--color-text-tertiary));
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.editorSurfaceHeaderIcon:hover {
+  background: color-mix(in srgb, var(--editor-vscode-text) 8%, transparent);
+  color: var(--editor-vscode-text);
+}
+
+.editorSurfaceBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px 6px 12px;
+  background: var(--editor-vscode-bg);
+  box-sizing: border-box;
 }
 
 /* @uiw/react-codemirror root — must fill .editorSurface or height:100% chain breaks */
@@ -1032,9 +1114,13 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 /* Only the text document should shrink in flex layouts — gutters must not get min-height:0 */
 .editorSurface :global(.cm-content) {
   min-height: 0 !important;
-  font-family: var(--font-mono);
+  font-family: var(--font-markdown-editor);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
+  font-weight: 500;
+  font-variant-ligatures: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .editorSurface :global(.cm-gutters) {
@@ -1046,6 +1132,9 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   background: var(--editor-vscode-bg);
   color: var(--editor-vscode-gutter);
   box-shadow: 1px 0 0 var(--editor-vscode-border);
+  font-family: var(--font-markdown-editor);
+  font-weight: 500;
+  font-variant-ligatures: none;
 }
 
 /* Soft-wrap long lines (frame.md / spec.md) so code blocks stay within the panel */
@@ -1074,6 +1163,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 
 .editorSurface :global(.cm-lineNumbers .cm-gutterElement) {
   color: var(--editor-vscode-gutter);
+  font-weight: 500;
 }
 
 .tabConfirmRow {
@@ -1340,6 +1430,7 @@ section[data-variant='breadcrumb'] .cardBody {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  background: #f6f3f1;
 }
 
 section[data-variant='breadcrumb'] .cardBodyAux {
@@ -1348,11 +1439,14 @@ section[data-variant='breadcrumb'] .cardBodyAux {
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
+  padding-top: 6px;
 }
 
 section[data-variant='breadcrumb'] .documentTabStack {
   flex: 1;
   min-height: 0;
+  gap: 10px;
+  padding-top: 6px;
   overflow-x: visible;
   overflow-y: hidden;
 }
@@ -1360,13 +1454,97 @@ section[data-variant='breadcrumb'] .documentTabStack {
 section[data-variant='breadcrumb'] .documentPanel {
   flex: 1;
   min-height: 0;
+  gap: 10px;
+  --editor-vscode-bg: var(--bg-surface, var(--surface-container-lowest, #ffffff));
+  --editor-vscode-panel: var(--bg-subtle, var(--surface-container-low));
+  --editor-vscode-border: var(--border-default, var(--color-border));
+  --editor-vscode-active: color-mix(in srgb, var(--accent-soft) 26%, transparent);
+  --editor-vscode-selection: color-mix(in srgb, var(--accent-primary) 18%, var(--bg-surface));
+}
+
+section[data-variant='breadcrumb'] .documentStatusRow {
+  min-height: 34px;
+  padding: 0 8px;
+  border-color: var(--border-default, var(--color-border));
+  background: var(--bg-subtle, var(--surface-container-low));
+  box-shadow: none;
+}
+
+section[data-variant='breadcrumb'] .documentPanel :global(.pt-sx-md-h1) {
+  color: color-mix(in srgb, var(--accent-primary) 84%, #6f3b20);
+}
+
+section[data-variant='breadcrumb'] .documentPanel :global(.pt-sx-md-h2) {
+  color: color-mix(in srgb, var(--text-primary) 88%, #16181a);
+}
+
+section[data-variant='breadcrumb'] .documentPanel :global(.pt-sx-md-h3) {
+  color: color-mix(in srgb, var(--text-primary) 84%, #16181a);
 }
 
 section[data-variant='breadcrumb'] .editorSurface {
+  margin-top: 15px;
   flex: 1;
   min-height: 0;
+  border: none;
+  background: var(--editor-vscode-bg);
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--outline, var(--color-text-primary)) 6%, transparent);
+}
+
+section[data-variant='breadcrumb'] .editorSurfaceHeader {
+  border: none;
+  min-height: 38px;
+  padding: 0 12px 0 14px;
+  background: color-mix(in srgb, var(--bg-subtle, var(--surface-container-low)) 92%, var(--text-primary) 4%);
+}
+
+section[data-variant='breadcrumb'] .editorSurfaceTitle {
+  color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-tertiary));
+}
+
+section[data-variant='breadcrumb'] .editorSurfaceHeaderIcon {
+  color: color-mix(in srgb, var(--text-secondary) 72%, var(--text-tertiary));
+}
+
+section[data-variant='breadcrumb'] .editorSurfaceHeaderIcon:hover {
+  color: var(--text-primary);
+}
+
+section[data-variant='breadcrumb'] .editorSurfaceBody {
+  padding: 12px 14px;
+}
+
+section[data-variant='breadcrumb'] .editorSurface :global(.cm-gutters) {
+  display: none;
 }
 
 section[data-variant='breadcrumb'] .editorSurface :global(.cm-content) {
   min-height: 0;
+  font-family: var(--font-markdown-editor);
+  font-size: 12.5px;
+  line-height: 1.78;
+  font-weight: 500;
+}
+
+section[data-variant='breadcrumb'] .editorSurface :global(.cm-line) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding-top: 1px;
+  padding-bottom: 1px;
+  border-radius: 6px;
+}
+
+section[data-variant='breadcrumb'] .editorSurface :global(.cm-activeLine),
+section[data-variant='breadcrumb'] .editorSurface :global(.cm-activeLineGutter) {
+  background: color-mix(in srgb, var(--editor-vscode-active) 45%, transparent);
+}
+
+/* Fenced-code feel like metadata shell blocks: subtle gray box + warm left rail */
+section[data-variant='breadcrumb'] .editorSurface :global(.cm-line:has(.pt-sx-code)) {
+  margin: 1px 0;
+  padding: 4px 10px;
+  border-left: 3px solid color-mix(in srgb, var(--accent-primary) 74%, #6a3a1f);
+  background: color-mix(in srgb, var(--bg-subtle) 88%, var(--bg-surface));
 }

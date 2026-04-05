@@ -1,4 +1,4 @@
-﻿import CodeMirror from '@uiw/react-codemirror'
+import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorView } from '@codemirror/view'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -92,7 +92,26 @@ export function NodeDocumentEditor({
   const [genStatus, setGenStatus] = useState<FrameGenJobStatus>('idle')
   const [genError, setGenError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
+  const editorSurfaceRef = useRef<HTMLDivElement>(null)
   const isFinishingTask = activeWorkflowMutation === 'finish_task'
+
+  const handleCopyDocument = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(entry.content)
+    } catch {
+      /* clipboard may be unavailable */
+    }
+  }, [entry.content])
+
+  const handleEditorFullscreen = useCallback(() => {
+    const el = editorSurfaceRef.current
+    if (!el) return
+    if (document.fullscreenElement === el) {
+      void document.exitFullscreen()
+    } else {
+      void el.requestFullscreen().catch(() => undefined)
+    }
+  }, [])
 
   const isGenerating = genStatus === 'active'
   const isInitialFrameStep = kind === 'frame' && workflowTab !== 'frame_updated'
@@ -540,27 +559,78 @@ export function NodeDocumentEditor({
       </div>
 
       <div
+        ref={editorSurfaceRef}
         className={styles.editorSurface}
         aria-busy={Boolean(entry.isLoading && !entry.hasLoaded)}
       >
-        <CodeMirror
-          className={styles.codemirrorHost}
-          value={entry.content}
-          height="100%"
-          theme="none"
-          extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
-          basicSetup={{
-            foldGutter: false,
-            lineNumbers: true,
-          }}
-          editable={!isReadOnly}
-          onChange={(value) => {
-            updateDraft(projectId, node.node_id, kind, value)
-          }}
-          onBlur={() => {
-            void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
-          }}
-        />
+        <div className={styles.editorSurfaceHeader}>
+          <span className={styles.editorSurfaceTitle}>Markdown editor</span>
+          <div className={styles.editorSurfaceHeaderActions}>
+            <button
+              type="button"
+              className={styles.editorSurfaceHeaderIcon}
+              onClick={() => {
+                void handleCopyDocument()
+              }}
+              aria-label="Copy document to clipboard"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                width="16"
+                height="16"
+                aria-hidden="true"
+              >
+                <rect x="5.5" y="5.5" width="8" height="8" rx="1" />
+                <path d="M3.5 10.5h-1a1 1 0 01-1-1v-7a1 1 0 011-1h7a1 1 0 011 1v1" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={styles.editorSurfaceHeaderIcon}
+              onClick={handleEditorFullscreen}
+              aria-label="Toggle fullscreen editor"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                width="16"
+                height="16"
+                aria-hidden="true"
+              >
+                <path d="M10 2h4v4M6 2H2v4M2 10v4h4M10 14h4v-4" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div className={styles.editorSurfaceBody}>
+          <CodeMirror
+            className={styles.codemirrorHost}
+            value={entry.content}
+            height="100%"
+            theme="none"
+            extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
+            basicSetup={{
+              foldGutter: false,
+              lineNumbers: true,
+            }}
+            editable={!isReadOnly}
+            onChange={(value) => {
+              updateDraft(projectId, node.node_id, kind, value)
+            }}
+            onBlur={() => {
+              void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
+            }}
+          />
+        </div>
       </div>
 
       {!readOnly ? (

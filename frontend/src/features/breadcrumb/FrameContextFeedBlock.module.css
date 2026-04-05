@@ -1,10 +1,20 @@
 /* ─── Outer wrapper (match MessagesV3 .row: max-width + horizontal inset) ─ */
 .feedBlock {
+  --shell-card-radius: 14px;
+  /* On flat thread canvas, cards use same fill as the scroll area (see --thread-chat-canvas) */
+  --shell-card-bg: var(--thread-chat-canvas, color-mix(in srgb, var(--bg-surface) 82%, var(--bg-app) 18%));
+  --shell-card-bg-current: var(
+    --thread-chat-canvas,
+    color-mix(in srgb, var(--accent-primary) 10%, var(--bg-app) 90%)
+  );
+  --shell-panel-hover: color-mix(in srgb, var(--text-primary) 4%, transparent);
+
   max-width: 860px;
   width: 100%;
   margin: 0 auto;
-  padding: 20px 20px 0;
+  padding: 16px 20px 0;
   box-sizing: border-box;
+  background: transparent;
 }
 
 /* ─── Eyebrow label ───────────────────────────────────────────────── */
@@ -22,28 +32,28 @@
 .nodeList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 /* ─── Node section card ───────────────────────────────────────────── */
 .nodeCard {
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg, 10px);
-  background: var(--bg-surface);
+  border: none;
+  border-radius: var(--shell-card-radius);
+  background: var(--shell-card-bg);
   overflow: hidden;
+  box-shadow: none;
 }
 
 .nodeCardCurrent {
-  border-color: color-mix(in srgb, var(--accent-primary) 38%, var(--border-default));
-  border-top: 2px solid var(--accent-primary);
+  background: var(--shell-card-bg-current);
 }
 
 /* ─── Node card header (always visible, not clickable) ───────────── */
 .nodeCardHeader {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 12px 9px 14px;
+  gap: 10px;
+  padding: 12px 14px 11px 16px;
 }
 
 .nodeNumber {
@@ -81,18 +91,18 @@
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: var(--accent-primary);
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 38%, transparent);
-  border-radius: 3px;
-  padding: 1px 5px;
-  background: color-mix(in srgb, var(--accent-primary) 7%, transparent);
+  color: color-mix(in srgb, var(--accent-primary) 88%, var(--text-primary));
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 3px 8px;
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
 }
 
 .actionStatusRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 12px 10px 14px;
+  gap: 8px;
+  padding: 0 16px 12px 16px;
 }
 
 .actionStatusChip {
@@ -100,8 +110,8 @@
   align-items: center;
   gap: 6px;
   border-radius: 999px;
-  border: 1px solid transparent;
-  padding: 2px 8px;
+  border: none;
+  padding: 4px 10px;
   font-size: 10px;
   line-height: 1.3;
 }
@@ -115,34 +125,33 @@
 
 .actionStatusChipRunning {
   color: var(--text-secondary);
-  border-color: color-mix(in srgb, var(--border-default) 70%, transparent);
-  background: color-mix(in srgb, var(--bg-subtle) 72%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 70%, var(--text-primary) 5%);
 }
 
 .actionStatusChipSuccess {
-  color: color-mix(in srgb, var(--accent-primary) 78%, var(--text-primary));
-  border-color: color-mix(in srgb, var(--accent-primary) 28%, transparent);
-  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  color: color-mix(in srgb, var(--accent-primary) 72%, var(--text-primary));
+  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
 }
 
 .actionStatusChipError {
   color: var(--text-error, #b91c1c);
-  border-color: color-mix(in srgb, var(--text-error, #b91c1c) 28%, transparent);
-  background: color-mix(in srgb, var(--text-error, #b91c1c) 10%, transparent);
+  background: color-mix(in srgb, var(--text-error, #b91c1c) 14%, transparent);
 }
 
 /* ─── Panel list (Frame / Clarify / Split) ────────────────────────── */
 .panelList {
-  border-top: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+  border-top: none;
+  padding: 0 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 /* ─── Individual panel ────────────────────────────────────────────── */
 .panel {
-  border-top: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
-}
-
-.panel:first-child {
   border-top: none;
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 /* ─── Panel toggle button ─────────────────────────────────────────── */
@@ -151,8 +160,9 @@
   align-items: center;
   gap: 7px;
   width: 100%;
-  padding: 7px 12px 7px 14px;
+  padding: 8px 12px 8px 10px;
   border: none;
+  border-radius: var(--radius-md);
   background: transparent;
   cursor: pointer;
   text-align: left;
@@ -161,7 +171,7 @@
 }
 
 .panelToggle:hover {
-  background: color-mix(in srgb, var(--bg-subtle) 70%, transparent);
+  background: var(--shell-panel-hover);
 }
 
 .panelToggle:focus-visible {
@@ -192,16 +202,16 @@
 
 /* ─── Panel body ──────────────────────────────────────────────────── */
 .panelBody {
-  padding: 4px 14px 14px 14px;
+  padding: 2px 12px 14px 28px;
 }
 
 /* ─── Shaping gate placeholder ────────────────────────────────────── */
 .shapingGate {
-  padding: 10px 14px 12px;
+  padding: 10px 16px 12px;
   font-size: 12px;
   color: var(--text-quaternary, var(--text-tertiary));
   font-style: italic;
-  border-top: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
+  border-top: none;
 }
 
 /* ─── States ───────────────────────────────────────────────────────── */
@@ -261,18 +271,14 @@
 .childList {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 8px;
 }
 
 .childItem {
   display: flex;
   align-items: baseline;
   gap: 7px;
-  padding: 5px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
-}
-
-.childItem:last-child {
+  padding: 2px 0;
   border-bottom: none;
 }
 
@@ -296,10 +302,11 @@
   font-weight: 500;
 }
 
-/* ─── Footer separator ────────────────────────────────────────────── */
+/* ─── Footer spacer (no rule — blends into thread scroll) ─────────── */
 .contextFooter {
-  height: 1px;
-  background: var(--border-default);
+  height: 0;
   margin-top: 20px;
-  opacity: 0.5;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
 }

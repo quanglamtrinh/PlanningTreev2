@@ -539,32 +539,17 @@ describe('TreeGraph', () => {
     expect(screen.getByText('Workflow').closest('button')).toBeEnabled()
   })
 
-  it('shows Frame -> Clarify -> Spec stepper in the detail panel header (no Describe)', async () => {
+  it('graph node details shows info (describe) only — no workflow stepper or document tabs', async () => {
     const snapshot = buildSnapshot()
 
     renderTreeGraph(snapshot)
     fireEvent.click(screen.getByRole('button', { name: 'Node details' }))
     const detailCard = screen.getByTestId('graph-node-detail-card')
 
-    expect(within(detailCard).queryByRole('button', { name: 'Describe' })).not.toBeInTheDocument()
-    expect(within(detailCard).getByRole('button', { name: 'Frame' })).toBeInTheDocument()
-    expect(await within(detailCard).findByRole('button', { name: 'Clarify' })).toBeInTheDocument()
-    expect(within(detailCard).getByRole('button', { name: 'Spec' })).toBeInTheDocument()
+    expect(within(detailCard).queryByTestId('workflow-stepper')).not.toBeInTheDocument()
+    expect(within(detailCard).queryByRole('tablist', { name: 'Task document sections' })).not.toBeInTheDocument()
+    expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
     expect(within(detailCard).queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
-    expect(within(detailCard).getByText('Finish Task')).toBeInTheDocument()
-    expect(within(detailCard).queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()
-
-    fireEvent.click(within(detailCard).getByRole('button', { name: 'Clarify' }))
-    expect(await within(detailCard).findByText(/What target platform/)).toBeInTheDocument()
-
-    apiMock.getNodeDocument.mockResolvedValueOnce({
-      node_id: 'root',
-      kind: 'spec',
-      content: '# Spec',
-      updated_at: '2026-03-20T00:00:01Z',
-    })
-    fireEvent.click(within(detailCard).getByRole('button', { name: 'Spec' }))
-    expect(await within(detailCard).findByDisplayValue('# Spec')).toBeInTheDocument()
   })
 
   it('renders child-to-review arrows and a review-return arrow while keeping structural edges', () => {

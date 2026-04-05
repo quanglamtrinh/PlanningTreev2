@@ -179,9 +179,13 @@ export function NodeDetailCard({
   const showDetailStateError =
     Boolean(detailStateError) && (variant !== 'breadcrumb' || !detailState)
   const showGitBlockerBanner =
+    variant === 'breadcrumb' &&
     detailTab === 'spec' &&
     detailState?.git_ready === false &&
     Boolean(detailState.git_blocker_message)
+
+  /** Graph side panel: task summary only (breadcrumb/chat carries frame/spec/clarify workflow). */
+  const graphInfoOnly = variant === 'graph' && !isReviewNode
 
   const rootClassName = useMemo(
     () =>
@@ -233,7 +237,7 @@ export function NodeDetailCard({
       {detailTab === 'describe' ? (
         breadcrumbTabsEmbedded ? (
           <BreadcrumbNonDocToolbar tabs={breadcrumbTabsEmbedded}>
-            <div className={styles.cardBodyAux}>
+            <div className={`${styles.cardBodyAux} ${styles.cardBodyAuxDescribe}`}>
               <NodeDescribePanel
                 node={node}
                 projectId={projectId}
@@ -245,7 +249,7 @@ export function NodeDetailCard({
             </div>
           </BreadcrumbNonDocToolbar>
         ) : (
-          <div className={styles.cardBodyAux}>
+          <div className={`${styles.cardBodyAux} ${styles.cardBodyAuxDescribe}`}>
             <NodeDescribePanel
               node={node}
               projectId={projectId}
@@ -357,7 +361,7 @@ export function NodeDetailCard({
           </div>
         </div>
 
-        {!isReviewNode ? (
+        {!isReviewNode && !graphInfoOnly ? (
           <div className={styles.explorationRegion} role="region" aria-label="Task exploration steps">
             <WorkflowStepper
               detailTab={detailTab}
@@ -386,13 +390,13 @@ export function NodeDetailCard({
           </div>
         ) : null}
 
-        {detailState?.workflow_notice ? (
+        {!graphInfoOnly && detailState?.workflow_notice ? (
           <div className={styles.workflowNoticeBanner} data-testid="workflow-notice" role="status">
             {detailState.workflow_notice}
           </div>
         ) : null}
 
-        {!isReviewNode && detailState?.package_audit_ready ? (
+        {!graphInfoOnly && !isReviewNode && detailState?.package_audit_ready ? (
           <div
             className={styles.packageAuditReadyBanner}
             data-testid="package-audit-ready-banner"
@@ -411,6 +415,19 @@ export function NodeDetailCard({
 
         {isReviewNode ? <ReviewDetailPanel projectId={projectId} node={node} /> : null}
 
+        {graphInfoOnly ? (
+          <div className={`${styles.cardBodyAux} ${styles.cardBodyAuxDescribe}`}>
+            <NodeDescribePanel
+              node={node}
+              projectId={projectId}
+              detailState={detailState}
+              isResetting={isResettingWorkspace}
+              onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
+              onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
+            />
+          </div>
+        ) : null}
+
         {!isReviewNode && variant === 'breadcrumb' ? (
           <div
             id={breadcrumbPanelId}
@@ -421,8 +438,6 @@ export function NodeDetailCard({
             {detailPanelsFragment}
           </div>
         ) : null}
-
-        {!isReviewNode && variant !== 'breadcrumb' ? detailPanelsFragment : null}
       </div>
     </section>
   )

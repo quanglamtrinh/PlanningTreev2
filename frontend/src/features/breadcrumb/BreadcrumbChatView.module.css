@@ -34,6 +34,10 @@
   max-width: 100%;
   flex-direction: column;
   box-sizing: border-box;
+  /* Warm flat canvas for the whole thread column (tabs + body + composer) */
+  --thread-chat-canvas: #fcf9f7;
+  --bg-app: var(--thread-chat-canvas);
+  --bg-surface: var(--thread-chat-canvas);
 }
 
 /* Ask / Execution / Audit — same chrome as detail stepper (accent + underline) */
@@ -145,11 +149,39 @@
 }
 
 .threadTabBody {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--thread-chat-canvas);
+}
+
+.threadBodyNoticeRow {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  gap: 8px;
+}
+
+.threadBodyMain {
   display: flex;
   flex: 1;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
+  overflow: hidden;
+  background: var(--thread-chat-canvas);
+}
+
+.threadBodyComposer {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 72%, var(--thread-chat-canvas));
+  background: var(--thread-chat-canvas);
 }
 
 .acceptReviewBar {
@@ -229,9 +261,7 @@
   box-sizing: border-box;
   overflow-x: hidden;
   padding: 24px 24px 24px 20px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 84%, transparent), transparent 240px),
-    color-mix(in srgb, var(--bg-app) 92%, transparent);
+  background: #f6f3f1;
 }
 
 .detailRail {
@@ -255,40 +285,54 @@
 }
 
 .errorBanner {
-  padding: 12px 24px;
-  color: var(--text-error, #dc2626);
-  font-size: 13px;
+  max-width: 860px;
+  width: calc(100% - 40px);
+  margin: 10px auto 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 22%, var(--border-default));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-surface));
+  color: color-mix(in srgb, var(--danger) 74%, var(--text-primary));
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .auditShell {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
+  background: var(--bg-app);
 }
 
 .auditShellBody {
   display: flex;
   flex: 1;
+  min-height: 0;
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 8px;
-  padding: 32px 24px;
-  color: var(--text-secondary);
+  gap: 10px;
+  padding: 40px 20px 36px;
   text-align: center;
+  box-sizing: border-box;
 }
 
 .auditShellTitle {
+  margin: 0;
   font-size: 15px;
   font-weight: 600;
+  line-height: 1.4;
   color: var(--text-primary);
 }
 
 .auditShellText {
-  max-width: 480px;
+  margin: 0;
+  max-width: 520px;
   font-size: 13px;
   line-height: 1.6;
+  color: var(--text-secondary);
 }
 
 /* ─── Row ─────────────────────────────────────────────────────────── */

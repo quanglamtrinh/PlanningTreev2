@@ -666,3 +666,83 @@
   color: var(--text-secondary);
   margin: 0;
 }
+
+/* ─── Thread metadata shell: nested blocks match borderless nodeCard chrome ─ */
+.viewerShell .shellFrBox {
+  border: none;
+  border-radius: 12px;
+  background: var(
+    --thread-chat-canvas,
+    color-mix(in srgb, var(--bg-surface) 86%, var(--text-primary) 5%)
+  );
+  padding: 10px 14px;
+}
+
+.viewerShell .shellSuccessCard {
+  border: none;
+  border-radius: 12px;
+  background: var(
+    --thread-chat-canvas,
+    color-mix(in srgb, var(--bg-surface) 90%, var(--text-primary) 4%)
+  );
+}
+
+.viewerShell .shellTsfCard {
+  border: none;
+  border-radius: 10px;
+  background: var(
+    --thread-chat-canvas,
+    color-mix(in srgb, var(--bg-surface) 88%, var(--text-primary) 4%)
+  );
+  padding: 10px 12px;
+}
+
+.viewerShell .callout {
+  border: none;
+  border-radius: 12px;
+  background: var(--thread-chat-canvas, color-mix(in srgb, var(--accent-primary) 9%, var(--bg-app)));
+}
+
+.viewerShell .decisionCard {
+  border: none;
+  border-radius: 12px;
+  background: var(
+    --thread-chat-canvas,
+    color-mix(in srgb, var(--bg-surface) 88%, var(--text-primary) 4%)
+  );
+}
+
+.viewerShell .paraCard,
+.viewerShell .listCard {
+  border: none;
+  border-radius: 12px;
+  background: var(
+    --thread-chat-canvas,
+    color-mix(in srgb, var(--bg-surface) 88%, var(--text-primary) 4%)
+  );
+}
+
+.viewerShell .pre {
+  border: none;
+  border-radius: 12px;
+  background: var(
+    --thread-chat-canvas,
+    color-mix(in srgb, var(--text-primary) 5%, var(--bg-surface))
+  );
+}
+
+.viewerShell .listCard .li {
+  border-bottom: none;
+  padding: 5px 0;
+}
+
+.viewerShell .listCard .li + .li {
+  margin-top: 2px;
+  padding-top: 7px;
+  border-top: 1px solid
+    color-mix(
+      in srgb,
+      var(--text-primary) 6%,
+      var(--thread-chat-canvas, color-mix(in srgb, var(--bg-surface) 100%, transparent))
+    );
+}

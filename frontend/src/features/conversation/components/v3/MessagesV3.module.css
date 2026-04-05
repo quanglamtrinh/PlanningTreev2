@@ -886,6 +886,90 @@
   font-size: 11px;
 }
 
+/* Breadcrumb thread chat: match --thread-chat-canvas on parent; flatten v3 “card” grays */
+.feedThreadChatCanvas {
+  --v3-canvas: var(--thread-chat-canvas, #fcf9f7);
+  --v3-bg-app: var(--v3-canvas);
+  --v3-surface: var(--v3-canvas);
+  --v3-surface-muted: var(--v3-canvas);
+  --v3-surface-soft: var(--v3-canvas);
+  --v3-card-shadow: none;
+  background: var(--v3-canvas);
+}
+
+.feedThreadChatCanvas .messageBubbleAssistant {
+  background: var(--v3-canvas);
+}
+
+.feedThreadChatCanvas .messageBubbleSystem {
+  background: var(--v3-canvas);
+  border-color: color-mix(in srgb, var(--v3-accent) 12%, transparent);
+}
+
+.feedThreadChatCanvas .messageBubbleUser {
+  background: color-mix(in srgb, var(--v3-accent) 8%, var(--v3-canvas));
+  border-color: color-mix(in srgb, var(--v3-accent) 16%, transparent);
+}
+
+.feedThreadChatCanvas .card {
+  background: var(--v3-canvas);
+  box-shadow: none;
+}
+
+.feedThreadChatCanvas .pendingUserInputCard,
+.feedThreadChatCanvas .planReadyCard {
+  background: var(--v3-canvas);
+  border-color: color-mix(in srgb, var(--v3-border) 55%, var(--v3-canvas));
+}
+
+.feedThreadChatCanvas .errorCard {
+  background: color-mix(in srgb, var(--v3-danger) 5%, var(--v3-canvas));
+}
+
+.feedThreadChatCanvas .plainPre,
+.feedThreadChatCanvas .commandViewport {
+  background: var(--v3-canvas);
+  border-color: color-mix(in srgb, var(--v3-border-soft) 70%, var(--v3-canvas));
+}
+
+.feedThreadChatCanvas .terminalZone {
+  background: var(--v3-canvas);
+}
+
+.feedThreadChatCanvas .commandLineBarCollapsed {
+  background: color-mix(in srgb, var(--v3-canvas) 92%, var(--v3-accent) 5%, var(--v3-text-primary) 3%);
+}
+
+.feedThreadChatCanvas .commandLineBarExpanded {
+  background: var(--v3-canvas);
+}
+
+.feedThreadChatCanvas .groupShell {
+  background: var(--v3-canvas);
+  border-color: color-mix(in srgb, var(--v3-border-strong) 45%, var(--v3-canvas));
+  box-shadow: none;
+}
+
+.feedThreadChatCanvas .fileItem,
+.feedThreadChatCanvas .questionCard,
+.feedThreadChatCanvas .answerItem {
+  background: var(--v3-canvas);
+  border-color: color-mix(in srgb, var(--v3-border-soft) 65%, var(--v3-canvas));
+}
+
+.feedThreadChatCanvas .workingIndicator {
+  background: var(--v3-canvas);
+  border-color: color-mix(in srgb, var(--v3-border-soft) 60%, var(--v3-canvas));
+}
+
+.feedThreadChatCanvas .commandHeaderStatusPill {
+  background: color-mix(in srgb, var(--v3-text-primary) 5%, var(--v3-canvas));
+}
+
+.feedThreadChatCanvas .li {
+  border-bottom-color: color-mix(in srgb, var(--v3-text-primary) 5%, var(--v3-canvas));
+}
+
 @media (max-width: 960px) {
   .row {
     padding: 0 12px;

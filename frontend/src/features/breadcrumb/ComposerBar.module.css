@@ -1,17 +1,17 @@
 .wrap {
   flex-shrink: 0;
-  padding: 16px 20px 24px;
-  background: var(--bg-app);
+  padding: 12px 20px 16px;
+  background: transparent;
 }
 
 .composer {
   max-width: 860px;
   margin: 0 auto;
-  border: 1px solid var(--border-default);
+  border: 1px solid color-mix(in srgb, var(--border-default) 82%, transparent);
   border-radius: var(--radius-xl);
   background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
-  padding: 12px 24px 0;
+  box-shadow: var(--shadow-xs);
+  padding: 10px 20px 0;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -20,7 +20,7 @@
 
 .composer:focus-within {
   border-color: var(--border-strong);
-  box-shadow: 0 0 0 3px var(--focus-ring), var(--shadow-sm);
+  box-shadow: 0 0 0 2px var(--focus-ring), var(--shadow-xs);
 }
 
 .editorRow {
@@ -84,10 +84,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 0 -24px 0;
-  padding: 10px 24px 12px;
-  border-top: 1px solid var(--border-subtle);
-  background: color-mix(in srgb, var(--bg-app) 55%, var(--bg-surface));
+  margin: 0 -20px 0;
+  padding: 10px 20px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 86%, transparent);
+  background: color-mix(in srgb, var(--bg-app) 40%, var(--bg-surface));
   border-radius: 0 0 calc(var(--radius-xl) - 1px) calc(var(--radius-xl) - 1px);
 }
 

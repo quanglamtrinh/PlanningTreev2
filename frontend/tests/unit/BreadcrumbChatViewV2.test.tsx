@@ -252,6 +252,8 @@ describe('BreadcrumbChatViewV2', () => {
         '/projects/project-1/nodes/root/chat-v2?thread=execution',
       )
     })
+    expect(screen.getByTestId('breadcrumb-thread-body')).toBeInTheDocument()
+    expect(screen.getByTestId('breadcrumb-thread-composer')).toBeInTheDocument()
     expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
     expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'exec-thread-1', 'execution')
   })

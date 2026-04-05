@@ -46,6 +46,26 @@ function statusLabel(status: ChangedFileRecord['status']): string {
   }
 }
 
+function InfoViewToolbarIcon() {
+  return (
+    <span className={styles.documentFileLabelIcon} aria-hidden="true">
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        width="13"
+        height="13"
+      >
+        <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" />
+        <path d="M10 2v4h3" />
+      </svg>
+    </span>
+  )
+}
+
 export function NodeDescribePanel({
   node,
   projectId,
@@ -72,130 +92,182 @@ export function NodeDescribePanel({
     Boolean(detailState?.head_sha?.trim())
 
   return (
-    <div className={styles.describePanel}>
-      <div className={styles.contentPanel}>
-        <p className={styles.eyebrow}>
-          {node.hierarchical_number ? `${node.hierarchical_number} - Node` : 'Node'}
-        </p>
-        <h3 className={styles.title}>{node.title}</h3>
-        <p className={styles.body}>{node.description.trim() || 'No description yet.'}</p>
-        <p className={styles.body}>
-          Status: <strong>{node.status}</strong> . Children: {node.child_ids.length}
-        </p>
-      </div>
-
-      {taskMissing ? (
-        <div className={styles.describeTaskMissingBanner} role="note">
-          This task&apos;s checkpoint commits are not on the current branch history. You may have
-          moved the workspace with a hard reset. Reset actions are disabled until the repo state
-          matches a known checkpoint.
-        </div>
-      ) : null}
-
-      <div className={styles.describeCommitSection}>
-        <h4 className={styles.describeSectionTitle}>Commit</h4>
-        <div className={styles.shaFieldRow}>
-          <label className={styles.shaFieldLabel} htmlFor="describe-initial-sha">
-            Initial SHA
-          </label>
-          <input
-            id="describe-initial-sha"
-            className={styles.shaFieldInput}
-            readOnly
-            value={initialSha}
-            aria-label="Initial SHA"
-          />
-        </div>
-        <div className={styles.shaFieldRow}>
-          <label className={styles.shaFieldLabel} htmlFor="describe-head-sha">
-            Head SHA
-          </label>
-          <input
-            id="describe-head-sha"
-            className={styles.shaFieldInput}
-            readOnly
-            value={headSha}
-            aria-label="Head SHA"
-          />
-        </div>
-        <div className={styles.shaFieldRow}>
-          <label className={styles.shaFieldLabel} htmlFor="describe-current-head">
-            Current HEAD
-          </label>
-          <input
-            id="describe-current-head"
-            className={styles.shaFieldInput}
-            readOnly
-            value={currentHead}
-            aria-label="Current repository HEAD"
-          />
-        </div>
-        <div className={styles.shaFieldRow}>
-          <label className={styles.shaFieldLabel} htmlFor="describe-commit-msg">
-            Commit message
-          </label>
-          <input
-            id="describe-commit-msg"
-            className={styles.shaFieldInput}
-            readOnly
-            value={commitMessage ?? '—'}
-            aria-label="Commit message for this task"
-          />
+    <div className={styles.describeDocumentRoot}>
+      <div className={styles.documentMetaColumn}>
+        <div className={styles.documentStatusRow}>
+          <div className={styles.documentFileLabelCell}>
+            <InfoViewToolbarIcon />
+            <span className={styles.documentFileLabel}>Info view</span>
+          </div>
         </div>
       </div>
 
-      <div className={styles.describeFilesSection}>
-        <h4 className={styles.describeSectionTitle}>Changed files</h4>
-        {changedFiles.length === 0 ? (
-          <p className={styles.changedFilesEmpty}>No changed files recorded for this task.</p>
-        ) : (
-          <ul className={styles.changedFilesList}>
-            {changedFiles.map((file) => {
-              const key = `${file.status}:${file.previous_path ?? ''}:${file.path}`
-              return (
-                <li key={key} className={styles.changedFilesItem}>
-                  <span
-                    className={styles.changedFilesStatus}
-                    data-status={file.status}
-                    title={statusLabel(file.status)}
-                  >
-                    {file.status}
-                  </span>
-                  <code className={styles.changedFilesPath}>
-                    {file.status === 'R' && file.previous_path
-                      ? `${file.previous_path} → ${file.path}`
-                      : file.path}
-                  </code>
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </div>
+      <div className={styles.describeDocumentSheet}>
+        <div className={styles.describePanel}>
+          <div className={styles.describeDocHero}>
+            <p className={styles.eyebrow}>
+              {node.hierarchical_number ? `${node.hierarchical_number} - Node` : 'Node'}
+            </p>
+            <h1 className={styles.describeDocH1}>{node.title}</h1>
+            <p className={styles.body}>{node.description.trim() || 'No description yet.'}</p>
+            <p className={styles.body}>
+              Status: <strong>{node.status}</strong> · Children: {node.child_ids.length}
+            </p>
+          </div>
 
-      <div className={styles.describeWorkspaceSection}>
-        <h4 className={styles.describeSectionTitle}>Workspace</h4>
-        <p className={styles.describeWorkspaceHint}>
-          Hard reset moves the entire project folder to that checkpoint state. Use only when you
-          understand the impact on uncommitted work.
-        </p>
-        <div className={styles.describeResetRow}>
-          <button
-            type="button"
-            className={styles.resetWorkspaceButtonSecondary}
-            disabled={!canReset || isResetting}
-            onClick={() => void onResetToBefore?.()}
-          >
-            {isResetting ? 'Resetting…' : 'Reset to before this task'}
-          </button>
-          <button
-            type="button"
-            className={styles.resetWorkspaceButtonDanger}
-            disabled={!canReset || isResetting}
-            onClick={() => void onResetToResult?.()}
-          >
-            {isResetting ? 'Resetting…' : 'Reset to this task result'}
-          </button>
+          <div className={styles.describeDocSection}>
+            <div className={styles.describeDocsSection}>
+              <h2 className={styles.describeSectionTitle}>Docs</h2>
+              <p className={styles.changedFilesEmpty}>No linked documentation for this task yet.</p>
+            </div>
+          </div>
+
+          <div className={styles.describeDocSection}>
+            <div className={styles.describeSystemPromptsSection}>
+              <h2 className={styles.describeSectionTitle}>System prompts</h2>
+              <p className={styles.changedFilesEmpty}>No system prompts attached.</p>
+            </div>
+          </div>
+
+          <div className={styles.describeDocSection}>
+            <div className={styles.describeSkillsSection}>
+              <h2 className={styles.describeSectionTitle}>Skills</h2>
+              <p className={styles.changedFilesEmpty}>No skills attached.</p>
+            </div>
+          </div>
+
+          {taskMissing ? (
+            <div className={styles.describeDocSection}>
+              <div className={styles.describeTaskMissingBanner} role="note">
+                This task&apos;s checkpoint commits are not on the current branch history. You may
+                have moved the workspace with a hard reset. Reset actions are disabled until the repo
+                state matches a known checkpoint.
+              </div>
+            </div>
+          ) : null}
+
+          <div className={styles.describeDocSection}>
+            <div className={styles.describeCommitSection}>
+              <h2 className={styles.describeSectionTitle}>Commit</h2>
+              <div className={styles.shaFieldRow}>
+                <label className={styles.shaFieldLabel} htmlFor="describe-initial-sha">
+                  Initial SHA
+                </label>
+                <input
+                  id="describe-initial-sha"
+                  className={styles.shaFieldInput}
+                  readOnly
+                  value={initialSha}
+                  aria-label="Initial SHA"
+                />
+              </div>
+              <div className={styles.shaFieldRow}>
+                <label className={styles.shaFieldLabel} htmlFor="describe-head-sha">
+                  Head SHA
+                </label>
+                <input
+                  id="describe-head-sha"
+                  className={styles.shaFieldInput}
+                  readOnly
+                  value={headSha}
+                  aria-label="Head SHA"
+                />
+              </div>
+              <div className={styles.shaFieldRow}>
+                <label className={styles.shaFieldLabel} htmlFor="describe-current-head">
+                  Current HEAD
+                </label>
+                <input
+                  id="describe-current-head"
+                  className={styles.shaFieldInput}
+                  readOnly
+                  value={currentHead}
+                  aria-label="Current repository HEAD"
+                />
+              </div>
+              <div className={styles.shaFieldRow}>
+                <label className={styles.shaFieldLabel} htmlFor="describe-commit-msg">
+                  Commit message
+                </label>
+                <input
+                  id="describe-commit-msg"
+                  className={styles.shaFieldInput}
+                  readOnly
+                  value={commitMessage ?? '—'}
+                  aria-label="Commit message for this task"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.describeDocSection}>
+            <div className={styles.describeFilesSection}>
+              <h2 className={styles.describeSectionTitle}>Changed files</h2>
+              {changedFiles.length === 0 ? (
+                <p className={styles.changedFilesEmpty}>No changed files recorded for this task.</p>
+              ) : (
+                <ul className={styles.changedFilesList}>
+                  {changedFiles.map((file) => {
+                    const key = `${file.status}:${file.previous_path ?? ''}:${file.path}`
+                    return (
+                      <li key={key} className={styles.changedFilesItem}>
+                        <span
+                          className={styles.changedFilesStatus}
+                          data-status={file.status}
+                          title={statusLabel(file.status)}
+                        >
+                          {file.status}
+                        </span>
+                        <code className={styles.changedFilesPath}>
+                          {file.status === 'R' && file.previous_path
+                            ? `${file.previous_path} → ${file.path}`
+                            : file.path}
+                        </code>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div className={styles.describeDocSection}>
+            <div className={styles.describeWorkspaceSection}>
+              <h2 className={styles.describeSectionTitle}>Workspace</h2>
+              <p className={styles.describeWorkspaceHint}>
+                Hard reset moves the entire project folder to that checkpoint state. Use only when
+                you understand the impact on uncommitted work.
+              </p>
+              <div className={styles.describeWorkspaceActions}>
+                <button
+                  type="button"
+                  className={styles.describeWorkspaceButtonOutline}
+                  disabled={!canReset || isResetting}
+                  onClick={() => void onResetToBefore?.()}
+                >
+                  {isResetting ? 'Resetting…' : 'Reset to before this task'}
+                </button>
+                <button
+                  type="button"
+                  className={styles.describeWorkspaceButtonPrimary}
+                  disabled={!canReset || isResetting}
+                  onClick={() => void onResetToResult?.()}
+                >
+                  {isResetting ? 'Resetting…' : 'Reset to this task result'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <p className={styles.describeDocumentFooter}>
+            Task <span className={styles.describeDocumentFooterMono}>{node.node_id}</span>
+            {node.hierarchical_number ? (
+              <>
+                {' '}
+                · Outline <span className={styles.describeDocumentFooterMono}>{node.hierarchical_number}</span>
+              </>
+            ) : null}
+          </p>
         </div>
       </div>
     </div>

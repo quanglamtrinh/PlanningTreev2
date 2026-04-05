@@ -526,62 +526,73 @@ export function BreadcrumbChatViewV2() {
             </nav>
           </div>
 
-          <div className={styles.threadTabBody}>
-            {combinedError ? <div className={styles.errorBanner}>{combinedError}</div> : null}
+          <div className={styles.threadTabBody} data-testid="breadcrumb-thread-body">
+            <div className={styles.threadBodyNoticeRow}>
+              {combinedError ? (
+                <div className={styles.errorBanner} role="alert">
+                  {combinedError}
+                </div>
+              ) : null}
+            </div>
 
-            {showAuditShell ? (
-              <div className={styles.auditShell} data-testid="audit-shell">
-                {snapshot && projectId && nodeId ? (
-                  <FrameContextFeedBlock
-                    projectId={projectId}
-                    nodeId={nodeId}
-                    nodeRegistry={snapshot.tree_state.node_registry}
-                    variant="audit"
-                    specConfirmed={nodeDetailState?.spec_confirmed === true}
-                  />
-                ) : null}
-                <div className={styles.auditShellBody}>
-                  <div className={styles.auditShellTitle}>Audit Review Not Started Yet</div>
-                  <div className={styles.auditShellText}>
-                    Start review from the execution tab once the current execution decision is ready.
+            <div className={styles.threadBodyMain}>
+              {showAuditShell ? (
+                <div className={styles.auditShell} data-testid="audit-shell">
+                  {snapshot && projectId && nodeId ? (
+                    <FrameContextFeedBlock
+                      projectId={projectId}
+                      nodeId={nodeId}
+                      nodeRegistry={snapshot.tree_state.node_registry}
+                      variant="audit"
+                      specConfirmed={nodeDetailState?.spec_confirmed === true}
+                    />
+                  ) : null}
+                  <div className={styles.auditShellBody}>
+                    <div className={styles.auditShellTitle}>Audit Review Not Started Yet</div>
+                    <div className={styles.auditShellText}>
+                      Start review from the execution tab once the current execution decision is ready.
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : (
-              <MessagesV3ErrorBoundary
-                key={`${threadTab}:${activeThreadId ?? 'none'}`}
-                onRenderError={handleV3RenderError}
-              >
-                <MessagesV3
-                  snapshot={conversationSnapshotV3}
-                  isLoading={isLoading || isWorkflowLoading}
-                  isSending={isSending}
-                  onResolveUserInput={resolveUserInput}
-                  onPlanAction={runPlanActionV3}
-                  lastCompletedAt={lastCompletedAt}
-                  lastDurationMs={lastDurationMs}
-                  prefix={
-                    (threadTab === 'ask' || threadTab === 'audit') && snapshot && projectId && nodeId ? (
-                      <FrameContextFeedBlock
-                        projectId={projectId}
-                        nodeId={nodeId}
-                        nodeRegistry={snapshot.tree_state.node_registry}
-                        variant={threadTab === 'audit' ? 'audit' : 'ask'}
-                        specConfirmed={nodeDetailState?.spec_confirmed === true}
-                      />
-                    ) : undefined
-                  }
-                  suffix={composerWorkflowActions ?? undefined}
-                />
-              </MessagesV3ErrorBoundary>
-            )}
+              ) : (
+                <MessagesV3ErrorBoundary
+                  key={`${threadTab}:${activeThreadId ?? 'none'}`}
+                  onRenderError={handleV3RenderError}
+                >
+                  <MessagesV3
+                    snapshot={conversationSnapshotV3}
+                    isLoading={isLoading || isWorkflowLoading}
+                    isSending={isSending}
+                    onResolveUserInput={resolveUserInput}
+                    onPlanAction={runPlanActionV3}
+                    lastCompletedAt={lastCompletedAt}
+                    lastDurationMs={lastDurationMs}
+                    threadChatFlatCanvas
+                    prefix={
+                      (threadTab === 'ask' || threadTab === 'audit') && snapshot && projectId && nodeId ? (
+                        <FrameContextFeedBlock
+                          projectId={projectId}
+                          nodeId={nodeId}
+                          nodeRegistry={snapshot.tree_state.node_registry}
+                          variant={threadTab === 'audit' ? 'audit' : 'ask'}
+                          specConfirmed={nodeDetailState?.spec_confirmed === true}
+                        />
+                      ) : undefined
+                    }
+                    suffix={composerWorkflowActions ?? undefined}
+                  />
+                </MessagesV3ErrorBoundary>
+              )}
+            </div>
 
-            <ComposerBar
-              onSend={(content) => {
-                void handleSend(content)
-              }}
-              disabled={composerDisabled}
-            />
+            <div className={styles.threadBodyComposer} data-testid="breadcrumb-thread-composer">
+              <ComposerBar
+                onSend={(content) => {
+                  void handleSend(content)
+                }}
+                disabled={composerDisabled}
+              />
+            </div>
           </div>
         </div>
       </div>

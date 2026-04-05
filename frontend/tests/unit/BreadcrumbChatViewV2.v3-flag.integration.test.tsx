@@ -212,6 +212,8 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     await waitFor(() => {
       expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
     })
+    expect(screen.getByTestId('breadcrumb-thread-body')).toBeInTheDocument()
+    expect(screen.getByTestId('breadcrumb-thread-composer')).toBeInTheDocument()
     expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'exec-thread-1', 'execution')
   })
 
