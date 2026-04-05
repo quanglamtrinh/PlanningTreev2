@@ -175,7 +175,7 @@ section[data-variant='breadcrumb'] .cardHeader {
   display: flex;
   flex-wrap: wrap;
   align-items: stretch;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
   padding: 2px 0 10px;
   margin-bottom: 2px;
@@ -190,6 +190,7 @@ section[data-variant='breadcrumb'] .cardHeader {
   gap: 0;
   flex: 1;
   min-width: 0;
+  width: 100%;
   flex-wrap: nowrap;
   align-items: stretch;
   align-self: stretch;
@@ -200,10 +201,10 @@ section[data-variant='breadcrumb'] .cardHeader {
 }
 
 .breadcrumbDetailTablistEmbedded .breadcrumbDetailTab {
-  flex: 0 0 auto;
+  flex: 1 1 0;
   min-width: 0;
   justify-content: center;
-  padding: 0 14px;
+  padding: 0 10px;
   height: 100%;
   font-size: 11px;
   font-weight: 500;
@@ -855,6 +856,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   gap: 12px;
   min-height: 0;
   box-sizing: border-box;
+  margin-top: 10px;
 }
 
 /* Syntax token classes — colors from tokens.css (--syntax-*) */
@@ -1660,7 +1662,6 @@ section[data-variant='breadcrumb'] .documentTabStack {
 section[data-variant='breadcrumb'] .documentPanel {
   flex: 1;
   min-height: 0;
-  gap: 10px;
   --editor-vscode-bg: var(--bg-surface, var(--surface-container-lowest, #ffffff));
   --editor-vscode-panel: var(--bg-subtle, var(--surface-container-low));
   --editor-vscode-border: var(--border-default, var(--color-border));
@@ -1671,9 +1672,8 @@ section[data-variant='breadcrumb'] .documentPanel {
 section[data-variant='breadcrumb'] .documentStatusRow {
   min-height: 34px;
   padding: 0 8px;
-  border-color: var(--border-default, var(--color-border));
-  background: var(--bg-subtle, var(--surface-container-low));
   box-shadow: none;
+  margin-bottom: 16px;
 }
 
 section[data-variant='breadcrumb'] .documentPanel :global(.pt-sx-md-h1) {
@@ -1689,14 +1689,13 @@ section[data-variant='breadcrumb'] .documentPanel :global(.pt-sx-md-h3) {
 }
 
 section[data-variant='breadcrumb'] .editorSurface {
-  margin-top: 15px;
   flex: 1;
   min-height: 0;
   border: none;
   background: var(--editor-vscode-bg);
   padding: 0;
   overflow: hidden;
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--outline, var(--color-text-primary)) 6%, transparent);
+  box-shadow: none;
 }
 
 section[data-variant='breadcrumb'] .editorSurfaceHeader {

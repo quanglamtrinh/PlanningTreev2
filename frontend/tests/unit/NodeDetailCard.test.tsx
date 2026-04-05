@@ -1660,7 +1660,7 @@ describe('NodeDetailCard', () => {
     await waitFor(() => {
       expect(screen.getByTestId('generate-frame-button')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generate from Chat')
+    expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generate Frame')
   })
 
   it('calls generateFrame and shows Generating state', async () => {
@@ -1845,7 +1845,7 @@ describe('NodeDetailCard', () => {
     // generateFrame should never have been called
     expect(apiMock.generateFrame).not.toHaveBeenCalled()
     // Button should still say "Generate from Chat" (not "Generating...")
-    expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generate from Chat')
+    expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generate Frame')
   })
 
   it('attaches to active job instead of showing error when generation is already running', async () => {

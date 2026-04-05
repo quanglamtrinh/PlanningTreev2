@@ -37,6 +37,8 @@ type PanelProps = {
   expanded: boolean
   onToggle: (nodeId: string, panelId: PanelId) => void
   children: React.ReactNode
+  /** Frame panel: shared chrome (toggle + body) for every node */
+  frameChrome?: boolean
 }
 
 function buildAncestorChain(nodeId: string, registry: NodeRecord[]): NodeRecord[] {
@@ -52,6 +54,26 @@ function buildAncestorChain(nodeId: string, registry: NodeRecord[]): NodeRecord[
     cursor = node.parent_id
   }
   return chain
+}
+
+function isInitNode(node: NodeRecord): boolean {
+  return node.is_init_node === true
+}
+
+function normalizeShellNodeNumber(rawNumber: string | null | undefined, stripInitPrefix: boolean): string | null {
+  const value = String(rawNumber ?? '').trim()
+  if (!value) {
+    return null
+  }
+  if (!stripInitPrefix) {
+    return value
+  }
+  const dotIndex = value.indexOf('.')
+  if (dotIndex <= -1 || dotIndex >= value.length - 1) {
+    return value
+  }
+  const normalized = value.slice(dotIndex + 1).trim()
+  return normalized || null
 }
 
 function panelKey(nodeId: string, panelId: PanelId): string {
@@ -123,28 +145,113 @@ function Chevron({ expanded }: { expanded: boolean }) {
   )
 }
 
+function IconUsers({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <circle cx="8" cy="5.25" r="2.75" stroke="currentColor" strokeWidth="1.25" />
+      <path
+        d="M3.25 13.25c0-2.35 2.13-4.25 4.75-4.25s4.75 1.9 4.75 4.25"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function IconClipboard({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path
+        d="M5.5 2.75h5a.75.75 0 01.75.75V4H4.75V3.5a.75.75 0 01.75-.75zM4 4.75h8a1.25 1.25 0 011.25 1.25v6.5A1.25 1.25 0 0112 13.75H4A1.25 1.25 0 012.75 12.5v-6.5A1.25 1.25 0 014 4.75z"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 function ContextClarifyView({ questions }: { questions: ClarifyQuestion[] }) {
   if (questions.length === 0) {
     return <div className={styles.stateEmpty}>No clarify questions.</div>
   }
 
+  const [first, ...rest] = questions
+  const firstAnswer = resolveAnswer(first)
+
   return (
-    <div className={styles.qaList}>
-      {questions.map((question, index) => {
-        const answer = resolveAnswer(question)
-        return (
-          <div key={question.field_name} className={styles.qaItem}>
+    <div className={styles.clarifyDoc}>
+      <section className={styles.docSection}>
+        <div className={styles.sectionLabelRow}>
+          <IconUsers className={styles.sectionLabelIcon} />
+          <span className={styles.sectionLabelText}>User story</span>
+        </div>
+        <div className={styles.userStoryBody}>
+          <span className={styles.storyIndex}>01</span>
+          <div className={styles.storyContent}>
             <span className={styles.qaQuestion}>
-              {index + 1}. {question.question}
+              1. {first.question}
             </span>
-            {answer ? (
-              <span className={styles.qaAnswer}>{answer}</span>
+            {firstAnswer ? (
+              <p className={styles.storyAnswer}>{firstAnswer}</p>
             ) : (
               <span className={styles.qaAnswerEmpty}>Not answered</span>
             )}
           </div>
-        )
-      })}
+        </div>
+      </section>
+
+      {rest.length > 0 ? (
+        <section className={`${styles.docSection} ${styles.docSectionSpaced}`}>
+          <div className={styles.sectionLabelRow}>
+            <IconClipboard className={styles.sectionLabelIcon} />
+            <span className={styles.sectionLabelText}>Functional requirements</span>
+          </div>
+          <ul className={styles.requirementList}>
+            {rest.map((question, index) => {
+              const answer = resolveAnswer(question)
+              const n = index + 2
+              return (
+                <li key={question.field_name} className={styles.requirementItem}>
+                  <span
+                    className={styles.reqCheck}
+                    data-checked={answer ? 'true' : 'false'}
+                    aria-hidden
+                  >
+                    {answer ? (
+                      <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="8" cy="8" r="8" fill="#059669" />
+                        <path
+                          d="M4.75 8.35 6.85 10.4 11.35 5.65"
+                          stroke="#ffffff"
+                          strokeWidth="1.35"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="8" cy="8" r="7.25" stroke="#c4c4c4" strokeWidth="1.35" />
+                      </svg>
+                    )}
+                  </span>
+                  <div className={styles.requirementText}>
+                    <span className={styles.qaQuestion}>
+                      {n}. {question.question}
+                    </span>
+                    {answer ? (
+                      <span className={styles.qaAnswer}>{answer}</span>
+                    ) : (
+                      <span className={styles.qaAnswerEmpty}>Not answered</span>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      ) : null}
     </div>
   )
 }
@@ -153,10 +260,12 @@ function ContextSplitView({
   node,
   nodeRegistry,
   currentNodeId,
+  stripInitPrefix,
 }: {
   node: NodeRecord
   nodeRegistry: NodeRecord[]
   currentNodeId: string
+  stripInitPrefix: boolean
 }) {
   const byId = useMemo(() => new Map(nodeRegistry.map((item) => [item.node_id, item])), [nodeRegistry])
   const children = useMemo(
@@ -172,10 +281,11 @@ function ContextSplitView({
     <div className={styles.childList}>
       {children.map((child) => {
         const isCurrent = child.node_id === currentNodeId
+        const displayNumber = normalizeShellNodeNumber(child.hierarchical_number, stripInitPrefix)
         return (
           <div key={child.node_id} className={styles.childItem}>
-            {child.hierarchical_number ? (
-              <span className={styles.childNumber}>{child.hierarchical_number}</span>
+            {displayNumber ? (
+              <span className={styles.childNumber}>{displayNumber}</span>
             ) : null}
             <span className={`${styles.childTitle} ${isCurrent ? styles.childTitleCurrent : ''}`}>
               {child.title}
@@ -187,9 +297,9 @@ function ContextSplitView({
   )
 }
 
-function NodePanel({ label, panelId, nodeId, expanded, onToggle, children }: PanelProps) {
+function NodePanel({ label, panelId, nodeId, expanded, onToggle, children, frameChrome }: PanelProps) {
   return (
-    <div className={styles.panel}>
+    <div className={`${styles.panel} ${frameChrome ? styles.panelFrame : ''}`}>
       <button
         type="button"
         className={styles.panelToggle}
@@ -199,7 +309,9 @@ function NodePanel({ label, panelId, nodeId, expanded, onToggle, children }: Pan
         <Chevron expanded={expanded} />
         <span className={styles.panelLabel}>{label}</span>
       </button>
-      {expanded ? <div className={styles.panelBody}>{children}</div> : null}
+      {expanded ? (
+        <div className={`${styles.panelBody} ${frameChrome ? styles.framePanelBody : ''}`}>{children}</div>
+      ) : null}
     </div>
   )
 }
@@ -211,7 +323,9 @@ export function FrameContextFeedBlock({
   variant = 'ask',
   specConfirmed = false,
 }: Props) {
-  const chain = useMemo(() => buildAncestorChain(nodeId, nodeRegistry), [nodeId, nodeRegistry])
+  const rawChain = useMemo(() => buildAncestorChain(nodeId, nodeRegistry), [nodeId, nodeRegistry])
+  const stripInitPrefix = rawChain.length > 0 && isInitNode(rawChain[0])
+  const chain = useMemo(() => rawChain.filter((node) => !isInitNode(node)), [rawChain])
   const actionState = useAskShellActionStore(
     (state) => state.entries[askShellNodeActionStateKey(projectId, nodeId)],
   )
@@ -275,25 +389,23 @@ export function FrameContextFeedBlock({
       <div className={styles.nodeList}>
         {chain.map((node) => {
           const isCurrent = node.node_id === nodeId
+          const displayNumber = normalizeShellNodeNumber(node.hierarchical_number, stripInitPrefix)
           const frameEntry = frameEntries[`${projectId}::${node.node_id}::frame`]
           const specEntry = frameEntries[`${projectId}::${node.node_id}::spec`]
           const clarifyEntry = clarifyEntries[`${projectId}::${node.node_id}`]
           const clarifyQuestions = clarifyEntry?.clarify?.questions ?? []
 
           return (
-            <div key={node.node_id} className={`${styles.nodeCard} ${isCurrent ? styles.nodeCardCurrent : ''}`}>
+            <div key={node.node_id} className={styles.nodeCardRow}>
               <div className={styles.nodeCardHeader}>
-                {node.hierarchical_number ? (
-                  <span className={`${styles.nodeNumber} ${isCurrent ? styles.nodeNumberCurrent : ''}`}>
-                    {node.hierarchical_number}
-                  </span>
+                {displayNumber ? (
+                  <span className={styles.nodeNumber}>{displayNumber}</span>
                 ) : null}
-                <span className={`${styles.nodeTitle} ${isCurrent ? styles.nodeTitleCurrent : ''}`}>
-                  {node.title}
-                </span>
-                {isCurrent ? <span className={styles.currentBadge}>current</span> : null}
+                <span className={styles.nodeTitle}>{node.title}</span>
+                {isCurrent ? <span className={styles.currentBadge}>Current task</span> : null}
               </div>
 
+              <div className={styles.nodeCard}>
               {isCurrent && currentNodeActionChips.length > 0 ? (
                 <div className={styles.actionStatusRow} data-testid="frame-context-action-status-row">
                   {currentNodeActionChips.map((chip) => (
@@ -315,23 +427,27 @@ export function FrameContextFeedBlock({
                 </div>
               ) : null}
 
-              <div className={styles.panelList}>
+              <div className={styles.nodeCardBody}>
+                <div className={styles.panelList}>
                 <NodePanel
                   label="Frame"
                   panelId="frame"
                   nodeId={node.node_id}
                   expanded={isPanelExpanded(node.node_id, 'frame', isCurrent)}
                   onToggle={togglePanel}
+                  frameChrome
                 >
-                  {!frameEntry || frameEntry.isLoading ? (
-                    <div className={styles.stateLoading}>Loading...</div>
-                  ) : frameEntry.error ? (
-                    <div className={styles.stateError}>{frameEntry.error}</div>
-                  ) : !frameEntry.content.trim() ? (
-                    <div className={styles.stateEmpty}>No frame content yet.</div>
-                  ) : (
-                    <FrameMarkdownViewer content={frameEntry.content} shellStyle />
-                  )}
+                  <div className={styles.framePanelInner}>
+                    {!frameEntry || frameEntry.isLoading ? (
+                      <div className={styles.stateLoading}>Loading...</div>
+                    ) : frameEntry.error ? (
+                      <div className={styles.stateError}>{frameEntry.error}</div>
+                    ) : !frameEntry.content.trim() ? (
+                      <div className={styles.stateEmpty}>No frame content yet.</div>
+                    ) : (
+                      <FrameMarkdownViewer content={frameEntry.content} shellStyle />
+                    )}
+                  </div>
                 </NodePanel>
 
                 <NodePanel
@@ -358,7 +474,12 @@ export function FrameContextFeedBlock({
                     expanded={isPanelExpanded(node.node_id, 'split', isCurrent)}
                     onToggle={togglePanel}
                   >
-                    <ContextSplitView node={node} nodeRegistry={nodeRegistry} currentNodeId={nodeId} />
+                    <ContextSplitView
+                      node={node}
+                      nodeRegistry={nodeRegistry}
+                      currentNodeId={nodeId}
+                      stripInitPrefix={stripInitPrefix}
+                    />
                   </NodePanel>
                 ) : null}
 
@@ -381,6 +502,8 @@ export function FrameContextFeedBlock({
                     )}
                   </NodePanel>
                 ) : null}
+                </div>
+              </div>
               </div>
             </div>
           )

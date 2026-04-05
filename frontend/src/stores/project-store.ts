@@ -459,11 +459,11 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
           isCreatingNode: false,
         })
         if (createdNodeId) {
-          try {
-            await api.generateFrame(activeProjectId, createdNodeId)
-          } catch (error) {
-            set({ error: toErrorMessage(error) })
-          }
+          void api.generateFrame(activeProjectId, createdNodeId).catch((error) => {
+            if (get().activeProjectId === activeProjectId) {
+              set({ error: toErrorMessage(error) })
+            }
+          })
         }
         return createdNodeId
       } catch (error) {

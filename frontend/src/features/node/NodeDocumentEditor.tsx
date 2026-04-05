@@ -644,7 +644,7 @@ export function NodeDocumentEditor({
                 data-testid="generate-frame-button"
                 onClick={handleGenerateFrame}
               >
-                {isGenerating ? <AgentSpinner words={SPINNER_WORDS_GENERATING} /> : 'Generate from Chat'}
+                {isGenerating ? <AgentSpinner words={SPINNER_WORDS_GENERATING} /> : 'Generate Frame'}
               </button>
               <button
                 type="button"

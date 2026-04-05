@@ -33,13 +33,13 @@ function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
   }
 }
 
-function seedDocumentStore() {
+function seedDocumentStore(nodeId = 'root') {
   const loadDocument = vi.fn().mockResolvedValue(undefined)
   useNodeDocumentStore.setState({
     ...useNodeDocumentStore.getState(),
     loadDocument,
     entries: {
-      'project-1::root::frame': {
+      [`project-1::${nodeId}::frame`]: {
         content: '# Frame\nLogin flow',
         savedContent: '# Frame\nLogin flow',
         updatedAt: '2026-04-03T00:00:00Z',
@@ -48,7 +48,7 @@ function seedDocumentStore() {
         error: null,
         hasLoaded: true,
       },
-      'project-1::root::spec': {
+      [`project-1::${nodeId}::spec`]: {
         content: '# Spec\nAuth details',
         savedContent: '# Spec\nAuth details',
         updatedAt: '2026-04-03T00:00:00Z',
@@ -62,13 +62,13 @@ function seedDocumentStore() {
   return loadDocument
 }
 
-function seedClarifyStore() {
+function seedClarifyStore(nodeId = 'root') {
   const loadClarify = vi.fn().mockResolvedValue(undefined)
   useClarifyStore.setState({
     ...useClarifyStore.getState(),
     loadClarify,
     entries: {
-      'project-1::root': {
+      [`project-1::${nodeId}`]: {
         clarify: {
           schema_version: 2,
           source_frame_revision: 1,
@@ -182,5 +182,50 @@ describe('FrameContextFeedBlock', () => {
     expect(screen.getByTestId('frame-context-action-clarify')).toHaveTextContent('Confirm failed')
     expect(screen.getByTestId('frame-context-action-spec')).toHaveTextContent('spec')
     expect(screen.getByTestId('frame-context-action-spec')).toHaveTextContent('Generated')
+  })
+
+  it('excludes init node from metadata shell and strips init index prefix', async () => {
+    const loadDocument = seedDocumentStore('task-1')
+    const loadClarify = seedClarifyStore('task-1')
+
+    const initNode = makeNode({
+      node_id: 'init',
+      title: 'Workspace Init',
+      node_kind: 'root',
+      is_init_node: true,
+      parent_id: null,
+      child_ids: ['task-1'],
+      hierarchical_number: '1',
+    })
+    const taskNode = makeNode({
+      node_id: 'task-1',
+      title: 'Implement Login',
+      node_kind: 'original',
+      is_init_node: false,
+      parent_id: 'init',
+      child_ids: [],
+      hierarchical_number: '1.1',
+      depth: 1,
+    })
+
+    render(
+      <FrameContextFeedBlock
+        projectId="project-1"
+        nodeId="task-1"
+        nodeRegistry={[initNode, taskNode]}
+        variant="ask"
+      />,
+    )
+
+    expect(screen.queryByText('Workspace Init')).not.toBeInTheDocument()
+    expect(screen.getByText('Implement Login')).toBeInTheDocument()
+    expect(screen.queryByText('1.1')).not.toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(loadDocument).toHaveBeenCalledWith('project-1', 'task-1', 'frame')
+      expect(loadClarify).toHaveBeenCalledWith('project-1', 'task-1')
+    })
+    expect(loadDocument).not.toHaveBeenCalledWith('project-1', 'init', 'frame')
+    expect(loadClarify).not.toHaveBeenCalledWith('project-1', 'init')
   })
 })

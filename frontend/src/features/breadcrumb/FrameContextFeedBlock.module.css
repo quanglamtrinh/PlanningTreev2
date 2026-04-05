@@ -1,39 +1,40 @@
-/* ─── Outer wrapper (match MessagesV3 .row: max-width + horizontal inset) ─ */
+/* ─── Outer wrapper ────────────────────────────────────────────────── */
 .feedBlock {
+  /* Card design tokens (Task Details reference UI) */
   --shell-card-radius: 14px;
-  /* On flat thread canvas, cards use same fill as the scroll area (see --thread-chat-canvas) */
-  --shell-card-bg: var(--thread-chat-canvas, color-mix(in srgb, var(--bg-surface) 82%, var(--bg-app) 18%));
-  --shell-card-bg-current: var(
-    --thread-chat-canvas,
-    color-mix(in srgb, var(--accent-primary) 10%, var(--bg-app) 90%)
-  );
-  --shell-panel-hover: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  --shell-card-bg: var(--surface-container-lowest, #ffffff);
+  --shell-card-border: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --shell-card-shadow: 0 1px 4px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shell-panel-hover: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  --fc-mock-fg: #1a1a1a;
+  --fc-mock-label: #8e8e8e;
+  --fc-mock-badge-bg: #fee2e2;
+  --fc-mock-badge-fg: #991b1b;
+  --fc-mock-check: #059669;
 
-  /* Thread context block: one type scale + field chrome (contrast-forward) */
+  /* Type scale */
   --fc-font: var(--font-sans);
   --fc-mono: var(--font-mono);
   --fc-size-body: var(--font-size-sm);
+  --fc-size-field-title: 13px;
   --fc-size-label: 11px;
   --fc-size-meta: 10px;
   --fc-lh-body: 1.55;
-  --fc-lh-tight: 1.4;
+  --fc-lh-tight: 1.3;
   --fc-w-body: 400;
   --fc-w-body-strong: 500;
   --fc-w-label: 600;
-  --fc-radius-field: var(--radius-sm);
+  --fc-w-field-title: 700;
   --fc-fg: var(--text-primary);
-  --fc-fg-muted: var(--text-secondary);
-  --fc-fg-quiet: var(--text-tertiary);
-  --fc-border: color-mix(in srgb, var(--border-strong) 88%, var(--text-primary) 6%);
-  --fc-border-soft: color-mix(in srgb, var(--border-default) 75%, var(--text-primary) 12%);
-  --fc-surface-field: color-mix(in srgb, var(--bg-surface) 90%, var(--text-primary) 5%);
-  --fc-surface-inset: color-mix(in srgb, var(--text-primary) 4%, transparent);
-  --fc-accent-border: color-mix(in srgb, var(--accent-primary) 45%, var(--border-strong));
+  --fc-fg-muted: color-mix(in srgb, var(--text-secondary) 45%, var(--text-primary));
+  --fc-fg-quiet: var(--text-secondary);
+  --fc-border-soft: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --fc-accent-border: color-mix(in srgb, var(--accent-primary) 35%, var(--border-default));
 
   max-width: 860px;
   width: 100%;
   margin: 0 auto;
-  padding: 16px 20px 0;
+  padding: 12px 20px 0;
   box-sizing: border-box;
   background: transparent;
 }
@@ -53,92 +54,113 @@
 .nodeList {
   display: flex;
   flex-direction: column;
+  gap: 20px;
+}
+
+/* Row: header sits above the bordered card */
+.nodeCardRow {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
 /* ─── Node section card ───────────────────────────────────────────── */
 .nodeCard {
-  border: none;
+  border: 1px solid var(--shell-card-border);
   border-radius: var(--shell-card-radius);
   background: var(--shell-card-bg);
   overflow: hidden;
-  box-shadow: none;
+  box-shadow: var(--shell-card-shadow);
+  transition: box-shadow 0.16s ease, border-color 0.16s ease;
+  /* Ancestor nodes: slightly compact + muted */
+  opacity: 0.88;
 }
 
-.nodeCardCurrent {
-  background: var(--shell-card-bg-current);
+.nodeCard:hover {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05);
+  opacity: 1;
 }
 
-/* ─── Node card header (always visible, not clickable) ───────────── */
+/* ─── Node card header (outside the white card) ───────────────────── */
 .nodeCardHeader {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px 11px 16px;
+  gap: 14px;
+  padding: 2px 4px 0;
+  border-bottom: none;
+  background: transparent;
 }
 
+/* Number badge — filled accent-tint tile (all nodes) */
 .nodeNumber {
   font-family: var(--fc-mono);
-  font-size: var(--fc-size-label);
-  font-weight: var(--fc-w-label);
-  letter-spacing: 0.04em;
-  color: var(--fc-fg-quiet);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--accent-primary) 82%, #0f172a);
   flex-shrink: 0;
+  background: color-mix(in srgb, var(--accent-primary) 16%, #f1f5f9);
+  padding: 8px 12px;
+  border-radius: 8px;
+  line-height: 1.25;
+  min-width: 2.5rem;
+  text-align: center;
+  box-sizing: border-box;
 }
 
-.nodeNumberCurrent {
-  color: var(--accent-primary);
-}
-
+/* Title — large, bold (all nodes) */
 .nodeTitle {
   font-family: var(--fc-font);
-  font-size: var(--fc-size-body);
-  font-weight: var(--fc-w-label);
-  line-height: var(--fc-lh-tight);
-  color: var(--fc-fg-muted);
+  font-size: 19px;
+  font-weight: 800;
+  line-height: 1.25;
+  color: var(--fc-mock-fg);
   flex: 1;
   min-width: 0;
+  letter-spacing: -0.02em;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.nodeTitleCurrent {
-  color: var(--fc-fg);
-}
-
+/* "CURRENT TASK" pill — reference palette */
 .currentBadge {
   flex-shrink: 0;
-  font-family: var(--fc-mono);
-  font-size: var(--fc-size-meta);
-  font-weight: var(--fc-w-label);
-  letter-spacing: 0.07em;
+  font-family: var(--fc-font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--accent-primary) 72%, var(--fc-fg));
+  color: var(--fc-mock-badge-fg);
+  background: var(--fc-mock-badge-bg);
   border: none;
-  border-radius: var(--radius-pill);
-  padding: 3px 8px;
-  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+  border-radius: 999px;
+  padding: 5px 12px;
+  line-height: 1.35;
 }
 
+/* ─── Action status chips ─────────────────────────────────────────── */
 .actionStatusRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 16px 12px 16px;
+  gap: 6px 8px;
+  padding: 10px 16px 12px;
+  border-bottom: 1px solid var(--fc-border-soft);
 }
 
 .actionStatusChip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border-radius: 999px;
-  border: none;
-  padding: 4px 10px;
+  gap: 5px;
+  border-radius: 20px;
+  border: 1px solid var(--fc-border-soft);
+  padding: 2px 8px 2px 6px;
   font-family: var(--fc-font);
-  font-size: var(--fc-size-label);
-  font-weight: var(--fc-w-body-strong);
+  font-size: var(--fc-size-meta);
+  font-weight: var(--fc-w-label);
   line-height: var(--fc-lh-tight);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
 .actionStatusArtifact {
@@ -150,50 +172,69 @@
 }
 
 .actionStatusChipRunning {
-  color: var(--fc-fg-muted);
-  background: color-mix(in srgb, var(--bg-surface) 72%, var(--text-primary) 7%);
+  color: var(--fc-fg-quiet);
+  border-color: var(--fc-border-soft);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
 .actionStatusChipSuccess {
-  color: color-mix(in srgb, var(--accent-primary) 58%, var(--fc-fg));
-  background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  color: color-mix(in srgb, var(--accent-primary) 75%, var(--fc-fg));
+  border-color: color-mix(in srgb, var(--accent-primary) 20%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
 }
 
 .actionStatusChipError {
   color: var(--text-error, #b91c1c);
-  background: color-mix(in srgb, var(--text-error, #b91c1c) 14%, transparent);
+  border-color: color-mix(in srgb, #b91c1c 20%, transparent);
+  background: color-mix(in srgb, #b91c1c 6%, transparent);
+}
+
+/* ─── Card body (same flush layout for every node) ────────────────── */
+.nodeCardBody {
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.framePanelInner {
+  min-width: 0;
 }
 
 /* ─── Panel list (Frame / Clarify / Split) ────────────────────────── */
 .panelList {
-  border-top: none;
-  padding: 0 6px 8px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
 }
 
 /* ─── Individual panel ────────────────────────────────────────────── */
 .panel {
   border-top: none;
-  border-radius: var(--radius-md);
+  border-radius: 0;
   overflow: hidden;
 }
 
-/* ─── Panel toggle button ─────────────────────────────────────────── */
+.panel + .panel {
+  border-top: 1px solid var(--fc-border-soft);
+}
+
+/* ─── Panel toggle button — matches image "∨ FRAME" style ─────────── */
 .panelToggle {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   width: 100%;
-  padding: 8px 12px 8px 10px;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 0;
   background: transparent;
   cursor: pointer;
   text-align: left;
   font-family: var(--fc-font);
-  transition: background 0.1s ease;
+  transition: background 0.12s ease;
+}
+
+.nodeCardBody .panelToggle {
+  padding: 20px 30px;
 }
 
 .panelToggle:hover {
@@ -207,11 +248,11 @@
 
 /* ─── Chevron ─────────────────────────────────────────────────────── */
 .chevron {
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   flex-shrink: 0;
   color: var(--fc-fg-quiet);
-  transition: transform 0.14s ease;
+  transition: transform 0.16s ease;
 }
 
 .chevronCollapsed {
@@ -219,38 +260,47 @@
 }
 
 /* ─── Panel label (Frame / Clarify / Split) ───────────────────────── */
+/* Matches image: small, uppercase, spaced — e.g. "FRAME" */
 .panelLabel {
   font-family: var(--fc-font);
-  font-size: var(--fc-size-label);
-  font-weight: var(--fc-w-label);
-  color: var(--fc-fg-muted);
-  letter-spacing: 0.02em;
-  line-height: var(--fc-lh-tight);
+  font-size: 11px;
+  font-weight: 700;
+  color: #000000c7;
+  letter-spacing: 0.1em;
+  line-height: 1.3;
+  text-transform: uppercase;
 }
 
-/* ─── Panel body ──────────────────────────────────────────────────── */
+/* ─── Panel body — matches image: comfortable padding, no indent strip ─ */
 .panelBody {
-  padding: 12px 14px 14px 16px;
-  margin: 0 0 2px;
+  margin: 0;
   box-sizing: border-box;
-  border-left: 2px solid var(--fc-accent-border);
-  background: var(--fc-surface-inset);
+  border: none;
+  background: transparent;
   font-family: var(--fc-font);
   font-size: var(--fc-size-body);
   line-height: var(--fc-lh-body);
   color: var(--fc-fg);
 }
 
+.nodeCardBody .panelBody:not(.framePanelBody) {
+  padding: 4px 20px 18px;
+}
+
+.nodeCardBody .panelBody.framePanelBody {
+  padding: 25px 50px 22px;
+}
+
 /* ─── Shaping gate placeholder ────────────────────────────────────── */
 .shapingGate {
-  padding: 10px 16px 12px;
+  padding: 10px 14px 12px;
   font-family: var(--fc-font);
   font-size: var(--fc-size-body);
   font-weight: var(--fc-w-body);
   line-height: var(--fc-lh-body);
   color: var(--fc-fg-muted);
   font-style: italic;
-  border-top: none;
+  border-top: 1px solid var(--fc-border-soft);
 }
 
 /* ─── States ───────────────────────────────────────────────────────── */
@@ -259,12 +309,12 @@
   font-size: var(--fc-size-body);
   font-weight: var(--fc-w-body);
   line-height: var(--fc-lh-body);
-  color: var(--fc-fg-muted);
-  padding: 12px 14px;
+  color: var(--fc-fg-quiet);
+  padding: 6px 0 10px;
   margin: 0;
-  border-radius: var(--fc-radius-field);
-  background: var(--fc-surface-field);
-  border: 1px solid var(--fc-border-soft);
+  border-radius: 0;
+  background: transparent;
+  border: none;
 }
 
 .stateEmpty {
@@ -272,13 +322,13 @@
   font-size: var(--fc-size-body);
   font-weight: var(--fc-w-body);
   line-height: var(--fc-lh-body);
-  color: var(--fc-fg-muted);
+  color: var(--fc-fg-quiet);
   font-style: italic;
-  padding: 12px 14px;
+  padding: 6px 0 10px;
   margin: 0;
-  border-radius: var(--fc-radius-field);
-  background: var(--fc-surface-field);
-  border: 1px dashed var(--fc-border);
+  border-radius: 0;
+  background: transparent;
+  border: none;
 }
 
 .stateError {
@@ -287,36 +337,137 @@
   font-weight: var(--fc-w-body-strong);
   line-height: var(--fc-lh-body);
   color: color-mix(in srgb, var(--text-error, #b91c1c) 92%, var(--fc-fg));
-  padding: 12px 14px;
+  padding: 6px 0 10px;
   margin: 0;
-  border-radius: var(--fc-radius-field);
-  background: color-mix(in srgb, var(--text-error, #b91c1c) 10%, var(--bg-surface));
-  border: 1px solid color-mix(in srgb, var(--text-error, #b91c1c) 35%, var(--border-strong));
+  border-radius: 0;
+  background: transparent;
+  border: none;
+  border-left: 2px solid var(--text-error, #b91c1c);
+  padding-left: 10px;
 }
 
-/* ─── Q/A list (Clarify panel) ────────────────────────────────────── */
-.qaList {
+/* ─── Clarify as document (User story + Functional requirements) ──── */
+.clarifyDoc {
   display: flex;
   flex-direction: column;
+  gap: 0;
+}
+
+.docSection {
+  margin: 0;
+  padding: 0;
+}
+
+.docSectionSpaced {
+  margin-top: 28px;
+  padding-top: 28px;
+  border-top: 1px solid var(--fc-border-soft);
+}
+
+.sectionLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.sectionLabelIcon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--fc-mock-label);
+}
+
+.sectionLabelText {
+  font-family: var(--fc-font);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fc-mock-label);
+  line-height: 1.3;
+}
+
+.userStoryBody {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.storyIndex {
+  font-family: var(--fc-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--fc-mock-label) 85%, var(--fc-mock-fg));
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.storyContent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.storyAnswer {
+  font-family: var(--fc-font);
+  font-size: var(--fc-size-body);
+  font-weight: var(--fc-w-body);
+  line-height: var(--fc-lh-body);
+  color: color-mix(in srgb, var(--fc-mock-fg) 88%, var(--fc-mock-label));
+  margin: 0;
+}
+
+.requirementList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.requirementItem {
+  display: flex;
+  align-items: flex-start;
   gap: 12px;
+  margin: 0;
+  padding: 0;
 }
 
-.qaItem {
+.reqCheck {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reqCheck svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.requirementText {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: var(--fc-radius-field);
-  background: var(--fc-surface-field);
-  border: 1px solid var(--fc-border-soft);
-  box-sizing: border-box;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
 }
 
 .qaQuestion {
   font-family: var(--fc-font);
   font-size: var(--fc-size-body);
   font-weight: var(--fc-w-label);
-  color: var(--fc-fg);
+  color: var(--fc-mock-fg);
   line-height: var(--fc-lh-body);
   letter-spacing: -0.01em;
 }
@@ -325,14 +476,13 @@
   font-family: var(--fc-font);
   font-size: var(--fc-size-body);
   font-weight: var(--fc-w-body);
-  color: var(--fc-fg);
+  color: var(--fc-fg-muted);
   line-height: var(--fc-lh-body);
-  padding: 10px 12px;
+  padding: 5px 8px;
   margin: 0;
-  border-radius: var(--fc-radius-field);
-  background: color-mix(in srgb, var(--accent-primary) 11%, var(--bg-surface));
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 22%, var(--fc-border-soft));
-  border-left: 3px solid var(--fc-accent-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  border: 1px solid var(--fc-border-soft);
   box-sizing: border-box;
 }
 
@@ -341,13 +491,13 @@
   font-size: var(--fc-size-body);
   font-weight: var(--fc-w-body);
   line-height: var(--fc-lh-body);
-  color: var(--fc-fg-muted);
+  color: var(--fc-fg-quiet);
   font-style: italic;
-  padding: 10px 12px;
+  padding: 5px 8px;
   margin: 0;
-  border-radius: var(--fc-radius-field);
-  background: var(--fc-surface-inset);
-  border: 1px dashed var(--fc-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px dashed var(--fc-border-soft);
   box-sizing: border-box;
 }
 
@@ -355,39 +505,45 @@
 .childList {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 2px;
 }
 
 .childItem {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: var(--fc-radius-field);
-  background: var(--fc-surface-field);
-  border: 1px solid var(--fc-border-soft);
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
   box-sizing: border-box;
+  transition: background 0.1s ease;
+}
+
+.childItem:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
 .childNumber {
   font-family: var(--fc-mono);
-  font-size: var(--fc-size-label);
+  font-size: var(--fc-size-meta);
   font-weight: var(--fc-w-label);
-  color: color-mix(in srgb, var(--accent-primary) 55%, var(--fc-fg));
+  color: var(--fc-fg-quiet);
   flex-shrink: 0;
-  letter-spacing: 0.03em;
-  line-height: var(--fc-lh-tight);
-  padding: 3px 8px;
-  margin-top: 1px;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--accent-primary) 14%, var(--bg-surface));
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 28%, var(--fc-border-soft));
+  letter-spacing: 0.04em;
+  line-height: var(--fc-lh-body);
+  padding: 0;
+  min-width: 1.6em;
+  border-radius: 0;
+  background: transparent;
+  border: none;
+  text-align: right;
 }
 
 .childTitle {
   font-family: var(--fc-font);
   font-size: var(--fc-size-body);
-  font-weight: var(--fc-w-body);
+  font-weight: var(--fc-w-body-strong);
   color: var(--fc-fg-muted);
   line-height: var(--fc-lh-body);
   flex: 1;
@@ -396,10 +552,10 @@
 
 .childTitleCurrent {
   color: var(--fc-fg);
-  font-weight: var(--fc-w-label);
+  font-weight: var(--fc-w-field-title);
 }
 
-/* ─── Footer spacer (no rule — blends into thread scroll) ─────────── */
+/* ─── Footer spacer ────────────────────────────────────────────────── */
 .contextFooter {
   height: 0;
   margin-top: 20px;
