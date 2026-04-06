@@ -49,6 +49,7 @@ from backend.services.git_checkpoint_service import GitCheckpointService
 from backend.services.node_detail_service import NodeDetailService
 from backend.services.spec_generation_service import SpecGenerationService
 from backend.services.node_document_service import NodeDocumentService
+from backend.services.workspace_file_service import WorkspaceFileService
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
@@ -80,6 +81,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     )
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
+    workspace_file_service = WorkspaceFileService(storage)
     thread_registry_service_v2 = ThreadRegistryService(storage.thread_registry_store)
     system_message_writer_v2 = ConversationSystemMessageWriter(storage)
     node_detail_service = NodeDetailService(
@@ -251,6 +253,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.project_service = project_service
     app.state.node_service = node_service
     app.state.node_document_service = node_document_service
+    app.state.workspace_file_service = workspace_file_service
     app.state.node_detail_service = node_detail_service
     app.state.snapshot_view_service = snapshot_view_service
     app.state.codex_client = codex_client

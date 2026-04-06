@@ -413,7 +413,7 @@ describe('MessagesV3', () => {
     expect(screen.getByTestId('messages-v3-plan-ready-zone')).toBeInTheDocument()
   })
 
-  it('keeps commandExecution tools on command card even when outputFiles exists', () => {
+  it('keeps commandExecution tools as command cards even when outputFiles are present', () => {
     render(
       <MessagesV3
         snapshot={makeSnapshot({
@@ -452,11 +452,13 @@ describe('MessagesV3', () => {
       />,
     )
 
-    expect(screen.getByText('Ran')).toBeInTheDocument()
+    const toolRow = screen.getByTestId('conversation-v3-item-tool')
+    expect(toolRow).toHaveTextContent('Begin Patch')
     expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
+
     fireEvent.click(screen.getByRole('button', { name: 'Expand command details' }))
-    expect(screen.getByText('src/app.ts')).toBeInTheDocument()
     expect(screen.getByTestId('conversation-v3-tool-output-tool-edit-1')).toBeInTheDocument()
+    expect(toolRow).toHaveTextContent('app.ts')
   })
 
   it('renders execution diff rows from canonical changes even when files.patchText is empty', () => {
@@ -830,7 +832,7 @@ describe('MessagesV3', () => {
     expect(diffRow).not.toHaveTextContent('No diff excerpt for this file.')
   })
 
-  it('does not infer file-change card from shell write command when semantic payload is absent', () => {
+  it('keeps shell write commands as command cards when file payload is absent', () => {
     render(
       <MessagesV3
         snapshot={makeSnapshot({
@@ -848,52 +850,12 @@ describe('MessagesV3', () => {
               tone: 'neutral',
               metadata: {},
               toolType: 'commandExecution',
-              title: '"powershell.exe" -Command "@\' ... \'@ | Set-Content -Path tests/session.test.mjs"',
+              title:
+                '"powershell.exe" -Command "@\'const ready = true;\'@ | Set-Content -Path tests/session.test.mjs"',
               toolName: 'powershell',
               callId: 'call-1',
               argumentsText:
-                '"powershell.exe" -Command "@\' ... \'@ | Set-Content -Path tests/session.test.mjs"',
-              outputText: '',
-              outputFiles: [],
-              exitCode: 0,
-            },
-          ],
-        })}
-        isLoading={false}
-        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
-      />,
-    )
-
-    expect(screen.getByText('Ran')).toBeInTheDocument()
-    expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Expand command details' }))
-    expect(screen.getByText(/Set-Content -Path tests\/session\.test\.mjs/)).toBeInTheDocument()
-  })
-
-  it('keeps raw command output for shell-write commandExecution tools', () => {
-    render(
-      <MessagesV3
-        snapshot={makeSnapshot({
-          items: [
-            {
-              id: 'tool-edit-shell-2',
-              kind: 'tool',
-              threadId: 'thread-1',
-              turnId: 'turn-1',
-              sequence: 1,
-              createdAt: '2026-04-01T00:00:01Z',
-              updatedAt: '2026-04-01T00:00:01Z',
-              status: 'completed',
-              source: 'upstream',
-              tone: 'neutral',
-              metadata: {},
-              toolType: 'commandExecution',
-              title:
-                '"powershell.exe" -Command "@\'const ready = true;\'@ | Set-Content -Path src/app.ts"',
-              toolName: 'powershell',
-              callId: 'call-2',
-              argumentsText:
-                '"powershell.exe" -Command "@\'const ready = true;\'@ | Set-Content -Path src/app.ts"',
+                '"powershell.exe" -Command "@\'const ready = true;\'@ | Set-Content -Path tests/session.test.mjs"',
               outputText: 'PS > powershell.exe -Command ...',
               outputFiles: [],
               exitCode: 0,
@@ -905,9 +867,10 @@ describe('MessagesV3', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand command details' }))
     const toolRow = screen.getByTestId('conversation-v3-item-tool')
-    expect(toolRow).toHaveTextContent(/PS > powershell\.exe/i)
+    expect(toolRow).toHaveTextContent(/set-content/i)
+    fireEvent.click(screen.getByRole('button', { name: 'Expand command details' }))
+    expect(screen.getByTestId('conversation-v3-tool-output-tool-edit-shell-1')).toBeInTheDocument()
     expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
   })
 

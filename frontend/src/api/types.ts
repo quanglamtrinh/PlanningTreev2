@@ -170,6 +170,13 @@ export interface NodeDocument {
   updated_at: string | null
 }
 
+/** Project-root-relative UTF-8 text file (info tab docs / Codex skills). */
+export interface WorkspaceTextFile {
+  relative_path: string
+  content: string
+  updated_at: string | null
+}
+
 export type ChangedFileStatus = 'A' | 'M' | 'D' | 'R'
 
 export interface ChangedFileRecord {

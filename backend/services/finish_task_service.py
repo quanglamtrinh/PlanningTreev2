@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -13,7 +14,6 @@ from backend.ai.auto_review_prompt_builder import (
     extract_auto_review_result,
 )
 from backend.ai.codex_client import CodexAppClient
-from backend.conversation.projector.thread_event_projector import patch_item
 from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.ai.execution_prompt_builder import (
@@ -29,6 +29,10 @@ from backend.errors.app_errors import (
     NodeNotFound,
 )
 from backend.services import planningtree_workspace
+from backend.services.execution_file_change_hydrator import (
+    ExecutionFileChangeDiffSource,
+    ExecutionFileChangeHydrator,
+)
 from backend.services.node_detail_service import (
     NodeDetailService,
     _DEFAULT_FRAME_META,
@@ -422,6 +426,295 @@ class FinishTaskService:
             or "\n--- " in f"\n{normalized}"
         )
 
+    @staticmethod
+    def _normalize_path_for_diff_match(path: str | None) -> str:
+        candidate = str(path or "").replace("\\", "/").strip()
+        if not candidate:
+            return ""
+        if len(candidate) >= 2 and candidate[1] == ":":
+            candidate = candidate[2:]
+        candidate = candidate.lstrip("/")
+        candidate = re.sub(r"^\./+", "", candidate)
+        return candidate.lower()
+
+    @staticmethod
+    def _is_planningtree_path(path: str | None) -> bool:
+        normalized = FinishTaskService._normalize_path_for_diff_match(path)
+        return normalized == ".planningtree" or normalized.startswith(".planningtree/")
+
+    @staticmethod
+    def _strip_git_ab_prefix(path: str) -> str:
+        candidate = str(path or "").strip().replace("\\", "/")
+        if candidate.startswith(("a/", "b/")) and len(candidate) > 2:
+            return candidate[2:]
+        return candidate
+
+    @staticmethod
+    def _extract_paths_from_diff_git_header(line: str) -> list[str]:
+        payload = line[len("diff --git ") :].strip()
+        if not payload:
+            return []
+        paths: list[str] = []
+        rest = payload
+        while rest:
+            if rest.startswith('"'):
+                end = rest.find('"', 1)
+                if end < 0:
+                    break
+                token = rest[1:end]
+                rest = rest[end + 1 :].lstrip()
+            else:
+                space = rest.find(" ")
+                token = rest if space < 0 else rest[:space]
+                rest = "" if space < 0 else rest[space + 1 :].lstrip()
+            normalized = FinishTaskService._strip_git_ab_prefix(token)
+            if normalized:
+                paths.append(normalized)
+        return paths
+
+    @staticmethod
+    def _parse_unified_diff_blocks(diff_text: str) -> list[dict[str, Any]]:
+        normalized = str(diff_text or "").replace("\r\n", "\n").replace("\r", "\n")
+        if not normalized.strip():
+            return []
+        lines = normalized.split("\n")
+        starts: list[tuple[int, list[str]]] = []
+        for index, line in enumerate(lines):
+            if line.startswith("diff --git "):
+                paths = FinishTaskService._extract_paths_from_diff_git_header(line)
+                starts.append((index, paths))
+        if not starts:
+            return [{"paths": [], "text": normalized.strip()}]
+        blocks: list[dict[str, Any]] = []
+        for idx, (start, paths) in enumerate(starts):
+            end = starts[idx + 1][0] if idx + 1 < len(starts) else len(lines)
+            block_text = "\n".join(lines[start:end]).strip()
+            if not block_text:
+                continue
+            blocks.append({"paths": paths, "text": block_text})
+        return blocks
+
+    @staticmethod
+    def _normalize_change_kind(value: Any, *, fallback: str = "modify") -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"add", "create", "created", "new"}:
+            return "add"
+        if normalized in {"delete", "deleted", "remove", "removed"}:
+            return "delete"
+        if normalized in {"modify", "modified", "update", "updated", "change", "changed"}:
+            return "modify"
+        return fallback
+
+    @staticmethod
+    def _change_type_to_kind(value: Any, *, fallback: str = "modify") -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"created", "create", "add"}:
+            return "add"
+        if normalized in {"deleted", "delete", "remove", "removed"}:
+            return "delete"
+        if normalized in {"updated", "update", "modify", "modified", "change", "changed"}:
+            return "modify"
+        return fallback
+
+    @staticmethod
+    def _change_kind_to_change_type(kind: str) -> str:
+        if kind == "add":
+            return "created"
+        if kind == "delete":
+            return "deleted"
+        return "updated"
+
+    @staticmethod
+    def _extract_file_change_changes(item: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_changes = item.get("changes") if isinstance(item.get("changes"), list) else None
+        rows = (
+            raw_changes
+            if raw_changes is not None
+            else item.get("outputFiles")
+            if isinstance(item.get("outputFiles"), list)
+            else []
+        )
+        extracted: list[dict[str, Any]] = []
+        for raw in rows:
+            if not isinstance(raw, dict):
+                continue
+            path = str(raw.get("path") or "").strip()
+            if not path:
+                continue
+            if FinishTaskService._is_planningtree_path(path):
+                continue
+            kind = FinishTaskService._normalize_change_kind(
+                raw.get("kind"),
+                fallback=FinishTaskService._change_type_to_kind(raw.get("changeType"), fallback="modify"),
+            )
+            diff_value = raw.get("diff")
+            if not isinstance(diff_value, str):
+                diff_value = raw.get("patchText")
+            diff_text = str(diff_value or "").strip() or None
+            summary_value = raw.get("summary")
+            summary = str(summary_value).strip() if isinstance(summary_value, str) and str(summary_value).strip() else None
+            extracted.append(
+                {
+                    "path": path,
+                    "kind": kind,
+                    "diff": diff_text,
+                    "summary": summary,
+                }
+            )
+        return extracted
+
+    @staticmethod
+    def _output_files_from_changes(changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        files: list[dict[str, Any]] = []
+        for change in changes:
+            path = str(change.get("path") or "").strip()
+            if not path:
+                continue
+            if FinishTaskService._is_planningtree_path(path):
+                continue
+            kind = FinishTaskService._normalize_change_kind(change.get("kind"), fallback="modify")
+            file_entry: dict[str, Any] = {
+                "path": path,
+                "changeType": FinishTaskService._change_kind_to_change_type(kind),
+                "summary": str(change.get("summary")).strip() if isinstance(change.get("summary"), str) and str(change.get("summary")).strip() else None,
+                "kind": kind,
+            }
+            diff_text = str(change.get("diff") or "").strip()
+            if diff_text:
+                file_entry["diff"] = diff_text
+            files.append(file_entry)
+        return files
+
+    @staticmethod
+    def _score_paths_for_match(candidate_paths: list[str], target_path: str) -> int:
+        if not target_path:
+            return 0
+        target_base = Path(target_path).name.lower()
+        best = 0
+        for candidate in candidate_paths:
+            normalized = FinishTaskService._normalize_path_for_diff_match(candidate)
+            if not normalized:
+                continue
+            if normalized == target_path:
+                return 10000 + len(normalized)
+            if target_path.endswith(f"/{normalized}") or normalized.endswith(f"/{target_path}"):
+                best = max(best, 5000 + min(len(normalized), len(target_path)))
+                continue
+            if normalized.endswith(target_base) and target_base:
+                best = max(best, 500 + len(normalized))
+        return best
+
+    @staticmethod
+    def _resolve_diff_block_for_path(
+        blocks: list[dict[str, Any]],
+        *,
+        path: str,
+        file_index: int,
+    ) -> dict[str, Any] | None:
+        normalized_target = FinishTaskService._normalize_path_for_diff_match(path)
+        best_index = -1
+        best_score = 0
+        for idx, block in enumerate(blocks):
+            block_paths = block.get("paths")
+            if not isinstance(block_paths, list):
+                continue
+            score = FinishTaskService._score_paths_for_match(block_paths, normalized_target)
+            if score > best_score:
+                best_score = score
+                best_index = idx
+        if best_index >= 0 and best_score >= 500:
+            return blocks[best_index]
+        if 0 <= file_index < len(blocks):
+            return blocks[file_index]
+        if len(blocks) == 1:
+            return blocks[0]
+        return None
+
+    @staticmethod
+    def _primary_path_from_block_paths(paths: list[str] | None) -> str:
+        if not isinstance(paths, list):
+            return ""
+        for candidate in reversed(paths):
+            normalized = FinishTaskService._normalize_path_for_diff_match(candidate)
+            if normalized and normalized != "dev/null":
+                return str(candidate)
+        for candidate in reversed(paths):
+            raw = str(candidate or "").strip()
+            if raw:
+                return raw
+        return ""
+
+    @staticmethod
+    def _change_kind_from_diff_block_text(text: str) -> str:
+        normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+        if (
+            re.search(r"(?m)^new file mode\b", normalized)
+            or re.search(r"(?m)^--- /dev/null$", normalized)
+        ):
+            return "add"
+        if (
+            re.search(r"(?m)^deleted file mode\b", normalized)
+            or re.search(r"(?m)^\+\+\+ /dev/null$", normalized)
+        ):
+            return "delete"
+        return "modify"
+
+    @staticmethod
+    def _changes_from_diff_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not blocks:
+            return []
+        changes: list[dict[str, Any]] = []
+        seen = set()
+        for block in blocks:
+            block_paths = block.get("paths")
+            path = FinishTaskService._primary_path_from_block_paths(
+                block_paths if isinstance(block_paths, list) else None
+            )
+            normalized_path = FinishTaskService._normalize_path_for_diff_match(path)
+            if (
+                not normalized_path
+                or normalized_path == "dev/null"
+                or normalized_path in seen
+                or FinishTaskService._is_planningtree_path(path)
+            ):
+                continue
+            text = str(block.get("text") or "").strip()
+            changes.append(
+                {
+                    "path": path,
+                    "kind": FinishTaskService._change_kind_from_diff_block_text(text),
+                    "diff": text or None,
+                    "summary": "Hydrated from git diff",
+                }
+            )
+            seen.add(normalized_path)
+        return changes
+
+    @staticmethod
+    def _file_change_item_has_planningtree_paths(item: dict[str, Any]) -> bool:
+        rows: list[Any] = []
+        raw_changes = item.get("changes")
+        raw_output_files = item.get("outputFiles")
+        if isinstance(raw_changes, list):
+            rows.extend(raw_changes)
+        if isinstance(raw_output_files, list):
+            rows.extend(raw_output_files)
+        for raw in rows:
+            if not isinstance(raw, dict):
+                continue
+            path = str(raw.get("path") or "").strip()
+            if FinishTaskService._is_planningtree_path(path):
+                return True
+        return False
+
+    @staticmethod
+    def _output_text_from_changes(changes: list[dict[str, Any]]) -> str:
+        return "\n\n".join(
+            str(change.get("diff") or "").strip()
+            for change in changes
+            if str(change.get("diff") or "").strip()
+        )
+
     def _hydrate_execution_file_change_diff_v2(
         self,
         *,
@@ -445,6 +738,75 @@ class FinishTaskService:
             return
 
         project_path = Path(workspace_root)
+
+        class _CommitRangeDiffSource(ExecutionFileChangeDiffSource):
+            mode = "commit_range"
+
+            def __init__(
+                self,
+                *,
+                git_checkpoint_service: Any,
+                project_path: Path,
+                initial_sha: str,
+                head_sha: str,
+            ) -> None:
+                self._git_checkpoint_service = git_checkpoint_service
+                self._project_path = project_path
+                self._initial_sha = initial_sha
+                self._head_sha = head_sha
+
+            def get_diff_for_paths(self, paths: list[str]) -> str:
+                if not paths:
+                    return ""
+                if not hasattr(self._git_checkpoint_service, "get_diff_for_paths"):
+                    return ""
+                try:
+                    return str(
+                        self._git_checkpoint_service.get_diff_for_paths(
+                            self._project_path,
+                            self._initial_sha,
+                            self._head_sha,
+                            paths,
+                        )
+                        or ""
+                    )
+                except Exception:
+                    logger.debug(
+                        "Failed to hydrate execution diff text for %s/%s (paths=%s)",
+                        project_id,
+                        node_id,
+                        paths,
+                        exc_info=True,
+                    )
+                    return ""
+
+            def get_full_diff(self) -> str:
+                try:
+                    return str(
+                        self._git_checkpoint_service.get_diff(
+                            self._project_path,
+                            self._initial_sha,
+                            self._head_sha,
+                        )
+                        or ""
+                    )
+                except Exception:
+                    logger.debug(
+                        "Failed to collect full execution diff for %s/%s turn %s",
+                        project_id,
+                        node_id,
+                        turn_id,
+                        exc_info=True,
+                    )
+                    return ""
+
+        diff_source = _CommitRangeDiffSource(
+            git_checkpoint_service=self._git_checkpoint_service,
+            project_path=project_path,
+            initial_sha=initial_sha,
+            head_sha=head_sha,
+        )
+        hydrator = ExecutionFileChangeHydrator(logger=logger)
         query_service = runtime._query_service
         snapshot = query_service.get_thread_snapshot(
             project_id,
@@ -454,75 +816,14 @@ class FinishTaskService:
             ensure_binding=False,
             allow_thread_read_hydration=False,
         )
-
-        updated_snapshot = snapshot
-        pending_events: list[dict[str, Any]] = []
-        for item in list(updated_snapshot.get("items", [])):
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("kind") or "") != "tool":
-                continue
-            if str(item.get("toolType") or "") != "fileChange":
-                continue
-            if str(item.get("turnId") or "") != turn_id:
-                continue
-
-            output_text = str(item.get("outputText") or "")
-            arguments_text = str(item.get("argumentsText") or "")
-            if self._looks_like_structured_diff(output_text) or self._looks_like_structured_diff(arguments_text):
-                continue
-
-            output_files = item.get("outputFiles")
-            paths: list[str] = []
-            if isinstance(output_files, list):
-                for raw_file in output_files:
-                    if not isinstance(raw_file, dict):
-                        continue
-                    raw_path = str(raw_file.get("path") or "").strip()
-                    if raw_path:
-                        paths.append(raw_path)
-
-            diff_text = ""
-            try:
-                if paths and hasattr(self._git_checkpoint_service, "get_diff_for_paths"):
-                    diff_text = str(
-                        self._git_checkpoint_service.get_diff_for_paths(
-                            project_path,
-                            initial_sha,
-                            head_sha,
-                            paths,
-                        )
-                        or ""
-                    )
-                if not diff_text.strip():
-                    diff_text = str(
-                        self._git_checkpoint_service.get_diff(project_path, initial_sha, head_sha) or ""
-                    )
-            except Exception:
-                logger.debug(
-                    "Failed to hydrate execution diff text for %s/%s item %s",
-                    project_id,
-                    node_id,
-                    str(item.get("id") or ""),
-                    exc_info=True,
-                )
-                continue
-
-            trimmed_diff = diff_text.strip()
-            if not trimmed_diff:
-                continue
-
-            append_text = trimmed_diff if not output_text.strip() else f"\n{trimmed_diff}"
-            updated_snapshot, events = patch_item(
-                updated_snapshot,
-                str(item.get("id") or ""),
-                {
-                    "kind": "tool",
-                    "outputTextAppend": append_text,
-                    "updatedAt": iso_now(),
-                },
-            )
-            pending_events.extend(events)
+        updated_snapshot, pending_events, _counters = hydrator.hydrate_turn_snapshot(
+            snapshot=snapshot,
+            turn_id=turn_id,
+            diff_source=diff_source,
+            hydrated_by="finish_task_diff_v2",
+            project_id=project_id,
+            node_id=node_id,
+        )
 
         if pending_events:
             query_service.persist_thread_mutation(

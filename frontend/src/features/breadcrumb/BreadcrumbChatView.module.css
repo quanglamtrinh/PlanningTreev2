@@ -184,6 +184,11 @@
   background: var(--thread-chat-canvas);
 }
 
+/* Execution tab: white canvas so messages + command blocks read as on paper */
+.threadExecutionWhiteCanvas {
+  --thread-chat-canvas: #ffffff;
+}
+
 .acceptReviewBar {
   display: flex;
   flex-direction: column;

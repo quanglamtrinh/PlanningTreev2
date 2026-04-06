@@ -32,6 +32,7 @@ import type {
   ThreadSnapshotV3,
   ThreadRole,
   WorkflowActionAcceptedResponse,
+  WorkspaceTextFile,
 } from './types'
 
 type JsonBody = Record<string, unknown> | undefined
@@ -346,6 +347,22 @@ export const api = {
   ): Promise<NodeDocument> {
     return jsonFetch<NodeDocument>(
       `/v1/projects/${projectId}/nodes/${nodeId}/documents/${kind}`,
+      { method: 'PUT' },
+      { content },
+    )
+  },
+  getWorkspaceTextFile(projectId: string, relativePath: string): Promise<WorkspaceTextFile> {
+    const q = new URLSearchParams({ relative_path: relativePath })
+    return jsonFetch<WorkspaceTextFile>(`/v1/projects/${projectId}/workspace-text-file?${q}`)
+  },
+  putWorkspaceTextFile(
+    projectId: string,
+    relativePath: string,
+    content: string,
+  ): Promise<WorkspaceTextFile> {
+    const q = new URLSearchParams({ relative_path: relativePath })
+    return jsonFetch<WorkspaceTextFile>(
+      `/v1/projects/${projectId}/workspace-text-file?${q}`,
       { method: 'PUT' },
       { content },
     )

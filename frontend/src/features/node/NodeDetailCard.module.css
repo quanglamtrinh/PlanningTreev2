@@ -468,6 +468,30 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   min-width: 0;
 }
 
+.describeInfoEditorHost.documentPanel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-top: 0;
+}
+
+.infoWorkspaceEditorToolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.infoWorkspaceSaving {
+  margin-left: 8px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
 .describePanel {
   display: flex;
   flex-direction: column;
@@ -701,15 +725,39 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 
 .infoPathItem {
   margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px 10px 14px;
+  padding: 0;
   border-radius: 0;
   background: color-mix(in srgb, var(--color-text-primary) 3.5%, var(--color-bg-panel));
   border: 1px solid color-mix(in srgb, var(--color-border-subtle) 85%, var(--color-text-primary) 15%);
   box-sizing: border-box;
   min-width: 0;
+}
+
+.infoPathHit {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px 10px 14px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  box-sizing: border-box;
+  min-width: 0;
+  border-radius: 0;
+}
+
+.infoPathHit:hover {
+  background: color-mix(in srgb, var(--color-accent) 5%, transparent);
+}
+
+.infoPathHit:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .infoPathIconSvg {

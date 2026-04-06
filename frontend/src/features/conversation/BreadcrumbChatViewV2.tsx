@@ -535,7 +535,11 @@ export function BreadcrumbChatViewV2() {
               ) : null}
             </div>
 
-            <div className={styles.threadBodyMain}>
+            <div
+              className={`${styles.threadBodyMain}${
+                threadTab === 'execution' ? ` ${styles.threadExecutionWhiteCanvas}` : ''
+              }`}
+            >
               {showAuditShell ? (
                 <div className={styles.auditShell} data-testid="audit-shell">
                   {snapshot && projectId && nodeId ? (
@@ -585,7 +589,12 @@ export function BreadcrumbChatViewV2() {
               )}
             </div>
 
-            <div className={styles.threadBodyComposer} data-testid="breadcrumb-thread-composer">
+            <div
+              className={`${styles.threadBodyComposer}${
+                threadTab === 'execution' ? ` ${styles.threadExecutionWhiteCanvas}` : ''
+              }`}
+              data-testid="breadcrumb-thread-composer"
+            >
               <ComposerBar
                 onSend={(content) => {
                   void handleSend(content)

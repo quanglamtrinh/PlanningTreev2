@@ -145,6 +145,38 @@ def _make_snapshot_for_file_change_item(
     }
 
 
+def _make_snapshot_for_command_only_item(*, turn_id: str) -> dict[str, Any]:
+    return {
+        "threadId": "thread-exec-1",
+        "activeTurnId": None,
+        "updatedAt": "2026-04-03T00:00:00Z",
+        "items": [
+            {
+                "id": "cmd_123",
+                "kind": "tool",
+                "threadId": "thread-exec-1",
+                "turnId": turn_id,
+                "sequence": 3,
+                "createdAt": "2026-04-03T00:00:01Z",
+                "updatedAt": "2026-04-03T00:00:01Z",
+                "status": "completed",
+                "source": "upstream",
+                "tone": "neutral",
+                "metadata": {},
+                "toolType": "commandExecution",
+                "title": 'echo "hello" > src/output.txt',
+                "toolName": "bash",
+                "callId": "call_123",
+                "argumentsText": 'echo "hello" > src/output.txt',
+                "outputText": "",
+                "outputFiles": [],
+                "changes": [],
+                "exitCode": 0,
+            }
+        ],
+    }
+
+
 def _run_hydration(
     *,
     snapshot: dict[str, Any],
@@ -350,6 +382,91 @@ def test_hydrate_execution_file_change_diff_from_worktree_matches_same_basename_
     assert "new-tests" in str(changes_by_path[tests_render_path].get("diff") or "")
 
 
+def test_hydrate_execution_file_change_diff_from_worktree_creates_synthetic_file_change_for_command_only_turn() -> None:
+    workspace_root = r"C:\Users\Thong\Tic tac toe"
+    snapshot = _make_snapshot_for_command_only_item(turn_id="exec_turn_1")
+    artifact_service = _RecordingArtifactService(
+        path_diff="",
+        full_diff=(
+            "diff --git a/src/output.txt b/src/output.txt\n"
+            "new file mode 100644\n"
+            "index 0000000..1111111\n"
+            "--- /dev/null\n"
+            "+++ b/src/output.txt\n"
+            "@@ -0,0 +1 @@\n"
+            "+hello\n"
+        ),
+    )
+
+    query_service = _run_hydration(
+        snapshot=snapshot,
+        artifact_service=artifact_service,
+        workspace_root=workspace_root,
+    )
+
+    assert len(artifact_service.calls) == 1
+    assert artifact_service.calls[0]["paths"] is None
+    assert len(query_service.persist_calls) == 1
+    updated_snapshot, _events = query_service.persist_calls[0]
+    updated_items = updated_snapshot.get("items", [])
+    assert len(updated_items) == 2
+
+    synthetic_item = next(
+        item for item in updated_items
+        if isinstance(item, dict) and str(item.get("id") or "") == "turn:exec_turn_1:hydrated-file-change"
+    )
+    assert synthetic_item["toolType"] == "fileChange"
+    assert synthetic_item["title"] == "File changes"
+    assert synthetic_item["toolName"] == "git-diff-hydrator"
+
+    changes = synthetic_item.get("changes") if isinstance(synthetic_item.get("changes"), list) else []
+    assert len(changes) == 1
+    assert changes[0]["path"] == "src/output.txt"
+    assert changes[0]["kind"] == "add"
+    assert "hello" in str(changes[0].get("diff") or "")
+
+    mirrored_files = synthetic_item.get("outputFiles") if isinstance(synthetic_item.get("outputFiles"), list) else []
+    assert len(mirrored_files) == 1
+    assert mirrored_files[0]["path"] == "src/output.txt"
+    assert mirrored_files[0]["changeType"] == "created"
+
+
+def test_hydrate_execution_file_change_diff_from_worktree_filters_out_planningtree_from_synthetic_changes() -> None:
+    workspace_root = r"C:\Users\Thong\Tic tac toe"
+    snapshot = _make_snapshot_for_command_only_item(turn_id="exec_turn_1")
+    artifact_service = _RecordingArtifactService(
+        path_diff="",
+        full_diff=(
+            "diff --git a/.planningtree/root/state.json b/.planningtree/root/state.json\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+            "diff --git a/src/app.ts b/src/app.ts\n"
+            "@@ -1 +1 @@\n"
+            "-before\n"
+            "+after\n"
+        ),
+    )
+
+    query_service = _run_hydration(
+        snapshot=snapshot,
+        artifact_service=artifact_service,
+        workspace_root=workspace_root,
+    )
+
+    assert len(query_service.persist_calls) == 1
+    updated_snapshot, _events = query_service.persist_calls[0]
+    synthetic_item = next(
+        item for item in updated_snapshot.get("items", [])
+        if isinstance(item, dict) and str(item.get("id") or "") == "turn:exec_turn_1:hydrated-file-change"
+    )
+    changes = synthetic_item.get("changes") if isinstance(synthetic_item.get("changes"), list) else []
+    assert len(changes) == 1
+    assert changes[0]["path"] == "src/app.ts"
+    assert "after" in str(changes[0].get("diff") or "")
+    assert all(".planningtree" not in str(change.get("path") or "") for change in changes)
+
+
 class _FakeGitCommitService:
     def __init__(self, *, initial_sha: str, committed_sha: str | None) -> None:
         self.initial_sha = initial_sha
@@ -500,19 +617,70 @@ class _FlowArtifactService:
 
 
 class _FlowMetadataService:
-    def __init__(self, *, workspace_root: str, hierarchical_number: str, title: str) -> None:
+    def __init__(
+        self,
+        *,
+        workspace_root: str,
+        hierarchical_number: str,
+        title: str,
+        node_id: str = "node-1",
+    ) -> None:
         self.workspace_root = workspace_root
         self.hierarchical_number = hierarchical_number
         self.title = title
+        self.node_id = node_id
+        self.spec_content = "## Spec\n- Implement feature"
+        self.frame_content = "## Frame\n- Keep behavior stable"
 
     def load_execution_metadata(self, _project_id: str, _node_id: str) -> dict[str, Any]:
+        snapshot = {
+            "tree_state": {
+                "root_node_id": "root-1",
+                "node_index": {
+                    "root-1": {
+                        "node_id": "root-1",
+                        "parent_id": None,
+                        "child_ids": [self.node_id],
+                        "node_kind": "root",
+                        "hierarchical_number": "1",
+                        "title": "Root",
+                    },
+                    self.node_id: {
+                        "node_id": self.node_id,
+                        "parent_id": "root-1",
+                        "child_ids": [],
+                        "node_kind": "original",
+                        "hierarchical_number": self.hierarchical_number,
+                        "title": self.title,
+                    },
+                },
+            }
+        }
+        node_payload = copy.deepcopy(snapshot["tree_state"]["node_index"][self.node_id])
         return {
             "workspaceRoot": self.workspace_root,
-            "node": {
-                "hierarchical_number": self.hierarchical_number,
-                "title": self.title,
-            },
+            "specContent": self.spec_content,
+            "frameContent": self.frame_content,
+            "node": node_payload,
+            "snapshot": snapshot,
         }
+
+    def build_audit_review_prompt(
+        self,
+        *,
+        node: dict[str, Any],
+        spec_content: str,
+        frame_content: str,
+        review_commit_sha: str,
+    ) -> str:
+        del node
+        return (
+            "I just completed code for this task.\n"
+            f"The task spec is: {spec_content}\n"
+            f"The confirmed frame is: {frame_content}\n"
+            f"The commit hash is {review_commit_sha}\n"
+            "Please review this implementation. Do you have any questions or issues?"
+        )
 
 
 class _FlowThreadRuntimeService:
@@ -554,6 +722,7 @@ def test_mark_done_from_execution_writes_latest_commit_metadata() -> None:
     service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
     service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
     service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
+    service._upsert_handoff_summary_locked = lambda **_kwargs: None  # type: ignore[attr-defined]
     service.get_workflow_state = lambda _project_id, _node_id: copy.deepcopy(storage.workflow_state_store.state)  # type: ignore[attr-defined]
     service._complete_node_progression = lambda _project_id, _node_id, *, accepted_sha, summary_text: progression_calls.append(  # type: ignore[attr-defined]
         {"accepted_sha": accepted_sha, "summary_text": summary_text}
@@ -638,10 +807,11 @@ def test_review_in_audit_writes_latest_commit_metadata_and_uses_head_sha(monkeyp
 
     assert response["accepted"] is True
     assert response["workflowPhase"] == "audit_running"
+    assert response["reviewThreadId"] == "audit-lineage-thread-1"
     assert len(storage.review_cycle_store.cycles) == 1
     cycle = storage.review_cycle_store.cycles[0]
     assert cycle["reviewCommitSha"] == "c" * 40
-    assert cycle["deliveryKind"] == "detached"
+    assert cycle["reviewThreadId"] == "audit-lineage-thread-1"
     latest_commit = storage.workflow_state_store.state.get("latestCommit")
     assert isinstance(latest_commit, dict)
     assert latest_commit["sourceAction"] == "review_in_audit"
@@ -654,10 +824,14 @@ def test_review_in_audit_writes_latest_commit_metadata_and_uses_head_sha(monkeyp
     assert storage.execution_run_store.runs[0]["decision"] == "sent_to_review"
     assert len(runtime_service.begin_turn_calls) == 1
     assert len(scheduled_threads) == 1
+    assert scheduled_threads[0]["kwargs"]["kwargs"]["thread_id"] == "audit-lineage-thread-1"
+    assert "The commit hash is cccccccccccccccccccccccccccccccccccccccc" in str(
+        scheduled_threads[0]["kwargs"]["kwargs"]["prompt"]
+    )
     assert scheduled_threads[0]["kwargs"]["kwargs"]["review_commit_sha"] == "c" * 40
 
 
-def test_mark_done_from_audit_keeps_existing_latest_commit_metadata() -> None:
+def test_mark_done_from_audit_uses_execution_summary_and_keeps_existing_latest_commit_metadata() -> None:
     existing_latest_commit = {
         "sourceAction": "review_in_audit",
         "initialSha": "e" * 40,
@@ -669,13 +843,18 @@ def test_mark_done_from_audit_keeps_existing_latest_commit_metadata() -> None:
     state = {
         "workflowPhase": "audit_decision_pending",
         "currentAuditDecision": {"sourceReviewCycleId": "cycle-1"},
+        "latestExecutionRunId": "run-9",
         "latestCommit": copy.deepcopy(existing_latest_commit),
         "mutationCache": {},
     }
-    storage = _InMemoryStorage(state=state, runs=[])
+    storage = _InMemoryStorage(
+        state=state,
+        runs=[{"runId": "run-9", "summaryText": "Execution summary from run"}],
+    )
     storage.review_cycle_store.cycles = [
         {
             "cycleId": "cycle-1",
+            "sourceExecutionRunId": "run-9",
             "finalReviewText": "Final audit summary",
         }
     ]
@@ -702,6 +881,7 @@ def test_mark_done_from_audit_keeps_existing_latest_commit_metadata() -> None:
     service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
     service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
     service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
+    service._upsert_handoff_summary_locked = lambda **_kwargs: None  # type: ignore[attr-defined]
     service.get_workflow_state = lambda _project_id, _node_id: copy.deepcopy(storage.workflow_state_store.state)  # type: ignore[attr-defined]
     service._complete_node_progression = lambda _project_id, _node_id, *, accepted_sha, summary_text: progression_calls.append(  # type: ignore[attr-defined]
         {"accepted_sha": accepted_sha, "summary_text": summary_text}
@@ -719,4 +899,240 @@ def test_mark_done_from_audit_keeps_existing_latest_commit_metadata() -> None:
     assert storage.workflow_state_store.state.get("latestCommit") == existing_latest_commit
     assert artifact_service.head_checks == [(r"C:\repo\workspace", "f" * 40)]
     assert artifact_service.commit_calls == []
-    assert progression_calls == [{"accepted_sha": "f" * 40, "summary_text": "Final audit summary"}]
+    assert progression_calls == [{"accepted_sha": "f" * 40, "summary_text": "Execution summary from run"}]
+
+
+def test_mark_done_from_execution_writes_handoff_before_commit(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    handoff_path = workspace_root / "docs" / "handoff.md"
+
+    state = {
+        "workflowPhase": "execution_decision_pending",
+        "currentExecutionDecision": {"sourceExecutionRunId": "run-1"},
+        "mutationCache": {},
+    }
+    runs = [{"runId": "run-1", "summaryText": "Execution summary for handoff"}]
+    storage = _InMemoryStorage(state=state, runs=runs)
+
+    class _CommitOrderArtifactService(_FlowArtifactService):
+        def commit_workspace(
+            self,
+            *,
+            workspace_root: str | None,
+            hierarchical_number: str,
+            title: str,
+            verb: str,
+        ) -> dict[str, Any]:
+            assert handoff_path.exists()
+            content = handoff_path.read_text(encoding="utf-8")
+            assert "<!-- PT_HANDOFF_NODE:node-1 -->" in content
+            assert "Execution summary for handoff" in content
+            return super().commit_workspace(
+                workspace_root=workspace_root,
+                hierarchical_number=hierarchical_number,
+                title=title,
+                verb=verb,
+            )
+
+    artifact_service = _CommitOrderArtifactService(
+        commit_result={
+            "initialSha": "a" * 40,
+            "headSha": "b" * 40,
+            "commitMessage": "pt(1.1): done build feature",
+            "committed": True,
+        }
+    )
+    metadata_service = _FlowMetadataService(
+        workspace_root=str(workspace_root),
+        hierarchical_number="1.1",
+        title="Build Feature",
+        node_id="node-1",
+    )
+    progression_calls: list[dict[str, Any]] = []
+
+    service = object.__new__(ExecutionAuditWorkflowService)
+    service._storage = storage  # type: ignore[attr-defined]
+    service._artifact_service = artifact_service  # type: ignore[attr-defined]
+    service._metadata_service = metadata_service  # type: ignore[attr-defined]
+    service._ensure_workflow_state_locked = lambda _project_id, _node_id: storage.workflow_state_store.state  # type: ignore[attr-defined]
+    service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
+    service.get_workflow_state = lambda _project_id, _node_id: copy.deepcopy(storage.workflow_state_store.state)  # type: ignore[attr-defined]
+    service._complete_node_progression = lambda _project_id, _node_id, *, accepted_sha, summary_text: progression_calls.append(  # type: ignore[attr-defined]
+        {"accepted_sha": accepted_sha, "summary_text": summary_text}
+    )
+
+    response = service.mark_done_from_execution(
+        "project-1",
+        "node-1",
+        idempotency_key="idem-order-1",
+        expected_workspace_hash="workspace-hash-order-1",
+    )
+
+    assert response["workflowPhase"] == "done"
+    assert handoff_path.exists()
+    assert progression_calls == [{"accepted_sha": "b" * 40, "summary_text": "Execution summary for handoff"}]
+
+
+def test_mark_done_from_audit_uses_placeholder_when_execution_summary_missing() -> None:
+    state = {
+        "workflowPhase": "audit_decision_pending",
+        "currentAuditDecision": {"sourceReviewCycleId": "cycle-1"},
+        "latestExecutionRunId": None,
+        "mutationCache": {},
+    }
+    storage = _InMemoryStorage(state=state, runs=[])
+    storage.review_cycle_store.cycles = [
+        {
+            "cycleId": "cycle-1",
+            "sourceExecutionRunId": None,
+            "finalReviewText": "Audit-only summary should be ignored",
+        }
+    ]
+    artifact_service = _FlowArtifactService(
+        commit_result={
+            "initialSha": "ignored",
+            "headSha": "ignored",
+            "commitMessage": "ignored",
+            "committed": False,
+        }
+    )
+    metadata_service = _FlowMetadataService(
+        workspace_root=r"C:\repo\workspace",
+        hierarchical_number="1.4",
+        title="Missing Summary",
+        node_id="node-1",
+    )
+    progression_calls: list[dict[str, Any]] = []
+    handoff_calls: list[dict[str, Any]] = []
+
+    service = object.__new__(ExecutionAuditWorkflowService)
+    service._storage = storage  # type: ignore[attr-defined]
+    service._artifact_service = artifact_service  # type: ignore[attr-defined]
+    service._metadata_service = metadata_service  # type: ignore[attr-defined]
+    service._ensure_workflow_state_locked = lambda _project_id, _node_id: storage.workflow_state_store.state  # type: ignore[attr-defined]
+    service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
+    service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
+    service._upsert_handoff_summary_locked = lambda **kwargs: handoff_calls.append(kwargs)  # type: ignore[attr-defined]
+    service.get_workflow_state = lambda _project_id, _node_id: copy.deepcopy(storage.workflow_state_store.state)  # type: ignore[attr-defined]
+    service._complete_node_progression = lambda _project_id, _node_id, *, accepted_sha, summary_text: progression_calls.append(  # type: ignore[attr-defined]
+        {"accepted_sha": accepted_sha, "summary_text": summary_text}
+    )
+
+    response = service.mark_done_from_audit(
+        "project-1",
+        "node-1",
+        idempotency_key="idem-audit-placeholder-1",
+        expected_review_commit_sha="d" * 40,
+    )
+
+    assert response["workflowPhase"] == "done"
+    assert handoff_calls and handoff_calls[0]["summary_text"] == "No execution summary."
+    assert progression_calls == [{"accepted_sha": "d" * 40, "summary_text": "No execution summary."}]
+
+
+def test_handoff_upsert_creates_replaces_orders_and_is_idempotent(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    handoff_path = workspace_root / "docs" / "handoff.md"
+
+    snapshot = {
+        "tree_state": {
+            "root_node_id": "root-1",
+            "node_index": {
+                "root-1": {
+                    "node_id": "root-1",
+                    "parent_id": None,
+                    "child_ids": ["node-a", "node-b", "node-c"],
+                    "node_kind": "root",
+                    "hierarchical_number": "1",
+                    "title": "Root",
+                },
+                "node-a": {
+                    "node_id": "node-a",
+                    "parent_id": "root-1",
+                    "child_ids": [],
+                    "node_kind": "original",
+                    "hierarchical_number": "1.1",
+                    "title": "A",
+                },
+                "node-b": {
+                    "node_id": "node-b",
+                    "parent_id": "root-1",
+                    "child_ids": [],
+                    "node_kind": "original",
+                    "hierarchical_number": "1.2",
+                    "title": "B",
+                },
+                "node-c": {
+                    "node_id": "node-c",
+                    "parent_id": "root-1",
+                    "child_ids": [],
+                    "node_kind": "original",
+                    "hierarchical_number": "1.3",
+                    "title": "C",
+                },
+            },
+        }
+    }
+    service = object.__new__(ExecutionAuditWorkflowService)
+
+    service._upsert_handoff_summary_locked(  # type: ignore[attr-defined]
+        project_id="project-1",
+        node_id="node-a",
+        workspace_root=str(workspace_root),
+        snapshot=snapshot,
+        node=snapshot["tree_state"]["node_index"]["node-a"],
+        summary_text="Summary A",
+    )
+    assert handoff_path.exists()
+    first_content = handoff_path.read_text(encoding="utf-8")
+    assert "<!-- PT_HANDOFF_NODE:node-a -->" in first_content
+
+    service._upsert_handoff_summary_locked(  # type: ignore[attr-defined]
+        project_id="project-1",
+        node_id="node-a",
+        workspace_root=str(workspace_root),
+        snapshot=snapshot,
+        node=snapshot["tree_state"]["node_index"]["node-a"],
+        summary_text="Summary A",
+    )
+    second_content = handoff_path.read_text(encoding="utf-8")
+    assert second_content == first_content
+
+    service._upsert_handoff_summary_locked(  # type: ignore[attr-defined]
+        project_id="project-1",
+        node_id="node-a",
+        workspace_root=str(workspace_root),
+        snapshot=snapshot,
+        node=snapshot["tree_state"]["node_index"]["node-a"],
+        summary_text="Summary A (updated)",
+    )
+    updated_content = handoff_path.read_text(encoding="utf-8")
+    assert "Summary A (updated)" in updated_content
+    assert "Summary A\n" not in updated_content
+
+    service._upsert_handoff_summary_locked(  # type: ignore[attr-defined]
+        project_id="project-1",
+        node_id="node-c",
+        workspace_root=str(workspace_root),
+        snapshot=snapshot,
+        node=snapshot["tree_state"]["node_index"]["node-c"],
+        summary_text="Summary C",
+    )
+    service._upsert_handoff_summary_locked(  # type: ignore[attr-defined]
+        project_id="project-1",
+        node_id="node-b",
+        workspace_root=str(workspace_root),
+        snapshot=snapshot,
+        node=snapshot["tree_state"]["node_index"]["node-b"],
+        summary_text="Summary B",
+    )
+    ordered_content = handoff_path.read_text(encoding="utf-8")
+    index_a = ordered_content.index("<!-- PT_HANDOFF_NODE:node-a -->")
+    index_b = ordered_content.index("<!-- PT_HANDOFF_NODE:node-b -->")
+    index_c = ordered_content.index("<!-- PT_HANDOFF_NODE:node-c -->")
+    assert index_a < index_b < index_c

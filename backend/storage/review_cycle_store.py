@@ -11,7 +11,6 @@ from backend.storage.project_locks import ProjectLockRegistry
 from backend.storage.workspace_store import WorkspaceStore
 
 _VALID_LIFECYCLE_STATUSES = {"running", "completed", "failed", "superseded"}
-_VALID_DELIVERY_KINDS = {"detached", "inline"}
 
 
 class ReviewCycleStore:
@@ -86,9 +85,6 @@ class ReviewCycleStore:
         lifecycle_status = str(payload.get("lifecycleStatus") or payload.get("lifecycle_status") or "running").strip()
         if lifecycle_status not in _VALID_LIFECYCLE_STATUSES:
             lifecycle_status = "running"
-        delivery_kind = str(payload.get("deliveryKind") or payload.get("delivery_kind") or "inline").strip()
-        if delivery_kind not in _VALID_DELIVERY_KINDS:
-            delivery_kind = "inline"
         return {
             "cycleId": _normalize_optional_string(payload.get("cycleId") or payload.get("cycle_id")) or "",
             "projectId": _normalize_optional_string(payload.get("projectId") or payload.get("project_id")) or "",
@@ -98,7 +94,6 @@ class ReviewCycleStore:
             "reviewThreadId": _normalize_optional_string(payload.get("reviewThreadId") or payload.get("review_thread_id")),
             "reviewTurnId": _normalize_optional_string(payload.get("reviewTurnId") or payload.get("review_turn_id")),
             "reviewCommitSha": _normalize_optional_string(payload.get("reviewCommitSha") or payload.get("review_commit_sha")),
-            "deliveryKind": delivery_kind,
             "clientRequestId": _normalize_optional_string(payload.get("clientRequestId") or payload.get("client_request_id")),
             "lifecycleStatus": lifecycle_status,
             "reviewDisposition": _normalize_optional_string(payload.get("reviewDisposition") or payload.get("review_disposition")),

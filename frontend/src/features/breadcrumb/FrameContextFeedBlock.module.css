@@ -234,7 +234,7 @@
 }
 
 .nodeCardBody .panelToggle {
-  padding: 17px 25px;
+  padding: 15px 20px;
 }
 
 .panelToggle:hover {
@@ -263,7 +263,7 @@
 /* Matches image: small, uppercase, spaced — e.g. "FRAME" */
 .panelLabel {
   font-family: var(--fc-font);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   color: #000000c7;
   letter-spacing: 0.1em;

@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import type { ChangedFileRecord, DetailState, NodeRecord } from '../../api/types'
+import { InfoWorkspaceMarkdownEditor } from './InfoWorkspaceMarkdownEditor'
 import styles from './NodeDetailCard.module.css'
 
 const INFO_TAB_SKILLS_PATHS = [
@@ -11,9 +13,21 @@ const INFO_TAB_SKILLS_PATHS = [
 const INFO_TAB_DOCS_PATHS = [
   'docs/codebase-summary.md',
   'docs/project-roadmap.md',
-  'workflows/handoff',
+  'docs/handoff.md',
   'workflows/development-rules.md',
 ] as const
+
+/** Maps list row path to project-root path for workspace-text-file API. */
+export function infoTabListPathToWorkspaceRelative(
+  variant: 'docs' | 'skills',
+  listPath: string,
+): string {
+  const trimmed = listPath.replace(/^[/\\]+/, '')
+  if (variant === 'skills') {
+    return `.codex/skills/${trimmed}`
+  }
+  return trimmed
+}
 
 function IconInfoDoc() {
   return (
@@ -55,34 +69,43 @@ function IconInfoSkill() {
 function InfoPathList({
   paths,
   variant,
+  onSelectPath,
   'data-testid': testId,
 }: {
   paths: readonly string[]
   variant: 'docs' | 'skills'
+  onSelectPath: (path: string) => void
   'data-testid'?: string
 }) {
   return (
     <ul className={styles.infoPathList} data-testid={testId}>
       {paths.map((path) => (
         <li key={path} className={styles.infoPathItem}>
-          <span
-            className={variant === 'docs' ? styles.infoPathIconDoc : styles.infoPathIconSkill}
-            aria-hidden
+          <button
+            type="button"
+            className={styles.infoPathHit}
+            onClick={() => onSelectPath(path)}
+            aria-label={`Open ${path} in markdown editor`}
           >
-            {variant === 'docs' ? <IconInfoDoc /> : <IconInfoSkill />}
-          </span>
-          <code className={styles.infoPathCode}>{path}</code>
-          <span className={styles.infoPathChevron} aria-hidden>
-            <svg viewBox="0 0 8 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path
-                d="M1.5 1.5 6.5 7l-5 5.5"
-                stroke="currentColor"
-                strokeWidth="1.35"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
+            <span
+              className={variant === 'docs' ? styles.infoPathIconDoc : styles.infoPathIconSkill}
+              aria-hidden
+            >
+              {variant === 'docs' ? <IconInfoDoc /> : <IconInfoSkill />}
+            </span>
+            <code className={styles.infoPathCode}>{path}</code>
+            <span className={styles.infoPathChevron} aria-hidden>
+              <svg viewBox="0 0 8 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M1.5 1.5 6.5 7l-5 5.5"
+                  stroke="currentColor"
+                  strokeWidth="1.35"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
+          </button>
         </li>
       ))}
     </ul>
@@ -142,7 +165,11 @@ export function NodeDescribePanel({
   onResetToResult,
   isResetting = false,
 }: Props) {
-  void projectId
+  const [openInfoPath, setOpenInfoPath] = useState<{
+    variant: 'docs' | 'skills'
+    path: string
+  } | null>(null)
+
   const initialSha = displaySha(detailState?.initial_sha)
   const headSha = displaySha(detailState?.head_sha)
   const currentHead = displaySha(detailState?.current_head_sha)
@@ -158,6 +185,22 @@ export function NodeDescribePanel({
     detailState?.execution_started === true &&
     Boolean(detailState?.initial_sha?.trim()) &&
     Boolean(detailState?.head_sha?.trim())
+
+  if (openInfoPath) {
+    const workspacePath = infoTabListPathToWorkspaceRelative(openInfoPath.variant, openInfoPath.path)
+    return (
+      <div className={styles.describeDocumentRoot}>
+        <div className={styles.describeDocumentSheet}>
+          <InfoWorkspaceMarkdownEditor
+            projectId={projectId}
+            workspaceRelativePath={workspacePath}
+            displayPath={openInfoPath.path}
+            onClose={() => setOpenInfoPath(null)}
+          />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={styles.describeDocumentRoot}>
@@ -177,7 +220,12 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeDocsSection}>
               <h2 className={styles.describeSectionTitle}>Docs</h2>
-              <InfoPathList variant="docs" paths={INFO_TAB_DOCS_PATHS} data-testid="info-tab-docs-paths" />
+              <InfoPathList
+                variant="docs"
+                paths={INFO_TAB_DOCS_PATHS}
+                data-testid="info-tab-docs-paths"
+                onSelectPath={(path) => setOpenInfoPath({ variant: 'docs', path })}
+              />
             </div>
           </div>
 
@@ -191,7 +239,12 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeSkillsSection}>
               <h2 className={styles.describeSectionTitle}>Skills</h2>
-              <InfoPathList variant="skills" paths={INFO_TAB_SKILLS_PATHS} data-testid="info-tab-skills-paths" />
+              <InfoPathList
+                variant="skills"
+                paths={INFO_TAB_SKILLS_PATHS}
+                data-testid="info-tab-skills-paths"
+                onSelectPath={(path) => setOpenInfoPath({ variant: 'skills', path })}
+              />
             </div>
           </div>
 

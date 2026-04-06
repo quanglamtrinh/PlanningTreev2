@@ -20,7 +20,7 @@ class WorkflowV2ReviewContextCodexClient:
         self.started_threads: list[dict[str, object]] = []
         self.resumed_threads: list[dict[str, object]] = []
         self.forked_threads: list[dict[str, object]] = []
-        self.review_calls: list[dict[str, object]] = []
+        self.review_turn_calls: list[dict[str, object]] = []
 
     def start_thread(self, **kwargs: object) -> dict[str, str]:
         thread_id = f"workflow-v2-thread-{len(self.started_threads) + 1}"
@@ -43,21 +43,19 @@ class WorkflowV2ReviewContextCodexClient:
         if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
             return {"stdout": "READY", "thread_id": thread_id, "turn_status": "completed"}
 
+        if "The commit hash is `" in prompt and "Please review this implementation." in prompt:
+            self.review_turn_calls.append({"prompt": prompt, "thread_id": thread_id, **kwargs})
+            return {
+                "stdout": "Looks good.",
+                "thread_id": thread_id,
+                "turn_id": "workflow-v2-review-turn-1",
+                "turn_status": "completed",
+            }
+
         cwd = kwargs.get("cwd")
         if isinstance(cwd, str) and cwd.strip():
             Path(cwd, "execution-output.txt").write_text("done\n", encoding="utf-8")
         return {"stdout": "Implemented the task.", "thread_id": thread_id, "turn_status": "completed"}
-
-    def start_review_streaming(self, **kwargs: object) -> dict[str, object]:
-        self.review_calls.append(dict(kwargs))
-        thread_id = str(kwargs.get("thread_id") or "")
-        return {
-            "review_thread_id": thread_id,
-            "review_turn_id": "workflow-v2-review-turn-1",
-            "review": "Looks good.",
-            "review_disposition": "approved",
-            "turn_status": "completed",
-        }
 
 
 def _set_workflow_v2_codex_client(app, codex_client: object) -> None:
@@ -105,7 +103,7 @@ def _detail_state(client: TestClient, project_id: str, node_id: str) -> dict[str
     return payload
 
 
-def test_first_review_cycle_uses_detached_thread_with_project_workspace(
+def test_first_review_cycle_uses_audit_lineage_thread_with_prompt_injection(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -172,7 +170,6 @@ def test_first_review_cycle_uses_detached_thread_with_project_workspace(
         review_cycles = app.state.storage.review_cycle_store.read_cycles(project_id, child_id)
         assert len(review_cycles) == 1
         review_cycle = review_cycles[0]
-        assert review_cycle["deliveryKind"] == "detached"
         persisted_workflow_state = _persisted_workflow_state(app, project_id, child_id)
         latest_commit = persisted_workflow_state.get("latestCommit")
         assert isinstance(latest_commit, dict)
@@ -206,20 +203,14 @@ def test_first_review_cycle_uses_detached_thread_with_project_workspace(
         assert detail_after_retry["head_sha"] == first_latest_commit["headSha"]
         assert detail_after_retry["commit_message"] == first_latest_commit["commitMessage"]
 
-        assert len(codex_client.review_calls) == 1
-        review_call = codex_client.review_calls[0]
-        assert len(codex_client.forked_threads) >= 2
-        review_fork = codex_client.forked_threads[-1]
-
-        assert review_fork["source_thread_id"] == audit_state["auditLineageThreadId"]
-        assert review_fork["cwd"] == str(workspace_root)
-        assert review_call["thread_id"] == review_fork["thread_id"]
-        assert review_call["thread_id"] != audit_state["auditLineageThreadId"]
-        assert review_call["delivery"] is None
+        assert len(codex_client.review_turn_calls) == 1
+        review_call = codex_client.review_turn_calls[0]
+        assert review_call["thread_id"] == audit_state["auditLineageThreadId"]
         assert review_call["cwd"] == str(workspace_root)
-        assert review_call["target_sha"] == review_cycle["reviewCommitSha"]
-        assert review_cycle["reviewThreadId"] == review_fork["thread_id"]
-        assert audit_state["reviewThreadId"] == review_fork["thread_id"]
+        assert review_call["sandbox_profile"] == "read_only"
+        assert f"The commit hash is `{review_cycle['reviewCommitSha']}`" in str(review_call["prompt"])
+        assert review_cycle["reviewThreadId"] == audit_state["auditLineageThreadId"]
+        assert audit_state["reviewThreadId"] == audit_state["auditLineageThreadId"]
 
         audit_snapshot = app.state.storage.thread_snapshot_store_v2.read_snapshot(
             project_id,
@@ -366,7 +357,6 @@ def test_mark_done_from_audit_reuses_existing_latest_commit_without_overwrite(
         assert isinstance(execution_decision, dict)
         candidate_workspace_hash = str(execution_decision.get("candidateWorkspaceHash") or "")
         assert candidate_workspace_hash
-
         review_response = client.post(
             f"/v2/projects/{project_id}/nodes/{child_id}/workflow/review-in-audit",
             json={

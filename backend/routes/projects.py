@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["projects"])
 
@@ -15,6 +15,10 @@ class AttachProjectRequest(BaseModel):
 
 class ActiveNodeRequest(BaseModel):
     active_node_id: Optional[str] = None
+
+
+class PutWorkspaceTextFileRequest(BaseModel):
+    content: str = Field(default="")
 
 
 @router.get("/projects")
@@ -54,3 +58,22 @@ async def init_git(request: Request, project_id: str) -> dict:
     project_path = Path(storage.workspace_store.get_folder_path(project_id))
     head_sha = svc.init_repo(project_path)
     return {"status": "initialized", "head_sha": head_sha, "message": "Git repository initialized."}
+
+
+@router.get("/projects/{project_id}/workspace-text-file")
+async def get_workspace_text_file(
+    request: Request, project_id: str, relative_path: str
+) -> dict:
+    return request.app.state.workspace_file_service.get_text_file(project_id, relative_path)
+
+
+@router.put("/projects/{project_id}/workspace-text-file")
+async def put_workspace_text_file(
+    request: Request,
+    project_id: str,
+    relative_path: str,
+    body: PutWorkspaceTextFileRequest,
+) -> dict:
+    return request.app.state.workspace_file_service.put_text_file(
+        project_id, relative_path, body.content
+    )

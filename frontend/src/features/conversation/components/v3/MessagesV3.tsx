@@ -563,37 +563,35 @@ function CommandToolRowV3({
   const showBody = !hasBody || isExpanded
   const ranLabel = commandRanLabel(item.status)
 
-  const commandBar = (
-    <div
-      className={`${styles.commandLineBar} ${
-        showBody ? styles.commandLineBarExpanded : styles.commandLineBarCollapsed
-      }`}
-    >
-      {showBody ? (
-        <>
-          <div className={styles.commandLineBarTop}>
-            <span className={styles.commandRanLabel}>{ranLabel}</span>
-            {hasBody ? (
-              <span className={styles.commandChevronSlot}>
-                <IconCommandLineChevron expanded />
-              </span>
-            ) : null}
-          </div>
-          <span className={styles.commandLineTextExpanded}>{headline}</span>
-        </>
-      ) : (
+  const commandBar =
+    hasBody && !showBody ? (
+      <div className={`${styles.commandLineBar} ${styles.commandLineBarCollapsed}`}>
         <div className={styles.commandLineBarTop}>
           <span className={styles.commandRanLabel}>{ranLabel}</span>
           <span className={styles.commandLineTextCollapsed}>{headline}</span>
-          {hasBody ? (
-            <span className={styles.commandChevronSlot}>
-              <IconCommandLineChevron expanded={false} />
-            </span>
-          ) : null}
+          <span className={styles.commandChevronSlot}>
+            <IconCommandLineChevron expanded={false} />
+          </span>
         </div>
-      )}
-    </div>
-  )
+      </div>
+    ) : hasBody && showBody ? (
+      <div className={`${styles.commandLineBar} ${styles.commandLineBarExpanded}`}>
+        <div className={styles.commandLineBarTop}>
+          <span className={styles.commandRanLabel}>{ranLabel}</span>
+          <span className={styles.commandChevronSlot}>
+            <IconCommandLineChevron expanded />
+          </span>
+        </div>
+        <span className={styles.commandLineTextExpanded}>{headline}</span>
+      </div>
+    ) : (
+      <div className={`${styles.commandLineBar} ${styles.commandLineBarExpanded}`}>
+        <div className={styles.commandLineBarTop}>
+          <span className={styles.commandRanLabel}>{ranLabel}</span>
+        </div>
+        <span className={styles.commandLineTextExpanded}>{headline}</span>
+      </div>
+    )
 
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-tool">
@@ -607,6 +605,7 @@ function CommandToolRowV3({
                 onClick={() => onToggle(item.id)}
                 aria-expanded={showBody}
                 aria-label={showBody ? 'Collapse command details' : 'Expand command details'}
+                title={headline}
               >
                 {commandBar}
               </button>
