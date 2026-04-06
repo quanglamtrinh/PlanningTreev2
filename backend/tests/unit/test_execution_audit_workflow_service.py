@@ -1136,3 +1136,27 @@ def test_handoff_upsert_creates_replaces_orders_and_is_idempotent(tmp_path: Path
     index_b = ordered_content.index("<!-- PT_HANDOFF_NODE:node-b -->")
     index_c = ordered_content.index("<!-- PT_HANDOFF_NODE:node-c -->")
     assert index_a < index_b < index_c
+
+
+def test_normalize_review_response_text_extracts_summary_from_json_object() -> None:
+    text, from_json = ExecutionAuditWorkflowService._normalize_review_response_text(
+        '{"summary":"Local review completed with no blocking issues.","findings":[]}'
+    )
+    assert from_json is True
+    assert text == "Local review completed with no blocking issues."
+
+
+def test_normalize_review_response_text_extracts_summary_from_json_fence() -> None:
+    text, from_json = ExecutionAuditWorkflowService._normalize_review_response_text(
+        '```json\n{"summary":"Review passed after checking changed files."}\n```'
+    )
+    assert from_json is True
+    assert text == "Review passed after checking changed files."
+
+
+def test_normalize_review_response_text_keeps_plain_markdown_when_not_json() -> None:
+    text, from_json = ExecutionAuditWorkflowService._normalize_review_response_text(
+        "No serious issues found.\n\n- Checked tests\n- Checked diff"
+    )
+    assert from_json is False
+    assert text == "No serious issues found.\n\n- Checked tests\n- Checked diff"

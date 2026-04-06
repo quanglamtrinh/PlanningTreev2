@@ -504,6 +504,34 @@ export function NodeDocumentEditor({
       detailState?.can_finish_task === true ||
       (detailState?.spec_confirmed !== true && canFinishTaskAfterConfirm)
     )
+  const isFinishTaskDisabled = !canFinishTask || isFinishActionPending
+  const finishTaskDisabledHint = (() => {
+    if (!isSpecStep || !isFinishTaskDisabled) {
+      return null
+    }
+    if (isFinishActionPending) {
+      return 'Processing finish task request...'
+    }
+    if (!hasContent) {
+      return 'Add spec content before finishing the task.'
+    }
+    if (entry.isLoading) {
+      return 'Spec is loading. Please wait.'
+    }
+    if (entry.isSaving) {
+      return 'Spec is saving. Please wait.'
+    }
+    if (isGenerating) {
+      return 'Spec generation is running. Please wait.'
+    }
+    if (detailState?.git_ready === false) {
+      return 'Finish Task is disabled. Resolve Git blocker to continue.'
+    }
+    if (detailState?.shaping_frozen === true) {
+      return 'Task is read-only while execution is active.'
+    }
+    return 'Finish Task is currently unavailable.'
+  })()
 
   return (
     <div className={styles.documentPanel}>
@@ -698,18 +726,26 @@ export function NodeDocumentEditor({
           ) : null}
 
           {isSpecStep ? (
-            <button
-              type="button"
-              className={styles.confirmButton}
-              disabled={!canFinishTask || isFinishActionPending}
-              data-testid="confirm-and-finish-task-button"
-              onClick={(event) => {
-                event.currentTarget.disabled = true
-                void handleConfirmAndFinish()
-              }}
-            >
-              {isFinishActionPending ? 'Finishing...' : 'Confirm and Finish Task'}
-            </button>
+            <div className={styles.finishTaskActionGroup}>
+              <button
+                type="button"
+                className={`${styles.confirmButton} ${isFinishTaskDisabled ? styles.finishTaskButtonDisabled : ''}`}
+                disabled={isFinishTaskDisabled}
+                data-testid="confirm-and-finish-task-button"
+                title={isFinishTaskDisabled ? finishTaskDisabledHint ?? 'Finish Task is currently unavailable.' : undefined}
+                onClick={(event) => {
+                  event.currentTarget.disabled = true
+                  void handleConfirmAndFinish()
+                }}
+              >
+                {isFinishActionPending ? 'Finishing...' : 'Confirm and Finish Task'}
+              </button>
+              {isFinishTaskDisabled && finishTaskDisabledHint ? (
+                <p className={styles.finishTaskDisabledHint} role="status" data-testid="finish-task-disabled-hint">
+                  {finishTaskDisabledHint}
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

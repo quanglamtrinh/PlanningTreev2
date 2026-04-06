@@ -1,0 +1,101 @@
+migration_id: usage_snapshot_rollout
+status: phase_0_not_started
+current_phase: 0
+next_phase: 0
+
+references:
+  plan_doc: docs/usagesnapshot/README.md
+  roadmap_doc: docs/usagesnapshot/usagesnapshot-phased-roadmap.md
+  artifacts_root: docs/usagesnapshot/artifacts/
+
+locked_decisions:
+  - id: dedicated_usage_snapshot_screen
+    status: locked
+    decision: usage snapshot is a separate route, not an inline sidebar expansion
+  - id: sidebar_button_entrypoint
+    status: locked
+    decision: open usage snapshot from a button above existing sidebar usage block
+  - id: all_codex_sessions_scope
+    status: locked
+    decision: aggregate all codex sessions from codex home without workspace filter
+  - id: polling_refresh_strategy
+    status: locked
+    decision: frontend refreshes usage snapshot via polling and manual refresh
+  - id: full_delivery_scope
+    status: locked
+    decision: include backend, frontend UI, polling, and automated test coverage including E2E
+
+phases:
+  - phase: 0
+    name: contract_freeze_and_boundaries
+    status: not_started
+    depends_on: []
+    effort_percent: 8
+    estimated_days: 2.0
+    artifacts:
+      - docs/usagesnapshot/phase-0-contract-freeze.md
+  - phase: 1
+    name: backend_scanner_and_api_foundation
+    status: not_started
+    depends_on:
+      - 0
+    effort_percent: 22
+    estimated_days: 5.0
+    artifacts:
+      - docs/usagesnapshot/phase-1-backend-scanner-and-api-foundation.md
+  - phase: 2
+    name: backend_performance_and_observability
+    status: not_started
+    depends_on:
+      - 1
+    effort_percent: 14
+    estimated_days: 3.0
+    artifacts:
+      - docs/usagesnapshot/phase-2-backend-performance-and-observability.md
+  - phase: 3
+    name: frontend_route_screen_and_polling
+    status: not_started
+    depends_on:
+      - 1
+    effort_percent: 20
+    estimated_days: 4.5
+    artifacts:
+      - docs/usagesnapshot/phase-3-frontend-route-screen-and-polling.md
+  - phase: 4
+    name: sidebar_entrypoint_and_ux_polish
+    status: not_started
+    depends_on:
+      - 3
+    effort_percent: 9
+    estimated_days: 2.0
+    artifacts:
+      - docs/usagesnapshot/phase-4-sidebar-entrypoint-and-ux-polish.md
+  - phase: 5
+    name: automated_test_matrix_and_e2e
+    status: not_started
+    depends_on:
+      - 2
+      - 3
+      - 4
+    effort_percent: 19
+    estimated_days: 4.5
+    artifacts:
+      - docs/usagesnapshot/phase-5-automated-test-matrix-and-e2e.md
+  - phase: 6
+    name: rollout_and_stabilization
+    status: not_started
+    depends_on:
+      - 5
+    effort_percent: 6
+    estimated_days: 1.5
+    artifacts:
+      - docs/usagesnapshot/phase-6-rollout-and-stabilization.md
+  - phase: 7
+    name: cleanup_and_closeout
+    status: not_started
+    depends_on:
+      - 6
+    effort_percent: 2
+    estimated_days: 0.5
+    artifacts:
+      - docs/usagesnapshot/phase-7-cleanup-and-closeout.md

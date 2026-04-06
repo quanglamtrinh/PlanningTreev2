@@ -1406,6 +1406,9 @@ describe('NodeDetailCard', () => {
     await screen.findByDisplayValue('# Spec content')
     expect(screen.getByText('Workspace has uncommitted changes.')).toBeInTheDocument()
     expect(screen.getByTestId('confirm-and-finish-task-button')).toBeDisabled()
+    expect(screen.getByTestId('finish-task-disabled-hint')).toHaveTextContent(
+      'Finish Task is disabled. Resolve Git blocker to continue.',
+    )
   })
 
   it('confirms the updated frame, opens Split tab, and submits the chosen split mode', async () => {

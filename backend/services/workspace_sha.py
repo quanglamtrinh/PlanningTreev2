@@ -6,15 +6,28 @@ Placeholder until real git integration replaces with commit SHAs.
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 from backend.services import planningtree_workspace
+
+_EXCLUDED_DIR_NAMES = {
+    planningtree_workspace.PLANNINGTREE_DIR,
+    ".git",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+}
 
 
 def compute_workspace_sha(workspace_root: Path) -> str:
     """Compute a deterministic SHA-256 of the workspace directory tree.
 
-    Excludes the `.planningtree/` metadata directory.
+    Excludes metadata/dependency/cache directories that are not source-of-truth
+    for PlanningTree execution state.
     Format: ``sha256:<hex-digest>``.
     """
     digest = hashlib.sha256()
@@ -22,11 +35,21 @@ def compute_workspace_sha(workspace_root: Path) -> str:
         return "sha256:" + digest.hexdigest()
 
     entries: list[Path] = []
-    for path in workspace_root.rglob("*"):
-        rel_parts = path.relative_to(workspace_root).parts
-        if rel_parts and rel_parts[0] == planningtree_workspace.PLANNINGTREE_DIR:
+    for root, dirnames, filenames in os.walk(workspace_root, topdown=True):
+        root_path = Path(root)
+        rel_parts = root_path.relative_to(workspace_root).parts
+        if rel_parts and rel_parts[0] in _EXCLUDED_DIR_NAMES:
+            dirnames[:] = []
             continue
-        entries.append(path)
+
+        # Prune heavy/external directories before descending for performance.
+        dirnames[:] = [name for name in dirnames if name not in _EXCLUDED_DIR_NAMES]
+
+        for dirname in dirnames:
+            entries.append(root_path / dirname)
+        for filename in filenames:
+            entries.append(root_path / filename)
+
     entries.sort(key=lambda item: item.relative_to(workspace_root).as_posix())
 
     for path in entries:

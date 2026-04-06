@@ -999,4 +999,72 @@ describe('MessagesV3', () => {
       vi.useRealTimers()
     }
   })
+
+  it('renders assistant audit review JSON as summary text only', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          lane: 'audit',
+          items: [
+            {
+              id: 'audit-msg-1',
+              kind: 'message',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 1,
+              createdAt: '2026-04-01T00:00:01Z',
+              updatedAt: '2026-04-01T00:00:01Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              role: 'assistant',
+              text: '{"summary":"Reviewed commit 738f17b and found no blocking issues."}',
+              format: 'markdown',
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const row = screen.getByTestId('conversation-v3-item-message')
+    expect(row).toHaveTextContent('Reviewed commit 738f17b and found no blocking issues.')
+    expect(row.textContent ?? '').not.toContain('{"summary":')
+  })
+
+  it('renders review item JSON payload as summary text only', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          lane: 'audit',
+          items: [
+            {
+              id: 'review-1',
+              kind: 'review',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 2,
+              createdAt: '2026-04-01T00:00:02Z',
+              updatedAt: '2026-04-01T00:00:02Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              title: 'Review summary',
+              text: '{"summary":"Static review passed with only non-blocking notes."}',
+              disposition: null,
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const row = screen.getByTestId('conversation-v3-item-review')
+    expect(row).toHaveTextContent('Static review passed with only non-blocking notes.')
+    expect(row.textContent ?? '').not.toContain('{"summary":')
+  })
 })

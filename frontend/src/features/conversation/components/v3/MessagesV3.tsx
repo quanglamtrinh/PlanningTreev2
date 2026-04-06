@@ -53,6 +53,27 @@ function normalizeText(value: string | null | undefined): string {
     .trim()
 }
 
+function extractReviewSummaryText(rawText: string): string | null {
+  const normalized = normalizeText(rawText)
+  if (!normalized.startsWith('{') || !normalized.endsWith('}')) {
+    return null
+  }
+  try {
+    const parsed: unknown = JSON.parse(normalized)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null
+    }
+    const summary = (parsed as { summary?: unknown }).summary
+    if (typeof summary !== 'string') {
+      return null
+    }
+    const rendered = normalizeText(summary)
+    return rendered || null
+  } catch {
+    return null
+  }
+}
+
 function toStatusClassName(status: ItemStatus): string {
   if (status === 'completed' || status === 'answered') {
     return styles.statusCompleted
@@ -492,6 +513,10 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
       : item.role === 'system'
         ? styles.messageBubbleSystem
         : styles.messageBubbleAssistant
+  const renderedText =
+    item.role === 'assistant'
+      ? extractReviewSummaryText(item.text) ?? item.text
+      : item.text
 
   return (
     <article className={`${styles.row} ${roleClass}`} data-testid="conversation-v3-item-message">
@@ -500,7 +525,7 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
           className={`${styles.messageShell} ${item.role === 'user' ? styles.messageShellUser : styles.messageShellAssistant}`}
         >
           <div className={`${styles.messageBubble} ${bubbleClass}`}>
-            <ConversationMarkdown content={item.text} />
+            <ConversationMarkdown content={renderedText} />
           </div>
         </div>
       </div>
@@ -926,6 +951,7 @@ function isFileChangeSemanticDiff(item: Extract<ConversationItemV3, { kind: 'dif
 }
 
 function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'review' }> }) {
+  const renderedText = extractReviewSummaryText(item.text) ?? item.text
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-review">
       <div className={styles.rowRail}>
@@ -937,7 +963,7 @@ function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'revi
             </div>
             <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-          <ConversationMarkdown content={item.text} />
+          <ConversationMarkdown content={renderedText} />
         </div>
       </div>
     </article>

@@ -42,6 +42,7 @@ import { useThreadByIdStoreV3 } from '../../src/features/conversation/state/thre
 import { useWorkflowStateStoreV2 } from '../../src/features/conversation/state/workflowStateStoreV2'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useProjectStore } from '../../src/stores/project-store'
+import { useUIStore } from '../../src/stores/ui-store'
 
 function makeProjectSnapshot(nodeKind: 'original' | 'review' = 'original'): Snapshot {
   return {
@@ -216,6 +217,7 @@ describe('BreadcrumbChatViewV2', () => {
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
     useWorkflowStateStoreV2.getState().reset()
     useThreadByIdStoreV3.getState().disconnectThread()
+    useUIStore.setState(useUIStore.getInitialState())
   })
 
   it('defaults non-review /chat-v2 routes to execution and loads execution thread by id', async () => {
@@ -400,6 +402,108 @@ describe('BreadcrumbChatViewV2', () => {
     })
     expect(screen.getByTestId('frame-context-ask')).toBeInTheDocument()
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
+  })
+
+  it('marks done from execution and returns to graph immediately', async () => {
+    const markDoneFromExecution = vi.fn().mockResolvedValue(undefined)
+    seedStores({
+      workflowState: makeWorkflowState({
+        workflowPhase: 'execution_decision_pending',
+        canMarkDoneFromExecution: true,
+        currentExecutionDecision: {
+          status: 'current',
+          sourceExecutionRunId: 'exec-run-1',
+          executionTurnId: 'turn-1',
+          candidateWorkspaceHash: 'ws:abc',
+          summaryText: 'Execution summary',
+          createdAt: '2026-03-28T00:01:00Z',
+        },
+      }),
+    })
+    useWorkflowStateStoreV2.setState({
+      ...useWorkflowStateStoreV2.getState(),
+      markDoneFromExecution,
+    })
+    useUIStore.setState({ ...useUIStore.getState(), activeSurface: 'breadcrumb' })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
+        <Routes>
+          <Route path="/" element={<LocationProbe />} />
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat-v2"
+            element={
+              <>
+                <BreadcrumbChatViewV2 />
+                <LocationProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByTestId('workflow-mark-done-execution'))
+
+    await waitFor(() => {
+      expect(markDoneFromExecution).toHaveBeenCalledWith('project-1', 'root', 'ws:abc')
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('location-probe')).toHaveTextContent('/')
+    })
+    expect(useUIStore.getState().activeSurface).toBe('graph')
+  })
+
+  it('marks done from audit and returns to graph immediately', async () => {
+    const markDoneFromAudit = vi.fn().mockResolvedValue(undefined)
+    seedStores({
+      workflowState: makeWorkflowState({
+        workflowPhase: 'audit_decision_pending',
+        canMarkDoneFromAudit: true,
+        reviewThreadId: 'audit-thread-1',
+        currentAuditDecision: {
+          status: 'current',
+          sourceReviewCycleId: 'review-cycle-1',
+          reviewCommitSha: 'sha:abc',
+          finalReviewText: 'Audit summary',
+          reviewDisposition: 'approve',
+          createdAt: '2026-03-28T00:02:00Z',
+        },
+      }),
+      threadSnapshot: makeConversationSnapshot({ threadId: 'audit-thread-1', lane: 'audit' }),
+    })
+    useWorkflowStateStoreV2.setState({
+      ...useWorkflowStateStoreV2.getState(),
+      markDoneFromAudit,
+    })
+    useUIStore.setState({ ...useUIStore.getState(), activeSurface: 'breadcrumb' })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
+        <Routes>
+          <Route path="/" element={<LocationProbe />} />
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat-v2"
+            element={
+              <>
+                <BreadcrumbChatViewV2 />
+                <LocationProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByTestId('workflow-mark-done-audit'))
+
+    await waitFor(() => {
+      expect(markDoneFromAudit).toHaveBeenCalledWith('project-1', 'root', 'sha:abc')
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('location-probe')).toHaveTextContent('/')
+    })
+    expect(useUIStore.getState().activeSurface).toBe('graph')
   })
 
   it('keeps review-node routes inside chat-v2 audit lane', async () => {

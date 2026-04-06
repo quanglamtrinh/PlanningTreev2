@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import type { ThreadRole } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
+import { useUIStore } from '../../stores/ui-store'
 import { NodeDetailCard } from '../node/NodeDetailCard'
 import { ComposerBar } from '../breadcrumb/ComposerBar'
 import { FrameContextFeedBlock } from '../breadcrumb/FrameContextFeedBlock'
@@ -98,6 +99,7 @@ export function BreadcrumbChatViewV2() {
     detailStateKey ? state.entries[detailStateKey] : undefined,
   )
   const loadDetailState = useDetailStateStore((state) => state.loadDetailState)
+  const setActiveSurface = useUIStore((state) => state.setActiveSurface)
 
   const {
     workflowState,
@@ -370,7 +372,16 @@ export function BreadcrumbChatViewV2() {
       return
     }
     await markDoneFromExecution(projectId, nodeId, currentExecutionDecision.candidateWorkspaceHash)
-  }, [currentExecutionDecision?.candidateWorkspaceHash, markDoneFromExecution, nodeId, projectId])
+    setActiveSurface('graph')
+    void navigate('/')
+  }, [
+    currentExecutionDecision?.candidateWorkspaceHash,
+    markDoneFromExecution,
+    navigate,
+    nodeId,
+    projectId,
+    setActiveSurface,
+  ])
 
   const handleReviewInAudit = useCallback(async () => {
     if (!projectId || !nodeId || !currentExecutionDecision?.candidateWorkspaceHash) {
@@ -385,7 +396,16 @@ export function BreadcrumbChatViewV2() {
       return
     }
     await markDoneFromAudit(projectId, nodeId, currentAuditDecision.reviewCommitSha)
-  }, [currentAuditDecision?.reviewCommitSha, markDoneFromAudit, nodeId, projectId])
+    setActiveSurface('graph')
+    void navigate('/')
+  }, [
+    currentAuditDecision?.reviewCommitSha,
+    markDoneFromAudit,
+    navigate,
+    nodeId,
+    projectId,
+    setActiveSurface,
+  ])
 
   const handleImproveInExecution = useCallback(async () => {
     if (!projectId || !nodeId || !currentAuditDecision?.reviewCommitSha) {

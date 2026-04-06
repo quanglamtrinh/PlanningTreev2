@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import re
 import threading
@@ -228,6 +229,8 @@ class WorkflowMetadataService:
                 "4. If there are no serious issues, state that explicitly.\n",
                 "5. Include concrete file paths for findings whenever possible.\n",
                 f"6. Start by inspecting commit `{review_commit_sha}` and its related diffs.\n",
+                "7. Respond in plain markdown prose for humans.\n",
+                "8. Do NOT return JSON/YAML objects or fenced data payloads.\n",
             ]
         )
         return "".join(sections)
@@ -1458,11 +1461,21 @@ class ExecutionAuditWorkflowService:
 
             discovered_review_thread_id = str(result.get("thread_id") or "").strip() or discovered_review_thread_id
             discovered_review_turn_id = str(result.get("turn_id") or "").strip() or discovered_review_turn_id
-            final_review_text = str(result.get("stdout") or "").strip() or final_review_text
+            normalized_review_text, normalized_from_json = self._normalize_review_response_text(
+                str(result.get("stdout") or "")
+            )
+            final_review_text = normalized_review_text or final_review_text
             if discovered_review_thread_id:
                 self._adopt_review_thread(project_id, node_id, cycle_id, discovered_review_thread_id)
             if not final_review_text:
                 final_review_text = "Local review completed without a textual review payload."
+            if normalized_from_json and final_review_text:
+                self._rewrite_review_turn_assistant_message(
+                    project_id=project_id,
+                    node_id=node_id,
+                    turn_id=local_turn_id,
+                    review_text=final_review_text,
+                )
             self._ensure_review_summary_item(
                 project_id=project_id,
                 node_id=node_id,
@@ -1612,6 +1625,106 @@ class ExecutionAuditWorkflowService:
             updated,
             events,
         )
+
+    @staticmethod
+    def _extract_json_object_from_text(text: str) -> dict[str, Any] | None:
+        raw = str(text or "").strip()
+        if not raw:
+            return None
+
+        candidates: list[str] = []
+        if raw.startswith("{") and raw.endswith("}"):
+            candidates.append(raw)
+
+        fenced_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", raw, flags=re.IGNORECASE)
+        if fenced_match:
+            candidates.append(fenced_match.group(1).strip())
+
+        if not candidates and raw.startswith("{"):
+            candidates.append(raw)
+
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+
+    @classmethod
+    def _normalize_review_response_text(cls, raw_text: str) -> tuple[str | None, bool]:
+        normalized = str(raw_text or "").strip()
+        if not normalized:
+            return None, False
+
+        payload = cls._extract_json_object_from_text(normalized)
+        if payload is None:
+            return normalized, False
+
+        for key in ("summary", "review", "final_review_text", "checkpoint_summary"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip(), True
+        return normalized, False
+
+    def _rewrite_review_turn_assistant_message(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        turn_id: str,
+        review_text: str,
+    ) -> None:
+        text = str(review_text or "").strip()
+        if not text:
+            return
+
+        query_service = self._thread_runtime_service_v2._query_service
+        snapshot = query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            "audit",
+            publish_repairs=False,
+            ensure_binding=False,
+            allow_thread_read_hydration=False,
+        )
+        assistant_messages = [
+            item
+            for item in snapshot.get("items", [])
+            if isinstance(item, dict)
+            and str(item.get("kind") or "") == "message"
+            and str(item.get("role") or "") == "assistant"
+            and str(item.get("turnId") or "") == turn_id
+        ]
+        if not assistant_messages:
+            return
+
+        updated = snapshot
+        events: list[dict[str, Any]] = []
+        for item in assistant_messages:
+            current_text = str(item.get("text") or "").strip()
+            if current_text == text:
+                continue
+            if self._extract_json_object_from_text(current_text) is None:
+                continue
+
+            rewritten = copy.deepcopy(item)
+            rewritten["text"] = text
+            rewritten["updatedAt"] = iso_now()
+            if str(rewritten.get("status") or "") != "failed":
+                rewritten["status"] = "completed"
+            updated, upsert_events = upsert_item(updated, rewritten)
+            events.extend(upsert_events)
+
+        if events:
+            query_service.persist_thread_mutation(
+                project_id,
+                node_id,
+                "audit",
+                updated,
+                events,
+            )
 
     def _materialize_execution_decision(
         self,
