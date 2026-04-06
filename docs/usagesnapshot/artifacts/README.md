@@ -1,6 +1,6 @@
 # Usage Snapshot Artifacts
 
-Status: pending implementation.
+Status: phase 0 artifacts recorded; later phase artifacts pending.
 
 This folder stores implementation evidence for the Usage Snapshot rollout.
 
@@ -11,6 +11,18 @@ Phase 0:
 - contract checklist
 - parser rule examples
 - open-questions log (if any)
+- current-state evidence
+- UI-state matrix
+- test acceptance matrix
+- deferred backlog guard
+
+Phase 0 files currently present:
+
+- `docs/usagesnapshot/artifacts/phase-0-current-state-evidence.md`
+- `docs/usagesnapshot/artifacts/phase-0-contract-checklist.md`
+- `docs/usagesnapshot/artifacts/phase-0-ui-state-matrix.md`
+- `docs/usagesnapshot/artifacts/phase-0-test-acceptance-matrix.md`
+- `docs/usagesnapshot/artifacts/phase-0-deferred-backlog.md`
 
 Phase 1:
 

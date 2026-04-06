@@ -11,9 +11,29 @@ router = APIRouter(tags=["codex"])
 SSE_HEARTBEAT_INTERVAL_SEC = 15
 
 
+def _parse_days_query_param(raw_days: str | None) -> int:
+    if raw_days is None:
+        return 30
+    try:
+        parsed = int(raw_days.strip())
+    except (AttributeError, TypeError, ValueError):
+        parsed = 30
+    return max(1, min(90, parsed))
+
+
 @router.get("/codex/account")
 async def get_codex_account_snapshot(request: Request) -> dict:
     return request.app.state.codex_account_service.get_snapshot()
+
+
+@router.get("/codex/usage/local")
+async def get_local_usage_snapshot(
+    request: Request,
+    days: str | None = None,
+) -> dict:
+    parsed_days = _parse_days_query_param(days)
+    service = request.app.state.local_usage_snapshot_service
+    return await asyncio.to_thread(service.read_snapshot, parsed_days)
 
 
 @router.get("/codex/events")

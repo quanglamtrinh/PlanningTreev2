@@ -1,6 +1,6 @@
 # Phase 1: Backend Scanner and API Foundation
 
-Status: not started.
+Status: completed.
 
 Effort: 22% (about 5.0 engineering days).
 
@@ -73,7 +73,7 @@ Create `backend/services/local_usage_snapshot_service.py` with:
 - include `days` in chronological order.
 - include computed totals:
   - `last7_days_tokens`
-  - `last30_days_tokens` (or selected-window total by contract)
+  - `last30_days_tokens` (sum of the most recent max 30 days within the selected scan window)
   - `average_daily_tokens`
   - `cache_hit_rate_percent`
   - `peak_day`

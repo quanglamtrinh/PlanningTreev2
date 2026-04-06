@@ -47,6 +47,7 @@ from backend.services.frame_generation_service import FrameGenerationService
 from backend.services.finish_task_service import FinishTaskService
 from backend.services.git_checkpoint_service import GitCheckpointService
 from backend.services.node_detail_service import NodeDetailService
+from backend.services.local_usage_snapshot_service import LocalUsageSnapshotService
 from backend.services.spec_generation_service import SpecGenerationService
 from backend.services.node_document_service import NodeDocumentService
 from backend.services.workspace_file_service import WorkspaceFileService
@@ -102,6 +103,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         codex_client=codex_client,
         event_broker=codex_event_broker,
     )
+    local_usage_snapshot_service = LocalUsageSnapshotService()
     split_service = SplitService(
         storage=storage,
         tree_service=tree_service,
@@ -259,6 +261,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.thread_lineage_service = thread_lineage_service
     app.state.codex_event_broker = codex_event_broker
     app.state.codex_account_service = codex_account_service
+    app.state.local_usage_snapshot_service = local_usage_snapshot_service
     app.state.split_service = split_service
     app.state.frame_generation_service = frame_generation_service
     app.state.clarify_generation_service = clarify_generation_service

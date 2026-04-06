@@ -158,7 +158,7 @@ function GraphNodeActionsDropdown({
               }}
             >
               <span className={styles.menuTitle}>Init Docs For Project</span>
-              <span className={styles.menuDesc}>Placeholder action. Project docs bootstrap is coming next.</span>
+              <span className={styles.menuDesc}>Scan the folder and create overview documents</span>
             </button>
             <button
               type="button"

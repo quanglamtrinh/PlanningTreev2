@@ -1,6 +1,6 @@
 # Usage Snapshot Phased Roadmap
 
-Status: planning skeleton for implementation.
+Status: Phase 0 completed. Implementation phases are queued.
 
 Last updated: 2026-04-06.
 
@@ -68,7 +68,7 @@ Total baseline effort: 100% (about 23 engineering days).
 
 ## 5. Detailed phase skeleton
 
-## Phase 0 (8%) - Contract freeze and boundaries
+## Phase 0 (8%) - Contract freeze and boundaries (completed)
 
 Goals:
 
@@ -89,6 +89,11 @@ Exit criteria:
 
 - No open contract-level ambiguity remains.
 - Phase 1 can implement without revisiting product decisions.
+
+Completion notes:
+
+- Completed on 2026-04-06.
+- Decision pack and phase artifacts are recorded under `docs/usagesnapshot/artifacts/phase-0-*`.
 
 ## Phase 1 (22%) - Backend scanner and API foundation
 

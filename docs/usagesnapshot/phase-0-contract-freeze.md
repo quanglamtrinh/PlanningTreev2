@@ -1,17 +1,36 @@
 # Phase 0: Contract Freeze and Boundaries
 
-Status: not started.
+Status: completed.
+
+Last updated: 2026-04-06.
 
 Effort: 8% (about 2.0 engineering days).
 
 ## Goal
 
-Freeze API contract, parser semantics, UI behavior, and scope boundaries before coding.
+Freeze API contract, parser semantics, UI behavior, and scope boundaries before Phase 1 implementation.
+
+## Phase completion summary
+
+- Decision pack is finalized with no open technical ambiguity for Phase 1.
+- Baseline compatibility with current PlanningTreeMain architecture is documented.
+- API/parser/UI/test contracts are locked and traceable.
+- Deferred scope is explicitly listed to prevent implementation creep.
 
 ## Inputs
 
 - `docs/usagesnapshot/README.md`
 - `docs/usagesnapshot/usagesnapshot-phased-roadmap.md`
+
+## Execution slots outcome
+
+| Slot | Owner role | Output | Status |
+|---|---|---|---|
+| A (0.5d) | Tech lead + BE lead | Current-state evidence and compatibility check | completed |
+| B (0.75d) | BE lead | API/parser contract freeze | completed |
+| C (0.5d) | FE lead | UX/route/state/refresh contract freeze | completed |
+| D (0.25d) | QA lead | Test acceptance matrix freeze | completed |
+| E (buffer) | Leads | Conflict cleanup + tracker update | completed |
 
 ## Locked product decisions for this phase
 
@@ -33,8 +52,22 @@ Freeze API contract, parser semantics, UI behavior, and scope boundaries before 
 - Coding scanner, route, or UI.
 - Adding workspace-level filter options.
 - Reworking existing codex account/rate-limit snapshot behavior.
+- Replacing `/v1/codex/events` SSE with a new usage-specific SSE flow.
+- Persistence layer for historical aggregate snapshots.
 
-## Contract draft
+## Current-state compatibility evidence
+
+Reference: `docs/usagesnapshot/artifacts/phase-0-current-state-evidence.md`
+
+Compatibility conclusion:
+
+- Existing codex account/rate-limit flows remain isolated and can coexist with new usage-local route.
+- App routing/shell structure allows adding `/usage-snapshot` without breaking existing graph/chat surfaces.
+- Existing test stack already supports required unit + E2E layers.
+
+## Contract freeze (decision complete)
+
+## API contract
 
 Route:
 
@@ -42,118 +75,134 @@ Route:
 
 Query params:
 
-- `days` (optional integer, default `30`, clamped to `[1, 90]`)
+- `days` optional integer
+- default `30`
+- clamp `[1, 90]`
+- invalid parse falls back to default `30` (no hard validation error)
 
-Response shape:
+Response contract:
 
-```json
-{
-  "updated_at": 1712428800000,
-  "days": [
-    {
-      "day": "2026-04-06",
-      "input_tokens": 1200,
-      "cached_input_tokens": 250,
-      "output_tokens": 900,
-      "total_tokens": 2100,
-      "agent_time_ms": 450000,
-      "agent_runs": 3
-    }
-  ],
-  "totals": {
-    "last7_days_tokens": 8800,
-    "last30_days_tokens": 35210,
-    "average_daily_tokens": 1257,
-    "cache_hit_rate_percent": 19.4,
-    "peak_day": "2026-04-03",
-    "peak_day_tokens": 4200
-  },
-  "top_models": [
-    {
-      "model": "gpt-5.3-codex",
-      "tokens": 22800,
-      "share_percent": 64.7
-    }
-  ]
-}
-```
+- snake_case fields only
+- fixed shape with:
+  - `updated_at`
+  - `days[]`
+  - `totals`
+  - `top_models[]`
 
-Error policy:
+Reference payload and field checklist:
 
-- Invalid `days` parses to default, not hard error.
-- Scan failures return empty-but-valid snapshot shape if possible.
-- Route should only return 5xx when service cannot initialize safely.
+- `docs/usagesnapshot/artifacts/phase-0-contract-checklist.md`
 
-## Parser semantics to freeze
+## Parser and aggregation contract
 
-- Session root path:
-  - resolve `CODEX_HOME` if defined
-  - fallback to `~/.codex`
-  - scan under `<codex_home>/sessions`
-- File traversal:
-  - day directories by `YYYY/MM/DD`
-  - only `.jsonl` files
-  - ignore unreadable files
-- Event handling:
-  - parse `event_msg` payloads with token usage
-  - support both `total_token_usage` and `last_token_usage`
-  - use delta logic to avoid double-counting totals
-  - track agent run counts from assistant-message style events
-  - track active time via timestamp deltas capped by max gap
-- Model attribution:
-  - prefer turn context model
-  - fallback to token payload model fields
-  - unknown model is excluded from top-model leaderboard
+Root and traversal:
 
-## Frontend behavior to freeze
+- session root = `$CODEX_HOME/sessions` else `~/.codex/sessions`
+- day folder traversal by `YYYY/MM/DD`
+- only `.jsonl` files
+- unreadable files are skipped safely
 
-- Route path: `/usage-snapshot`
-- Screen states:
-  - loading skeleton
-  - loaded state
-  - empty state
-  - recoverable error banner with retry
-- Refresh behavior:
-  - initial load on mount
-  - fixed interval polling
-  - manual refresh button
-  - stale-response guard with request generation id
+Event handling:
 
-## Test acceptance criteria to freeze
+- support both `total_token_usage` and `last_token_usage`
+- per-file delta logic must prevent double counting
+- `agent_runs` from assistant message events
+- `agent_time_ms` from timestamp delta with `MAX_ACTIVITY_GAP_MS = 120000`
+- day bucket uses local timezone on backend host
 
-- Backend unit tests for parser edge cases and formulas.
-- Backend integration test for route contract and days clamp.
-- Frontend unit tests for screen render states and refresh behavior.
-- Frontend unit test for sidebar button navigation.
-- Frontend E2E test for full entrypoint flow and screen visibility.
+Totals semantics:
 
-## File-target plan for later phases
+- `last7_days_tokens` = sum of most recent 7 days in selected scan window
+- `last30_days_tokens` = sum of most recent max 30 days in selected scan window
+- `average_daily_tokens` = rounded average over the same most recent 7-day set
+- `cache_hit_rate_percent` = `cached_input_tokens / input_tokens * 100`, rounded to 1 decimal
+- `peak_day` and `peak_day_tokens` from max `total_tokens` day within scan window
 
-- Backend:
-  - `backend/main.py`
-  - `backend/routes/codex.py`
-  - `backend/services/local_usage_snapshot_service.py` (new)
-  - `backend/tests/unit/test_local_usage_snapshot_service.py` (new)
-  - `backend/tests/integration/test_codex_api.py`
-- Frontend:
-  - `frontend/src/App.tsx`
-  - `frontend/src/api/types.ts`
-  - `frontend/src/api/client.ts`
-  - `frontend/src/features/graph/Sidebar.tsx`
-  - `frontend/src/features/graph/Sidebar.module.css`
-  - `frontend/src/features/usage-snapshot/UsageSnapshotPage.tsx` (new)
-  - `frontend/src/features/usage-snapshot/UsageSnapshotPage.module.css` (new)
-  - `frontend/src/features/usage-snapshot/useLocalUsageSnapshot.ts` (new)
-  - `frontend/tests/unit/Sidebar.test.tsx`
-  - `frontend/tests/unit/UsageSnapshotPage.test.tsx` (new)
-  - `frontend/tests/e2e/usage-snapshot.spec.ts` (new)
+Model leaderboard:
 
-## Deliverables
+- sort by descending `tokens`
+- exclude `unknown`
+- keep top 4
+- `share_percent` rounded to 1 decimal
 
-- Contract checkpoint in this phase doc is complete and approved.
-- Any open questions are logged in artifacts with explicit ownership and due date.
+## Error policy
+
+- malformed JSON line: skip line, continue scan
+- oversized line: skip line, continue scan
+- unreadable file: skip file, continue scan
+- route should prefer valid empty snapshot fallback when scan is partially degraded
+- 5xx is reserved for service-level unsafe initialization/fatal failure
+
+## Frontend contract freeze
+
+- route path: `/usage-snapshot`
+- entrypoint button located above current sidebar usage block
+- data refresh: initial load + interval polling + manual refresh
+- stale-response guard required via request generation id
+- no SSE for usage snapshot in this track
+
+UI state matrix and interaction notes:
+
+- `docs/usagesnapshot/artifacts/phase-0-ui-state-matrix.md`
+
+## Test acceptance contract freeze
+
+Frozen matrix:
+
+- backend unit: parser and aggregation rules
+- backend integration: route shape + days behavior
+- frontend unit: usage page states + refresh behavior
+- frontend unit: sidebar navigation to usage route
+- frontend E2E: sidebar entrypoint to loaded usage screen
+
+Reference:
+
+- `docs/usagesnapshot/artifacts/phase-0-test-acceptance-matrix.md`
+
+## Traceability and sign-off checklist
+
+Contract traceability:
+
+- `dedicated_usage_snapshot_screen` -> phase-0 sections `Frontend contract freeze` + UI matrix
+- `sidebar_button_entrypoint` -> phase-0 sections `Frontend contract freeze` + UI matrix
+- `all_codex_sessions_scope` -> phase-0 sections `Parser and aggregation contract`
+- `polling_refresh_strategy` -> phase-0 sections `Frontend contract freeze`
+- `full_delivery_scope` -> phase-0 sections `Test acceptance contract freeze`
+
+Role sign-off checklist:
+
+- [x] BE lead sign-off recorded (API/parser/error policy)
+- [x] FE lead sign-off recorded (route/UX/states/refresh policy)
+- [x] QA lead sign-off recorded (test acceptance matrix)
+
+## Deferred scope guard
+
+Deferred backlog (explicitly non-phase-0 and non-phase-1 decisions):
+
+- workspace/project filter
+- SSE-based usage push updates
+- persisted aggregate database/cache
+- deep drill-down analytics
+
+Reference:
+
+- `docs/usagesnapshot/artifacts/phase-0-deferred-backlog.md`
+
+## Phase 0 deliverables
+
+- `docs/usagesnapshot/artifacts/phase-0-current-state-evidence.md`
+- `docs/usagesnapshot/artifacts/phase-0-contract-checklist.md`
+- `docs/usagesnapshot/artifacts/phase-0-ui-state-matrix.md`
+- `docs/usagesnapshot/artifacts/phase-0-test-acceptance-matrix.md`
+- `docs/usagesnapshot/artifacts/phase-0-deferred-backlog.md`
 
 ## Exit criteria
 
 - API shape, parser semantics, UI states, and test matrix are frozen.
-- No open product/architecture question blocks Phase 1.
+- All high-impact ambiguities are resolved.
+- Deferred scope is explicitly documented.
+
+## Phase gate decision
+
+- Phase 0 gate: passed.
+- Phase 1 kickoff status: ready.

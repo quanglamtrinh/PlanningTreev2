@@ -1,7 +1,7 @@
 migration_id: usage_snapshot_rollout
-status: phase_0_not_started
-current_phase: 0
-next_phase: 0
+status: phase_2_not_started
+current_phase: 2
+next_phase: 2
 
 references:
   plan_doc: docs/usagesnapshot/README.md
@@ -28,21 +28,36 @@ locked_decisions:
 phases:
   - phase: 0
     name: contract_freeze_and_boundaries
-    status: not_started
+    status: completed
     depends_on: []
     effort_percent: 8
     estimated_days: 2.0
     artifacts:
       - docs/usagesnapshot/phase-0-contract-freeze.md
+      - docs/usagesnapshot/artifacts/phase-0-current-state-evidence.md
+      - docs/usagesnapshot/artifacts/phase-0-contract-checklist.md
+      - docs/usagesnapshot/artifacts/phase-0-ui-state-matrix.md
+      - docs/usagesnapshot/artifacts/phase-0-test-acceptance-matrix.md
+      - docs/usagesnapshot/artifacts/phase-0-deferred-backlog.md
+    notes: >
+      Completed on 2026-04-06. Phase 0 contract freeze, traceability mapping,
+      UI-state matrix, test acceptance matrix, and deferred-scope guard are all
+      recorded. No open contract ambiguity remains for Phase 1 kickoff.
   - phase: 1
     name: backend_scanner_and_api_foundation
-    status: not_started
+    status: completed
     depends_on:
       - 0
     effort_percent: 22
     estimated_days: 5.0
     artifacts:
       - docs/usagesnapshot/phase-1-backend-scanner-and-api-foundation.md
+      - docs/usagesnapshot/phase-1-to-phase-2-handoff.md
+    notes: >
+      Completed on 2026-04-06. Phase 1 shipped LocalUsageSnapshotService,
+      route GET /v1/codex/usage/local, app-state wiring, and backend tests for
+      parser semantics plus API contract/degraded-input behavior. Verification:
+      unit 10 passed, integration 7 passed.
   - phase: 2
     name: backend_performance_and_observability
     status: not_started

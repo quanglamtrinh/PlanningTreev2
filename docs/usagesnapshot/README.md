@@ -1,6 +1,6 @@
 # Usage Snapshot Rollout Plan
 
-Status: planning skeleton for implementation.
+Status: Phase 1 completed. Phase 2 is ready to start.
 
 Last updated: 2026-04-06.
 
@@ -9,7 +9,9 @@ Last updated: 2026-04-06.
 - `docs/usagesnapshot/usagesnapshot-phased-roadmap.md`
 - `docs/usagesnapshot/progress.yaml`
 - `docs/usagesnapshot/phase-0-contract-freeze.md`
+- `docs/usagesnapshot/phase-0-to-phase-1-handoff.md`
 - `docs/usagesnapshot/phase-1-backend-scanner-and-api-foundation.md`
+- `docs/usagesnapshot/phase-1-to-phase-2-handoff.md`
 - `docs/usagesnapshot/phase-2-backend-performance-and-observability.md`
 - `docs/usagesnapshot/phase-3-frontend-route-screen-and-polling.md`
 - `docs/usagesnapshot/phase-4-sidebar-entrypoint-and-ux-polish.md`
@@ -17,6 +19,19 @@ Last updated: 2026-04-06.
 - `docs/usagesnapshot/phase-6-rollout-and-stabilization.md`
 - `docs/usagesnapshot/phase-7-cleanup-and-closeout.md`
 - `docs/usagesnapshot/artifacts/README.md`
+
+## Phase 0 completion outputs
+
+- `docs/usagesnapshot/artifacts/phase-0-current-state-evidence.md`
+- `docs/usagesnapshot/artifacts/phase-0-contract-checklist.md`
+- `docs/usagesnapshot/artifacts/phase-0-ui-state-matrix.md`
+- `docs/usagesnapshot/artifacts/phase-0-test-acceptance-matrix.md`
+- `docs/usagesnapshot/artifacts/phase-0-deferred-backlog.md`
+
+## Phase 1 completion outputs
+
+- `docs/usagesnapshot/phase-1-backend-scanner-and-api-foundation.md`
+- `docs/usagesnapshot/phase-1-to-phase-2-handoff.md`
 
 ## Locked decisions
 
@@ -32,7 +47,11 @@ Last updated: 2026-04-06.
   - backend route: `/v1/codex/account`
   - SSE route: `/v1/codex/events`
   - frontend store: `useCodexStore`
-- No local usage snapshot API exists in PlanningTreeMain backend.
+- Local usage snapshot API exists in PlanningTreeMain backend:
+  - backend route: `/v1/codex/usage/local`
+  - service: `LocalUsageSnapshotService`
+  - parser supports `total_token_usage` + `last_token_usage`
+  - route fallback semantics for `days`: default `30`, clamp `[1, 90]`, invalid -> `30`
 - No dedicated Usage Snapshot route or page exists in PlanningTreeMain frontend.
 - CodexMonitor already has a reference implementation of local usage aggregation over `.codex/sessions`.
 

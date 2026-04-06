@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -66,6 +68,66 @@ def _reset_codex_snapshot(client: TestClient) -> None:
     }
 
 
+def _today_day_key() -> str:
+    return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+def _timestamp_ms_for_day(day_key: str, *, hour: int, minute: int, second: int) -> int:
+    local_tz = datetime.now().astimezone().tzinfo
+    day = datetime.strptime(day_key, "%Y-%m-%d")
+    local_dt = day.replace(
+        hour=hour,
+        minute=minute,
+        second=second,
+        microsecond=0,
+        tzinfo=local_tz,
+    )
+    return int(local_dt.timestamp() * 1000)
+
+
+def _write_usage_session_file(
+    codex_home: Path,
+    day_key: str,
+    lines: list[str],
+    *,
+    name: str = "usage.jsonl",
+) -> Path:
+    year, month, day = day_key.split("-")
+    day_dir = codex_home / "sessions" / year / month / day
+    day_dir.mkdir(parents=True, exist_ok=True)
+    path = day_dir / name
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _token_count_total_event(
+    timestamp_ms: int,
+    *,
+    input_tokens: int,
+    cached_input_tokens: int,
+    output_tokens: int,
+    model_name: str | None = None,
+) -> str:
+    info: dict[str, Any] = {
+        "total_token_usage": {
+            "input_tokens": input_tokens,
+            "cached_input_tokens": cached_input_tokens,
+            "output_tokens": output_tokens,
+        }
+    }
+    if model_name is not None:
+        info["model_name"] = model_name
+    return json.dumps(
+        {
+            "timestamp": timestamp_ms,
+            "payload": {
+                "type": "token_count",
+                "info": info,
+            },
+        }
+    )
+
+
 async def _read_stream_chunk(response: Any, *, timeout_sec: float = 1.0) -> str:
     return await asyncio.wait_for(anext(response.body_iterator), timeout=timeout_sec)
 
@@ -110,6 +172,107 @@ def test_get_codex_account_snapshot_returns_normalized_shape(client: TestClient)
             "plan_type": "plus",
         },
     }
+
+
+def test_get_local_usage_snapshot_returns_expected_shape(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    day_key = _today_day_key()
+    timestamp_ms = _timestamp_ms_for_day(day_key, hour=11, minute=0, second=0)
+    _write_usage_session_file(
+        codex_home,
+        day_key,
+        [
+            _token_count_total_event(
+                timestamp_ms,
+                input_tokens=10,
+                cached_input_tokens=2,
+                output_tokens=5,
+                model_name="gpt-5",
+            )
+        ],
+    )
+
+    response = client.get("/v1/codex/usage/local")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload.keys()) == {"updated_at", "days", "totals", "top_models"}
+    assert len(payload["days"]) == 30
+    assert set(payload["days"][-1].keys()) == {
+        "day",
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "agent_time_ms",
+        "agent_runs",
+    }
+    assert set(payload["totals"].keys()) == {
+        "last7_days_tokens",
+        "last30_days_tokens",
+        "average_daily_tokens",
+        "cache_hit_rate_percent",
+        "peak_day",
+        "peak_day_tokens",
+    }
+    assert payload["top_models"]
+    assert set(payload["top_models"][0].keys()) == {"model", "tokens", "share_percent"}
+
+
+def test_get_local_usage_snapshot_honors_valid_days_query(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
+
+    response = client.get("/v1/codex/usage/local?days=7")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["days"]) == 7
+
+
+def test_get_local_usage_snapshot_invalid_days_falls_back_to_default(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
+
+    response = client.get("/v1/codex/usage/local?days=abc")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["days"]) == 30
+
+
+def test_get_local_usage_snapshot_degraded_input_still_returns_valid_snapshot(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    day_key = _today_day_key()
+    year, month, day = day_key.split("-")
+    day_dir = codex_home / "sessions" / year / month / day
+    day_dir.mkdir(parents=True, exist_ok=True)
+    (day_dir / "broken.jsonl").mkdir()
+    (day_dir / "malformed.jsonl").write_text("{not-json\n", encoding="utf-8")
+
+    response = client.get("/v1/codex/usage/local?days=1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload.keys()) == {"updated_at", "days", "totals", "top_models"}
+    assert len(payload["days"]) == 1
+    assert payload["days"][0]["total_tokens"] == 0
 
 
 @pytest.mark.anyio
