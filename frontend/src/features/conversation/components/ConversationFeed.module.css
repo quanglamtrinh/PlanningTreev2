@@ -19,7 +19,7 @@
   gap: 8px;
   width: 100%;
   max-width: 760px;
-  margin: 0 auto;
+  margin: 15px auto;
   padding: 0 24px 8px;
   box-sizing: border-box;
   flex-shrink: 0;
@@ -98,10 +98,7 @@
   flex-direction: column;
   gap: 10px;
   width: min(100%, 100%);
-  border: 1px solid color-mix(in srgb, var(--border-default) 90%, transparent);
-  border-radius: 16px;
   background: var(--bg-surface);
-  padding: 14px 16px;
   box-shadow: var(--shadow-sm);
 }
 
@@ -522,9 +519,6 @@
   flex-direction: column;
   gap: 12px;
   width: min(100%, 100%);
-  border: 1px solid color-mix(in srgb, var(--border-default) 90%, transparent);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--bg-surface) 98%, transparent);
   padding: 14px 16px;
 }
 
@@ -568,11 +562,6 @@
 .fileChangeCard {
   padding: 0;
   overflow: hidden;
-  border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--border-default) 82%, transparent);
-  background: var(--bg-surface);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 6%, transparent),
-    0 4px 12px color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
 .fileChangeMultiCard {

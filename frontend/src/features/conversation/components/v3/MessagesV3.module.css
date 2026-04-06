@@ -33,7 +33,7 @@
 .pendingStack {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 20px;
 }
 
 .pendingStack {
@@ -59,7 +59,7 @@
   gap: 8px;
   width: 100%;
   max-width: 860px;
-  margin: 0 auto;
+  margin: 20px auto;
   padding: 0 20px 10px;
   box-sizing: border-box;
   flex-shrink: 0;
@@ -98,7 +98,7 @@
   left: 0;
   top: 4px;
   bottom: 4px;
-  width: 2px;
+  width: 5px;
   border-radius: 999px;
   background: var(--v3-rail);
 }
@@ -234,7 +234,7 @@
 }
 
 .messageBubble {
-  padding: 10px 12px;
+  padding: 30px 25px;
   line-height: 1.5;
 }
 
@@ -266,7 +266,6 @@
       var(--v3-surface) 40%
     ),
     var(--v3-surface);
-  padding: 11px 12px;
   box-shadow: var(--v3-card-shadow);
 }
 
@@ -393,7 +392,6 @@
 
 .commandCard {
   gap: 10px;
-  padding: 11px 12px;
 }
 
 .commandCardEyebrow {
@@ -781,9 +779,9 @@
   background: color-mix(in srgb, var(--v3-accent) 55%, var(--v3-success));
 }
 
-.exploreCard::before {
+/* .exploreCard::before {
   background: color-mix(in srgb, var(--v3-accent) 70%, var(--v3-warning) 30%);
-}
+} */
 
 .diffCard::before {
   background: color-mix(in srgb, var(--v3-success) 78%, var(--v3-accent) 22%);
@@ -834,9 +832,6 @@
   flex-direction: column;
   gap: 10px;
   width: min(100%, 100%);
-  border: 1px solid var(--v3-border-strong);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--v3-surface) 98%, transparent);
   padding: 11px 12px;
   box-shadow: var(--v3-card-shadow);
 }
@@ -945,12 +940,6 @@
   background: var(--v3-canvas);
 }
 
-.feedThreadChatCanvas .groupShell,
-.feedThreadChatCanvas .groupShellStream {
-  background: var(--v3-canvas);
-  border-color: color-mix(in srgb, var(--v3-border-strong) 45%, var(--v3-canvas));
-  box-shadow: none;
-}
 
 .feedThreadChatCanvas .fileItem,
 .feedThreadChatCanvas .questionCard,

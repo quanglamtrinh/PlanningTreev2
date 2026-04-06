@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from typing import Any
+from typing import Any, Callable
 
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.types import (
@@ -391,6 +391,7 @@ class ThreadRuntimeService:
         sandbox_profile: str | None = None,
         output_schema: dict[str, Any] | None = None,
         timeout_sec: int | None = None,
+        on_raw_event_applied: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         provisional_tool_calls: dict[str, dict[str, Any]] = {}
         final_turn_status = "completed"
@@ -416,6 +417,16 @@ class ThreadRuntimeService:
                     "createdAt": str(raw_event.get("received_at") or iso_now()),
                     "matched": False,
                 }
+                if callable(on_raw_event_applied):
+                    try:
+                        on_raw_event_applied(raw_event)
+                    except Exception:
+                        logger.debug(
+                            "stream_agent_turn on_raw_event_applied callback failed for %s/%s",
+                            project_id,
+                            node_id,
+                            exc_info=True,
+                        )
                 return
 
             current = self._query_service.get_thread_snapshot(
@@ -453,6 +464,17 @@ class ThreadRuntimeService:
                     updated,
                     events,
                 )
+
+            if callable(on_raw_event_applied):
+                try:
+                    on_raw_event_applied(raw_event)
+                except Exception:
+                    logger.debug(
+                        "stream_agent_turn on_raw_event_applied callback failed for %s/%s",
+                        project_id,
+                        node_id,
+                        exc_info=True,
+                    )
 
         try:
             result = self._codex_client.run_turn_streaming(

@@ -46,6 +46,7 @@ class ExecutionFileChangeHydrator:
         hydrated_by: str,
         project_id: str,
         node_id: str,
+        refresh_synthetic_from_full_diff: bool = False,
     ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, int]]:
         counters = self._new_counters()
         updated_snapshot = copy.deepcopy(snapshot)
@@ -53,6 +54,7 @@ class ExecutionFileChangeHydrator:
         turn_file_change_items: list[dict[str, Any]] = []
         explicit_empty_changes = False
         hydrated_existing_file_change = False
+        synthetic_item_id: str | None = None
 
         for item in list(updated_snapshot.get("items", [])):
             if not isinstance(item, dict):
@@ -75,7 +77,14 @@ class ExecutionFileChangeHydrator:
                 pending_events.extend(events)
                 item = sanitized_item
 
+            if self._is_synthetic_file_change_item(item):
+                candidate_item_id = str(item.get("id") or "").strip()
+                if candidate_item_id:
+                    synthetic_item_id = candidate_item_id
+
             turn_file_change_items.append(item)
+            if refresh_synthetic_from_full_diff and self._is_synthetic_file_change_item(item):
+                continue
             if isinstance(item.get("changes"), list) and len(item.get("changes") or []) == 0:
                 explicit_empty_changes = True
                 continue
@@ -139,7 +148,13 @@ class ExecutionFileChangeHydrator:
             hydrated_existing_file_change = True
             self._inc(counters, _COUNTER_HYDRATED_FROM_GIT)
 
-        should_hydrate_from_command_only = not turn_file_change_items or (
+        should_refresh_existing_synthetic = (
+            refresh_synthetic_from_full_diff
+            and bool(synthetic_item_id)
+            and not explicit_empty_changes
+            and not hydrated_existing_file_change
+        )
+        should_hydrate_from_command_only = should_refresh_existing_synthetic or not turn_file_change_items or (
             turn_file_change_items and not explicit_empty_changes and not hydrated_existing_file_change
         )
         if should_hydrate_from_command_only:
@@ -150,7 +165,11 @@ class ExecutionFileChangeHydrator:
                 synthetic_changes = self._changes_from_diff_blocks(blocks, counters=counters)
                 if synthetic_changes:
                     if turn_file_change_items:
-                        target_item_id = str(turn_file_change_items[0].get("id") or "")
+                        target_item_id = (
+                            str(synthetic_item_id or "").strip()
+                            if should_refresh_existing_synthetic
+                            else str(turn_file_change_items[0].get("id") or "")
+                        )
                         if target_item_id:
                             updated_snapshot, events = patch_item(
                                 updated_snapshot,
@@ -553,6 +572,13 @@ class ExecutionFileChangeHydrator:
             if cls._is_planningtree_path(path):
                 return True
         return False
+
+    @staticmethod
+    def _is_synthetic_file_change_item(item: dict[str, Any]) -> bool:
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            return False
+        return bool(metadata.get("synthetic"))
 
     @staticmethod
     def _output_text_from_changes(changes: list[dict[str, Any]]) -> str:

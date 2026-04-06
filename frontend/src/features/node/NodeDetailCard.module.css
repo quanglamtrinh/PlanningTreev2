@@ -924,10 +924,13 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   --editor-vscode-button-hover: var(--color-accent-hover);
   --editor-vscode-button-secondary: var(--chip-bg);
   --editor-vscode-button-secondary-hover: color-mix(in srgb, var(--color-text-primary) 10%, var(--chip-bg));
-  /* Spec-style markdown: readable monospace for long-form text (mockup-style vs dense UI mono) */
-  --font-markdown-editor:
-    'Source Code Pro', ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Monaco, Consolas, 'Liberation Mono',
-    monospace;
+  /* Body copy matches frame metadata shell (FrameMarkdownViewer field values) */
+  --doc-editor-body-font: var(--font-sans);
+  --doc-editor-body-fs: 13px;
+  --doc-editor-body-lh: 1.6;
+  --doc-editor-body-fw: 400;
+  /* Legacy name: used by cm-content + gutters (gutters overridden to mono below) */
+  --font-markdown-editor: var(--doc-editor-body-font);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1011,6 +1014,9 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 
 .documentPanel :global(.pt-sx-code) {
   color: var(--syntax-inline-code);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
 }
 
 .documentPanel :global(.pt-sx-meta) {
@@ -1387,10 +1393,10 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 /* Only the text document should shrink in flex layouts — gutters must not get min-height:0 */
 .editorSurface :global(.cm-content) {
   min-height: 0 !important;
-  font-family: var(--font-markdown-editor);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-relaxed);
-  font-weight: 500;
+  font-family: var(--doc-editor-body-font);
+  font-size: var(--doc-editor-body-fs);
+  line-height: var(--doc-editor-body-lh);
+  font-weight: var(--doc-editor-body-fw);
   font-variant-ligatures: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -1405,7 +1411,8 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   background: var(--editor-vscode-bg);
   color: var(--editor-vscode-gutter);
   box-shadow: 1px 0 0 var(--editor-vscode-border);
-  font-family: var(--font-markdown-editor);
+  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 500;
   font-variant-ligatures: none;
 }
@@ -1437,6 +1444,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 .editorSurface :global(.cm-lineNumbers .cm-gutterElement) {
   color: var(--editor-vscode-gutter);
   font-weight: 500;
+  font-family: var(--font-mono);
 }
 
 .tabConfirmRow {
@@ -1804,10 +1812,10 @@ section[data-variant='breadcrumb'] .editorSurface :global(.cm-gutters) {
 
 section[data-variant='breadcrumb'] .editorSurface :global(.cm-content) {
   min-height: 0;
-  font-family: var(--font-markdown-editor);
-  font-size: 12.5px;
-  line-height: 1.78;
-  font-weight: 500;
+  font-family: var(--doc-editor-body-font);
+  font-size: var(--doc-editor-body-fs);
+  line-height: var(--doc-editor-body-lh);
+  font-weight: var(--doc-editor-body-fw);
 }
 
 section[data-variant='breadcrumb'] .editorSurface :global(.cm-line) {
@@ -1827,6 +1835,4 @@ section[data-variant='breadcrumb'] .editorSurface :global(.cm-activeLineGutter) 
 section[data-variant='breadcrumb'] .editorSurface :global(.cm-line:has(.pt-sx-code)) {
   margin: 1px 0;
   padding: 4px 10px;
-  border-left: 3px solid color-mix(in srgb, var(--accent-primary) 74%, #6a3a1f);
-  background: color-mix(in srgb, var(--bg-subtle) 88%, var(--bg-surface));
 }

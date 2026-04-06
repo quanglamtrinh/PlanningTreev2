@@ -47,6 +47,7 @@ from backend.streaming.sse_broker import ChatEventBroker
 logger = logging.getLogger(__name__)
 
 _DRAFT_FLUSH_INTERVAL_SEC = 0.5
+_LIVE_FILE_CHANGE_HYDRATE_DEBOUNCE_SEC = 0.35
 
 if TYPE_CHECKING:
     from backend.services.chat_service import ChatService
@@ -715,6 +716,180 @@ class FinishTaskService:
             if str(change.get("diff") or "").strip()
         )
 
+    @staticmethod
+    def _should_trigger_live_file_change_hydrate(raw_event: dict[str, Any]) -> bool:
+        method = str(raw_event.get("method") or "").strip()
+        if method not in {"item/completed", "turn/completed"}:
+            return False
+        if method == "turn/completed":
+            return True
+        params = raw_event.get("params", {})
+        item = params.get("item", {}) if isinstance(params, dict) else {}
+        if not isinstance(item, dict):
+            return False
+        if str(item.get("kind") or "") != "tool":
+            return False
+        return True
+
+    @classmethod
+    def _normalize_worktree_diff_paths_for_git(
+        cls,
+        project_path: Path,
+        paths: list[str],
+    ) -> list[str]:
+        normalized_paths: list[str] = []
+        for raw_path in paths:
+            candidate = str(raw_path or "").strip()
+            if not candidate:
+                continue
+            path_obj = Path(candidate)
+            if path_obj.is_absolute():
+                try:
+                    rel = path_obj.expanduser().resolve().relative_to(project_path)
+                    candidate = rel.as_posix()
+                except Exception:
+                    pass
+            candidate = candidate.replace("\\", "/")
+            if cls._is_planningtree_path(candidate):
+                continue
+            normalized_paths.append(candidate)
+        return normalized_paths
+
+    def _get_worktree_diff_against_sha(
+        self,
+        *,
+        project_path: Path,
+        start_sha: str,
+        paths: list[str] | None,
+        project_id: str,
+        node_id: str,
+    ) -> str:
+        if self._git_checkpoint_service is None:
+            return ""
+        normalized_paths = self._normalize_worktree_diff_paths_for_git(project_path, paths or [])
+        try:
+            if normalized_paths and hasattr(self._git_checkpoint_service, "get_worktree_diff_against_sha_for_paths"):
+                return str(
+                    self._git_checkpoint_service.get_worktree_diff_against_sha_for_paths(
+                        project_path,
+                        start_sha,
+                        normalized_paths,
+                    )
+                    or ""
+                )
+            if hasattr(self._git_checkpoint_service, "get_worktree_diff_against_sha"):
+                return str(
+                    self._git_checkpoint_service.get_worktree_diff_against_sha(
+                        project_path,
+                        start_sha,
+                    )
+                    or ""
+                )
+        except Exception:
+            logger.debug(
+                "Failed to collect live worktree diff for %s/%s from %s",
+                project_id,
+                node_id,
+                start_sha,
+                exc_info=True,
+            )
+        return ""
+
+    def _hydrate_execution_file_change_diff_from_worktree_v2(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        turn_id: str,
+        workspace_root: str | None,
+        start_sha: str | None,
+        hydrated_by: str = "finish_task_worktree_diff_v2",
+        refresh_synthetic_from_full_diff: bool = False,
+    ) -> None:
+        runtime = self._thread_runtime_service_v2
+        if (
+            runtime is None
+            or self._git_checkpoint_service is None
+            or not isinstance(workspace_root, str)
+            or not workspace_root.strip()
+            or not isinstance(start_sha, str)
+            or not start_sha.strip()
+        ):
+            return
+        project_path = Path(workspace_root).expanduser().resolve()
+
+        class _WorktreeRangeDiffSource(ExecutionFileChangeDiffSource):
+            mode = "worktree_range"
+
+            def __init__(
+                self,
+                *,
+                owner: FinishTaskService,
+                project_path: Path,
+                start_sha: str,
+                project_id: str,
+                node_id: str,
+            ) -> None:
+                self._owner = owner
+                self._project_path = project_path
+                self._start_sha = start_sha
+                self._project_id = project_id
+                self._node_id = node_id
+
+            def get_diff_for_paths(self, paths: list[str]) -> str:
+                return self._owner._get_worktree_diff_against_sha(
+                    project_path=self._project_path,
+                    start_sha=self._start_sha,
+                    paths=paths,
+                    project_id=self._project_id,
+                    node_id=self._node_id,
+                )
+
+            def get_full_diff(self) -> str:
+                return self._owner._get_worktree_diff_against_sha(
+                    project_path=self._project_path,
+                    start_sha=self._start_sha,
+                    paths=None,
+                    project_id=self._project_id,
+                    node_id=self._node_id,
+                )
+
+        diff_source = _WorktreeRangeDiffSource(
+            owner=self,
+            project_path=project_path,
+            start_sha=start_sha,
+            project_id=project_id,
+            node_id=node_id,
+        )
+        hydrator = ExecutionFileChangeHydrator(logger=logger)
+        query_service = runtime._query_service
+        snapshot = query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            "execution",
+            publish_repairs=False,
+            ensure_binding=False,
+            allow_thread_read_hydration=False,
+        )
+        updated_snapshot, pending_events, _counters = hydrator.hydrate_turn_snapshot(
+            snapshot=snapshot,
+            turn_id=turn_id,
+            diff_source=diff_source,
+            hydrated_by=hydrated_by,
+            project_id=project_id,
+            node_id=node_id,
+            refresh_synthetic_from_full_diff=refresh_synthetic_from_full_diff,
+        )
+
+        if pending_events:
+            query_service.persist_thread_mutation(
+                project_id,
+                node_id,
+                "execution",
+                updated_snapshot,
+                pending_events,
+            )
+
     def _hydrate_execution_file_change_diff_v2(
         self,
         *,
@@ -724,6 +899,7 @@ class FinishTaskService:
         workspace_root: str | None,
         initial_sha: str | None,
         head_sha: str | None,
+        refresh_synthetic_from_full_diff: bool = False,
     ) -> None:
         runtime = self._thread_runtime_service_v2
         if (
@@ -823,6 +999,7 @@ class FinishTaskService:
             hydrated_by="finish_task_diff_v2",
             project_id=project_id,
             node_id=node_id,
+            refresh_synthetic_from_full_diff=refresh_synthetic_from_full_diff,
         )
 
         if pending_events:
@@ -1289,6 +1466,30 @@ class FinishTaskService:
 
         turn_finalized = False
         try:
+            last_live_file_change_hydrate_at = 0.0
+
+            def handle_live_file_change_hydration(raw_event: dict[str, Any]) -> None:
+                nonlocal last_live_file_change_hydrate_at
+                if not self._should_trigger_live_file_change_hydrate(raw_event):
+                    return
+                method = str(raw_event.get("method") or "").strip()
+                now_mono = time.monotonic()
+                if (
+                    method != "turn/completed"
+                    and now_mono - last_live_file_change_hydrate_at < _LIVE_FILE_CHANGE_HYDRATE_DEBOUNCE_SEC
+                ):
+                    return
+                last_live_file_change_hydrate_at = now_mono
+                self._hydrate_execution_file_change_diff_from_worktree_v2(
+                    project_id=project_id,
+                    node_id=node_id,
+                    turn_id=turn_id,
+                    workspace_root=workspace_root,
+                    start_sha=initial_sha,
+                    hydrated_by="finish_task_worktree_live",
+                    refresh_synthetic_from_full_diff=True,
+                )
+
             stream_result = self._thread_runtime_service_v2.stream_agent_turn(
                 project_id=project_id,
                 node_id=node_id,
@@ -1299,6 +1500,7 @@ class FinishTaskService:
                 cwd=workspace_root,
                 writable_roots=[workspace_root] if isinstance(workspace_root, str) and workspace_root.strip() else None,
                 timeout_sec=self._chat_timeout,
+                on_raw_event_applied=handle_live_file_change_hydration,
             )
             result = stream_result["result"]
             turn_status = str(stream_result.get("turnStatus") or "").strip().lower()
@@ -1369,6 +1571,7 @@ class FinishTaskService:
                 workspace_root=workspace_root,
                 initial_sha=initial_sha,
                 head_sha=head_sha,
+                refresh_synthetic_from_full_diff=True,
             )
             self._thread_runtime_service_v2.complete_turn(
                 project_id=project_id,

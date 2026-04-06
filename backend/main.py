@@ -88,7 +88,6 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         storage,
         tree_service,
         git_checkpoint_service=git_checkpoint_service,
-        system_message_writer=system_message_writer_v2,
     )
     codex_client = CodexAppClient(StdioTransport(codex_cmd=get_codex_cmd() or "codex"))
     thread_lineage_service = ThreadLineageService(

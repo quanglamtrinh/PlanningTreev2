@@ -102,11 +102,6 @@ class FakeGitCheckpointService:
         return self.split_commit_sha
 
 
-class NoopSystemMessageWriter:
-    def upsert_system_message(self, **kwargs: object) -> dict[str, object]:
-        return {}
-
-
 def create_project(project_service: ProjectService, workspace_root: str) -> dict:
     return project_service.attach_project_folder(workspace_root)
 
@@ -125,7 +120,6 @@ def make_node_split_ready(
     detail_service = NodeDetailService(
         storage,
         tree_service,
-        system_message_writer=NoopSystemMessageWriter(),
     )
     doc_service.put_document(
         project_id,
@@ -553,7 +547,6 @@ def test_split_service_rejects_when_clarify_questions_remain(
     detail_service = NodeDetailService(
         storage,
         tree_service,
-        system_message_writer=NoopSystemMessageWriter(),
     )
     title = str(storage.project_store.load_snapshot(project_id)["tree_state"]["node_index"][root_id]["title"])
     doc_service.put_document(
@@ -584,7 +577,6 @@ def test_split_service_rejects_when_frame_needs_reconfirm(
     detail_service = NodeDetailService(
         storage,
         tree_service,
-        system_message_writer=NoopSystemMessageWriter(),
     )
     title = str(storage.project_store.load_snapshot(project_id)["tree_state"]["node_index"][root_id]["title"])
     doc_service.put_document(

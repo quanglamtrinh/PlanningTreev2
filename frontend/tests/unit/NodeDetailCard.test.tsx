@@ -1150,6 +1150,123 @@ describe('NodeDetailCard', () => {
     expect(navigateMock).toHaveBeenCalledWith('/projects/project-1/nodes/root/chat-v2?thread=execution')
   })
 
+  it('disables Confirm and Finish Task immediately after click while request is pending', async () => {
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      bootstrap: {
+        ready: true,
+        workspace_configured: true,
+        codex_available: true,
+        codex_path: 'codex',
+      },
+    })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: false,
+      can_finish_task: true,
+      shaping_frozen: false,
+      git_ready: true,
+    })
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec content',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+    apiMock.putNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'spec',
+      content: '# Spec content',
+      updated_at: '2026-03-21T00:00:02Z',
+    })
+
+    const confirmSpecResponse = {
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: true,
+    }
+    let resolveConfirmSpec: (() => void) | null = null
+    apiMock.confirmSpec.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveConfirmSpec = () => resolve(confirmSpecResponse)
+        }),
+    )
+    apiMock.getSnapshot.mockResolvedValue({
+      schema_version: 1,
+      project: { id: 'project-1', name: 'Test' },
+      tree_state: { root_node_id: 'root', active_node_id: 'root', node_registry: [] },
+      updated_at: '2026-03-21T00:00:03Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({ status: 'ready' })}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Spec' }))
+    await screen.findByDisplayValue('# Spec content')
+
+    const finishButton = screen.getByTestId('confirm-and-finish-task-button')
+    fireEvent.click(finishButton)
+
+    expect(finishButton).toBeDisabled()
+    expect(finishButton).toHaveTextContent('Finishing...')
+
+    await waitFor(() => {
+      expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
+      expect(resolveConfirmSpec).not.toBeNull()
+    })
+
+    if (!resolveConfirmSpec) {
+      throw new Error('confirmSpec request was not started')
+    }
+    resolveConfirmSpec()
+
+    await waitFor(() => {
+      expect(apiMock.finishTaskWorkflowV2).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.stringMatching(/^finish_task:/),
+      )
+    })
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith('/projects/project-1/nodes/root/chat-v2?thread=execution')
+    })
+  })
+
   it('does not refetch spec generation status on a stable rerender', async () => {
     useDetailStateStore.setState({
       entries: {

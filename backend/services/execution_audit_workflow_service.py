@@ -4,6 +4,7 @@ import copy
 import logging
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -31,6 +32,7 @@ _HANDOFF_SUMMARY_PLACEHOLDER = "No execution summary."
 _HANDOFF_DOCS_DIR = "docs"
 _HANDOFF_FILE_NAME = "handoff.md"
 _HANDOFF_FILE_HEADER = "# PlanningTree Handoff\n\n"
+_LIVE_FILE_CHANGE_HYDRATE_DEBOUNCE_SEC = 0.35
 _HANDOFF_NODE_BLOCK_RE = re.compile(
     r"<!-- PT_HANDOFF_NODE:(?P<node_id>[^>\r\n]+) -->\n(?P<body>.*?)\n<!-- /PT_HANDOFF_NODE:(?P=node_id) -->\n?",
     re.DOTALL,
@@ -726,6 +728,30 @@ class ExecutionAuditWorkflowService:
     ) -> None:
         turn_finalized = False
         try:
+            last_live_file_change_hydrate_at = 0.0
+
+            def handle_live_file_change_hydration(raw_event: dict[str, Any]) -> None:
+                nonlocal last_live_file_change_hydrate_at
+                if not self._should_trigger_live_file_change_hydrate(raw_event):
+                    return
+                method = str(raw_event.get("method") or "").strip()
+                now_mono = time.monotonic()
+                if (
+                    method != "turn/completed"
+                    and now_mono - last_live_file_change_hydrate_at < _LIVE_FILE_CHANGE_HYDRATE_DEBOUNCE_SEC
+                ):
+                    return
+                last_live_file_change_hydrate_at = now_mono
+                self._hydrate_execution_file_change_diff_from_worktree(
+                    project_id=project_id,
+                    node_id=node_id,
+                    turn_id=turn_id,
+                    workspace_root=workspace_root,
+                    start_sha=start_sha,
+                    hydrated_by="execution_audit_worktree_live",
+                    refresh_synthetic_from_full_diff=True,
+                )
+
             stream_result = self._thread_runtime_service_v2.stream_agent_turn(
                 project_id=project_id,
                 node_id=node_id,
@@ -736,6 +762,7 @@ class ExecutionAuditWorkflowService:
                 cwd=workspace_root,
                 writable_roots=[workspace_root] if isinstance(workspace_root, str) and workspace_root.strip() else None,
                 timeout_sec=self._finish_task_service._chat_timeout,
+                on_raw_event_applied=handle_live_file_change_hydration,
             )
             result = stream_result["result"]
             turn_status = str(stream_result.get("turnStatus") or "").strip().lower()
@@ -750,6 +777,7 @@ class ExecutionAuditWorkflowService:
                 turn_id=turn_id,
                 workspace_root=workspace_root,
                 start_sha=start_sha,
+                refresh_synthetic_from_full_diff=True,
             )
             self._thread_runtime_service_v2.complete_turn(
                 project_id=project_id,
@@ -1125,6 +1153,19 @@ class ExecutionAuditWorkflowService:
             if str(change.get("diff") or "").strip()
         )
 
+    @staticmethod
+    def _should_trigger_live_file_change_hydrate(raw_event: dict[str, Any]) -> bool:
+        method = str(raw_event.get("method") or "").strip()
+        if method not in {"item/completed", "turn/completed"}:
+            return False
+        if method == "turn/completed":
+            return True
+        params = raw_event.get("params", {})
+        item = params.get("item", {}) if isinstance(params, dict) else {}
+        if not isinstance(item, dict):
+            return False
+        return str(item.get("kind") or "") == "tool"
+
     def _hydrate_execution_file_change_diff_from_worktree(
         self,
         *,
@@ -1133,6 +1174,8 @@ class ExecutionAuditWorkflowService:
         turn_id: str,
         workspace_root: str | None,
         start_sha: str | None,
+        hydrated_by: str = "execution_audit_worktree_diff",
+        refresh_synthetic_from_full_diff: bool = False,
     ) -> None:
         if not isinstance(workspace_root, str) or not workspace_root.strip():
             return
@@ -1196,9 +1239,10 @@ class ExecutionAuditWorkflowService:
             snapshot=snapshot,
             turn_id=turn_id,
             diff_source=diff_source,
-            hydrated_by="execution_audit_worktree_diff",
+            hydrated_by=hydrated_by,
             project_id=project_id,
             node_id=node_id,
+            refresh_synthetic_from_full_diff=refresh_synthetic_from_full_diff,
         )
 
         if pending_events:
@@ -1392,7 +1436,6 @@ class ExecutionAuditWorkflowService:
         review_disposition: str | None = None
 
         try:
-            self._ensure_review_guidance_item(project_id=project_id, node_id=node_id)
             stream_result = self._thread_runtime_service_v2.stream_agent_turn(
                 project_id=project_id,
                 node_id=node_id,
@@ -1568,30 +1611,6 @@ class ExecutionAuditWorkflowService:
             "audit",
             updated,
             events,
-        )
-
-    def _ensure_review_guidance_item(
-        self,
-        *,
-        project_id: str,
-        node_id: str,
-    ) -> None:
-        self._thread_runtime_service_v2.upsert_system_message(
-            project_id=project_id,
-            node_id=node_id,
-            thread_role="audit",
-            item_id="review-context:instructions",
-            turn_id=None,
-            text=(
-                "Review workflow guidance:\n\n"
-                "- Use the canonical confirmed frame/spec snapshots already present in this thread as the task contract.\n"
-                "- Start with the target commit diff, changed files, and relevant tests.\n"
-                "- Do not recursively scan `.planningtree` before reviewing.\n"
-                "- Do not open or inspect files under `.planningtree/`; treat those changes as internal planning metadata and exclude them from review findings.\n"
-                "- Keep this run read-only."
-            ),
-            tone="neutral",
-            metadata={"workflowReviewGuidance": True},
         )
 
     def _materialize_execution_decision(

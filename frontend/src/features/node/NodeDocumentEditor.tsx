@@ -94,6 +94,7 @@ export function NodeDocumentEditor({
   const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
   const editorSurfaceRef = useRef<HTMLDivElement>(null)
   const isFinishingTask = activeWorkflowMutation === 'finish_task'
+  const isFinishActionPending = pendingAction === 'finish' || isFinishingTask
 
   const handleCopyDocument = useCallback(async () => {
     try {
@@ -395,6 +396,9 @@ export function NodeDocumentEditor({
   }, [handleConfirmFrame, onFramePostUpdateCommit, onWorkflowTabChange])
 
   const handleConfirmAndFinish = useCallback(async () => {
+    if (pendingAction === 'finish' || isFinishingTask) {
+      return
+    }
     setIsConfirming(true)
     setPendingAction('finish')
     setConfirmError(null)
@@ -428,11 +432,13 @@ export function NodeDocumentEditor({
     confirmSpec,
     finishTaskWorkflowV2,
     flushDocument,
+    isFinishingTask,
     markActionFailed,
     markActionRunning,
     markActionSucceeded,
     navigate,
     node.node_id,
+    pendingAction,
     projectId,
     refreshSnapshot,
   ])
@@ -493,7 +499,7 @@ export function NodeDocumentEditor({
     detailState?.git_ready !== false
   const canFinishTask =
     canConfirm &&
-    !isFinishingTask &&
+    !isFinishActionPending &&
     (
       detailState?.can_finish_task === true ||
       (detailState?.spec_confirmed !== true && canFinishTaskAfterConfirm)
@@ -695,11 +701,14 @@ export function NodeDocumentEditor({
             <button
               type="button"
               className={styles.confirmButton}
-              disabled={!canFinishTask}
+              disabled={!canFinishTask || isFinishActionPending}
               data-testid="confirm-and-finish-task-button"
-              onClick={handleConfirmAndFinish}
+              onClick={(event) => {
+                event.currentTarget.disabled = true
+                void handleConfirmAndFinish()
+              }}
             >
-              {pendingAction === 'finish' || isFinishingTask ? 'Finishing...' : 'Confirm and Finish Task'}
+              {isFinishActionPending ? 'Finishing...' : 'Confirm and Finish Task'}
             </button>
           ) : null}
         </div>

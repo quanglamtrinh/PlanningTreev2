@@ -212,20 +212,6 @@ def test_first_review_cycle_uses_audit_lineage_thread_with_prompt_injection(
         assert review_cycle["reviewThreadId"] == audit_state["auditLineageThreadId"]
         assert audit_state["reviewThreadId"] == audit_state["auditLineageThreadId"]
 
-        audit_snapshot = app.state.storage.thread_snapshot_store_v2.read_snapshot(
-            project_id,
-            child_id,
-            "audit",
-        )
-        guidance_item = next(
-            item
-            for item in audit_snapshot.get("items", [])
-            if str(item.get("id") or "") == "review-context:instructions"
-        )
-        assert "Do not recursively scan `.planningtree` before reviewing." in str(
-            guidance_item.get("text") or ""
-        )
-
 
 def test_mark_done_from_execution_persists_latest_commit_and_idempotency(
     monkeypatch,

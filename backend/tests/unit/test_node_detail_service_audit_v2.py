@@ -8,11 +8,6 @@ from backend.services.project_service import ProjectService
 from backend.services.tree_service import TreeService
 
 
-class _NoopSystemMessageWriter:
-    def upsert_system_message(self, **kwargs: object) -> dict[str, object]:
-        return {}
-
-
 def _create_project(storage, workspace_root: str) -> tuple[str, str]:
     snapshot = ProjectService(storage).attach_project_folder(workspace_root)
     return snapshot["project"]["id"], snapshot["tree_state"]["root_node_id"]
@@ -40,7 +35,11 @@ def _find_snapshot_item(storage, project_id: str, node_id: str, item_id: str) ->
     return None
 
 
-def test_confirm_frame_writes_v2_audit_system_item(storage, workspace_root: Path, tree_service: TreeService) -> None:
+def test_confirm_frame_does_not_write_v2_audit_system_item(
+    storage,
+    workspace_root: Path,
+    tree_service: TreeService,
+) -> None:
     project_id, node_id = _create_project(storage, str(workspace_root))
     _seed_audit_thread_binding(storage, project_id, node_id)
     doc_service = NodeDocumentService(storage)
@@ -56,13 +55,14 @@ def test_confirm_frame_writes_v2_audit_system_item(storage, workspace_root: Path
     detail_service.confirm_frame(project_id, node_id)
 
     item = _find_snapshot_item(storage, project_id, node_id, "audit-record:frame")
-    assert item is not None
-    assert item["kind"] == "message"
-    assert item["role"] == "system"
-    assert "Canonical confirmed frame snapshot" in item["text"]
+    assert item is None
 
 
-def test_confirm_spec_writes_v2_audit_system_item(storage, workspace_root: Path, tree_service: TreeService) -> None:
+def test_confirm_spec_does_not_write_v2_audit_system_item(
+    storage,
+    workspace_root: Path,
+    tree_service: TreeService,
+) -> None:
     project_id, node_id = _create_project(storage, str(workspace_root))
     _seed_audit_thread_binding(storage, project_id, node_id)
     doc_service = NodeDocumentService(storage)
@@ -80,10 +80,7 @@ def test_confirm_spec_writes_v2_audit_system_item(storage, workspace_root: Path,
     detail_service.confirm_spec(project_id, node_id)
 
     item = _find_snapshot_item(storage, project_id, node_id, "audit-record:spec")
-    assert item is not None
-    assert item["kind"] == "message"
-    assert item["role"] == "system"
-    assert "Canonical confirmed spec snapshot" in item["text"]
+    assert item is None
 
 
 def test_detail_state_falls_back_to_execution_state_when_latest_commit_missing(
@@ -92,11 +89,7 @@ def test_detail_state_falls_back_to_execution_state_when_latest_commit_missing(
     tree_service: TreeService,
 ) -> None:
     project_id, node_id = _create_project(storage, str(workspace_root))
-    detail_service = NodeDetailService(
-        storage,
-        tree_service,
-        system_message_writer=_NoopSystemMessageWriter(),
-    )
+    detail_service = NodeDetailService(storage, tree_service)
 
     storage.execution_state_store.write_state(
         project_id,
