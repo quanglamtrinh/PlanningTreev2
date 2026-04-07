@@ -10,16 +10,20 @@ import styles from './GraphNode.module.css'
 
 const CONTROL_CLASS_NAME = 'nodrag nopan'
 
-/** Gap between action badge and dropdown (right + below placement). */
-const DROPDOWN_GAP = 0
+/** Gap between action badge and dropdown menu (horizontal + vertical offset). */
+const DROPDOWN_GAP = 1
 const VIEW_MARGIN = 8
 
-function placeDropdownNearAnchor(anchorEl: HTMLElement, dropdownEl: HTMLElement) {
+/**
+ * Positions the dropdown to the RIGHT of the action badge when there is room;
+ * otherwise opens to the LEFT of the badge. Vertical: prefer below the badge.
+ */
+function placeDropdownNearBadge(badgeEl: HTMLElement, dropdownEl: HTMLElement) {
   const el = dropdownEl
   el.style.maxHeight = ''
   el.style.overflowY = ''
 
-  const anchor = anchorEl.getBoundingClientRect()
+  const badge = badgeEl.getBoundingClientRect()
   const vw = window.innerWidth
   const vh = window.innerHeight
   const G = DROPDOWN_GAP
@@ -29,43 +33,36 @@ function placeDropdownNearAnchor(anchorEl: HTMLElement, dropdownEl: HTMLElement)
   const menuHeight =
     el.offsetHeight || el.scrollHeight || el.getBoundingClientRect().height || 1
 
-  // Default: to the right of the badge, top aligned with the row below the badge (tight gap).
-  let left = anchor.right + G
+  // Horizontal: open to the right of the badge; fall back to the left if needed.
+  let left = badge.right + G
   if (left + menuWidth > vw - M) {
-    const leftOfAnchor = anchor.left - G - menuWidth
-    if (leftOfAnchor >= M) {
-      left = leftOfAnchor
-    } else {
-      left = Math.max(M, vw - menuWidth - M)
-    }
+    left = badge.left - menuWidth - G
+  }
+  if (left < M) left = M
+  if (left + menuWidth > vw - M) {
+    left = Math.max(M, vw - menuWidth - M)
   }
 
-  const spaceBelow = vh - M - anchor.bottom - G
-  const spaceAbove = anchor.top - M - G
+  // Vertical: prefer below the badge; flip above if not enough room.
+  const spaceBelow = vh - M - badge.bottom - G
+  const spaceAbove = badge.top - M - G
 
   let top: number
   let maxHeightPx: number | undefined
 
   if (menuHeight <= spaceBelow) {
-    top = anchor.bottom + G
+    top = badge.bottom + G
   } else if (menuHeight <= spaceAbove) {
-    top = anchor.top - G - menuHeight
+    top = badge.top - G - menuHeight
   } else if (spaceBelow >= spaceAbove) {
-    top = anchor.bottom + G
+    top = badge.bottom + G
     maxHeightPx = Math.max(120, spaceBelow)
   } else {
     top = M
     maxHeightPx = Math.max(120, spaceAbove)
   }
 
-  const blockH = maxHeightPx ?? menuHeight
-  if (top + blockH > vh - M) {
-    top = Math.max(M, vh - M - blockH)
-  }
-  if (top < M) {
-    top = M
-    maxHeightPx = Math.max(120, vh - M - top)
-  }
+  if (top < M) top = M
 
   el.style.position = 'fixed'
   el.style.left = `${left}px`
@@ -130,14 +127,14 @@ function GraphNodeActionsDropdown({
   }, [anchorRef, onClose])
 
   useLayoutEffect(() => {
-    const anchor = anchorRef.current
+    const badge = anchorRef.current
     const dropdown = dropdownRef.current
-    if (!anchor || !dropdown) {
+    if (!badge || !dropdown) {
       return undefined
     }
 
     const apply = () => {
-      placeDropdownNearAnchor(anchor, dropdown)
+      placeDropdownNearBadge(badge, dropdown)
     }
 
     apply()
@@ -323,6 +320,7 @@ function GraphNodeComponent({ data }: NodeProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [descriptionExpanded, setDescriptionExpanded] = useState(true)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const wrapperRef = useRef<HTMLDivElement | null>(null)
   const closeMenu = useCallback(() => setMenuOpen(false), [])
   const d = data as GraphNodeData
   const descriptionText = d.node.description.trim()
@@ -335,7 +333,7 @@ function GraphNodeComponent({ data }: NodeProps) {
   }, [d.isInitNode, menuOpen])
 
   return (
-    <div className={styles.wrapper}>
+    <div ref={wrapperRef} className={styles.wrapper}>
       <Handle
         className={styles.handle}
         type="target"

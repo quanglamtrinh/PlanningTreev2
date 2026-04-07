@@ -1529,36 +1529,58 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 .splitPanel {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 2px 0 6px;
+  gap: 12px;
+  padding: 2px 0 8px;
+}
+
+.splitPanel.documentPanel {
+  gap: 12px;
+  margin-top: 8px;
 }
 
 .splitPanelIntro {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+}
+
+.splitPanelIntro .title {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.splitPanelIntro .body {
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .splitHintPanel {
-  padding: 12px 14px;
+  padding: 13px 15px;
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--color-bg-hover) 72%, transparent);
 }
 
+.splitHintPanel .body {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .splitOptionsGroup {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
 .splitOptionCard {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
+  min-width: 0;
   padding: 14px 16px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-bg-panel) 96%, transparent);
   text-align: left;
   cursor: pointer;
@@ -1595,7 +1617,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 .splitOptionTitle {
   font-size: 13px;
   font-weight: 700;
-  line-height: 1.5;
+  line-height: 1.35;
   color: var(--color-text-primary);
 }
 
@@ -1604,7 +1626,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
   color: var(--color-accent);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1612,7 +1634,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 
 .splitOptionDescription {
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--color-text-secondary);
 }
 
@@ -1620,6 +1642,16 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   display: flex;
   align-items: center;
   min-height: 22px;
+}
+
+.splitSelectionSummary .body {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.splitPanel .tabConfirmRow {
+  padding-top: 8px;
 }
 
 .eyebrow,

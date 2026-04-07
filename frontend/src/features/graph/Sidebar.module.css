@@ -590,10 +590,6 @@
   text-align: left;
   letter-spacing: 0.01em;
   color: var(--on-surface);
-  background: color-mix(in srgb, var(--tertiary) 12%, var(--surface-container-lowest));
-  box-shadow:
-    var(--shadow-xs),
-    inset 0 0 0 1px color-mix(in srgb, var(--tertiary) 22%, transparent);
   transition: background 0.14s ease, box-shadow 0.14s ease, color 0.14s ease, transform 0.14s ease;
 }
 
@@ -615,10 +611,7 @@
 }
 
 .usageSnapshotBtnActive {
-  background: color-mix(in srgb, var(--tertiary) 22%, var(--surface-container-lowest));
-  box-shadow:
-    var(--shadow-xs),
-    inset 0 0 0 1px color-mix(in srgb, var(--tertiary) 40%, transparent);
+  background: var(--surface-container-lowest);
   color: var(--on-surface);
 }
 

@@ -8,13 +8,10 @@ export const LOCAL_USAGE_POLL_INTERVAL_MS = 5 * 60 * 1000
 export type UseLocalUsageSnapshotResult = {
   snapshot: LocalUsageSnapshot | null
   isLoading: boolean
-  isRefreshing: boolean
   error: string | null
-  lastSuccessfulAt: number | null
-  refresh: () => Promise<void>
 }
 
-type RefreshReason = 'initial' | 'poll' | 'manual'
+type RefreshReason = 'initial' | 'poll'
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -26,9 +23,7 @@ function toErrorMessage(error: unknown): string {
 export function useLocalUsageSnapshot(): UseLocalUsageSnapshotResult {
   const [snapshot, setSnapshot] = useState<LocalUsageSnapshot | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [lastSuccessfulAt, setLastSuccessfulAt] = useState<number | null>(null)
 
   const snapshotRef = useRef<LocalUsageSnapshot | null>(null)
   const requestGenerationRef = useRef(0)
@@ -40,8 +35,6 @@ export function useLocalUsageSnapshot(): UseLocalUsageSnapshotResult {
 
     if (reason === 'initial' || !hasSnapshot) {
       setIsLoading(true)
-    } else {
-      setIsRefreshing(true)
     }
 
     try {
@@ -53,7 +46,6 @@ export function useLocalUsageSnapshot(): UseLocalUsageSnapshotResult {
       snapshotRef.current = nextSnapshot
       setSnapshot(nextSnapshot)
       setError(null)
-      setLastSuccessfulAt(Date.now())
     } catch (requestError) {
       if (!isMountedRef.current || requestGeneration !== requestGenerationRef.current) {
         return
@@ -64,13 +56,8 @@ export function useLocalUsageSnapshot(): UseLocalUsageSnapshotResult {
         return
       }
       setIsLoading(false)
-      setIsRefreshing(false)
     }
   }, [])
-
-  const refresh = useCallback(async () => {
-    await requestSnapshot('manual')
-  }, [requestSnapshot])
 
   useEffect(() => {
     isMountedRef.current = true
@@ -88,9 +75,6 @@ export function useLocalUsageSnapshot(): UseLocalUsageSnapshotResult {
   return {
     snapshot,
     isLoading,
-    isRefreshing,
     error,
-    lastSuccessfulAt,
-    refresh,
   }
 }

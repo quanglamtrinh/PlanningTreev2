@@ -1,4 +1,4 @@
-﻿import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type HookState = {
@@ -28,21 +28,16 @@ type HookState = {
     }[]
   } | null
   isLoading: boolean
-  isRefreshing: boolean
   error: string | null
-  lastSuccessfulAt: number | null
-  refresh: () => Promise<void>
 }
 
 type SnapshotData = NonNullable<HookState['snapshot']>
 
 const {
-  refreshMock,
   initializeMock,
   projectStoreState,
   hookStateRef,
 } = vi.hoisted(() => {
-  const refreshMock = vi.fn(async () => undefined)
   const initializeMock = vi.fn(async () => undefined)
   const projectStoreState = {
     initialize: initializeMock,
@@ -53,14 +48,10 @@ const {
     current: {
       snapshot: null,
       isLoading: true,
-      isRefreshing: false,
       error: null,
-      lastSuccessfulAt: null,
-      refresh: refreshMock,
     },
   }
   return {
-    refreshMock,
     initializeMock,
     projectStoreState,
     hookStateRef,
@@ -181,10 +172,7 @@ describe('UsageSnapshotPage', () => {
     hookStateRef.current = {
       snapshot: null,
       isLoading: true,
-      isRefreshing: false,
       error: null,
-      lastSuccessfulAt: null,
-      refresh: refreshMock,
     }
   })
 
@@ -195,21 +183,17 @@ describe('UsageSnapshotPage', () => {
     expect(screen.getByTestId('sidebar-stub')).toBeInTheDocument()
   })
 
-  it('renders blocking error and retries when no snapshot is available', () => {
+  it('renders blocking error state without manual retry controls', () => {
     hookStateRef.current = {
       snapshot: null,
       isLoading: false,
-      isRefreshing: false,
       error: 'request failed',
-      lastSuccessfulAt: null,
-      refresh: refreshMock,
     }
 
     render(<UsageSnapshotPage />)
 
     expect(screen.getByTestId('usage-snapshot-error-blocking')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect(refreshMock).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
   })
 
   it('renders empty state when snapshot has zero usage', () => {
@@ -239,10 +223,7 @@ describe('UsageSnapshotPage', () => {
     hookStateRef.current = {
       snapshot: emptySnapshot,
       isLoading: false,
-      isRefreshing: false,
       error: null,
-      lastSuccessfulAt: emptySnapshot.updated_at,
-      refresh: refreshMock,
     }
 
     render(<UsageSnapshotPage />)
@@ -250,20 +231,19 @@ describe('UsageSnapshotPage', () => {
     expect(screen.getByTestId('usage-snapshot-empty')).toBeInTheDocument()
   })
 
-  it('renders populated content cards, chart section, and models', () => {
+  it('renders populated content without lede or manual refresh controls', () => {
     const snapshot = makeSnapshot()
     hookStateRef.current = {
       snapshot,
       isLoading: false,
-      isRefreshing: false,
       error: null,
-      lastSuccessfulAt: snapshot.updated_at,
-      refresh: refreshMock,
     }
 
     render(<UsageSnapshotPage />)
 
     expect(screen.getByTestId('usage-snapshot-content')).toBeInTheDocument()
+    expect(screen.queryByText(/Local rollups across all Codex sessions on this machine/i)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('usage-refresh-button')).not.toBeInTheDocument()
     expect(screen.getByText('7-day token trend')).toBeInTheDocument()
     expect(screen.getByText('Top models')).toBeInTheDocument()
     expect(screen.getByText('gpt-5')).toBeInTheDocument()
@@ -274,33 +254,13 @@ describe('UsageSnapshotPage', () => {
     hookStateRef.current = {
       snapshot,
       isLoading: false,
-      isRefreshing: false,
       error: 'temporary timeout',
-      lastSuccessfulAt: snapshot.updated_at,
-      refresh: refreshMock,
     }
 
     render(<UsageSnapshotPage />)
 
     expect(screen.getByTestId('usage-snapshot-error-banner')).toBeInTheDocument()
     expect(screen.getByTestId('usage-snapshot-content')).toBeInTheDocument()
-  })
-
-  it('invokes manual refresh from header control', () => {
-    const snapshot = makeSnapshot()
-    hookStateRef.current = {
-      snapshot,
-      isLoading: false,
-      isRefreshing: false,
-      error: null,
-      lastSuccessfulAt: snapshot.updated_at,
-      refresh: refreshMock,
-    }
-
-    render(<UsageSnapshotPage />)
-
-    fireEvent.click(screen.getByTestId('usage-refresh-button'))
-    expect(refreshMock).toHaveBeenCalledTimes(1)
   })
 
   it('shows project bootstrap loader when project store is still initializing', () => {

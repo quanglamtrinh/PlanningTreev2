@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { GenJobStatus, NodeRecord } from '../../api/types'
 import { AgentSpinner, SPINNER_WORDS_APPLYING, SPINNER_WORDS_GENERATING } from '../../components/AgentSpinner'
 import { api, ApiError } from '../../api/client'
@@ -13,6 +13,61 @@ type Props = {
   projectId: string
   node: NodeRecord
   readOnly?: boolean
+}
+
+/** Uppercase letter index for option rows: A, B, C, … (falls back to 1-based number if > 26). */
+function clarifyOptionLetter(index: number): string {
+  if (index >= 0 && index < 26) {
+    return String.fromCharCode(65 + index)
+  }
+  return String(index + 1)
+}
+
+/** True when the API/label already marks the option (avoids duplicating our badge). */
+function optionLabelAlreadyIncludesRecommended(label: string): boolean {
+  return /\(\s*Recommended\s*\)/i.test(label)
+}
+
+function ClarifyCustomInlineTextarea({
+  id,
+  value,
+  disabled,
+  placeholder,
+  ariaLabel,
+  onChange,
+}: {
+  id: string
+  value: string
+  disabled: boolean
+  placeholder: string
+  ariaLabel: string
+  onChange: (value: string) => void
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (value.trim() === '') {
+      el.style.height = '22px'
+      return
+    }
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(Math.max(22, el.scrollHeight), 160)}px`
+  }, [value])
+
+  return (
+    <textarea
+      ref={ref}
+      id={id}
+      className={styles.optionInlineTextarea}
+      value={value}
+      disabled={disabled}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      rows={1}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  )
 }
 
 export function ClarifyPanel({ projectId, node, readOnly }: Props) {
@@ -319,10 +374,10 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
                 </p>
               ) : null}
 
-              {/* Options as pill buttons */}
-              {q.options.length > 0 ? (
+              {/* Options as pill buttons + optional custom-answer control */}
+              {q.options.length > 0 || q.allow_custom ? (
                 <div className={styles.options} role="group" aria-label="Options">
-                  {q.options.map((opt) => (
+                  {q.options.map((opt, oi) => (
                     <button
                       key={opt.id}
                       type="button"
@@ -334,12 +389,47 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
                       }}
                       disabled={isDisabled}
                     >
-                      {opt.label}
-                      {opt.recommended ? (
-                        <span className={styles.recommendedBadge}> (Recommended)</span>
-                      ) : null}
+                      <span className={styles.optionLetter} aria-hidden="true">
+                        {clarifyOptionLetter(oi)}
+                      </span>
+                      <span className={styles.optionBtnBody}>
+                        {opt.label}
+                        {opt.recommended && !optionLabelAlreadyIncludesRecommended(opt.label) ? (
+                          <span className={styles.recommendedBadge}> · Recommended</span>
+                        ) : null}
+                      </span>
                     </button>
                   ))}
+                  {q.allow_custom ? (
+                    <div
+                      className={`${styles.optionBtn} ${styles.optionBtnCustomRow} ${
+                        q.selected_option_id == null && q.custom_answer.trim() !== ''
+                          ? styles.optionBtnActive
+                          : ''
+                      }`}
+                      aria-disabled={isDisabled}
+                      data-testid={`clarify-custom-option-${q.field_name}`}
+                      onMouseDown={(e) => {
+                        if (isDisabled) return
+                        const t = e.target as HTMLElement
+                        if (t.closest('textarea')) return
+                        e.preventDefault()
+                        document.getElementById(`clarify-custom-${q.field_name}`)?.focus()
+                      }}
+                    >
+                      <span className={styles.optionLetter} aria-hidden="true">
+                        {clarifyOptionLetter(q.options.length)}
+                      </span>
+                      <ClarifyCustomInlineTextarea
+                        id={`clarify-custom-${q.field_name}`}
+                        value={q.custom_answer}
+                        disabled={isDisabled}
+                        placeholder="Describe in your own words…"
+                        ariaLabel={`Custom answer for: ${q.field_name}`}
+                        onChange={(text) => updateCustomAnswer(projectId, node.node_id, q.field_name, text)}
+                      />
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -374,20 +464,6 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
                 })()
               ) : null}
 
-              {/* Custom answer textarea */}
-              {q.allow_custom ? (
-                <textarea
-                  className={styles.customInput}
-                  rows={2}
-                  placeholder="Or describe in your own words..."
-                  value={q.custom_answer}
-                  onChange={(e) => {
-                    updateCustomAnswer(projectId, node.node_id, q.field_name, e.target.value)
-                  }}
-                  aria-label={`Custom answer for: ${q.field_name}`}
-                  disabled={isDisabled}
-                />
-              ) : null}
             </div>
           </div>
         ))}

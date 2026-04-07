@@ -29,6 +29,13 @@ const QUESTIONS: Question[] = [
 type Answers = Record<string, string>
 type CustomInputs = Record<string, string>
 
+function optionLetter(index: number): string {
+  if (index >= 0 && index < 26) {
+    return String.fromCharCode(65 + index)
+  }
+  return String(index + 1)
+}
+
 function formatAnswerForSummary(raw: string): string {
   if (!raw) return ''
   if (raw.startsWith('__custom__')) {
@@ -112,7 +119,7 @@ export function ClarifyMockPanel() {
                 {q.label}
               </p>
               <div className={styles.options} role="group" aria-labelledby={`clarify-q-${q.id}`}>
-                {q.options.map((opt) => {
+                {q.options.map((opt, oi) => {
                   const selected = answers[q.id] === opt
                   return (
                     <button
@@ -122,7 +129,10 @@ export function ClarifyMockPanel() {
                       aria-pressed={selected}
                       onClick={() => handleOptionClick(q.id, opt)}
                     >
-                      {opt}
+                      <span className={styles.optionLetter} aria-hidden="true">
+                        {optionLetter(oi)}
+                      </span>
+                      <span className={styles.optionBtnBody}>{opt}</span>
                     </button>
                   )
                 })}

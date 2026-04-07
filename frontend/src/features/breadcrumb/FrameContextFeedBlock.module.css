@@ -164,7 +164,6 @@
 }
 
 .actionStatusArtifact {
-  font-family: var(--fc-mono);
   font-weight: var(--fc-w-label);
   letter-spacing: 0.04em;
   text-transform: uppercase;

@@ -1,4 +1,4 @@
-﻿import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { apiMock } = vi.hoisted(() => ({
@@ -65,22 +65,14 @@ function HookHarness() {
   const {
     snapshot,
     isLoading,
-    isRefreshing,
     error,
-    lastSuccessfulAt,
-    refresh,
   } = useLocalUsageSnapshot()
 
   return (
     <div>
-      <button type="button" onClick={() => void refresh()}>
-        refresh
-      </button>
       <div data-testid="loading">{String(isLoading)}</div>
-      <div data-testid="refreshing">{String(isRefreshing)}</div>
       <div data-testid="error">{error ?? ''}</div>
       <div data-testid="updated">{snapshot?.updated_at ?? 'none'}</div>
-      <div data-testid="last-success">{lastSuccessfulAt == null ? 'none' : String(lastSuccessfulAt)}</div>
     </div>
   )
 }
@@ -95,7 +87,7 @@ describe('useLocalUsageSnapshot', () => {
     vi.useRealTimers()
   })
 
-  it('loads snapshot on mount and stores last successful timestamp', async () => {
+  it('loads snapshot on mount', async () => {
     apiMock.getLocalUsageSnapshot.mockResolvedValue(makeSnapshot(1_710_000_000_000))
 
     render(<HookHarness />)
@@ -106,7 +98,6 @@ describe('useLocalUsageSnapshot', () => {
     })
     expect(screen.getByTestId('error')).toHaveTextContent('')
     expect(screen.getByTestId('loading')).toHaveTextContent('false')
-    expect(screen.getByTestId('last-success')).not.toHaveTextContent('none')
   })
 
   it('polls every 5 minutes after initial load', async () => {
@@ -134,7 +125,8 @@ describe('useLocalUsageSnapshot', () => {
     expect(apiMock.getLocalUsageSnapshot).toHaveBeenCalledTimes(2)
   })
 
-  it('ignores stale responses when a newer request resolves first', async () => {
+  it('ignores stale responses when a newer poll request resolves first', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval')
     const first = deferred<LocalUsageSnapshot>()
     const second = deferred<LocalUsageSnapshot>()
 
@@ -144,7 +136,11 @@ describe('useLocalUsageSnapshot', () => {
 
     render(<HookHarness />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'refresh' }))
+    await act(async () => {
+      const pollTick = setIntervalSpy.mock.calls[0]?.[0] as (() => void) | undefined
+      pollTick?.()
+      await Promise.resolve()
+    })
 
     await act(async () => {
       second.resolve(makeSnapshot(2_000))
@@ -163,11 +159,11 @@ describe('useLocalUsageSnapshot', () => {
     expect(screen.getByTestId('updated')).toHaveTextContent('2000')
   })
 
-  it('sets refreshing state during manual refresh after initial success', async () => {
-    const second = deferred<LocalUsageSnapshot>()
+  it('keeps existing snapshot visible when a poll update fails', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval')
     apiMock.getLocalUsageSnapshot
       .mockResolvedValueOnce(makeSnapshot(1_000))
-      .mockImplementationOnce(() => second.promise)
+      .mockRejectedValueOnce(new Error('poll timeout'))
 
     render(<HookHarness />)
 
@@ -175,19 +171,16 @@ describe('useLocalUsageSnapshot', () => {
       expect(screen.getByTestId('updated')).toHaveTextContent('1000')
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'refresh' }))
-
-    expect(screen.getByTestId('refreshing')).toHaveTextContent('true')
-
     await act(async () => {
-      second.resolve(makeSnapshot(2_000))
+      const pollTick = setIntervalSpy.mock.calls[0]?.[0] as (() => void) | undefined
+      pollTick?.()
       await Promise.resolve()
     })
 
     await waitFor(() => {
-      expect(screen.getByTestId('refreshing')).toHaveTextContent('false')
+      expect(screen.getByTestId('error')).toHaveTextContent('poll timeout')
     })
-    expect(screen.getByTestId('updated')).toHaveTextContent('2000')
+    expect(screen.getByTestId('updated')).toHaveTextContent('1000')
   })
 
   it('cleans up polling interval on unmount', async () => {
