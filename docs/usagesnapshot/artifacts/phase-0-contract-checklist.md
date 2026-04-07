@@ -7,7 +7,7 @@ Status: completed.
 | ID | Decision | Locked | Source |
 |---|---|---|---|
 | `dedicated_usage_snapshot_screen` | Usage Snapshot is a dedicated screen. | yes | `docs/usagesnapshot/phase-0-contract-freeze.md` |
-| `sidebar_button_entrypoint` | Entry point is a button above existing sidebar usage block. | yes | `docs/usagesnapshot/phase-0-contract-freeze.md` |
+| `sidebar_button_entrypoint` | Entry point is a button under existing sidebar usage block. | yes | `docs/usagesnapshot/phase-0-contract-freeze.md` |
 | `all_codex_sessions_scope` | Aggregate all Codex sessions from Codex home. | yes | `docs/usagesnapshot/phase-0-contract-freeze.md` |
 | `polling_refresh_strategy` | Frontend refresh uses polling + manual refresh. | yes | `docs/usagesnapshot/phase-0-contract-freeze.md` |
 | `full_delivery_scope` | Delivery includes backend + frontend + automated tests incl. E2E. | yes | `docs/usagesnapshot/phase-0-contract-freeze.md` |

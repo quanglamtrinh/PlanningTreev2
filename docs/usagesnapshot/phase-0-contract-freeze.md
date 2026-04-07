@@ -136,7 +136,7 @@ Model leaderboard:
 ## Frontend contract freeze
 
 - route path: `/usage-snapshot`
-- entrypoint button located above current sidebar usage block
+- entrypoint button located under current sidebar usage block
 - data refresh: initial load + interval polling + manual refresh
 - stale-response guard required via request generation id
 - no SSE for usage snapshot in this track

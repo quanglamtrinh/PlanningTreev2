@@ -33,7 +33,10 @@ function StatusDot({ status }: { status: string }) {
 export function Sidebar() {
   const navigate = useNavigate()
   const location = useLocation()
-  const isUsageSnapshotRoute = location.pathname === '/usage-snapshot'
+  const usageSnapshotRoute = '/usage-snapshot'
+  const usageSnapshotLabel = 'Usage Snapshot'
+  const usageSnapshotTitle = 'Open Usage Snapshot'
+  const isUsageSnapshotRoute = location.pathname === usageSnapshotRoute
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
@@ -329,8 +332,9 @@ export function Sidebar() {
           <button
             type="button"
             className={`${styles.usageSnapshotBtn} ${isUsageSnapshotRoute ? styles.usageSnapshotBtnActive : ''}`}
-            onClick={() => navigate('/usage-snapshot')}
-            aria-label="Open usage snapshot"
+            onClick={() => navigate(usageSnapshotRoute)}
+            aria-label={usageSnapshotTitle}
+            title={usageSnapshotTitle}
             aria-current={isUsageSnapshotRoute ? 'page' : undefined}
           >
             <span className={styles.usageSnapshotBtnInner}>
@@ -350,7 +354,7 @@ export function Sidebar() {
                 <path d="M12 20V4" />
                 <path d="M6 20v-6" />
               </svg>
-              <span className={styles.usageSnapshotLabel}>Usage snapshot</span>
+              <span className={styles.usageSnapshotLabel}>{usageSnapshotLabel}</span>
               <svg
                 className={styles.usageSnapshotChevron}
                 width="16"

@@ -5,7 +5,7 @@ Status: completed.
 ## Route and entrypoint contract
 
 - New route: `/usage-snapshot`
-- Entry point: new sidebar button above existing usage block
+- Entry point: new sidebar button under existing usage block
 - Entry action: navigate to `/usage-snapshot` from graph shell
 
 ## Screen state matrix

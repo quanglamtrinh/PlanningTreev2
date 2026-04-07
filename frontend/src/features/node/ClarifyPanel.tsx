@@ -347,7 +347,29 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
                 (() => {
                   const selected = q.options.find((o) => o.id === q.selected_option_id)
                   return selected?.rationale ? (
-                    <p className={styles.optionRationale}>{selected.rationale}</p>
+                    <div className={styles.optionRationaleRow}>
+                      <svg
+                        className={styles.optionRationaleIcon}
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                        aria-hidden="true"
+                        focusable="false"
+                      >
+                        <title>Why this option is suggested</title>
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                        <path
+                          d="M12 16v-5M12 8h.01"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      <p className={styles.optionRationale}>{selected.rationale}</p>
+                    </div>
                   ) : null
                 })()
               ) : null}

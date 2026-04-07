@@ -13,7 +13,7 @@
 
 .threadPane {
   display: flex;
-  flex: 3;
+  flex: 5 1 0;
   min-width: 0;
   min-height: 0;
   max-width: 100%;
@@ -259,7 +259,7 @@
 
 .detailPane {
   display: flex;
-  flex: 2 1 0;
+  flex: 4 1 0;
   min-width: 0;
   min-height: 0;
   max-width: 100%;

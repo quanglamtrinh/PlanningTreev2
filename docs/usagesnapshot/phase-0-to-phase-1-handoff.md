@@ -40,7 +40,7 @@ Read these docs in order before touching backend code:
 ## 4. Locked contract decisions (do not reopen in Phase 1)
 
 1. Usage Snapshot is a dedicated screen with route `/usage-snapshot`.
-2. Screen is opened from a new sidebar button above existing usage block.
+2. Screen is opened from a new sidebar button under existing usage block.
 3. Data scope is all Codex sessions from Codex home; no workspace/project filter.
 4. Backend route is `GET /v1/codex/usage/local`.
 5. Query param `days` is optional, defaults to `30`, clamp range `[1, 90]`.

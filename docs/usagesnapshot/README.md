@@ -1,6 +1,6 @@
 # Usage Snapshot Rollout Plan
 
-Status: Phase 3 completed. Phase 4 is ready to start.
+Status: Phase 4 completed. Phase 5 is ready to start.
 
 Last updated: 2026-04-06.
 
@@ -17,6 +17,7 @@ Last updated: 2026-04-06.
 - `docs/usagesnapshot/phase-3-to-phase-4-handoff.md`
 - `docs/usagesnapshot/phase-3-frontend-route-screen-and-polling.md`
 - `docs/usagesnapshot/phase-4-sidebar-entrypoint-and-ux-polish.md`
+- `docs/usagesnapshot/phase-4-to-phase-5-handoff.md`
 - `docs/usagesnapshot/phase-5-automated-test-matrix-and-e2e.md`
 - `docs/usagesnapshot/phase-6-rollout-and-stabilization.md`
 - `docs/usagesnapshot/phase-7-cleanup-and-closeout.md`
@@ -44,6 +45,11 @@ Last updated: 2026-04-06.
 
 - `docs/usagesnapshot/phase-3-frontend-route-screen-and-polling.md`
 - `docs/usagesnapshot/phase-3-to-phase-4-handoff.md`
+
+## Phase 4 completion outputs
+
+- `docs/usagesnapshot/phase-4-sidebar-entrypoint-and-ux-polish.md`
+- `docs/usagesnapshot/phase-4-to-phase-5-handoff.md`
 
 ## Locked decisions
 

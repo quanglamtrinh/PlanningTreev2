@@ -178,12 +178,25 @@
   letter-spacing: 0.02em;
 }
 
+.optionRationaleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.optionRationaleIcon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--color-text-tertiary) 92%, var(--color-text-primary));
+}
+
 .optionRationale {
   margin: 0;
+  flex: 1;
+  min-width: 0;
   font-size: 11px;
   line-height: 1.45;
   color: var(--color-text-tertiary);
-  font-style: italic;
 }
 
 .whyItMatters {

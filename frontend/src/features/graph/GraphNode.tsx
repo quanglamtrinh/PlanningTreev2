@@ -10,7 +10,8 @@ import styles from './GraphNode.module.css'
 
 const CONTROL_CLASS_NAME = 'nodrag nopan'
 
-const DROPDOWN_GAP = 8
+/** Gap between action badge and dropdown (right + below placement). */
+const DROPDOWN_GAP = 0
 const VIEW_MARGIN = 8
 
 function placeDropdownNearAnchor(anchorEl: HTMLElement, dropdownEl: HTMLElement) {
@@ -28,6 +29,7 @@ function placeDropdownNearAnchor(anchorEl: HTMLElement, dropdownEl: HTMLElement)
   const menuHeight =
     el.offsetHeight || el.scrollHeight || el.getBoundingClientRect().height || 1
 
+  // Default: to the right of the badge, top aligned with the row below the badge (tight gap).
   let left = anchor.right + G
   if (left + menuWidth > vw - M) {
     const leftOfAnchor = anchor.left - G - menuWidth

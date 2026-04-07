@@ -508,7 +508,7 @@
 .footerUsageStack {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   min-width: 0;
 }
@@ -578,20 +578,23 @@
   display: block;
   width: 100%;
   margin: 0;
-  padding: 10px 14px;
+  min-height: 42px;
+  padding: 11px 14px;
   border: none;
   border-radius: var(--radius-lg);
   cursor: pointer;
   font-family: inherit;
   font-size: var(--font-size-sm);
   font-weight: 600;
+  line-height: 1.3;
+  text-align: left;
   letter-spacing: 0.01em;
   color: var(--on-surface);
   background: color-mix(in srgb, var(--tertiary) 12%, var(--surface-container-lowest));
   box-shadow:
     var(--shadow-xs),
     inset 0 0 0 1px color-mix(in srgb, var(--tertiary) 22%, transparent);
-  transition: background 0.14s ease, box-shadow 0.14s ease, color 0.14s ease;
+  transition: background 0.14s ease, box-shadow 0.14s ease, color 0.14s ease, transform 0.14s ease;
 }
 
 .usageSnapshotBtn:hover {
@@ -599,11 +602,16 @@
   box-shadow:
     var(--shadow-xs),
     inset 0 0 0 1px color-mix(in srgb, var(--tertiary) 32%, transparent);
+  transform: translateY(-1px);
 }
 
 .usageSnapshotBtn:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--tertiary) 55%, transparent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--tertiary) 58%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--surface) 90%, transparent),
+    var(--shadow-xs),
+    inset 0 0 0 1px color-mix(in srgb, var(--tertiary) 40%, transparent);
 }
 
 .usageSnapshotBtnActive {
@@ -612,6 +620,10 @@
     var(--shadow-xs),
     inset 0 0 0 1px color-mix(in srgb, var(--tertiary) 40%, transparent);
   color: var(--on-surface);
+}
+
+.usageSnapshotBtnActive:hover {
+  transform: none;
 }
 
 .usageSnapshotBtnInner {
@@ -623,22 +635,33 @@
 }
 
 .usageSnapshotLabel {
-  text-align: center;
+  text-align: left;
   min-width: 0;
 }
 
 .usageSnapshotIcon {
   flex-shrink: 0;
   color: color-mix(in srgb, var(--tertiary) 75%, var(--on-surface));
+  transition: color 0.14s ease;
 }
 
 .usageSnapshotChevron {
   flex-shrink: 0;
   opacity: 0.55;
+  transition: opacity 0.14s ease;
 }
 
 .usageSnapshotBtn:hover .usageSnapshotChevron {
   opacity: 0.85;
+}
+
+.usageSnapshotBtnActive .usageSnapshotIcon {
+  color: color-mix(in srgb, var(--tertiary) 88%, var(--on-surface));
+}
+
+.usageSnapshotBtnActive .usageSnapshotChevron,
+.usageSnapshotBtn:focus-visible .usageSnapshotChevron {
+  opacity: 0.95;
 }
 
 /* Footer icon row */

@@ -1,6 +1,6 @@
 # Usage Snapshot Artifacts
 
-Status: phase 0 artifacts recorded; later phase artifacts pending.
+Status: phase 0 through phase 4 artifacts and handoffs recorded.
 
 This folder stores implementation evidence for the Usage Snapshot rollout.
 

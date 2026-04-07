@@ -1,6 +1,6 @@
 # Usage Snapshot Phased Roadmap
 
-Status: Phase 0 completed. Implementation phases are queued.
+Status: Phase 4 completed. Phase 5 is queued.
 
 Last updated: 2026-04-06.
 
@@ -9,7 +9,7 @@ Last updated: 2026-04-06.
 This roadmap assumes the following decisions are frozen:
 
 - Usage Snapshot is a dedicated screen, not an inline expansion of existing sidebar footer usage.
-- Screen entry point is a button above the existing sidebar usage block.
+- Screen entry point is a button under the existing sidebar usage block.
 - Snapshot scope is all Codex sessions under Codex home.
 - Workspace/project selector is out of scope.
 - Data refresh strategy is polling (initial fetch + interval + manual refresh).
@@ -42,7 +42,7 @@ Frontend:
   - loading/empty/error states
   - manual refresh button
 - Polling hook with request-generation guard.
-- Sidebar button above existing usage section to navigate to `/usage-snapshot`.
+- Sidebar button under existing usage section to navigate to `/usage-snapshot`.
 
 Testing:
 
@@ -179,7 +179,7 @@ Goals:
 
 Key implementation slices:
 
-- Add sidebar button above usage block.
+- Keep sidebar button under usage block and polish behavior.
 - Navigate to `/usage-snapshot` and preserve app shell behavior.
 - Add route-aware active state styling.
 - Tune copy, spacing, and accessibility labels.
@@ -188,6 +188,12 @@ Exit criteria:
 
 - User can discover and open Usage Snapshot from existing sidebar quickly.
 - Navigation and visual hierarchy are stable across themes.
+
+Completion notes:
+
+- Completed on 2026-04-06.
+- Phase 4 delivered sidebar entrypoint semantics/copy/interaction polish and
+  expanded unit coverage for active-route and keyboard-focus behavior.
 
 ## Phase 5 (19%) - Automated test matrix and E2E
 
@@ -297,7 +303,7 @@ Risk: stale polling responses overwrite fresher state.
 Risk: route discoverability is low.
 
 - Mitigation:
-  - prominent button placement above existing usage block
+  - prominent button placement under existing usage block
   - unit and E2E tests for entrypoint flow
 
 Risk: feature scope creep (workspace filter, SSE, persistence).

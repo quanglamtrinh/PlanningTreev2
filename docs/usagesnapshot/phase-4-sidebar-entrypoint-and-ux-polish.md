@@ -1,6 +1,6 @@
 # Phase 4: Sidebar Entrypoint and UX Polish
 
-Status: not started.
+Status: completed on 2026-04-06.
 
 Effort: 9% (about 2.0 engineering days).
 
@@ -8,75 +8,79 @@ Depends on: Phase 3.
 
 ## Goal
 
-Integrate discoverable entrypoint in existing sidebar and polish route UX for daily usage.
+Polish the existing Usage Snapshot sidebar entrypoint while keeping placement under the usage block and preserving Phase 3 data behavior.
 
-## Scope
+## Scope boundary lock
 
-- Keep sidebar button in usage area with current placement under existing usage block.
-- Navigate to `/usage-snapshot`.
-- Add active-state and hover/focus behavior.
-- Ensure accessibility and keyboard navigation.
+- Keep Usage Snapshot button under existing usage block in sidebar footer.
+- Keep route target `/usage-snapshot` unchanged.
+- Keep backend API, polling lifecycle, and data contract unchanged.
+- Focus only on copy/semantics/visual polish + unit-test coverage for this entrypoint.
 
-## Detailed implementation checklist
+## Delivered implementation
 
-## 1) Add sidebar button
+## 1) Sidebar semantics and copy polish
 
-Update `frontend/src/features/graph/Sidebar.tsx`:
+Updated `frontend/src/features/graph/Sidebar.tsx`:
 
-- keep button directly under current usage block (current placement), polish visuals and focus behavior.
-- label recommendation:
-  - `Usage Snapshot`
-- click action:
-  - `navigate('/usage-snapshot')`
-- include `aria-label` and descriptive title.
+- standardized visible copy to `Usage Snapshot` (title case)
+- added explicit `title="Open Usage Snapshot"`
+- normalized `aria-label` to match action label
+- retained route-aware `aria-current="page"` on active route
+- kept native `button` semantics for keyboard activation behavior
 
-## 2) Add style treatment
+## 2) Visual polish and interaction consistency
 
-Update `frontend/src/features/graph/Sidebar.module.css`:
+Updated `frontend/src/features/graph/Sidebar.module.css`:
 
-- button visual hierarchy should sit between project tree and footer usage block.
-- add active style when current route is `/usage-snapshot`.
-- add keyboard focus-visible ring consistent with design tokens.
+- improved button hierarchy spacing in footer usage stack
+- tuned button sizing/padding for stronger discoverability
+- aligned hover/active/focus-visible interaction states
+- added stronger focus-visible ring treatment for keyboard users
+- tuned icon/chevron active and focus affordances for route clarity
 
-## 3) Route-aware active state
+## 3) Sidebar unit-test expansion
 
-In `Sidebar.tsx`:
+Updated `frontend/tests/unit/Sidebar.test.tsx`:
 
-- derive route via `useLocation`.
-- compute active class for usage button.
-- ensure existing project behaviors remain unchanged.
+- navigation test now also asserts visible copy `Usage Snapshot`
+- added active-route semantics test:
+  - on `/usage-snapshot`, button exposes `aria-current="page"`
+  - button has expected `title`
+  - active class is applied
+- added keyboard-focusability test:
+  - button has discoverable label/title
+  - button is focusable and receives focus
 
-## 4) UX and accessibility pass
+## 4) Documentation alignment
 
-- verify button remains visible when sidebar has many projects.
-- verify contrast and focus indicators in available themes.
-- verify button is reachable and actionable via keyboard only.
+- phase wording now consistently locks entrypoint placement under usage block.
+- no contract changes were introduced in API/polling layers.
 
-## 5) Sidebar unit test extension
+## Verification commands
 
-Update `frontend/tests/unit/Sidebar.test.tsx`:
+Executed:
 
-- render sidebar
-- click `Usage Snapshot` button
-- assert route becomes `/usage-snapshot`
+- `npm run test:unit --prefix frontend -- tests/unit/Sidebar.test.tsx tests/unit/Layout.test.tsx tests/unit/UsageSnapshotPage.test.tsx tests/unit/useLocalUsageSnapshot.test.tsx`
+  - result: pass (`36 files`, `212 tests`)
+- `npm run typecheck --prefix frontend`
+  - result: pass
 
-## File targets
+## File targets updated
 
 - `frontend/src/features/graph/Sidebar.tsx`
 - `frontend/src/features/graph/Sidebar.module.css`
 - `frontend/tests/unit/Sidebar.test.tsx`
-
-## Verification commands
-
-- `npm run test:unit --prefix frontend -- tests/unit/Sidebar.test.tsx`
-- `npm run typecheck --prefix frontend`
+- `docs/usagesnapshot/phase-4-sidebar-entrypoint-and-ux-polish.md`
 
 ## Deliverables
 
-- Users can open Usage Snapshot from current sidebar with one click.
-- Sidebar behavior remains stable for existing project flows.
+- Users can open Usage Snapshot from the sidebar usage area entrypoint with one click.
+- Active-route semantics and discoverability are explicit (`title`, `aria-label`, `aria-current`).
+- Keyboard focus visibility and entrypoint resilience are test-covered.
 
 ## Exit criteria
 
-- Sidebar entrypoint and route navigation are test-covered and stable.
-- No accessibility blocker remains for this new navigation action.
+- Sidebar entrypoint UX polish is implemented and test-covered.
+- No blocker-level accessibility issue remains for this navigation action.
+- Phase 5 (automated matrix + E2E) can start without reopening Phase 4 decisions.

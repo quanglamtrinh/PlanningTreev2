@@ -91,10 +91,45 @@ describe('Sidebar', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /open usage snapshot/i }))
+    const usageSnapshotButton = screen.getByRole('button', { name: /open usage snapshot/i })
+    expect(screen.getByText('Usage Snapshot')).toBeInTheDocument()
+
+    fireEvent.click(usageSnapshotButton)
     await waitFor(() => {
       expect(screen.getByTestId('location-path')).toHaveTextContent('/usage-snapshot')
     })
+  })
+
+  it('marks usage snapshot button active on the usage route with route semantics', () => {
+    vi.useRealTimers()
+    render(
+      <MemoryRouter initialEntries={['/usage-snapshot']}>
+        <Routes>
+          <Route path="/" element={<SidebarHarness />} />
+          <Route path="/usage-snapshot" element={<SidebarHarness />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const usageSnapshotButton = screen.getByRole('button', { name: /open usage snapshot/i })
+    expect(usageSnapshotButton).toHaveAttribute('aria-current', 'page')
+    expect(usageSnapshotButton).toHaveAttribute('title', 'Open Usage Snapshot')
+    expect(usageSnapshotButton.className).toContain('usageSnapshotBtnActive')
+  })
+
+  it('keeps usage snapshot button keyboard focusable and discoverable', () => {
+    render(
+      <MemoryRouter>
+        <Sidebar />
+      </MemoryRouter>,
+    )
+
+    const usageSnapshotButton = screen.getByRole('button', { name: /open usage snapshot/i })
+    expect(usageSnapshotButton).toHaveTextContent('Usage Snapshot')
+    expect(usageSnapshotButton).toHaveAttribute('title', 'Open Usage Snapshot')
+
+    usageSnapshotButton.focus()
+    expect(usageSnapshotButton).toHaveFocus()
   })
 
   it('hides weekly usage and shows fallback session text when data is missing', () => {

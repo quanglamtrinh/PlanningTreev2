@@ -1,7 +1,7 @@
 migration_id: usage_snapshot_rollout
-status: phase_4_not_started
-current_phase: 4
-next_phase: 4
+status: phase_5_not_started
+current_phase: 5
+next_phase: 5
 
 references:
   plan_doc: docs/usagesnapshot/README.md
@@ -92,13 +92,20 @@ phases:
       suite passed (36 files, 210 tests).
   - phase: 4
     name: sidebar_entrypoint_and_ux_polish
-    status: not_started
+    status: completed
     depends_on:
       - 3
     effort_percent: 9
     estimated_days: 2.0
     artifacts:
       - docs/usagesnapshot/phase-4-sidebar-entrypoint-and-ux-polish.md
+      - docs/usagesnapshot/phase-4-to-phase-5-handoff.md
+    notes: >
+      Completed on 2026-04-06. Polished existing sidebar entrypoint under usage
+      block with standardized copy/semantics, refined hover/active/focus-visible
+      treatment, and expanded sidebar unit coverage for navigation + active-route
+      semantics + keyboard focusability. Verification: frontend unit suite passed
+      (36 files, 212 tests) and frontend typecheck passed.
   - phase: 5
     name: automated_test_matrix_and_e2e
     status: not_started
