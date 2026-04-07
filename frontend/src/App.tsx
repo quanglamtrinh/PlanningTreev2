@@ -3,6 +3,7 @@ import { Layout } from './components/Layout'
 import { BreadcrumbPlaceholder } from './features/breadcrumb/BreadcrumbPlaceholder'
 import { BreadcrumbPlaceholderV2 } from './features/conversation/BreadcrumbPlaceholderV2'
 import { GraphWorkspace } from './features/graph/GraphWorkspace'
+import { UsageSnapshotPage } from './features/usage-snapshot/UsageSnapshotPage'
 
 export default function App() {
   return (
@@ -10,6 +11,7 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<GraphWorkspace />} />
+          <Route path="/usage-snapshot" element={<UsageSnapshotPage />} />
           <Route
             path="/projects/:projectId/nodes/:nodeId/chat"
             element={<BreadcrumbPlaceholder />}

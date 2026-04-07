@@ -1,6 +1,6 @@
 # Usage Snapshot Rollout Plan
 
-Status: Phase 1 completed. Phase 2 is ready to start.
+Status: Phase 3 completed. Phase 4 is ready to start.
 
 Last updated: 2026-04-06.
 
@@ -13,6 +13,8 @@ Last updated: 2026-04-06.
 - `docs/usagesnapshot/phase-1-backend-scanner-and-api-foundation.md`
 - `docs/usagesnapshot/phase-1-to-phase-2-handoff.md`
 - `docs/usagesnapshot/phase-2-backend-performance-and-observability.md`
+- `docs/usagesnapshot/phase-2-to-phase-3-handoff.md`
+- `docs/usagesnapshot/phase-3-to-phase-4-handoff.md`
 - `docs/usagesnapshot/phase-3-frontend-route-screen-and-polling.md`
 - `docs/usagesnapshot/phase-4-sidebar-entrypoint-and-ux-polish.md`
 - `docs/usagesnapshot/phase-5-automated-test-matrix-and-e2e.md`
@@ -33,10 +35,20 @@ Last updated: 2026-04-06.
 - `docs/usagesnapshot/phase-1-backend-scanner-and-api-foundation.md`
 - `docs/usagesnapshot/phase-1-to-phase-2-handoff.md`
 
+## Phase 2 completion outputs
+
+- `docs/usagesnapshot/phase-2-backend-performance-and-observability.md`
+- `docs/usagesnapshot/phase-2-to-phase-3-handoff.md`
+
+## Phase 3 completion outputs
+
+- `docs/usagesnapshot/phase-3-frontend-route-screen-and-polling.md`
+- `docs/usagesnapshot/phase-3-to-phase-4-handoff.md`
+
 ## Locked decisions
 
 - A dedicated Usage Snapshot screen is required.
-- Entry point is a new button above the current usage block in the sidebar.
+- Entry point is the Usage Snapshot button in the sidebar usage area (current placement is under usage block).
 - Data scope is all Codex sessions from Codex home (no project/workspace filter).
 - Frontend data flow uses polling, not an SSE subscription for this feature.
 - Delivery includes backend API, frontend UI, polling behavior, and automated tests including E2E.
@@ -52,7 +64,10 @@ Last updated: 2026-04-06.
   - service: `LocalUsageSnapshotService`
   - parser supports `total_token_usage` + `last_token_usage`
   - route fallback semantics for `days`: default `30`, clamp `[1, 90]`, invalid -> `30`
-- No dedicated Usage Snapshot route or page exists in PlanningTreeMain frontend.
+- Usage Snapshot route and page now exist in PlanningTreeMain frontend:
+  - route: `/usage-snapshot`
+  - page: `UsageSnapshotPage`
+  - hook: `useLocalUsageSnapshot` (polling + manual refresh + stale guard)
 - CodexMonitor already has a reference implementation of local usage aggregation over `.codex/sessions`.
 
 ## Migration shape
@@ -63,7 +78,7 @@ Phase order:
 2. Phase 1: backend scanner and API foundation
 3. Phase 2: backend performance, cache, resilience, observability
 4. Phase 3: frontend route, page, polling hook, API integration
-5. Phase 4: sidebar entrypoint and UX polish
+5. Phase 4: sidebar UX polish and accessibility follow-through
 6. Phase 5: automated test matrix and E2E coverage
 7. Phase 6: rollout and stabilization
 8. Phase 7: cleanup and closeout

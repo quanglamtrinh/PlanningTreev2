@@ -1,10 +1,10 @@
-# Phase 3: Frontend Route, Screen, and Polling
+﻿# Phase 3: Frontend Route, Screen, and Polling
 
-Status: not started.
+Status: completed on 2026-04-06.
 
 Effort: 20% (about 4.5 engineering days).
 
-Depends on: Phase 1.
+Depends on: Phase 1 (and consumes Phase 2 hardened backend behavior).
 
 ## Goal
 
@@ -12,124 +12,125 @@ Ship a dedicated Usage Snapshot page powered by backend local usage API with sta
 
 ## Scope
 
-- Add route `/usage-snapshot`.
-- Add page component and styles.
-- Add API typing and client call.
-- Add polling hook with stale-response guard.
-- Support manual refresh.
+- Add API typing and frontend client call for local usage snapshot.
+- Add polling hook with stale-response guard and manual refresh action.
+- Connect Usage Snapshot page to real backend data and state-driven UI.
+- Keep route and app shell behavior stable.
+- Add frontend unit tests for page, hook, and route shell behavior.
 
-## Detailed implementation checklist
+## Delivered implementation
 
-## 1) Extend API types
+## 1) API types and client contract
 
-Update `frontend/src/api/types.ts` with:
+Updated `frontend/src/api/types.ts`:
 
 - `LocalUsageDay`
 - `LocalUsageTotals`
 - `LocalUsageModel`
 - `LocalUsageSnapshot`
 
-Naming convention:
+Updated `frontend/src/api/client.ts`:
 
-- follow backend snake_case fields in API layer for consistency.
-- map to display-friendly values in component layer only.
+- `getLocalUsageSnapshot(days?: number): Promise<LocalUsageSnapshot>`
+- endpoint: `/v1/codex/usage/local`
+- query behavior: include `days` only when provided.
 
-## 2) Add API client method
+## 2) Polling hook with stale-overwrite protection
 
-Update `frontend/src/api/client.ts`:
-
-- add method:
-  - `getLocalUsageSnapshot(days?: number): Promise<LocalUsageSnapshot>`
-- endpoint:
-  - `/v1/codex/usage/local`
-- include query param only when needed.
-- reuse existing auth/header helper flow.
-
-## 3) Add polling hook
-
-Create `frontend/src/features/usage-snapshot/useLocalUsageSnapshot.ts`:
+Created `frontend/src/features/usage-snapshot/useLocalUsageSnapshot.ts` with:
 
 - state:
   - `snapshot`
   - `isLoading`
+  - `isRefreshing`
   - `error`
+  - `lastSuccessfulAt`
 - actions:
   - `refresh()`
 - behavior:
   - initial fetch on mount
-  - periodic fetch interval (baseline: 5 minutes)
+  - polling every 5 minutes
   - manual refresh support
-  - request generation id guard to prevent stale-overwrite
+  - request generation guard to ignore stale responses
+  - unmount-safe cleanup for interval and post-unmount state updates
+- days input standardized to `30` for Phase 3 reads.
 
-## 4) Build Usage Snapshot page
+## 3) Usage Snapshot page connected to live data
 
-Create `frontend/src/features/usage-snapshot/UsageSnapshotPage.tsx` and CSS module.
+Updated:
 
-Layout requirements:
+- `frontend/src/features/usage-snapshot/UsageSnapshotPage.tsx`
+- `frontend/src/features/usage-snapshot/UsageSnapshotPage.module.css`
 
-- keep app shell visual language consistent with graph view.
-- include:
-  - page title and short subtitle
+Delivered UI states:
+
+- initial loading skeleton
+- blocking error state with retry when no data exists
+- non-blocking error banner when stale data exists
+- empty state when usage totals are zero
+- populated state with:
   - updated timestamp
-  - manual refresh button
+  - manual refresh control
   - summary cards
-  - 7-day chart
-  - top-model section
-  - error and empty states
+  - 7-day chart (native SVG/CSS)
+  - top-model list
 
-Data rules:
+Shell continuity:
 
-- screen always requests all sessions (no workspace selector).
-- support zero-data empty state cleanly.
+- kept existing shell (`Sidebar` + main column)
+- kept existing route `/usage-snapshot`
+- kept current sidebar entrypoint placement unchanged in this phase.
 
-## 5) Register route
+## 4) Frontend unit test coverage
 
-Update `frontend/src/App.tsx`:
+Created:
 
-- add route:
-  - `path="/usage-snapshot"`
-  - `element={<UsageSnapshotPage .../>}`
+- `frontend/tests/unit/UsageSnapshotPage.test.tsx`
+- `frontend/tests/unit/useLocalUsageSnapshot.test.tsx`
 
-Update any shell state handling if route-specific behavior is needed.
+Updated:
 
-## 6) Add frontend unit tests
+- `frontend/tests/unit/Layout.test.tsx` (Back to Graph on `/usage-snapshot`)
 
-Add `frontend/tests/unit/UsageSnapshotPage.test.tsx`:
+Validated test scenarios:
 
-- loading skeleton render
-- empty state render
-- populated render
-- manual refresh invokes hook action
-- error state render and recover behavior
-
-Add hook-focused tests if needed:
-
-- polling interval behavior
-- stale response ignored when newer request resolves first
-
-## File targets
-
-- `frontend/src/App.tsx`
-- `frontend/src/api/types.ts`
-- `frontend/src/api/client.ts`
-- `frontend/src/features/usage-snapshot/UsageSnapshotPage.tsx` (new)
-- `frontend/src/features/usage-snapshot/UsageSnapshotPage.module.css` (new)
-- `frontend/src/features/usage-snapshot/useLocalUsageSnapshot.ts` (new)
-- `frontend/tests/unit/UsageSnapshotPage.test.tsx` (new)
+- page: loading, blocking error + retry, empty, populated, non-blocking error, manual refresh action
+- hook: initial fetch, polling, stale response ignored, manual refresh state, interval cleanup
+- layout: `/usage-snapshot` route shows Back to Graph and navigates to graph
 
 ## Verification commands
 
+Executed:
+
 - `npm run typecheck --prefix frontend`
-- `npm run test:unit --prefix frontend -- tests/unit/UsageSnapshotPage.test.tsx`
+- `npm run test:unit --prefix frontend -- tests/unit/useLocalUsageSnapshot.test.tsx tests/unit/UsageSnapshotPage.test.tsx tests/unit/Layout.test.tsx tests/unit/Sidebar.test.tsx`
+- `npm run test:unit --prefix frontend`
+
+Result:
+
+- frontend typecheck passed
+- frontend unit suite passed (`36 files`, `210 tests`)
+
+## File targets delivered
+
+- `frontend/src/api/types.ts`
+- `frontend/src/api/client.ts`
+- `frontend/src/features/usage-snapshot/useLocalUsageSnapshot.ts` (new)
+- `frontend/src/features/usage-snapshot/UsageSnapshotPage.tsx`
+- `frontend/src/features/usage-snapshot/UsageSnapshotPage.module.css`
+- `frontend/tests/unit/UsageSnapshotPage.test.tsx` (new)
+- `frontend/tests/unit/useLocalUsageSnapshot.test.tsx` (new)
+- `frontend/tests/unit/Layout.test.tsx`
 
 ## Deliverables
 
-- `/usage-snapshot` route is live and data-driven.
+- `/usage-snapshot` route is data-driven.
 - Polling behavior is deterministic and stale-safe.
-- Feature-level frontend unit tests are green.
+- Manual refresh is stable (no forced cache bypass).
+- Phase 4 integration work can proceed.
 
 ## Exit criteria
 
 - Page loads and refreshes correctly against backend API.
 - No blocker-level UI regression remains open.
-- Phase 4 can integrate sidebar entrypoint cleanly.
+- Phase 4 can focus on sidebar UX polish and accessibility follow-through.

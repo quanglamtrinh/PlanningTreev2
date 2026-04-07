@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Sidebar } from '../../src/features/graph/Sidebar'
@@ -9,6 +9,15 @@ import { useProjectStore } from '../../src/stores/project-store'
 function LocationProbe() {
   const location = useLocation()
   return <div data-testid="location-path">{`${location.pathname}${location.search}`}</div>
+}
+
+function SidebarHarness() {
+  return (
+    <>
+      <LocationProbe />
+      <Sidebar />
+    </>
+  )
 }
 
 describe('Sidebar', () => {
@@ -69,6 +78,23 @@ describe('Sidebar', () => {
     expect(screen.getByText('· Resets 2h')).toBeInTheDocument()
     expect(screen.getByText('· Resets 6d')).toBeInTheDocument()
     expect(screen.getByText('Credits: 4 credits')).toBeInTheDocument()
+  })
+
+  it('navigates to usage snapshot from the footer button', async () => {
+    vi.useRealTimers()
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<SidebarHarness />} />
+          <Route path="/usage-snapshot" element={<SidebarHarness />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /open usage snapshot/i }))
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/usage-snapshot')
+    })
   })
 
   it('hides weekly usage and shows fallback session text when data is missing', () => {

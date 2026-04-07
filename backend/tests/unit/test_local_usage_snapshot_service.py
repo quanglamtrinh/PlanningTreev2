@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
+from backend.services import local_usage_snapshot_service as local_usage_snapshot_module
 from backend.services.local_usage_snapshot_service import (
     MAX_LINE_BYTES,
     LocalUsageSnapshotService,
@@ -486,3 +491,234 @@ def test_days_clamp_and_default_behavior(tmp_path: Path) -> None:
     assert len(service.read_snapshot(days=0)["days"]) == 1
     assert len(service.read_snapshot(days=-5)["days"]) == 1
     assert len(service.read_snapshot(days=120)["days"]) == 90
+
+
+def test_cache_hit_within_ttl_does_not_rescan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    day_key = _today_day_key()
+    ts = _timestamp_ms_for_day(day_key, hour=14, minute=0, second=0)
+    _write_session_file(
+        codex_home,
+        day_key,
+        [
+            _token_count_event(
+                ts,
+                total={
+                    "input_tokens": 10,
+                    "cached_input_tokens": 1,
+                    "output_tokens": 4,
+                },
+            )
+        ],
+    )
+
+    service = LocalUsageSnapshotService(codex_home=codex_home)
+    scan_calls = {"count": 0}
+    original_scan_file = local_usage_snapshot_module._scan_file
+
+    def wrapped_scan_file(*args, **kwargs):
+        scan_calls["count"] += 1
+        return original_scan_file(*args, **kwargs)
+
+    now = {"value": 100.0}
+    monkeypatch.setattr(local_usage_snapshot_module.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(local_usage_snapshot_module, "_scan_file", wrapped_scan_file)
+
+    service.read_snapshot(days=1)
+    now["value"] = 110.0
+    service.read_snapshot(days=1)
+
+    assert scan_calls["count"] == 1
+
+
+def test_cache_stale_after_ttl_triggers_recompute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    day_key = _today_day_key()
+    ts = _timestamp_ms_for_day(day_key, hour=14, minute=10, second=0)
+    _write_session_file(
+        codex_home,
+        day_key,
+        [
+            _token_count_event(
+                ts,
+                total={
+                    "input_tokens": 12,
+                    "cached_input_tokens": 1,
+                    "output_tokens": 3,
+                },
+            )
+        ],
+    )
+
+    service = LocalUsageSnapshotService(codex_home=codex_home)
+    scan_calls = {"count": 0}
+    original_scan_file = local_usage_snapshot_module._scan_file
+
+    def wrapped_scan_file(*args, **kwargs):
+        scan_calls["count"] += 1
+        return original_scan_file(*args, **kwargs)
+
+    now = {"value": 200.0}
+    monkeypatch.setattr(local_usage_snapshot_module.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(local_usage_snapshot_module, "_scan_file", wrapped_scan_file)
+
+    service.read_snapshot(days=1)
+    now["value"] = 231.0
+    service.read_snapshot(days=1)
+
+    assert scan_calls["count"] == 2
+
+
+def test_single_flight_concurrent_requests_compute_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    day_key = _today_day_key()
+    ts = _timestamp_ms_for_day(day_key, hour=14, minute=20, second=0)
+    _write_session_file(
+        codex_home,
+        day_key,
+        [
+            _token_count_event(
+                ts,
+                total={
+                    "input_tokens": 8,
+                    "cached_input_tokens": 1,
+                    "output_tokens": 2,
+                },
+            )
+        ],
+    )
+
+    service = LocalUsageSnapshotService(codex_home=codex_home)
+    scan_calls = {"count": 0}
+    original_scan_file = local_usage_snapshot_module._scan_file
+
+    def wrapped_scan_file(*args, **kwargs):
+        scan_calls["count"] += 1
+        time.sleep(0.05)
+        return original_scan_file(*args, **kwargs)
+
+    monkeypatch.setattr(local_usage_snapshot_module, "_scan_file", wrapped_scan_file)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(service.read_snapshot, 1) for _ in range(4)]
+        results = [future.result(timeout=5) for future in futures]
+
+    assert scan_calls["count"] == 1
+    assert all(len(result["days"]) == 1 for result in results)
+
+
+def test_cache_keys_are_isolated_by_days(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    day_key = _today_day_key()
+    ts = _timestamp_ms_for_day(day_key, hour=14, minute=30, second=0)
+    _write_session_file(
+        codex_home,
+        day_key,
+        [
+            _token_count_event(
+                ts,
+                total={
+                    "input_tokens": 5,
+                    "cached_input_tokens": 0,
+                    "output_tokens": 1,
+                },
+            )
+        ],
+    )
+
+    service = LocalUsageSnapshotService(codex_home=codex_home)
+    scan_calls = {"count": 0}
+    original_scan_file = local_usage_snapshot_module._scan_file
+
+    def wrapped_scan_file(*args, **kwargs):
+        scan_calls["count"] += 1
+        return original_scan_file(*args, **kwargs)
+
+    monkeypatch.setattr(local_usage_snapshot_module, "_scan_file", wrapped_scan_file)
+
+    service.read_snapshot(days=1)
+    service.read_snapshot(days=7)
+    service.read_snapshot(days=1)
+
+    assert scan_calls["count"] == 2
+
+
+def test_cache_keys_are_isolated_by_sessions_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home_a = tmp_path / ".codex-a"
+    codex_home_b = tmp_path / ".codex-b"
+    day_key = _today_day_key()
+    ts_a = _timestamp_ms_for_day(day_key, hour=14, minute=40, second=0)
+    ts_b = _timestamp_ms_for_day(day_key, hour=14, minute=40, second=1)
+
+    _write_session_file(
+        codex_home_a,
+        day_key,
+        [
+            _token_count_event(
+                ts_a,
+                total={
+                    "input_tokens": 3,
+                    "cached_input_tokens": 0,
+                    "output_tokens": 1,
+                },
+            )
+        ],
+    )
+    _write_session_file(
+        codex_home_b,
+        day_key,
+        [
+            _token_count_event(
+                ts_b,
+                total={
+                    "input_tokens": 7,
+                    "cached_input_tokens": 0,
+                    "output_tokens": 2,
+                },
+            )
+        ],
+    )
+
+    service = LocalUsageSnapshotService(codex_home=codex_home_a)
+    scan_calls = {"count": 0}
+    original_scan_file = local_usage_snapshot_module._scan_file
+
+    def wrapped_scan_file(*args, **kwargs):
+        scan_calls["count"] += 1
+        return original_scan_file(*args, **kwargs)
+
+    roots = [
+        codex_home_a / "sessions",
+        codex_home_b / "sessions",
+        codex_home_a / "sessions",
+    ]
+    index = {"value": 0}
+
+    def fake_resolve_sessions_root() -> Path:
+        root = roots[min(index["value"], len(roots) - 1)]
+        index["value"] += 1
+        return root
+
+    monkeypatch.setattr(local_usage_snapshot_module, "_scan_file", wrapped_scan_file)
+    monkeypatch.setattr(service, "_resolve_sessions_root", fake_resolve_sessions_root)
+
+    service.read_snapshot(days=1)
+    service.read_snapshot(days=1)
+    service.read_snapshot(days=1)
+
+    assert scan_calls["count"] == 2

@@ -71,6 +71,38 @@ export interface CodexSnapshot {
   rate_limits: CodexRateLimits | null
 }
 
+export interface LocalUsageDay {
+  day: string
+  input_tokens: number
+  cached_input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  agent_time_ms: number
+  agent_runs: number
+}
+
+export interface LocalUsageTotals {
+  last7_days_tokens: number
+  last30_days_tokens: number
+  average_daily_tokens: number
+  cache_hit_rate_percent: number
+  peak_day: string | null
+  peak_day_tokens: number
+}
+
+export interface LocalUsageModel {
+  model: string
+  tokens: number
+  share_percent: number
+}
+
+export interface LocalUsageSnapshot {
+  updated_at: number
+  days: LocalUsageDay[]
+  totals: LocalUsageTotals
+  top_models: LocalUsageModel[]
+}
+
 export interface ProjectSummary {
   id: string
   name: string

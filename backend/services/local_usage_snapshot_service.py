@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import copy
 import json
+import logging
 import math
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -15,6 +18,9 @@ MIN_DAYS = 1
 MAX_DAYS = 90
 MAX_ACTIVITY_GAP_MS = 120_000
 MAX_LINE_BYTES = 512_000
+DEFAULT_CACHE_TTL_SEC = 30.0
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,19 +39,127 @@ class UsageTotals:
     output_tokens: int = 0
 
 
+@dataclass
+class ScanDiagnostics:
+    files_visited: int = 0
+    files_opened: int = 0
+    files_skipped_unreadable: int = 0
+    lines_total: int = 0
+    lines_invalid_json: int = 0
+    lines_oversized: int = 0
+    token_events_applied: int = 0
+    scan_duration_ms: int = 0
+    cache_hit: bool = False
+
+    def with_cache_hit(self, cache_hit: bool) -> ScanDiagnostics:
+        return replace(self, cache_hit=cache_hit)
+
+
+@dataclass
+class SnapshotCacheEntry:
+    snapshot: dict[str, Any]
+    computed_at_monotonic: float
+    diagnostics: ScanDiagnostics
+
+
 class LocalUsageSnapshotService:
     def __init__(self, codex_home: Path | None = None) -> None:
         self._codex_home = codex_home
+        self._cache_ttl_sec = DEFAULT_CACHE_TTL_SEC
+        self._cache_lock = threading.Lock()
+        self._cache: dict[tuple[int, str], SnapshotCacheEntry] = {}
+        self._inflight: dict[tuple[int, str], threading.Event] = {}
 
-    def read_snapshot(self, days: int | None = None) -> dict[str, Any]:
+    def read_snapshot(self, days: Any = None) -> dict[str, Any]:
         normalized_days = _normalize_days(days)
-        day_keys = _make_day_keys(normalized_days)
-        daily: dict[str, DailyTotals] = {
-            day_key: DailyTotals() for day_key in day_keys
-        }
-        model_totals: dict[str, int] = {}
-
         sessions_root = self._resolve_sessions_root()
+        cache_key = (normalized_days, str(sessions_root))
+
+        while True:
+            now = time.monotonic()
+            cached_entry = self._get_cached_entry(cache_key, now=now)
+            if cached_entry is not None:
+                diagnostics = cached_entry.diagnostics.with_cache_hit(True)
+                self._log_scan_summary(
+                    level="debug",
+                    normalized_days=normalized_days,
+                    sessions_root=sessions_root,
+                    diagnostics=diagnostics,
+                )
+                return copy.deepcopy(cached_entry.snapshot)
+
+            is_owner, waiter = self._begin_single_flight(cache_key)
+            if is_owner:
+                break
+            waiter.wait()
+
+        try:
+            snapshot, diagnostics = self._compute_snapshot(
+                normalized_days=normalized_days,
+                sessions_root=sessions_root,
+            )
+            with self._cache_lock:
+                self._cache[cache_key] = SnapshotCacheEntry(
+                    snapshot=copy.deepcopy(snapshot),
+                    computed_at_monotonic=time.monotonic(),
+                    diagnostics=diagnostics,
+                )
+                waiter = self._inflight.pop(cache_key, None)
+            if waiter is not None:
+                waiter.set()
+            self._log_scan_summary(
+                level="info",
+                normalized_days=normalized_days,
+                sessions_root=sessions_root,
+                diagnostics=diagnostics,
+            )
+            return copy.deepcopy(snapshot)
+        except Exception:
+            with self._cache_lock:
+                waiter = self._inflight.pop(cache_key, None)
+            if waiter is not None:
+                waiter.set()
+            raise
+
+    def _resolve_sessions_root(self) -> Path:
+        return resolve_codex_home(self._codex_home) / "sessions"
+
+    def _get_cached_entry(
+        self,
+        cache_key: tuple[int, str],
+        *,
+        now: float,
+    ) -> SnapshotCacheEntry | None:
+        with self._cache_lock:
+            entry = self._cache.get(cache_key)
+            if entry is None:
+                return None
+            if now - entry.computed_at_monotonic > self._cache_ttl_sec:
+                self._cache.pop(cache_key, None)
+                return None
+            return entry
+
+    def _begin_single_flight(self, cache_key: tuple[int, str]) -> tuple[bool, threading.Event]:
+        with self._cache_lock:
+            waiter = self._inflight.get(cache_key)
+            if waiter is None:
+                waiter = threading.Event()
+                self._inflight[cache_key] = waiter
+                return True, waiter
+            return False, waiter
+
+    def _compute_snapshot(
+        self,
+        *,
+        normalized_days: int,
+        sessions_root: Path,
+    ) -> tuple[dict[str, Any], ScanDiagnostics]:
+        scan_started = time.monotonic()
+        day_keys = _make_day_keys(normalized_days)
+        daily: dict[str, DailyTotals] = {day_key: DailyTotals() for day_key in day_keys}
+        model_totals: dict[str, int] = {}
+        diagnostics = ScanDiagnostics()
+
         if sessions_root.exists():
             for day_key in day_keys:
                 day_dir = _day_dir_for_key(sessions_root, day_key)
@@ -59,25 +173,59 @@ class LocalUsageSnapshotService:
                 for entry in entries:
                     if entry.suffix != ".jsonl":
                         continue
+                    diagnostics.files_visited += 1
                     _scan_file(
                         entry,
                         daily=daily,
                         model_totals=model_totals,
+                        diagnostics=diagnostics,
                     )
 
+        diagnostics.scan_duration_ms = max(
+            0,
+            int(_round_half_away_from_zero((time.monotonic() - scan_started) * 1000)),
+        )
+
         updated_at = int(time.time() * 1000)
-        return _build_snapshot(
+        snapshot = _build_snapshot(
             updated_at=updated_at,
             day_keys=day_keys,
             daily=daily,
             model_totals=model_totals,
         )
+        return snapshot, diagnostics
 
-    def _resolve_sessions_root(self) -> Path:
-        return resolve_codex_home(self._codex_home) / "sessions"
+    def _log_scan_summary(
+        self,
+        *,
+        level: str,
+        normalized_days: int,
+        sessions_root: Path,
+        diagnostics: ScanDiagnostics,
+    ) -> None:
+        log_fn = logger.debug if level == "debug" else logger.info
+        log_fn(
+            (
+                "Local usage snapshot read "
+                "cache_hit=%s days=%s sessions_root=%s files_visited=%s files_opened=%s "
+                "files_skipped_unreadable=%s lines_total=%s lines_invalid_json=%s "
+                "lines_oversized=%s token_events_applied=%s scan_duration_ms=%s"
+            ),
+            diagnostics.cache_hit,
+            normalized_days,
+            str(sessions_root),
+            diagnostics.files_visited,
+            diagnostics.files_opened,
+            diagnostics.files_skipped_unreadable,
+            diagnostics.lines_total,
+            diagnostics.lines_invalid_json,
+            diagnostics.lines_oversized,
+            diagnostics.token_events_applied,
+            diagnostics.scan_duration_ms,
+        )
 
 
-def _normalize_days(days: int | None) -> int:
+def _normalize_days(days: Any | None) -> int:
     if days is None:
         return DEFAULT_DAYS
     parsed = _coerce_int(days)
@@ -104,11 +252,14 @@ def _scan_file(
     *,
     daily: dict[str, DailyTotals],
     model_totals: dict[str, int],
+    diagnostics: ScanDiagnostics,
 ) -> None:
     try:
         handle = path.open("rb")
     except OSError:
+        diagnostics.files_skipped_unreadable += 1
         return
+    diagnostics.files_opened += 1
 
     previous_totals: UsageTotals | None = None
     current_model: str | None = None
@@ -117,11 +268,14 @@ def _scan_file(
 
     with handle:
         for raw_line in handle:
+            diagnostics.lines_total += 1
             if len(raw_line) > MAX_LINE_BYTES:
+                diagnostics.lines_oversized += 1
                 continue
             try:
                 line = raw_line.decode("utf-8")
             except UnicodeDecodeError:
+                diagnostics.lines_invalid_json += 1
                 continue
 
             if not line.strip():
@@ -129,6 +283,7 @@ def _scan_file(
             try:
                 value = json.loads(line)
             except json.JSONDecodeError:
+                diagnostics.lines_invalid_json += 1
                 continue
             if not isinstance(value, dict):
                 continue
@@ -256,6 +411,7 @@ def _scan_file(
                             + delta.input_tokens
                             + delta.output_tokens
                         )
+                        diagnostics.token_events_applied += 1
                     last_activity_ms = _track_activity(
                         daily,
                         last_activity_ms=last_activity_ms,

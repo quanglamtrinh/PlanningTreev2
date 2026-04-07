@@ -12,7 +12,7 @@ Integrate discoverable entrypoint in existing sidebar and polish route UX for da
 
 ## Scope
 
-- Add sidebar button above existing usage block.
+- Keep sidebar button in usage area with current placement under existing usage block.
 - Navigate to `/usage-snapshot`.
 - Add active-state and hover/focus behavior.
 - Ensure accessibility and keyboard navigation.
@@ -23,7 +23,7 @@ Integrate discoverable entrypoint in existing sidebar and polish route UX for da
 
 Update `frontend/src/features/graph/Sidebar.tsx`:
 
-- place button directly above current usage block.
+- keep button directly under current usage block (current placement), polish visuals and focus behavior.
 - label recommendation:
   - `Usage Snapshot`
 - click action:

@@ -1,7 +1,7 @@
 migration_id: usage_snapshot_rollout
-status: phase_2_not_started
-current_phase: 2
-next_phase: 2
+status: phase_4_not_started
+current_phase: 4
+next_phase: 4
 
 references:
   plan_doc: docs/usagesnapshot/README.md
@@ -14,7 +14,7 @@ locked_decisions:
     decision: usage snapshot is a separate route, not an inline sidebar expansion
   - id: sidebar_button_entrypoint
     status: locked
-    decision: open usage snapshot from a button above existing sidebar usage block
+    decision: open usage snapshot from the sidebar usage area entrypoint (current placement under usage block)
   - id: all_codex_sessions_scope
     status: locked
     decision: aggregate all codex sessions from codex home without workspace filter
@@ -60,22 +60,36 @@ phases:
       unit 10 passed, integration 7 passed.
   - phase: 2
     name: backend_performance_and_observability
-    status: not_started
+    status: completed
     depends_on:
       - 1
     effort_percent: 14
     estimated_days: 3.0
     artifacts:
       - docs/usagesnapshot/phase-2-backend-performance-and-observability.md
+      - docs/usagesnapshot/phase-2-to-phase-3-handoff.md
+    notes: >
+      Completed on 2026-04-06. Added process-local in-memory cache (TTL 30s),
+      single-flight recomputation by key (normalized days + sessions root),
+      centralized days normalization in service, and scan diagnostics summary
+      logging (cache hit debug / miss info). Verification: unit 15 passed,
+      integration 10 passed.
   - phase: 3
     name: frontend_route_screen_and_polling
-    status: not_started
+    status: completed
     depends_on:
       - 1
     effort_percent: 20
     estimated_days: 4.5
     artifacts:
       - docs/usagesnapshot/phase-3-frontend-route-screen-and-polling.md
+      - docs/usagesnapshot/phase-3-to-phase-4-handoff.md
+    notes: >
+      Completed on 2026-04-06. Shipped local usage snapshot frontend
+      integration with typed API client contract, polling + manual refresh hook
+      (stale-response guard), and full page UI states (loading, blocking/non-blocking
+      error, empty, populated). Verification: frontend typecheck passed and unit
+      suite passed (36 files, 210 tests).
   - phase: 4
     name: sidebar_entrypoint_and_ux_polish
     status: not_started

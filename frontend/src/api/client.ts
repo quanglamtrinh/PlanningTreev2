@@ -10,6 +10,7 @@ import type {
   DetailState,
   FrameGenAcceptedResponse,
   FrameGenStatusResponse,
+  LocalUsageSnapshot,
   NodeDocument,
   NodeDocumentKind,
   ResetThreadV2Response,
@@ -281,6 +282,10 @@ export const api = {
   },
   getCodexSnapshot(): Promise<CodexSnapshot> {
     return jsonFetch('/v1/codex/account')
+  },
+  getLocalUsageSnapshot(days?: number): Promise<LocalUsageSnapshot> {
+    const query = days == null ? '' : `?days=${encodeURIComponent(String(days))}`
+    return jsonFetch<LocalUsageSnapshot>(`/v1/codex/usage/local${query}`)
   },
   listProjects(): Promise<ProjectSummary[]> {
     return jsonFetch('/v1/projects')

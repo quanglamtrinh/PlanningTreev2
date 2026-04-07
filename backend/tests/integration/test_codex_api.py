@@ -238,18 +238,29 @@ def test_get_local_usage_snapshot_honors_valid_days_query(
     assert len(payload["days"]) == 7
 
 
-def test_get_local_usage_snapshot_invalid_days_falls_back_to_default(
+@pytest.mark.parametrize(
+    ("raw_days", "expected_days"),
+    [
+        ("0", 1),
+        ("-1", 1),
+        ("999", 90),
+        ("abc", 30),
+    ],
+)
+def test_get_local_usage_snapshot_days_boundaries_and_fallback(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    raw_days: str,
+    expected_days: int,
 ) -> None:
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
 
-    response = client.get("/v1/codex/usage/local?days=abc")
+    response = client.get(f"/v1/codex/usage/local?days={raw_days}")
 
     assert response.status_code == 200
     payload = response.json()
-    assert len(payload["days"]) == 30
+    assert len(payload["days"]) == expected_days
 
 
 def test_get_local_usage_snapshot_degraded_input_still_returns_valid_snapshot(

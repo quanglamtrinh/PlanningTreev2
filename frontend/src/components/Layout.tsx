@@ -42,9 +42,9 @@ export function Layout() {
     }
   }, [])
 
-  const showBackToGraph = BREADCRUMB_CHAT_PATHS.some(
-    (path) => matchPath(path, location.pathname) != null,
-  )
+  const showBackToGraph =
+    location.pathname === '/usage-snapshot' ||
+    BREADCRUMB_CHAT_PATHS.some((path) => matchPath(path, location.pathname) != null)
 
   function handleBackToGraph() {
     setActiveSurface('graph')
