@@ -1,4 +1,4 @@
-﻿# Usage Snapshot Phase 3 to Phase 4 Handoff
+# Usage Snapshot Phase 3 to Phase 4 Handoff
 
 Status: ready for Phase 4 implementation.
 
@@ -6,83 +6,143 @@ Date: 2026-04-06.
 
 Owner scope: transition from frontend data delivery to sidebar UX polish and accessibility finalization.
 
-## 1. Purpose of this handoff
+## 1. Purpose
 
-Phase 3 is completed and validated. This handoff locks the frontend data and polling behaviors so Phase 4 can focus on UX polish without reopening core API/polling contracts.
+Phase 3 is complete and validated. This handoff locks the frontend data/polling contract so Phase 4 can focus on UX polish without reopening API or data-lifecycle logic.
 
-## 2. Phase 3 delivery summary
+## 2. Phase 3 outcome at a glance
 
-Phase 3 goals were to connect `/usage-snapshot` to real backend data, implement polling/manual refresh, and close core frontend test coverage.
+Phase 3 target was: real data on `/usage-snapshot`, stable polling/manual refresh, and baseline unit coverage for route/screen/hook behavior.
 
-Delivered:
+Outcome: delivered and verified.
 
-1. API contract usage in frontend:
-   - `frontend/src/api/types.ts`
-   - `frontend/src/api/client.ts` (`getLocalUsageSnapshot`)
-2. Polling hook with stale-overwrite guard:
-   - `frontend/src/features/usage-snapshot/useLocalUsageSnapshot.ts`
-   - interval: `5 minutes`
-   - request generation guard + unmount-safe cleanup
-   - standardized `days=30`
-3. Usage Snapshot page data integration:
-   - `frontend/src/features/usage-snapshot/UsageSnapshotPage.tsx`
-   - `frontend/src/features/usage-snapshot/UsageSnapshotPage.module.css`
-   - UI states: loading / blocking error / non-blocking error / empty / populated
-   - populated view includes timestamp, refresh, summary cards, 7-day chart, top models
-4. Frontend test coverage:
-   - `frontend/tests/unit/UsageSnapshotPage.test.tsx`
-   - `frontend/tests/unit/useLocalUsageSnapshot.test.tsx`
-   - `frontend/tests/unit/Layout.test.tsx` (`/usage-snapshot` back-to-graph behavior)
+## 3. Implementation inventory (what shipped)
 
-## 3. Contract conformance checklist (Phase 3)
+### 3.1 Frontend API contract wiring
 
-All locked Phase 3 requirements are satisfied:
+1. Typed models added in `frontend/src/api/types.ts`:
+   - `LocalUsageDay`
+   - `LocalUsageTotals`
+   - `LocalUsageModel`
+   - `LocalUsageSnapshot`
+2. API client method added in `frontend/src/api/client.ts`:
+   - `getLocalUsageSnapshot(days?: number)`
+   - calls `GET /v1/codex/usage/local`
+   - query param `days` is only sent when explicitly provided
 
-1. Backend contract is consumed via `GET /v1/codex/usage/local` without schema changes.
-2. Screen scope remains all Codex sessions (no workspace filter).
-3. Polling is enabled and stale response overwrite is prevented.
-4. Manual refresh is supported and does not force cache bypass.
-5. Usage Snapshot route remains in existing shell with sidebar + topbar continuity.
+### 3.2 Data lifecycle + polling
 
-## 4. Verification evidence
+1. New hook `frontend/src/features/usage-snapshot/useLocalUsageSnapshot.ts`.
+2. Hook state:
+   - `snapshot`
+   - `isLoading`
+   - `isRefreshing`
+   - `error`
+   - `lastSuccessfulAt`
+3. Runtime behavior:
+   - initial fetch on mount
+   - polling interval: every 5 minutes
+   - manual refresh trigger
+   - standardized request window: `days=30`
+4. Safety/consistency guards:
+   - request generation guard prevents stale response overwrite
+   - interval cleanup + unmount safety (no post-unmount state update)
 
-Executed commands:
+### 3.3 Usage Snapshot page integration
+
+1. Updated `frontend/src/features/usage-snapshot/UsageSnapshotPage.tsx`.
+2. Updated `frontend/src/features/usage-snapshot/UsageSnapshotPage.module.css`.
+3. Kept current shell behavior and existing sidebar/button placement.
+4. Implemented full page state matrix:
+   - initial loading skeleton
+   - blocking error (no cached data) + retry action
+   - non-blocking error banner (when stale data is present)
+   - empty state when total usage is zero
+   - populated state with:
+     - title/subtitle + updated timestamp
+     - manual refresh button with busy state
+     - summary cards from totals
+     - native 7-day chart (SVG/CSS, no new chart dependency)
+     - top-model usage list
+
+### 3.4 Route/layout continuity
+
+1. Existing route `/usage-snapshot` remains unchanged at app shell level.
+2. Existing topbar back-navigation behavior preserved.
+
+## 4. Locked behavior contract for Phase 4
+
+Phase 4 should treat these as stable unless blocker-level issue appears:
+
+1. Data source remains `GET /v1/codex/usage/local` (no backend schema/endpoint change).
+2. Scope remains all Codex sessions (no workspace filter in this phase path).
+3. Polling cadence remains 5 minutes.
+4. Manual refresh does not force backend cache bypass.
+5. Usage snapshot entrypoint remains at current sidebar placement under the usage block.
+
+## 5. Verification evidence
+
+Executed during Phase 3 closeout:
 
 1. `npm run typecheck --prefix frontend`
    - result: pass
 2. `npm run test:unit --prefix frontend -- tests/unit/useLocalUsageSnapshot.test.tsx tests/unit/UsageSnapshotPage.test.tsx tests/unit/Layout.test.tsx tests/unit/Sidebar.test.tsx`
    - result: pass
 3. `npm run test:unit --prefix frontend`
-   - result: `36 passed`, `210 passed`
+   - result: pass (`36 files`, `210 tests`)
 
-## 5. Out-of-scope items intentionally deferred to Phase 4+
+## 6. Test coverage map (Phase 3)
 
-Not part of Phase 3 by design:
+1. `frontend/tests/unit/UsageSnapshotPage.test.tsx`
+   - loading
+   - populated render
+   - empty state
+   - blocking error + retry
+   - non-blocking error with existing data
+   - manual refresh interaction
+2. `frontend/tests/unit/useLocalUsageSnapshot.test.tsx`
+   - polling tick behavior
+   - interval cleanup on unmount
+   - stale response guard
+   - manual refresh lifecycle
+3. `frontend/tests/unit/Layout.test.tsx`
+   - `/usage-snapshot` route shows back-to-graph control
+4. `frontend/tests/unit/Sidebar.test.tsx`
+   - usage snapshot navigation from sidebar
 
-1. additional sidebar visual polish beyond current stable entrypoint
-2. expanded accessibility sweep beyond covered route/control behavior
-3. E2E coverage for sidebar-to-usage flow (Phase 5)
+## 7. Known non-blocking notes
 
-## 6. Phase 4 kickoff guidance
+1. Manual refresh can still return cached snapshot within backend TTL (30 seconds) by design.
+2. Existing unrelated test-suite warnings (react-router future flags / isolated act warnings in non-phase-3 tests) were observed previously and do not block Phase 4 kickoff.
 
-Phase 4 should focus on UX/accessibility polish only, keeping Phase 3 behavior stable:
+## 8. Phase 4 kickoff checklist
 
-1. preserve current usage snapshot data flow and polling hook behavior
-2. polish sidebar usage snapshot entrypoint states and accessibility affordances
-3. validate route-active and keyboard/focus behavior across themes
-4. avoid reopening API/hook contracts unless blocker-level issue is found
+Recommended start checklist for the next owner:
 
-## 7. Risks and assumptions to carry forward
+1. Review `docs/usagesnapshot/phase-4-sidebar-entrypoint-and-ux-polish.md` and confirm scope boundary (UX/a11y only).
+2. Preserve `useLocalUsageSnapshot` contract and avoid altering fetch semantics unless a blocker is proven.
+3. Validate:
+   - route active visuals
+   - keyboard navigation
+   - focus visibility and tab order
+   - responsive behavior for sidebar entrypoint
+4. Keep `/usage-snapshot` page data rendering logic intact while polishing entrypoint UX.
+5. Record any polish-driven test additions directly in phase-4 doc and progress log.
 
-1. manual refresh may return cached backend snapshot inside 30-second backend TTL by design
-2. current sidebar usage snapshot button placement remains unchanged in this phase handoff
-3. route-level and unit-level verification is complete; E2E verification remains in Phase 5
+## 9. Forward seed for Phase 5 (E2E)
 
-## 8. Open blockers and questions
+Phase 3 leaves clear seeds for E2E completion in Phase 5:
 
-No blocking issues remain for Phase 4 kickoff.
+1. sidebar entrypoint click to `/usage-snapshot`
+2. screen state transitions (loading -> populated / empty / error)
+3. manual refresh interaction
+4. periodic polling behavior (clock-controlled E2E where feasible)
 
-## 9. Handoff artifact index
+## 10. Open blockers/questions
+
+No blockers remain for Phase 4 implementation.
+
+## 11. Artifact index
 
 - `docs/usagesnapshot/phase-3-frontend-route-screen-and-polling.md`
 - `docs/usagesnapshot/phase-3-to-phase-4-handoff.md`
