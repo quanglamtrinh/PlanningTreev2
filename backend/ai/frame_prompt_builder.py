@@ -328,6 +328,8 @@ TASK-SHAPING FIELDS RULES
 
 13. Prefer fewer high-impact shaping fields over many low-impact ones.
     Stop once this task is sufficiently shaped.
+    The initial frame must include at least 3 unresolved Task-Shaping Fields
+    using the empty format `- field name:`.
 
 14. Use the exact bullet format `- field name: value` for resolved fields and
     `- field name:` for unresolved fields.

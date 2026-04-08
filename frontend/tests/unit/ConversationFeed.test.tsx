@@ -223,7 +223,7 @@ describe('ConversationFeed', () => {
     expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument()
   })
 
-  it('renders command-based file writes as file-change cards when path can be inferred', () => {
+  it('keeps shell write commands as command cards when file payload is absent', () => {
     render(
       <ConversationFeed
         snapshot={makeSnapshot({
@@ -232,33 +232,7 @@ describe('ConversationFeed', () => {
               id: 'tool-write-1',
               status: 'completed',
               argumentsText:
-                '"powershell.exe" -Command "@\'content\'@ | Set-Content -Path tests/session.test.mjs"',
-              outputText: '',
-              outputFiles: [],
-            }),
-          ],
-        })}
-        isLoading={false}
-        onResolveUserInput={vi.fn()}
-      />,
-    )
-
-    const toolRow = screen.getByTestId('conversation-item-tool')
-    expect(within(toolRow).getByText('session.test.mjs')).toBeInTheDocument()
-    expect(within(toolRow).getByLabelText('Copy diff')).toBeInTheDocument()
-    expect(screen.queryByTestId('conversation-tool-output-tool-write-1')).not.toBeInTheDocument()
-  })
-
-  it('prefers inferred file payload over raw command output for shell-write commands', () => {
-    render(
-      <ConversationFeed
-        snapshot={makeSnapshot({
-          items: [
-            makeCommandTool({
-              id: 'tool-write-2',
-              status: 'completed',
-              argumentsText:
-                '"powershell.exe" -Command "@\'const ready = true;\'@ | Set-Content -Path src/app.ts"',
+                '"powershell.exe" -Command "@\'const ready = true;\'@ | Set-Content -Path tests/session.test.mjs"',
               outputText: 'PS > powershell.exe -Command ...',
               outputFiles: [],
             }),
@@ -269,13 +243,14 @@ describe('ConversationFeed', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand diff for app.ts' }))
     const toolRow = screen.getByTestId('conversation-item-tool')
-    expect(toolRow).toHaveTextContent(/const\s+ready\s*=\s*true;/)
-    expect(toolRow).not.toHaveTextContent(/PS > powershell\.exe/i)
+    expect(within(toolRow).getByText(/set-content/i)).toBeInTheDocument()
+    fireEvent.click(within(toolRow).getByRole('button', { name: 'Expand' }))
+    expect(screen.getByTestId('conversation-tool-output-tool-write-1')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
   })
 
-  it('shows per-file diff content and +/- stats for multi-file patch payloads', () => {
+  it('keeps multi-file patch command payloads on command cards', () => {
     render(
       <ConversationFeed
         snapshot={makeSnapshot({
@@ -312,16 +287,14 @@ describe('ConversationFeed', () => {
     )
 
     const toolRow = screen.getByTestId('conversation-item-tool')
-    expect(within(toolRow).getByText('2 files changed')).toBeInTheDocument()
-    expect(within(toolRow).getAllByText('+1').length).toBeGreaterThanOrEqual(2)
-    expect(within(toolRow).getAllByText('-1').length).toBeGreaterThanOrEqual(2)
+    expect(toolRow).toHaveTextContent('Begin Patch')
+    expect(within(toolRow).queryByText('2 files changed')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Copy diff')).not.toBeInTheDocument()
 
-    fireEvent.click(within(toolRow).getByRole('button', { name: 'Expand diff for a.ts' }))
-    expect(toolRow).toHaveTextContent(/const\s+a\s*=\s*2/)
-
-    fireEvent.click(within(toolRow).getByRole('button', { name: 'Expand diff for b.ts' }))
-    expect(toolRow).toHaveTextContent(/console\.log\('new'\)/)
-    expect(toolRow).not.toHaveTextContent('No diff excerpt for this file.')
+    fireEvent.click(within(toolRow).getByRole('button', { name: 'Expand' }))
+    expect(screen.getByTestId('conversation-tool-output-tool-multi-1')).toBeInTheDocument()
+    expect(toolRow).toHaveTextContent('src/a.ts')
+    expect(toolRow).toHaveTextContent('src/b.ts')
   })
 
   it('shows only the activity spinner while running (no reasoning caption or elapsed timer)', () => {

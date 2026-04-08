@@ -2,16 +2,34 @@
 .viewer {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   font-family: var(--font-sans);
-  font-size: 12.5px;
-  line-height: 1.55;
+  font-size: 13px;
+  line-height: 1.6;
   color: var(--text-primary);
 }
 
-/* Metadata shell (thread context): match Clarify Q/A density */
+/* Frame panel shell (task details reference UI) */
 .viewerShell {
-  gap: 25px;
+  gap: 28px;
+  font-size: 13px;
+  line-height: 1.55;
+  --shell-mock-label: #8e8e8e;
+  --shell-mock-fg: #1a1a1a;
+  --shell-check-green: #059669;
+  --shell-oos-icon: #9ca3af;
+  --shell-tsf-card-bg: color-mix(in srgb, var(--text-primary) 3.5%, #f3f4f6);
+  --shell-field-label-fs: 11px;
+  --shell-field-label-fw: 700;
+  --shell-field-label-lh: 1.3;
+  --shell-field-label-track: 0.1em;
+  --shell-field-label-fg: var(--shell-mock-label);
+  --shell-field-value-fs: 13px;
+  --shell-field-value-fw: 400;
+  --shell-field-value-lh: 1.6;
+  --shell-field-value-fg: var(--shell-mock-fg);
+  --shell-field-code-fs: 11.5px;
+  --shell-field-code-fw: 500;
 }
 
 /* ─── Shell: User Story / Functional Requirements / Success Criteria ─ */
@@ -19,33 +37,33 @@
 .shellStyledSection {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 20px;
 }
 
 .shellSectionHeading {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .shellSectionIcon {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
-  color: var(--accent-primary, #3b82f6);
 }
 
 .shellSectionTitle {
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1.3;
+  font-size: var(--shell-field-label-fs);
+  font-weight: var(--shell-field-label-fw);
+  letter-spacing: var(--shell-field-label-track);
+  text-transform: uppercase;
+  line-height: var(--shell-field-label-lh);
 }
 
 .shellUserStoryList {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
 .shellUserStoryRow {
@@ -56,12 +74,13 @@
 
 .shellUserStoryIndex {
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent-primary);
-  line-height: 1.45;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--shell-mock-label);
+  line-height: var(--shell-field-value-lh);
   flex-shrink: 0;
-  min-width: 1.5em;
+  min-width: 1.75em;
+  letter-spacing: 0.04em;
 }
 
 .shellUserStoryBody {
@@ -69,221 +88,188 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
 }
 
 .shellUserStoryTitle {
-  font-size: 11.5px;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
   font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1.4;
+  color: var(--shell-field-value-fg);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellUserStoryDesc {
-  font-size: 11.5px;
-  line-height: 1.45;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellStoryDescP {
   margin: 0;
-  font-size: 11.5px;
-  font-weight: 400;
-  color: var(--text-secondary);
-  line-height: 1.45;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: color-mix(in srgb, var(--shell-mock-label) 28%, var(--shell-mock-fg));
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellStoryDescStrong {
   font-weight: 700;
-  color: var(--text-primary);
+  color: var(--shell-field-value-fg);
 }
 
-.shellFrBox {
-  border-radius: var(--radius-md, 8px);
-  background: color-mix(in srgb, var(--text-primary) 4%, var(--bg-subtle, #f4f4f5));
-  border: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
-  padding: 8px 12px;
-}
-
-.shellFrList {
+/* Shared: functional requirements + success criteria (green circle check) */
+.shellCheckList {
   list-style: none;
-  margin: 0;
+  margin: 0 5px;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 14px;
 }
 
-.shellFrItem {
+.shellCheckListItem {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   align-items: flex-start;
 }
 
-.shellFrCheck {
+.shellCheckListGlyph {
   flex-shrink: 0;
-  color: var(--accent-primary);
+  color: var(--shell-check-green);
   line-height: 0;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .shellCheckCircleSvg {
-  margin-top: 5px;
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
   display: block;
 }
 
-.shellFrItemBody {
+.shellCheckListBody {
   flex: 1;
   min-width: 0;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  line-height: var(--shell-field-value-lh);
+  color: var(--shell-mock-fg);
 }
 
 .shellFrItemP {
-  margin-top: 5px;
+  margin: 0;
+  color: var(--shell-mock-fg);
+}
+
+.shellFrItemP + .shellFrItemP {
+  margin-top: 8px;
 }
 
 .shellFrItemStrong {
   font-weight: 700;
-  color: var(--text-primary);
+  color: var(--shell-mock-fg);
 }
 
 .shellInlineAccent {
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--accent-primary);
-  background: transparent;
-  padding: 0;
-  border-radius: 0;
-}
-
-.shellSuccessList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.shellSuccessCard {
-  margin-top: 5px;
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  border: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
-  border-radius: var(--radius-sm, 6px);
-  background: var(--bg-surface);
-  padding: 7px 10px;
-}
-
-.shellSuccessCheck {
-  flex-shrink: 0;
-  color: var(--accent-primary);
-  line-height: 0;
-  margin-top: 1px;
-}
-
-.shellCheckSquareSvg {
-  width: 15px;
-  height: 15px;
-  display: block;
-}
-
-.shellSuccessCardBody {
-  flex: 1;
-  min-width: 0;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--text-secondary);
-  font-weight: 400;
-}
-
-.shellSuccessItemP {
-  margin: 0;
-}
-
-.shellSuccessItemStrong {
-  font-weight: 600;
-  color: var(--text-primary);
+  font-size: var(--shell-field-code-fs);
+  font-weight: var(--shell-field-code-fw);
+  color: var(--shell-field-value-fg);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  padding: 1px 4px;
+  border-radius: 4px;
 }
 
 .shellSectionIconMuted {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
-  color: var(--text-tertiary);
+  color: var(--shell-mock-label);
 }
 
 /* Out of Scope */
 .shellOosList {
   list-style: none;
-  margin: 0;
+  margin: 0 5px;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 14px;
 }
 
 .shellOosItem {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   align-items: flex-start;
 }
 
-.shellOosDash {
-  margin-top: 5px;
+.shellOosMinusIcon {
   flex-shrink: 0;
-  width: 1em;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--text-tertiary);
-  font-weight: 500;
-  text-align: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  color: var(--shell-oos-icon);
+  line-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shellOosMinusIcon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 
 .shellOosText {
   flex: 1;
   min-width: 0;
-  font-size: 11.5px;
-  line-height: 1.45;
-  font-style: italic;
-  color: var(--text-quaternary, var(--text-tertiary));
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  line-height: var(--shell-field-value-lh);
+  font-style: normal;
+  color: color-mix(in srgb, var(--shell-mock-label) 35%, var(--shell-mock-fg));
 }
 
 .shellOosMdP {
-  margin-top: 5px;
-  font-size: 11.5px;
-  line-height: 1.45;
-  font-style: italic;
-  color: var(--text-quaternary, var(--text-tertiary));
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  line-height: var(--shell-field-value-lh);
+  font-style: normal;
+  color: color-mix(in srgb, var(--shell-mock-label) 35%, var(--shell-mock-fg));
+}
+
+.shellOosMdP + .shellOosMdP {
+  margin-top: 8px;
 }
 
 .shellOosStrong {
-  font-style: italic;
-  font-weight: 700;
-  color: var(--text-secondary);
+  font-style: normal;
+  font-weight: var(--shell-field-value-fw);
+  color: color-mix(in srgb, var(--shell-mock-label) 22%, var(--shell-mock-fg));
 }
 
 .shellOosCode {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--shell-field-code-fs);
   font-style: normal;
-  font-weight: 500;
-  color: var(--text-tertiary);
+  font-weight: var(--shell-field-code-fw);
+  color: var(--shell-field-value-fg);
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   padding: 1px 4px;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
-/* Task-Shaping Fields */
+/* Task-Shaping Fields — 2-col card grid */
 .shellTsfGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 @media (max-width: 520px) {
@@ -293,38 +279,40 @@
 }
 
 .shellTsfCard {
-  background: transparent;
-  border: 1px solid color-mix(in srgb, var(--border-default) 55%, transparent);
-  border-radius: var(--radius-sm, 6px);
-  padding: 8px 10px;
+  background: var(--shell-tsf-card-bg);
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 8px;
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .shellTsfLabel {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-label-fs);
+  font-weight: var(--shell-field-label-fw);
+  letter-spacing: var(--shell-field-label-track);
   text-transform: uppercase;
-  color: var(--text-quaternary, var(--text-tertiary));
-  line-height: 1.2;
+  color: var(--shell-field-label-fg);
+  line-height: var(--shell-field-label-lh);
 }
 
 .shellTsfValue {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.4;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: 700;
+  color: var(--shell-mock-fg);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellTsfValueEmpty {
-  font-size: 11px;
-  font-weight: 400;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: 500;
   font-style: italic;
-  color: var(--text-quaternary, var(--text-tertiary));
-  line-height: 1.4;
+  color: var(--text-secondary);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellQaItem {
@@ -334,25 +322,29 @@
 }
 
 .shellQaLabel {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-label-fs);
+  font-weight: var(--shell-field-label-fw);
+  letter-spacing: var(--shell-field-label-track);
+  text-transform: uppercase;
+  line-height: var(--shell-field-label-lh);
 }
 
 .shellQaValue {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellQaValue .p {
   margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: color-mix(in srgb, var(--text-secondary) 28%, var(--text-primary));
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellQaValue .ul,
@@ -368,10 +360,11 @@
 
 .shellQaValue .li {
   display: list-item;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: color-mix(in srgb, var(--text-secondary) 28%, var(--text-primary));
+  line-height: var(--shell-field-value-lh);
   padding: 2px 0;
   border: none;
 }
@@ -381,14 +374,17 @@
 }
 
 .shellQaValue .inlineCode {
-  font-size: 11px;
+  font-size: var(--shell-field-code-fs);
+  font-weight: var(--shell-field-code-fw);
 }
 
 .shellQaEmpty {
-  font-size: 12px;
-  color: var(--text-quaternary, var(--text-tertiary));
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: 500;
+  color: var(--text-secondary);
   font-style: italic;
-  line-height: 1.5;
+  line-height: var(--shell-field-value-lh);
 }
 
 .shellBody {
@@ -399,10 +395,11 @@
 
 .shellBody .p {
   margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-primary);
-  font-weight: 600;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  line-height: var(--shell-field-value-lh);
+  color: var(--shell-field-value-fg);
+  font-weight: var(--shell-field-value-fw);
 }
 
 .shellBody .ul,
@@ -418,10 +415,11 @@
 
 .shellBody .li {
   display: list-item;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--shell-field-value-fs);
+  font-weight: var(--shell-field-value-fw);
+  color: var(--shell-field-value-fg);
+  line-height: var(--shell-field-value-lh);
   padding: 2px 0;
   border: none;
 }
@@ -432,51 +430,55 @@
 
 /* ─── Headings ────────────────────────────────────────────────────── */
 .h1 {
-  margin: 4px 0 0;
-  font-size: 16px;
+  margin: 6px 0 2px;
+  /* Toned down — strong but not glowing full-accent */
+  font-size: 14.5px;
   font-weight: 700;
-  color: var(--accent-primary);
-  letter-spacing: -0.015em;
-  line-height: 1.25;
+  color: color-mix(in srgb, var(--accent-primary) 80%, var(--text-primary));
+  letter-spacing: -0.01em;
+  line-height: 1.3;
 }
 
 .h2 {
-  margin: 2px 0 0;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent-primary);
-  letter-spacing: 0.07em;
+  margin: 4px 0 2px;
+  /* Was: 11px uppercase — now readable sentence-case */
+  font-size: 12.5px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text-primary) 72%, var(--text-secondary));
+  letter-spacing: -0.005em;
   line-height: 1.3;
-  text-transform: uppercase;
   font-family: var(--font-sans);
 }
 
 .h3 {
-  margin: 0;
-  font-size: 13px;
+  margin: 2px 0 1px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text-primary);
+  line-height: 1.3;
 }
 
 .h4 {
   margin: 0;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-secondary);
+  line-height: 1.3;
 }
 
 /* ─── Body prose wrapper ──────────────────────────────────────────── */
 .body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 
 .p {
   margin: 0;
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  /* Better contrast: closer to text-primary */
+  color: color-mix(in srgb, var(--text-primary) 82%, var(--text-secondary));
 }
 
 .strong {
@@ -486,10 +488,11 @@
 
 /* ─── Paragraph card box ─────────────────────────────────────────── */
 .paraCard {
-  border: 1px solid var(--border-default);
+  /* Softer: less stark border */
+  border: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
   border-radius: var(--radius-md, 8px);
-  background: var(--bg-surface);
-  padding: 8px 12px;
+  background: color-mix(in srgb, var(--bg-surface) 88%, var(--bg-subtle, #f8f8f8));
+  padding: 8px 12px 9px;
 }
 
 .paraCard .p {
@@ -498,10 +501,11 @@
 
 /* ─── Lists — rendered as card boxes ─────────────────────────────── */
 .listCard {
-  border: 1px solid var(--border-default);
+  /* Softer: less stark border, warmer background */
+  border: 1px solid color-mix(in srgb, var(--border-default) 65%, transparent);
   border-radius: var(--radius-md, 8px);
-  background: var(--bg-surface);
-  padding: 8px 12px;
+  background: color-mix(in srgb, var(--bg-surface) 88%, var(--bg-subtle, #f8f8f8));
+  padding: 6px 12px 8px;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -518,14 +522,16 @@
 }
 
 .li {
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  /* Better contrast: not washed-out secondary */
+  color: color-mix(in srgb, var(--text-primary) 80%, var(--text-secondary));
   display: flex;
   align-items: flex-start;
-  gap: 7px;
-  padding: 4px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
+  gap: 8px;
+  padding: 3px 0;
+  /* No border-bottom per item — too noisy */
+  border-bottom: none;
 }
 
 .li:last-child {
@@ -537,14 +543,14 @@
   padding-top: 0;
 }
 
-/* Bullet dot */
+/* Bullet — softer en-dash instead of loud filled dot */
 .li::before {
-  content: '•';
-  color: var(--accent-primary);
+  content: '–';
+  color: color-mix(in srgb, var(--accent-primary) 55%, var(--text-secondary));
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.6;
   flex-shrink: 0;
-  opacity: 0.7;
+  opacity: 0.9;
 }
 
 /* ─── Code ────────────────────────────────────────────────────────── */
@@ -575,21 +581,23 @@
 
 /* ─── Callout box (blockquote) ────────────────────────────────────── */
 .callout {
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 28%, var(--border-default));
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 20%, var(--border-default));
+  /* Left accent strip instead of all-side border */
+  border-left: 3px solid color-mix(in srgb, var(--accent-primary) 50%, transparent);
   border-radius: var(--radius-md, 8px);
-  padding: 13px 16px 14px;
-  background: color-mix(in srgb, var(--accent-primary) 5%, var(--bg-surface));
+  padding: 10px 14px 12px;
+  background: color-mix(in srgb, var(--accent-primary) 4%, var(--bg-surface));
 }
 
 .calloutLabel {
   display: block;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--accent-primary);
-  margin-bottom: 10px;
+  color: color-mix(in srgb, var(--accent-primary) 80%, var(--text-primary));
+  margin-bottom: 7px;
 }
 
 .calloutBody {
@@ -599,8 +607,9 @@
 }
 
 .calloutBody .p {
-  font-size: 13.5px;
-  color: var(--text-secondary);
+  font-size: 13px;
+  /* Better contrast inside callout */
+  color: color-mix(in srgb, var(--text-primary) 80%, var(--text-secondary));
 }
 
 /* Lists inside callout — no card wrapping, just clean bullets */
@@ -613,8 +622,8 @@
 .calloutBody .li {
   border-bottom: none;
   padding: 3px 0;
-  font-size: 13.5px;
-  color: var(--text-secondary);
+  font-size: 13px;
+  color: color-mix(in srgb, var(--text-primary) 80%, var(--text-secondary));
 }
 
 .calloutBody .li:first-child {
@@ -665,4 +674,69 @@
   font-size: 12.5px;
   color: var(--text-secondary);
   margin: 0;
+}
+
+/* ─── Frame shell: keep section lists unboxed; cards use .shellTsfCard chrome above ─ */
+.viewerShell .shellUserStoryList {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.viewerShell .shellOosList {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.viewerShell .callout {
+  border: none;
+  border-radius: 12px;
+  background: var(--thread-chat-canvas, color-mix(in srgb, var(--accent-primary) 9%, var(--bg-app)));
+}
+
+.viewerShell .decisionCard {
+  border: none;
+  border-radius: 12px;
+  background: var(
+    --thread-chat-canvas,
+    color-mix(in srgb, var(--bg-surface) 88%, var(--text-primary) 4%)
+  );
+}
+
+.viewerShell .paraCard,
+.viewerShell .listCard {
+  border: none;
+  border-radius: 12px;
+  background: var(
+    --thread-chat-canvas,
+    color-mix(in srgb, var(--bg-surface) 88%, var(--text-primary) 4%)
+  );
+}
+
+.viewerShell .pre {
+  border: none;
+  border-radius: 12px;
+  background: var(
+    --thread-chat-canvas,
+    color-mix(in srgb, var(--text-primary) 5%, var(--bg-surface))
+  );
+}
+
+.viewerShell .listCard .li {
+  border-bottom: none;
+  padding: 5px 0;
+}
+
+.viewerShell .listCard .li + .li {
+  margin-top: 2px;
+  padding-top: 7px;
+  border-top: 1px solid
+    color-mix(
+      in srgb,
+      var(--text-primary) 6%,
+      var(--thread-chat-canvas, color-mix(in srgb, var(--bg-surface) 100%, transparent))
+    );
 }

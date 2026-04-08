@@ -53,6 +53,27 @@ function normalizeText(value: string | null | undefined): string {
     .trim()
 }
 
+function extractReviewSummaryText(rawText: string): string | null {
+  const normalized = normalizeText(rawText)
+  if (!normalized.startsWith('{') || !normalized.endsWith('}')) {
+    return null
+  }
+  try {
+    const parsed: unknown = JSON.parse(normalized)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null
+    }
+    const summary = (parsed as { summary?: unknown }).summary
+    if (typeof summary !== 'string') {
+      return null
+    }
+    const rendered = normalizeText(summary)
+    return rendered || null
+  } catch {
+    return null
+  }
+}
+
 function toStatusClassName(status: ItemStatus): string {
   if (status === 'completed' || status === 'answered') {
     return styles.statusCompleted
@@ -342,13 +363,12 @@ function messageIsPlanSupersedingUserMessage(
 
 function toViewState(
   expandedItemIds: Set<string>,
-  collapsedToolGroupIds: Set<string>,
   dismissedPlanReadyKeys: Set<string>,
 ): MessagesV3ViewState {
   return {
     schemaVersion: 1,
     expandedItemIds: [...expandedItemIds],
-    collapsedToolGroupIds: [...collapsedToolGroupIds],
+    collapsedToolGroupIds: [],
     dismissedPlanReadyKeys: [...dismissedPlanReadyKeys],
     updatedAt: new Date().toISOString(),
   }
@@ -359,6 +379,27 @@ function formatDurationV3(durationMs: number): string {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function IconCommandLineChevron({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      className={`${styles.commandChevron} ${expanded ? styles.commandChevronExpanded : ''}`}
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+    >
+      <path
+        d="M6 9l6 6 6-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
 }
 
 function WorkingIndicatorV3({
@@ -472,6 +513,10 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
       : item.role === 'system'
         ? styles.messageBubbleSystem
         : styles.messageBubbleAssistant
+  const renderedText =
+    item.role === 'assistant'
+      ? extractReviewSummaryText(item.text) ?? item.text
+      : item.text
 
   return (
     <article className={`${styles.row} ${roleClass}`} data-testid="conversation-v3-item-message">
@@ -480,7 +525,7 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
           className={`${styles.messageShell} ${item.role === 'user' ? styles.messageShellUser : styles.messageShellAssistant}`}
         >
           <div className={`${styles.messageBubble} ${bubbleClass}`}>
-            <ConversationMarkdown content={item.text} />
+            <ConversationMarkdown content={renderedText} />
           </div>
         </div>
       </div>
@@ -543,40 +588,55 @@ function CommandToolRowV3({
   const showBody = !hasBody || isExpanded
   const ranLabel = commandRanLabel(item.status)
 
+  const commandBar =
+    hasBody && !showBody ? (
+      <div className={`${styles.commandLineBar} ${styles.commandLineBarCollapsed}`}>
+        <div className={styles.commandLineBarTop}>
+          <span className={styles.commandRanLabel}>{ranLabel}</span>
+          <span className={styles.commandLineTextCollapsed}>{headline}</span>
+          <span className={styles.commandChevronSlot}>
+            <IconCommandLineChevron expanded={false} />
+          </span>
+        </div>
+      </div>
+    ) : hasBody && showBody ? (
+      <div className={`${styles.commandLineBar} ${styles.commandLineBarExpanded}`}>
+        <div className={styles.commandLineBarTop}>
+          <span className={styles.commandRanLabel}>{ranLabel}</span>
+          <span className={styles.commandChevronSlot}>
+            <IconCommandLineChevron expanded />
+          </span>
+        </div>
+        <span className={styles.commandLineTextExpanded}>{headline}</span>
+      </div>
+    ) : (
+      <div className={`${styles.commandLineBar} ${styles.commandLineBarExpanded}`}>
+        <div className={styles.commandLineBarTop}>
+          <span className={styles.commandRanLabel}>{ranLabel}</span>
+        </div>
+        <span className={styles.commandLineTextExpanded}>{headline}</span>
+      </div>
+    )
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-tool">
       <div className={styles.rowRail}>
         <div className={`${styles.card} ${styles.cardSection} ${styles.commandCard}`}>
-          <header className={styles.commandCardHeader}>
-            <div className={styles.commandCardHeaderLeft}>
-              <span className={styles.commandCardEyebrow}>Command</span>
-              <span className={styles.commandHeaderStatusPill}>{item.status.replace(/_/g, ' ')}</span>
-            </div>
+          <div className={styles.terminalZone}>
             {hasBody ? (
               <button
                 type="button"
-                className={styles.commandExpandToggle}
+                className={styles.commandLineBarButton}
                 onClick={() => onToggle(item.id)}
                 aria-expanded={showBody}
+                aria-label={showBody ? 'Collapse command details' : 'Expand command details'}
+                title={headline}
               >
-                {showBody ? 'Collapse' : 'Expand'}
+                {commandBar}
               </button>
-            ) : null}
-          </header>
-
-          <div className={styles.terminalZone}>
-            <div
-              className={`${styles.commandLineBar} ${
-                showBody ? styles.commandLineBarExpanded : styles.commandLineBarCollapsed
-              }`}
-            >
-              <span className={styles.commandRanLabel}>{ranLabel}</span>
-              <span
-                className={showBody ? styles.commandLineTextExpanded : styles.commandLineTextCollapsed}
-              >
-                {headline}
-              </span>
-            </div>
+            ) : (
+              commandBar
+            )}
 
             {showBody ? (
               <>
@@ -698,27 +758,68 @@ function ToolRowV3({
   const hasBody = hasArguments || hasOutput || hasFiles
   const showBody = !hasBody || isExpanded
 
+  const toolBar = (
+    <div
+      className={`${styles.commandLineBar} ${
+        showBody ? styles.commandLineBarExpanded : styles.commandLineBarCollapsed
+      }`}
+    >
+      {showBody ? (
+        <>
+          <div className={styles.commandLineBarTop}>
+            <span className={styles.commandCardEyebrow}>Tool</span>
+            <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>
+              {item.status}
+            </span>
+            {item.toolName ? <span className={styles.toolLineMeta}>{item.toolName}</span> : null}
+            {item.exitCode != null ? (
+              <span className={styles.toolLineMeta}>exit {item.exitCode}</span>
+            ) : null}
+            {hasBody ? (
+              <span className={styles.commandChevronSlot}>
+                <IconCommandLineChevron expanded />
+              </span>
+            ) : null}
+          </div>
+          <span className={styles.commandLineTextExpanded}>{headline}</span>
+        </>
+      ) : (
+        <div className={styles.commandLineBarTop}>
+          <span className={styles.commandCardEyebrow}>Tool</span>
+          <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
+          {item.toolName ? <span className={styles.toolLineMeta}>{item.toolName}</span> : null}
+          {item.exitCode != null ? (
+            <span className={styles.toolLineMeta}>exit {item.exitCode}</span>
+          ) : null}
+          <span className={styles.commandLineTextCollapsed}>{headline}</span>
+          {hasBody ? (
+            <span className={styles.commandChevronSlot}>
+              <IconCommandLineChevron expanded={false} />
+            </span>
+          ) : null}
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-tool">
       <div className={styles.rowRail}>
         <div className={`${styles.card} ${styles.cardSection}`}>
-          <div className={styles.cardHeader}>
-            <div>
-              <div className={styles.cardEyebrow}>Tool</div>
-              <div className={styles.cardTitleRow}>
-                <h3 className={styles.cardTitle}>{headline}</h3>
-                {hasBody ? (
-                  <button type="button" className={styles.inlineToggle} onClick={() => onToggle(item.id)}>
-                    {showBody ? 'Collapse' : 'Expand'}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div className={styles.cardMeta}>
-              <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
-              {item.toolName ? <span>{item.toolName}</span> : null}
-              {item.exitCode != null ? <span>exit {item.exitCode}</span> : null}
-            </div>
+          <div className={styles.terminalZone}>
+            {hasBody ? (
+              <button
+                type="button"
+                className={styles.commandLineBarButton}
+                onClick={() => onToggle(item.id)}
+                aria-expanded={showBody}
+                aria-label={showBody ? 'Collapse tool details' : 'Expand tool details'}
+              >
+                {toolBar}
+              </button>
+            ) : (
+              toolBar
+            )}
           </div>
 
           {showBody && hasArguments ? (
@@ -850,6 +951,7 @@ function isFileChangeSemanticDiff(item: Extract<ConversationItemV3, { kind: 'dif
 }
 
 function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'review' }> }) {
+  const renderedText = extractReviewSummaryText(item.text) ?? item.text
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-review">
       <div className={styles.rowRail}>
@@ -861,7 +963,7 @@ function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'revi
             </div>
             <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-          <ConversationMarkdown content={item.text} />
+          <ConversationMarkdown content={renderedText} />
         </div>
       </div>
     </article>
@@ -1298,12 +1400,15 @@ export function MessagesV3({
   onPlanAction,
   lastCompletedAt,
   lastDurationMs,
+  threadChatFlatCanvas = false,
 }: {
   snapshot: ThreadSnapshotV3 | null
   isLoading: boolean
   isSending?: boolean
   prefix?: ReactNode
   suffix?: ReactNode
+  /** Breadcrumb thread: one #fcf9f7 canvas (no gray “cards” in the scroll area). */
+  threadChatFlatCanvas?: boolean
   onResolveUserInput: (requestId: string, answers: UserInputAnswerV3[]) => Promise<void> | void
   onPlanAction?: (
     action: PlanActionV3,
@@ -1317,12 +1422,10 @@ export function MessagesV3({
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const autoScrollRef = useRef(true)
   const manuallyToggledExpandedRef = useRef<Set<string>>(new Set())
-  const manuallyToggledGroupsRef = useRef<Set<string>>(new Set())
   const snapshotRef = useRef(snapshot)
   snapshotRef.current = snapshot
 
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
-  const [collapsedToolGroupIds, setCollapsedToolGroupIds] = useState<Set<string>>(new Set())
   const [dismissedPlanReadyKeys, setDismissedPlanReadyKeys] = useState<Set<string>>(new Set())
 
   const threadId = snapshot?.threadId ?? null
@@ -1396,16 +1499,13 @@ export function MessagesV3({
   useLayoutEffect(() => {
     autoScrollRef.current = true
     manuallyToggledExpandedRef.current = new Set()
-    manuallyToggledGroupsRef.current = new Set()
     if (!threadId) {
       setExpandedItemIds(new Set())
-      setCollapsedToolGroupIds(new Set())
       setDismissedPlanReadyKeys(new Set())
       return
     }
     const saved = loadMessagesV3ViewState(threadId)
     setExpandedItemIds(new Set(saved.expandedItemIds))
-    setCollapsedToolGroupIds(new Set(saved.collapsedToolGroupIds))
     setDismissedPlanReadyKeys(new Set(saved.dismissedPlanReadyKeys))
     primeManualExpandedIdsFromSavedView(
       saved.expandedItemIds,
@@ -1423,22 +1523,6 @@ export function MessagesV3({
       return unchanged ? previous : next
     })
   }, [visibleItems])
-
-  useEffect(() => {
-    const visibleGroupIds = new Set(
-      groupedEntries
-        .filter(
-          (entry): entry is Extract<ToolGroupEntryV3, { kind: 'toolGroup' }> =>
-            entry.kind === 'toolGroup',
-        )
-        .map((entry) => entry.group.id),
-    )
-    setCollapsedToolGroupIds((previous) => {
-      const next = new Set([...previous].filter((id) => visibleGroupIds.has(id)))
-      const unchanged = next.size === previous.size && [...next].every((id) => previous.has(id))
-      return unchanged ? previous : next
-    })
-  }, [groupedEntries])
 
   useEffect(() => {
     const allowedKeys = collectPlanReadyKeys(snapshot)
@@ -1492,11 +1576,11 @@ export function MessagesV3({
     const persistTimer = globalThis.setTimeout(() => {
       saveMessagesV3ViewState(
         threadId,
-        toViewState(expandedItemIds, collapsedToolGroupIds, dismissedPlanReadyKeys),
+        toViewState(expandedItemIds, dismissedPlanReadyKeys),
       )
     }, VIEW_STATE_PERSIST_DEBOUNCE_MS)
     return () => globalThis.clearTimeout(persistTimer)
-  }, [collapsedToolGroupIds, dismissedPlanReadyKeys, expandedItemIds, threadId])
+  }, [dismissedPlanReadyKeys, expandedItemIds, threadId])
 
   const toggleExpanded = useCallback((itemId: string) => {
     manuallyToggledExpandedRef.current.add(itemId)
@@ -1506,19 +1590,6 @@ export function MessagesV3({
         next.delete(itemId)
       } else {
         next.add(itemId)
-      }
-      return next
-    })
-  }, [])
-
-  const toggleToolGroup = useCallback((groupId: string) => {
-    manuallyToggledGroupsRef.current.add(groupId)
-    setCollapsedToolGroupIds((previous) => {
-      const next = new Set(previous)
-      if (next.has(groupId)) {
-        next.delete(groupId)
-      } else {
-        next.add(groupId)
       }
       return next
     })
@@ -1621,18 +1692,6 @@ export function MessagesV3({
         )
       }
 
-      const isCollapsed = collapsedToolGroupIds.has(entry.group.id)
-      const leadTool = entry.group.items.find((item) => item.kind === 'tool')
-      const groupTitle =
-        (leadTool && normalizeText(leadTool.title)) ||
-        (leadTool && normalizeText(leadTool.toolName)) ||
-        'Live tool activity'
-      const groupCounts = `${entry.group.toolCount} tools${
-        entry.group.supportingItemCount
-          ? ` - ${entry.group.supportingItemCount} supporting items`
-          : ''
-      }`
-
       return (
         <section
           key={entry.group.id}
@@ -1640,55 +1699,37 @@ export function MessagesV3({
           data-testid={`conversation-v3-tool-group-${entry.group.id}`}
         >
           <div className={styles.rowRail}>
-            <div className={styles.groupShell}>
-              <div className={styles.groupHeader}>
-                <div>
-                  <div className={styles.cardEyebrow}>Tool Stream</div>
-                  <div className={styles.cardTitle}>{groupTitle}</div>
-                  <div className={styles.groupCounts}>{groupCounts}</div>
-                </div>
-                <button
-                  type="button"
-                  className={styles.groupToggle}
-                  onClick={() => toggleToolGroup(entry.group.id)}
-                >
-                  {isCollapsed ? 'Expand' : 'Collapse'}
-                </button>
+            <div className={`${styles.groupShell} ${styles.groupShellStream}`}>
+              <div className={styles.groupBody}>
+                {entry.group.items.map((item) => {
+                  const reasoningMeta =
+                    item.kind === 'reasoning'
+                      ? visibleState.reasoningMetaById.get(item.id)
+                      : undefined
+                  return (
+                    <div key={item.id} className={styles.streamEntry}>
+                      {renderItemRowV3({
+                        item,
+                        requestMapByRequestId,
+                        reasoningMeta,
+                        expandedItemIds,
+                        onToggleExpanded: toggleExpanded,
+                        onRequestAutoScroll: requestAutoScroll,
+                      })}
+                    </div>
+                  )
+                })}
               </div>
-              {!isCollapsed ? (
-                <div className={styles.groupBody}>
-                  {entry.group.items.map((item) => {
-                    const reasoningMeta =
-                      item.kind === 'reasoning'
-                        ? visibleState.reasoningMetaById.get(item.id)
-                        : undefined
-                    return (
-                      <div key={item.id} className={styles.streamEntry}>
-                        {renderItemRowV3({
-                          item,
-                          requestMapByRequestId,
-                          reasoningMeta,
-                          expandedItemIds,
-                          onToggleExpanded: toggleExpanded,
-                          onRequestAutoScroll: requestAutoScroll,
-                        })}
-                      </div>
-                    )
-                  })}
-                </div>
-              ) : null}
             </div>
           </div>
         </section>
       )
     },
     [
-      collapsedToolGroupIds,
       expandedItemIds,
       requestMapByRequestId,
       requestAutoScroll,
       toggleExpanded,
-      toggleToolGroup,
       visibleState.reasoningMetaById,
     ],
   )
@@ -1696,7 +1737,7 @@ export function MessagesV3({
   return (
     <div
       ref={containerRef}
-      className={styles.feed}
+      className={`${styles.feed} ${threadChatFlatCanvas ? styles.feedThreadChatCanvas : ''}`}
       data-testid="messages-v3-feed"
       onScroll={updateAutoScroll}
     >

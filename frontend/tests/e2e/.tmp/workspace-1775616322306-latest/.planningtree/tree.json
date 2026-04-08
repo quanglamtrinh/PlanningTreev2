@@ -1,0 +1,47 @@
+{
+  "schema_version": 6,
+  "project": {
+    "created_at": "2026-04-08T02:45:30.957626+00:00",
+    "name": "workspace-1775616322306-latest",
+    "id": "7151f7fba441464da2dbf4c555b7ce3f",
+    "root_goal": "workspace-1775616322306-latest",
+    "updated_at": "2026-04-08T02:45:30.957626+00:00"
+  },
+  "tree_state": {
+    "root_node_id": "9536b5c815e84ddb8f15c7c13b1cc275",
+    "active_node_id": "75cc94e8c61544c0a2e653cd1ae30bba",
+    "node_index": {
+      "9536b5c815e84ddb8f15c7c13b1cc275": {
+        "node_id": "9536b5c815e84ddb8f15c7c13b1cc275",
+        "parent_id": null,
+        "child_ids": [
+          "75cc94e8c61544c0a2e653cd1ae30bba"
+        ],
+        "title": "workspace-1775616322306-latest",
+        "description": "",
+        "status": "draft",
+        "node_kind": "root",
+        "depth": 0,
+        "display_order": 0,
+        "hierarchical_number": "1",
+        "created_at": "2026-04-08T02:45:30.957626+00:00",
+        "review_node_id": null
+      },
+      "75cc94e8c61544c0a2e653cd1ae30bba": {
+        "node_id": "75cc94e8c61544c0a2e653cd1ae30bba",
+        "parent_id": "9536b5c815e84ddb8f15c7c13b1cc275",
+        "child_ids": [],
+        "title": "New Task",
+        "description": "Smoke test task for baseline e2e",
+        "status": "ready",
+        "node_kind": "original",
+        "depth": 1,
+        "display_order": 0,
+        "hierarchical_number": "1.1",
+        "created_at": "2026-04-08T02:45:39.112092+00:00",
+        "review_node_id": null
+      }
+    }
+  },
+  "updated_at": "2026-04-08T02:45:39.112211+00:00"
+}

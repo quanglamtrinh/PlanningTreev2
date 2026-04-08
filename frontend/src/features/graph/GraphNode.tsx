@@ -10,15 +10,20 @@ import styles from './GraphNode.module.css'
 
 const CONTROL_CLASS_NAME = 'nodrag nopan'
 
-const DROPDOWN_GAP = 8
+/** Gap between action badge and dropdown menu (horizontal + vertical offset). */
+const DROPDOWN_GAP = 1
 const VIEW_MARGIN = 8
 
-function placeDropdownNearAnchor(anchorEl: HTMLElement, dropdownEl: HTMLElement) {
+/**
+ * Positions the dropdown to the RIGHT of the action badge when there is room;
+ * otherwise opens to the LEFT of the badge. Vertical: prefer below the badge.
+ */
+function placeDropdownNearBadge(badgeEl: HTMLElement, dropdownEl: HTMLElement) {
   const el = dropdownEl
   el.style.maxHeight = ''
   el.style.overflowY = ''
 
-  const anchor = anchorEl.getBoundingClientRect()
+  const badge = badgeEl.getBoundingClientRect()
   const vw = window.innerWidth
   const vh = window.innerHeight
   const G = DROPDOWN_GAP
@@ -28,42 +33,36 @@ function placeDropdownNearAnchor(anchorEl: HTMLElement, dropdownEl: HTMLElement)
   const menuHeight =
     el.offsetHeight || el.scrollHeight || el.getBoundingClientRect().height || 1
 
-  let left = anchor.right + G
+  // Horizontal: open to the right of the badge; fall back to the left if needed.
+  let left = badge.right + G
   if (left + menuWidth > vw - M) {
-    const leftOfAnchor = anchor.left - G - menuWidth
-    if (leftOfAnchor >= M) {
-      left = leftOfAnchor
-    } else {
-      left = Math.max(M, vw - menuWidth - M)
-    }
+    left = badge.left - menuWidth - G
+  }
+  if (left < M) left = M
+  if (left + menuWidth > vw - M) {
+    left = Math.max(M, vw - menuWidth - M)
   }
 
-  const spaceBelow = vh - M - anchor.bottom - G
-  const spaceAbove = anchor.top - M - G
+  // Vertical: prefer below the badge; flip above if not enough room.
+  const spaceBelow = vh - M - badge.bottom - G
+  const spaceAbove = badge.top - M - G
 
   let top: number
   let maxHeightPx: number | undefined
 
   if (menuHeight <= spaceBelow) {
-    top = anchor.bottom + G
+    top = badge.bottom + G
   } else if (menuHeight <= spaceAbove) {
-    top = anchor.top - G - menuHeight
+    top = badge.top - G - menuHeight
   } else if (spaceBelow >= spaceAbove) {
-    top = anchor.bottom + G
+    top = badge.bottom + G
     maxHeightPx = Math.max(120, spaceBelow)
   } else {
     top = M
     maxHeightPx = Math.max(120, spaceAbove)
   }
 
-  const blockH = maxHeightPx ?? menuHeight
-  if (top + blockH > vh - M) {
-    top = Math.max(M, vh - M - blockH)
-  }
-  if (top < M) {
-    top = M
-    maxHeightPx = Math.max(120, vh - M - top)
-  }
+  if (top < M) top = M
 
   el.style.position = 'fixed'
   el.style.left = `${left}px`
@@ -80,7 +79,9 @@ function placeDropdownNearAnchor(anchorEl: HTMLElement, dropdownEl: HTMLElement)
 function GraphNodeActionsDropdown({
   anchorRef,
   nodeId,
+  isInitNode,
   canCreateChild,
+  canCreateTask,
   canSplit,
   canOpenBreadcrumb,
   isSplitting,
@@ -89,7 +90,9 @@ function GraphNodeActionsDropdown({
 }: {
   anchorRef: RefObject<HTMLDivElement | null>
   nodeId: string
+  isInitNode: boolean
   canCreateChild: boolean
+  canCreateTask: boolean
   canSplit: boolean
   canOpenBreadcrumb: boolean
   isSplitting: boolean
@@ -124,14 +127,14 @@ function GraphNodeActionsDropdown({
   }, [anchorRef, onClose])
 
   useLayoutEffect(() => {
-    const anchor = anchorRef.current
+    const badge = anchorRef.current
     const dropdown = dropdownRef.current
-    if (!anchor || !dropdown) {
+    if (!badge || !dropdown) {
       return undefined
     }
 
     const apply = () => {
-      placeDropdownNearAnchor(anchor, dropdown)
+      placeDropdownNearBadge(badge, dropdown)
     }
 
     apply()
@@ -143,73 +146,105 @@ function GraphNodeActionsDropdown({
     <div ref={dropdownRef} className={`${styles.dropdown} ${CONTROL_CLASS_NAME}`}>
       <div className={styles.dropdownSection}>
         <p className={styles.dropdownLabel}>Actions</p>
-        <button
-          type="button"
-          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-          disabled={!canCreateChild}
-          onClick={() => {
-            onClose()
-            actions.createChild(nodeId)
-          }}
-        >
-          <span className={styles.menuTitle}>Create Child</span>
-          <span className={styles.menuDesc}>Append a new child node under this card.</span>
-        </button>
-        <button
-          type="button"
-          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-          disabled={!canOpenBreadcrumb}
-          onClick={() => {
-            onClose()
-            actions.openBreadcrumb(nodeId)
-          }}
-        >
-          <span className={styles.menuTitle}>Open Breadcrumb</span>
-          <span className={styles.menuDesc}>Open the breadcrumb route for this node.</span>
-        </button>
-        <button
-          type="button"
-          className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-          onClick={() => {
-            onClose()
-            if (actions.graphViewRootId === nodeId) {
-              actions.setGraphViewRoot(null)
-            } else {
-              actions.setGraphViewRoot(nodeId)
-            }
-          }}
-        >
-          <span className={styles.menuTitle}>
-            {actions.graphViewRootId === nodeId ? 'Unset current root' : 'Set as current root'}
-          </span>
-          <span className={styles.menuDesc}>
-            {actions.graphViewRootId === nodeId
-              ? 'Show the full project tree again.'
-              : 'Show only this node and its descendants in the graph.'}
-          </span>
-        </button>
+        {isInitNode ? (
+          <>
+            <button
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              onClick={() => {
+                onClose()
+                actions.initDocsForProject(nodeId)
+              }}
+            >
+              <span className={styles.menuTitle}>Init Docs For Project</span>
+              <span className={styles.menuDesc}>Scan the folder and create overview documents</span>
+            </button>
+            <button
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              disabled={!canCreateTask}
+              onClick={() => {
+                onClose()
+                actions.createTask(nodeId)
+              }}
+            >
+              <span className={styles.menuTitle}>Create A Task</span>
+              <span className={styles.menuDesc}>Describe one task, then auto-generate its frame draft.</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              disabled={!canCreateChild}
+              onClick={() => {
+                onClose()
+                actions.createChild(nodeId)
+              }}
+            >
+              <span className={styles.menuTitle}>Create Child</span>
+              <span className={styles.menuDesc}>Append a new child node under this card.</span>
+            </button>
+            <button
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              disabled={!canOpenBreadcrumb}
+              onClick={() => {
+                onClose()
+                actions.openBreadcrumb(nodeId)
+              }}
+            >
+              <span className={styles.menuTitle}>Open Breadcrumb</span>
+              <span className={styles.menuDesc}>Open the breadcrumb route for this node.</span>
+            </button>
+            <button
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              onClick={() => {
+                onClose()
+                if (actions.graphViewRootId === nodeId) {
+                  actions.setGraphViewRoot(null)
+                } else {
+                  actions.setGraphViewRoot(nodeId)
+                }
+              }}
+            >
+              <span className={styles.menuTitle}>
+                {actions.graphViewRootId === nodeId ? 'Unset current root' : 'Set as current root'}
+              </span>
+              <span className={styles.menuDesc}>
+                {actions.graphViewRootId === nodeId
+                  ? 'Show the full project tree again.'
+                  : 'Show only this node and its descendants in the graph.'}
+              </span>
+            </button>
+          </>
+        )}
       </div>
 
-      <div className={styles.dropdownSection}>
-        <p className={styles.dropdownLabel}>AI Split</p>
-        {GRAPH_SPLIT_OPTIONS.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
-            disabled={!canSplit || isSplitDisabled}
-            onClick={() => {
-              onClose()
-              actions.split(nodeId, option.id)
-            }}
-          >
-            <span className={styles.menuTitle}>
-              {isSplitting ? 'Splitting...' : option.label}
-            </span>
-            <span className={styles.menuDesc}>{option.description}</span>
-          </button>
-        ))}
-      </div>
+      {!isInitNode ? (
+        <div className={styles.dropdownSection}>
+          <p className={styles.dropdownLabel}>AI Split</p>
+          {GRAPH_SPLIT_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`${styles.menuItem} ${CONTROL_CLASS_NAME}`}
+              disabled={!canSplit || isSplitDisabled}
+              onClick={() => {
+                onClose()
+                actions.split(nodeId, option.id)
+              }}
+            >
+              <span className={styles.menuTitle}>
+                {isSplitting ? 'Splitting...' : option.label}
+              </span>
+              <span className={styles.menuDesc}>{option.description}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>,
     document.body,
   )
@@ -226,11 +261,13 @@ export type GraphNodeData = {
     is_superseded: boolean
     hierarchical_number: string
   }
+  isInitNode: boolean
   isCurrent: boolean
   isSelected: boolean
   isCollapsed: boolean
   directHiddenChildrenCount: number
   canCreateChild: boolean
+  canCreateTask: boolean
   canSplit: boolean
   canOpenBreadcrumb: boolean
   isSplitting: boolean
@@ -256,9 +293,11 @@ function graphNodePropsAreEqual(prev: NodeProps, next: NodeProps): boolean {
   return (
     a.isCurrent === b.isCurrent &&
     a.isSelected === b.isSelected &&
+    a.isInitNode === b.isInitNode &&
     a.isCollapsed === b.isCollapsed &&
     a.directHiddenChildrenCount === b.directHiddenChildrenCount &&
     a.canCreateChild === b.canCreateChild &&
+    a.canCreateTask === b.canCreateTask &&
     a.canSplit === b.canSplit &&
     a.canOpenBreadcrumb === b.canOpenBreadcrumb &&
     a.isSplitting === b.isSplitting &&
@@ -281,13 +320,23 @@ function GraphNodeComponent({ data }: NodeProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [descriptionExpanded, setDescriptionExpanded] = useState(true)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const wrapperRef = useRef<HTMLDivElement | null>(null)
   const closeMenu = useCallback(() => setMenuOpen(false), [])
   const d = data as GraphNodeData
   const descriptionText = d.node.description.trim()
   const hasDescription = descriptionText.length > 0
 
+  useEffect(() => {
+    if (!d.isInitNode && menuOpen) {
+      setMenuOpen(false)
+    }
+  }, [d.isInitNode, menuOpen])
+
   return (
-    <div className={styles.wrapper}>
+    <div
+      ref={wrapperRef}
+      className={`${styles.wrapper}${d.isInitNode ? ` ${styles.wrapperFloatingMenu}` : ''}`}
+    >
       <Handle
         className={styles.handle}
         type="target"
@@ -431,35 +480,39 @@ function GraphNodeComponent({ data }: NodeProps) {
         </div>
       </div>
 
-      <div className={`${styles.menuAnchor} ${CONTROL_CLASS_NAME}`} ref={menuRef}>
-        <button
-          type="button"
-          className={`${styles.badge} ${CONTROL_CLASS_NAME} ${menuOpen ? styles.badgeOpen : ''}`}
-          onClick={(event) => {
-            event.stopPropagation()
-            setMenuOpen((value) => !value)
-          }}
-          aria-label="Node actions"
-          title="Node actions"
-        >
-          <svg viewBox="0 0 20 20" className={styles.badgeIcon} aria-hidden="true">
-            <path d="M11 2 4 11h5l-1 7 8-10h-5z" fill="currentColor" />
-          </svg>
-        </button>
+      {d.isInitNode ? (
+        <div className={`${styles.menuAnchor} ${CONTROL_CLASS_NAME}`} ref={menuRef}>
+          <button
+            type="button"
+            className={`${styles.badge} ${CONTROL_CLASS_NAME} ${menuOpen ? styles.badgeOpen : ''}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              setMenuOpen((value) => !value)
+            }}
+            aria-label="Node actions"
+            title="Node actions"
+          >
+            <svg viewBox="0 0 20 20" className={styles.badgeIcon} aria-hidden="true">
+              <path d="M11 2 4 11h5l-1 7 8-10h-5z" fill="currentColor" />
+            </svg>
+          </button>
 
-        {menuOpen ? (
-          <GraphNodeActionsDropdown
-            anchorRef={menuRef}
-            nodeId={d.node.node_id}
-            canCreateChild={d.canCreateChild}
-            canSplit={d.canSplit}
-            canOpenBreadcrumb={d.canOpenBreadcrumb}
-            isSplitting={d.isSplitting}
-            isSplitDisabled={d.isSplitDisabled}
-            onClose={closeMenu}
-          />
-        ) : null}
-      </div>
+          {menuOpen ? (
+            <GraphNodeActionsDropdown
+              anchorRef={menuRef}
+              nodeId={d.node.node_id}
+              isInitNode={d.isInitNode}
+              canCreateChild={d.canCreateChild}
+              canCreateTask={d.canCreateTask}
+              canSplit={d.canSplit}
+              canOpenBreadcrumb={d.canOpenBreadcrumb}
+              isSplitting={d.isSplitting}
+              isSplitDisabled={d.isSplitDisabled}
+              onClose={closeMenu}
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       <Handle
         className={styles.handle}

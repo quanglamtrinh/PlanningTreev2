@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   Background,
   Controls,
@@ -157,6 +157,7 @@ type Props = {
   codexAvailable: boolean
   onSelectNode: (nodeId: string, persist?: boolean) => Promise<void>
   onCreateChild: (parentId: string) => Promise<void>
+  onCreateTask: (parentId: string, description: string) => Promise<string | null>
   onSplitNode: (nodeId: string, mode: SplitMode) => Promise<void>
   onOpenBreadcrumb: (nodeId: string) => Promise<void>
   onResetProject: () => Promise<void>
@@ -233,6 +234,7 @@ export function TreeGraph({
   codexAvailable,
   onSelectNode,
   onCreateChild,
+  onCreateTask,
   onSplitNode,
   onOpenBreadcrumb,
   onResetProject,
@@ -241,6 +243,10 @@ export function TreeGraph({
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
+  const [createTaskParentId, setCreateTaskParentId] = useState<string | null>(null)
+  const [createTaskDescription, setCreateTaskDescription] = useState('')
+  const [createTaskSubmitting, setCreateTaskSubmitting] = useState(false)
+  const [createTaskError, setCreateTaskError] = useState<string | null>(null)
   /** Subtree-only graph view; null = show full project tree. */
   const [graphViewRootId, setGraphViewRootId] = useState<string | null>(null)
   const graphShellRef = useRef<HTMLDivElement | null>(null)
@@ -255,12 +261,14 @@ export function TreeGraph({
   const handlerRef = useRef({
     onSelectNode,
     onCreateChild,
+    onCreateTask,
     onSplitNode,
     onOpenBreadcrumb,
   })
   handlerRef.current = {
     onSelectNode,
     onCreateChild,
+    onCreateTask,
     onSplitNode,
     onOpenBreadcrumb,
   }
@@ -304,6 +312,16 @@ export function TreeGraph({
       createChild: (nodeId) => {
         void handlerRef.current.onCreateChild(nodeId)
       },
+      createTask: (nodeId) => {
+        setCreateTaskParentId(nodeId)
+        setCreateTaskDescription('')
+        setCreateTaskError(null)
+      },
+      initDocsForProject: () => {
+        if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+          window.alert('Init docs for project is a placeholder action for now.')
+        }
+      },
       split: (nodeId, mode) => {
         void handlerRef.current.onSplitNode(nodeId, mode)
       },
@@ -325,6 +343,47 @@ export function TreeGraph({
     }),
     [graphViewRootId, nodeById],
   )
+
+  const createTaskParentNode = createTaskParentId ? (nodeById.get(createTaskParentId) ?? null) : null
+
+  function closeCreateTaskDialog() {
+    if (createTaskSubmitting) {
+      return
+    }
+    setCreateTaskParentId(null)
+    setCreateTaskDescription('')
+    setCreateTaskError(null)
+  }
+
+  async function submitCreateTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!createTaskParentId) {
+      return
+    }
+    const description = createTaskDescription.trim()
+    if (!description) {
+      setCreateTaskError('Task description is required.')
+      return
+    }
+
+    setCreateTaskSubmitting(true)
+    setCreateTaskError(null)
+    try {
+      const createdNodeId = await onCreateTask(createTaskParentId, description)
+      if (!createdNodeId) {
+        setCreateTaskError('Could not create task. Please retry.')
+        return
+      }
+      setCreateTaskParentId(null)
+      setCreateTaskDescription('')
+      setCreateTaskError(null)
+      await onOpenBreadcrumb(createdNodeId)
+    } catch (error) {
+      setCreateTaskError(error instanceof Error ? error.message : 'Could not create task.')
+    } finally {
+      setCreateTaskSubmitting(false)
+    }
+  }
 
   const rootNode = useMemo(
     () => nodeById.get(snapshot.tree_state.root_node_id) ?? null,
@@ -584,20 +643,27 @@ export function TreeGraph({
         selectable: false,
         data: {
           node,
+          isInitNode: Boolean(node.is_init_node),
           siblingLayerIndex: siblingLayerIndexByNodeId.get(node.node_id) ?? 1,
           isCurrent: snapshot.tree_state.active_node_id === node.node_id,
           isSelected: selectedNode?.node_id === node.node_id,
           isCollapsed: collapsedById.get(node.node_id) ?? false,
           directHiddenChildrenCount: directHiddenChildrenById.get(node.node_id) ?? 0,
-          canCreateChild: node.status !== 'done' && !node.is_superseded,
+          canCreateChild: !node.is_init_node && node.status !== 'done' && !node.is_superseded,
+          canCreateTask:
+            Boolean(node.is_init_node) &&
+            node.status !== 'done' &&
+            !node.is_superseded &&
+            splitStatus !== 'active',
           canSplit:
             codexAvailable &&
+            !node.is_init_node &&
             !node.is_superseded &&
             node.status !== 'done' &&
             (activeChildrenById.get(node.node_id) ?? []).length === 0 &&
             (node.workflow?.frame_confirmed ?? false) &&
             node.workflow?.active_step === 'spec',
-          canOpenBreadcrumb: true,
+          canOpenBreadcrumb: !node.is_init_node,
           isSplitting: splitStatus === 'active' && splittingNodeId === node.node_id,
           isSplitDisabled: splitStatus === 'active',
           executionStatus: node.workflow?.execution_status ?? null,
@@ -1000,70 +1066,120 @@ export function TreeGraph({
           <p>The project snapshot is missing its root node, so the graph cannot be rendered safely.</p>
         </div>
       ) : (
-        <GraphNodeActionsProvider value={graphNodeActions}>
-          <ReactFlow
-            fitView
-            fitViewOptions={{
-              padding: FIT_VIEW_PADDING_FULL,
-              maxZoom: FIT_VIEW_MAX_ZOOM_FULL,
-              ...fitViewSmoothOpts(isFullscreen),
-            }}
-            proOptions={{ hideAttribution: true }}
-            nodes={flowNodes}
-            edges={flowEdges}
-            nodeTypes={nodeTypes}
-            onlyRenderVisibleElements
-            nodesDraggable={false}
-            nodesConnectable={false}
-            minZoom={0.2}
-            maxZoom={1.35}
-            onInit={setFlowInstance}
-            onNodeClick={handleFlowNodePointerEvents}
-          >
-            <Background color="var(--color-border-subtle)" gap={22} size={1} />
-            <Controls showInteractive={false} position="bottom-right" />
+        <>
+          <GraphNodeActionsProvider value={graphNodeActions}>
+            <ReactFlow
+              fitView
+              fitViewOptions={{
+                padding: FIT_VIEW_PADDING_FULL,
+                maxZoom: FIT_VIEW_MAX_ZOOM_FULL,
+                ...fitViewSmoothOpts(isFullscreen),
+              }}
+              proOptions={{ hideAttribution: true }}
+              nodes={flowNodes}
+              edges={flowEdges}
+              nodeTypes={nodeTypes}
+              onlyRenderVisibleElements
+              nodesDraggable={false}
+              nodesConnectable={false}
+              minZoom={0.2}
+              maxZoom={1.35}
+              onInit={setFlowInstance}
+              onNodeClick={handleFlowNodePointerEvents}
+            >
+              <Background color="var(--color-border-subtle)" gap={22} size={1} />
+              <Controls showInteractive={false} position="bottom-right" />
 
-            <Panel position="bottom-left">
-              <div className={styles.controlStack}>
-                <button
-                  type="button"
-                  className={styles.fullscreenButton}
-                  onClick={() => setIsFullscreen((current) => !current)}
-                >
-                  {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-                </button>
-                <button
-                  type="button"
-                  className={styles.resetButton}
-                  disabled={isResetDisabled}
-                  onClick={() => void onResetProject()}
-                >
-                  {isResettingProject ? 'Resetting...' : 'Reset to Root'}
-                </button>
-              </div>
-            </Panel>
-
-            {focusedNode ? (
-              <Panel
-                position="top-right"
-                className={styles.detailPanel}
-                data-graph-detail-panel
-              >
-                <NodeDetailCard
-                  projectId={snapshot.project.id}
-                  node={focusedNode}
-                  variant="graph"
-                  showClose
-                  onClose={() => {
-                    suppressFullGraphFitUntilRef.current =
-                      performance.now() + SUPPRESS_FULL_GRAPH_FIT_MS_AFTER_DETAIL_CLOSE
-                    setFocusedNodeId(null)
-                  }}
-                />
+              <Panel position="bottom-left">
+                <div className={styles.controlStack}>
+                  <button
+                    type="button"
+                    className={styles.fullscreenButton}
+                    onClick={() => setIsFullscreen((current) => !current)}
+                  >
+                    {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.resetButton}
+                    disabled={isResetDisabled}
+                    onClick={() => void onResetProject()}
+                  >
+                    {isResettingProject ? 'Resetting...' : 'Reset to Root'}
+                  </button>
+                </div>
               </Panel>
-            ) : null}
-          </ReactFlow>
-        </GraphNodeActionsProvider>
+
+              {focusedNode ? (
+                <Panel
+                  position="top-right"
+                  className={styles.detailPanel}
+                  data-graph-detail-panel
+                >
+                  <NodeDetailCard
+                    projectId={snapshot.project.id}
+                    node={focusedNode}
+                    variant="graph"
+                    showClose
+                    onClose={() => {
+                      suppressFullGraphFitUntilRef.current =
+                        performance.now() + SUPPRESS_FULL_GRAPH_FIT_MS_AFTER_DETAIL_CLOSE
+                      setFocusedNodeId(null)
+                    }}
+                  />
+                </Panel>
+              ) : null}
+            </ReactFlow>
+          </GraphNodeActionsProvider>
+
+          {createTaskParentId ? (
+            <div
+              className={styles.createTaskBackdrop}
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  closeCreateTaskDialog()
+                }
+              }}
+            >
+              <form className={styles.createTaskDialog} onSubmit={(event) => void submitCreateTask(event)}>
+                <h3 className={styles.createTaskTitle}>Create A Task</h3>
+                <p className={styles.createTaskSubtitle}>
+                  Init node: <strong>{createTaskParentNode?.title ?? 'Project root'}</strong>
+                </p>
+                <label className={styles.createTaskLabel} htmlFor="create-task-description">
+                  Describe this task for AI agents
+                </label>
+                <textarea
+                  id="create-task-description"
+                  className={styles.createTaskTextarea}
+                  value={createTaskDescription}
+                  onChange={(event) => setCreateTaskDescription(event.target.value)}
+                  placeholder="Describe one concrete task..."
+                  rows={5}
+                  autoFocus
+                />
+                {createTaskError ? <p className={styles.createTaskError}>{createTaskError}</p> : null}
+                <div className={styles.createTaskActions}>
+                  <button
+                    type="button"
+                    className={styles.createTaskCancel}
+                    onClick={closeCreateTaskDialog}
+                    disabled={createTaskSubmitting}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className={styles.createTaskConfirm}
+                    disabled={createTaskSubmitting || !createTaskDescription.trim()}
+                  >
+                    {createTaskSubmitting ? 'Creating...' : 'Confirm Task'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : null}
+        </>
       )}
     </div>
   )

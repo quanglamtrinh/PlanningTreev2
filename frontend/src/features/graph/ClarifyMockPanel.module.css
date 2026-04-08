@@ -80,13 +80,19 @@
 
 .options {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
 }
 
 .optionBtn {
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 4px;
   border: 1px solid var(--color-border-subtle);
   background: transparent;
   font-size: 11px;
@@ -94,7 +100,43 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
-  white-space: nowrap;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.4;
+}
+
+.optionLetter {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-bg-panel) 55%, var(--color-bg-hover));
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+.optionBtn:hover:not(.optionBtnActive) .optionLetter {
+  border-color: color-mix(in srgb, var(--color-border-subtle) 70%, var(--color-text-tertiary));
+  background: var(--color-bg-hover);
+}
+
+.optionBtnActive .optionLetter {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-panel));
+  color: var(--color-accent);
+}
+
+.optionBtnBody {
+  flex: 1;
+  min-width: 0;
 }
 
 .optionBtn:hover:not(.optionBtnActive) {
@@ -125,16 +167,74 @@
   pointer-events: none;
 }
 
+.optionBtnCustomRow {
+  cursor: text;
+  align-items: flex-start;
+}
+
+.optionBtnCustomRow:focus-within:not(.optionBtnActive) {
+  border-color: color-mix(in srgb, var(--color-accent) 38%, var(--color-border-subtle));
+  background: var(--color-bg-hover);
+}
+
+.optionBtnCustomRow[aria-disabled='true'] {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+.optionInlineTextarea {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  resize: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: inherit;
+  line-height: 22px;
+  color: inherit;
+  min-height: 22px;
+  max-height: 160px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: none;
+  outline: none;
+}
+
+.optionInlineTextarea::placeholder {
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
+
+.optionInlineTextarea:focus,
+.optionInlineTextarea:focus-visible {
+  outline: none;
+  border: none;
+  box-shadow: none;
+  background: var(--color-bg-hover);
+
+}
+
+.optionInlineTextarea:disabled {
+  cursor: not-allowed;
+}
+
 .customInput {
-  margin-top: 2px;
+  margin-top: 0;
   width: 100%;
-  padding: 6px 9px;
-  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  border-radius: 4px;
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-panel);
   font-size: 11px;
   color: var(--color-text-primary);
   resize: none;
+  min-height: 4.5rem;
   line-height: 1.5;
   transition: border-color 0.12s ease;
   box-sizing: border-box;
@@ -172,18 +272,32 @@
 }
 
 .recommendedBadge {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--color-accent);
   letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.optionRationaleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.optionRationaleIcon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--color-text-tertiary) 92%, var(--color-text-primary));
 }
 
 .optionRationale {
   margin: 0;
+  flex: 1;
+  min-width: 0;
   font-size: 11px;
   line-height: 1.45;
   color: var(--color-text-tertiary);
-  font-style: italic;
 }
 
 .whyItMatters {

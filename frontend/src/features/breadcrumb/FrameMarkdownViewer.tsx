@@ -56,6 +56,25 @@ function buildShellPieces(sections: Section[]): ShellPiece[] {
   return pieces
 }
 
+/** "Task title" / "1. Task title" blocks repeat the node header in frame shell — drop them. */
+function isTaskTitleShellLabel(label: string): boolean {
+  const t = label
+    .toLowerCase()
+    .replace(/\u00a0/g, ' ')
+    .replace(/^\d+\.?\s*/, '')
+    .trim()
+  return t === 'task title'
+}
+
+function filterShellPieces(pieces: ShellPiece[]): ShellPiece[] {
+  return pieces.filter((p) => {
+    if (p.kind !== 'qa' && p.kind !== 'qa-empty') {
+      return true
+    }
+    return !isTaskTitleShellLabel(p.label)
+  })
+}
+
 // ─── Parser ────────────────────────────────────────────────────────
 
 const ADR_HEADING_RE = /^### (.+)$/
@@ -340,17 +359,6 @@ const mdShellFrItem: Components = {
   },
 }
 
-const mdShellSuccessItem: Components = {
-  p: ({ children }) => <p className={styles.shellSuccessItemP}>{children}</p>,
-  strong: ({ children }) => <strong className={styles.shellSuccessItemStrong}>{children}</strong>,
-  code: ({ className, children }) => {
-    if (className?.startsWith('language-')) {
-      return <code className={styles.codeBlock}>{children}</code>
-    }
-    return <code className={styles.shellInlineAccent}>{children}</code>
-  },
-}
-
 const mdShellOosItem: Components = {
   p: ({ children }) => <p className={styles.shellOosMdP}>{children}</p>,
   strong: ({ children }) => <strong className={styles.shellOosStrong}>{children}</strong>,
@@ -430,21 +438,6 @@ function CheckCircleGlyph() {
   )
 }
 
-function CheckSquareGlyph() {
-  return (
-    <svg className={styles.shellCheckSquareSvg} viewBox="0 0 20 20" fill="none" aria-hidden>
-      <rect x="2.5" y="2.5" width="15" height="15" rx="3" fill="currentColor" />
-      <path
-        d="M6 10.2 8.5 12.7 14.2 7"
-        stroke="#fff"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
 function IconOutOfScope() {
   return (
     <svg
@@ -461,18 +454,16 @@ function IconOutOfScope() {
 
 function IconTaskShaping() {
   return (
-    <svg
-      className={styles.shellSectionIcon}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      aria-hidden
-    >
-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="3" width="7" height="7" rx="1.5" />
-      <rect x="3" y="14" width="7" height="7" rx="1.5" />
-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    <svg className={styles.shellSectionIcon} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M4 8h16M4 12h16M4 16h16"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+      <circle cx="15" cy="8" r="2.25" fill="currentColor" />
+      <circle cx="9" cy="12" r="2.25" fill="currentColor" />
+      <circle cx="14" cy="16" r="2.25" fill="currentColor" />
     </svg>
   )
 }
@@ -523,22 +514,20 @@ function ShellFunctionalRequirementsSection({ label, markdown }: { label: string
       {items.length === 0 ? (
         <span className={styles.shellQaEmpty}>No content</span>
       ) : (
-        <div className={styles.shellFrBox}>
-          <ul className={styles.shellFrList}>
-            {items.map((item, i) => (
-              <li key={i} className={styles.shellFrItem}>
-                <span className={styles.shellFrCheck} aria-hidden>
-                  <CheckCircleGlyph />
-                </span>
-                <div className={styles.shellFrItemBody}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellFrItem}>
-                    {item}
-                  </ReactMarkdown>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <ul className={styles.shellCheckList}>
+          {items.map((item, i) => (
+            <li key={i} className={styles.shellCheckListItem}>
+              <span className={styles.shellCheckListGlyph} aria-hidden>
+                <CheckCircleGlyph />
+              </span>
+              <div className={styles.shellCheckListBody}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellFrItem}>
+                  {item}
+                </ReactMarkdown>
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   )
@@ -555,14 +544,14 @@ function ShellSuccessCriteriaSection({ label, markdown }: { label: string; markd
       {items.length === 0 ? (
         <span className={styles.shellQaEmpty}>No content</span>
       ) : (
-        <ul className={styles.shellSuccessList}>
+        <ul className={styles.shellCheckList}>
           {items.map((item, i) => (
-            <li key={i} className={styles.shellSuccessCard}>
-              <span className={styles.shellSuccessCheck} aria-hidden>
-                <CheckSquareGlyph />
+            <li key={i} className={styles.shellCheckListItem}>
+              <span className={styles.shellCheckListGlyph} aria-hidden>
+                <CheckCircleGlyph />
               </span>
-              <div className={styles.shellSuccessCardBody}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellSuccessItem}>
+              <div className={styles.shellCheckListBody}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellFrItem}>
                   {item}
                 </ReactMarkdown>
               </div>
@@ -588,8 +577,11 @@ function ShellOutOfScopeSection({ label, markdown }: { label: string; markdown: 
         <ul className={styles.shellOosList}>
           {items.map((item, i) => (
             <li key={i} className={styles.shellOosItem}>
-              <span className={styles.shellOosDash} aria-hidden>
-                —
+              <span className={styles.shellOosMinusIcon} aria-hidden>
+                <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="8" cy="8" r="7.25" stroke="currentColor" strokeWidth="1.35" />
+                  <path d="M5 8h6" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+                </svg>
               </span>
               <div className={styles.shellOosText}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellOosItem}>
@@ -698,7 +690,7 @@ export function FrameMarkdownViewer({
 }) {
   const sections = useMemo(() => parseFrameContent(content), [content])
   const shellPieces = useMemo(
-    () => (shellStyle ? buildShellPieces(sections) : null),
+    () => (shellStyle ? filterShellPieces(buildShellPieces(sections)) : null),
     [sections, shellStyle],
   )
 

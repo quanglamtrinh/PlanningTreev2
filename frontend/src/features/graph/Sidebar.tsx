@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { NodeRecord, ProjectSummary, Snapshot } from '../../api/types'
 import {
@@ -32,6 +32,11 @@ function StatusDot({ status }: { status: string }) {
 
 export function Sidebar() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const usageSnapshotRoute = '/usage-snapshot'
+  const usageSnapshotLabel = 'Usage Snapshot'
+  const usageSnapshotTitle = 'Open Usage Snapshot'
+  const isUsageSnapshotRoute = location.pathname === usageSnapshotRoute
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
@@ -289,39 +294,83 @@ export function Sidebar() {
       </div>
 
       <div className={styles.footer}>
-        <div className={styles.usageBlock}>
-          <div className={styles.usageRow}>
-            <span className={styles.usageLabel}>Session</span>
-            <span className={styles.usageHint}>
-              {sessionResetLabel ? `· ${sessionResetLabel}` : ''}
-            </span>
-            <span className={styles.usagePct}>
-              {sessionPercent === null ? '--' : `${sessionPercent}%`}
-            </span>
+        <div className={styles.footerUsageStack}>
+          <div className={styles.usageBlock}>
+            <div className={styles.usageRow}>
+              <span className={styles.usageLabel}>Session</span>
+              <span className={styles.usageHint}>
+                {sessionResetLabel ? `· ${sessionResetLabel}` : ''}
+              </span>
+              <span className={styles.usagePct}>
+                {sessionPercent === null ? '--' : `${sessionPercent}%`}
+              </span>
+            </div>
+            <div className={styles.usageBar}>
+              <div className={styles.usageBarFill} style={{ width: `${sessionPercent ?? 0}%` }} />
+            </div>
+            {showWeekly ? (
+              <>
+                <div className={styles.usageRow} style={{ marginTop: 8 }}>
+                  <span className={styles.usageLabel}>Weekly</span>
+                  <span className={styles.usageHint}>
+                    {weeklyResetLabel ? `· ${weeklyResetLabel}` : ''}
+                  </span>
+                  <span className={styles.usagePct}>
+                    {weeklyPercent === null ? '--' : `${weeklyPercent}%`}
+                  </span>
+                </div>
+                <div className={styles.usageBar}>
+                  <div
+                    className={styles.usageBarFillWeekly}
+                    style={{ width: `${weeklyPercent ?? 0}%` }}
+                  />
+                </div>
+              </>
+            ) : null}
+            {creditsLabel ? <div className={styles.usageMeta}>{creditsLabel}</div> : null}
           </div>
-          <div className={styles.usageBar}>
-            <div className={styles.usageBarFill} style={{ width: `${sessionPercent ?? 0}%` }} />
-          </div>
-          {showWeekly ? (
-            <>
-              <div className={styles.usageRow} style={{ marginTop: 8 }}>
-                <span className={styles.usageLabel}>Weekly</span>
-                <span className={styles.usageHint}>
-                  {weeklyResetLabel ? `· ${weeklyResetLabel}` : ''}
-                </span>
-                <span className={styles.usagePct}>
-                  {weeklyPercent === null ? '--' : `${weeklyPercent}%`}
-                </span>
-              </div>
-              <div className={styles.usageBar}>
-                <div
-                  className={styles.usageBarFillWeekly}
-                  style={{ width: `${weeklyPercent ?? 0}%` }}
-                />
-              </div>
-            </>
-          ) : null}
-          {creditsLabel ? <div className={styles.usageMeta}>{creditsLabel}</div> : null}
+          <button
+            type="button"
+            className={`${styles.usageSnapshotBtn} ${isUsageSnapshotRoute ? styles.usageSnapshotBtnActive : ''}`}
+            onClick={() => navigate(usageSnapshotRoute)}
+            aria-label={usageSnapshotTitle}
+            title={usageSnapshotTitle}
+            aria-current={isUsageSnapshotRoute ? 'page' : undefined}
+          >
+            <span className={styles.usageSnapshotBtnInner}>
+              <svg
+                className={styles.usageSnapshotIcon}
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M18 20V10" />
+                <path d="M12 20V4" />
+                <path d="M6 20v-6" />
+              </svg>
+              <span className={styles.usageSnapshotLabel}>{usageSnapshotLabel}</span>
+              <svg
+                className={styles.usageSnapshotChevron}
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            </span>
+          </button>
         </div>
         <div className={styles.footerActions}>
           <button type="button" className={styles.footerBtn} title="Account" aria-label="Account">

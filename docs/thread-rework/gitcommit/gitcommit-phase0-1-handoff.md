@@ -31,21 +31,31 @@ Out of scope for this handoff:
 - no-diff actions still persist planned `commit_message`
 - split metadata must not use `execution_state`
 
-## 3. Implementation checklist (Phase 0-1)
+## 3. Current-state mismatch baseline (for Phase 0-1 clarity)
+
+- describe commit fields currently come from `execution_state`, not from a workflow-owned commit record
+- split currently records only partial commit info (`split_commit_sha`/`k0_git_head_sha`)
+- workflow commit helper currently returns only resulting SHA, not full commit metadata tuple
+- reset endpoint remains execution-state-SHA-based and is intentionally out-of-scope in this track
+
+Phase 0-1 must freeze these mismatches in docs and prepare schema support so later phases can close them without reopening contract questions.
+
+## 4. Implementation checklist (Phase 0-1)
 
 - [ ] freeze docs for trigger matrix and no-diff semantics
 - [ ] add `latestCommit` block in workflow state default payload
 - [ ] normalize read/write for partial or invalid commit metadata values
 - [ ] keep backward compatibility when `latestCommit` absent
+- [ ] document reset dependency on execution-state SHAs as known limitation for this track
 - [ ] add store unit tests for schema normalization
 
-## 4. Expected write scope (planned)
+## 5. Expected write scope (planned)
 
 - `backend/storage/workflow_state_store.py`
 - `backend/tests/unit/*workflow_state*`
 - `docs/thread-rework/gitcommit/*`
 
-## 5. Exit criteria for Phase 0-1
+## 6. Exit criteria for Phase 0-1
 
 - contract decisions are documented and unchanged
 - workflow state persists/reads `latestCommit` safely

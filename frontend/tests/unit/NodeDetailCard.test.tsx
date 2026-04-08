@@ -311,6 +311,55 @@ describe('NodeDetailCard', () => {
     })
   })
 
+  it('graph variant shows only info (describe) without workflow stepper or editors', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
+    })
+
+    expect(screen.queryByTestId('workflow-stepper')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tablist', { name: 'Task document sections' })).not.toBeInTheDocument()
+    expect(screen.getByText('Root node')).toBeInTheDocument()
+    expect(screen.queryByTestId('confirm-document-frame')).not.toBeInTheDocument()
+    expect(apiMock.getNodeDocument).not.toHaveBeenCalled()
+  })
+
+  it('normalizes nodeMetaRow index by stripping init prefix for task nodes', () => {
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({
+          node_id: 'task-1',
+          parent_id: 'init-1',
+          node_kind: 'original',
+          title: 'Task 1',
+          hierarchical_number: '1.1',
+        })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    const card = screen.getByTestId('graph-node-detail-card')
+    expect(within(card).getByText('1')).toBeInTheDocument()
+    expect(within(card).queryByText('1.1')).not.toBeInTheDocument()
+  })
+
   it('loads frame.md on the default Frame tab', async () => {
     apiMock.getNodeDocument.mockResolvedValue({
       node_id: 'root',
@@ -323,7 +372,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode({ status: 'ready' })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -353,13 +402,13 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
 
     // Wait for detail state to load so Spec tab is unlocked
-    const specButton = await screen.findByRole('button', { name: 'Spec' })
+    const specButton = await screen.findByRole('tab', { name: 'Spec' })
     fireEvent.click(specButton)
 
     await waitFor(() => {
@@ -422,7 +471,7 @@ describe('NodeDetailCard', () => {
             execution_status: 'completed',
           },
         })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -450,7 +499,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -477,7 +526,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -504,7 +553,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -554,7 +603,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -594,7 +643,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -619,7 +668,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -628,11 +677,10 @@ describe('NodeDetailCard', () => {
       expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
     })
 
-    // All tabs should be clickable
-    expect(screen.getByRole('button', { name: 'Describe' })).not.toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Frame' })).not.toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Clarify' })).not.toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Spec' })).not.toBeDisabled()
+    // Stepper tabs (Describe removed from exploration region; Info stays on breadcrumb tabs)
+    expect(screen.getByRole('tab', { name: 'Frame' })).not.toBeDisabled()
+    expect(screen.getByRole('tab', { name: 'Clarify' })).not.toBeDisabled()
+    expect(screen.getByRole('tab', { name: 'Spec' })).not.toBeDisabled()
   })
 
   it('shows error banner with retry when detail state fails to load', async () => {
@@ -648,7 +696,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -730,6 +778,107 @@ describe('NodeDetailCard', () => {
     expect(screen.getByText('Root')).toBeInTheDocument()
   })
 
+  it('breadcrumb shows indicative workflow stepper and document tabs for navigation', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getNodeDocument).toHaveBeenCalledWith('project-1', 'root', 'frame')
+    })
+
+    const stepper = screen.getByTestId('workflow-stepper')
+    expect(stepper).toHaveAttribute('data-stepper-mode', 'indicative')
+    expect(stepper).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.queryByRole('navigation', { name: 'Task workflow steps' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tablist', { name: 'Task document sections' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Info' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Frame' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Split' })).not.toBeInTheDocument()
+  })
+
+  it('breadcrumb shows Split tab when frame_branch_ready', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'frame' as const,
+      frame_branch_ready: true,
+      workflow_notice: null,
+      generation_error: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: false,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: true,
+      spec_stale: false,
+      spec_confirmed: false,
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    expect(await screen.findByRole('tab', { name: 'Split' })).toBeInTheDocument()
+  })
+
+  it('breadcrumb loads spec.md when the Spec tab is clicked', async () => {
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    const specTab = await screen.findByRole('tab', { name: 'Spec' })
+    fireEvent.click(specTab)
+
+    await waitFor(() => {
+      expect(apiMock.getNodeDocument).toHaveBeenCalledWith('project-1', 'root', 'spec')
+    })
+    expect(screen.getByDisplayValue('# Spec')).toBeInTheDocument()
+  })
+
   it('does not show a generation error banner when spec is no longer auto-started', async () => {
     apiMock.getDetailState.mockResolvedValue({
       node_id: 'root',
@@ -765,7 +914,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -794,7 +943,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -805,7 +954,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode({ node_id: 'child-1', title: 'Child', description: 'Child node' })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -874,13 +1023,13 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode({ status: 'ready' })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
 
     // Switch to Spec tab
-    const specButton = await screen.findByRole('button', { name: 'Spec' })
+    const specButton = await screen.findByRole('tab', { name: 'Spec' })
     fireEvent.click(specButton)
 
     await screen.findByDisplayValue('# Spec content')
@@ -974,12 +1123,12 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode({ status: 'ready' })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Spec' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'Spec' }))
     await screen.findByDisplayValue('# Spec content')
 
     fireEvent.click(screen.getByTestId('confirm-and-finish-task-button'))
@@ -999,6 +1148,123 @@ describe('NodeDetailCard', () => {
     })
     expect(apiMock.finishTask).not.toHaveBeenCalled()
     expect(navigateMock).toHaveBeenCalledWith('/projects/project-1/nodes/root/chat-v2?thread=execution')
+  })
+
+  it('disables Confirm and Finish Task immediately after click while request is pending', async () => {
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      bootstrap: {
+        ready: true,
+        workspace_configured: true,
+        codex_available: true,
+        codex_path: 'codex',
+      },
+    })
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: false,
+      can_finish_task: true,
+      shaping_frozen: false,
+      git_ready: true,
+    })
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec content',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+    apiMock.putNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'spec',
+      content: '# Spec content',
+      updated_at: '2026-03-21T00:00:02Z',
+    })
+
+    const confirmSpecResponse = {
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 1,
+      frame_revision: 1,
+      active_step: 'spec',
+      workflow_notice: null,
+      frame_needs_reconfirm: false,
+      frame_read_only: true,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: false,
+      spec_stale: false,
+      spec_confirmed: true,
+    }
+    let resolveConfirmSpec: (() => void) | null = null
+    apiMock.confirmSpec.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveConfirmSpec = () => resolve(confirmSpecResponse)
+        }),
+    )
+    apiMock.getSnapshot.mockResolvedValue({
+      schema_version: 1,
+      project: { id: 'project-1', name: 'Test' },
+      tree_state: { root_node_id: 'root', active_node_id: 'root', node_registry: [] },
+      updated_at: '2026-03-21T00:00:03Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({ status: 'ready' })}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Spec' }))
+    await screen.findByDisplayValue('# Spec content')
+
+    const finishButton = screen.getByTestId('confirm-and-finish-task-button')
+    fireEvent.click(finishButton)
+
+    expect(finishButton).toBeDisabled()
+    expect(finishButton).toHaveTextContent('Finishing...')
+
+    await waitFor(() => {
+      expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
+      expect(resolveConfirmSpec).not.toBeNull()
+    })
+
+    if (!resolveConfirmSpec) {
+      throw new Error('confirmSpec request was not started')
+    }
+    resolveConfirmSpec()
+
+    await waitFor(() => {
+      expect(apiMock.finishTaskWorkflowV2).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.stringMatching(/^finish_task:/),
+      )
+    })
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith('/projects/project-1/nodes/root/chat-v2?thread=execution')
+    })
   })
 
   it('does not refetch spec generation status on a stable rerender', async () => {
@@ -1061,7 +1327,7 @@ describe('NodeDetailCard', () => {
             spec_confirmed: false,
           },
         })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1080,7 +1346,7 @@ describe('NodeDetailCard', () => {
             spec_confirmed: false,
           },
         })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1127,16 +1393,22 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode({ status: 'ready' })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
 
-    const specButton = await screen.findByRole('button', { name: 'Spec' })
+    expect(screen.queryByText('Workspace has uncommitted changes.')).not.toBeInTheDocument()
+
+    const specButton = await screen.findByRole('tab', { name: 'Spec' })
     fireEvent.click(specButton)
 
     await screen.findByDisplayValue('# Spec content')
+    expect(screen.getByText('Workspace has uncommitted changes.')).toBeInTheDocument()
     expect(screen.getByTestId('confirm-and-finish-task-button')).toBeDisabled()
+    expect(screen.getByTestId('finish-task-disabled-hint')).toHaveTextContent(
+      'Finish Task is disabled. Resolve Git blocker to continue.',
+    )
   })
 
   it('confirms the updated frame, opens Split tab, and submits the chosen split mode', async () => {
@@ -1207,7 +1479,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1258,7 +1530,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1304,13 +1576,13 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
 
     await screen.findByDisplayValue('# Spec content')
-    fireEvent.click(screen.getByRole('button', { name: 'Frame Updated' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Frame Updated', hidden: true }))
 
     expect(screen.getByDisplayValue('# Spec content')).toBeInTheDocument()
     expect(screen.queryByTestId('confirm-and-split-button')).not.toBeInTheDocument()
@@ -1318,17 +1590,18 @@ describe('NodeDetailCard', () => {
   })
 
   it('keeps Split available during the normal spec workflow', async () => {
+    /* frame_branch_ready shows Split tab; active_step must not be spec or initial tab becomes frame_updated-only */
     apiMock.getDetailState.mockResolvedValue({
       node_id: 'root',
       frame_confirmed: true,
       frame_confirmed_revision: 2,
       frame_revision: 2,
-      active_step: 'spec' as const,
+      active_step: 'frame' as const,
       workflow_notice: null,
       generation_error: null,
-      frame_branch_ready: false,
+      frame_branch_ready: true,
       frame_needs_reconfirm: false,
-      frame_read_only: true,
+      frame_read_only: false,
       clarify_read_only: true,
       clarify_confirmed: true,
       spec_read_only: false,
@@ -1354,16 +1627,18 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode({ status: 'ready' })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
 
+    await screen.findByDisplayValue('# Frame content')
+    fireEvent.click(screen.getByRole('tab', { name: 'Spec' }))
     await screen.findByDisplayValue('# Spec content')
-    const splitButton = screen.getByRole('button', { name: 'Split' })
-    expect(splitButton).not.toBeDisabled()
 
-    fireEvent.click(splitButton)
+    const splitTab = screen.getByRole('tab', { name: 'Split' })
+    expect(splitTab).not.toBeDisabled()
+    fireEvent.click(splitTab)
 
     expect(
       await screen.findByRole('heading', {
@@ -1449,7 +1724,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode({ status: 'ready' })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1462,7 +1737,7 @@ describe('NodeDetailCard', () => {
     })
 
     expect(await screen.findByDisplayValue('# Generated spec content')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Split' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Split', hidden: true })).toBeDisabled()
   })
 
   it('clears a stale post-update branch when a new Frame Updated cycle starts', async () => {
@@ -1495,7 +1770,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode({ status: 'ready' })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1518,7 +1793,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1526,7 +1801,7 @@ describe('NodeDetailCard', () => {
     await waitFor(() => {
       expect(screen.getByTestId('generate-frame-button')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generate from Chat')
+    expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generate Frame')
   })
 
   it('calls generateFrame and shows Generating state', async () => {
@@ -1553,7 +1828,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1584,7 +1859,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1620,7 +1895,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1656,7 +1931,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1688,7 +1963,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1711,7 +1986,7 @@ describe('NodeDetailCard', () => {
     // generateFrame should never have been called
     expect(apiMock.generateFrame).not.toHaveBeenCalled()
     // Button should still say "Generate from Chat" (not "Generating...")
-    expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generate from Chat')
+    expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generate Frame')
   })
 
   it('attaches to active job instead of showing error when generation is already running', async () => {
@@ -1747,7 +2022,7 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -1801,12 +2076,12 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode()}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
 
-    const specButton = await screen.findByRole('button', { name: 'Spec' })
+    const specButton = await screen.findByRole('tab', { name: 'Spec' })
     fireEvent.click(specButton)
 
     await waitFor(() => {
@@ -2005,7 +2280,7 @@ describe('NodeDetailCard', () => {
           hierarchical_number: '1.R',
           workflow: null,
         })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )
@@ -2072,7 +2347,7 @@ describe('NodeDetailCard', () => {
             execution_status: 'review_accepted',
           },
         })}
-        variant="graph"
+        variant="breadcrumb"
         showClose={false}
       />,
     )

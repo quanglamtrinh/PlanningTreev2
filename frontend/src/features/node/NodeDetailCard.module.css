@@ -4,8 +4,6 @@
   flex-direction: column;
   overflow: hidden;
   padding: 14px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-xl);
   background: color-mix(in srgb, var(--color-bg-panel) 97%, transparent);
   box-shadow: var(--shadow-float);
   backdrop-filter: blur(12px);
@@ -18,7 +16,12 @@
 
 .cardBreadcrumb {
   width: 100%;
-  background: color-mix(in srgb, var(--color-bg-panel) 98%, transparent);
+  background: #f6f3f1;
+}
+
+section[data-variant='breadcrumb'] .cardHeader {
+  background: #f6f3f1;
+  backdrop-filter: none;
 }
 
 .cardHeader {
@@ -165,6 +168,132 @@
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+}
+
+/* Breadcrumb detail: document tabs (primary navigation); header stepper is indicative only */
+.breadcrumbDetailTablist {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 2px 0 10px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* Underline-tab strip: transparent, flush with parent — matches screenshot nav */
+.breadcrumbDetailTablistEmbedded {
+  padding: 0;
+  margin: 0;
+  border-bottom: none;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  align-self: stretch;
+  border: none;
+  border-radius: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.breadcrumbDetailTablistEmbedded .breadcrumbDetailTab {
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+  padding: 0 10px;
+  height: 100%;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-tertiary, var(--color-text-secondary));
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.breadcrumbDetailTablistEmbedded .breadcrumbDetailTab:last-child {
+  border-right: none;
+}
+
+.breadcrumbDetailTablistEmbedded .breadcrumbDetailTab:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text-secondary, var(--color-text-primary));
+}
+
+.breadcrumbDetailTablistEmbedded .breadcrumbDetailTabActive {
+  color: var(--accent-primary, var(--color-accent));
+  background: transparent;
+  font-weight: 700;
+  box-shadow: none;
+  border-color: transparent;
+  border-bottom-color: var(--accent-primary, var(--color-accent));
+}
+
+.breadcrumbDetailTab {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-panel-alt);
+  font-family: var(--font-sans, sans-serif);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.breadcrumbDetailTab:hover:not(:disabled) {
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-strong);
+  background: var(--color-bg-hover);
+}
+
+.breadcrumbDetailTab:focus {
+  outline: none;
+}
+
+.breadcrumbDetailTab:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  z-index: 1;
+}
+
+.breadcrumbDetailTabActive {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-subtle);
+  background: var(--color-bg-panel);
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.breadcrumbDetailTabDisabled,
+.breadcrumbDetailTab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+section[data-variant='breadcrumb'] .breadcrumbTabPanel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .explorationLockHint {
@@ -317,31 +446,133 @@
   background: var(--color-bg-hover);
 }
 
+/* ─── Info / Describe tab (readable column + section cards) ─ */
+.cardBodyAuxDescribe {
+  padding: 10px 12px 22px;
+  box-sizing: border-box;
+}
+
+.describeDocumentRoot {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+  width: 100%;
+  max-width: 40rem;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.describeDocumentSheet {
+  flex: 1;
+  min-width: 0;
+}
+
+.describeInfoEditorHost.documentPanel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-top: 0;
+}
+
+.infoWorkspaceEditorToolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.infoWorkspaceSaving {
+  margin-left: 8px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
 .describePanel {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: 18px;
   min-height: 100%;
   box-sizing: border-box;
+}
+
+.describeDocSection {
+  margin: 0;
+}
+
+.describeDocHero {
+  padding: 22px 24px;
+  border-radius: 0;
+  background: linear-gradient(
+    152deg,
+    color-mix(in srgb, var(--color-accent) 9%, var(--color-bg-panel)) 0%,
+    var(--color-bg-panel) 42%,
+    color-mix(in srgb, var(--color-text-primary) 2.5%, var(--color-bg-panel)) 100%
+  );
+  border: 1px solid color-mix(in srgb, var(--color-accent) 14%, var(--color-border-subtle));
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--color-text-primary) 5%, transparent),
+    0 10px 28px color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+}
+
+.describeDocHero .body {
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.describeDocH1 {
+  margin: 6px 0 14px;
+  font-size: 1.375rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.28;
+  color: var(--color-text-primary);
+  font-family: var(--font-display, var(--font-sans));
+}
+
+.describeCommitSection,
+.describeFilesSection,
+.describeWorkspaceSection,
+.describeDocsSection,
+.describeSystemPromptsSection,
+.describeSkillsSection {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, var(--color-text-primary) 10%);
+  border-radius: 0;
+  background: var(--color-bg-panel);
+  box-sizing: border-box;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--color-text-primary) 4%, transparent);
 }
 
 .describeCommitSection,
 .describeFilesSection,
 .describeWorkspaceSection {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: 18px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--color-bg-hover);
-  box-sizing: border-box;
+  border-left: 3px solid color-mix(in srgb, var(--color-text-tertiary) 28%, var(--color-border-subtle));
+}
+
+.describeDocsSection {
+  border-left: 3px solid color-mix(in srgb, var(--color-accent) 58%, var(--color-border-subtle));
+}
+
+.describeSkillsSection {
+  border-left: 3px solid color-mix(in srgb, var(--tertiary, #0d9488) 52%, var(--color-border-subtle));
+}
+
+.describeSystemPromptsSection {
+  border-left: 3px solid color-mix(in srgb, var(--color-accent) 22%, var(--color-text-tertiary) 78%);
 }
 
 .describeTaskMissingBanner {
   margin: 0;
   padding: 12px 14px;
-  border-radius: var(--radius-lg);
+  border-radius: 0;
   background: color-mix(in srgb, var(--warning) 10%, var(--surface-container-lowest, var(--color-bg-panel)));
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
@@ -353,6 +584,60 @@
   font-size: var(--font-size-xs);
   line-height: var(--line-height-relaxed);
   color: var(--color-text-tertiary);
+}
+
+.describeWorkspaceActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.describeWorkspaceButtonOutline {
+  padding: 8px 14px;
+  border-radius: 0;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.describeWorkspaceButtonOutline:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-panel));
+}
+
+.describeWorkspaceButtonPrimary {
+  padding: 8px 14px;
+  border-radius: 0;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  background: linear-gradient(
+    180deg,
+    var(--color-accent) 0%,
+    color-mix(in srgb, var(--color-accent) 86%, #1a0a0a) 100%
+  );
+  color: var(--on-primary, #fff);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    filter 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.describeWorkspaceButtonPrimary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.describeWorkspaceButtonOutline:disabled,
+.describeWorkspaceButtonPrimary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .describeResetRow {
@@ -402,11 +687,126 @@
 
 .describeSectionTitle {
   margin: 0;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  line-height: var(--line-height-ui);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
   color: var(--color-text-primary);
   font-family: var(--font-display, var(--font-sans));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 82%, transparent);
+}
+
+.describeSectionTitle::before {
+  content: '';
+  width: 4px;
+  height: 1.15em;
+  border-radius: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-accent) 90%, transparent),
+    color-mix(in srgb, var(--color-accent) 45%, var(--tertiary, #0d9488) 55%)
+  );
+  flex-shrink: 0;
+}
+
+.infoPathList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.infoPathItem {
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--color-text-primary) 3.5%, var(--color-bg-panel));
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 85%, var(--color-text-primary) 15%);
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.infoPathHit {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px 10px 14px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  box-sizing: border-box;
+  min-width: 0;
+  border-radius: 0;
+}
+
+.infoPathHit:hover {
+  background: color-mix(in srgb, var(--color-accent) 5%, transparent);
+}
+
+.infoPathHit:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.infoPathIconSvg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.infoPathIconDoc {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #047857;
+}
+
+.infoPathIconSkill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #0d9488;
+}
+
+.infoPathCode {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: break-all;
+  color: var(--color-text-secondary);
+}
+
+.infoPathChevron {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: color-mix(in srgb, var(--color-text-tertiary) 72%, var(--color-border-subtle));
+}
+
+.infoPathChevron svg {
+  width: 7px;
+  height: 12px;
+  display: block;
 }
 
 .shaFieldRow {
@@ -427,7 +827,7 @@
 .shaFieldInput {
   width: 100%;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 0;
   padding: 8px 10px;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
@@ -524,32 +924,40 @@
   --editor-vscode-button-hover: var(--color-accent-hover);
   --editor-vscode-button-secondary: var(--chip-bg);
   --editor-vscode-button-secondary-hover: color-mix(in srgb, var(--color-text-primary) 10%, var(--chip-bg));
+  /* Body copy matches frame metadata shell (FrameMarkdownViewer field values) */
+  --doc-editor-body-font: var(--font-sans);
+  --doc-editor-body-fs: 13px;
+  --doc-editor-body-lh: 1.6;
+  --doc-editor-body-fw: 400;
+  /* Legacy name: used by cm-content + gutters (gutters overridden to mono below) */
+  --font-markdown-editor: var(--doc-editor-body-font);
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-height: 0;
   box-sizing: border-box;
+  margin-top: 10px;
 }
 
 /* Syntax token classes — colors from tokens.css (--syntax-*) */
 .documentPanel :global(.pt-sx-md-h1) {
   color: var(--syntax-md-h1);
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .documentPanel :global(.pt-sx-md-h2) {
   color: var(--syntax-md-h2);
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .documentPanel :global(.pt-sx-md-h3) {
   color: var(--syntax-md-h3);
-  font-weight: 650;
+  font-weight: 700;
 }
 
 .documentPanel :global(.pt-sx-md-h4) {
   color: var(--syntax-md-h4);
-  font-weight: 650;
+  font-weight: 700;
 }
 
 .documentPanel :global(.pt-sx-md-h5) {
@@ -569,7 +977,7 @@
 
 .documentPanel :global(.pt-sx-strong) {
   color: var(--syntax-strong);
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .documentPanel :global(.pt-sx-em) {
@@ -606,6 +1014,9 @@
 
 .documentPanel :global(.pt-sx-code) {
   color: var(--syntax-inline-code);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
 }
 
 .documentPanel :global(.pt-sx-meta) {
@@ -744,10 +1155,37 @@
   gap: 12px;
   min-height: 34px;
   padding: 0 10px;
-  border: 1px solid var(--editor-vscode-border);
+  border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);
-  background: var(--editor-vscode-panel);
+  background: var(--color-bg-panel-alt);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+}
+
+/* Tab strip fills this row edge-to-edge — transparent underline nav */
+.documentStatusRowEmbedTabs {
+  padding: 0 4px;
+  overflow: hidden;
+  align-items: stretch;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle, var(--color-border-subtle));
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 38px;
+}
+
+.documentStatusRowEmbedTabs > * {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+}
+
+.documentFileLabelCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
 }
 
 .documentFileLabel {
@@ -755,19 +1193,7 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--editor-vscode-text);
-}
-
-.documentStatusValue {
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--editor-vscode-muted);
-  min-height: 1.4em;
-  text-align: right;
-}
-
-.documentStatusError {
-  color: #b42318;
+  color: var(--editor-vscode-text, var(--color-text-primary));
 }
 
 .detailStateError {
@@ -857,7 +1283,7 @@
 .editorSurface {
   flex: 1;
   min-height: 0;
-  /* overflow:hidden here clips the line-number gutter; scroll + clip live in .cm-scroller */
+  /* overflow:visible avoids clipping the line-number gutter; scroll lives in .cm-scroller */
   overflow: visible;
   display: flex;
   flex-direction: column;
@@ -865,8 +1291,72 @@
   border-radius: var(--radius-md);
   background: var(--editor-vscode-bg);
   box-sizing: border-box;
-  padding: 6px 8px 6px 12px;
+  padding: 0;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+}
+
+.editorSurfaceHeader {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid var(--editor-vscode-border);
+  background: color-mix(in srgb, var(--editor-vscode-bg) 72%, var(--color-text-primary) 5%);
+  box-sizing: border-box;
+}
+
+.editorSurfaceTitle {
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--editor-vscode-text) 58%, var(--color-text-tertiary));
+  line-height: 1.2;
+  user-select: none;
+}
+
+.editorSurfaceHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.editorSurfaceHeaderIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: color-mix(in srgb, var(--editor-vscode-text) 52%, var(--color-text-tertiary));
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.editorSurfaceHeaderIcon:hover {
+  background: color-mix(in srgb, var(--editor-vscode-text) 8%, transparent);
+  color: var(--editor-vscode-text);
+}
+
+.editorSurfaceBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px 6px 12px;
+  background: var(--editor-vscode-bg);
+  box-sizing: border-box;
 }
 
 /* @uiw/react-codemirror root — must fill .editorSurface or height:100% chain breaks */
@@ -903,9 +1393,13 @@
 /* Only the text document should shrink in flex layouts — gutters must not get min-height:0 */
 .editorSurface :global(.cm-content) {
   min-height: 0 !important;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-relaxed);
+  font-family: var(--doc-editor-body-font);
+  font-size: var(--doc-editor-body-fs);
+  line-height: var(--doc-editor-body-lh);
+  font-weight: var(--doc-editor-body-fw);
+  font-variant-ligatures: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .editorSurface :global(.cm-gutters) {
@@ -917,6 +1411,10 @@
   background: var(--editor-vscode-bg);
   color: var(--editor-vscode-gutter);
   box-shadow: 1px 0 0 var(--editor-vscode-border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-ligatures: none;
 }
 
 /* Soft-wrap long lines (frame.md / spec.md) so code blocks stay within the panel */
@@ -945,6 +1443,8 @@
 
 .editorSurface :global(.cm-lineNumbers .cm-gutterElement) {
   color: var(--editor-vscode-gutter);
+  font-weight: 500;
+  font-family: var(--font-mono);
 }
 
 .tabConfirmRow {
@@ -1001,39 +1501,86 @@
   cursor: not-allowed;
 }
 
+.finishTaskActionGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.finishTaskButtonDisabled {
+  opacity: 1;
+  background: color-mix(in srgb, var(--danger) 14%, var(--color-bg-panel));
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--color-border));
+  color: color-mix(in srgb, var(--danger) 60%, var(--color-text-secondary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.finishTaskDisabledHint {
+  margin: 0;
+  max-width: 360px;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--warning) 66%, var(--color-text-secondary));
+}
+
 .splitPanel {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 2px 0 6px;
+  gap: 12px;
+  padding: 2px 0 8px;
+}
+
+.splitPanel.documentPanel {
+  gap: 12px;
+  margin-top: 8px;
 }
 
 .splitPanelIntro {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+}
+
+.splitPanelIntro .title {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.splitPanelIntro .body {
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .splitHintPanel {
-  padding: 12px 14px;
+  padding: 13px 15px;
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--color-bg-hover) 72%, transparent);
 }
 
+.splitHintPanel .body {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .splitOptionsGroup {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
 .splitOptionCard {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
+  min-width: 0;
   padding: 14px 16px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-bg-panel) 96%, transparent);
   text-align: left;
   cursor: pointer;
@@ -1070,7 +1617,7 @@
 .splitOptionTitle {
   font-size: 13px;
   font-weight: 700;
-  line-height: 1.5;
+  line-height: 1.35;
   color: var(--color-text-primary);
 }
 
@@ -1079,7 +1626,7 @@
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
   color: var(--color-accent);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1087,7 +1634,7 @@
 
 .splitOptionDescription {
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--color-text-secondary);
 }
 
@@ -1095,6 +1642,16 @@
   display: flex;
   align-items: center;
   min-height: 22px;
+}
+
+.splitSelectionSummary .body {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.splitPanel .tabConfirmRow {
+  padding-top: 8px;
 }
 
 .eyebrow,
@@ -1211,6 +1768,7 @@ section[data-variant='breadcrumb'] .cardBody {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  background: #f6f3f1;
 }
 
 section[data-variant='breadcrumb'] .cardBodyAux {
@@ -1219,11 +1777,26 @@ section[data-variant='breadcrumb'] .cardBodyAux {
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
+  padding-top: 6px;
+}
+
+section[data-variant='breadcrumb'] .cardBodyAuxDescribe {
+  padding-left: 8px;
+  padding-right: 8px;
+  padding-bottom: 24px;
+}
+
+section[data-variant='graph'] .cardBodyAuxDescribe {
+  padding-left: 6px;
+  padding-right: 6px;
+  padding-bottom: 20px;
 }
 
 section[data-variant='breadcrumb'] .documentTabStack {
   flex: 1;
   min-height: 0;
+  gap: 10px;
+  padding-top: 6px;
   overflow-x: visible;
   overflow-y: hidden;
 }
@@ -1231,13 +1804,92 @@ section[data-variant='breadcrumb'] .documentTabStack {
 section[data-variant='breadcrumb'] .documentPanel {
   flex: 1;
   min-height: 0;
+  --editor-vscode-bg: var(--bg-surface, var(--surface-container-lowest, #ffffff));
+  --editor-vscode-panel: var(--bg-subtle, var(--surface-container-low));
+  --editor-vscode-border: var(--border-default, var(--color-border));
+  --editor-vscode-active: color-mix(in srgb, var(--accent-soft) 26%, transparent);
+  --editor-vscode-selection: color-mix(in srgb, var(--accent-primary) 18%, var(--bg-surface));
+}
+
+section[data-variant='breadcrumb'] .documentStatusRow {
+  min-height: 34px;
+  padding: 0 8px;
+  box-shadow: none;
+  margin-bottom: 16px;
+}
+
+section[data-variant='breadcrumb'] .documentPanel :global(.pt-sx-md-h1) {
+  color: color-mix(in srgb, var(--accent-primary) 84%, #6f3b20);
+}
+
+section[data-variant='breadcrumb'] .documentPanel :global(.pt-sx-md-h2) {
+  color: color-mix(in srgb, var(--text-primary) 88%, #16181a);
+}
+
+section[data-variant='breadcrumb'] .documentPanel :global(.pt-sx-md-h3) {
+  color: color-mix(in srgb, var(--text-primary) 84%, #16181a);
 }
 
 section[data-variant='breadcrumb'] .editorSurface {
   flex: 1;
   min-height: 0;
+  border: none;
+  background: var(--editor-vscode-bg);
+  padding: 0;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+section[data-variant='breadcrumb'] .editorSurfaceHeader {
+  border: none;
+  min-height: 38px;
+  padding: 0 12px 0 14px;
+  background: color-mix(in srgb, var(--bg-subtle, var(--surface-container-low)) 92%, var(--text-primary) 4%);
+}
+
+section[data-variant='breadcrumb'] .editorSurfaceTitle {
+  color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-tertiary));
+}
+
+section[data-variant='breadcrumb'] .editorSurfaceHeaderIcon {
+  color: color-mix(in srgb, var(--text-secondary) 72%, var(--text-tertiary));
+}
+
+section[data-variant='breadcrumb'] .editorSurfaceHeaderIcon:hover {
+  color: var(--text-primary);
+}
+
+section[data-variant='breadcrumb'] .editorSurfaceBody {
+  padding: 12px 14px;
+}
+
+section[data-variant='breadcrumb'] .editorSurface :global(.cm-gutters) {
+  display: none;
 }
 
 section[data-variant='breadcrumb'] .editorSurface :global(.cm-content) {
   min-height: 0;
+  font-family: var(--doc-editor-body-font);
+  font-size: var(--doc-editor-body-fs);
+  line-height: var(--doc-editor-body-lh);
+  font-weight: var(--doc-editor-body-fw);
+}
+
+section[data-variant='breadcrumb'] .editorSurface :global(.cm-line) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding-top: 1px;
+  padding-bottom: 1px;
+  border-radius: 6px;
+}
+
+section[data-variant='breadcrumb'] .editorSurface :global(.cm-activeLine),
+section[data-variant='breadcrumb'] .editorSurface :global(.cm-activeLineGutter) {
+  background: color-mix(in srgb, var(--editor-vscode-active) 45%, transparent);
+}
+
+/* Fenced-code feel like metadata shell blocks: subtle gray box + warm left rail */
+section[data-variant='breadcrumb'] .editorSurface :global(.cm-line:has(.pt-sx-code)) {
+  margin: 1px 0;
+  padding: 4px 10px;
 }

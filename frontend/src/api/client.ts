@@ -10,6 +10,7 @@ import type {
   DetailState,
   FrameGenAcceptedResponse,
   FrameGenStatusResponse,
+  LocalUsageSnapshot,
   NodeDocument,
   NodeDocumentKind,
   ResetThreadV2Response,
@@ -32,6 +33,7 @@ import type {
   ThreadSnapshotV3,
   ThreadRole,
   WorkflowActionAcceptedResponse,
+  WorkspaceTextFile,
 } from './types'
 
 type JsonBody = Record<string, unknown> | undefined
@@ -281,6 +283,10 @@ export const api = {
   getCodexSnapshot(): Promise<CodexSnapshot> {
     return jsonFetch('/v1/codex/account')
   },
+  getLocalUsageSnapshot(days?: number): Promise<LocalUsageSnapshot> {
+    const query = days == null ? '' : `?days=${encodeURIComponent(String(days))}`
+    return jsonFetch<LocalUsageSnapshot>(`/v1/codex/usage/local${query}`)
+  },
   listProjects(): Promise<ProjectSummary[]> {
     return jsonFetch('/v1/projects')
   },
@@ -306,6 +312,12 @@ export const api = {
   createChild(projectId: string, parentId: string): Promise<Snapshot> {
     return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes`, { method: 'POST' }, {
       parent_id: parentId,
+    })
+  },
+  createTask(projectId: string, parentId: string, description: string): Promise<Snapshot> {
+    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes/create-task`, { method: 'POST' }, {
+      parent_id: parentId,
+      description,
     })
   },
   splitNode(projectId: string, nodeId: string, mode: SplitMode): Promise<SplitAcceptedResponse> {
@@ -340,6 +352,22 @@ export const api = {
   ): Promise<NodeDocument> {
     return jsonFetch<NodeDocument>(
       `/v1/projects/${projectId}/nodes/${nodeId}/documents/${kind}`,
+      { method: 'PUT' },
+      { content },
+    )
+  },
+  getWorkspaceTextFile(projectId: string, relativePath: string): Promise<WorkspaceTextFile> {
+    const q = new URLSearchParams({ relative_path: relativePath })
+    return jsonFetch<WorkspaceTextFile>(`/v1/projects/${projectId}/workspace-text-file?${q}`)
+  },
+  putWorkspaceTextFile(
+    projectId: string,
+    relativePath: string,
+    content: string,
+  ): Promise<WorkspaceTextFile> {
+    const q = new URLSearchParams({ relative_path: relativePath })
+    return jsonFetch<WorkspaceTextFile>(
+      `/v1/projects/${projectId}/workspace-text-file?${q}`,
       { method: 'PUT' },
       { content },
     )

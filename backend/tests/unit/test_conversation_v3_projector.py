@@ -137,6 +137,133 @@ def test_v3_projection_maps_upsert_and_patch_events() -> None:
     assert patch_events[0]["type"] == event_types.CONVERSATION_ITEM_PATCH_V3
 
 
+def test_v3_snapshot_projection_hides_legacy_audit_seed_items() -> None:
+    snapshot_v2 = default_thread_snapshot("project-1", "node-1", "audit")
+    snapshot_v2["threadId"] = "audit-thread-1"
+    snapshot_v2["items"] = [
+        {
+            "id": "audit-record:frame",
+            "kind": "message",
+            "threadId": "audit-thread-1",
+            "turnId": None,
+            "sequence": 1,
+            "createdAt": "2026-04-01T00:00:00Z",
+            "updatedAt": "2026-04-01T00:00:00Z",
+            "status": "completed",
+            "source": "backend",
+            "tone": "neutral",
+            "metadata": {},
+            "role": "system",
+            "text": "Canonical confirmed frame snapshot",
+            "format": "markdown",
+        },
+        {
+            "id": "audit-record:spec",
+            "kind": "message",
+            "threadId": "audit-thread-1",
+            "turnId": None,
+            "sequence": 2,
+            "createdAt": "2026-04-01T00:00:01Z",
+            "updatedAt": "2026-04-01T00:00:01Z",
+            "status": "completed",
+            "source": "backend",
+            "tone": "neutral",
+            "metadata": {},
+            "role": "system",
+            "text": "Canonical confirmed spec snapshot",
+            "format": "markdown",
+        },
+        {
+            "id": "review-context:instructions",
+            "kind": "message",
+            "threadId": "audit-thread-1",
+            "turnId": None,
+            "sequence": 3,
+            "createdAt": "2026-04-01T00:00:02Z",
+            "updatedAt": "2026-04-01T00:00:02Z",
+            "status": "completed",
+            "source": "backend",
+            "tone": "neutral",
+            "metadata": {"workflowReviewGuidance": True},
+            "role": "system",
+            "text": "Review workflow guidance",
+            "format": "markdown",
+        },
+        {
+            "id": "msg-1",
+            "kind": "message",
+            "threadId": "audit-thread-1",
+            "turnId": "turn-1",
+            "sequence": 4,
+            "createdAt": "2026-04-01T00:00:03Z",
+            "updatedAt": "2026-04-01T00:00:03Z",
+            "status": "completed",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "role": "assistant",
+            "text": "Review result",
+            "format": "markdown",
+        },
+    ]
+
+    snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+
+    assert [item["id"] for item in snapshot_v3["items"]] == ["msg-1"]
+    assert snapshot_v3["items"][0]["kind"] == "message"
+
+
+def test_v3_projection_ignores_hidden_audit_seed_item_events() -> None:
+    snapshot_v2 = default_thread_snapshot("project-1", "node-1", "audit")
+    snapshot_v2["threadId"] = "audit-thread-1"
+    snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+
+    snapshot_v3, upsert_events = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_UPSERT,
+            "payload": {
+                "item": {
+                    "id": "audit-record:frame",
+                    "kind": "message",
+                    "threadId": "audit-thread-1",
+                    "turnId": None,
+                    "sequence": 1,
+                    "createdAt": "2026-04-01T00:00:00Z",
+                    "updatedAt": "2026-04-01T00:00:00Z",
+                    "status": "completed",
+                    "source": "backend",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "system",
+                    "text": "Canonical confirmed frame snapshot",
+                    "format": "markdown",
+                }
+            },
+        },
+    )
+    assert upsert_events == []
+    assert snapshot_v3["items"] == []
+
+    snapshot_v3, patch_events = project_v2_envelope_to_v3(
+        snapshot_v3,
+        {
+            "type": event_types.CONVERSATION_ITEM_PATCH,
+            "payload": {
+                "itemId": "audit-record:frame",
+                "patch": {
+                    "kind": "message",
+                    "textAppend": " updated",
+                    "status": "completed",
+                    "updatedAt": "2026-04-01T00:00:01Z",
+                },
+            },
+        },
+    )
+    assert patch_events == []
+    assert snapshot_v3["items"] == []
+
+
 def test_v3_projection_emits_user_input_signal_events() -> None:
     snapshot_v2 = default_thread_snapshot("project-1", "node-1", "execution")
     snapshot_v2["threadId"] = "exec-thread-1"

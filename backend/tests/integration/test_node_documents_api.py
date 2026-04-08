@@ -115,7 +115,7 @@ def test_child_document_endpoints_work_immediately_after_create_child(client, tm
     assert response.json()["content"] == ""
 
 
-def test_confirm_frame_route_writes_v2_audit_item_and_preserves_ordering_on_reconfirm(
+def test_confirm_frame_route_does_not_write_v2_audit_item(
     client,
     tmp_path: Path,
 ) -> None:
@@ -137,22 +137,15 @@ def test_confirm_frame_route_writes_v2_audit_item_and_preserves_ordering_on_reco
     first_confirm = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame")
     assert first_confirm.status_code == 200
     first_item = _find_audit_snapshot_item(client, project_id, root_id, "audit-record:frame")
-    assert first_item is not None
-    first_sequence = first_item["sequence"]
-    first_created_at = first_item["createdAt"]
+    assert first_item is None
 
     second_confirm = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame")
     assert second_confirm.status_code == 200
     second_item = _find_audit_snapshot_item(client, project_id, root_id, "audit-record:frame")
-    assert second_item is not None
-    assert second_item["kind"] == "message"
-    assert second_item["role"] == "system"
-    assert "Canonical confirmed frame snapshot" in second_item["text"]
-    assert second_item["sequence"] == first_sequence
-    assert second_item["createdAt"] == first_created_at
+    assert second_item is None
 
 
-def test_confirm_spec_route_writes_v2_audit_item_via_production_wiring(client, tmp_path: Path) -> None:
+def test_confirm_spec_route_does_not_write_v2_audit_item(client, tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
@@ -178,10 +171,7 @@ def test_confirm_spec_route_writes_v2_audit_item_via_production_wiring(client, t
     assert confirm_response.status_code == 200
 
     item = _find_audit_snapshot_item(client, project_id, root_id, "audit-record:spec")
-    assert item is not None
-    assert item["kind"] == "message"
-    assert item["role"] == "system"
-    assert "Canonical confirmed spec snapshot" in item["text"]
+    assert item is None
 
 
 def test_split_created_child_document_endpoints_work(client, tmp_path: Path) -> None:

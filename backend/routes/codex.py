@@ -16,6 +16,15 @@ async def get_codex_account_snapshot(request: Request) -> dict:
     return request.app.state.codex_account_service.get_snapshot()
 
 
+@router.get("/codex/usage/local")
+async def get_local_usage_snapshot(
+    request: Request,
+    days: str | None = None,
+) -> dict:
+    service = request.app.state.local_usage_snapshot_service
+    return await asyncio.to_thread(service.read_snapshot, days)
+
+
 @router.get("/codex/events")
 async def codex_events(request: Request) -> StreamingResponse:
     broker = request.app.state.codex_event_broker

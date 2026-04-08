@@ -1,27 +1,50 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import re
 import threading
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from backend.ai.execution_prompt_builder import build_execution_prompt
 from backend.ai.split_context_builder import build_split_context
-from backend.conversation.projector.thread_event_projector import apply_raw_event, patch_item, upsert_item
+from backend.conversation.projector.thread_event_projector import upsert_item
 from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.errors.app_errors import FinishTaskNotAllowed, NodeNotFound, ReviewNotAllowed
+from backend.services.execution_file_change_hydrator import (
+    ExecutionFileChangeDiffSource,
+    ExecutionFileChangeHydrator,
+)
 from backend.services.finish_task_service import FinishTaskService
 from backend.services.git_checkpoint_service import GitCheckpointService
 from backend.services.review_service import ReviewService
 from backend.services.tree_service import TreeService
 from backend.services.workspace_sha import compute_workspace_sha
-from backend.storage.file_utils import iso_now, new_id
+from backend.storage.file_utils import atomic_write_text, iso_now, load_text, new_id
 from backend.storage.storage import Storage
 
 logger = logging.getLogger(__name__)
+
+_HANDOFF_SUMMARY_PLACEHOLDER = "No execution summary."
+_HANDOFF_DOCS_DIR = "docs"
+_HANDOFF_FILE_NAME = "handoff.md"
+_HANDOFF_FILE_HEADER = "# PlanningTree Handoff\n\n"
+_LIVE_FILE_CHANGE_HYDRATE_DEBOUNCE_SEC = 0.35
+_HANDOFF_NODE_BLOCK_RE = re.compile(
+    r"<!-- PT_HANDOFF_NODE:(?P<node_id>[^>\r\n]+) -->\n(?P<body>.*?)\n<!-- /PT_HANDOFF_NODE:(?P=node_id) -->\n?",
+    re.DOTALL,
+)
+
+
+class WorkspaceCommitResult(TypedDict):
+    initialSha: str
+    headSha: str
+    commitMessage: str
+    committed: bool
 
 
 class WorkflowDecisionService:
@@ -140,10 +163,93 @@ class WorkflowMetadataService:
         )
         return f"{base}\n\n{improve}"
 
+    @staticmethod
+    def _truncate_for_prompt(text: str, *, char_limit: int) -> str:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return ""
+        if len(normalized) <= char_limit:
+            return normalized
+        if char_limit <= 3:
+            return normalized[:char_limit]
+        return normalized[: char_limit - 3].rstrip() + "..."
+
+    @classmethod
+    def build_audit_review_prompt(
+        cls,
+        *,
+        node: dict[str, Any],
+        spec_content: str,
+        frame_content: str,
+        review_commit_sha: str,
+    ) -> str:
+        task_number = str(node.get("hierarchical_number") or "").strip()
+        task_title = str(node.get("title") or "").strip() or "Task"
+        task_label = f"{task_number} {task_title}".strip()
+
+        frame_excerpt = cls._truncate_for_prompt(frame_content, char_limit=6000)
+        spec_excerpt = cls._truncate_for_prompt(spec_content, char_limit=16000)
+
+        sections = [
+            "You are reviewing code changes that were just completed in the current workspace.\n\n",
+            "I just completed code for task:\n",
+            f"- {task_label}\n\n",
+        ]
+
+        if frame_excerpt:
+            sections.extend(
+                [
+                    "Confirmed frame:\n",
+                    "```markdown\n",
+                    frame_excerpt,
+                    "\n```\n\n",
+                ]
+            )
+        if spec_excerpt:
+            sections.extend(
+                [
+                    "The task spec is:\n",
+                    "```markdown\n",
+                    spec_excerpt,
+                    "\n```\n\n",
+                ]
+            )
+        else:
+            sections.append("The task spec is: (confirmed spec content was not found)\n\n")
+
+        sections.extend(
+            [
+                f"The commit hash is `{review_commit_sha}`.\n",
+                "Please review this implementation.\n",
+                "Do you have any questions or issues?\n\n",
+                "Review requirements:\n",
+                "1. Evaluate strictly against the confirmed spec/frame.\n",
+                "2. Prioritize bugs, regressions, missing tests, and maintainability risks.\n",
+                "3. Ignore changes under `.planningtree/`.\n",
+                "4. If there are no serious issues, state that explicitly.\n",
+                "5. Include concrete file paths for findings whenever possible.\n",
+                f"6. Start by inspecting commit `{review_commit_sha}` and its related diffs.\n",
+                "7. Respond in plain markdown prose for humans.\n",
+                "8. Do NOT return JSON/YAML objects or fenced data payloads.\n",
+            ]
+        )
+        return "".join(sections)
+
 
 class GitArtifactService:
     def __init__(self, git_checkpoint_service: GitCheckpointService | None) -> None:
         self._git_checkpoint_service = git_checkpoint_service
+
+    @staticmethod
+    def _is_planningtree_relative_path(path: str | None) -> bool:
+        candidate = str(path or "").replace("\\", "/").strip().lower()
+        if not candidate:
+            return False
+        if len(candidate) >= 2 and candidate[1] == ":":
+            candidate = candidate[2:]
+        candidate = candidate.lstrip("/")
+        candidate = re.sub(r"^\./+", "", candidate)
+        return candidate == ".planningtree" or candidate.startswith(".planningtree/")
 
     def compute_workspace_hash(self, workspace_root: str | None) -> str:
         if not isinstance(workspace_root, str) or not workspace_root.strip():
@@ -177,20 +283,31 @@ class GitArtifactService:
         hierarchical_number: str,
         title: str,
         verb: str,
-    ) -> str:
+    ) -> WorkspaceCommitResult:
         if self._git_checkpoint_service is None:
             raise FinishTaskNotAllowed("Git checkpoint service is unavailable.")
         if not isinstance(workspace_root, str) or not workspace_root.strip():
             raise FinishTaskNotAllowed("Project snapshot is missing project_path.")
         project_path = Path(workspace_root).expanduser().resolve()
+        initial_sha = self._git_checkpoint_service.capture_head_sha(project_path)
         commit_message = self._git_checkpoint_service.build_commit_message(
             hierarchical_number,
             f"{verb} {title}".strip(),
         )
         committed_sha = self._git_checkpoint_service.commit_if_changed(project_path, commit_message)
         if committed_sha:
-            return committed_sha
-        return self._git_checkpoint_service.capture_head_sha(project_path)
+            return {
+                "initialSha": initial_sha,
+                "headSha": committed_sha,
+                "commitMessage": commit_message,
+                "committed": True,
+            }
+        return {
+            "initialSha": initial_sha,
+            "headSha": initial_sha,
+            "commitMessage": commit_message,
+            "committed": False,
+        }
 
     def get_worktree_diff(
         self,
@@ -216,11 +333,17 @@ class GitArtifactService:
             if path_obj.is_absolute():
                 try:
                     rel = path_obj.expanduser().resolve().relative_to(project_path)
-                    normalized_paths.append(rel.as_posix())
+                    normalized_rel = rel.as_posix()
+                    if self._is_planningtree_relative_path(normalized_rel):
+                        continue
+                    normalized_paths.append(normalized_rel)
                     continue
                 except Exception:
                     pass
-            normalized_paths.append(candidate)
+            normalized_path = candidate
+            if self._is_planningtree_relative_path(normalized_path):
+                continue
+            normalized_paths.append(normalized_path)
 
         try:
             if normalized_paths and hasattr(self._git_checkpoint_service, "get_worktree_diff_against_sha_for_paths"):
@@ -396,25 +519,41 @@ class ExecutionAuditWorkflowService:
                 raise FinishTaskNotAllowed("No current execution decision is available.")
             metadata = self._metadata_service.load_execution_metadata(project_id, node_id)
             self._artifact_service.require_workspace_hash(metadata["workspaceRoot"], expected_workspace_hash)
-            accepted_sha = self._artifact_service.commit_workspace(
+            run_id = str(current_execution_decision.get("sourceExecutionRunId") or "").strip() or None
+            summary_text = self._resolve_execution_summary_text_locked(
+                project_id=project_id,
+                node_id=node_id,
+                run_id=run_id,
+            )
+            self._upsert_handoff_summary_locked(
+                project_id=project_id,
+                node_id=node_id,
+                workspace_root=metadata["workspaceRoot"],
+                snapshot=metadata.get("snapshot"),
+                node=metadata.get("node"),
+                summary_text=summary_text,
+            )
+            commit_result = self._artifact_service.commit_workspace(
                 workspace_root=metadata["workspaceRoot"],
                 hierarchical_number=str(metadata["node"].get("hierarchical_number") or "1"),
                 title=str(metadata["node"].get("title") or "task").strip() or "task",
                 verb="done",
             )
-            run_id = str(current_execution_decision.get("sourceExecutionRunId") or "")
+            accepted_sha = commit_result["headSha"]
             runs = self._storage.execution_run_store.read_runs(project_id, node_id)
-            summary_text: str | None = None
             for run in runs:
-                if str(run.get("runId") or "") != run_id:
+                if str(run.get("runId") or "") != str(run_id or ""):
                     continue
                 run["committedHeadSha"] = accepted_sha
                 run["decision"] = "marked_done"
                 run["decidedAt"] = iso_now()
-                summary_text = str(run.get("summaryText") or "").strip() or None
                 break
             self._storage.execution_run_store.write_runs(project_id, node_id, runs)
             state["acceptedSha"] = accepted_sha
+            state["latestCommit"] = self._materialize_latest_commit(
+                source_action="mark_done_from_execution",
+                commit_result=commit_result,
+            )
             state["workflowPhase"] = "done"
             state["activeExecutionRunId"] = None
             self._storage.workflow_state_store.write_state(project_id, node_id, state)
@@ -592,6 +731,30 @@ class ExecutionAuditWorkflowService:
     ) -> None:
         turn_finalized = False
         try:
+            last_live_file_change_hydrate_at = 0.0
+
+            def handle_live_file_change_hydration(raw_event: dict[str, Any]) -> None:
+                nonlocal last_live_file_change_hydrate_at
+                if not self._should_trigger_live_file_change_hydrate(raw_event):
+                    return
+                method = str(raw_event.get("method") or "").strip()
+                now_mono = time.monotonic()
+                if (
+                    method != "turn/completed"
+                    and now_mono - last_live_file_change_hydrate_at < _LIVE_FILE_CHANGE_HYDRATE_DEBOUNCE_SEC
+                ):
+                    return
+                last_live_file_change_hydrate_at = now_mono
+                self._hydrate_execution_file_change_diff_from_worktree(
+                    project_id=project_id,
+                    node_id=node_id,
+                    turn_id=turn_id,
+                    workspace_root=workspace_root,
+                    start_sha=start_sha,
+                    hydrated_by="execution_audit_worktree_live",
+                    refresh_synthetic_from_full_diff=True,
+                )
+
             stream_result = self._thread_runtime_service_v2.stream_agent_turn(
                 project_id=project_id,
                 node_id=node_id,
@@ -602,6 +765,7 @@ class ExecutionAuditWorkflowService:
                 cwd=workspace_root,
                 writable_roots=[workspace_root] if isinstance(workspace_root, str) and workspace_root.strip() else None,
                 timeout_sec=self._finish_task_service._chat_timeout,
+                on_raw_event_applied=handle_live_file_change_hydration,
             )
             result = stream_result["result"]
             turn_status = str(stream_result.get("turnStatus") or "").strip().lower()
@@ -610,6 +774,14 @@ class ExecutionAuditWorkflowService:
                 raise FinishTaskNotAllowed(
                     f"Execution run returned unsupported terminal status {turn_status or 'unknown'}."
                 )
+            self._hydrate_execution_file_change_diff_from_worktree(
+                project_id=project_id,
+                node_id=node_id,
+                turn_id=turn_id,
+                workspace_root=workspace_root,
+                start_sha=start_sha,
+                refresh_synthetic_from_full_diff=True,
+            )
             self._thread_runtime_service_v2.complete_turn(
                 project_id=project_id,
                 node_id=node_id,
@@ -618,13 +790,6 @@ class ExecutionAuditWorkflowService:
                 outcome="completed",
             )
             turn_finalized = True
-            self._hydrate_execution_file_change_diff_from_worktree(
-                project_id=project_id,
-                node_id=node_id,
-                turn_id=turn_id,
-                workspace_root=workspace_root,
-                start_sha=start_sha,
-            )
             summary_text = str(result.get("stdout") or "").strip() or None
             candidate_workspace_hash = self._artifact_service.compute_workspace_hash(workspace_root)
             with self._storage.project_lock(project_id):
@@ -712,6 +877,11 @@ class ExecutionAuditWorkflowService:
         candidate = candidate.lstrip("/")
         candidate = re.sub(r"^\./+", "", candidate)
         return candidate.lower()
+
+    @staticmethod
+    def _is_planningtree_path(path: str | None) -> bool:
+        normalized = ExecutionAuditWorkflowService._normalize_path_for_diff_match(path)
+        return normalized == ".planningtree" or normalized.startswith(".planningtree/")
 
     @staticmethod
     def _strip_git_ab_prefix(path: str) -> str:
@@ -812,6 +982,8 @@ class ExecutionAuditWorkflowService:
             path = str(raw.get("path") or "").strip()
             if not path:
                 continue
+            if ExecutionAuditWorkflowService._is_planningtree_path(path):
+                continue
             kind = ExecutionAuditWorkflowService._normalize_change_kind(
                 raw.get("kind"),
                 fallback=ExecutionAuditWorkflowService._change_type_to_kind(raw.get("changeType"), fallback="modify"),
@@ -838,6 +1010,8 @@ class ExecutionAuditWorkflowService:
         for change in changes:
             path = str(change.get("path") or "").strip()
             if not path:
+                continue
+            if ExecutionAuditWorkflowService._is_planningtree_path(path):
                 continue
             kind = ExecutionAuditWorkflowService._normalize_change_kind(change.get("kind"), fallback="modify")
             file_entry: dict[str, Any] = {
@@ -897,6 +1071,104 @@ class ExecutionAuditWorkflowService:
             return blocks[0]
         return None
 
+    @staticmethod
+    def _primary_path_from_block_paths(paths: list[str] | None) -> str:
+        if not isinstance(paths, list):
+            return ""
+        for candidate in reversed(paths):
+            normalized = ExecutionAuditWorkflowService._normalize_path_for_diff_match(candidate)
+            if normalized and normalized != "dev/null":
+                return str(candidate)
+        for candidate in reversed(paths):
+            raw = str(candidate or "").strip()
+            if raw:
+                return raw
+        return ""
+
+    @staticmethod
+    def _change_kind_from_diff_block_text(text: str) -> str:
+        normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+        if (
+            re.search(r"(?m)^new file mode\b", normalized)
+            or re.search(r"(?m)^--- /dev/null$", normalized)
+        ):
+            return "add"
+        if (
+            re.search(r"(?m)^deleted file mode\b", normalized)
+            or re.search(r"(?m)^\+\+\+ /dev/null$", normalized)
+        ):
+            return "delete"
+        return "modify"
+
+    @staticmethod
+    def _changes_from_diff_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not blocks:
+            return []
+        changes: list[dict[str, Any]] = []
+        seen = set()
+        for block in blocks:
+            block_paths = block.get("paths")
+            path = ExecutionAuditWorkflowService._primary_path_from_block_paths(
+                block_paths if isinstance(block_paths, list) else None
+            )
+            normalized_path = ExecutionAuditWorkflowService._normalize_path_for_diff_match(path)
+            if (
+                not normalized_path
+                or normalized_path == "dev/null"
+                or normalized_path in seen
+                or ExecutionAuditWorkflowService._is_planningtree_path(path)
+            ):
+                continue
+            text = str(block.get("text") or "").strip()
+            changes.append(
+                {
+                    "path": path,
+                    "kind": ExecutionAuditWorkflowService._change_kind_from_diff_block_text(text),
+                    "diff": text or None,
+                    "summary": "Hydrated from git diff",
+                }
+            )
+            seen.add(normalized_path)
+        return changes
+
+    @staticmethod
+    def _file_change_item_has_planningtree_paths(item: dict[str, Any]) -> bool:
+        rows: list[Any] = []
+        raw_changes = item.get("changes")
+        raw_output_files = item.get("outputFiles")
+        if isinstance(raw_changes, list):
+            rows.extend(raw_changes)
+        if isinstance(raw_output_files, list):
+            rows.extend(raw_output_files)
+        for raw in rows:
+            if not isinstance(raw, dict):
+                continue
+            path = str(raw.get("path") or "").strip()
+            if ExecutionAuditWorkflowService._is_planningtree_path(path):
+                return True
+        return False
+
+    @staticmethod
+    def _output_text_from_changes(changes: list[dict[str, Any]]) -> str:
+        return "\n\n".join(
+            str(change.get("diff") or "").strip()
+            for change in changes
+            if str(change.get("diff") or "").strip()
+        )
+
+    @staticmethod
+    def _should_trigger_live_file_change_hydrate(raw_event: dict[str, Any]) -> bool:
+        method = str(raw_event.get("method") or "").strip()
+        if method not in {"item/completed", "turn/completed"}:
+            return False
+        if method == "turn/completed":
+            return True
+        params = raw_event.get("params", {})
+        item = params.get("item", {}) if isinstance(params, dict) else {}
+        if not isinstance(item, dict):
+            return False
+        return str(item.get("kind") or "") == "tool"
+
     def _hydrate_execution_file_change_diff_from_worktree(
         self,
         *,
@@ -905,13 +1177,59 @@ class ExecutionAuditWorkflowService:
         turn_id: str,
         workspace_root: str | None,
         start_sha: str | None,
+        hydrated_by: str = "execution_audit_worktree_diff",
+        refresh_synthetic_from_full_diff: bool = False,
     ) -> None:
         if not isinstance(workspace_root, str) or not workspace_root.strip():
             return
         if not isinstance(start_sha, str) or not start_sha.strip():
             return
+        runtime = self._thread_runtime_service_v2
+        if runtime is None:
+            return
 
-        query_service = self._thread_runtime_service_v2._query_service
+        class _WorktreeRangeDiffSource(ExecutionFileChangeDiffSource):
+            mode = "worktree_range"
+
+            def __init__(
+                self,
+                *,
+                artifact_service: GitArtifactService,
+                workspace_root: str,
+                start_sha: str,
+            ) -> None:
+                self._artifact_service = artifact_service
+                self._workspace_root = workspace_root
+                self._start_sha = start_sha
+
+            def get_diff_for_paths(self, paths: list[str]) -> str:
+                return str(
+                    self._artifact_service.get_worktree_diff(
+                        workspace_root=self._workspace_root,
+                        start_sha=self._start_sha,
+                        paths=paths,
+                    )
+                    or ""
+                )
+
+            def get_full_diff(self) -> str:
+                return str(
+                    self._artifact_service.get_worktree_diff(
+                        workspace_root=self._workspace_root,
+                        start_sha=self._start_sha,
+                        paths=None,
+                    )
+                    or ""
+                )
+
+        diff_source = _WorktreeRangeDiffSource(
+            artifact_service=self._artifact_service,
+            workspace_root=workspace_root,
+            start_sha=start_sha,
+        )
+        hydrator = ExecutionFileChangeHydrator(logger=logger)
+
+        query_service = runtime._query_service
         snapshot = query_service.get_thread_snapshot(
             project_id,
             node_id,
@@ -920,81 +1238,15 @@ class ExecutionAuditWorkflowService:
             ensure_binding=False,
             allow_thread_read_hydration=False,
         )
-
-        updated_snapshot = snapshot
-        pending_events: list[dict[str, Any]] = []
-        for item in list(updated_snapshot.get("items", [])):
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("kind") or "") != "tool":
-                continue
-            if str(item.get("toolType") or "") != "fileChange":
-                continue
-            if str(item.get("turnId") or "") != turn_id:
-                continue
-
-            output_text = str(item.get("outputText") or "")
-            arguments_text = str(item.get("argumentsText") or "")
-            if self._looks_like_structured_diff(output_text) or self._looks_like_structured_diff(arguments_text):
-                continue
-
-            baseline_changes = self._extract_file_change_changes(item)
-            if not baseline_changes:
-                continue
-            if any(str(change.get("diff") or "").strip() for change in baseline_changes):
-                continue
-
-            paths: list[str] = []
-            for change in baseline_changes:
-                raw_path = str(change.get("path") or "").strip()
-                if raw_path:
-                    paths.append(raw_path)
-
-            diff_text = self._artifact_service.get_worktree_diff(
-                workspace_root=workspace_root,
-                start_sha=start_sha,
-                paths=paths,
-            )
-            if not diff_text.strip() and paths:
-                diff_text = self._artifact_service.get_worktree_diff(
-                    workspace_root=workspace_root,
-                    start_sha=start_sha,
-                    paths=None,
-                )
-            trimmed_diff = diff_text.strip()
-            if not trimmed_diff:
-                continue
-
-            blocks = self._parse_unified_diff_blocks(trimmed_diff)
-            hydrated_changes: list[dict[str, Any]] = []
-            did_hydrate = False
-            for index, change in enumerate(baseline_changes):
-                block = self._resolve_diff_block_for_path(
-                    blocks,
-                    path=str(change.get("path") or ""),
-                    file_index=index,
-                )
-                diff_value = str(block.get("text") or "").strip() if isinstance(block, dict) else ""
-                next_change = copy.deepcopy(change)
-                next_change["diff"] = diff_value or None
-                hydrated_changes.append(next_change)
-                if diff_value:
-                    did_hydrate = True
-
-            if not did_hydrate:
-                continue
-
-            updated_snapshot, events = patch_item(
-                updated_snapshot,
-                str(item.get("id") or ""),
-                {
-                    "kind": "tool",
-                    "changesReplace": hydrated_changes,
-                    "outputFilesReplace": self._output_files_from_changes(hydrated_changes),
-                    "updatedAt": iso_now(),
-                },
-            )
-            pending_events.extend(events)
+        updated_snapshot, pending_events, _counters = hydrator.hydrate_turn_snapshot(
+            snapshot=snapshot,
+            turn_id=turn_id,
+            diff_source=diff_source,
+            hydrated_by=hydrated_by,
+            project_id=project_id,
+            node_id=node_id,
+            refresh_synthetic_from_full_diff=refresh_synthetic_from_full_diff,
+        )
 
         if pending_events:
             query_service.persist_thread_mutation(
@@ -1026,19 +1278,25 @@ class ExecutionAuditWorkflowService:
             if not isinstance(current_execution_decision, dict):
                 raise ReviewNotAllowed("No current execution decision is available.")
             self._artifact_service.require_workspace_hash(metadata["workspaceRoot"], expected_workspace_hash)
-            review_commit_sha = self._artifact_service.commit_workspace(
+            commit_result = self._artifact_service.commit_workspace(
                 workspace_root=metadata["workspaceRoot"],
                 hierarchical_number=str(metadata["node"].get("hierarchical_number") or "1"),
                 title=str(metadata["node"].get("title") or "task").strip() or "task",
                 verb="review",
             )
+            review_commit_sha = commit_result["headSha"]
             audit_lineage_thread_id = str(state.get("auditLineageThreadId") or "").strip()
             if not audit_lineage_thread_id:
                 audit_lineage_thread_id = self._ensure_audit_lineage_thread_id(project_id, node_id, metadata["workspaceRoot"])
                 state["auditLineageThreadId"] = audit_lineage_thread_id
 
-            review_thread_id = str(state.get("reviewThreadId") or "").strip() or None
-            delivery_kind = "inline" if review_thread_id else "detached"
+            review_thread_id = audit_lineage_thread_id
+            review_prompt = self._metadata_service.build_audit_review_prompt(
+                node=metadata["node"],
+                spec_content=metadata["specContent"],
+                frame_content=metadata["frameContent"],
+                review_commit_sha=review_commit_sha,
+            )
             cycle_id = new_id("review_cycle")
             local_turn_id = new_id("review_turn")
             source_execution_run_id = str(current_execution_decision.get("sourceExecutionRunId") or "")
@@ -1051,7 +1309,6 @@ class ExecutionAuditWorkflowService:
                 "reviewThreadId": review_thread_id,
                 "reviewTurnId": None,
                 "reviewCommitSha": review_commit_sha,
-                "deliveryKind": delivery_kind,
                 "clientRequestId": idempotency_key,
                 "lifecycleStatus": "running",
                 "reviewDisposition": None,
@@ -1072,10 +1329,14 @@ class ExecutionAuditWorkflowService:
             state["activeReviewCycleId"] = cycle_id
             state["latestReviewCycleId"] = cycle_id
             state["activeExecutionRunId"] = None
+            state["reviewThreadId"] = review_thread_id
+            state["latestCommit"] = self._materialize_latest_commit(
+                source_action="review_in_audit",
+                commit_result=commit_result,
+            )
             self._storage.workflow_state_store.write_state(project_id, node_id, state)
 
-        if review_thread_id:
-            self._bind_audit_thread_to_review_thread(project_id, node_id, review_thread_id)
+        self._bind_audit_thread_to_review_thread(project_id, node_id, review_thread_id)
         self._thread_runtime_service_v2.begin_turn(
             project_id=project_id,
             node_id=node_id,
@@ -1092,10 +1353,9 @@ class ExecutionAuditWorkflowService:
                 "node_id": node_id,
                 "cycle_id": cycle_id,
                 "local_turn_id": local_turn_id,
-                "source_thread_id": review_thread_id or audit_lineage_thread_id,
-                "delivery_kind": delivery_kind,
+                "thread_id": review_thread_id,
+                "prompt": review_prompt,
                 "review_commit_sha": review_commit_sha,
-                "client_request_id": idempotency_key,
                 "workspace_root": metadata["workspaceRoot"],
             },
             daemon=True,
@@ -1130,18 +1390,29 @@ class ExecutionAuditWorkflowService:
                 raise ReviewNotAllowed("No current audit decision is available.")
             metadata = self._metadata_service.load_execution_metadata(project_id, node_id)
             self._artifact_service.require_head_sha(metadata["workspaceRoot"], expected_review_commit_sha)
+            run_id = self._resolve_execution_run_id_for_audit_mark_done_locked(
+                project_id=project_id,
+                node_id=node_id,
+                state=state,
+                current_audit_decision=current_audit_decision,
+            )
+            summary_text = self._resolve_execution_summary_text_locked(
+                project_id=project_id,
+                node_id=node_id,
+                run_id=run_id,
+            )
+            self._upsert_handoff_summary_locked(
+                project_id=project_id,
+                node_id=node_id,
+                workspace_root=metadata["workspaceRoot"],
+                snapshot=metadata.get("snapshot"),
+                node=metadata.get("node"),
+                summary_text=summary_text,
+            )
             state["acceptedSha"] = expected_review_commit_sha
             state["workflowPhase"] = "done"
             state["activeReviewCycleId"] = None
             self._storage.workflow_state_store.write_state(project_id, node_id, state)
-            review_cycles = self._storage.review_cycle_store.read_cycles(project_id, node_id)
-            summary_text: str | None = None
-            cycle_id = str(current_audit_decision.get("sourceReviewCycleId") or "")
-            for cycle in review_cycles:
-                if str(cycle.get("cycleId") or "") != cycle_id:
-                    continue
-                summary_text = str(cycle.get("finalReviewText") or "").strip() or None
-                break
 
         self._complete_node_progression(project_id, node_id, accepted_sha=expected_review_commit_sha, summary_text=summary_text)
         response = self.get_workflow_state(project_id, node_id)
@@ -1156,118 +1427,59 @@ class ExecutionAuditWorkflowService:
         node_id: str,
         cycle_id: str,
         local_turn_id: str,
-        source_thread_id: str,
-        delivery_kind: str,
+        thread_id: str,
+        prompt: str,
         review_commit_sha: str,
-        client_request_id: str,
         workspace_root: str | None,
     ) -> None:
         turn_finalized = False
-        discovered_review_thread_id: str | None = None
+        discovered_review_thread_id: str | None = thread_id
         discovered_review_turn_id: str | None = None
         final_review_text: str | None = None
         review_disposition: str | None = None
 
-        def handle_raw_event(raw_event: dict[str, Any]) -> None:
-            nonlocal discovered_review_thread_id, discovered_review_turn_id, final_review_text, review_disposition
-            params = raw_event.get("params", {})
-            if not isinstance(params, dict):
-                params = {}
-            thread_id_candidate = str(
-                raw_event.get("review_thread_id")
-                or raw_event.get("thread_id")
-                or params.get("reviewThreadId")
-                or params.get("threadId")
-                or ""
-            ).strip()
-            if thread_id_candidate:
-                discovered_review_thread_id = thread_id_candidate
-                self._adopt_review_thread(project_id, node_id, cycle_id, thread_id_candidate)
-
-            review_turn_candidate = str(
-                raw_event.get("review_turn_id")
-                or raw_event.get("turn_id")
-                or params.get("reviewTurnId")
-                or params.get("turnId")
-                or ""
-            ).strip()
-            if review_turn_candidate:
-                discovered_review_turn_id = review_turn_candidate
-
-            if str(raw_event.get("method") or "") == "exitedReviewMode":
-                review_payload = params.get("exitedReviewMode")
-                if not isinstance(review_payload, dict):
-                    review_payload = params
-                text = str(review_payload.get("review") or "").strip()
-                disposition = str(review_payload.get("disposition") or review_payload.get("result") or "").strip() or None
-                if text:
-                    final_review_text = text
-                if disposition:
-                    review_disposition = disposition
-
-            current = self._thread_runtime_service_v2._query_service.get_thread_snapshot(
-                project_id,
-                node_id,
-                "audit",
-                publish_repairs=False,
-                ensure_binding=False,
-                allow_thread_read_hydration=False,
-            )
-            updated, events = apply_raw_event(current, raw_event)
-            if events:
-                self._thread_runtime_service_v2._query_service.persist_thread_mutation(
-                    project_id,
-                    node_id,
-                    "audit",
-                    updated,
-                    events,
-                )
-
         try:
-            review_runtime_thread_id = source_thread_id
-            if delivery_kind == "detached":
-                forked = self._codex_client.fork_thread(
-                    source_thread_id,
-                    cwd=workspace_root,
-                    timeout_sec=min(30, self._finish_task_service._chat_timeout),
-                    writable_roots=None,
-                )
-                detached_review_thread_id = str(forked.get("thread_id") or "").strip()
-                if not detached_review_thread_id:
-                    raise ReviewNotAllowed("Detached review thread bootstrap did not return a thread id.")
-                review_runtime_thread_id = detached_review_thread_id
-                discovered_review_thread_id = detached_review_thread_id
-                self._adopt_review_thread(project_id, node_id, cycle_id, detached_review_thread_id)
-
-            self._codex_client.resume_thread(
-                review_runtime_thread_id,
+            stream_result = self._thread_runtime_service_v2.stream_agent_turn(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="audit",
+                thread_id=thread_id,
+                turn_id=local_turn_id,
+                prompt=prompt,
                 cwd=workspace_root,
-                timeout_sec=min(30, self._finish_task_service._chat_timeout),
                 writable_roots=None,
-            )
-            self._ensure_review_guidance_item(project_id=project_id, node_id=node_id)
-            review_result = self._codex_client.start_review_streaming(
-                thread_id=review_runtime_thread_id,
-                target_sha=review_commit_sha,
-                target_title=f"Review commit {review_commit_sha}",
-                cwd=workspace_root,
-                delivery=None,
-                client_request_id=client_request_id,
+                sandbox_profile="read_only",
                 timeout_sec=self._finish_task_service._chat_timeout,
-                on_raw_event=handle_raw_event,
             )
-            discovered_review_thread_id = str(review_result.get("review_thread_id") or "").strip() or discovered_review_thread_id
-            discovered_review_turn_id = str(review_result.get("review_turn_id") or "").strip() or discovered_review_turn_id
-            final_review_text = str(review_result.get("review") or "").strip() or final_review_text
-            review_disposition = str(review_result.get("review_disposition") or "").strip() or review_disposition
+            result = stream_result["result"]
+            turn_status = str(stream_result.get("turnStatus") or "").strip().lower()
+            outcome = self._thread_runtime_service_v2.outcome_from_turn_status(turn_status)
+            if outcome != "completed":
+                raise ReviewNotAllowed(
+                    f"Audit review run returned unsupported terminal status {turn_status or 'unknown'}."
+                )
+
+            discovered_review_thread_id = str(result.get("thread_id") or "").strip() or discovered_review_thread_id
+            discovered_review_turn_id = str(result.get("turn_id") or "").strip() or discovered_review_turn_id
+            normalized_review_text, normalized_from_json = self._normalize_review_response_text(
+                str(result.get("stdout") or "")
+            )
+            final_review_text = normalized_review_text or final_review_text
             if discovered_review_thread_id:
                 self._adopt_review_thread(project_id, node_id, cycle_id, discovered_review_thread_id)
             if not final_review_text:
                 final_review_text = "Local review completed without a textual review payload."
+            if normalized_from_json and final_review_text:
+                self._rewrite_review_turn_assistant_message(
+                    project_id=project_id,
+                    node_id=node_id,
+                    turn_id=local_turn_id,
+                    review_text=final_review_text,
+                )
             self._ensure_review_summary_item(
                 project_id=project_id,
                 node_id=node_id,
-                thread_id=discovered_review_thread_id or source_thread_id,
+                thread_id=discovered_review_thread_id or thread_id,
                 turn_id=discovered_review_turn_id or local_turn_id,
                 review_text=final_review_text,
             )
@@ -1314,7 +1526,7 @@ class ExecutionAuditWorkflowService:
                         node_id=node_id,
                         thread_role="audit",
                         turn_id=local_turn_id,
-                        thread_id=discovered_review_thread_id or source_thread_id,
+                        thread_id=discovered_review_thread_id or thread_id,
                         message=str(exc),
                     )
                     self._thread_runtime_service_v2.complete_turn(
@@ -1414,29 +1626,105 @@ class ExecutionAuditWorkflowService:
             events,
         )
 
-    def _ensure_review_guidance_item(
+    @staticmethod
+    def _extract_json_object_from_text(text: str) -> dict[str, Any] | None:
+        raw = str(text or "").strip()
+        if not raw:
+            return None
+
+        candidates: list[str] = []
+        if raw.startswith("{") and raw.endswith("}"):
+            candidates.append(raw)
+
+        fenced_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", raw, flags=re.IGNORECASE)
+        if fenced_match:
+            candidates.append(fenced_match.group(1).strip())
+
+        if not candidates and raw.startswith("{"):
+            candidates.append(raw)
+
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+
+    @classmethod
+    def _normalize_review_response_text(cls, raw_text: str) -> tuple[str | None, bool]:
+        normalized = str(raw_text or "").strip()
+        if not normalized:
+            return None, False
+
+        payload = cls._extract_json_object_from_text(normalized)
+        if payload is None:
+            return normalized, False
+
+        for key in ("summary", "review", "final_review_text", "checkpoint_summary"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip(), True
+        return normalized, False
+
+    def _rewrite_review_turn_assistant_message(
         self,
         *,
         project_id: str,
         node_id: str,
+        turn_id: str,
+        review_text: str,
     ) -> None:
-        self._thread_runtime_service_v2.upsert_system_message(
-            project_id=project_id,
-            node_id=node_id,
-            thread_role="audit",
-            item_id="review-context:instructions",
-            turn_id=None,
-            text=(
-                "Review workflow guidance:\n\n"
-                "- Use the canonical confirmed frame/spec snapshots already present in this thread as the task contract.\n"
-                "- Start with the target commit diff, changed files, and relevant tests.\n"
-                "- Do not recursively scan `.planningtree` before reviewing.\n"
-                "- Do not open or inspect files under `.planningtree/`; treat those changes as internal planning metadata and exclude them from review findings.\n"
-                "- Keep this run read-only."
-            ),
-            tone="neutral",
-            metadata={"workflowReviewGuidance": True},
+        text = str(review_text or "").strip()
+        if not text:
+            return
+
+        query_service = self._thread_runtime_service_v2._query_service
+        snapshot = query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            "audit",
+            publish_repairs=False,
+            ensure_binding=False,
+            allow_thread_read_hydration=False,
         )
+        assistant_messages = [
+            item
+            for item in snapshot.get("items", [])
+            if isinstance(item, dict)
+            and str(item.get("kind") or "") == "message"
+            and str(item.get("role") or "") == "assistant"
+            and str(item.get("turnId") or "") == turn_id
+        ]
+        if not assistant_messages:
+            return
+
+        updated = snapshot
+        events: list[dict[str, Any]] = []
+        for item in assistant_messages:
+            current_text = str(item.get("text") or "").strip()
+            if current_text == text:
+                continue
+            if self._extract_json_object_from_text(current_text) is None:
+                continue
+
+            rewritten = copy.deepcopy(item)
+            rewritten["text"] = text
+            rewritten["updatedAt"] = iso_now()
+            if str(rewritten.get("status") or "") != "failed":
+                rewritten["status"] = "completed"
+            updated, upsert_events = upsert_item(updated, rewritten)
+            events.extend(upsert_events)
+
+        if events:
+            query_service.persist_thread_mutation(
+                project_id,
+                node_id,
+                "audit",
+                updated,
+                events,
+            )
 
     def _materialize_execution_decision(
         self,
@@ -1470,6 +1758,21 @@ class ExecutionAuditWorkflowService:
             "finalReviewText": final_review_text,
             "reviewDisposition": review_disposition,
             "createdAt": iso_now(),
+        }
+
+    def _materialize_latest_commit(
+        self,
+        *,
+        source_action: str,
+        commit_result: WorkspaceCommitResult,
+    ) -> dict[str, Any]:
+        return {
+            "sourceAction": source_action,
+            "initialSha": commit_result["initialSha"],
+            "headSha": commit_result["headSha"],
+            "commitMessage": commit_result["commitMessage"],
+            "committed": commit_result["committed"],
+            "recordedAt": iso_now(),
         }
 
     def _ensure_workflow_state_locked(self, project_id: str, node_id: str) -> dict[str, Any]:
@@ -1587,6 +1890,196 @@ class ExecutionAuditWorkflowService:
             "text": text,
             "format": "markdown",
         }
+
+    def _resolve_execution_summary_text_locked(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        run_id: str | None,
+    ) -> str:
+        target_run_id = str(run_id or "").strip()
+        if not target_run_id:
+            return _HANDOFF_SUMMARY_PLACEHOLDER
+        runs = self._storage.execution_run_store.read_runs(project_id, node_id)
+        for run in runs:
+            if str(run.get("runId") or "").strip() != target_run_id:
+                continue
+            summary_text = str(run.get("summaryText") or "").strip()
+            return summary_text or _HANDOFF_SUMMARY_PLACEHOLDER
+        return _HANDOFF_SUMMARY_PLACEHOLDER
+
+    def _resolve_execution_run_id_for_audit_mark_done_locked(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        state: dict[str, Any],
+        current_audit_decision: dict[str, Any],
+    ) -> str | None:
+        cycle_id = str(current_audit_decision.get("sourceReviewCycleId") or "").strip()
+        if cycle_id:
+            review_cycles = self._storage.review_cycle_store.read_cycles(project_id, node_id)
+            for cycle in review_cycles:
+                if str(cycle.get("cycleId") or "").strip() != cycle_id:
+                    continue
+                run_id = str(cycle.get("sourceExecutionRunId") or "").strip()
+                if run_id:
+                    return run_id
+                break
+        latest_run_id = str(state.get("latestExecutionRunId") or "").strip()
+        return latest_run_id or None
+
+    def _upsert_handoff_summary_locked(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+        snapshot: Any,
+        node: Any,
+        summary_text: str,
+    ) -> None:
+        root = str(workspace_root or "").strip()
+        if not root:
+            raise FinishTaskNotAllowed("Project snapshot is missing project_path.")
+        target = Path(root).expanduser().resolve() / _HANDOFF_DOCS_DIR / _HANDOFF_FILE_NAME
+        if target.exists():
+            content = load_text(target)
+            if not content.strip():
+                content = _HANDOFF_FILE_HEADER
+        else:
+            content = _HANDOFF_FILE_HEADER
+
+        node_payload = node if isinstance(node, dict) else {}
+        block = self._render_handoff_block(
+            node_id=node_id,
+            node_label=self._node_label_for_handoff(node_payload),
+            summary_text=str(summary_text or "").strip() or _HANDOFF_SUMMARY_PLACEHOLDER,
+        )
+        ordered_node_ids = self._handoff_task_node_order(snapshot) if isinstance(snapshot, dict) else []
+        updated = self._upsert_handoff_block_content(
+            content=content,
+            node_id=node_id,
+            block=block,
+            ordered_node_ids=ordered_node_ids,
+        )
+        if updated == content:
+            return
+        atomic_write_text(target, updated)
+
+    @staticmethod
+    def _node_label_for_handoff(node: dict[str, Any]) -> str:
+        hierarchical_number = str(node.get("hierarchical_number") or "").strip()
+        title = str(node.get("title") or "").strip() or "Task"
+        return f"{hierarchical_number} {title}".strip()
+
+    @staticmethod
+    def _render_handoff_block(*, node_id: str, node_label: str, summary_text: str) -> str:
+        normalized_summary = summary_text.rstrip()
+        return (
+            f"<!-- PT_HANDOFF_NODE:{node_id} -->\n"
+            f"## {node_label}\n\n"
+            f"{normalized_summary}\n"
+            f"<!-- /PT_HANDOFF_NODE:{node_id} -->\n"
+        )
+
+    def _upsert_handoff_block_content(
+        self,
+        *,
+        content: str,
+        node_id: str,
+        block: str,
+        ordered_node_ids: list[str],
+    ) -> str:
+        matches = list(_HANDOFF_NODE_BLOCK_RE.finditer(content))
+        ranges_by_node_id: dict[str, tuple[int, int]] = {}
+        for match in matches:
+            match_node_id = str(match.group("node_id") or "").strip()
+            if not match_node_id or match_node_id in ranges_by_node_id:
+                continue
+            ranges_by_node_id[match_node_id] = (match.start(), match.end())
+
+        existing = ranges_by_node_id.get(node_id)
+        if existing is not None:
+            start, end = existing
+            return f"{content[:start]}{block}{content[end:]}"
+
+        insert_at = self._choose_handoff_insert_offset(
+            content=content,
+            ranges_by_node_id=ranges_by_node_id,
+            ordered_node_ids=ordered_node_ids,
+            target_node_id=node_id,
+        )
+        prefix = content[:insert_at]
+        suffix = content[insert_at:]
+        before = "" if not prefix or prefix.endswith("\n") else "\n"
+        after = "" if not suffix or suffix.startswith("\n") else "\n"
+        return f"{prefix}{before}{block}{after}{suffix}"
+
+    @staticmethod
+    def _choose_handoff_insert_offset(
+        *,
+        content: str,
+        ranges_by_node_id: dict[str, tuple[int, int]],
+        ordered_node_ids: list[str],
+        target_node_id: str,
+    ) -> int:
+        if ranges_by_node_id and ordered_node_ids:
+            try:
+                target_index = ordered_node_ids.index(target_node_id)
+            except ValueError:
+                target_index = -1
+            if target_index >= 0:
+                for previous_id in reversed(ordered_node_ids[:target_index]):
+                    previous_range = ranges_by_node_id.get(previous_id)
+                    if previous_range is not None:
+                        return previous_range[1]
+                for next_id in ordered_node_ids[target_index + 1 :]:
+                    next_range = ranges_by_node_id.get(next_id)
+                    if next_range is not None:
+                        return next_range[0]
+        return len(content)
+
+    @staticmethod
+    def _handoff_task_node_order(snapshot: dict[str, Any]) -> list[str]:
+        tree_state = snapshot.get("tree_state")
+        if not isinstance(tree_state, dict):
+            return []
+        node_index = tree_state.get("node_index")
+        if not isinstance(node_index, dict):
+            return []
+        root_node_id = str(tree_state.get("root_node_id") or "").strip()
+        if not root_node_id:
+            return []
+
+        ordered_ids: list[str] = []
+        visited: set[str] = set()
+
+        def walk(node_id: str) -> None:
+            if not node_id or node_id in visited:
+                return
+            visited.add(node_id)
+            node = node_index.get(node_id)
+            if not isinstance(node, dict):
+                return
+            node_kind = str(node.get("node_kind") or "").strip()
+            if node_id == root_node_id:
+                node_kind = "root"
+            elif not node_kind:
+                node_kind = "original"
+            if node_kind in {"root", "original"}:
+                ordered_ids.append(node_id)
+            child_ids = node.get("child_ids")
+            if not isinstance(child_ids, list):
+                return
+            for raw_child_id in child_ids:
+                child_id = str(raw_child_id or "").strip()
+                if child_id:
+                    walk(child_id)
+
+        walk(root_node_id)
+        return ordered_ids
 
     def _update_execution_run_decision(
         self,

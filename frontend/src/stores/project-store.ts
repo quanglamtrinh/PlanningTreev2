@@ -107,6 +107,7 @@ export type ProjectStoreState = {
   stageNodeEdit: (nodeId: string, draft: NodeDraft) => void
   flushNodeDraft: (nodeId: string) => Promise<void>
   createChild: (parentId: string) => Promise<void>
+  createTask: (parentId: string, description: string) => Promise<string | null>
   splitNode: (nodeId: string, mode: SplitMode) => Promise<void>
   refreshSplitStatus: (projectId?: string) => Promise<void>
   clearError: () => void
@@ -436,6 +437,35 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
           nodeDrafts: {},
           isCreatingNode: false,
         })
+      } catch (error) {
+        set({ error: toErrorMessage(error), isCreatingNode: false })
+        throw error
+      }
+    },
+    async createTask(parentId: string, description: string) {
+      const activeProjectId = get().activeProjectId
+      const cleanedDescription = description.trim()
+      if (!activeProjectId || !cleanedDescription) {
+        return null
+      }
+      set({ isCreatingNode: true, error: null })
+      try {
+        const snapshot = await api.createTask(activeProjectId, parentId, cleanedDescription)
+        const createdNodeId = snapshot.tree_state.active_node_id ?? null
+        set({
+          snapshot,
+          selectedNodeId: rootFallback(snapshot),
+          nodeDrafts: {},
+          isCreatingNode: false,
+        })
+        if (createdNodeId) {
+          void api.generateFrame(activeProjectId, createdNodeId).catch((error) => {
+            if (get().activeProjectId === activeProjectId) {
+              set({ error: toErrorMessage(error) })
+            }
+          })
+        }
+        return createdNodeId
       } catch (error) {
         set({ error: toErrorMessage(error), isCreatingNode: false })
         throw error

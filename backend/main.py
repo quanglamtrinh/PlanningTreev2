@@ -47,8 +47,10 @@ from backend.services.frame_generation_service import FrameGenerationService
 from backend.services.finish_task_service import FinishTaskService
 from backend.services.git_checkpoint_service import GitCheckpointService
 from backend.services.node_detail_service import NodeDetailService
+from backend.services.local_usage_snapshot_service import LocalUsageSnapshotService
 from backend.services.spec_generation_service import SpecGenerationService
 from backend.services.node_document_service import NodeDocumentService
+from backend.services.workspace_file_service import WorkspaceFileService
 from backend.services.node_service import NodeService
 from backend.services.project_service import ProjectService
 from backend.services.review_service import ReviewService
@@ -80,13 +82,13 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     )
     node_service = NodeService(storage, tree_service, snapshot_view_service)
     node_document_service = NodeDocumentService(storage)
+    workspace_file_service = WorkspaceFileService(storage)
     thread_registry_service_v2 = ThreadRegistryService(storage.thread_registry_store)
     system_message_writer_v2 = ConversationSystemMessageWriter(storage)
     node_detail_service = NodeDetailService(
         storage,
         tree_service,
         git_checkpoint_service=git_checkpoint_service,
-        system_message_writer=system_message_writer_v2,
     )
     codex_client = CodexAppClient(StdioTransport(codex_cmd=get_codex_cmd() or "codex"))
     thread_lineage_service = ThreadLineageService(
@@ -101,6 +103,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         codex_client=codex_client,
         event_broker=codex_event_broker,
     )
+    local_usage_snapshot_service = LocalUsageSnapshotService()
     split_service = SplitService(
         storage=storage,
         tree_service=tree_service,
@@ -251,12 +254,14 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.project_service = project_service
     app.state.node_service = node_service
     app.state.node_document_service = node_document_service
+    app.state.workspace_file_service = workspace_file_service
     app.state.node_detail_service = node_detail_service
     app.state.snapshot_view_service = snapshot_view_service
     app.state.codex_client = codex_client
     app.state.thread_lineage_service = thread_lineage_service
     app.state.codex_event_broker = codex_event_broker
     app.state.codex_account_service = codex_account_service
+    app.state.local_usage_snapshot_service = local_usage_snapshot_service
     app.state.split_service = split_service
     app.state.frame_generation_service = frame_generation_service
     app.state.clarify_generation_service = clarify_generation_service

@@ -89,6 +89,27 @@ def _lane_from_thread_role(thread_role: str) -> ThreadLaneV3:
     return "execution"
 
 
+_HIDDEN_AUDIT_SYSTEM_MESSAGE_IDS = {
+    "audit-record:frame",
+    "audit-record:spec",
+    "review-context:instructions",
+}
+
+
+def _is_hidden_audit_system_item(raw_item: dict[str, Any]) -> bool:
+    if str(raw_item.get("kind") or "").strip() != "message":
+        return False
+    if str(raw_item.get("role") or "").strip() != "system":
+        return False
+    item_id = str(raw_item.get("id") or "").strip()
+    if item_id in _HIDDEN_AUDIT_SYSTEM_MESSAGE_IDS:
+        return True
+    metadata = raw_item.get("metadata")
+    if isinstance(metadata, dict) and _is_truthy_flag(metadata.get("workflowReviewGuidance")):
+        return True
+    return False
+
+
 def _render_plan_text(item: dict[str, Any]) -> str:
     base_text = str(item.get("text") or "").strip()
     steps = item.get("steps")
@@ -511,6 +532,8 @@ def build_snapshot_v3_from_v2(snapshot: ThreadSnapshotV2 | dict[str, Any]) -> Th
     items: list[ConversationItemV3] = []
     for raw_item in source.get("items") if isinstance(source.get("items"), list) else []:
         if not isinstance(raw_item, dict):
+            continue
+        if thread_role == "audit" and _is_hidden_audit_system_item(raw_item):
             continue
         items.append(convert_item_v2_to_v3(raw_item))
     items.sort(key=lambda current: (int(current.get("sequence") or 0), str(current.get("id") or "")))
@@ -963,6 +986,9 @@ def project_v2_envelope_to_v3(
     if event_type == event_types.CONVERSATION_ITEM_UPSERT:
         raw_item = payload_dict.get("item")
         if isinstance(raw_item, dict):
+            if updated.get("lane") == "audit" and _is_hidden_audit_system_item(raw_item):
+                updated["uiSignals"]["planReady"] = _derive_plan_ready(updated)
+                return updated, events
             item_v3 = convert_item_v2_to_v3(raw_item)
             updated = _upsert_item(updated, item_v3)
             events.append(
@@ -975,6 +1001,9 @@ def project_v2_envelope_to_v3(
         item_id = str(payload_dict.get("itemId") or "").strip()
         raw_patch = payload_dict.get("patch")
         if item_id and isinstance(raw_patch, dict):
+            if updated.get("lane") == "audit" and item_id in _HIDDEN_AUDIT_SYSTEM_MESSAGE_IDS:
+                updated["uiSignals"]["planReady"] = _derive_plan_ready(updated)
+                return updated, events
             current_index = _find_item_index(updated, item_id)
             if current_index is None:
                 synthesized_item = _synthesize_item_for_patch_v2(

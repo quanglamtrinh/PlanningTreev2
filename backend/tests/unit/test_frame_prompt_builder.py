@@ -38,6 +38,13 @@ def test_role_prefix_preserves_relevant_unresolved_shaping_fields() -> None:
     assert "left blank" in prefix.lower()
 
 
+def test_role_prefix_requires_minimum_empty_task_shaping_fields() -> None:
+    prefix = build_frame_generation_role_prefix()
+    lowered = prefix.lower()
+    assert "at least 3 unresolved task-shaping fields" in lowered
+    assert "empty format `- field name:`" in lowered
+
+
 def test_role_prefix_declares_initial_frame_philosophy() -> None:
     prefix = build_frame_generation_role_prefix()
     lowered = prefix.lower()

@@ -1,0 +1,31 @@
+{
+  "schema_version": 6,
+  "project": {
+    "id": "953e283e03a64ceaaabf47d6080d34b9",
+    "root_goal": "usage-success-1775616733592",
+    "name": "usage-success-1775616733592",
+    "created_at": "2026-04-08T02:52:33.391524+00:00",
+    "updated_at": "2026-04-08T02:52:33.391524+00:00"
+  },
+  "tree_state": {
+    "root_node_id": "a1835e272d9a4b6f907d82098e3a2ac4",
+    "active_node_id": "a1835e272d9a4b6f907d82098e3a2ac4",
+    "node_index": {
+      "a1835e272d9a4b6f907d82098e3a2ac4": {
+        "node_id": "a1835e272d9a4b6f907d82098e3a2ac4",
+        "parent_id": null,
+        "child_ids": [],
+        "title": "usage-success-1775616733592",
+        "description": "",
+        "status": "draft",
+        "node_kind": "root",
+        "depth": 0,
+        "display_order": 0,
+        "hierarchical_number": "1",
+        "created_at": "2026-04-08T02:52:33.391524+00:00",
+        "review_node_id": null
+      }
+    }
+  },
+  "updated_at": "2026-04-08T02:52:33.391524+00:00"
+}

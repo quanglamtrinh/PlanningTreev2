@@ -55,11 +55,14 @@ class SnapshotViewService:
             node = dict(raw_node)
             node_id = str(node.get("node_id") or "")
             node_kind = str(node.get("node_kind") or "").strip()
+            is_init_node = False
             if node_id and node_id == root_node_id:
                 node_kind = "root"
+                is_init_node = True
             elif node_kind not in {"root", "original", "superseded", "review"}:
                 node_kind = "original"
             node["node_kind"] = node_kind
+            node["is_init_node"] = is_init_node
             node["is_superseded"] = node_kind == "superseded"
             if node_kind == "review":
                 node["workflow"] = None

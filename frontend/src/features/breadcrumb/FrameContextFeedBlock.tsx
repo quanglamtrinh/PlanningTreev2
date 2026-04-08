@@ -37,6 +37,8 @@ type PanelProps = {
   expanded: boolean
   onToggle: (nodeId: string, panelId: PanelId) => void
   children: React.ReactNode
+  /** Frame panel: shared chrome (toggle + body) for every node */
+  frameChrome?: boolean
 }
 
 function buildAncestorChain(nodeId: string, registry: NodeRecord[]): NodeRecord[] {
@@ -54,15 +56,32 @@ function buildAncestorChain(nodeId: string, registry: NodeRecord[]): NodeRecord[
   return chain
 }
 
+function isInitNode(node: NodeRecord): boolean {
+  return node.is_init_node === true
+}
+
+function normalizeShellNodeNumber(rawNumber: string | null | undefined, stripInitPrefix: boolean): string | null {
+  const value = String(rawNumber ?? '').trim()
+  if (!value) {
+    return null
+  }
+  if (!stripInitPrefix) {
+    return value
+  }
+  const dotIndex = value.indexOf('.')
+  if (dotIndex <= -1 || dotIndex >= value.length - 1) {
+    return value
+  }
+  const normalized = value.slice(dotIndex + 1).trim()
+  return normalized || null
+}
+
 function panelKey(nodeId: string, panelId: PanelId): string {
   return `${nodeId}::${panelId}`
 }
 
-function defaultExpanded(panelId: PanelId, isCurrent: boolean): boolean {
-  if (isCurrent) {
-    return panelId === 'frame'
-  }
-  return panelId === 'split'
+function defaultExpanded(_panelId: PanelId, _isCurrent: boolean): boolean {
+  return false
 }
 
 function resolveAnswer(question: ClarifyQuestion): string | null {
@@ -123,28 +142,52 @@ function Chevron({ expanded }: { expanded: boolean }) {
   )
 }
 
+/** Reply / return curve — clarify answer row (reference UI). */
+function IconClarifyReply() {
+  return (
+    <svg className={styles.clarifyQaReplySvg} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" />
+    </svg>
+  )
+}
+
+function ClarifyQABlock({ n, question }: { n: number; question: ClarifyQuestion }) {
+  const answer = resolveAnswer(question)
+  return (
+    <div className={styles.clarifyQaBlock}>
+      <span className={styles.clarifyQaQuestion}>
+        {n}. {question.question}
+      </span>
+      <div className={styles.clarifyQaDivider} aria-hidden />
+      {answer ? (
+        <div className={styles.clarifyQaAnswerBox}>
+          <span className={styles.clarifyQaReplyIcon} aria-hidden>
+            <IconClarifyReply />
+          </span>
+          <span className={styles.clarifyQaAnswerText}>{answer}</span>
+        </div>
+      ) : (
+        <div className={`${styles.clarifyQaAnswerBox} ${styles.clarifyQaAnswerBoxUnset}`}>
+          <span className={styles.clarifyQaAnswerEmpty}>Not answered</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Clarify metadata: flat numbered Q/A only (no frame-style section labels or IconUsers). */
 function ContextClarifyView({ questions }: { questions: ClarifyQuestion[] }) {
   if (questions.length === 0) {
     return <div className={styles.stateEmpty}>No clarify questions.</div>
   }
 
   return (
-    <div className={styles.qaList}>
-      {questions.map((question, index) => {
-        const answer = resolveAnswer(question)
-        return (
-          <div key={question.field_name} className={styles.qaItem}>
-            <span className={styles.qaQuestion}>
-              {index + 1}. {question.question}
-            </span>
-            {answer ? (
-              <span className={styles.qaAnswer}>{answer}</span>
-            ) : (
-              <span className={styles.qaAnswerEmpty}>Not answered</span>
-            )}
-          </div>
-        )
-      })}
+    <div className={styles.clarifyDoc}>
+      <div className={styles.clarifyQaStack}>
+        {questions.map((question, index) => (
+          <ClarifyQABlock key={question.field_name} n={index + 1} question={question} />
+        ))}
+      </div>
     </div>
   )
 }
@@ -153,10 +196,12 @@ function ContextSplitView({
   node,
   nodeRegistry,
   currentNodeId,
+  stripInitPrefix,
 }: {
   node: NodeRecord
   nodeRegistry: NodeRecord[]
   currentNodeId: string
+  stripInitPrefix: boolean
 }) {
   const byId = useMemo(() => new Map(nodeRegistry.map((item) => [item.node_id, item])), [nodeRegistry])
   const children = useMemo(
@@ -172,10 +217,11 @@ function ContextSplitView({
     <div className={styles.childList}>
       {children.map((child) => {
         const isCurrent = child.node_id === currentNodeId
+        const displayNumber = normalizeShellNodeNumber(child.hierarchical_number, stripInitPrefix)
         return (
           <div key={child.node_id} className={styles.childItem}>
-            {child.hierarchical_number ? (
-              <span className={styles.childNumber}>{child.hierarchical_number}</span>
+            {displayNumber ? (
+              <span className={styles.childNumber}>{displayNumber}</span>
             ) : null}
             <span className={`${styles.childTitle} ${isCurrent ? styles.childTitleCurrent : ''}`}>
               {child.title}
@@ -187,9 +233,9 @@ function ContextSplitView({
   )
 }
 
-function NodePanel({ label, panelId, nodeId, expanded, onToggle, children }: PanelProps) {
+function NodePanel({ label, panelId, nodeId, expanded, onToggle, children, frameChrome }: PanelProps) {
   return (
-    <div className={styles.panel}>
+    <div className={`${styles.panel} ${frameChrome ? styles.panelFrame : ''}`}>
       <button
         type="button"
         className={styles.panelToggle}
@@ -199,7 +245,9 @@ function NodePanel({ label, panelId, nodeId, expanded, onToggle, children }: Pan
         <Chevron expanded={expanded} />
         <span className={styles.panelLabel}>{label}</span>
       </button>
-      {expanded ? <div className={styles.panelBody}>{children}</div> : null}
+      {expanded ? (
+        <div className={`${styles.panelBody} ${frameChrome ? styles.framePanelBody : ''}`}>{children}</div>
+      ) : null}
     </div>
   )
 }
@@ -211,7 +259,9 @@ export function FrameContextFeedBlock({
   variant = 'ask',
   specConfirmed = false,
 }: Props) {
-  const chain = useMemo(() => buildAncestorChain(nodeId, nodeRegistry), [nodeId, nodeRegistry])
+  const rawChain = useMemo(() => buildAncestorChain(nodeId, nodeRegistry), [nodeId, nodeRegistry])
+  const stripInitPrefix = rawChain.length > 0 && isInitNode(rawChain[0])
+  const chain = useMemo(() => rawChain.filter((node) => !isInitNode(node)), [rawChain])
   const actionState = useAskShellActionStore(
     (state) => state.entries[askShellNodeActionStateKey(projectId, nodeId)],
   )
@@ -275,25 +325,23 @@ export function FrameContextFeedBlock({
       <div className={styles.nodeList}>
         {chain.map((node) => {
           const isCurrent = node.node_id === nodeId
+          const displayNumber = normalizeShellNodeNumber(node.hierarchical_number, stripInitPrefix)
           const frameEntry = frameEntries[`${projectId}::${node.node_id}::frame`]
           const specEntry = frameEntries[`${projectId}::${node.node_id}::spec`]
           const clarifyEntry = clarifyEntries[`${projectId}::${node.node_id}`]
           const clarifyQuestions = clarifyEntry?.clarify?.questions ?? []
 
           return (
-            <div key={node.node_id} className={`${styles.nodeCard} ${isCurrent ? styles.nodeCardCurrent : ''}`}>
+            <div key={node.node_id} className={styles.nodeCardRow}>
               <div className={styles.nodeCardHeader}>
-                {node.hierarchical_number ? (
-                  <span className={`${styles.nodeNumber} ${isCurrent ? styles.nodeNumberCurrent : ''}`}>
-                    {node.hierarchical_number}
-                  </span>
+                {displayNumber ? (
+                  <span className={styles.nodeNumber}>{displayNumber}</span>
                 ) : null}
-                <span className={`${styles.nodeTitle} ${isCurrent ? styles.nodeTitleCurrent : ''}`}>
-                  {node.title}
-                </span>
-                {isCurrent ? <span className={styles.currentBadge}>current</span> : null}
+                <span className={styles.nodeTitle}>{node.title}</span>
+                {isCurrent ? <span className={styles.currentBadge}>Current task</span> : null}
               </div>
 
+              <div className={styles.nodeCard}>
               {isCurrent && currentNodeActionChips.length > 0 ? (
                 <div className={styles.actionStatusRow} data-testid="frame-context-action-status-row">
                   {currentNodeActionChips.map((chip) => (
@@ -315,23 +363,27 @@ export function FrameContextFeedBlock({
                 </div>
               ) : null}
 
-              <div className={styles.panelList}>
+              <div className={styles.nodeCardBody}>
+                <div className={styles.panelList}>
                 <NodePanel
                   label="Frame"
                   panelId="frame"
                   nodeId={node.node_id}
                   expanded={isPanelExpanded(node.node_id, 'frame', isCurrent)}
                   onToggle={togglePanel}
+                  frameChrome
                 >
-                  {!frameEntry || frameEntry.isLoading ? (
-                    <div className={styles.stateLoading}>Loading...</div>
-                  ) : frameEntry.error ? (
-                    <div className={styles.stateError}>{frameEntry.error}</div>
-                  ) : !frameEntry.content.trim() ? (
-                    <div className={styles.stateEmpty}>No frame content yet.</div>
-                  ) : (
-                    <FrameMarkdownViewer content={frameEntry.content} shellStyle />
-                  )}
+                  <div className={styles.framePanelInner}>
+                    {!frameEntry || frameEntry.isLoading ? (
+                      <div className={styles.stateLoading}>Loading...</div>
+                    ) : frameEntry.error ? (
+                      <div className={styles.stateError}>{frameEntry.error}</div>
+                    ) : !frameEntry.content.trim() ? (
+                      <div className={styles.stateEmpty}>No frame content yet.</div>
+                    ) : (
+                      <FrameMarkdownViewer content={frameEntry.content} shellStyle />
+                    )}
+                  </div>
                 </NodePanel>
 
                 <NodePanel
@@ -358,7 +410,12 @@ export function FrameContextFeedBlock({
                     expanded={isPanelExpanded(node.node_id, 'split', isCurrent)}
                     onToggle={togglePanel}
                   >
-                    <ContextSplitView node={node} nodeRegistry={nodeRegistry} currentNodeId={nodeId} />
+                    <ContextSplitView
+                      node={node}
+                      nodeRegistry={nodeRegistry}
+                      currentNodeId={nodeId}
+                      stripInitPrefix={stripInitPrefix}
+                    />
                   </NodePanel>
                 ) : null}
 
@@ -381,6 +438,8 @@ export function FrameContextFeedBlock({
                     )}
                   </NodePanel>
                 ) : null}
+                </div>
+              </div>
               </div>
             </div>
           )

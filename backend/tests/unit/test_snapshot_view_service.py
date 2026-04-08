@@ -106,6 +106,15 @@ def test_task_workflow_includes_execution_fields(storage, workspace_root, tree_s
     snapshot = ProjectService(storage).attach_project_folder(str(workspace_root))
     project_id = snapshot["project"]["id"]
     root_id = snapshot["tree_state"]["root_node_id"]
+    audit_thread_id = "audit-thread-snapshot-view"
+
+    audit_snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, root_id, "audit")
+    audit_snapshot["threadId"] = audit_thread_id
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, root_id, "audit", audit_snapshot)
+
+    audit_entry = storage.thread_registry_store.read_entry(project_id, root_id, "audit")
+    audit_entry["threadId"] = audit_thread_id
+    storage.thread_registry_store.write_entry(project_id, root_id, "audit", audit_entry)
 
     doc_service = NodeDocumentService(storage)
     detail_service = NodeDetailService(storage, tree_service)

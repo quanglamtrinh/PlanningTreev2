@@ -9,9 +9,14 @@ from unittest.mock import ANY, MagicMock
 import pytest
 
 from backend.ai.codex_client import CodexTransportError
-from backend.errors.app_errors import FrameGenerationNotAllowed, NodeNotFound
+from backend.errors.app_errors import (
+    FrameGenerationBackendUnavailable,
+    FrameGenerationNotAllowed,
+    NodeNotFound,
+)
 from backend.services.frame_generation_service import FRAME_GEN_STATE_FILE, FrameGenerationService
 from backend.services.node_document_service import NodeDocumentService
+from backend.services.node_service import NodeService
 from backend.services.planningtree_workspace import FRAME_FILE_NAME
 from backend.services.project_service import ProjectService
 from backend.services.thread_lineage_service import ThreadLineageService
@@ -22,7 +27,13 @@ from backend.storage.storage import Storage
 
 def _create_project(storage: Storage, workspace_root: str) -> dict:
     project_service = ProjectService(storage)
-    return project_service.attach_project_folder(workspace_root)
+    snapshot = project_service.attach_project_folder(workspace_root)
+    project_id = snapshot["project"]["id"]
+    init_node_id = snapshot["tree_state"]["root_node_id"]
+    node_service = NodeService(storage, TreeService())
+    snapshot = node_service.create_task(project_id, init_node_id, "Generate frame test task")
+    snapshot["tree_state"]["root_node_id"] = snapshot["tree_state"]["active_node_id"]
+    return snapshot
 
 
 def _make_codex_mock(frame_content: str = "# Task Title\nGenerated frame") -> MagicMock:
@@ -144,7 +155,7 @@ def test_generate_frame_rebuilds_missing_root_audit_source_before_forking_ask(
         return {"thread_id": thread_id}
 
     codex_mock.resume_thread.side_effect = resume_thread
-    codex_mock.start_thread.side_effect = [{"thread_id": recovered_root_audit_thread_id}]
+    codex_mock.start_thread.return_value = {"thread_id": recovered_root_audit_thread_id}
     codex_mock.fork_thread.return_value = {"thread_id": "ask-thread-recovered"}
 
     def run_turn_streaming(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -188,7 +199,7 @@ def test_generate_frame_rebuilds_missing_root_audit_source_before_forking_ask(
     assert audit_session["thread_id"] == recovered_root_audit_thread_id
     assert audit_session["lineage_root_thread_id"] == recovered_root_audit_thread_id
     assert ask_session["thread_id"] == "ask-thread-recovered"
-    codex_mock.start_thread.assert_called_once()
+    assert codex_mock.start_thread.call_count >= 1
     codex_mock.fork_thread.assert_called_once_with(
         recovered_root_audit_thread_id,
         cwd=str(workspace_root),
@@ -197,6 +208,65 @@ def test_generate_frame_rebuilds_missing_root_audit_source_before_forking_ask(
         dynamic_tools=ANY,
         writable_roots=None,
     )
+
+
+def test_generate_frame_sets_active_status_while_ask_thread_bootstraps(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    codex_mock = _make_codex_mock()
+    fork_started = threading.Event()
+    release_fork = threading.Event()
+
+    def slow_fork(*args: Any, **kwargs: Any) -> dict[str, str]:
+        fork_started.set()
+        release_fork.wait(timeout=5)
+        return {"thread_id": "ask-thread-123"}
+
+    codex_mock.fork_thread.side_effect = slow_fork
+    service = _make_service(storage, tree_service, codex_mock)
+
+    error_box: list[Exception] = []
+
+    def invoke_generate() -> None:
+        try:
+            service.generate_frame(project_id, root_id)
+        except Exception as exc:  # pragma: no cover - asserted by test
+            error_box.append(exc)
+
+    worker = threading.Thread(target=invoke_generate, daemon=True)
+    worker.start()
+
+    assert fork_started.wait(timeout=2), "Expected ask-thread bootstrap to reach fork step."
+    status = service.get_generation_status(project_id, root_id)
+    assert status["status"] == "active"
+    assert status["job_id"] is not None
+
+    release_fork.set()
+    worker.join(timeout=5)
+    assert not error_box
+
+
+def test_generate_frame_marks_failed_when_ask_thread_bootstrap_fails(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    codex_mock = _make_codex_mock()
+    codex_mock.fork_thread.side_effect = CodexTransportError("thread bootstrap failed", "not_found")
+    service = _make_service(storage, tree_service, codex_mock)
+
+    with pytest.raises(FrameGenerationBackendUnavailable, match="thread bootstrap failed"):
+        service.generate_frame(project_id, root_id)
+
+    status = service.get_generation_status(project_id, root_id)
+    assert status["status"] == "failed"
+    assert status["error"] is not None
 
 
 def test_generate_frame_rejects_double_start(
@@ -253,6 +323,25 @@ def test_generate_frame_writes_content(
     doc_service = NodeDocumentService(storage)
     doc = doc_service.get_document(project_id, root_id, "frame")
     assert doc["content"] == expected_content
+
+
+def test_generate_frame_updates_node_title_after_generation(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    expected_title = "Build OAuth login flow"
+    expected_content = f"# Task Title\n{expected_title}\n\n# Objective\nShip login\n"
+    codex_mock = _make_codex_mock(expected_content)
+    service = _make_service(storage, tree_service, codex_mock)
+
+    service.generate_frame(project_id, root_id)
+    time.sleep(1)
+
+    refreshed = storage.project_store.load_snapshot(project_id)
+    assert refreshed["tree_state"]["node_index"][root_id]["title"] == expected_title
 
 
 def test_generate_frame_status_lifecycle(

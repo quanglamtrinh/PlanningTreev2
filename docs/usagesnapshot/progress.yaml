@@ -1,0 +1,145 @@
+migration_id: usage_snapshot_rollout
+status: phase_6_not_started
+current_phase: 6
+next_phase: 6
+
+references:
+  plan_doc: docs/usagesnapshot/README.md
+  roadmap_doc: docs/usagesnapshot/usagesnapshot-phased-roadmap.md
+  artifacts_root: docs/usagesnapshot/artifacts/
+
+locked_decisions:
+  - id: dedicated_usage_snapshot_screen
+    status: locked
+    decision: usage snapshot is a separate route, not an inline sidebar expansion
+  - id: sidebar_button_entrypoint
+    status: locked
+    decision: open usage snapshot from the sidebar usage area entrypoint (current placement under usage block)
+  - id: all_codex_sessions_scope
+    status: locked
+    decision: aggregate all codex sessions from codex home without workspace filter
+  - id: polling_refresh_strategy
+    status: locked
+    decision: frontend refreshes usage snapshot via polling and manual refresh
+  - id: full_delivery_scope
+    status: locked
+    decision: include backend, frontend UI, polling, and automated test coverage including E2E
+
+phases:
+  - phase: 0
+    name: contract_freeze_and_boundaries
+    status: completed
+    depends_on: []
+    effort_percent: 8
+    estimated_days: 2.0
+    artifacts:
+      - docs/usagesnapshot/phase-0-contract-freeze.md
+      - docs/usagesnapshot/artifacts/phase-0-current-state-evidence.md
+      - docs/usagesnapshot/artifacts/phase-0-contract-checklist.md
+      - docs/usagesnapshot/artifacts/phase-0-ui-state-matrix.md
+      - docs/usagesnapshot/artifacts/phase-0-test-acceptance-matrix.md
+      - docs/usagesnapshot/artifacts/phase-0-deferred-backlog.md
+    notes: >
+      Completed on 2026-04-06. Phase 0 contract freeze, traceability mapping,
+      UI-state matrix, test acceptance matrix, and deferred-scope guard are all
+      recorded. No open contract ambiguity remains for Phase 1 kickoff.
+  - phase: 1
+    name: backend_scanner_and_api_foundation
+    status: completed
+    depends_on:
+      - 0
+    effort_percent: 22
+    estimated_days: 5.0
+    artifacts:
+      - docs/usagesnapshot/phase-1-backend-scanner-and-api-foundation.md
+      - docs/usagesnapshot/phase-1-to-phase-2-handoff.md
+    notes: >
+      Completed on 2026-04-06. Phase 1 shipped LocalUsageSnapshotService,
+      route GET /v1/codex/usage/local, app-state wiring, and backend tests for
+      parser semantics plus API contract/degraded-input behavior. Verification:
+      unit 10 passed, integration 7 passed.
+  - phase: 2
+    name: backend_performance_and_observability
+    status: completed
+    depends_on:
+      - 1
+    effort_percent: 14
+    estimated_days: 3.0
+    artifacts:
+      - docs/usagesnapshot/phase-2-backend-performance-and-observability.md
+      - docs/usagesnapshot/phase-2-to-phase-3-handoff.md
+    notes: >
+      Completed on 2026-04-06. Added process-local in-memory cache (TTL 30s),
+      single-flight recomputation by key (normalized days + sessions root),
+      centralized days normalization in service, and scan diagnostics summary
+      logging (cache hit debug / miss info). Verification: unit 15 passed,
+      integration 10 passed.
+  - phase: 3
+    name: frontend_route_screen_and_polling
+    status: completed
+    depends_on:
+      - 1
+    effort_percent: 20
+    estimated_days: 4.5
+    artifacts:
+      - docs/usagesnapshot/phase-3-frontend-route-screen-and-polling.md
+      - docs/usagesnapshot/phase-3-to-phase-4-handoff.md
+    notes: >
+      Completed on 2026-04-06. Shipped local usage snapshot frontend
+      integration with typed API client contract, polling + manual refresh hook
+      (stale-response guard), and full page UI states (loading, blocking/non-blocking
+      error, empty, populated). Verification: frontend typecheck passed and unit
+      suite passed (36 files, 210 tests).
+  - phase: 4
+    name: sidebar_entrypoint_and_ux_polish
+    status: completed
+    depends_on:
+      - 3
+    effort_percent: 9
+    estimated_days: 2.0
+    artifacts:
+      - docs/usagesnapshot/phase-4-sidebar-entrypoint-and-ux-polish.md
+      - docs/usagesnapshot/phase-4-to-phase-5-handoff.md
+    notes: >
+      Completed on 2026-04-06. Polished existing sidebar entrypoint under usage
+      block with standardized copy/semantics, refined hover/active/focus-visible
+      treatment, and expanded sidebar unit coverage for navigation + active-route
+      semantics + keyboard focusability. Verification: frontend unit suite passed
+      (36 files, 212 tests) and frontend typecheck passed.
+  - phase: 5
+    name: automated_test_matrix_and_e2e
+    status: completed
+    depends_on:
+      - 2
+      - 3
+      - 4
+    effort_percent: 19
+    estimated_days: 4.5
+    artifacts:
+      - docs/usagesnapshot/phase-5-automated-test-matrix-and-e2e.md
+      - docs/usagesnapshot/artifacts/phase-5-test-matrix-results.md
+    notes: >
+      Completed on 2026-04-07. Closed automated matrix across backend unit/integration,
+      frontend unit/typecheck, and Playwright E2E. Baseline graph E2E is aligned to
+      Create A Task (no Create Child dependency), added deterministic usage snapshot E2E
+      coverage, and added integration coverage for empty sessions directory behavior.
+      Verification: backend unit 15 passed, backend integration 11 passed, frontend unit
+      36 files/212 tests passed, typecheck passed, e2e targeted/full suites passed.
+  - phase: 6
+    name: rollout_and_stabilization
+    status: not_started
+    depends_on:
+      - 5
+    effort_percent: 6
+    estimated_days: 1.5
+    artifacts:
+      - docs/usagesnapshot/phase-6-rollout-and-stabilization.md
+  - phase: 7
+    name: cleanup_and_closeout
+    status: not_started
+    depends_on:
+      - 6
+    effort_percent: 2
+    estimated_days: 0.5
+    artifacts:
+      - docs/usagesnapshot/phase-7-cleanup-and-closeout.md

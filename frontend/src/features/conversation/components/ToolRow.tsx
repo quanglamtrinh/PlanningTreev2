@@ -1,11 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ItemStatus, ToolItem } from '../../../api/types'
 import styles from './ConversationFeed.module.css'
-import {
-  inferFileWritesFromCommandText,
-  inferInlineFileWriteContentFromCommandText,
-  toAddedDiffText,
-} from './fileChangeInference'
 import { FileChangeToolRow } from './FileChangeToolRow'
 import {
   getToolHeadline,
@@ -86,11 +81,6 @@ function trailingCommandOutput(outputText: string): string {
     return normalized
   }
   return lines.slice(-MAX_COMMAND_OUTPUT_LINES).join('\n')
-}
-
-function looksLikeDiffText(text: string): boolean {
-  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  return /^(?:\+\+\+|---|@@)/m.test(normalized) || /^[+-][^\r\n]*/m.test(normalized)
 }
 
 function CommandOutputViewport({
@@ -273,39 +263,12 @@ export function ToolRow({
   onToggle?: (itemId: string) => void
   onRequestAutoScroll?: () => void
 }) {
-  const inferenceSource = [item.argumentsText, item.title, item.toolName, item.outputText]
-    .map((part) => String(part ?? '').trim())
-    .filter(Boolean)
-    .join('\n')
-  const inferredFiles = inferFileWritesFromCommandText(inferenceSource)
-  const inferredContent = inferInlineFileWriteContentFromCommandText(inferenceSource)
-  const effectiveFileOutputs = item.outputFiles.length
-    ? item.outputFiles
-    : inferredFiles.map((file) => ({
-        path: file.path,
-        changeType: file.changeType,
-        summary: file.summary,
-      }))
-  const normalizedOutputText = item.outputText.trim()
-  const effectiveOutputText =
-    inferredContent
-      ? toAddedDiffText(inferredContent)
-      : normalizedOutputText.length > 0
-        ? item.toolType === 'commandExecution' &&
-          effectiveFileOutputs.length > 0 &&
-          !looksLikeDiffText(item.outputText)
-          ? toAddedDiffText(item.outputText)
-          : item.outputText
-        : item.outputText
-
-  if (item.toolType === 'fileChange' || effectiveFileOutputs.length > 0) {
+  if (item.toolType === 'fileChange') {
     return (
       <FileChangeToolRow
         item={{
           ...item,
           toolType: 'fileChange',
-          outputText: effectiveOutputText,
-          outputFiles: effectiveFileOutputs,
         }}
         isExpanded={isExpanded}
         onToggle={onToggle}

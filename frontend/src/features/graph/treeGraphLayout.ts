@@ -1,14 +1,11 @@
 import type { NodeRecord } from '../../api/types'
 
 // ─── Layout constants (vertical tree: root top → children below, siblings left–right) ───
-// Vertical distance between depth levels (parent row → child row). This is the primary control for
-// “more air” between tiers — increase here for height only (sibling packing on X is unchanged).
-// Budget: tallest parent (~300px) + gapAbove(28) + reviewCard(320) + gapBelow(72) = 720px min.
-// 860px gives ~140px breathing room above that worst case.
-const DEPTH_STEP_PX = 860
+// Row Y is computed from actual card heights (see applyCompactRowYs): compact gap after parents
+// without a review strip; full review band when the parent shows the review overlay.
 
 /** Exported for TreeGraph position fallback when layout map misses a node. */
-export const TREE_DEPTH_STEP_PX = DEPTH_STEP_PX
+export const TREE_DEPTH_STEP_PX = 320
 
 /**
  * @deprecated Kept for test compatibility — review Y is now computed as the midpoint between
@@ -28,16 +25,25 @@ export const REVIEW_CHILD_TOP_CLEARANCE_PX = 152
  *   + stats(14) + manifest-header(11) + 6 rows×14px(84) + row-gaps(15) + footer(42) ≈ 294px.
  * Use 320 to add a buffer for edge cases (very long parent titles, extra stats).
  */
-const REVIEW_CARD_HEIGHT_PX = 320
+const REVIEW_CARD_HEIGHT_PX = 310
 
 /** Minimum gap between parent bottom and the top of the review card. */
-const MIN_REVIEW_GAP_ABOVE_PX = 28
+const MIN_REVIEW_GAP_ABOVE_PX = 200
 
 /**
  * Minimum gap between the bottom of the review card and the top of the child row (tasks below).
- * Larger than {@link MIN_REVIEW_GAP_ABOVE_PX} so the review strip sits clearly above children.
  */
 const MIN_REVIEW_GAP_BELOW_PX = 72
+
+/** Vertical gap parent → child row when this parent does not host a review strip (single child, etc.). */
+const SMALL_ROW_GAP_PX = 56
+
+/** Extra air below the project init/root node down to its first task row (no review strip on that parent). */
+const INIT_NODE_TO_CHILD_GAP_PX = 200
+
+/** Reserved band below parent when a review card sits between parent and children (matches overlay math). */
+const REVIEW_ROW_GAP_PX =
+  MIN_REVIEW_GAP_ABOVE_PX + REVIEW_CARD_HEIGHT_PX + MIN_REVIEW_GAP_BELOW_PX
 
 /** Matches `GraphNode` card width (`GraphNode.module.css` `.card`). */
 export const GRAPH_NODE_WIDTH_PX = 270
@@ -76,22 +82,127 @@ function estimateTextLines(value: string, charsPerLine: number): number {
 }
 
 /**
- * Height of the graph card in layout (matches `GraphNode`: title row + optional description, padding).
- * Title row shares width with status/actions (~140px); body text uses full card width.
+ * Matches `GraphNode` chrome: `.nodeMain` vertical padding, title row (with status/badge column),
+ * optional description, and non-init breadcrumb footer. Keeps stacked rows from overlapping
+ * (notably after tasks move to `done`, which still show the full card + footer).
  */
+const NODE_MAIN_PADDING_Y = 44
+
+/** Title row height ≈ max(wrapped title, collapse + status badge rail). */
+const TITLE_ROW_MIN_PX = 28
+
+/** Non-init nodes: `.footer` margin + padding + border + full-width breadcrumb button. */
+const BREADCRUMB_FOOTER_BLOCK_PX = 50
+
+/** Init node: matches `.wrapperFloatingMenu` padding-bottom (⚡ badge extends below card). */
+const INIT_FLOATING_MENU_RESERVE_PX = 24
+
 export function estimateNodeHeight(node: NodeRecord): number {
   const titleLines = estimateTextLines(node.title.trim(), 20)
   const desc = node.description.trim()
   const descLines = desc ? estimateTextLines(desc, 32) : 0
-  const paddingY = 14 + 16
   const titleLinePx = 21
-  const titleRowPx = Math.max(titleLines * titleLinePx, 26)
+  const titleTextHeight = Math.max(titleLines * titleLinePx, 26)
+  const titleRowPx = Math.max(titleTextHeight, TITLE_ROW_MIN_PX)
   const gapTitleToDesc = desc ? 8 : 0
   const descLinePx = 18
-  return paddingY + titleRowPx + gapTitleToDesc + descLines * descLinePx
+  const footerPx = node.is_init_node === true ? 0 : BREADCRUMB_FOOTER_BLOCK_PX
+  const initReservePx = node.is_init_node === true ? INIT_FLOATING_MENU_RESERVE_PX : 0
+  return NODE_MAIN_PADDING_Y + titleRowPx + gapTitleToDesc + descLines * descLinePx + footerPx + initReservePx
 }
 
 export type GhostSiblingLayoutEntry = { id: string }
+
+/** Same eligibility as `buildReviewOverlayPositions` — review strip between parent and child row. */
+function parentHasReviewOverlay(
+  parentId: string,
+  nodeById: Map<string, NodeRecord>,
+  visibleChildrenById: Map<string, string[]>,
+): boolean {
+  const childIds = visibleChildrenById.get(parentId) ?? []
+  if (childIds.length === 0) {
+    return false
+  }
+  const parent = nodeById.get(parentId)
+  if (!parent) {
+    return false
+  }
+  const reviewNodeId = parent.review_node_id
+  const useSynthetic = !reviewNodeId && childIds.length >= 2
+  return Boolean(reviewNodeId || useSynthetic)
+}
+
+/**
+ * Stack depth rows from measured card heights: tight gaps when no review strip, full band when needed.
+ */
+function applyCompactRowYs(
+  nodeById: Map<string, NodeRecord>,
+  nodePositions: Map<string, { x: number; y: number }>,
+  ghostPositions: Map<string, { x: number; y: number }>,
+  visibleChildrenById: Map<string, string[]>,
+  ghostSiblingsByParent: Map<string, GhostSiblingLayoutEntry[]> | undefined,
+  baseDepth: number,
+) {
+  const relDepth = (depth: number) => Math.max(0, depth - baseDepth)
+  const maxRel = Math.max(
+    0,
+    ...[...nodePositions.keys()]
+      .map((id) => nodeById.get(id))
+      .filter((n): n is NodeRecord => n != null)
+      .map((n) => relDepth(n.depth)),
+  )
+
+  const rowTop = new Map<number, number>()
+  rowTop.set(0, 0)
+
+  for (let d = 0; d < maxRel; d++) {
+    const rowY = rowTop.get(d) ?? 0
+    const parents = [...nodeById.values()].filter(
+      (n) => relDepth(n.depth) === d && nodePositions.has(n.node_id),
+    )
+    let nextRowTop = 0
+    for (const p of parents) {
+      const childIds = visibleChildrenById.get(p.node_id) ?? []
+      const ghostExtra = ghostSiblingsByParent?.get(p.node_id)?.length ?? 0
+      if (childIds.length === 0 && ghostExtra === 0) {
+        continue
+      }
+      const bottom = rowY + estimateNodeHeight(p) + GRAPH_NODE_MARGIN_BOTTOM_PX
+      const hasReview = parentHasReviewOverlay(p.node_id, nodeById, visibleChildrenById)
+      const gap = hasReview
+        ? REVIEW_ROW_GAP_PX
+        : p.is_init_node
+          ? INIT_NODE_TO_CHILD_GAP_PX
+          : SMALL_ROW_GAP_PX
+      nextRowTop = Math.max(nextRowTop, bottom + gap)
+    }
+    rowTop.set(d + 1, nextRowTop)
+  }
+
+  for (const [id, pos] of nodePositions) {
+    const node = nodeById.get(id)
+    if (!node) {
+      continue
+    }
+    pos.y = rowTop.get(relDepth(node.depth)) ?? 0
+  }
+
+  if (ghostSiblingsByParent) {
+    for (const [parentId, ghosts] of ghostSiblingsByParent) {
+      const parent = nodeById.get(parentId)
+      if (!parent) {
+        continue
+      }
+      const childRowY = rowTop.get(relDepth(parent.depth) + 1) ?? 0
+      for (const g of ghosts) {
+        const gp = ghostPositions.get(g.id)
+        if (gp) {
+          gp.y = childRowY
+        }
+      }
+    }
+  }
+}
 
 export function buildTreeLayoutPositions({
   nodeById,
@@ -174,13 +285,12 @@ export function buildTreeLayoutPositions({
     const centerX = (startUnit + nodeUnits / 2) * HORIZONTAL_UNIT_PX
     nodePositions.set(nodeId, {
       x: centerX - GRAPH_NODE_WIDTH_PX / 2,
-      y: Math.max(0, node.depth - baseDepth) * DEPTH_STEP_PX,
+      y: 0,
     })
 
     const children = visibleChildrenById.get(nodeId) ?? []
     const ghostList = ghostSiblingsByParent?.get(nodeId) ?? []
     const ghostExtra = ghostList.length
-    const childDepthY = Math.max(0, node.depth - baseDepth + 1) * DEPTH_STEP_PX
 
     if (children.length === 0 && ghostExtra === 0) {
       return
@@ -196,7 +306,7 @@ export function buildTreeLayoutPositions({
         const centerUnit = cursor + slot / 2
         ghostPositions.set(ghostList[g].id, {
           x: centerUnit * HORIZONTAL_UNIT_PX - GRAPH_NODE_WIDTH_PX / 2,
-          y: childDepthY,
+          y: 0,
         })
         cursor += slot + SIBLING_GAP_UNITS
       }
@@ -221,7 +331,7 @@ export function buildTreeLayoutPositions({
       const centerUnit = cursor + ghostW / 2
       ghostPositions.set(ghostList[g].id, {
         x: centerUnit * HORIZONTAL_UNIT_PX - GRAPH_NODE_WIDTH_PX / 2,
-        y: childDepthY,
+        y: 0,
       })
       cursor += ghostW + SIBLING_GAP_UNITS
     }
@@ -233,6 +343,15 @@ export function buildTreeLayoutPositions({
     // Extra gap between separate root trees
     offset += computeUnits(rootId) + SIBLING_GAP_UNITS * 2
   }
+
+  applyCompactRowYs(
+    nodeById,
+    nodePositions,
+    ghostPositions,
+    visibleChildrenById,
+    ghostSiblingsByParent,
+    baseDepth,
+  )
 
   return { nodePositions, ghostPositions }
 }

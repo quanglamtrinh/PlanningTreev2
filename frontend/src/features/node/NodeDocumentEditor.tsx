@@ -1,7 +1,7 @@
-﻿import CodeMirror from '@uiw/react-codemirror'
+import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorView } from '@codemirror/view'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { FrameGenJobStatus, NodeDocumentKind, NodeRecord } from '../../api/types'
 import { api, ApiError } from '../../api/client'
@@ -50,22 +50,8 @@ type Props = {
   /** Tracks spec vs split commitment after Frame updated (for mutual exclusivity). */
   framePostUpdateBranch?: FramePostUpdateBranch
   onFramePostUpdateCommit?: (branch: 'spec' | 'split') => void
-}
-
-function documentStatusText(entry: EditorEntry, isGenerating: boolean): string {
-  if (isGenerating) {
-    return 'Generating...'
-  }
-  if (entry.isLoading && !entry.hasLoaded) {
-    return 'Loading...'
-  }
-  if (entry.error) {
-    return entry.error
-  }
-  if (entry.isSaving || entry.content !== entry.savedContent) {
-    return 'Saving...'
-  }
-  return 'Saved'
+  /** Breadcrumb: replaces frame.md/spec.md label in the toolbar row */
+  documentToolbarTabs?: ReactNode
 }
 
 export function NodeDocumentEditor({
@@ -78,6 +64,7 @@ export function NodeDocumentEditor({
   readOnly,
   framePostUpdateBranch = 'none',
   onFramePostUpdateCommit,
+  documentToolbarTabs,
 }: Props) {
   const navigate = useNavigate()
   const entryKey = `${projectId}::${node.node_id}::${kind}`
@@ -105,7 +92,27 @@ export function NodeDocumentEditor({
   const [genStatus, setGenStatus] = useState<FrameGenJobStatus>('idle')
   const [genError, setGenError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
+  const editorSurfaceRef = useRef<HTMLDivElement>(null)
   const isFinishingTask = activeWorkflowMutation === 'finish_task'
+  const isFinishActionPending = pendingAction === 'finish' || isFinishingTask
+
+  const handleCopyDocument = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(entry.content)
+    } catch {
+      /* clipboard may be unavailable */
+    }
+  }, [entry.content])
+
+  const handleEditorFullscreen = useCallback(() => {
+    const el = editorSurfaceRef.current
+    if (!el) return
+    if (document.fullscreenElement === el) {
+      void document.exitFullscreen()
+    } else {
+      void el.requestFullscreen().catch(() => undefined)
+    }
+  }, [])
 
   const isGenerating = genStatus === 'active'
   const isInitialFrameStep = kind === 'frame' && workflowTab !== 'frame_updated'
@@ -389,6 +396,9 @@ export function NodeDocumentEditor({
   }, [handleConfirmFrame, onFramePostUpdateCommit, onWorkflowTabChange])
 
   const handleConfirmAndFinish = useCallback(async () => {
+    if (pendingAction === 'finish' || isFinishingTask) {
+      return
+    }
     setIsConfirming(true)
     setPendingAction('finish')
     setConfirmError(null)
@@ -422,11 +432,13 @@ export function NodeDocumentEditor({
     confirmSpec,
     finishTaskWorkflowV2,
     flushDocument,
+    isFinishingTask,
     markActionFailed,
     markActionRunning,
     markActionSucceeded,
     navigate,
     node.node_id,
+    pendingAction,
     projectId,
     refreshSnapshot,
   ])
@@ -465,6 +477,7 @@ export function NodeDocumentEditor({
   ])
 
   const isLoadError = Boolean(entry.error) && !entry.hasLoaded
+  const isSaveError = Boolean(entry.error) && entry.hasLoaded
   const isReadOnly =
     Boolean(readOnly) ||
     isGenerating ||
@@ -486,58 +499,63 @@ export function NodeDocumentEditor({
     detailState?.git_ready !== false
   const canFinishTask =
     canConfirm &&
-    !isFinishingTask &&
+    !isFinishActionPending &&
     (
       detailState?.can_finish_task === true ||
       (detailState?.spec_confirmed !== true && canFinishTaskAfterConfirm)
     )
+  const isFinishTaskDisabled = !canFinishTask || isFinishActionPending
+  const finishTaskDisabledHint = (() => {
+    if (!isSpecStep || !isFinishTaskDisabled) {
+      return null
+    }
+    if (isFinishActionPending) {
+      return 'Processing finish task request...'
+    }
+    if (!hasContent) {
+      return 'Add spec content before finishing the task.'
+    }
+    if (entry.isLoading) {
+      return 'Spec is loading. Please wait.'
+    }
+    if (entry.isSaving) {
+      return 'Spec is saving. Please wait.'
+    }
+    if (isGenerating) {
+      return 'Spec generation is running. Please wait.'
+    }
+    if (detailState?.git_ready === false) {
+      return 'Finish Task is disabled. Resolve Git blocker to continue.'
+    }
+    if (detailState?.shaping_frozen === true) {
+      return 'Task is read-only while execution is active.'
+    }
+    return 'Finish Task is currently unavailable.'
+  })()
 
   return (
     <div className={styles.documentPanel}>
       <div className={styles.documentMetaColumn}>
-        <div className={styles.documentStatusRow}>
-          {/* Left cell: file icon + name */}
-          <div className={styles.documentFileLabelCell}>
-            <span className={styles.documentFileLabelIcon} aria-hidden="true">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="13" height="13">
-                <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" />
-                <path d="M10 2v4h3" />
-              </svg>
-            </span>
-            <span className={styles.documentFileLabel}>{kind === 'frame' ? 'frame.md' : 'spec.md'}</span>
-          </div>
-          {/* Middle cells: labeled metadata pairs */}
-          <div className={styles.documentMetaSections}>
-            <div className={styles.documentMetaSection}>
-              <span className={styles.documentMetaSectionLabel}>Step</span>
-              <span className={styles.documentMetaSectionValue}>
-                {kind === 'frame'
-                  ? isInitialFrameStep ? 'Initial Frame' : 'Frame Updated'
-                  : 'Spec Review'}
+        <div
+          className={
+            documentToolbarTabs
+              ? `${styles.documentStatusRow} ${styles.documentStatusRowEmbedTabs}`
+              : styles.documentStatusRow
+          }
+        >
+          {documentToolbarTabs ? (
+            documentToolbarTabs
+          ) : (
+            <div className={styles.documentFileLabelCell}>
+              <span className={styles.documentFileLabelIcon} aria-hidden="true">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="13" height="13">
+                  <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" />
+                  <path d="M10 2v4h3" />
+                </svg>
               </span>
+              <span className={styles.documentFileLabel}>{kind === 'frame' ? 'frame.md' : 'spec.md'}</span>
             </div>
-            <div className={styles.documentMetaSection}>
-              <span className={styles.documentMetaSectionLabel}>Content</span>
-              <span className={styles.documentMetaSectionValue}>
-                {!entry.hasLoaded ? 'Loading\u2026' : hasContent ? 'Ready' : 'Empty'}
-              </span>
-            </div>
-          </div>
-          {/* Right cell: save status */}
-          <div className={styles.documentStatusCell}>
-            <span
-              className={`${styles.documentStatusValue} ${entry.error ? styles.documentStatusError : ''}`}
-              data-testid={`document-status-${kind}`}
-              role="status"
-              aria-live="polite"
-            >
-              {isGenerating ? (
-                <AgentSpinner words={SPINNER_WORDS_GENERATING} />
-              ) : (
-                documentStatusText(entry, false)
-              )}
-            </span>
-          </div>
+          )}
         </div>
 
         {isLoadError ? (
@@ -555,6 +573,12 @@ export function NodeDocumentEditor({
           </div>
         ) : null}
 
+        {isSaveError ? (
+          <div className={styles.documentErrorPanel} data-testid={`save-error-${kind}`} role="alert">
+            <p className={styles.body}>{entry.error}</p>
+          </div>
+        ) : null}
+
         {confirmError ? (
           <div className={styles.documentErrorPanel} data-testid={`confirm-error-${kind}`}>
             <p className={styles.body}>{confirmError}</p>
@@ -569,27 +593,78 @@ export function NodeDocumentEditor({
       </div>
 
       <div
+        ref={editorSurfaceRef}
         className={styles.editorSurface}
         aria-busy={Boolean(entry.isLoading && !entry.hasLoaded)}
       >
-        <CodeMirror
-          className={styles.codemirrorHost}
-          value={entry.content}
-          height="100%"
-          theme="none"
-          extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
-          basicSetup={{
-            foldGutter: false,
-            lineNumbers: true,
-          }}
-          editable={!isReadOnly}
-          onChange={(value) => {
-            updateDraft(projectId, node.node_id, kind, value)
-          }}
-          onBlur={() => {
-            void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
-          }}
-        />
+        <div className={styles.editorSurfaceHeader}>
+          <span className={styles.editorSurfaceTitle}>Markdown editor</span>
+          <div className={styles.editorSurfaceHeaderActions}>
+            <button
+              type="button"
+              className={styles.editorSurfaceHeaderIcon}
+              onClick={() => {
+                void handleCopyDocument()
+              }}
+              aria-label="Copy document to clipboard"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                width="16"
+                height="16"
+                aria-hidden="true"
+              >
+                <rect x="5.5" y="5.5" width="8" height="8" rx="1" />
+                <path d="M3.5 10.5h-1a1 1 0 01-1-1v-7a1 1 0 011-1h7a1 1 0 011 1v1" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={styles.editorSurfaceHeaderIcon}
+              onClick={handleEditorFullscreen}
+              aria-label="Toggle fullscreen editor"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                width="16"
+                height="16"
+                aria-hidden="true"
+              >
+                <path d="M10 2h4v4M6 2H2v4M2 10v4h4M10 14h4v-4" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div className={styles.editorSurfaceBody}>
+          <CodeMirror
+            className={styles.codemirrorHost}
+            value={entry.content}
+            height="100%"
+            theme="none"
+            extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
+            basicSetup={{
+              foldGutter: false,
+              lineNumbers: true,
+            }}
+            editable={!isReadOnly}
+            onChange={(value) => {
+              updateDraft(projectId, node.node_id, kind, value)
+            }}
+            onBlur={() => {
+              void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
+            }}
+          />
+        </div>
       </div>
 
       {!readOnly ? (
@@ -603,7 +678,7 @@ export function NodeDocumentEditor({
                 data-testid="generate-frame-button"
                 onClick={handleGenerateFrame}
               >
-                {isGenerating ? <AgentSpinner words={SPINNER_WORDS_GENERATING} /> : 'Generate from Chat'}
+                {isGenerating ? <AgentSpinner words={SPINNER_WORDS_GENERATING} /> : 'Generate Frame'}
               </button>
               <button
                 type="button"
@@ -651,15 +726,26 @@ export function NodeDocumentEditor({
           ) : null}
 
           {isSpecStep ? (
-            <button
-              type="button"
-              className={styles.confirmButton}
-              disabled={!canFinishTask}
-              data-testid="confirm-and-finish-task-button"
-              onClick={handleConfirmAndFinish}
-            >
-              {pendingAction === 'finish' || isFinishingTask ? 'Finishing...' : 'Confirm and Finish Task'}
-            </button>
+            <div className={styles.finishTaskActionGroup}>
+              <button
+                type="button"
+                className={`${styles.confirmButton} ${isFinishTaskDisabled ? styles.finishTaskButtonDisabled : ''}`}
+                disabled={isFinishTaskDisabled}
+                data-testid="confirm-and-finish-task-button"
+                title={isFinishTaskDisabled ? finishTaskDisabledHint ?? 'Finish Task is currently unavailable.' : undefined}
+                onClick={(event) => {
+                  event.currentTarget.disabled = true
+                  void handleConfirmAndFinish()
+                }}
+              >
+                {isFinishActionPending ? 'Finishing...' : 'Confirm and Finish Task'}
+              </button>
+              {isFinishTaskDisabled && finishTaskDisabledHint ? (
+                <p className={styles.finishTaskDisabledHint} role="status" data-testid="finish-task-disabled-hint">
+                  {finishTaskDisabledHint}
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

@@ -338,6 +338,115 @@
 }
 
 /* ─── Responsive ─── */
+.createTaskBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 320;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--surface-container-lowest) 58%, transparent);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.createTaskDialog {
+  width: min(560px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: var(--radius-xl);
+  border: none;
+  background: var(--glass-fill);
+  box-shadow: var(--shadow-float);
+}
+
+.createTaskTitle {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  color: var(--color-text-primary);
+}
+
+.createTaskSubtitle {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.createTaskLabel {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.createTaskTextarea {
+  resize: vertical;
+  min-height: 120px;
+  max-height: 260px;
+  border-radius: var(--radius-lg);
+  border: none;
+  padding: 10px 12px;
+  background: var(--surface-container-low);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}
+
+.createTaskTextarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--primary) 48%, transparent);
+  outline-offset: 0;
+}
+
+.createTaskError {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--danger);
+}
+
+.createTaskActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.createTaskCancel,
+.createTaskConfirm {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  border: none;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.createTaskCancel {
+  color: var(--color-text-secondary);
+  background: var(--surface-container-low);
+}
+
+.createTaskCancel:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--surface-container);
+}
+
+.createTaskConfirm {
+  color: var(--on-primary);
+  background: linear-gradient(180deg, var(--primary) 0%, var(--primary-container) 100%);
+}
+
+.createTaskConfirm:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+
+.createTaskCancel:disabled,
+.createTaskConfirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 @media (max-width: 920px) {
   .detailPanel {
     width: min(clamp(360px, 88vw, 520px), calc(100vw - 32px));

@@ -40,6 +40,11 @@ class ProjectNotFound(AppError):
         super().__init__("project_not_found", f"Project {project_id!r} not found.", 404)
 
 
+class WorkspaceFileNotFound(AppError):
+    def __init__(self, message: str = "File not found.") -> None:
+        super().__init__("workspace_file_not_found", message, 404)
+
+
 class LegacyProjectUnsupported(AppError):
     def __init__(self, project_id: str) -> None:
         super().__init__(

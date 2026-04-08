@@ -123,4 +123,26 @@ describe('Layout', () => {
 
     expect(screen.getByRole('button', { name: 'Back to Graph' })).toBeInTheDocument()
   })
+
+  it('shows Back to Graph on usage snapshot route and navigates to graph', () => {
+    render(
+      <MemoryRouter
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        initialEntries={['/usage-snapshot']}
+      >
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<div>Graph workspace stub</div>} />
+            <Route path="/usage-snapshot" element={<div>Usage snapshot stub</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('button', { name: 'Back to Graph' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Graph' }))
+
+    expect(screen.getByText('Graph workspace stub')).toBeInTheDocument()
+  })
 })

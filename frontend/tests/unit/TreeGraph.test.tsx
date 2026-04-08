@@ -252,6 +252,7 @@ function renderTreeGraph(
 ) {
   const onSelectNode = options.onSelectNode ?? vi.fn(async () => undefined)
   const onCreateChild = vi.fn(async () => undefined)
+  const onCreateTask = vi.fn(async () => 'child-created')
   const onSplitNode = vi.fn(async () => undefined)
   const onOpenBreadcrumb = vi.fn(async () => undefined)
   const onResetProject = vi.fn(async () => undefined)
@@ -268,6 +269,7 @@ function renderTreeGraph(
         codexAvailable={options.codexAvailable ?? true}
         onSelectNode={onSelectNode}
         onCreateChild={onCreateChild}
+        onCreateTask={onCreateTask}
         onSplitNode={onSplitNode}
         onOpenBreadcrumb={onOpenBreadcrumb}
         onResetProject={onResetProject}
@@ -277,6 +279,7 @@ function renderTreeGraph(
   return {
     ...view,
     onCreateChild,
+    onCreateTask,
     onOpenBreadcrumb,
     onResetProject,
     onSelectNode,
@@ -420,7 +423,7 @@ describe('TreeGraph', () => {
     expect(screen.getByTestId('rf-node-child-1')).toBeInTheDocument()
   })
 
-  it('keeps node wrappers interactive and exposes split actions', () => {
+  it('keeps node wrappers interactive and hides node actions on non-init nodes', () => {
     const snapshot = buildSnapshot({
       tree_state: {
         root_node_id: 'root',
@@ -438,13 +441,9 @@ describe('TreeGraph', () => {
     expect(reactFlow).toHaveAttribute('data-has-node-click', 'true')
     expect(rootWrapper).toHaveClass('nopan')
     expect(rootNode).toHaveClass('nodrag', 'nopan')
-    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
-    expect(screen.getByText('Create Child')).toBeInTheDocument()
-    expect(screen.getByText('Open Breadcrumb')).toBeInTheDocument()
-    expect(screen.queryByText('Finish Task')).not.toBeInTheDocument()
-    expect(screen.getByText('AI Split')).toBeInTheDocument()
-    expect(screen.getByText('Workflow')).toBeInTheDocument()
-    expect(screen.getByText('Phase Breakdown')).toBeInTheDocument()
+    expect(within(rootWrapper).queryByRole('button', { name: 'Node actions' })).not.toBeInTheDocument()
+    expect(within(rootNode).getByRole('button', { name: 'Open in Breadcrumb' })).toBeEnabled()
+    expect(screen.queryByText('AI Split')).not.toBeInTheDocument()
   })
 
   it('keeps Open Breadcrumb enabled even when Codex CLI is unavailable', () => {
@@ -458,12 +457,37 @@ describe('TreeGraph', () => {
 
     renderTreeGraph(snapshot, { codexAvailable: false })
 
-    const rootWrapper = screen.getByTestId('rf-node-root')
-    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
-    expect(screen.getByText('Open Breadcrumb').closest('button')).toBeEnabled()
+    const rootNode = screen.getByTestId('graph-node-root')
+    expect(within(rootNode).getByRole('button', { name: 'Open in Breadcrumb' })).toBeEnabled()
   })
 
-  it('opens breadcrumb from the action menu for a done node', () => {
+  it('renders init-node actions only when the node is marked as init', () => {
+    const snapshot = buildSnapshot({
+      tree_state: {
+        root_node_id: 'root',
+        active_node_id: 'root',
+        node_registry: [
+          buildNode({
+            node_id: 'root',
+            child_ids: [],
+            is_init_node: true,
+          }),
+        ],
+      },
+    })
+
+    renderTreeGraph(snapshot)
+
+    const rootWrapper = screen.getByTestId('rf-node-root')
+    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
+
+    expect(screen.getByText('Init Docs For Project')).toBeInTheDocument()
+    expect(screen.getByText('Create A Task')).toBeInTheDocument()
+    expect(screen.queryByText('Open Breadcrumb')).not.toBeInTheDocument()
+    expect(screen.queryByText('AI Split')).not.toBeInTheDocument()
+  })
+
+  it('opens breadcrumb from the node footer for a done node', () => {
     const snapshot = buildSnapshot({
       tree_state: {
         root_node_id: 'root',
@@ -480,40 +504,12 @@ describe('TreeGraph', () => {
 
     const { onOpenBreadcrumb } = renderTreeGraph(snapshot)
 
-    const rootWrapper = screen.getByTestId('rf-node-root')
-    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
-    fireEvent.click(screen.getByText('Open Breadcrumb'))
+    fireEvent.click(screen.getByTestId('graph-node-open-breadcrumb-root'))
 
     expect(onOpenBreadcrumb).toHaveBeenCalledWith('root')
   })
 
-  it('disables Split until the node reaches the Spec workflow step', () => {
-    const snapshot = buildSnapshot({
-      tree_state: {
-        root_node_id: 'root',
-        active_node_id: 'root',
-        node_registry: [
-          buildNode({
-            node_id: 'root',
-            status: 'ready',
-            workflow: {
-              frame_confirmed: true,
-              active_step: 'clarify',
-              spec_confirmed: false,
-            },
-          }),
-        ],
-      },
-    })
-
-    renderTreeGraph(snapshot)
-
-    const rootWrapper = screen.getByTestId('rf-node-root')
-    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
-    expect(screen.getByText('Workflow').closest('button')).toBeDisabled()
-  })
-
-  it('enables Split when workflow readiness is met', () => {
+  it('keeps node actions hidden on non-init nodes even when split readiness is met', () => {
     const snapshot = buildSnapshot({
       tree_state: {
         root_node_id: 'root',
@@ -535,38 +531,21 @@ describe('TreeGraph', () => {
     renderTreeGraph(snapshot)
 
     const rootWrapper = screen.getByTestId('rf-node-root')
-    fireEvent.click(within(rootWrapper).getByRole('button', { name: 'Node actions' }))
-    expect(screen.getByText('Workflow').closest('button')).toBeEnabled()
+    expect(within(rootWrapper).queryByRole('button', { name: 'Node actions' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Workflow')).not.toBeInTheDocument()
   })
 
-  it('shows Describe -> Frame -> Clarify -> Spec stepper in the detail panel header', async () => {
+  it('graph node details shows info (describe) only — no workflow stepper or document tabs', async () => {
     const snapshot = buildSnapshot()
 
     renderTreeGraph(snapshot)
     fireEvent.click(screen.getByRole('button', { name: 'Node details' }))
     const detailCard = screen.getByTestId('graph-node-detail-card')
 
-    expect(within(detailCard).getByRole('button', { name: 'Describe' })).toBeInTheDocument()
-    expect(within(detailCard).getByRole('button', { name: 'Frame' })).toBeInTheDocument()
-    expect(await within(detailCard).findByRole('button', { name: 'Clarify' })).toBeInTheDocument()
-    expect(within(detailCard).getByRole('button', { name: 'Spec' })).toBeInTheDocument()
-    fireEvent.click(within(detailCard).getByRole('button', { name: 'Describe' }))
+    expect(within(detailCard).queryByTestId('workflow-stepper')).not.toBeInTheDocument()
+    expect(within(detailCard).queryByRole('tablist', { name: 'Task document sections' })).not.toBeInTheDocument()
     expect(within(detailCard).getByText('Root node')).toBeInTheDocument()
     expect(within(detailCard).queryByRole('button', { name: 'Open Breadcrumb' })).not.toBeInTheDocument()
-    expect(within(detailCard).getByText('Finish Task')).toBeInTheDocument()
-    expect(within(detailCard).queryByRole('button', { name: 'Finish Task' })).not.toBeInTheDocument()
-
-    fireEvent.click(within(detailCard).getByRole('button', { name: 'Clarify' }))
-    expect(await within(detailCard).findByText(/What target platform/)).toBeInTheDocument()
-
-    apiMock.getNodeDocument.mockResolvedValueOnce({
-      node_id: 'root',
-      kind: 'spec',
-      content: '# Spec',
-      updated_at: '2026-03-20T00:00:01Z',
-    })
-    fireEvent.click(within(detailCard).getByRole('button', { name: 'Spec' }))
-    expect(await within(detailCard).findByDisplayValue('# Spec')).toBeInTheDocument()
   })
 
   it('renders child-to-review arrows and a review-return arrow while keeping structural edges', () => {
@@ -835,7 +814,7 @@ describe('TreeGraph', () => {
     expect(screen.queryByTestId('rf-node-review::root')).not.toBeInTheDocument()
   })
 
-  it('does not render a review overlay when the parent is outside the current graph root', () => {
+  it('hides node actions for child nodes that are not init nodes', () => {
     const snapshot = buildSnapshot({
       tree_state: {
         root_node_id: 'root',
@@ -872,13 +851,8 @@ describe('TreeGraph', () => {
 
     renderTreeGraph(snapshot)
 
-    expect(screen.getByTestId('rf-node-review::root')).toBeInTheDocument()
     const childWrapper = screen.getByTestId('rf-node-child-1')
-    fireEvent.click(within(childWrapper).getByRole('button', { name: 'Node actions' }))
-    fireEvent.click(screen.getByRole('button', { name: /Set as current root/i }))
-
-    expect(screen.queryByTestId('rf-node-root')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('rf-node-review::root')).not.toBeInTheDocument()
+    expect(within(childWrapper).queryByRole('button', { name: 'Node actions' })).not.toBeInTheDocument()
   })
 
   it('keeps the review card read-only and clicking it does not select a node', () => {
