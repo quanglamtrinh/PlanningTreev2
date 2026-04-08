@@ -1,6 +1,6 @@
 # Usage Snapshot Artifacts
 
-Status: phase 0 through phase 4 artifacts and handoffs recorded.
+Status: phase 0 through phase 5 artifacts and handoffs recorded.
 
 This folder stores implementation evidence for the Usage Snapshot rollout.
 
@@ -53,6 +53,10 @@ Phase 5:
 - consolidated test matrix
 - unit/integration/E2E run results
 - flaky-test notes and resolutions
+
+Phase 5 files currently present:
+
+- `docs/usagesnapshot/artifacts/phase-5-test-matrix-results.md`
 
 Phase 6:
 

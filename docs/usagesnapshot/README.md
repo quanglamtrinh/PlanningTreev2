@@ -1,8 +1,8 @@
 # Usage Snapshot Rollout Plan
 
-Status: Phase 4 completed. Phase 5 is ready to start.
+Status: Phase 5 completed. Phase 6 is ready to start.
 
-Last updated: 2026-04-06.
+Last updated: 2026-04-07.
 
 ## Primary docs
 
@@ -50,6 +50,11 @@ Last updated: 2026-04-06.
 
 - `docs/usagesnapshot/phase-4-sidebar-entrypoint-and-ux-polish.md`
 - `docs/usagesnapshot/phase-4-to-phase-5-handoff.md`
+
+## Phase 5 completion outputs
+
+- `docs/usagesnapshot/phase-5-automated-test-matrix-and-e2e.md`
+- `docs/usagesnapshot/artifacts/phase-5-test-matrix-results.md`
 
 ## Locked decisions
 

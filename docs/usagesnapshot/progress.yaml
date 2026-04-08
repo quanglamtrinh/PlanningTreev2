@@ -1,7 +1,7 @@
 migration_id: usage_snapshot_rollout
-status: phase_5_not_started
-current_phase: 5
-next_phase: 5
+status: phase_6_not_started
+current_phase: 6
+next_phase: 6
 
 references:
   plan_doc: docs/usagesnapshot/README.md
@@ -108,7 +108,7 @@ phases:
       (36 files, 212 tests) and frontend typecheck passed.
   - phase: 5
     name: automated_test_matrix_and_e2e
-    status: not_started
+    status: completed
     depends_on:
       - 2
       - 3
@@ -117,6 +117,14 @@ phases:
     estimated_days: 4.5
     artifacts:
       - docs/usagesnapshot/phase-5-automated-test-matrix-and-e2e.md
+      - docs/usagesnapshot/artifacts/phase-5-test-matrix-results.md
+    notes: >
+      Completed on 2026-04-07. Closed automated matrix across backend unit/integration,
+      frontend unit/typecheck, and Playwright E2E. Baseline graph E2E is aligned to
+      Create A Task (no Create Child dependency), added deterministic usage snapshot E2E
+      coverage, and added integration coverage for empty sessions directory behavior.
+      Verification: backend unit 15 passed, backend integration 11 passed, frontend unit
+      36 files/212 tests passed, typecheck passed, e2e targeted/full suites passed.
   - phase: 6
     name: rollout_and_stabilization
     status: not_started
