@@ -286,6 +286,23 @@ def test_get_local_usage_snapshot_degraded_input_still_returns_valid_snapshot(
     assert payload["days"][0]["total_tokens"] == 0
 
 
+def test_get_local_usage_snapshot_with_empty_sessions_directory_returns_valid_snapshot(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    codex_home = tmp_path / ".codex-empty"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    response = client.get("/v1/codex/usage/local?days=1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload.keys()) == {"updated_at", "days", "totals", "top_models"}
+    assert len(payload["days"]) == 1
+    assert payload["days"][0]["total_tokens"] == 0
+
+
 @pytest.mark.anyio
 async def test_codex_events_emits_snapshot_updated(client: TestClient) -> None:
     snapshot = {
