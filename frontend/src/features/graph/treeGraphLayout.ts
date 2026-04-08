@@ -82,19 +82,33 @@ function estimateTextLines(value: string, charsPerLine: number): number {
 }
 
 /**
- * Height of the graph card in layout (matches `GraphNode`: title row + optional description, padding).
- * Title row shares width with status/actions (~140px); body text uses full card width.
+ * Matches `GraphNode` chrome: `.nodeMain` vertical padding, title row (with status/badge column),
+ * optional description, and non-init breadcrumb footer. Keeps stacked rows from overlapping
+ * (notably after tasks move to `done`, which still show the full card + footer).
  */
+const NODE_MAIN_PADDING_Y = 44
+
+/** Title row height ≈ max(wrapped title, collapse + status badge rail). */
+const TITLE_ROW_MIN_PX = 28
+
+/** Non-init nodes: `.footer` margin + padding + border + full-width breadcrumb button. */
+const BREADCRUMB_FOOTER_BLOCK_PX = 50
+
+/** Init node: matches `.wrapperFloatingMenu` padding-bottom (⚡ badge extends below card). */
+const INIT_FLOATING_MENU_RESERVE_PX = 24
+
 export function estimateNodeHeight(node: NodeRecord): number {
   const titleLines = estimateTextLines(node.title.trim(), 20)
   const desc = node.description.trim()
   const descLines = desc ? estimateTextLines(desc, 32) : 0
-  const paddingY = 14 + 16
   const titleLinePx = 21
-  const titleRowPx = Math.max(titleLines * titleLinePx, 26)
+  const titleTextHeight = Math.max(titleLines * titleLinePx, 26)
+  const titleRowPx = Math.max(titleTextHeight, TITLE_ROW_MIN_PX)
   const gapTitleToDesc = desc ? 8 : 0
   const descLinePx = 18
-  return paddingY + titleRowPx + gapTitleToDesc + descLines * descLinePx
+  const footerPx = node.is_init_node === true ? 0 : BREADCRUMB_FOOTER_BLOCK_PX
+  const initReservePx = node.is_init_node === true ? INIT_FLOATING_MENU_RESERVE_PX : 0
+  return NODE_MAIN_PADDING_Y + titleRowPx + gapTitleToDesc + descLines * descLinePx + footerPx + initReservePx
 }
 
 export type GhostSiblingLayoutEntry = { id: string }

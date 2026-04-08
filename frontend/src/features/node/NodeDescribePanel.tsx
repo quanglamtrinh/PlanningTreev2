@@ -180,11 +180,6 @@ export function NodeDescribePanel({
 
   const present = detailState?.task_present_in_current_workspace
   const taskMissing = present === false
-  const canReset =
-    !taskMissing &&
-    detailState?.execution_started === true &&
-    Boolean(detailState?.initial_sha?.trim()) &&
-    Boolean(detailState?.head_sha?.trim())
 
   if (openInfoPath) {
     const workspacePath = infoTabListPathToWorkspaceRelative(openInfoPath.variant, openInfoPath.path)
@@ -252,8 +247,8 @@ export function NodeDescribePanel({
             <div className={styles.describeDocSection}>
               <div className={styles.describeTaskMissingBanner} role="note">
                 This task&apos;s checkpoint commits are not on the current branch history. You may
-                have moved the workspace with a hard reset. Reset actions are disabled until the repo
-                state matches a known checkpoint.
+                have moved the workspace with a hard reset. Resets may fail until the repo state
+                matches a known checkpoint.
               </div>
             </div>
           ) : null}
@@ -354,7 +349,7 @@ export function NodeDescribePanel({
                 <button
                   type="button"
                   className={styles.describeWorkspaceButtonOutline}
-                  disabled={!canReset || isResetting}
+                  disabled={isResetting}
                   onClick={() => void onResetToBefore?.()}
                 >
                   {isResetting ? 'Resetting…' : 'Reset to before this task'}
@@ -362,7 +357,7 @@ export function NodeDescribePanel({
                 <button
                   type="button"
                   className={styles.describeWorkspaceButtonPrimary}
-                  disabled={!canReset || isResetting}
+                  disabled={isResetting}
                   onClick={() => void onResetToResult?.()}
                 >
                   {isResetting ? 'Resetting…' : 'Reset to this task result'}

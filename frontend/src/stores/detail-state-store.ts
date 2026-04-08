@@ -6,6 +6,11 @@ import { useProjectStore } from './project-store'
 
 const EXECUTION_POLL_INTERVAL_MS = 1000
 
+/** Temporary: Info tab workspace reset buttons no-op over the network; set `false` to call the real API. */
+const DUMMY_RESET_WORKSPACE_API = true
+
+const DUMMY_RESET_DELAY_MS = 350
+
 type DetailStateStoreState = {
   /** Keyed by `${projectId}::${nodeId}` */
   entries: Record<string, DetailState>
@@ -277,7 +282,13 @@ export const useDetailStateStore = create<DetailStateStoreState>((set, get) => (
     const key = stateKey(projectId, nodeId)
     set((s) => ({ resettingWorkspace: { ...s.resettingWorkspace, [key]: true } }))
     try {
-      await api.resetWorkspace(projectId, nodeId, target)
+      if (DUMMY_RESET_WORKSPACE_API) {
+        await new Promise<void>((resolve) => {
+          globalThis.setTimeout(resolve, DUMMY_RESET_DELAY_MS)
+        })
+      } else {
+        await api.resetWorkspace(projectId, nodeId, target)
+      }
       await get().loadDetailState(projectId, nodeId)
       void syncProjectSnapshot(projectId)
     } finally {

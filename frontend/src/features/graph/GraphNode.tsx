@@ -333,7 +333,10 @@ function GraphNodeComponent({ data }: NodeProps) {
   }, [d.isInitNode, menuOpen])
 
   return (
-    <div ref={wrapperRef} className={styles.wrapper}>
+    <div
+      ref={wrapperRef}
+      className={`${styles.wrapper}${d.isInitNode ? ` ${styles.wrapperFloatingMenu}` : ''}`}
+    >
       <Handle
         className={styles.handle}
         type="target"
