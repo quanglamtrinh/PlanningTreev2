@@ -36,6 +36,22 @@ function formatDuration(totalMs: number): string {
   return `${(totalMs / 3_600_000).toFixed(1)}h`
 }
 
+function formatUpdatedAt(timestampMs: number | null): string {
+  if (timestampMs == null) {
+    return '--'
+  }
+  const parsed = new Date(timestampMs)
+  if (Number.isNaN(parsed.getTime())) {
+    return '--'
+  }
+  return parsed.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 function buildChartPoints(days: LocalUsageDay[]): string {
   if (days.length === 0) {
     return ''
@@ -76,7 +92,10 @@ export function UsageSnapshotPage() {
   const {
     snapshot,
     isLoading,
+    isRefreshing,
     error,
+    lastSuccessfulAt,
+    refresh,
   } = useLocalUsageSnapshot()
 
   if (!hasInitialized || isInitializing) {
@@ -106,7 +125,24 @@ export function UsageSnapshotPage() {
       <div className={`${graphStyles.mainColumn} ${styles.mainColumn}`}>
         <div className={styles.scroll}>
           <header className={styles.hero}>
-            <h1 className={styles.title}>Usage Snapshot</h1>
+            <div className={styles.heroRow}>
+              <h1 className={styles.title}>Usage Snapshot</h1>
+              <button
+                type="button"
+                className={styles.refreshButton}
+                data-testid="usage-refresh-button"
+                onClick={() => {
+                  void refresh()
+                }}
+                disabled={isLoading || isRefreshing}
+                aria-busy={isRefreshing ? 'true' : undefined}
+              >
+                {isRefreshing ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+            <p className={styles.updatedAt}>
+              Last updated: {formatUpdatedAt(snapshot?.updated_at ?? lastSuccessfulAt)}
+            </p>
           </header>
 
           {showInitialLoading ? (
@@ -120,6 +156,16 @@ export function UsageSnapshotPage() {
             <section className={styles.blockingError} data-testid="usage-snapshot-error-blocking">
               <h2 className={styles.blockingErrorTitle}>Unable to load usage snapshot</h2>
               <p className={styles.blockingErrorBody}>{error}</p>
+              <button
+                type="button"
+                className={styles.retryButton}
+                onClick={() => {
+                  void refresh()
+                }}
+                disabled={isLoading || isRefreshing}
+              >
+                {isLoading || isRefreshing ? 'Retrying...' : 'Retry'}
+              </button>
             </section>
           ) : null}
 

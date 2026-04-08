@@ -19,6 +19,13 @@
   flex-shrink: 0;
 }
 
+.heroRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 .title {
   margin: 0;
   font-family: var(--font-display);
@@ -27,6 +34,28 @@
   line-height: var(--type-display-md-line);
   letter-spacing: -0.02em;
   color: var(--on-surface);
+}
+
+.refreshButton {
+  border: 0;
+  border-radius: var(--radius-pill);
+  padding: 8px 14px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--surface);
+  background: var(--on-surface);
+  cursor: pointer;
+}
+
+.refreshButton:disabled {
+  opacity: 0.56;
+  cursor: default;
+}
+
+.updatedAt {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
 }
 
 .loadingShell {
@@ -75,6 +104,23 @@
   font-size: var(--font-size-sm);
   line-height: 1.55;
   color: var(--text-secondary);
+}
+
+.retryButton {
+  margin-top: var(--space-4);
+  border: 0;
+  border-radius: var(--radius-pill);
+  padding: 8px 14px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--surface);
+  background: color-mix(in srgb, var(--danger) 70%, var(--on-surface));
+  cursor: pointer;
+}
+
+.retryButton:disabled {
+  opacity: 0.56;
+  cursor: default;
 }
 
 .errorBanner {
@@ -273,6 +319,11 @@
 @media (max-width: 680px) {
   .mainColumn {
     padding: 18px;
+  }
+
+  .heroRow {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .summaryGrid {

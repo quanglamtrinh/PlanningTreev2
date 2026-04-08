@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { apiMock } = vi.hoisted(() => ({
@@ -65,14 +65,22 @@ function HookHarness() {
   const {
     snapshot,
     isLoading,
+    isRefreshing,
     error,
+    lastSuccessfulAt,
+    refresh,
   } = useLocalUsageSnapshot()
 
   return (
     <div>
       <div data-testid="loading">{String(isLoading)}</div>
+      <div data-testid="refreshing">{String(isRefreshing)}</div>
       <div data-testid="error">{error ?? ''}</div>
       <div data-testid="updated">{snapshot?.updated_at ?? 'none'}</div>
+      <div data-testid="last-successful">{lastSuccessfulAt ?? 'none'}</div>
+      <button type="button" onClick={() => void refresh()}>
+        Refresh
+      </button>
     </div>
   )
 }
@@ -98,6 +106,8 @@ describe('useLocalUsageSnapshot', () => {
     })
     expect(screen.getByTestId('error')).toHaveTextContent('')
     expect(screen.getByTestId('loading')).toHaveTextContent('false')
+    expect(screen.getByTestId('refreshing')).toHaveTextContent('false')
+    expect(screen.getByTestId('last-successful')).toHaveTextContent('1710000000000')
   })
 
   it('polls every 5 minutes after initial load', async () => {
@@ -123,6 +133,33 @@ describe('useLocalUsageSnapshot', () => {
       expect(screen.getByTestId('updated')).toHaveTextContent('1710000500000')
     })
     expect(apiMock.getLocalUsageSnapshot).toHaveBeenCalledTimes(2)
+  })
+
+  it('supports manual refresh with refreshing state after initial snapshot', async () => {
+    const manualRefresh = deferred<LocalUsageSnapshot>()
+    apiMock.getLocalUsageSnapshot
+      .mockResolvedValueOnce(makeSnapshot(1_710_000_000_000))
+      .mockImplementationOnce(() => manualRefresh.promise)
+
+    render(<HookHarness />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('updated')).toHaveTextContent('1710000000000')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(screen.getByTestId('refreshing')).toHaveTextContent('true')
+
+    await act(async () => {
+      manualRefresh.resolve(makeSnapshot(1_710_000_900_000))
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('updated')).toHaveTextContent('1710000900000')
+    })
+    expect(screen.getByTestId('refreshing')).toHaveTextContent('false')
+    expect(screen.getByTestId('last-successful')).toHaveTextContent('1710000900000')
   })
 
   it('ignores stale responses when a newer poll request resolves first', async () => {
