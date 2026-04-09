@@ -1,6 +1,6 @@
 # Usage Snapshot Artifacts
 
-Status: phase 0 through phase 5 artifacts and handoffs recorded.
+Status: phase 0 through phase 7 artifacts and closeout are recorded.
 
 This folder stores implementation evidence for the Usage Snapshot rollout.
 
@@ -63,11 +63,20 @@ Phase 6:
 - rollout checklist execution notes
 - stabilization issues and fixes
 
+Phase 6 files currently present:
+
+- `docs/usagesnapshot/artifacts/phase-6-rollout-checklist.md`
+- `docs/usagesnapshot/artifacts/phase-6-stabilization-notes.md`
+
 Phase 7:
 
 - closeout summary
 - residual risk register
 - ownership handoff notes
+
+Phase 7 files currently present:
+
+- `docs/usagesnapshot/artifacts/phase-7-closeout-summary.md`
 
 ## Naming guidance
 

@@ -343,25 +343,6 @@
         "updatedAt": "2026-04-03T00:10:02Z",
         "items": [
           {
-            "id": "guide-1",
-            "kind": "explore",
-            "threadId": "audit-thread-1",
-            "turnId": "turn-3",
-            "sequence": 1,
-            "createdAt": "2026-04-03T00:10:01Z",
-            "updatedAt": "2026-04-03T00:10:01Z",
-            "status": "completed",
-            "source": "upstream",
-            "tone": "neutral",
-            "metadata": {
-              "workflowReviewGuidance": true,
-              "v2Kind": "message",
-              "semanticKind": "workflowReviewGuidance"
-            },
-            "title": null,
-            "text": "Review guidance text."
-          },
-          {
             "id": "diff-1",
             "kind": "diff",
             "threadId": "audit-thread-1",
@@ -401,11 +382,9 @@
       "expected": {
         "lane": "audit",
         "item_order": [
-          "guide-1",
           "diff-1"
         ],
         "item_kinds": [
-          "explore",
           "diff"
         ],
         "plan_ready": {
@@ -417,11 +396,9 @@
         "pending_request_statuses": [],
         "parity_model": {
           "visibleItemIds": [
-            "guide-1",
             "diff-1"
           ],
           "visibleItemKinds": [
-            "explore",
             "diff"
           ],
           "pendingRequestIds": [],

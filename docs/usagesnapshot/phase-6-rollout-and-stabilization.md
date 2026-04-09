@@ -1,6 +1,6 @@
 # Phase 6: Rollout and Stabilization
 
-Status: not started.
+Status: completed on 2026-04-09.
 
 Effort: 6% (about 1.5 engineering days).
 
@@ -73,13 +73,29 @@ Roll out Usage Snapshot safely, monitor behavior in real use, and stabilize befo
 ## Verification commands
 
 - `npm run build --prefix frontend`
-- `npm run test --prefix frontend` (if full frontend validation is required by release gate)
+- `npm run test:unit --prefix frontend`
+- `npm run test:e2e --prefix frontend -- usage-snapshot.spec.ts`
 - `npm run test`
 
 ## Deliverables
 
 - Rollout checklist completed and recorded.
 - Stabilization notes documented with final decision.
+
+## Completion notes
+
+- Full gate checks are green after remediation:
+  - `npm run build --prefix frontend`
+  - `python -m pytest backend/tests/unit/test_local_usage_snapshot_service.py backend/tests/integration/test_codex_api.py -q`
+  - `npm run test:e2e --prefix frontend -- usage-snapshot.spec.ts`
+  - `npm run test`
+- Packaged runtime validation is green after rebuilding backend bundle:
+  - `python scripts/build-backend.py`
+  - `npm run validate:build`
+- Data-shape smoke (no sessions / moderate / large history) and cache-hit proxy checks are recorded.
+- Evidence is captured in:
+  - `docs/usagesnapshot/artifacts/phase-6-rollout-checklist.md`
+  - `docs/usagesnapshot/artifacts/phase-6-stabilization-notes.md`
 
 ## Exit criteria
 

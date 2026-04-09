@@ -142,7 +142,7 @@ def test_frame_reconfirm_resets_active_step_to_clarify(
 def test_spec_stale_detection(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:
-    """Spec is stale when its source_frame_revision is behind the current confirmed_revision."""
+    """Spec branch becomes ready when frame confirmation advances beyond spec source revision."""
     project_id, root_id, detail_service, doc_service = _setup_to_spec_step(
         storage, workspace_root, tree_service
     )
@@ -161,7 +161,9 @@ def test_spec_stale_detection(
     detail_service._save_frame_meta(node_dir, frame_meta)
 
     state = detail_service.get_detail_state(project_id, root_id)
-    assert state["spec_stale"] is True
+    assert state["frame_branch_ready"] is True
+    assert state["spec_read_only"] is True
+    assert state["spec_stale"] is False
 
 
 def test_active_step_spec_after_full_loop(
