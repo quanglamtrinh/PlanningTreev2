@@ -1,0 +1,169 @@
+migration_id: native_v3_end_to_end_conversion
+status: phase_0_in_progress
+current_phase: 0
+next_phase: 1
+baseline_date: 2026-04-09
+
+references:
+  overview: docs/conversion/README.md
+  phase_docs:
+    - docs/conversion/phase-0-baseline-and-contract.md
+    - docs/conversion/phase-1-v3-domain-store.md
+    - docs/conversion/phase-2-v3-runtime-query.md
+    - docs/conversion/phase-3-v3-route-cutover.md
+    - docs/conversion/phase-4-workflow-services-cutover.md
+    - docs/conversion/phase-5-frontend-control-plane-v3.md
+    - docs/conversion/phase-6-data-migration.md
+    - docs/conversion/phase-7-hard-cutover-cleanup.md
+    - docs/conversion/phase-8-stabilization-closeout.md
+  baseline_tests:
+    - backend/tests/integration/test_chat_v3_api_execution_audit.py
+    - backend/tests/integration/test_phase6_execution_audit_cutover.py
+    - backend/tests/unit/test_conversation_v3_projector.py
+    - backend/tests/unit/test_conversation_v3_parity_fixtures.py
+    - backend/tests/unit/test_conversation_v3_fixture_replay.py
+    - backend/tests/unit/test_conversation_v3_fileschanged_parity_fixtures.py
+    - backend/tests/unit/test_ask_v3_rollout_phase6_7.py
+
+locked_decisions:
+  - id: v3_contract_is_canonical
+    status: locked
+    decision: ThreadSnapshotV3 and V3 event envelope are the canonical contract.
+  - id: registry_first_identity
+    status: locked
+    decision: Thread registry remains source of truth for role<->threadId binding.
+  - id: no_v2_adapter_in_v3_final
+    status: locked
+    decision: Final /v3 route path cannot depend on project_v2_snapshot_to_v3 or project_v2_envelope_to_v3.
+  - id: stream_first_frame
+    status: locked
+    decision: V3 stream must emit thread.snapshot.v3 as first non-heartbeat frame.
+  - id: stream_guard_mismatch
+    status: locked
+    decision: after_snapshot_version mismatch must return conversation_stream_mismatch.
+  - id: ask_gate_contract
+    status: locked
+    decision: ask_v3_disabled (409) semantics remain unchanged while gate exists.
+  - id: reset_policy
+    status: locked
+    decision: by-id reset remains ask-only; execution/audit reset by-id returns invalid_request.
+
+effort_model:
+  total_effort_percent: 100
+  total_person_day_estimate_range: "42-57"
+
+phases:
+  - phase: 0
+    name: baseline_and_contract_freeze
+    status: in_progress
+    effort_percent: 8
+    estimate_person_days: "3-4"
+    depends_on: []
+    primary_owner: "BE + FE lead"
+    exit_criteria:
+      - Behavior matrix from existing tests is frozen.
+      - Error and policy semantics are frozen.
+      - Contradictory legacy docs are reconciled for this track.
+
+  - phase: 1
+    name: v3_domain_store_foundation
+    status: pending
+    effort_percent: 12
+    estimate_person_days: "5-7"
+    depends_on:
+      - 0
+    primary_owner: "BE"
+    exit_criteria:
+      - Thread snapshot V3 store exists and passes unit tests.
+      - Normalization and persistence rules are deterministic.
+
+  - phase: 2
+    name: v3_runtime_query_native
+    status: pending
+    effort_percent: 14
+    estimate_person_days: "6-8"
+    depends_on:
+      - 1
+    primary_owner: "BE"
+    exit_criteria:
+      - Query and runtime V3 services run ask/execution/audit natively.
+      - Ask legacy mirroring is removed from runtime path.
+
+  - phase: 3
+    name: v3_route_native_cutover
+    status: pending
+    effort_percent: 12
+    estimate_person_days: "4-6"
+    depends_on:
+      - 2
+    primary_owner: "BE"
+    exit_criteria:
+      - workflow_v3 routes no longer call V2 query/runtime services.
+      - Snapshot and stream behavior parity is preserved.
+
+  - phase: 4
+    name: workflow_service_cutover
+    status: pending
+    effort_percent: 18
+    estimate_person_days: "8-10"
+    depends_on:
+      - 3
+    primary_owner: "BE"
+    exit_criteria:
+      - finish-task/execution/audit/review services use V3 core only.
+      - No execution/audit write path touches legacy chat session transcript.
+
+  - phase: 5
+    name: frontend_control_plane_v3
+    status: pending
+    effort_percent: 14
+    estimate_person_days: "6-8"
+    depends_on:
+      - 4
+    primary_owner: "FE"
+    exit_criteria:
+      - Frontend workflow state/action/event bridge uses V3 endpoints.
+      - No V2 workflow API dependency remains in main surface path.
+
+  - phase: 6
+    name: data_migration_and_compatibility_bridge
+    status: pending
+    effort_percent: 10
+    estimate_person_days: "4-6"
+    depends_on:
+      - 5
+    primary_owner: "BE"
+    exit_criteria:
+      - v2->v3 migration tool is idempotent and verified.
+      - Backfill dry-run and execution runbook are available.
+
+  - phase: 7
+    name: hard_cutover_cleanup
+    status: pending
+    effort_percent: 8
+    estimate_person_days: "4-5"
+    depends_on:
+      - 6
+    primary_owner: "BE + FE"
+    exit_criteria:
+      - V2 adapter core removed from production path.
+      - Dead code and legacy stores/routes are cleaned up.
+
+  - phase: 8
+    name: stabilization_and_closeout
+    status: pending
+    effort_percent: 4
+    estimate_person_days: "2-3"
+    depends_on:
+      - 7
+    primary_owner: "BE + FE + QA"
+    exit_criteria:
+      - Release stabilization window passes.
+      - Final architecture and operations docs are complete.
+
+update_rules:
+  - Keep exactly one phase in_progress at a time.
+  - Update status and notes before switching phases.
+  - Attach verification evidence before marking completed.
+  - If a phase is blocked, record blocker owner and unblock plan.
+
