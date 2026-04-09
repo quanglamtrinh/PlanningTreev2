@@ -1,0 +1,13 @@
+{
+  "projectId": "c8afe67a1a164edd842f68ad5b26b1d0",
+  "nodeId": "322311cb831744c3b896f25a51f48266",
+  "threadRole": "ask_planning",
+  "threadId": "019d6b13-7b41-74a2-8d76-1107cab820bb",
+  "forkedFromThreadId": "019d6b13-5d91-7ad3-ace8-ea5183cdc2de",
+  "forkedFromNodeId": "322311cb831744c3b896f25a51f48266",
+  "forkedFromRole": "audit",
+  "forkReason": "ask_bootstrap",
+  "lineageRootThreadId": "019d6b13-3886-72c1-b24f-e834d64996d6",
+  "createdAt": "2026-04-08T03:12:17.481938+00:00",
+  "updatedAt": "2026-04-08T03:12:17.488732+00:00"
+}
