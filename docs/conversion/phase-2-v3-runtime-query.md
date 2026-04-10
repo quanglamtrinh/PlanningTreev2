@@ -1,6 +1,6 @@
 # Phase 2 - V3 Runtime/Query Native + Compatibility Read Bridge
 
-Status: pending  
+Status: in_progress  
 Estimate: 6-8 person-days (14%)
 
 ## 1. Goal

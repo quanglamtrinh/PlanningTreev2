@@ -1,6 +1,6 @@
 # Phase 1 - V3 Domain/Store Foundation
 
-Status: in_progress  
+Status: completed  
 Estimate: 5-7 person-days (12%)
 
 ## 1. Goal
@@ -26,21 +26,21 @@ Build native V3 data foundations:
 
 ## 4. Work breakdown
 
-- [ ] Add new store module:
+- [x] Add new store module:
   - `backend/conversation/storage/thread_snapshot_store_v3.py`
   - Canonical path: `.planningtree/conversation_v3/{node_id}/{thread_role}.json`
-- [ ] Wire into `Storage`:
+- [x] Wire into `Storage`:
   - expose `thread_snapshot_store_v3`
   - preserve current V2 path behavior
-- [ ] Lock naming schema:
+- [x] Lock naming schema:
   - canonical V3 domain/storage naming uses `thread_role` (JSON key `threadRole`)
   - legacy persisted payloads with `lane` are read-normalized to `threadRole` during load
   - route/output contract tightening (`no lane`) is deferred to Phase 3/5/7 rollout gates
-- [ ] Add V3 snapshot helpers:
+- [x] Add V3 snapshot helpers:
   - default builder
   - normalize function (field hardening)
   - copy/version helpers as needed
-- [ ] Add unit tests:
+- [x] Add unit tests:
   - read default when file is missing
   - write/read roundtrip
   - malformed payload normalization
@@ -62,9 +62,10 @@ Build native V3 data foundations:
 
 ## 7. Verification
 
-- [ ] `python -m pytest -q backend/tests/unit/test_conversation_v3_stores.py` (new)
-- [ ] `python -m pytest -q backend/tests/unit/test_conversation_v3_projector.py`
-- [ ] `python -m pytest -q backend/tests/unit/test_conversation_v3_parity_fixtures.py`
+- [x] `python -m pytest -q backend/tests/unit/test_conversation_v3_stores.py` (new)
+- [x] `python -m pytest -q backend/tests/unit/test_conversation_v3_projector.py`
+- [x] `python -m pytest -q backend/tests/unit/test_conversation_v3_parity_fixtures.py`
+- [x] `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py` (route behavior unchanged check)
 
 ## 8. Risks and mitigations
 

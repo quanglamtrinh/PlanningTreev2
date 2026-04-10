@@ -11,7 +11,7 @@ This directory stores evidence and operational documentation for each conversion
 ## Structure
 
 - `phase-0/`: behavior matrix, policy matrix, decision log, open questions, phase-1 handoff
-- `phase-1/`: storage schema notes
+- `phase-1/`: storage schema notes, phase-2 handoff
 - `phase-2/`: runtime sequence + event contract notes
 - `phase-3/`: route cutover diff + compatibility notes
 - `phase-4/`: service call graph + parity report

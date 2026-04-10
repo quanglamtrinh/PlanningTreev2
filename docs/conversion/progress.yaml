@@ -1,7 +1,7 @@
 migration_id: native_v3_end_to_end_conversion
-status: phase_1_in_progress
-current_phase: 1
-next_phase: 2
+status: phase_2_in_progress
+current_phase: 2
+next_phase: 3
 baseline_date: 2026-04-09
 
 references:
@@ -109,7 +109,7 @@ phases:
 
   - phase: 1
     name: v3_domain_store_foundation
-    status: in_progress
+    status: completed
     effort_percent: 12
     estimate_person_days: "5-7"
     depends_on:
@@ -123,10 +123,19 @@ phases:
       2026-04-10 sequencing lock: naming migration follows phased transition
       (P1 canonical internals, P3 route threadRole-primary output with temporary compat allowed,
       P5 frontend lane-read removal, P7 hard lane cleanup) to avoid foundation-vs-route conflict.
+      2026-04-10 completion evidence: implemented canonical `threadRole` domain/store foundation
+      with legacy `lane` read-normalization, added `thread_snapshot_store_v3` and storage wiring,
+      and published artifact `docs/conversion/artifacts/phase-1/storage-schema.md`.
+      Verification passed:
+      `python -m pytest -q backend/tests/unit/test_conversation_v3_stores.py backend/tests/unit/test_conversation_v3_projector.py backend/tests/unit/test_conversation_v3_parity_fixtures.py`
+      (17 passed), and route guard check
+      `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py`
+      (16 passed). Published handoff:
+      `docs/conversion/artifacts/phase-1/handoff-to-phase-2.md`.
 
   - phase: 2
     name: v3_runtime_query_native_with_read_bridge
-    status: pending
+    status: in_progress
     effort_percent: 14
     estimate_person_days: "6-8"
     depends_on:
@@ -136,6 +145,9 @@ phases:
       - Query and runtime V3 services run ask/execution/audit natively.
       - Ask legacy mirroring is removed from runtime path.
       - Compatibility read bridge is active for legacy v2-only projects.
+    notes: >
+      Entered in_progress on 2026-04-10 after Phase-1 completion and handoff publication
+      at `docs/conversion/artifacts/phase-1/handoff-to-phase-2.md`.
 
   - phase: 3
     name: v3_route_native_cutover
