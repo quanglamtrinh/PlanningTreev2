@@ -1,6 +1,6 @@
 # Phase 5 - Frontend Control Plane V3
 
-Status: pending  
+Status: in_progress  
 Estimate: 6-8 person-days (14%)
 
 ## 1. Objective

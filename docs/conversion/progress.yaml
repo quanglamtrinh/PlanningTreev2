@@ -225,6 +225,8 @@ phases:
       Artifacts published:
       `docs/conversion/artifacts/phase-4/service-call-graph-before-after.md`
       and `docs/conversion/artifacts/phase-4/behavior-parity-report.md`.
+      Published handoff:
+      `docs/conversion/artifacts/phase-4/handoff-to-phase-5.md`.
       Verification passed:
       `python -m pytest -q backend/tests/unit/test_app_config.py backend/tests/unit/test_phase4_main_wiring.py backend/tests/unit/test_phase4_workflow_v3_control_plane_guards.py backend/tests/unit/test_execution_audit_workflow_service.py backend/tests/unit/test_review_service.py backend/tests/integration/test_chat_v3_api_execution_audit.py backend/tests/integration/test_phase6_execution_audit_cutover.py`
       (84 passed).
