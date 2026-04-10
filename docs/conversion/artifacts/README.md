@@ -1,16 +1,16 @@
 # Conversion Artifacts
 
-Thu muc nay luu bang chung va tai lieu van hanh cho tung phase conversion.
+This directory stores evidence and operational documentation for each conversion phase.
 
-## Cac nguyen tac
+## Principles
 
-- Moi artifact phai map duoc toi phase trong `docs/conversion/progress.yaml`.
-- Artifact nen co ngay tao, owner, va command hoac test evidence.
-- Khong ghi de artifact cu; neu cap nhat, ghi ro revision changelog.
+- Each artifact must map to a phase in `docs/conversion/progress.yaml`.
+- Artifacts should include creation date, owner, and command/test evidence.
+- Do not overwrite old artifacts silently; if updated, include a clear revision changelog.
 
-## Cau truc
+## Structure
 
-- `phase-0/`: behavior matrix, policy matrix, open questions
+- `phase-0/`: behavior matrix, policy matrix, decision log, open questions
 - `phase-1/`: storage schema notes
 - `phase-2/`: runtime sequence + event contract notes
 - `phase-3/`: route cutover diff + compatibility notes
@@ -19,4 +19,3 @@ Thu muc nay luu bang chung va tai lieu van hanh cho tung phase conversion.
 - `phase-6/`: migration runbook + migration reports
 - `phase-7/`: deletion log + deprecation notice
 - `phase-8/`: smoke/stabilization/closeout evidence
-

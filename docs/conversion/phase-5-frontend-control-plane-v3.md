@@ -3,71 +3,84 @@
 Status: pending  
 Estimate: 6-8 person-days (14%)
 
-## 1. Muc tieu
+## 1. Objective
 
-Frontend surface chinh (`/chat-v2`) dung full V3 cho transcript + workflow control plane:
+Migrate the primary frontend surface (`/chat-v2`) to full V3 for transcript and workflow control plane:
 
 - workflow state
 - workflow actions
 - workflow event bridge
 
-Khong con dependency `/v2/projects/...` tren duong chay chinh.
+No `/v2/projects/...` dependency should remain on the primary active path.
 
-## 2. In-scope
+## 2. In Scope
 
 - API client:
-  - add/replace workflow APIs sang `/v3` namespace (neu backend expose)
+  - add/replace workflow APIs under the `/v3` namespace according to the locked contract
+  - allowed endpoints:
+    - `GET /v3/projects/{project_id}/nodes/{node_id}/workflow-state`
+    - `POST /v3/projects/{project_id}/nodes/{node_id}/workflow/finish-task`
+    - `POST /v3/projects/{project_id}/nodes/{node_id}/workflow/mark-done-from-execution`
+    - `POST /v3/projects/{project_id}/nodes/{node_id}/workflow/review-in-audit`
+    - `POST /v3/projects/{project_id}/nodes/{node_id}/workflow/mark-done-from-audit`
+    - `POST /v3/projects/{project_id}/nodes/{node_id}/workflow/improve-in-execution`
+    - `GET /v3/projects/{project_id}/events`
 - Store migration:
-  - `workflowStateStoreV2` -> workflow store V3
-  - event bridge `/v2/projects/{id}/events` -> V3 equivalent
-- `BreadcrumbChatViewV2` wiring update.
-- Remove dead stores khong con su dung:
+  - `workflowStateStoreV2` -> V3 workflow store
+  - event bridge `/v2/projects/{id}/events` -> `GET /v3/projects/{project_id}/events`
+- `BreadcrumbChatViewV2` wiring updates
+- Remove unused/dead stores:
   - `threadStoreV2.ts`
-  - `threadByIdStoreV2.ts` (sau khi test va imports clean)
+  - `threadByIdStoreV2.ts` (after tests pass and imports are clean)
 
-## 3. Out-of-scope
+## 3. Out Of Scope
 
-- Redesign visual UX.
-- Router rename (`chat-v2` -> khac) neu chua can thiet.
+- Visual UX redesign
+- Router rename (`chat-v2` -> another name) unless required later
 
-## 4. Work breakdown
+## 4. Work Breakdown
 
-- [ ] Tao workflow state store V3 (zustand) va wiring mutation.
-- [ ] Tao workflow event bridge V3 + reconnect handling.
-- [ ] Cap nhat `BreadcrumbChatViewV2` su dung store/bridge moi.
-- [ ] Cap nhat telemetry hooks neu can.
-- [ ] Remove import/path thua.
-- [ ] Cap nhat/bo sung unit tests FE cho:
+- [ ] Build V3 workflow state store (zustand) and wire mutations.
+- [ ] Build V3 workflow event bridge with reconnect handling.
+- [ ] Update `BreadcrumbChatViewV2` to use new store/bridge.
+- [ ] Remove primary-path calls to:
+  - `buildWorkflowStatePathV2`
+  - `buildWorkflowActionPathV2`
+  - `buildProjectEventsUrlV2`
+- [ ] Update telemetry hooks if needed.
+- [ ] Remove unused imports/paths.
+- [ ] Update/add frontend unit tests for:
   - tab resolution
   - action button gating
-  - reconnect + reload behavior
+  - reconnect and reload behavior
 
 ## 5. Deliverables
 
-- FE control-plane V3 path chay on by default.
+- Frontend control-plane V3 path is on by default.
 - Artifacts:
   - `docs/conversion/artifacts/phase-5/frontend-migration-checklist.md`
   - `docs/conversion/artifacts/phase-5/frontend-regression-notes.md`
 
-## 6. Exit criteria
+## 6. Exit Criteria
 
-- Frontend khong con call:
+- Frontend no longer calls:
   - `/v2/projects/{projectId}/nodes/{nodeId}/workflow-state`
   - `/v2/projects/{projectId}/nodes/{nodeId}/workflow/*`
   - `/v2/projects/{projectId}/events`
-  tren surface chinh.
-- Unit tests FE lien quan chat-v2/workflow pass.
+  on the primary surface.
+- Frontend uses only the workflow endpoints defined in `docs/conversion/workflow-v3-control-plane-contract.md`.
+- Primary active route no longer depends on `workflowStateStoreV2` or V2 project events bridge.
+- Frontend unit tests related to `chat-v2`/workflow pass.
 
 ## 7. Verification
 
 - [ ] `npm run typecheck --prefix frontend`
 - [ ] `npm run test:unit --prefix frontend`
-- [ ] Them test grep guard khong con references V2 workflow API trong code path active.
+- [ ] Add grep-based guard tests to ensure no V2 workflow API references remain on active code paths.
 
-## 8. Risks va giam thieu
+## 8. Risks And Mitigations
 
-- Risk: race condition stream/workflow refresh.
-  - Mitigation: generation tokens + stale response guard nhu thread store.
-- Risk: hidden dependency V2 trong edge component.
-  - Mitigation: code search gate truoc merge.
-
+- Risk: race conditions between stream updates and workflow refresh.
+  - Mitigation: generation tokens and stale-response guards, consistent with thread store patterns.
+- Risk: hidden V2 dependency in edge components.
+  - Mitigation: enforce code-search gates before merge.

@@ -3,58 +3,58 @@
 Status: pending  
 Estimate: 4-5 person-days (8%)
 
-## 1. Muc tieu
+## 1. Objective
 
-Loai bo duong chay V2 adapter khoi production code path sau khi da on dinh.
+Remove V2 adapter paths from production code after the system is stable.
 
-## 2. In-scope
+## 2. In Scope
 
-- Remove hoac deprecate hard:
+- Remove or hard-deprecate:
   - `thread_query_service_v2` production wiring
   - `thread_runtime_service_v2` production wiring
-  - `project_v2_snapshot_to_v3` va `project_v2_envelope_to_v3` trong route path production
-  - V2-only dead stores tren frontend
-- Rename service/state cho ro "V3 canonical".
-- Cap nhat docs architecture chinh.
+  - `project_v2_snapshot_to_v3` and `project_v2_envelope_to_v3` on production route paths
+  - legacy `lane` compatibility branches in V3 snapshot/event serializers
+  - frontend dead stores that are V2-only
+- Rename services/state to clearly indicate "V3 canonical."
+- Update primary architecture documentation.
 
-## 3. Out-of-scope
+## 3. Out Of Scope
 
-- Feature moi.
-- Experiment rollout moi.
+- New features
+- New rollout experiments
 
-## 4. Work breakdown
+## 4. Work Breakdown
 
-- [ ] Clean DI trong `backend/main.py` de service naming khong con `_v2` cho path canonical.
-- [ ] Remove code branches compatibility khong con su dung.
-- [ ] Code search gate:
-  - khong con call V2 core tu `/v3` path
-  - khong con FE active path call workflow `/v2`
-- [ ] Update tests theo naming moi.
-- [ ] Danh dau deprecation strategy cho V2 APIs neu van giu route compatibility.
+- [ ] Clean DI in `backend/main.py` so canonical paths no longer use `_v2` naming.
+- [ ] Remove unused compatibility code branches.
+- [ ] Add code-search gates:
+  - no V2 core calls from `/v3` paths
+  - no active frontend workflow calls to `/v2`
+- [ ] Update tests to match new canonical naming.
+- [ ] Define deprecation strategy for V2 APIs if route compatibility is still retained.
 
 ## 5. Deliverables
 
-- Pull request cleanup lon (co checklists).
-- Artifact:
+- Large cleanup pull request (with checklists)
+- Artifacts:
   - `docs/conversion/artifacts/phase-7/deletion-log.md`
   - `docs/conversion/artifacts/phase-7/deprecation-notice.md`
 
-## 6. Exit criteria
+## 6. Exit Criteria
 
-- Code search khong con V2 adapter dependency tren production path.
-- Test gate pass sau cleanup.
-- Architecture docs reflect native V3 reality.
+- Code search confirms no V2 adapter dependencies on production paths.
+- Test gates pass after cleanup.
+- Architecture docs reflect native V3 end-to-end reality.
 
 ## 7. Verification
 
-- [ ] Full targeted backend suite cho conversation/workflow.
-- [ ] Frontend typecheck + unit.
-- [ ] Search gate scripts (rg-based) pass.
+- [ ] Full targeted backend suite for conversation/workflow
+- [ ] Frontend typecheck and unit tests
+- [ ] Search-gate scripts (rg-based) pass
 
-## 8. Risks va giam thieu
+## 8. Risks And Mitigations
 
-- Risk: xoa code som gay regression edge-case chua thay.
-  - Mitigation: chi cleanup sau Phase 6 stabilization proof.
-- Risk: hidden transitive import V2.
-  - Mitigation: enforce forbidden import check trong CI.
-
+- Risk: deleting code too early causes hidden edge-case regressions.
+  - Mitigation: run cleanup only after Phase 6 stabilization proof.
+- Risk: hidden transitive V2 imports.
+  - Mitigation: enforce forbidden-import checks in CI.

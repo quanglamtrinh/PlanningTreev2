@@ -3,11 +3,11 @@
 Status: pending  
 Estimate: 4-6 person-days (12%)
 
-## 1. Muc tieu
+## 1. Goal
 
-Chuyen route `/v3` sang goi thang service V3 native, xoa phu thuoc adapter V2 trong route path.
+Move `/v3` routes to call native V3 services directly and remove V2 adapter dependence from route paths.
 
-## 2. In-scope
+## 2. In scope
 
 - Refactor `backend/routes/workflow_v3.py`:
   - snapshot by-id
@@ -16,53 +16,55 @@ Chuyen route `/v3` sang goi thang service V3 native, xoa phu thuoc adapter V2 tr
   - resolve user input by-id
   - plan actions by-id
   - reset by-id policy
-- Wring app state tu `*_v2` sang service V3 moi trong route path.
-- Giu nguyen behavior contract da freeze o phase 0.
+- Rewire app state usage from `*_v2` route dependencies to V3 services.
+- Preserve all frozen behavior from Phase 0.
 
-## 3. Out-of-scope
+## 3. Out of scope
 
-- Refactor workflow business services lon.
-- Frontend migration.
+- Large workflow business-service refactor.
+- Frontend migration work.
 
 ## 4. Work breakdown
 
-- [ ] Doi dependency route:
+- [ ] Switch route dependencies to:
   - `thread_query_service_v3`
   - `thread_runtime_service_v3`
-  - (tam thoi) workflow service co the con ten `_v2` neu chua phase 4
-- [ ] Xoa adapter route-level:
-  - bo `project_v2_snapshot_to_v3`
-  - bo `project_v2_envelope_to_v3` tren stream path route
-- [ ] Giu logic role resolution by-id:
-  - execution/audit theo workflow state
-  - ask theo registry (co fallback seed tu legacy session chi neu can trong bridge)
-- [ ] Giu error semantics:
+  - workflow service may remain `_v2` temporarily until Phase 4
+- [ ] Remove route-level adapters:
+  - remove `project_v2_snapshot_to_v3`
+  - remove `project_v2_envelope_to_v3` from stream route path
+- [ ] Preserve by-id role resolution:
+  - execution/audit via workflow state
+  - ask via registry (with legacy-session seed only when bridge policy allows)
+- [ ] Enforce naming contract:
+  - responses/events use canonical `thread_role` (JSON key `threadRole`)
+  - no `lane` exposure in new public contract
+- [ ] Preserve error semantics:
   - `invalid_request` for mismatch/policy
-  - `ask_v3_disabled` gate contract neu gate con ton tai
+  - `ask_v3_disabled` while ask gate remains enabled
   - `conversation_stream_mismatch` guard
 
 ## 5. Deliverables
 
-- Route `/v3` native service wiring.
-- Integration tests update/pass.
+- Native `/v3` route wiring to V3 services.
+- Updated/passing integration tests.
 - Artifact:
   - `docs/conversion/artifacts/phase-3/route-cutover-diff.md`
 
 ## 6. Exit criteria
 
-- `/v3` route khong con read/publish qua query/runtime V2.
-- `test_chat_v3_api_execution_audit.py` pass full.
-- Stream first-frame + reconnect guard pass.
+- `/v3` routes no longer read/publish via V2 query/runtime services.
+- `test_chat_v3_api_execution_audit.py` passes fully.
+- Stream first-frame and reconnect guard behavior pass.
 
 ## 7. Verification
 
 - [ ] `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py`
 - [ ] `python -m pytest -q backend/tests/unit/test_ask_v3_rollout_phase6_7.py`
 
-## 8. Risks va giam thieu
+## 8. Risks and mitigations
 
-- Risk: drift event ordering tren SSE.
-  - Mitigation: freeze explicit event order assertions trong integration test.
-- Risk: role resolution by-id regression.
-  - Mitigation: add dedicated tests mismatch + registry-seed cases.
-
+- Risk: SSE event ordering drift.
+  - Mitigation: freeze explicit ordering assertions in integration tests.
+- Risk: by-id role resolution regression.
+  - Mitigation: add focused mismatch and registry-seed test cases.

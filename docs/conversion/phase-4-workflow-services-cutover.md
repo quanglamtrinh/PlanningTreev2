@@ -3,58 +3,58 @@
 Status: pending  
 Estimate: 8-10 person-days (18%)
 
-## 1. Muc tieu
+## 1. Objective
 
-Chuyen toan bo workflow business path sang V3 core:
+Move all workflow business paths to the V3 core:
 
 - finish-task
 - execution follow-up
 - audit review
 - rollup
 
-Khong con runtime/query coupling V2 o service layer production path.
+There must be no V2 runtime/query coupling left in the production service-layer path.
 
-## 2. In-scope
+## 2. In Scope
 
 - `FinishTaskService`
 - `ExecutionAuditWorkflowService`
 - `ReviewService`
-- Workflow event publisher integration voi V3 state changes
-- Khong ghi transcript execution/audit vao legacy `chat_state_store`
+- Workflow event publisher integration for V3 state changes
+- Do not write execution/audit transcripts to legacy `chat_state_store`
 
-## 3. Out-of-scope
+## 3. Out Of Scope
 
-- Frontend control-plane migration.
-- Hard delete module V2 (se lam phase 7).
+- Frontend control-plane migration
+- Hard removal of V2 modules (handled in Phase 7)
 
-## 4. Work breakdown
+## 4. Work Breakdown
 
-- [ ] Refactor constructor/wiring bo ten `_v2` o service state.
-- [ ] Chuyen call sites:
+- [ ] Refactor constructors/wiring to remove `_v2` naming from service state.
+- [ ] Migrate call sites:
   - `begin_turn`, `stream_agent_turn`, `complete_turn`
   - `get_thread_snapshot`, `persist_thread_mutation`
-  sang runtime/query V3.
-- [ ] Dam bao behavior giu nguyen:
-  - execution/audit khong phat legacy chat events
-  - workflow invalidation reasons day du
-  - command/fileChange/reasoning semantics giu parity
-- [ ] Giu askThreadId resolution policy (registry-first, bridge fallback neu con can).
-- [ ] Cap nhat test doubles/fakes cho service unit tests.
+  to V3 runtime/query services.
+- [ ] Preserve behavior parity:
+  - execution/audit does not emit legacy chat events
+  - workflow invalidation reasons are complete
+  - command/fileChange/reasoning semantics remain equivalent
+- [ ] Keep `askThreadId` resolution policy (registry-first, bridge fallback only when needed).
+- [ ] Update test doubles/fakes for service unit tests.
 
 ## 5. Deliverables
 
-- Workflow services chay V3 native.
+- Workflow services run natively on V3.
 - Integration evidence:
-  - phase6 production cutover test van pass voi V3 core.
+  - the Phase 6 production cutover test still passes with the V3 core
 - Artifacts:
   - `docs/conversion/artifacts/phase-4/service-call-graph-before-after.md`
   - `docs/conversion/artifacts/phase-4/behavior-parity-report.md`
 
-## 6. Exit criteria
+## 6. Exit Criteria
 
-- `FinishTaskService`, `ExecutionAuditWorkflowService`, `ReviewService` khong con dependency runtime/query V2.
-- Legacy chat_state transcript cho execution/audit khong bi mutate tren production path.
-- Workflow state/mutation behavior khong drift.
+- `FinishTaskService`, `ExecutionAuditWorkflowService`, and `ReviewService` no longer depend on V2 runtime/query services.
+- Legacy `chat_state_store` transcripts for execution/audit are not mutated on the production path.
+- Workflow state and mutation behavior does not drift from baseline.
 
 ## 7. Verification
 
@@ -62,10 +62,9 @@ Khong con runtime/query coupling V2 o service layer production path.
 - [ ] `python -m pytest -q backend/tests/unit/test_execution_audit_workflow_service.py`
 - [ ] `python -m pytest -q backend/tests/unit/test_review_service.py`
 
-## 8. Risks va giam thieu
+## 8. Risks And Mitigations
 
-- Risk: regression o finish-task long-running flow.
-  - Mitigation: chay integration production-like + add timeboxed watchdog assertions.
-- Risk: diff hydration fileChange drift.
-  - Mitigation: run fileschanged parity fixtures + hydrate tests.
-
+- Risk: regression in long-running finish-task flows.
+  - Mitigation: run production-like integration tests and add timeboxed watchdog assertions.
+- Risk: drift in fileChange diff hydration.
+  - Mitigation: run files-changed parity fixtures and hydration tests.

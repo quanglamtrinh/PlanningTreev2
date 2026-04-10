@@ -6,6 +6,8 @@ baseline_date: 2026-04-09
 
 references:
   overview: docs/conversion/README.md
+  contracts:
+    - docs/conversion/workflow-v3-control-plane-contract.md
   phase_docs:
     - docs/conversion/phase-0-baseline-and-contract.md
     - docs/conversion/phase-1-v3-domain-store.md
@@ -26,9 +28,27 @@ references:
     - backend/tests/unit/test_ask_v3_rollout_phase6_7.py
 
 locked_decisions:
+  - id: canonical_thread_role_naming
+    status: locked
+    decision: Public V3 contract uses thread_role as canonical naming; lane terminology is deprecated.
+  - id: thread_role_replacement_immediate
+    status: locked
+    decision: Replace lane with thread_role immediately on canonical V3 snapshot and event contracts; legacy lane may be read for compatibility but must not be emitted by active V3 APIs.
   - id: v3_contract_is_canonical
     status: locked
     decision: ThreadSnapshotV3 and V3 event envelope are the canonical contract.
+  - id: workflow_control_plane_v3_contract
+    status: locked
+    decision: Frontend workflow control plane uses /v3 workflow-state, /v3 workflow actions, and /v3 project events endpoints.
+  - id: workflow_control_plane_v3_active_path
+    status: locked
+    decision: Primary active frontend workflow path must call only the locked /v3 workflow-state, workflow actions, and project events endpoints.
+  - id: compatibility_bridge_phase2
+    status: locked
+    decision: Compatibility read bridge starts in Phase 2 (read v3 first, fallback read-through from v2, then persist v3; no v2 back-write).
+  - id: compatibility_bridge_modes_and_sunset
+    status: locked
+    decision: Bridge mode is explicit (enabled | allowlist | disabled); disabled mode must return conversation_v3_missing for missing V3 snapshots and must not fallback to V2.
   - id: registry_first_identity
     status: locked
     decision: Thread registry remains source of truth for role<->threadId binding.
@@ -64,6 +84,14 @@ phases:
       - Behavior matrix from existing tests is frozen.
       - Error and policy semantics are frozen.
       - Contradictory legacy docs are reconciled for this track.
+    notes: >
+      2026-04-09 evidence refresh: baseline suite re-run completed with all green
+      (`test_chat_v3_api_execution_audit` 16 passed, `test_phase6_execution_audit_cutover` 1 passed,
+      `test_conversation_v3_projector` 11 passed, `test_conversation_v3_parity_fixtures` 1 passed,
+      `test_conversation_v3_fixture_replay` 2 passed, `test_conversation_v3_fileschanged_parity_fixtures` 1 passed,
+      `test_ask_v3_rollout_phase6_7` 5 passed). Phase-0 artifacts created:
+      `behavior-matrix.md`, `policy-matrix.md`, `open-questions.md`; decision-log updated with
+      cross-track precedence note against `docs/handoff/conversation-streaming-v2/progress.yaml`.
 
   - phase: 1
     name: v3_domain_store_foundation
@@ -78,7 +106,7 @@ phases:
       - Normalization and persistence rules are deterministic.
 
   - phase: 2
-    name: v3_runtime_query_native
+    name: v3_runtime_query_native_with_read_bridge
     status: pending
     effort_percent: 14
     estimate_person_days: "6-8"
@@ -88,6 +116,7 @@ phases:
     exit_criteria:
       - Query and runtime V3 services run ask/execution/audit natively.
       - Ask legacy mirroring is removed from runtime path.
+      - Compatibility read bridge is active for legacy v2-only projects.
 
   - phase: 3
     name: v3_route_native_cutover
@@ -126,7 +155,7 @@ phases:
       - No V2 workflow API dependency remains in main surface path.
 
   - phase: 6
-    name: data_migration_and_compatibility_bridge
+    name: batch_migration_and_bridge_sunset
     status: pending
     effort_percent: 10
     estimate_person_days: "4-6"
@@ -135,7 +164,8 @@ phases:
     primary_owner: "BE"
     exit_criteria:
       - v2->v3 migration tool is idempotent and verified.
-      - Backfill dry-run and execution runbook are available.
+      - Batch backfill runbook and report are available.
+      - Compatibility bridge sunset conditions and fallback policy are documented.
 
   - phase: 7
     name: hard_cutover_cleanup
@@ -166,4 +196,3 @@ update_rules:
   - Update status and notes before switching phases.
   - Attach verification evidence before marking completed.
   - If a phase is blocked, record blocker owner and unblock plan.
-

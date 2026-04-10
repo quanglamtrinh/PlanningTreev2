@@ -3,56 +3,61 @@
 Status: pending  
 Estimate: 5-7 person-days (12%)
 
-## 1. Muc tieu
+## 1. Goal
 
-Tao nen tang du lieu native V3:
+Build native V3 data foundations:
 
-- Co transcript store V3 rieng (`conversation_v3`).
-- Normalize + persist snapshot V3 mot cach deterministic.
-- Chua dong toi route cutover, chi dung cho foundation.
+- Add dedicated V3 transcript storage (`conversation_v3`).
+- Make V3 snapshot normalization and persistence deterministic.
+- Keep this phase focused on foundation only (before route cutover).
 
-## 2. In-scope
+## 2. In scope
 
-- Thread snapshot V3 store.
-- Normalizer/default builder cho snapshot V3.
-- Co che read/write/exists/reset cho V3 store.
-- Unit test cho store + normalization.
+- V3 thread snapshot store.
+- Snapshot default builder and normalizer for V3.
+- Read/write/exists/reset behavior for V3 store.
+- Unit tests for storage and normalization.
 
-## 3. Out-of-scope
+## 3. Out of scope
 
-- Route `/v3` chuyen sang V3 service.
-- Runtime agent streaming va mutation logic.
+- `/v3` route migration to V3 services.
+- Runtime streaming/mutation behavior.
 
 ## 4. Work breakdown
 
-- [ ] Tao module store moi:
+- [ ] Add new store module:
   - `backend/conversation/storage/thread_snapshot_store_v3.py`
-  - Path de nghi: `.planningtree/conversation_v3/{node_id}/{thread_role}.json`
-- [ ] Bo sung wiring trong `Storage`:
+  - Canonical path: `.planningtree/conversation_v3/{node_id}/{thread_role}.json`
+- [ ] Wire into `Storage`:
   - expose `thread_snapshot_store_v3`
-  - khong pha vo path V2 hien tai
-- [ ] Bo sung domain helper cho V3 snapshot:
+  - preserve current V2 path behavior
+- [ ] Lock naming schema:
+  - public snapshot/event fields use canonical `thread_role` (JSON key `threadRole`)
+  - do not emit `lane` in active V3 snapshot/event payloads
+  - legacy persisted payloads with `lane` are read-normalized to `threadRole` during load
+- [ ] Add V3 snapshot helpers:
   - default builder
-  - normalize function (field-level hardening)
-  - copy/version helper neu can
-- [ ] Viet unit tests:
-  - read default khi file chua ton tai
+  - normalize function (field hardening)
+  - copy/version helpers as needed
+- [ ] Add unit tests:
+  - read default when file is missing
   - write/read roundtrip
-  - normalize payload xau
+  - malformed payload normalization
   - reset behavior
+  - verify output payload does not contain legacy `lane`
 
 ## 5. Deliverables
 
-- `thread_snapshot_store_v3.py` + tests.
-- `Storage` wiring cho V3 store.
-- Artifact note:
+- `thread_snapshot_store_v3.py` plus tests.
+- `Storage` wiring for V3 store.
+- Artifact:
   - `docs/conversion/artifacts/phase-1/storage-schema.md`
 
 ## 6. Exit criteria
 
-- Co V3 store duoc wiring va co test pass.
-- Khong anh huong behavior route hien tai.
-- Khong co coupling bat buoc voi projector V2.
+- V3 store is wired and all related tests pass.
+- Existing route behavior is unchanged.
+- No required coupling to V2 projector internals.
 
 ## 7. Verification
 
@@ -60,10 +65,9 @@ Tao nen tang du lieu native V3:
 - [ ] `python -m pytest -q backend/tests/unit/test_conversation_v3_projector.py`
 - [ ] `python -m pytest -q backend/tests/unit/test_conversation_v3_parity_fixtures.py`
 
-## 8. Risks va giam thieu
+## 8. Risks and mitigations
 
-- Risk: schema V3 thieu field can cho workflow phase sau.
-  - Mitigation: freeze schema delta doc truoc khi merge.
-- Risk: duplicate logic normalize giua V2/V3.
-  - Mitigation: tach helper chung cho primitive field normalization.
-
+- Risk: V3 schema misses fields needed by later workflow phases.
+  - Mitigation: freeze schema delta doc before merge.
+- Risk: duplicated normalization logic between V2 and V3.
+  - Mitigation: extract shared primitive normalization helpers.

@@ -3,34 +3,34 @@
 Status: pending  
 Estimate: 2-3 person-days (4%)
 
-## 1. Muc tieu
+## 1. Objective
 
-On dinh sau cutover, chot tai lieu van hanh, va dong migration track.
+Stabilize after cutover, finalize operational documentation, and close the migration track.
 
-## 2. In-scope
+## 2. In Scope
 
-- Soak/stabilization window.
-- Monitor va incident review.
-- Final handoff docs:
-  - architecture update
+- Soak/stabilization window
+- Monitoring and incident review
+- Final handoff documents:
+  - architecture updates
   - operations runbook
-  - rollback policy (neu con)
-- Chot `progress.yaml` sang completed.
+  - rollback policy (if still needed)
+- Move `progress.yaml` to completed status
 
-## 3. Out-of-scope
+## 3. Out Of Scope
 
-- Refactor lon khong lien quan.
-- Feature roadmap moi.
+- Unrelated large refactors
+- New feature roadmap work
 
-## 4. Work breakdown
+## 4. Work Breakdown
 
-- [ ] Chay smoke checklist tren sample projects.
-- [ ] Theo doi metric:
+- [ ] Run smoke checklist on sample projects.
+- [ ] Track metrics:
   - stream reconnect/error rate
-  - user-input resolve failure rate
+  - user-input resolution failure rate
   - workflow mutation error rate
-- [ ] Incident triage trong stabilization window.
-- [ ] Cap nhat docs closeout:
+- [ ] Triage incidents during the stabilization window.
+- [ ] Update closeout docs:
   - final state
   - known limitations
   - ownership map
@@ -41,22 +41,21 @@ On dinh sau cutover, chot tai lieu van hanh, va dong migration track.
 - `docs/conversion/artifacts/phase-8/stabilization-notes.md`
 - `docs/conversion/artifacts/phase-8/closeout-summary.md`
 
-## 6. Exit criteria
+## 6. Exit Criteria
 
-- Khong co blocker severity cao trong stabilization window.
-- Team dong y architecture da native V3 end-to-end.
-- Tracker `progress.yaml` chuyen completed.
+- No high-severity blockers during the stabilization window.
+- Team agreement that architecture is native V3 end-to-end.
+- Tracker `progress.yaml` is marked completed.
 
 ## 7. Verification
 
-- [ ] Run full regression subset da quy uoc.
-- [ ] Confirm no active bug P0/P1 lien quan conversion.
-- [ ] Sign-off tu BE lead + FE lead + QA.
+- [ ] Run the agreed full regression subset.
+- [ ] Confirm no active P0/P1 bugs related to the conversion.
+- [ ] Sign-off from BE lead, FE lead, and QA.
 
-## 8. Risks va giam thieu
+## 8. Risks And Mitigations
 
-- Risk: van con regression hiem xuat hien sau rollout.
-  - Mitigation: giu emergency fallback procedure den het stabilization window.
-- Risk: docs khong dong bo voi code.
-  - Mitigation: enforce closeout doc review trong PR merge checklist.
-
+- Risk: rare regressions appear after rollout.
+  - Mitigation: keep emergency fallback procedures until the stabilization window ends.
+- Risk: documentation diverges from code.
+  - Mitigation: enforce closeout document review in PR merge checklists.
