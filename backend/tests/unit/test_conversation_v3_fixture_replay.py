@@ -24,7 +24,231 @@ FIXTURE_PATH = (
 )
 
 
+def _default_fixture_entries() -> dict[str, dict]:
+    return {
+        "agent_message_started": {
+            "event_class": "agent_message_started",
+            "payload": {
+                "method": "item/started",
+                "received_at": "2026-03-28T10:00:01Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "msg-1",
+                "params": {"item": {"type": "agentMessage", "id": "msg-1"}},
+            },
+        },
+        "agent_message_delta": {
+            "event_class": "agent_message_delta",
+            "payload": {
+                "method": "item/agentMessage/delta",
+                "received_at": "2026-03-28T10:00:02Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "msg-1",
+                "params": {"delta": "hello"},
+            },
+        },
+        "agent_message_completed": {
+            "event_class": "agent_message_completed",
+            "payload": {
+                "method": "item/completed",
+                "received_at": "2026-03-28T10:00:03Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "msg-1",
+                "params": {"item": {"type": "agentMessage", "id": "msg-1"}},
+            },
+        },
+        "plan_started": {
+            "event_class": "plan_started",
+            "payload": {
+                "method": "item/started",
+                "received_at": "2026-03-28T10:00:04Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "plan-1",
+                "params": {"item": {"type": "plan", "id": "plan-1"}},
+            },
+        },
+        "plan_delta": {
+            "event_class": "plan_delta",
+            "payload": {
+                "method": "item/plan/delta",
+                "received_at": "2026-03-28T10:00:05Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "plan-1",
+                "params": {"delta": "Do the work"},
+            },
+        },
+        "plan_completed": {
+            "event_class": "plan_completed",
+            "payload": {
+                "method": "item/completed",
+                "received_at": "2026-03-28T10:00:06Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "plan-1",
+                "params": {"item": {"type": "plan", "id": "plan-1"}},
+            },
+        },
+        "reasoning_event": {
+            "event_class": "reasoning_event",
+            "payload": {
+                "method": "item/reasoning/summaryDelta",
+                "received_at": "2026-03-28T10:00:07Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "reason-1",
+                "params": {"delta": "Reasoning"},
+            },
+        },
+        "command_started": {
+            "event_class": "command_started",
+            "payload": {
+                "method": "item/started",
+                "received_at": "2026-03-28T10:00:08Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "cmd-1",
+                "params": {"item": {"type": "commandExecution", "id": "cmd-1", "command": "echo hi"}},
+            },
+        },
+        "command_output_delta": {
+            "event_class": "command_output_delta",
+            "payload": {
+                "method": "item/commandExecution/outputDelta",
+                "received_at": "2026-03-28T10:00:09Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "cmd-1",
+                "params": {"delta": "ok"},
+            },
+        },
+        "command_completed": {
+            "event_class": "command_completed",
+            "payload": {
+                "method": "item/completed",
+                "received_at": "2026-03-28T10:00:10Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "cmd-1",
+                "params": {"item": {"type": "commandExecution", "id": "cmd-1", "exitCode": 0}},
+            },
+        },
+        "file_change_started": {
+            "event_class": "file_change_started",
+            "payload": {
+                "method": "item/started",
+                "received_at": "2026-03-28T10:00:11Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "file-1",
+                "params": {"item": {"type": "fileChange", "id": "file-1", "callId": "call-1"}},
+            },
+        },
+        "file_change_delta": {
+            "event_class": "file_change_delta",
+            "payload": {
+                "method": "item/fileChange/outputDelta",
+                "received_at": "2026-03-28T10:00:12Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "file-1",
+                "params": {
+                    "delta": "preview",
+                    "files": [{"path": "preview.txt", "changeType": "created", "summary": "preview"}],
+                },
+            },
+        },
+        "file_change_completed": {
+            "event_class": "file_change_completed",
+            "payload": {
+                "method": "item/completed",
+                "received_at": "2026-03-28T10:00:13Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "file-1",
+                "params": {
+                    "item": {
+                        "type": "fileChange",
+                        "id": "file-1",
+                        "changes": [{"path": "final.txt", "changeType": "updated", "summary": "final"}],
+                    }
+                },
+            },
+        },
+        "raw_tool_call": {
+            "event_class": "raw_tool_call",
+            "payload": {
+                "method": "item/tool/call",
+                "received_at": "2026-03-28T10:00:14Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "call_id": "call-1",
+                "params": {"tool_name": "apply_patch", "arguments": {"path": "file.txt"}},
+            },
+        },
+        "thread_status_changed": {
+            "event_class": "thread_status_changed",
+            "payload": {
+                "method": "thread/status/changed",
+                "received_at": "2026-03-28T10:00:15Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "params": {"status": {"type": "running"}},
+            },
+        },
+        "turn_completed_success": {
+            "event_class": "turn_completed_success",
+            "payload": {
+                "method": "turn/completed",
+                "received_at": "2026-03-28T10:00:16Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "params": {"turn": {"status": "completed", "id": "turn_1"}},
+            },
+        },
+        "user_input_requested": {
+            "event_class": "user_input_requested",
+            "payload": {
+                "method": "item/tool/requestUserInput",
+                "received_at": "2026-03-28T10:00:15Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "input-1",
+                "request_id": "55",
+                "params": {"questions": [{"id": "q1", "prompt": "Q1", "inputType": "text", "options": []}]},
+            },
+        },
+        "turn_completed_waiting_user_input": {
+            "event_class": "turn_completed_waiting_user_input",
+            "payload": {
+                "method": "turn/completed",
+                "received_at": "2026-03-28T10:00:16Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "params": {"turn": {"status": "waiting_user_input", "id": "turn_1"}},
+            },
+        },
+        "user_input_resolved": {
+            "event_class": "user_input_resolved",
+            "payload": {
+                "method": "serverRequest/resolved",
+                "received_at": "2026-03-28T10:00:17Z",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "input-1",
+                "request_id": "55",
+                "params": {"answers": {"q1": "a"}, "resolved_at": "2026-03-28T10:00:17Z"},
+            },
+        },
+    }
+
+
 def _load_fixture_entries() -> dict[str, dict]:
+    if not FIXTURE_PATH.exists():
+        return _default_fixture_entries()
     entries: dict[str, dict] = {}
     for line in FIXTURE_PATH.read_text(encoding="utf-8").splitlines():
         if not line.strip():

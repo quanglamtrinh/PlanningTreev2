@@ -1,6 +1,6 @@
 # Phase 2 - V3 Runtime/Query Native + Compatibility Read Bridge
 
-Status: in_progress  
+Status: completed  
 Estimate: 6-8 person-days (14%)
 
 ## 1. Goal
@@ -65,24 +65,24 @@ Example C - Controlled rollback with allowlist:
 
 ## 4. Work breakdown
 
-- [ ] Add new query service:
+- [x] Add new query service:
   - `backend/conversation/services/thread_query_service_v3.py`
-- [ ] Add new runtime service:
+- [x] Add new runtime service:
   - `backend/conversation/services/thread_runtime_service_v3.py`
-- [ ] Define canonical V3 event envelope for persist/publish:
+- [x] Define canonical V3 event envelope for persist/publish:
   - snapshot
   - item upsert/patch
   - lifecycle
   - user-input signal
   - thread error
-- [ ] Integrate request ledger for V3 pending requests.
-- [ ] Implement compatibility read bridge in query path.
-- [ ] Implement bridge mode switch:
+- [x] Integrate request ledger for V3 pending requests.
+- [x] Implement compatibility read bridge in query path.
+- [x] Implement bridge mode switch:
   - `enabled`: fallback for all projects
   - `allowlist`: fallback only for listed project ids
   - `disabled`: no fallback; return `conversation_v3_missing`
-- [ ] Do not call `sync_legacy_turn_state` on V3 path.
-- [ ] Add runtime/query V3 unit tests.
+- [x] Do not call `sync_legacy_turn_state` on V3 path.
+- [x] Add runtime/query V3 unit tests.
 
 ## 5. Deliverables
 
@@ -102,9 +102,9 @@ Example C - Controlled rollback with allowlist:
 
 ## 7. Verification
 
-- [ ] `python -m pytest -q backend/tests/unit/test_thread_query_service_v3.py` (new)
-- [ ] `python -m pytest -q backend/tests/unit/test_thread_runtime_service_v3.py` (new)
-- [ ] `python -m pytest -q backend/tests/unit/test_conversation_v3_fixture_replay.py`
+- [x] `python -m pytest -q backend/tests/unit/test_thread_query_service_v3.py` (new)
+- [x] `python -m pytest -q backend/tests/unit/test_thread_runtime_service_v3.py` (new)
+- [x] `python -m pytest -q backend/tests/unit/test_conversation_v3_fixture_replay.py`
 
 ## 8. Risks and mitigations
 

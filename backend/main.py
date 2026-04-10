@@ -13,9 +13,12 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
 from backend.conversation.services.request_ledger_service import RequestLedgerService
+from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
 from backend.conversation.services.thread_query_service import ThreadQueryService
+from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
 from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
+from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
 from backend.conversation.services.system_message_writer import ConversationSystemMessageWriter
 from backend.conversation.services.thread_transcript_builder import ThreadTranscriptBuilder
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
@@ -145,7 +148,9 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         max_message_chars=get_max_chat_message_chars(),
     )
     request_ledger_service_v2 = RequestLedgerService()
+    request_ledger_service_v3 = RequestLedgerServiceV3()
     conversation_event_broker_v2 = ChatEventBroker()
+    conversation_event_broker_v3 = ChatEventBroker()
     workflow_event_broker_v2 = GlobalEventBroker()
     thread_query_service_v2 = ThreadQueryService(
         storage=storage,
@@ -165,6 +170,28 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         codex_client=codex_client,
         query_service=thread_query_service_v2,
         request_ledger_service=request_ledger_service_v2,
+        chat_timeout=get_chat_timeout(),
+        max_message_chars=get_max_chat_message_chars(),
+        ask_rollout_metrics_service=ask_rollout_metrics_service,
+    )
+    thread_query_service_v3 = ThreadQueryServiceV3(
+        storage=storage,
+        chat_service=chat_service,
+        thread_lineage_service=thread_lineage_service,
+        codex_client=codex_client,
+        snapshot_store_v3=storage.thread_snapshot_store_v3,
+        snapshot_store_v2=storage.thread_snapshot_store_v2,
+        registry_service_v2=thread_registry_service_v2,
+        request_ledger_service=request_ledger_service_v3,
+        thread_event_broker=conversation_event_broker_v3,
+    )
+    thread_runtime_service_v3 = ThreadRuntimeServiceV3(
+        storage=storage,
+        tree_service=tree_service,
+        chat_service=chat_service,
+        codex_client=codex_client,
+        query_service=thread_query_service_v3,
+        request_ledger_service=request_ledger_service_v3,
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),
         ask_rollout_metrics_service=ask_rollout_metrics_service,
@@ -272,10 +299,14 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.finish_task_service = finish_task_service
     app.state.thread_registry_service_v2 = thread_registry_service_v2
     app.state.request_ledger_service_v2 = request_ledger_service_v2
+    app.state.request_ledger_service_v3 = request_ledger_service_v3
     app.state.conversation_event_broker_v2 = conversation_event_broker_v2
+    app.state.conversation_event_broker_v3 = conversation_event_broker_v3
     app.state.workflow_event_broker_v2 = workflow_event_broker_v2
     app.state.thread_query_service_v2 = thread_query_service_v2
     app.state.thread_runtime_service_v2 = thread_runtime_service_v2
+    app.state.thread_query_service_v3 = thread_query_service_v3
+    app.state.thread_runtime_service_v3 = thread_runtime_service_v3
     app.state.thread_transcript_builder_v2 = thread_transcript_builder_v2
     app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2
     app.state.system_message_writer_v2 = system_message_writer_v2

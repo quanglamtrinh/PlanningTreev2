@@ -129,6 +129,29 @@ def get_max_chat_message_chars() -> int:
     return max(1, limit)
 
 
+def get_conversation_v3_bridge_mode() -> str:
+    raw = str(os.environ.get("PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE", "") or "").strip().lower()
+    if raw in {"enabled", "allowlist", "disabled"}:
+        return raw
+    return "enabled"
+
+
+def get_conversation_v3_bridge_allowlist() -> set[str]:
+    raw = str(os.environ.get("PLANNINGTREE_CONVERSATION_V3_BRIDGE_ALLOWLIST", "") or "").strip()
+    if not raw:
+        return set()
+    return {entry.strip() for entry in raw.split(",") if entry.strip()}
+
+
+def is_conversation_v3_bridge_allowed_for_project(project_id: str) -> bool:
+    mode = get_conversation_v3_bridge_mode()
+    if mode == "enabled":
+        return True
+    if mode == "disabled":
+        return False
+    return str(project_id or "").strip() in get_conversation_v3_bridge_allowlist()
+
+
 def get_split_model() -> str:
     return os.environ.get("PLANNINGTREE_SPLIT_MODEL", "gpt-4o")
 

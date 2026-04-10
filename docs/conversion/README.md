@@ -18,7 +18,7 @@ Move PTM from the current model ("V3 at UI/API, V2 in core engine") to a fully *
 
 Confirmed codebase reality:
 
-- `backend/main.py` still wires `thread_query_service_v2`, `thread_runtime_service_v2`, and `execution_audit_workflow_service_v2`.
+- `backend/main.py` active `/v3` route path still depends on `thread_query_service_v2`, `thread_runtime_service_v2`, and `execution_audit_workflow_service_v2` (Phase 2 also wires V3 services in parallel for internal use/tests).
 - `backend/routes/workflow_v3.py` currently:
   - reads V2 snapshots
   - maps `project_v2_snapshot_to_v3`

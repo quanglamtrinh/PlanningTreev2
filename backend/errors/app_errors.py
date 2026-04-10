@@ -215,6 +215,15 @@ class ConversationStreamMismatch(AppError):
         )
 
 
+class ConversationV3Missing(AppError):
+    def __init__(self) -> None:
+        super().__init__(
+            "conversation_v3_missing",
+            "Conversation V3 snapshot is missing for this thread.",
+            409,
+        )
+
+
 class ConversationPersistenceUnavailable(AppError):
     def __init__(self) -> None:
         super().__init__(

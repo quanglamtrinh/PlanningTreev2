@@ -1,7 +1,7 @@
 migration_id: native_v3_end_to_end_conversion
-status: phase_2_in_progress
-current_phase: 2
-next_phase: 3
+status: phase_3_in_progress
+current_phase: 3
+next_phase: 4
 baseline_date: 2026-04-09
 
 references:
@@ -135,7 +135,7 @@ phases:
 
   - phase: 2
     name: v3_runtime_query_native_with_read_bridge
-    status: in_progress
+    status: completed
     effort_percent: 14
     estimate_person_days: "6-8"
     depends_on:
@@ -148,10 +148,25 @@ phases:
     notes: >
       Entered in_progress on 2026-04-10 after Phase-1 completion and handoff publication
       at `docs/conversion/artifacts/phase-1/handoff-to-phase-2.md`.
+      2026-04-10 completion evidence: implemented `ThreadQueryServiceV3` +
+      `ThreadRuntimeServiceV3` with native V3 projector path, typed
+      `conversation_v3_missing` error (`409`), env-only bridge policy
+      (`enabled|allowlist|disabled` + allowlist parser), and parallel app wiring
+      (no `/v3` route cutover in Phase 2). Added unit tests:
+      `test_thread_query_service_v3.py` and `test_thread_runtime_service_v3.py`.
+      Artifacts published:
+      `docs/conversion/artifacts/phase-2/runtime-sequence.md`,
+      `docs/conversion/artifacts/phase-2/event-contract-v3.md`,
+      `docs/conversion/artifacts/phase-2/bridge-policy.md`.
+      Verification passed:
+      `python -m pytest -q backend/tests/unit/test_app_config.py backend/tests/unit/test_thread_query_service_v3.py backend/tests/unit/test_thread_runtime_service_v3.py`
+      (20 passed),
+      `python -m pytest -q backend/tests/unit/test_conversation_v3_fixture_replay.py backend/tests/integration/test_chat_v3_api_execution_audit.py`
+      (18 passed).
 
   - phase: 3
     name: v3_route_native_cutover
-    status: pending
+    status: in_progress
     effort_percent: 12
     estimate_person_days: "4-6"
     depends_on:
@@ -160,6 +175,9 @@ phases:
     exit_criteria:
       - workflow_v3 routes no longer call V2 query/runtime services.
       - Snapshot and stream behavior parity is preserved.
+    notes: >
+      Entered in_progress on 2026-04-10 after Phase-2 completion evidence and
+      artifact handoff. Scope now is route dependency cutover only.
 
   - phase: 4
     name: workflow_service_cutover
