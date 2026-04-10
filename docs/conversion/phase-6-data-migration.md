@@ -1,6 +1,6 @@
 # Phase 6 - Batch Migration And Bridge Sunset
 
-Status: pending  
+Status: in_progress  
 Estimate: 4-6 person-days (10%)
 
 ## 1. Objective

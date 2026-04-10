@@ -1,7 +1,7 @@
 migration_id: native_v3_end_to_end_conversion
-status: phase_5_in_progress
-current_phase: 5
-next_phase: 6
+status: phase_6_in_progress
+current_phase: 6
+next_phase: 7
 baseline_date: 2026-04-09
 
 references:
@@ -233,7 +233,7 @@ phases:
 
   - phase: 5
     name: frontend_control_plane_v3
-    status: in_progress
+    status: completed
     effort_percent: 14
     estimate_person_days: "6-8"
     depends_on:
@@ -259,10 +259,12 @@ phases:
       Verification passed:
       `npm run typecheck --prefix frontend`,
       `npm run test:unit --prefix frontend` (38 passed files, 218 tests).
+      2026-04-10 phase closeout: Phase 5 marked completed and handed off to
+      Phase 6 via `docs/conversion/artifacts/phase-5/handoff-to-phase-6.md`.
 
   - phase: 6
     name: batch_migration_and_bridge_sunset
-    status: pending
+    status: in_progress
     effort_percent: 10
     estimate_person_days: "4-6"
     depends_on:
@@ -272,6 +274,9 @@ phases:
       - v2->v3 migration tool is idempotent and verified.
       - Batch backfill runbook and report are available.
       - Compatibility bridge sunset conditions and fallback policy are documented.
+    notes: >
+      Entered in_progress on 2026-04-10 after Phase-5 completion and handoff
+      publication at `docs/conversion/artifacts/phase-5/handoff-to-phase-6.md`.
 
   - phase: 7
     name: hard_cutover_cleanup
