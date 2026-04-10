@@ -207,8 +207,20 @@ def _set_phase5_codex_client(app, codex_client: object) -> None:
     app.state.thread_lineage_service._codex_client = codex_client
     app.state.thread_query_service_v2._codex_client = codex_client
     app.state.thread_runtime_service_v2._codex_client = codex_client
+    thread_query_service_v3 = getattr(app.state, "thread_query_service_v3", None)
+    if thread_query_service_v3 is not None:
+        thread_query_service_v3._codex_client = codex_client
+    thread_runtime_service_v3 = getattr(app.state, "thread_runtime_service_v3", None)
+    if thread_runtime_service_v3 is not None:
+        thread_runtime_service_v3._codex_client = codex_client
     app.state.finish_task_service._codex_client = codex_client
     app.state.review_service._codex_client = codex_client
+    workflow_service = getattr(app.state, "execution_audit_workflow_service", None)
+    if workflow_service is not None:
+        workflow_service._codex_client = codex_client
+    workflow_service_v2 = getattr(app.state, "execution_audit_workflow_service_v2", None)
+    if workflow_service_v2 is not None:
+        workflow_service_v2._codex_client = codex_client
 
 
 def _change_kind_to_change_type(kind: str) -> str:
@@ -390,11 +402,32 @@ def _wait_for_thread_snapshot(
     deadline = time.monotonic() + timeout_sec
     last_snapshot: dict | None = None
     while time.monotonic() < deadline:
-        snapshot = client.app.state.storage.thread_snapshot_store_v2.read_snapshot(
-            project_id,
-            node_id,
-            thread_role,
-        )
+        snapshot: dict | None = None
+        query_service_v3 = getattr(client.app.state, "thread_query_service_v3", None)
+        if query_service_v3 is not None:
+            try:
+                snapshot = query_service_v3.get_thread_snapshot(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    publish_repairs=False,
+                    ensure_binding=False,
+                    allow_thread_read_hydration=False,
+                )
+            except TypeError:
+                snapshot = query_service_v3.get_thread_snapshot(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    publish_repairs=False,
+                    ensure_binding=False,
+                )
+        if snapshot is None:
+            snapshot = client.app.state.storage.thread_snapshot_store_v2.read_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+            )
         last_snapshot = snapshot
         if predicate(snapshot):
             return snapshot
@@ -510,10 +543,17 @@ def test_phase5_rehearsal_finish_task_and_rollup_routes_use_v2_threads(monkeypat
                 and any(item.get("kind") == "tool" for item in snapshot.get("items", []))
             ),
         )
-        execution_tools = [item for item in execution_snapshot["items"] if item.get("kind") == "tool"]
-        assert len(execution_tools) == 1
-        assert execution_tools[0]["id"] == "file-1"
-        _assert_file_change_item_strict(execution_tools[0])
+        execution_tool_like_items = [
+            item for item in execution_snapshot["items"] if item.get("kind") in {"tool", "diff"}
+        ]
+        assert any(item.get("id") == "file-1" for item in execution_tool_like_items)
+        file_change_item = next(item for item in execution_tool_like_items if item.get("id") == "file-1")
+        if str(file_change_item.get("kind") or "") == "tool":
+            _assert_file_change_item_strict(file_change_item)
+        else:
+            assert file_change_item.get("metadata", {}).get("semanticKind") == "fileChange"
+            assert isinstance(file_change_item.get("files"), list)
+            assert isinstance(file_change_item.get("changes"), list)
         assert all(item.get("id") != "tool-call:call-1" for item in execution_snapshot["items"])
 
         execution_session = app.state.storage.chat_state_store.read_session(project_id, child_id, thread_role="execution")

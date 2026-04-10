@@ -1,7 +1,7 @@
 migration_id: native_v3_end_to_end_conversion
-status: phase_4_in_progress
-current_phase: 4
-next_phase: 5
+status: phase_5_in_progress
+current_phase: 5
+next_phase: 6
 baseline_date: 2026-04-09
 
 references:
@@ -188,13 +188,15 @@ phases:
       remains on `execution_audit_workflow_service_v2` until Phase 4.
       Artifact updated:
       `docs/conversion/artifacts/phase-3/route-cutover-diff.md`.
+      Published handoff:
+      `docs/conversion/artifacts/phase-3/handoff-to-phase-4.md`.
       Verification passed:
       `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py backend/tests/unit/test_ask_v3_rollout_phase6_7.py backend/tests/unit/test_thread_query_service_v3.py backend/tests/unit/test_thread_runtime_service_v3.py backend/tests/unit/test_phase3_workflow_v3_route_cutover_guards.py`
       (38 passed). Additional route grep gate passed for forbidden V2 route dependencies.
 
   - phase: 4
     name: workflow_service_cutover
-    status: in_progress
+    status: completed
     effort_percent: 18
     estimate_person_days: "8-10"
     depends_on:
@@ -207,10 +209,29 @@ phases:
       Entered in_progress on 2026-04-10 after Phase-3 completion evidence and
       handoff. Focus is execution/audit workflow service migration to native V3
       core and removal of temporary V2->V3 event relay compatibility.
+      2026-04-10 completion evidence: added active `/v3` workflow control-plane
+      endpoints in `workflow_v3.py` (state, actions, project events), moved
+      production service dependencies (`FinishTaskService`,
+      `ExecutionAuditWorkflowService`, `ReviewService`) to V3 runtime/query
+      semantics, removed production wiring dependency on
+      `RelayingConversationEventBrokerV2`, and introduced env parser
+      `PLANNINGTREE_EXECUTION_AUDIT_V2_ENABLED` (default true) in app config.
+      Added Phase-4 tests:
+      `backend/tests/unit/test_phase4_main_wiring.py`,
+      `backend/tests/unit/test_phase4_workflow_v3_control_plane_guards.py`,
+      plus integration route coverage in
+      `backend/tests/integration/test_chat_v3_api_execution_audit.py`.
+      Updated cutover integration helpers for strict V3 thread-id/runtime path.
+      Artifacts published:
+      `docs/conversion/artifacts/phase-4/service-call-graph-before-after.md`
+      and `docs/conversion/artifacts/phase-4/behavior-parity-report.md`.
+      Verification passed:
+      `python -m pytest -q backend/tests/unit/test_app_config.py backend/tests/unit/test_phase4_main_wiring.py backend/tests/unit/test_phase4_workflow_v3_control_plane_guards.py backend/tests/unit/test_execution_audit_workflow_service.py backend/tests/unit/test_review_service.py backend/tests/integration/test_chat_v3_api_execution_audit.py backend/tests/integration/test_phase6_execution_audit_cutover.py`
+      (84 passed).
 
   - phase: 5
     name: frontend_control_plane_v3
-    status: pending
+    status: in_progress
     effort_percent: 14
     estimate_person_days: "6-8"
     depends_on:
@@ -219,6 +240,8 @@ phases:
     exit_criteria:
       - Frontend workflow state/action/event bridge uses V3 endpoints.
       - No V2 workflow API dependency remains in main surface path.
+    notes: >
+      Entered in_progress on 2026-04-10 after Phase-4 completion and evidence publication.
 
   - phase: 6
     name: batch_migration_and_bridge_sunset

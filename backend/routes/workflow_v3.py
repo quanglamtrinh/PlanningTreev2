@@ -79,6 +79,32 @@ class PlanActionByIdRequest(BaseModel):
     idempotencyKey: str | None = None
 
 
+class WorkflowMutationRequest(BaseModel):
+    idempotencyKey: str
+
+
+class WorkspaceGuardMutationRequest(WorkflowMutationRequest):
+    expectedWorkspaceHash: str
+
+
+class ReviewGuardMutationRequest(WorkflowMutationRequest):
+    expectedReviewCommitSha: str
+
+
+def _workflow_service(request: Request) -> Any:
+    service = getattr(request.app.state, "execution_audit_workflow_service", None)
+    if service is not None:
+        return service
+    return request.app.state.execution_audit_workflow_service_v2
+
+
+def _workflow_event_broker(request: Request) -> Any:
+    broker = getattr(request.app.state, "workflow_event_broker_v3", None)
+    if broker is not None:
+        return broker
+    return request.app.state.workflow_event_broker_v2
+
+
 def _normalize_thread_id(value: Any) -> str:
     return str(value or "").strip()
 
@@ -189,6 +215,155 @@ def _resolve_thread_role_by_id_v3(
     if ask_role is not None:
         return ask_role
     raise InvalidRequest(_THREAD_MISMATCH_ERROR)
+
+
+@router.get("/projects/{project_id}/nodes/{node_id}/workflow-state")
+async def get_workflow_state_v3(request: Request, project_id: str, node_id: str):
+    try:
+        payload = _workflow_service(request).get_workflow_state(project_id, node_id)
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/workflow/finish-task")
+async def finish_task_v3(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: WorkflowMutationRequest,
+):
+    try:
+        payload = _workflow_service(request).finish_task(
+            project_id,
+            node_id,
+            idempotency_key=body.idempotencyKey,
+        )
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/workflow/mark-done-from-execution")
+async def mark_done_from_execution_v3(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: WorkspaceGuardMutationRequest,
+):
+    try:
+        payload = _workflow_service(request).mark_done_from_execution(
+            project_id,
+            node_id,
+            idempotency_key=body.idempotencyKey,
+            expected_workspace_hash=body.expectedWorkspaceHash,
+        )
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/workflow/review-in-audit")
+async def review_in_audit_v3(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: WorkspaceGuardMutationRequest,
+):
+    try:
+        payload = _workflow_service(request).review_in_audit(
+            project_id,
+            node_id,
+            idempotency_key=body.idempotencyKey,
+            expected_workspace_hash=body.expectedWorkspaceHash,
+        )
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/workflow/mark-done-from-audit")
+async def mark_done_from_audit_v3(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: ReviewGuardMutationRequest,
+):
+    try:
+        payload = _workflow_service(request).mark_done_from_audit(
+            project_id,
+            node_id,
+            idempotency_key=body.idempotencyKey,
+            expected_review_commit_sha=body.expectedReviewCommitSha,
+        )
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/workflow/improve-in-execution")
+async def improve_in_execution_v3(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: ReviewGuardMutationRequest,
+):
+    try:
+        payload = _workflow_service(request).improve_in_execution(
+            project_id,
+            node_id,
+            idempotency_key=body.idempotencyKey,
+            expected_review_commit_sha=body.expectedReviewCommitSha,
+        )
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.get("/projects/{project_id}/events")
+async def workflow_events_v3(
+    request: Request,
+    project_id: str,
+):
+    broker = _workflow_event_broker(request)
+    queue = broker.subscribe()
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_INTERVAL_SEC)
+                    if str(event.get("projectId") or "") != project_id:
+                        continue
+                    yield _sse_frame(event)
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+                if await request.is_disconnected():
+                    break
+        finally:
+            broker.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/projects/{project_id}/threads/by-id/{thread_id}")
@@ -340,7 +515,7 @@ async def start_turn_by_id_v3(
     node_id: str = Query(...),
 ):
     try:
-        workflow_service = request.app.state.execution_audit_workflow_service_v2
+        workflow_service = _workflow_service(request)
         thread_role = _resolve_thread_role_by_id_v3(request, project_id, node_id, thread_id)
         if thread_role == "execution":
             idempotency_key = str(body.metadata.get("idempotencyKey") or new_id("exec_followup"))
@@ -376,7 +551,7 @@ async def apply_plan_action_by_id_v3(
     node_id: str = Query(...),
 ):
     try:
-        workflow_service = request.app.state.execution_audit_workflow_service_v2
+        workflow_service = _workflow_service(request)
         thread_role = _resolve_thread_role_by_id_v3(request, project_id, node_id, thread_id)
         if thread_role != "execution":
             raise InvalidRequest("Plan-ready actions are supported only on execution threads.")

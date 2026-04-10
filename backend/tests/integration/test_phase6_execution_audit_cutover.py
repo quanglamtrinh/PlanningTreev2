@@ -16,7 +16,6 @@ from backend.tests.integration.test_phase5_execution_audit_rehearsal import (
     _do_lazy_split,
     _set_phase5_codex_client as _set_phase6_codex_client,
     _setup_project,
-    _wait_for_thread_snapshot,
 )
 
 
@@ -25,9 +24,14 @@ class Phase6ProductionCodexClient:
         self.started_threads: list[str] = []
         self.forked_threads: list[dict[str, object]] = []
         self.prompts: list[str] = []
+        self._thread_counter = 0
+
+    def _new_thread_id(self) -> str:
+        self._thread_counter += 1
+        return f"00000000-0000-0000-0000-{self._thread_counter:012d}"
 
     def start_thread(self, **_: object) -> dict[str, str]:
-        thread_id = f"phase6-thread-{len(self.started_threads) + 1}"
+        thread_id = self._new_thread_id()
         self.started_threads.append(thread_id)
         return {"thread_id": thread_id}
 
@@ -35,7 +39,7 @@ class Phase6ProductionCodexClient:
         return {"thread_id": thread_id}
 
     def fork_thread(self, source_thread_id: str, **kwargs: object) -> dict[str, str]:
-        thread_id = f"phase6-fork-{len(self.forked_threads) + 1}"
+        thread_id = self._new_thread_id()
         self.forked_threads.append({"thread_id": thread_id, "source_thread_id": source_thread_id, **kwargs})
         return {"thread_id": thread_id}
 
@@ -339,6 +343,51 @@ class Phase6ProductionCodexClient:
         return {"stdout": "Implemented the task.", "thread_id": thread_id, "turn_status": "completed"}
 
 
+def _wait_for_thread_snapshot(
+    client: TestClient,
+    project_id: str,
+    node_id: str,
+    thread_role: str,
+    predicate,
+    *,
+    timeout_sec: float = 3.0,
+) -> dict:
+    deadline = time.monotonic() + timeout_sec
+    last_snapshot: dict | None = None
+    while time.monotonic() < deadline:
+        snapshot: dict | None = None
+        query_service_v3 = getattr(client.app.state, "thread_query_service_v3", None)
+        if query_service_v3 is not None:
+            try:
+                snapshot = query_service_v3.get_thread_snapshot(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    publish_repairs=False,
+                    ensure_binding=False,
+                    allow_thread_read_hydration=False,
+                )
+            except TypeError:
+                snapshot = query_service_v3.get_thread_snapshot(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    publish_repairs=False,
+                    ensure_binding=False,
+                )
+        if snapshot is None:
+            snapshot = client.app.state.storage.thread_snapshot_store_v2.read_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+            )
+        last_snapshot = snapshot
+        if predicate(snapshot):
+            return snapshot
+        time.sleep(0.02)
+    raise AssertionError(f"Timed out waiting for snapshot condition. Last snapshot: {last_snapshot!r}")
+
+
 def _wait_for_condition(predicate, *, timeout_sec: float = 4.0):
     deadline = time.monotonic() + timeout_sec
     last_value = None
@@ -411,9 +460,12 @@ def test_phase6_production_finish_task_cuts_execution_auto_review_and_rollup_to_
         execution_chat_path = app.state.storage.chat_state_store.path(project_id, child_id, thread_role="execution")
         child_audit_chat_path = app.state.storage.chat_state_store.path(project_id, child_id, thread_role="audit")
         review_audit_chat_path = app.state.storage.chat_state_store.path(project_id, review_node_id, thread_role="audit")
-        execution_snapshot_path = app.state.storage.thread_snapshot_store_v2.path(project_id, child_id, "execution")
-        child_audit_snapshot_path = app.state.storage.thread_snapshot_store_v2.path(project_id, child_id, "audit")
-        review_audit_snapshot_path = app.state.storage.thread_snapshot_store_v2.path(project_id, review_node_id, "audit")
+        execution_snapshot_path_v2 = app.state.storage.thread_snapshot_store_v2.path(project_id, child_id, "execution")
+        child_audit_snapshot_path_v2 = app.state.storage.thread_snapshot_store_v2.path(project_id, child_id, "audit")
+        review_audit_snapshot_path_v2 = app.state.storage.thread_snapshot_store_v2.path(project_id, review_node_id, "audit")
+        execution_snapshot_path_v3 = app.state.storage.thread_snapshot_store_v3.path(project_id, child_id, "execution")
+        child_audit_snapshot_path_v3 = app.state.storage.thread_snapshot_store_v3.path(project_id, child_id, "audit")
+        review_audit_snapshot_path_v3 = app.state.storage.thread_snapshot_store_v3.path(project_id, review_node_id, "audit")
         execution_registry_path = app.state.storage.thread_registry_store.path(project_id, child_id, "execution")
         child_audit_registry_path = app.state.storage.thread_registry_store.path(project_id, child_id, "audit")
         review_audit_registry_path = app.state.storage.thread_registry_store.path(project_id, review_node_id, "audit")
@@ -548,20 +600,33 @@ def test_phase6_production_finish_task_cuts_execution_auto_review_and_rollup_to_
         assert execution_registry_path.exists()
         assert child_audit_registry_path.exists()
         assert review_audit_registry_path.exists()
-        assert execution_snapshot_path.exists()
-        assert child_audit_snapshot_path.exists()
-        assert review_audit_snapshot_path.exists()
+        assert execution_snapshot_path_v3.exists()
+        assert child_audit_snapshot_path_v3.exists()
+        assert review_audit_snapshot_path_v3.exists()
+        assert not execution_snapshot_path_v2.exists()
+        assert not child_audit_snapshot_path_v2.exists()
+        assert not review_audit_snapshot_path_v2.exists()
         assert legacy_before["execution"] == _file_fingerprint(execution_chat_path)
         assert legacy_before["child_audit"] == _file_fingerprint(child_audit_chat_path)
         assert legacy_before["review_audit"] == _file_fingerprint(review_audit_chat_path)
 
-        tool_items = [item for item in execution_snapshot["items"] if item.get("kind") == "tool"]
-        assert {item["id"] for item in tool_items} == {"cmd-1", "file-1"}
-        command_item = next(item for item in tool_items if item["id"] == "cmd-1")
-        file_change_item = next(item for item in tool_items if item["id"] == "file-1")
+        execution_tool_like_items = [
+            item for item in execution_snapshot["items"] if item.get("kind") in {"tool", "diff"}
+        ]
+        assert {item["id"] for item in execution_tool_like_items} == {"cmd-1", "file-1"}
+        command_item = next(item for item in execution_tool_like_items if item["id"] == "cmd-1")
+        file_change_item = next(item for item in execution_tool_like_items if item["id"] == "file-1")
         assert "[stdin]\ny\n" in command_item["outputText"]
         assert command_item["exitCode"] == 0
-        _assert_file_change_item_strict(file_change_item)
+        if str(file_change_item.get("kind") or "") == "tool":
+            _assert_file_change_item_strict(file_change_item)
+        else:
+            assert str(file_change_item.get("kind") or "") == "diff"
+            assert isinstance(file_change_item.get("files"), list)
+            assert isinstance(file_change_item.get("changes"), list)
+            assert file_change_item.get("metadata", {}).get("semanticKind") == "fileChange"
+            assert len(file_change_item["files"]) >= 1
+            assert len(file_change_item["changes"]) >= 1
         reasoning_items = [item for item in execution_snapshot["items"] if item.get("kind") == "reasoning"]
         assert len(reasoning_items) == 1
         assert reasoning_items[0]["summaryText"] == "Checking workspace state"

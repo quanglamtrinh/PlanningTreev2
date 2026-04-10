@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
 from backend.routes import workflow_v3 as workflow_v3_route_module
+from backend.streaming.sse_broker import GlobalEventBroker
 
 
 class _StreamingTestRequest:
@@ -530,6 +531,220 @@ def test_v2_workflow_state_seeds_ask_thread_id_from_legacy_session(client: TestC
     assert seeded_entry["threadId"] == ask_thread_id
 
 
+def test_v3_workflow_state_endpoint_calls_canonical_service(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    calls: list[tuple[str, str]] = []
+
+    class _CanonicalWorkflowService:
+        def get_workflow_state(self, project_id_arg: str, node_id_arg: str) -> dict[str, Any]:
+            calls.append((project_id_arg, node_id_arg))
+            return {
+                "nodeId": node_id_arg,
+                "workflowPhase": "idle",
+                "askThreadId": None,
+                "executionThreadId": None,
+                "reviewThreadId": None,
+                "auditLineageThreadId": None,
+                "currentExecutionDecision": None,
+                "currentAuditDecision": None,
+                "canSendExecutionMessage": False,
+                "canReviewInAudit": False,
+                "canImproveInExecution": False,
+                "canMarkDoneFromExecution": False,
+                "canMarkDoneFromAudit": False,
+                "source": "canonical",
+            }
+
+    class _LegacyWorkflowService:
+        def get_workflow_state(self, *_args, **_kwargs):  # pragma: no cover - guard assertion
+            raise AssertionError("Legacy workflow service alias should not be used when canonical service is present.")
+
+    client.app.state.execution_audit_workflow_service = _CanonicalWorkflowService()
+    client.app.state.execution_audit_workflow_service_v2 = _LegacyWorkflowService()
+
+    response = client.get(f"/v3/projects/{project_id}/nodes/{node_id}/workflow-state")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["data"]["source"] == "canonical"
+    assert calls == [(project_id, node_id)]
+
+
+def test_v3_workflow_action_endpoints_dispatch_to_canonical_service(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    class _CanonicalWorkflowService:
+        def finish_task(self, project_id_arg: str, node_id_arg: str, *, idempotency_key: str) -> dict[str, Any]:
+            payload = {"projectId": project_id_arg, "nodeId": node_id_arg, "idempotencyKey": idempotency_key}
+            calls.append(("finish_task", payload))
+            return {"source": "canonical", "action": "finish-task", **payload}
+
+        def mark_done_from_execution(
+            self,
+            project_id_arg: str,
+            node_id_arg: str,
+            *,
+            idempotency_key: str,
+            expected_workspace_hash: str,
+        ) -> dict[str, Any]:
+            payload = {
+                "projectId": project_id_arg,
+                "nodeId": node_id_arg,
+                "idempotencyKey": idempotency_key,
+                "expectedWorkspaceHash": expected_workspace_hash,
+            }
+            calls.append(("mark_done_from_execution", payload))
+            return {"source": "canonical", "action": "mark-done-from-execution", **payload}
+
+        def review_in_audit(
+            self,
+            project_id_arg: str,
+            node_id_arg: str,
+            *,
+            idempotency_key: str,
+            expected_workspace_hash: str,
+        ) -> dict[str, Any]:
+            payload = {
+                "projectId": project_id_arg,
+                "nodeId": node_id_arg,
+                "idempotencyKey": idempotency_key,
+                "expectedWorkspaceHash": expected_workspace_hash,
+            }
+            calls.append(("review_in_audit", payload))
+            return {"source": "canonical", "action": "review-in-audit", **payload}
+
+        def mark_done_from_audit(
+            self,
+            project_id_arg: str,
+            node_id_arg: str,
+            *,
+            idempotency_key: str,
+            expected_review_commit_sha: str,
+        ) -> dict[str, Any]:
+            payload = {
+                "projectId": project_id_arg,
+                "nodeId": node_id_arg,
+                "idempotencyKey": idempotency_key,
+                "expectedReviewCommitSha": expected_review_commit_sha,
+            }
+            calls.append(("mark_done_from_audit", payload))
+            return {"source": "canonical", "action": "mark-done-from-audit", **payload}
+
+        def improve_in_execution(
+            self,
+            project_id_arg: str,
+            node_id_arg: str,
+            *,
+            idempotency_key: str,
+            expected_review_commit_sha: str,
+        ) -> dict[str, Any]:
+            payload = {
+                "projectId": project_id_arg,
+                "nodeId": node_id_arg,
+                "idempotencyKey": idempotency_key,
+                "expectedReviewCommitSha": expected_review_commit_sha,
+            }
+            calls.append(("improve_in_execution", payload))
+            return {"source": "canonical", "action": "improve-in-execution", **payload}
+
+    class _LegacyWorkflowService:
+        def __getattr__(self, _name: str):  # pragma: no cover - guard assertion
+            raise AssertionError("Legacy workflow service alias should not be used when canonical service is present.")
+
+    client.app.state.execution_audit_workflow_service = _CanonicalWorkflowService()
+    client.app.state.execution_audit_workflow_service_v2 = _LegacyWorkflowService()
+
+    finish_payload = {"idempotencyKey": "idem-finish"}
+    finish_response = client.post(
+        f"/v3/projects/{project_id}/nodes/{node_id}/workflow/finish-task",
+        json=finish_payload,
+    )
+    assert finish_response.status_code == 200
+    assert finish_response.json()["data"]["action"] == "finish-task"
+
+    mark_exec_response = client.post(
+        f"/v3/projects/{project_id}/nodes/{node_id}/workflow/mark-done-from-execution",
+        json={"idempotencyKey": "idem-mark-exec", "expectedWorkspaceHash": "sha:workspace"},
+    )
+    assert mark_exec_response.status_code == 200
+    assert mark_exec_response.json()["data"]["action"] == "mark-done-from-execution"
+
+    review_response = client.post(
+        f"/v3/projects/{project_id}/nodes/{node_id}/workflow/review-in-audit",
+        json={"idempotencyKey": "idem-review", "expectedWorkspaceHash": "sha:workspace"},
+    )
+    assert review_response.status_code == 200
+    assert review_response.json()["data"]["action"] == "review-in-audit"
+
+    mark_audit_response = client.post(
+        f"/v3/projects/{project_id}/nodes/{node_id}/workflow/mark-done-from-audit",
+        json={"idempotencyKey": "idem-mark-audit", "expectedReviewCommitSha": "sha:review"},
+    )
+    assert mark_audit_response.status_code == 200
+    assert mark_audit_response.json()["data"]["action"] == "mark-done-from-audit"
+
+    improve_response = client.post(
+        f"/v3/projects/{project_id}/nodes/{node_id}/workflow/improve-in-execution",
+        json={"idempotencyKey": "idem-improve", "expectedReviewCommitSha": "sha:review"},
+    )
+    assert improve_response.status_code == 200
+    assert improve_response.json()["data"]["action"] == "improve-in-execution"
+
+    assert [name for name, _ in calls] == [
+        "finish_task",
+        "mark_done_from_execution",
+        "review_in_audit",
+        "mark_done_from_audit",
+        "improve_in_execution",
+    ]
+
+
+@pytest.mark.anyio
+async def test_v3_workflow_events_endpoint_uses_canonical_broker_and_filters_project(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    canonical_broker = GlobalEventBroker()
+
+    class _LegacyBroker:
+        def subscribe(self):  # pragma: no cover - guard assertion
+            raise AssertionError("Legacy workflow broker should not be used when canonical broker is present.")
+
+    client.app.state.workflow_event_broker_v3 = canonical_broker
+    client.app.state.workflow_event_broker_v2 = _LegacyBroker()
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.workflow_events_v3(request, project_id)
+    try:
+        canonical_broker.publish(
+            {
+                "eventId": "evt-ignore",
+                "projectId": "other-project",
+                "nodeId": node_id,
+                "type": "node.workflow.updated",
+                "payload": {"reason": "ignore"},
+            }
+        )
+        canonical_broker.publish(
+            {
+                "eventId": "evt-accept",
+                "projectId": project_id,
+                "nodeId": node_id,
+                "type": "node.workflow.updated",
+                "payload": {"reason": "phase4-test"},
+            }
+        )
+        payload = await _read_sse_payload(response)
+        assert payload["eventId"] == "evt-accept"
+        assert payload["projectId"] == project_id
+        assert payload["nodeId"] == node_id
+        assert payload["type"] == "node.workflow.updated"
+    finally:
+        await _close_stream(response, request)
+
+
 def test_v3_execution_resolve_user_input_by_id_updates_snapshot_and_signal(
     client: TestClient, workspace_root
 ) -> None:
@@ -908,7 +1123,7 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
             node_id=node_id,
             thread_role="execution",
             snapshot_version=max(1, first_snapshot_version + 1),
-            event_type=event_types.CONVERSATION_ITEM_UPSERT,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
             payload={
                 "item": {
                     "id": "msg-2",
@@ -928,7 +1143,7 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
                 }
             },
         )
-        client.app.state.conversation_event_broker_v2.publish(
+        client.app.state.conversation_event_broker_v3.publish(
             project_id,
             node_id,
             envelope,

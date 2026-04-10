@@ -68,6 +68,7 @@ class FinishTaskService:
         git_checkpoint_service: Any = None,
         review_service: ReviewService | None = None,
         thread_runtime_service_v2: ThreadRuntimeService | None = None,
+        thread_query_service: Any | None = None,
         workflow_event_publisher_v2: WorkflowEventPublisher | None = None,
         execution_audit_v2_enabled: bool = False,
         execution_audit_v2_rehearsal_enabled: bool = False,
@@ -84,6 +85,7 @@ class FinishTaskService:
         self._git_checkpoint_service = git_checkpoint_service
         self._review_service = review_service
         self._thread_runtime_service_v2 = thread_runtime_service_v2
+        self._thread_query_service = thread_query_service
         self._workflow_event_publisher_v2 = workflow_event_publisher_v2
         self._execution_audit_v2_enabled = bool(execution_audit_v2_enabled)
         self._execution_audit_v2_rehearsal_enabled = bool(execution_audit_v2_rehearsal_enabled)
@@ -238,6 +240,40 @@ class FinishTaskService:
         if self._execution_audit_v2_rehearsal_enabled:
             return "rehearsal"
         return None
+
+    def _resolve_thread_query_service(self) -> Any | None:
+        if self._thread_query_service is not None:
+            return self._thread_query_service
+        runtime = self._thread_runtime_service_v2
+        if runtime is None:
+            return None
+        return getattr(runtime, "_query_service", None)
+
+    @staticmethod
+    def _read_snapshot_without_thread_hydration(
+        query_service: Any,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+    ) -> dict[str, Any]:
+        try:
+            return query_service.get_thread_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+                publish_repairs=False,
+                ensure_binding=False,
+                allow_thread_read_hydration=False,
+            )
+        except TypeError:
+            return query_service.get_thread_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+                publish_repairs=False,
+                ensure_binding=False,
+            )
 
     def _finish_task_v2(
         self,
@@ -806,9 +842,9 @@ class FinishTaskService:
         hydrated_by: str = "finish_task_worktree_diff_v2",
         refresh_synthetic_from_full_diff: bool = False,
     ) -> None:
-        runtime = self._thread_runtime_service_v2
+        query_service = self._resolve_thread_query_service()
         if (
-            runtime is None
+            query_service is None
             or self._git_checkpoint_service is None
             or not isinstance(workspace_root, str)
             or not workspace_root.strip()
@@ -862,14 +898,11 @@ class FinishTaskService:
             node_id=node_id,
         )
         hydrator = ExecutionFileChangeHydrator(logger=logger)
-        query_service = runtime._query_service
-        snapshot = query_service.get_thread_snapshot(
-            project_id,
-            node_id,
-            "execution",
-            publish_repairs=False,
-            ensure_binding=False,
-            allow_thread_read_hydration=False,
+        snapshot = self._read_snapshot_without_thread_hydration(
+            query_service,
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
         )
         updated_snapshot, pending_events, _counters = hydrator.hydrate_turn_snapshot(
             snapshot=snapshot,
@@ -901,9 +934,9 @@ class FinishTaskService:
         head_sha: str | None,
         refresh_synthetic_from_full_diff: bool = False,
     ) -> None:
-        runtime = self._thread_runtime_service_v2
+        query_service = self._resolve_thread_query_service()
         if (
-            runtime is None
+            query_service is None
             or self._git_checkpoint_service is None
             or not isinstance(workspace_root, str)
             or not workspace_root.strip()
@@ -983,14 +1016,11 @@ class FinishTaskService:
             head_sha=head_sha,
         )
         hydrator = ExecutionFileChangeHydrator(logger=logger)
-        query_service = runtime._query_service
-        snapshot = query_service.get_thread_snapshot(
-            project_id,
-            node_id,
-            "execution",
-            publish_repairs=False,
-            ensure_binding=False,
-            allow_thread_read_hydration=False,
+        snapshot = self._read_snapshot_without_thread_hydration(
+            query_service,
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
         )
         updated_snapshot, pending_events, _counters = hydrator.hydrate_turn_snapshot(
             snapshot=snapshot,

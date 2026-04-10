@@ -105,6 +105,10 @@ def is_execution_audit_v2_rehearsal_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def is_execution_audit_v2_enabled() -> bool:
+    return _bool_env("PLANNINGTREE_EXECUTION_AUDIT_V2_ENABLED", default=True)
+
+
 def is_ask_v3_backend_enabled() -> bool:
     return _bool_env("PLANNINGTREE_ASK_V3_BACKEND_ENABLED", default=True)
 
