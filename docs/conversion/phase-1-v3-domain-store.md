@@ -1,6 +1,6 @@
 # Phase 1 - V3 Domain/Store Foundation
 
-Status: pending  
+Status: in_progress  
 Estimate: 5-7 person-days (12%)
 
 ## 1. Goal
@@ -22,6 +22,7 @@ Build native V3 data foundations:
 
 - `/v3` route migration to V3 services.
 - Runtime streaming/mutation behavior.
+- Active `/v3` payload lane-removal enforcement (handled in Phase 3/5/7 sequence).
 
 ## 4. Work breakdown
 
@@ -32,9 +33,9 @@ Build native V3 data foundations:
   - expose `thread_snapshot_store_v3`
   - preserve current V2 path behavior
 - [ ] Lock naming schema:
-  - public snapshot/event fields use canonical `thread_role` (JSON key `threadRole`)
-  - do not emit `lane` in active V3 snapshot/event payloads
+  - canonical V3 domain/storage naming uses `thread_role` (JSON key `threadRole`)
   - legacy persisted payloads with `lane` are read-normalized to `threadRole` during load
+  - route/output contract tightening (`no lane`) is deferred to Phase 3/5/7 rollout gates
 - [ ] Add V3 snapshot helpers:
   - default builder
   - normalize function (field hardening)
@@ -44,7 +45,7 @@ Build native V3 data foundations:
   - write/read roundtrip
   - malformed payload normalization
   - reset behavior
-  - verify output payload does not contain legacy `lane`
+  - verify legacy `lane` payloads normalize to canonical `threadRole`
 
 ## 5. Deliverables
 

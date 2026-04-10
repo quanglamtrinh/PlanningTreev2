@@ -1,6 +1,6 @@
 # Phase 0 Policy Matrix
 
-Date: 2026-04-09  
+Date: 2026-04-10  
 Owner: PTM Core Team  
 Status: frozen (phase-0 policy baseline)
 
@@ -24,12 +24,16 @@ This matrix freezes policy semantics across `/v1`, `/v2`, and `/v3` for the conv
 | P014 | v3 | `/v3/projects/{project_id}/threads/by-id/{thread_id}/reset` | POST | Reset by-id is ask-only. | 200 (ask) / 400 (execution,audit) | `invalid_request` (non-ask) | `test_v3_ask_reset_by_id_clears_thread_snapshot`, `test_v3_reset_policy_rejects_execution_and_audit_threads` |
 | P015 | v3 | `/v3/projects/{project_id}/threads/by-id/{thread_id}/plan-actions` | POST | Plan-ready actions are execution-only and enforce stale-revision guards. | 200 (valid execution) / 400 (invalid policy or stale revision) | `invalid_request` (invalid/stale) | `test_v3_execution_plan_actions_by_id_validate_stale_and_dispatch_followup`, `test_v3_plan_actions_on_ask_thread_reject_policy` |
 | P016 | target active path | `/v3/projects/{project_id}/nodes/{node_id}/workflow-state`, `/v3/projects/{project_id}/nodes/{node_id}/workflow/*`, `/v3/projects/{project_id}/events` | GET/POST | Frontend primary workflow control-plane path must be v3-only (contract lock). | contract lock | - | `docs/conversion/workflow-v3-control-plane-contract.md`, `docs/conversion/progress.yaml` |
+| P017 | v3 bridge disabled | `/v3` thread snapshot/query path (Phase 2 target behavior) | GET | If V3 snapshot is missing and bridge mode is `disabled`, return typed missing-snapshot gate error. | 409 | `conversation_v3_missing` | phase-0 lock in `decision-log.md`; implementation/test in Phase 2 |
 
 ## Naming and contract locks
 
-- Canonical public naming key is `thread_role` (JSON key `threadRole`) for active V3 APIs.
-- Active V3 APIs must not emit legacy `lane`.
-- Legacy `lane` read-compat is temporary and migration-only.
+- Canonical naming target is `thread_role` (JSON key `threadRole`) for V3 APIs.
+- While `/v3` still runs through adapter-based route paths (Phase 0-2 baseline), legacy `lane` may appear as compatibility payload shape.
+- Enforced transition gates:
+  - Phase 3: threadRole-primary route output on native `/v3` stack (temporary lane dual-emit allowed only for migration safety).
+  - Phase 5: frontend active path no longer reads `lane`.
+  - Phase 7: `lane` emission and lane-based types/tests removed.
 
 ## Bridge policy locks
 
@@ -38,3 +42,4 @@ This matrix freezes policy semantics across `/v1`, `/v2`, and `/v3` for the conv
 - New V3 path does not write back to V2.
 - Mode contract: `enabled | allowlist | disabled`.
 - Disabled mode contract: missing V3 snapshot returns typed `conversation_v3_missing`.
+- Disabled mode HTTP contract: `409` with envelope `error.details` as `{}`.

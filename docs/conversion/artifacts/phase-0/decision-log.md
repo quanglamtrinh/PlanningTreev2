@@ -3,19 +3,23 @@
 Date: 2026-04-10  
 Status: locked
 
-## Decision 1 - Immediate naming cutover to `thread_role`
+## Decision 1 - Phased naming transition to `thread_role`
 
 Decision:
 
 - Canonical V3 naming is `thread_role` with values `ask_planning | execution | audit`.
 - Canonical JSON key in V3 payloads is `threadRole`.
-- Active V3 APIs must not emit legacy `lane`.
+- Sequencing lock to avoid foundation-vs-route conflict:
+  - Phase 1: canonicalize domain/store naming to `threadRole`; normalize legacy `lane` on read.
+  - Phase 3: `/v3` native route output is `threadRole`-primary; temporary `lane` dual-emit is allowed only as migration bridge.
+  - Phase 5: frontend active path must stop reading `lane`.
+  - Phase 7: remove `lane` emission and lane-based types/tests.
 
 Implementation proposal:
 
-1. Replace `ThreadSnapshotV3.lane` with `ThreadSnapshotV3.threadRole` in backend and frontend V3 types.
-2. Keep read-compat for legacy payloads containing `lane` during migration only.
-3. Add tests that fail if active V3 payloads still include `lane`.
+1. Replace canonical backend domain/store naming with `threadRole` in Phase 1 without changing route behavior.
+2. Keep read-compat for legacy payloads containing `lane` during migration.
+3. Shift test gates by phase: route output gate in Phase 3, frontend lane-read removal in Phase 5, hard no-lane assertions in Phase 7.
 
 ## Decision 2 - Workflow control plane active path is V3-only
 
@@ -43,6 +47,12 @@ Decision:
   - `enabled`: fallback allowed for all projects.
   - `allowlist`: fallback allowed only for listed projects.
   - `disabled`: no fallback; return `conversation_v3_missing` when V3 is absent.
+- Disabled-mode error contract is fixed:
+  - HTTP status: `409`
+  - envelope: `{ "ok": false, "error": { "code": "conversation_v3_missing", "message": "...", "details": {} } }`
+- Bridge mode configuration is env-only:
+  - `PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE`
+  - `PLANNINGTREE_CONVERSATION_V3_BRIDGE_ALLOWLIST` (comma-separated project ids)
 
 ### Workflow example A - Legacy project with bridge enabled
 
@@ -73,3 +83,10 @@ Decision:
 
 - `docs/handoff/conversation-streaming-v2/progress.yaml` remains on an earlier migration track status.
 - For native V3 end-to-end conversion, `docs/conversion/progress.yaml` is the authoritative tracker.
+
+## Decision 4 - V3 workflow events endpoint ownership
+
+Decision:
+
+- Canonical backend ownership for `GET /v3/projects/{project_id}/events` is `backend/routes/workflow_v3.py`.
+- During migration, `/v2` workflow events in `chat_v2.py` remain compatibility-only and must not remain on the primary active path after Phase 5.

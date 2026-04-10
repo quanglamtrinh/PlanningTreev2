@@ -12,7 +12,8 @@ This document locks the workflow control plane contract between frontend and bac
 - Canonical public naming: `thread_role`
 - Supported values: `ask_planning | execution | audit`
 - Canonical JSON key for thread role in V3 payloads: `threadRole`
-- Do not use or emit `lane` in active V3 API contracts.
+- Final target contract (Phase 7+) does not emit `lane`.
+- During Phase 0-2 adapter baseline, legacy `lane` may still appear on transcript payloads; no new workflow control-plane dependency may be introduced on `lane`.
 
 ## 3. Envelope Contract
 
@@ -73,6 +74,7 @@ Idempotency and guard behavior must preserve baseline semantics:
 ## 6. Workflow Events Endpoint
 
 - `GET /v3/projects/{project_id}/events`
+- Backend ownership: `backend/routes/workflow_v3.py`
 
 Minimum event families:
 

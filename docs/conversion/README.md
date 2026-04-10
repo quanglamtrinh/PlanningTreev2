@@ -9,7 +9,7 @@ Move PTM from the current model ("V3 at UI/API, V2 in core engine") to a fully *
 
 - V3 is the only canonical contract and runtime model for ask/execution/audit.
 - `thread_role` is the canonical naming key across API/domain/storage.
-- `lane` terminology is deprecated and must not be emitted by active V3 APIs.
+- `lane` terminology is deprecated and scheduled for phased removal from active V3 APIs.
 - `/v3` no longer depends on `project_v2_*` adapters.
 - Frontend no longer depends on workflow control-plane `/v2` APIs.
 - V1/V2 compatibility paths become temporary and are removed after hard cutover.
@@ -42,9 +42,12 @@ Consequence: public-facing contract is V3, but core runtime/storage remains V2.
 
 ## 3.1 Locked decisions (2026-04-10)
 
-1. Rename cutover now:
+1. Naming transition is phased:
    - Canonical V3 snapshot/event field is `thread_role` (JSON key `threadRole`).
-   - Legacy `lane` is read-compat only and must not be emitted by active `/v3` routes.
+   - Phase 1: canonicalize domain/store to `threadRole`; keep route compatibility unchanged.
+   - Phase 3: native `/v3` routes emit `threadRole` as primary naming (temporary `lane` dual-emit allowed only as migration bridge).
+   - Phase 5: frontend active path removes `lane` reads.
+   - Phase 7: remove `lane` emission and lane-based types/tests.
 2. Workflow control-plane active path:
    - Primary frontend path must call only locked `/v3` workflow-state, workflow actions, and project events endpoints.
    - `/v2` workflow endpoints remain temporary compatibility only until cleanup phases.

@@ -10,6 +10,7 @@ Migrate the primary frontend surface (`/chat-v2`) to full V3 for transcript and 
 - workflow state
 - workflow actions
 - workflow event bridge
+- remove active-path reads of legacy `lane` in favor of canonical `threadRole`
 
 No `/v2/projects/...` dependency should remain on the primary active path.
 
@@ -49,6 +50,7 @@ No `/v2/projects/...` dependency should remain on the primary active path.
   - `buildProjectEventsUrlV2`
 - [ ] Update telemetry hooks if needed.
 - [ ] Remove unused imports/paths.
+- [ ] Remove `lane`-based reads/types on primary transcript/workflow path (keep only temporary compat shim if strictly required during rollout).
 - [ ] Update/add frontend unit tests for:
   - tab resolution
   - action button gating

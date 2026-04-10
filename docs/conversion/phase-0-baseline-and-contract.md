@@ -1,6 +1,6 @@
 # Phase 0 - Baseline and Contract Freeze
 
-Status: in_progress  
+Status: completed  
 Estimate: 3-4 person-days (8%)
 
 ## 1. Goal
@@ -42,9 +42,13 @@ Freeze the behavior contract before implementation changes:
   - incremental item event contract
   - reconnect guard `conversation_stream_mismatch`
 - [ ] Freeze naming matrix:
-  - replace `lane` with `thread_role` immediately in canonical V3 contract
-  - canonical JSON key in V3 payloads: `threadRole`
-  - legacy `lane` is read-compat only and must not be emitted by active `/v3`
+  - lock canonical naming target as `thread_role` with JSON key `threadRole`
+  - lock phased transition to avoid sequencing conflict:
+    - Phase 1 canonicalizes domain/store and normalizes legacy `lane` on read
+    - Phase 3 makes native `/v3` route output `threadRole`-primary
+    - Phase 5 removes frontend active-path `lane` reads
+    - Phase 7 removes `lane` emission and lane-based types/tests
+  - baseline evidence may still include `lane` assertions while adapter-based `/v3` route path is active
   - canonical enum: `ask_planning | execution | audit`
 - [ ] Freeze Workflow API V3 contract:
   - workflow state endpoint
@@ -74,6 +78,7 @@ Freeze the behavior contract before implementation changes:
 - `docs/conversion/workflow-v3-control-plane-contract.md`
 - `docs/conversion/artifacts/phase-0/open-questions.md` (if needed)
 - `docs/conversion/artifacts/phase-0/decision-log.md`
+- `docs/conversion/artifacts/phase-0/handoff-to-phase-1.md`
 
 ## 6. Exit criteria
 

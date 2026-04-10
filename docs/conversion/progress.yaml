@@ -1,7 +1,7 @@
 migration_id: native_v3_end_to_end_conversion
-status: phase_0_in_progress
-current_phase: 0
-next_phase: 1
+status: phase_1_in_progress
+current_phase: 1
+next_phase: 2
 baseline_date: 2026-04-09
 
 references:
@@ -31,9 +31,9 @@ locked_decisions:
   - id: canonical_thread_role_naming
     status: locked
     decision: Public V3 contract uses thread_role as canonical naming; lane terminology is deprecated.
-  - id: thread_role_replacement_immediate
+  - id: thread_role_transition_phased
     status: locked
-    decision: Replace lane with thread_role immediately on canonical V3 snapshot and event contracts; legacy lane may be read for compatibility but must not be emitted by active V3 APIs.
+    decision: thread_role/threadRole is canonical from Phase 1 at domain/store level; while /v3 routes still depend on V2 adapters (Phase 1-2), legacy lane may remain in compatibility payloads. Enforced sequence is Phase 3 threadRole-primary route output (temporary lane dual-emit allowed only as migration bridge), Phase 5 frontend lane-read removal, and Phase 7 lane emission/type/test cleanup.
   - id: v3_contract_is_canonical
     status: locked
     decision: ThreadSnapshotV3 and V3 event envelope are the canonical contract.
@@ -49,6 +49,15 @@ locked_decisions:
   - id: compatibility_bridge_modes_and_sunset
     status: locked
     decision: Bridge mode is explicit (enabled | allowlist | disabled); disabled mode must return conversation_v3_missing for missing V3 snapshots and must not fallback to V2.
+  - id: conversation_v3_missing_error_contract
+    status: locked
+    decision: conversation_v3_missing uses HTTP 409 and the standard envelope shape with error.details = {}.
+  - id: compatibility_bridge_env_only_config
+    status: locked
+    decision: Bridge mode is controlled by env only using PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE and PLANNINGTREE_CONVERSATION_V3_BRIDGE_ALLOWLIST.
+  - id: workflow_v3_events_endpoint_owner
+    status: locked
+    decision: Canonical owner for GET /v3/projects/{project_id}/events is backend/routes/workflow_v3.py.
   - id: registry_first_identity
     status: locked
     decision: Thread registry remains source of truth for role<->threadId binding.
@@ -75,7 +84,7 @@ effort_model:
 phases:
   - phase: 0
     name: baseline_and_contract_freeze
-    status: in_progress
+    status: completed
     effort_percent: 8
     estimate_person_days: "3-4"
     depends_on: []
@@ -92,10 +101,15 @@ phases:
       `test_ask_v3_rollout_phase6_7` 5 passed). Phase-0 artifacts created:
       `behavior-matrix.md`, `policy-matrix.md`, `open-questions.md`; decision-log updated with
       cross-track precedence note against `docs/handoff/conversation-streaming-v2/progress.yaml`.
+      2026-04-09 decision closeout: resolved all Phase-0 open questions (conversation_v3_missing
+      error contract, bridge env-only controls, workflow_v3 events endpoint ownership) and
+      published phase handoff at `docs/conversion/artifacts/phase-0/handoff-to-phase-1.md`.
+      2026-04-10 sequencing reconciliation: replaced "immediate no-lane" wording with phased
+      transition milestones (P1/P3/P5/P7) to match foundation-only scope before route cutover.
 
   - phase: 1
     name: v3_domain_store_foundation
-    status: pending
+    status: in_progress
     effort_percent: 12
     estimate_person_days: "5-7"
     depends_on:
@@ -104,6 +118,11 @@ phases:
     exit_criteria:
       - Thread snapshot V3 store exists and passes unit tests.
       - Normalization and persistence rules are deterministic.
+    notes: >
+      Entered in_progress on 2026-04-09 after Phase-0 contract freeze/handoff completion.
+      2026-04-10 sequencing lock: naming migration follows phased transition
+      (P1 canonical internals, P3 route threadRole-primary output with temporary compat allowed,
+      P5 frontend lane-read removal, P7 hard lane cleanup) to avoid foundation-vs-route conflict.
 
   - phase: 2
     name: v3_runtime_query_native_with_read_bridge

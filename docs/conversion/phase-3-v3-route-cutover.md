@@ -37,8 +37,8 @@ Move `/v3` routes to call native V3 services directly and remove V2 adapter depe
   - execution/audit via workflow state
   - ask via registry (with legacy-session seed only when bridge policy allows)
 - [ ] Enforce naming contract:
-  - responses/events use canonical `thread_role` (JSON key `threadRole`)
-  - no `lane` exposure in new public contract
+  - responses/events use canonical `thread_role` (JSON key `threadRole`) as primary contract
+  - if needed for rollout safety, keep temporary `lane` dual-emit behind explicit compatibility guard only until frontend Phase 5 completion
 - [ ] Preserve error semantics:
   - `invalid_request` for mismatch/policy
   - `ask_v3_disabled` while ask gate remains enabled

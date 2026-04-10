@@ -20,15 +20,18 @@ Build native V3 query/runtime for ask/execution/audit without V2 snapshot/item d
   - begin/complete turn
   - stream agent turns into canonical V3 items/events
 - Canonical V3 payload naming:
-  - emit `threadRole`
-  - do not emit legacy `lane`
+  - emit `threadRole` as canonical field
+  - keep optional temporary `lane` dual-emit capability for Phase 3-5 migration safety; remove in Phase 7
 - Remove legacy ask mirroring from the new runtime path.
 - Compatibility read bridge:
   - read `conversation_v3` first
   - if missing, read-through from V2, convert, then persist to V3
   - no V2 back-write on new path
   - explicit mode: `enabled | allowlist | disabled`
-  - `disabled` returns typed `conversation_v3_missing` on missing V3 snapshot
+  - `disabled` returns typed `conversation_v3_missing` (`409`, `error.details` remains `{}`) on missing V3 snapshot
+  - env-only bridge controls:
+    - `PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE`
+    - `PLANNINGTREE_CONVERSATION_V3_BRIDGE_ALLOWLIST` (comma-separated project ids)
 
 ## 2.1 Bridge workflow examples (locked behavior)
 
