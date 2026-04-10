@@ -91,6 +91,25 @@ function isPendingRequestStatus(status: PendingRequestStatus): boolean {
   return status === 'requested' || status === 'answer_submitted'
 }
 
+function legacyLaneToThreadRole(
+  lane: ThreadSnapshotV3['lane'] | null | undefined,
+): ThreadSnapshotV3['threadRole'] | null {
+  if (lane === 'ask') {
+    return 'ask_planning'
+  }
+  if (lane === 'execution' || lane === 'audit') {
+    return lane
+  }
+  return null
+}
+
+function resolveSnapshotThreadRole(snapshot: ThreadSnapshotV3 | null): ThreadSnapshotV3['threadRole'] | null {
+  if (!snapshot) {
+    return null
+  }
+  return snapshot.threadRole ?? legacyLaneToThreadRole(snapshot.lane)
+}
+
 function buildPlanReadyDismissKey(
   threadId: string | null | undefined,
   planItemId: string | null | undefined,
@@ -1641,7 +1660,7 @@ export function MessagesV3({
     planReadySignal?.revision ?? null,
   )
   const showPlanReadyCard =
-    Boolean(snapshot?.lane === 'execution') &&
+    resolveSnapshotThreadRole(snapshot) === 'execution' &&
     Boolean(planReadySignal?.ready) &&
     !Boolean(planReadySignal?.failed) &&
     Boolean(planReadyDismissKey) &&

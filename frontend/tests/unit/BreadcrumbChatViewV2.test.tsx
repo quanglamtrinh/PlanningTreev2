@@ -32,14 +32,14 @@ vi.mock('../../src/features/node/NodeDetailCard', () => ({
   ),
 }))
 
-vi.mock('../../src/features/conversation/state/workflowEventBridge', () => ({
-  useWorkflowEventBridge: vi.fn(),
+vi.mock('../../src/features/conversation/state/workflowEventBridgeV3', () => ({
+  useWorkflowEventBridgeV3: vi.fn(),
 }))
 
 import type { NodeWorkflowView, Snapshot, ThreadSnapshotV3 } from '../../src/api/types'
 import { BreadcrumbChatViewV2 } from '../../src/features/conversation/BreadcrumbChatViewV2'
 import { useThreadByIdStoreV3 } from '../../src/features/conversation/state/threadByIdStoreV3'
-import { useWorkflowStateStoreV2 } from '../../src/features/conversation/state/workflowStateStoreV2'
+import { useWorkflowStateStoreV3 } from '../../src/features/conversation/state/workflowStateStoreV3'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useProjectStore } from '../../src/stores/project-store'
 import { useUIStore } from '../../src/stores/ui-store'
@@ -92,6 +92,7 @@ function makeConversationSnapshot(
     projectId: 'project-1',
     nodeId: 'root',
     threadId: 'exec-thread-1',
+    threadRole: 'execution',
     lane: 'execution',
     activeTurnId: null,
     processingState: 'idle',
@@ -190,7 +191,7 @@ function seedStores(options: {
     },
     loadDetailState: vi.fn().mockResolvedValue(undefined),
   } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
-  useWorkflowStateStoreV2.setState({
+  useWorkflowStateStoreV3.setState({
     entries: { 'project-1::root': workflowState },
     loadWorkflowState: vi.fn().mockResolvedValue(undefined),
     finishTask: vi.fn().mockResolvedValue(undefined),
@@ -198,7 +199,7 @@ function seedStores(options: {
     reviewInAudit: vi.fn().mockResolvedValue(undefined),
     markDoneFromAudit: vi.fn().mockResolvedValue(undefined),
     improveInExecution: vi.fn().mockResolvedValue(undefined),
-  } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+  } as Partial<ReturnType<typeof useWorkflowStateStoreV3.getState>>)
   useThreadByIdStoreV3.setState({
     snapshot: threadSnapshot,
     loadThread: vi.fn().mockResolvedValue(undefined),
@@ -215,7 +216,7 @@ describe('BreadcrumbChatViewV2', () => {
     vi.clearAllMocks()
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
-    useWorkflowStateStoreV2.getState().reset()
+    useWorkflowStateStoreV3.getState().reset()
     useThreadByIdStoreV3.getState().disconnectThread()
     useUIStore.setState(useUIStore.getInitialState())
   })
@@ -298,8 +299,8 @@ describe('BreadcrumbChatViewV2', () => {
         },
       }),
     })
-    useWorkflowStateStoreV2.setState({
-      ...useWorkflowStateStoreV2.getState(),
+    useWorkflowStateStoreV3.setState({
+      ...useWorkflowStateStoreV3.getState(),
       reviewInAudit,
     })
 
@@ -337,7 +338,7 @@ describe('BreadcrumbChatViewV2', () => {
       workflowState: makeWorkflowState({
         askThreadId: 'ask-thread-1',
       }),
-      threadSnapshot: makeConversationSnapshot({ threadId: 'ask-thread-1', lane: 'ask' }),
+      threadSnapshot: makeConversationSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning', lane: 'ask' }),
     })
     useThreadByIdStoreV3.setState({
       ...useThreadByIdStoreV3.getState(),
@@ -420,8 +421,8 @@ describe('BreadcrumbChatViewV2', () => {
         },
       }),
     })
-    useWorkflowStateStoreV2.setState({
-      ...useWorkflowStateStoreV2.getState(),
+    useWorkflowStateStoreV3.setState({
+      ...useWorkflowStateStoreV3.getState(),
       markDoneFromExecution,
     })
     useUIStore.setState({ ...useUIStore.getState(), activeSurface: 'breadcrumb' })
@@ -470,10 +471,10 @@ describe('BreadcrumbChatViewV2', () => {
           createdAt: '2026-03-28T00:02:00Z',
         },
       }),
-      threadSnapshot: makeConversationSnapshot({ threadId: 'audit-thread-1', lane: 'audit' }),
+      threadSnapshot: makeConversationSnapshot({ threadId: 'audit-thread-1', threadRole: 'audit', lane: 'audit' }),
     })
-    useWorkflowStateStoreV2.setState({
-      ...useWorkflowStateStoreV2.getState(),
+    useWorkflowStateStoreV3.setState({
+      ...useWorkflowStateStoreV3.getState(),
       markDoneFromAudit,
     })
     useUIStore.setState({ ...useUIStore.getState(), activeSurface: 'breadcrumb' })
@@ -512,7 +513,7 @@ describe('BreadcrumbChatViewV2', () => {
       workflowState: makeWorkflowState({
         reviewThreadId: 'audit-thread-1',
       }),
-      threadSnapshot: makeConversationSnapshot({ threadId: 'audit-thread-1', lane: 'audit' }),
+      threadSnapshot: makeConversationSnapshot({ threadId: 'audit-thread-1', threadRole: 'audit', lane: 'audit' }),
     })
 
     render(

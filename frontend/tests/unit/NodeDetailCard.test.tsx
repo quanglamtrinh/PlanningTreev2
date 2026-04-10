@@ -59,8 +59,8 @@ const { apiMock, MockApiError, navigateMock } = vi.hoisted(() => ({
     confirmClarify: vi.fn(),
     confirmSpec: vi.fn(),
     finishTask: vi.fn(),
-    getWorkflowStateV2: vi.fn(),
-    finishTaskWorkflowV2: vi.fn(),
+    getWorkflowStateV3: vi.fn(),
+    finishTaskWorkflowV3: vi.fn(),
     generateFrame: vi.fn(),
     getFrameGenStatus: vi.fn().mockResolvedValue({
       status: 'idle',
@@ -283,13 +283,13 @@ describe('NodeDetailCard', () => {
       summary: 'Accepted rollup summary',
       sha: 'sha256:accepted',
     })
-    apiMock.finishTaskWorkflowV2.mockResolvedValue({
+    apiMock.finishTaskWorkflowV3.mockResolvedValue({
       accepted: true,
       workflowPhase: 'execution_running',
       threadId: 'thread-execution-1',
       executionRunId: 'run-1',
     })
-    apiMock.getWorkflowStateV2.mockResolvedValue({
+    apiMock.getWorkflowStateV3.mockResolvedValue({
       nodeId: 'root',
       workflowPhase: 'execution_running',
       executionThreadId: 'thread-execution-1',
@@ -1042,7 +1042,7 @@ describe('NodeDetailCard', () => {
       expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
     })
     await waitFor(() => {
-      expect(apiMock.finishTaskWorkflowV2).toHaveBeenCalledWith(
+      expect(apiMock.finishTaskWorkflowV3).toHaveBeenCalledWith(
         'project-1',
         'root',
         expect.stringMatching(/^finish_task:/),
@@ -1137,14 +1137,14 @@ describe('NodeDetailCard', () => {
       expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
     })
     await waitFor(() => {
-      expect(apiMock.finishTaskWorkflowV2).toHaveBeenCalledWith(
+      expect(apiMock.finishTaskWorkflowV3).toHaveBeenCalledWith(
         'project-1',
         'root',
         expect.stringMatching(/^finish_task:/),
       )
     })
     await waitFor(() => {
-      expect(apiMock.getWorkflowStateV2).toHaveBeenCalledWith('project-1', 'root')
+      expect(apiMock.getWorkflowStateV3).toHaveBeenCalledWith('project-1', 'root')
     })
     expect(apiMock.finishTask).not.toHaveBeenCalled()
     expect(navigateMock).toHaveBeenCalledWith('/projects/project-1/nodes/root/chat-v2?thread=execution')
@@ -1256,7 +1256,7 @@ describe('NodeDetailCard', () => {
     resolveConfirmSpec()
 
     await waitFor(() => {
-      expect(apiMock.finishTaskWorkflowV2).toHaveBeenCalledWith(
+      expect(apiMock.finishTaskWorkflowV3).toHaveBeenCalledWith(
         'project-1',
         'root',
         expect.stringMatching(/^finish_task:/),
@@ -2357,3 +2357,4 @@ describe('NodeDetailCard', () => {
     )
   })
 })
+

@@ -30,9 +30,7 @@ No `/v2/projects/...` dependency should remain on the primary active path.
   - `workflowStateStoreV2` -> V3 workflow store
   - event bridge `/v2/projects/{id}/events` -> `GET /v3/projects/{project_id}/events`
 - `BreadcrumbChatViewV2` wiring updates
-- Remove unused/dead stores:
-  - `threadStoreV2.ts`
-  - `threadByIdStoreV2.ts` (after tests pass and imports are clean)
+- Keep V2 compatibility modules/builders available, but remove active-path imports/usages from primary `chat-v2` wiring.
 
 ## 3. Out Of Scope
 
@@ -41,17 +39,17 @@ No `/v2/projects/...` dependency should remain on the primary active path.
 
 ## 4. Work Breakdown
 
-- [ ] Build V3 workflow state store (zustand) and wire mutations.
-- [ ] Build V3 workflow event bridge with reconnect handling.
-- [ ] Update `BreadcrumbChatViewV2` to use new store/bridge.
-- [ ] Remove primary-path calls to:
+- [x] Build V3 workflow state store (zustand) and wire mutations.
+- [x] Build V3 workflow event bridge with reconnect handling.
+- [x] Update `BreadcrumbChatViewV2` to use new store/bridge.
+- [x] Remove primary-path calls to:
   - `buildWorkflowStatePathV2`
   - `buildWorkflowActionPathV2`
   - `buildProjectEventsUrlV2`
-- [ ] Update telemetry hooks if needed.
-- [ ] Remove unused imports/paths.
-- [ ] Remove `lane`-based reads/types on primary transcript/workflow path (keep only temporary compat shim if strictly required during rollout).
-- [ ] Update/add frontend unit tests for:
+- [x] Update telemetry hooks if needed.
+- [x] Remove unused imports/paths.
+- [x] Remove `lane`-based reads/types on primary transcript/workflow path (keep only temporary compat shim if strictly required during rollout).
+- [x] Update/add frontend unit tests for:
   - tab resolution
   - action button gating
   - reconnect and reload behavior
@@ -76,9 +74,9 @@ No `/v2/projects/...` dependency should remain on the primary active path.
 
 ## 7. Verification
 
-- [ ] `npm run typecheck --prefix frontend`
-- [ ] `npm run test:unit --prefix frontend`
-- [ ] Add grep-based guard tests to ensure no V2 workflow API references remain on active code paths.
+- [x] `npm run typecheck --prefix frontend`
+- [x] `npm run test:unit --prefix frontend`
+- [x] Add grep-based guard tests to ensure no V2 workflow API references remain on active code paths.
 
 ## 8. Risks And Mitigations
 
@@ -86,3 +84,15 @@ No `/v2/projects/...` dependency should remain on the primary active path.
   - Mitigation: generation tokens and stale-response guards, consistent with thread store patterns.
 - Risk: hidden V2 dependency in edge components.
   - Mitigation: enforce code-search gates before merge.
+
+## 9. Implementation Snapshot (2026-04-10)
+
+- Active `chat-v2` workflow control-plane now uses:
+  - `useWorkflowStateStoreV3`
+  - `useWorkflowEventBridgeV3`
+  - V3 workflow endpoints in API client
+- `ThreadSnapshotV3` now uses canonical `threadRole` on FE type contract.
+- `lane` remains optional compatibility field only (deprecated) and no longer drives active plan-ready decisions.
+- Phase 5 artifacts published:
+  - `docs/conversion/artifacts/phase-5/frontend-migration-checklist.md`
+  - `docs/conversion/artifacts/phase-5/frontend-regression-notes.md`

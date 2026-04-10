@@ -244,6 +244,21 @@ phases:
       - No V2 workflow API dependency remains in main surface path.
     notes: >
       Entered in_progress on 2026-04-10 after Phase-4 completion and evidence publication.
+      2026-04-10 implementation evidence: active FE workflow control-plane path
+      (`BreadcrumbChatViewV2`, `NodeDocumentEditor`) now uses V3 workflow store
+      + V3 project event bridge (`useWorkflowStateStoreV3`,
+      `useWorkflowEventBridgeV3`) and V3 API methods
+      (`getWorkflowStateV3`, workflow action V3 calls, `buildProjectEventsUrlV3`);
+      active `MessagesV3` plan-ready gating now uses canonical `threadRole` with
+      optional `lane` compatibility fallback. Added FE tests:
+      `workflowStateStoreV3.test.ts`, `phase5.active-path-v3.guards.test.ts`,
+      and migrated workflow bridge/chat-v2 tests to V3 active wiring.
+      Artifacts published:
+      `docs/conversion/artifacts/phase-5/frontend-migration-checklist.md`,
+      `docs/conversion/artifacts/phase-5/frontend-regression-notes.md`.
+      Verification passed:
+      `npm run typecheck --prefix frontend`,
+      `npm run test:unit --prefix frontend` (38 passed files, 218 tests).
 
   - phase: 6
     name: batch_migration_and_bridge_sunset

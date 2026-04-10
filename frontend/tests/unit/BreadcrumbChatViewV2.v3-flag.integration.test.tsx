@@ -22,14 +22,14 @@ vi.mock('../../src/features/node/NodeDetailCard', () => ({
   NodeDetailCard: () => <div data-testid="node-detail-card">detail</div>,
 }))
 
-vi.mock('../../src/features/conversation/state/workflowEventBridge', () => ({
-  useWorkflowEventBridge: vi.fn(),
+vi.mock('../../src/features/conversation/state/workflowEventBridgeV3', () => ({
+  useWorkflowEventBridgeV3: vi.fn(),
 }))
 
 import type { NodeWorkflowView, Snapshot, ThreadSnapshotV3 } from '../../src/api/types'
 import { BreadcrumbChatViewV2 } from '../../src/features/conversation/BreadcrumbChatViewV2'
 import { useThreadByIdStoreV3 } from '../../src/features/conversation/state/threadByIdStoreV3'
-import { useWorkflowStateStoreV2 } from '../../src/features/conversation/state/workflowStateStoreV2'
+import { useWorkflowStateStoreV3 } from '../../src/features/conversation/state/workflowStateStoreV3'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useProjectStore } from '../../src/stores/project-store'
 
@@ -81,6 +81,7 @@ function makeConversationSnapshotV3(
     projectId: 'project-1',
     nodeId: 'root',
     threadId: 'exec-thread-1',
+    threadRole: 'execution',
     lane: 'execution',
     activeTurnId: null,
     processingState: 'idle',
@@ -167,7 +168,7 @@ function seedBaseStores(workflowState: NodeWorkflowView, snapshot: Snapshot) {
     },
     loadDetailState: vi.fn().mockResolvedValue(undefined),
   } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
-  useWorkflowStateStoreV2.setState({
+  useWorkflowStateStoreV3.setState({
     entries: {
       'project-1::root': workflowState,
     },
@@ -177,7 +178,7 @@ function seedBaseStores(workflowState: NodeWorkflowView, snapshot: Snapshot) {
     reviewInAudit: vi.fn().mockResolvedValue(undefined),
     markDoneFromAudit: vi.fn().mockResolvedValue(undefined),
     improveInExecution: vi.fn().mockResolvedValue(undefined),
-  } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+  } as Partial<ReturnType<typeof useWorkflowStateStoreV3.getState>>)
 }
 
 describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
@@ -185,7 +186,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     vi.clearAllMocks()
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
-    useWorkflowStateStoreV2.getState().reset()
+    useWorkflowStateStoreV3.getState().reset()
     useThreadByIdStoreV3.getState().disconnectThread()
   })
 
@@ -229,7 +230,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
 
     useThreadByIdStoreV3.setState({
-      snapshot: makeConversationSnapshotV3({ threadId: 'audit-thread-1', lane: 'audit' }),
+      snapshot: makeConversationSnapshotV3({ threadId: 'audit-thread-1', threadRole: 'audit', lane: 'audit' }),
       loadThread: loadThreadV3,
       sendTurn: vi.fn().mockResolvedValue(undefined),
       resolveUserInput: vi.fn().mockResolvedValue(undefined),
@@ -254,7 +255,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     seedBaseStores(makeWorkflowState(), makeProjectSnapshot('original'))
     const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
     useThreadByIdStoreV3.setState({
-      snapshot: makeConversationSnapshotV3({ threadId: 'ask-thread-1', lane: 'ask' }),
+      snapshot: makeConversationSnapshotV3({ threadId: 'ask-thread-1', threadRole: 'ask_planning', lane: 'ask' }),
       loadThread: loadThreadV3,
       sendTurn: vi.fn().mockResolvedValue(undefined),
       resolveUserInput: vi.fn().mockResolvedValue(undefined),

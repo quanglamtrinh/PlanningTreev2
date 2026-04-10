@@ -63,6 +63,10 @@ function buildWorkflowStatePathV2(projectId: string, nodeId: string): string {
   return `/v2/projects/${projectId}/nodes/${nodeId}/workflow-state`
 }
 
+function buildWorkflowStatePathV3(projectId: string, nodeId: string): string {
+  return `/v3/projects/${projectId}/nodes/${nodeId}/workflow-state`
+}
+
 function buildWorkflowActionPathV2(
   projectId: string,
   nodeId: string,
@@ -74,6 +78,19 @@ function buildWorkflowActionPathV2(
     | 'improve-in-execution',
 ): string {
   return `/v2/projects/${projectId}/nodes/${nodeId}/workflow/${action}`
+}
+
+function buildWorkflowActionPathV3(
+  projectId: string,
+  nodeId: string,
+  action:
+    | 'finish-task'
+    | 'mark-done-from-execution'
+    | 'review-in-audit'
+    | 'mark-done-from-audit'
+    | 'improve-in-execution',
+): string {
+  return `/v3/projects/${projectId}/nodes/${nodeId}/workflow/${action}`
 }
 
 function buildThreadByIdBasePathV2(projectId: string, threadId: string): string {
@@ -137,6 +154,10 @@ export function buildThreadByIdEventsUrlV3(
 
 export function buildProjectEventsUrlV2(projectId: string): string {
   return `/v2/projects/${projectId}/events`
+}
+
+export function buildProjectEventsUrlV3(projectId: string): string {
+  return `/v3/projects/${projectId}/events`
 }
 
 let _cachedAuthToken: string | null = null
@@ -377,6 +398,9 @@ export const api = {
   },
   getWorkflowStateV2(projectId: string, nodeId: string): Promise<NodeWorkflowView> {
     return jsonFetchV2<NodeWorkflowView>(buildWorkflowStatePathV2(projectId, nodeId))
+  },
+  getWorkflowStateV3(projectId: string, nodeId: string): Promise<NodeWorkflowView> {
+    return jsonFetchV2<NodeWorkflowView>(buildWorkflowStatePathV3(projectId, nodeId))
   },
   getReviewState(projectId: string, nodeId: string): Promise<ReviewState> {
     return jsonFetch<ReviewState>(`/v1/projects/${projectId}/nodes/${nodeId}/review-state`)
@@ -622,6 +646,17 @@ export const api = {
       { idempotencyKey },
     )
   },
+  finishTaskWorkflowV3(
+    projectId: string,
+    nodeId: string,
+    idempotencyKey: string,
+  ): Promise<WorkflowActionAcceptedResponse> {
+    return jsonFetchV2<WorkflowActionAcceptedResponse>(
+      buildWorkflowActionPathV3(projectId, nodeId, 'finish-task'),
+      { method: 'POST' },
+      { idempotencyKey },
+    )
+  },
   markDoneFromExecutionV2(
     projectId: string,
     nodeId: string,
@@ -630,6 +665,18 @@ export const api = {
   ): Promise<NodeWorkflowView> {
     return jsonFetchV2<NodeWorkflowView>(
       buildWorkflowActionPathV2(projectId, nodeId, 'mark-done-from-execution'),
+      { method: 'POST' },
+      { idempotencyKey, expectedWorkspaceHash },
+    )
+  },
+  markDoneFromExecutionV3(
+    projectId: string,
+    nodeId: string,
+    idempotencyKey: string,
+    expectedWorkspaceHash: string,
+  ): Promise<NodeWorkflowView> {
+    return jsonFetchV2<NodeWorkflowView>(
+      buildWorkflowActionPathV3(projectId, nodeId, 'mark-done-from-execution'),
       { method: 'POST' },
       { idempotencyKey, expectedWorkspaceHash },
     )
@@ -646,6 +693,18 @@ export const api = {
       { idempotencyKey, expectedWorkspaceHash },
     )
   },
+  reviewInAuditV3(
+    projectId: string,
+    nodeId: string,
+    idempotencyKey: string,
+    expectedWorkspaceHash: string,
+  ): Promise<WorkflowActionAcceptedResponse> {
+    return jsonFetchV2<WorkflowActionAcceptedResponse>(
+      buildWorkflowActionPathV3(projectId, nodeId, 'review-in-audit'),
+      { method: 'POST' },
+      { idempotencyKey, expectedWorkspaceHash },
+    )
+  },
   markDoneFromAuditV2(
     projectId: string,
     nodeId: string,
@@ -658,6 +717,18 @@ export const api = {
       { idempotencyKey, expectedReviewCommitSha },
     )
   },
+  markDoneFromAuditV3(
+    projectId: string,
+    nodeId: string,
+    idempotencyKey: string,
+    expectedReviewCommitSha: string,
+  ): Promise<NodeWorkflowView> {
+    return jsonFetchV2<NodeWorkflowView>(
+      buildWorkflowActionPathV3(projectId, nodeId, 'mark-done-from-audit'),
+      { method: 'POST' },
+      { idempotencyKey, expectedReviewCommitSha },
+    )
+  },
   improveInExecutionV2(
     projectId: string,
     nodeId: string,
@@ -666,6 +737,18 @@ export const api = {
   ): Promise<WorkflowActionAcceptedResponse> {
     return jsonFetchV2<WorkflowActionAcceptedResponse>(
       buildWorkflowActionPathV2(projectId, nodeId, 'improve-in-execution'),
+      { method: 'POST' },
+      { idempotencyKey, expectedReviewCommitSha },
+    )
+  },
+  improveInExecutionV3(
+    projectId: string,
+    nodeId: string,
+    idempotencyKey: string,
+    expectedReviewCommitSha: string,
+  ): Promise<WorkflowActionAcceptedResponse> {
+    return jsonFetchV2<WorkflowActionAcceptedResponse>(
+      buildWorkflowActionPathV3(projectId, nodeId, 'improve-in-execution'),
       { method: 'POST' },
       { idempotencyKey, expectedReviewCommitSha },
     )

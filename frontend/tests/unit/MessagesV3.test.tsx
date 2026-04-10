@@ -5,10 +5,11 @@ import type { ThreadSnapshotV3 } from '../../src/api/types'
 import { MessagesV3 } from '../../src/features/conversation/components/v3/MessagesV3'
 
 function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshotV3 {
-  return {
+  const snapshot: ThreadSnapshotV3 = {
     projectId: 'project-1',
     nodeId: 'node-1',
     threadId: 'thread-1',
+    threadRole: 'execution',
     lane: 'execution',
     activeTurnId: null,
     processingState: 'idle',
@@ -27,6 +28,16 @@ function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshot
     },
     ...overrides,
   }
+  if (!snapshot.threadRole) {
+    if (snapshot.lane === 'ask') {
+      snapshot.threadRole = 'ask_planning'
+    } else if (snapshot.lane === 'audit') {
+      snapshot.threadRole = 'audit'
+    } else {
+      snapshot.threadRole = 'execution'
+    }
+  }
+  return snapshot
 }
 
 describe('MessagesV3', () => {

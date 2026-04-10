@@ -18,8 +18,8 @@ import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { MessagesV3 } from './components/v3/MessagesV3'
 import { MessagesV3ErrorBoundary } from './components/v3/MessagesV3ErrorBoundary'
 import { useThreadByIdStoreV3 } from './state/threadByIdStoreV3'
-import { useWorkflowEventBridge } from './state/workflowEventBridge'
-import { useWorkflowStateStoreV2 } from './state/workflowStateStoreV2'
+import { useWorkflowEventBridgeV3 } from './state/workflowEventBridgeV3'
+import { useWorkflowStateStoreV3 } from './state/workflowStateStoreV3'
 
 function resolveThreadRole(threadTab: ThreadTab): ThreadRole | null {
   if (threadTab === 'ask') {
@@ -111,7 +111,7 @@ export function BreadcrumbChatViewV2() {
     reviewInAudit,
     markDoneFromAudit,
     improveInExecution,
-  } = useWorkflowStateStoreV2(
+  } = useWorkflowStateStoreV3(
     useShallow((state) => ({
       workflowState: detailStateKey ? state.entries[detailStateKey] : undefined,
       isWorkflowLoading: detailStateKey ? state.loading[detailStateKey] === true : false,
@@ -153,7 +153,7 @@ export function BreadcrumbChatViewV2() {
   const threadRole = resolveThreadRole(threadTab)
   const shouldCanonicalizeV2 = routeTarget.surface !== 'v2' || requestedThreadTab !== routeTarget.threadTab
 
-  useWorkflowEventBridge(
+  useWorkflowEventBridgeV3(
     projectId,
     nodeId,
     Boolean(projectId && nodeId && !shouldCanonicalizeV2),

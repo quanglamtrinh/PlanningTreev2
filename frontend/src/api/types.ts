@@ -837,6 +837,7 @@ export type ThreadEventV2 =
 
 // Conversation V3 types (ask/execution/audit)
 
+/** @deprecated Compatibility alias during V3 naming transition. */
 export type ThreadLaneV3 = 'ask' | 'execution' | 'audit'
 export type ConversationItemKindV3 =
   | 'message'
@@ -1015,7 +1016,9 @@ export interface ThreadSnapshotV3 {
   projectId: string
   nodeId: string
   threadId: string | null
-  lane: ThreadLaneV3
+  threadRole: ThreadRole
+  /** @deprecated Compatibility field; active logic should use threadRole. */
+  lane?: ThreadLaneV3
   activeTurnId: string | null
   processingState: ProcessingState
   snapshotVersion: number
