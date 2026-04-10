@@ -13,10 +13,6 @@ from backend.config.app_config import is_conversation_v3_bridge_allowed_for_proj
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
 from backend.conversation.domain.types_v3 import normalize_thread_role_v3, thread_role_to_lane_v3
-from backend.conversation.projector.thread_event_projector_v3 import (
-    project_v2_envelope_to_v3,
-    project_v2_snapshot_to_v3,
-)
 from backend.errors.app_errors import AppError, AskV3Disabled, InvalidRequest
 from backend.storage.file_utils import new_id
 
@@ -209,23 +205,13 @@ async def get_thread_snapshot_by_id_v3(
             node_id,
             thread_id,
         )
-        if thread_role == "ask_planning":
-            snapshot_v3 = request.app.state.thread_query_service_v3.get_thread_snapshot(
-                project_id,
-                node_id,
-                thread_role,
-                publish_repairs=True,
-                ensure_binding=False,
-            )
-        else:
-            snapshot_v2 = request.app.state.thread_query_service_v2.get_thread_snapshot(
-                project_id,
-                node_id,
-                thread_role,
-                publish_repairs=True,
-                ensure_binding=False,
-            )
-            snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+        snapshot_v3 = request.app.state.thread_query_service_v3.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=True,
+            ensure_binding=False,
+        )
         snapshot_v3 = _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)
         return _ok({"snapshot": snapshot_v3})
     except AppError as exc:
@@ -242,10 +228,9 @@ async def thread_events_by_id_v3(
     node_id: str = Query(...),
     after_snapshot_version: int | None = Query(None),
 ):
-    broker: Any = None
+    broker = request.app.state.conversation_event_broker_v3
     queue = None
     thread_role = ""
-    stream_mode = "legacy_v2_projected"
     try:
         thread_role = _resolve_thread_role_by_id_v3(
             request,
@@ -257,25 +242,13 @@ async def thread_events_by_id_v3(
             metrics = getattr(request.app.state, "ask_rollout_metrics_service", None)
             if metrics is not None:
                 metrics.record_stream_session()
-            broker = request.app.state.conversation_event_broker_v3
-            snapshot_v3 = request.app.state.thread_query_service_v3.build_stream_snapshot(
-                project_id,
-                node_id,
-                thread_role,
-                after_snapshot_version=after_snapshot_version,
-                ensure_binding=False,
-            )
-            stream_mode = "native_v3"
-        else:
-            broker = request.app.state.conversation_event_broker_v2
-            snapshot_v2 = request.app.state.thread_query_service_v2.build_stream_snapshot(
-                project_id,
-                node_id,
-                thread_role,
-                after_snapshot_version=after_snapshot_version,
-                ensure_binding=False,
-            )
-            snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+        snapshot_v3 = request.app.state.thread_query_service_v3.build_stream_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            after_snapshot_version=after_snapshot_version,
+            ensure_binding=False,
+        )
         queue = broker.subscribe(project_id, node_id, thread_role=thread_role)
     except AppError as exc:
         if queue is not None:
@@ -298,7 +271,6 @@ async def thread_events_by_id_v3(
     first_snapshot_version = int(snapshot_v3.get("snapshotVersion") or 0)
 
     async def event_generator():
-        current_snapshot = snapshot_v3
         try:
             yield _sse_frame(snapshot_envelope)
             while True:
@@ -308,27 +280,9 @@ async def thread_events_by_id_v3(
                     event_version = int(event_payload.get("snapshotVersion") or 0)
                     if event_version and event_version <= first_snapshot_version:
                         continue
-                    if stream_mode == "native_v3":
-                        if not event_payload:
-                            continue
-                        yield _sse_frame(_envelope_with_contract_fields(event_payload, thread_role=thread_role))
+                    if not event_payload:
                         continue
-
-                    current_snapshot, mapped_events = project_v2_envelope_to_v3(current_snapshot, event_payload)
-                    if not mapped_events:
-                        continue
-                    for mapped in mapped_events:
-                        mapped_payload = mapped.get("payload")
-                        payload_dict = mapped_payload if isinstance(mapped_payload, dict) else {}
-                        mapped_envelope = build_thread_envelope(
-                            project_id=project_id,
-                            node_id=node_id,
-                            thread_role=thread_role,
-                            snapshot_version=event_version or int(current_snapshot.get("snapshotVersion") or 0),
-                            event_type=str(mapped.get("type") or ""),
-                            payload=payload_dict,
-                        )
-                        yield _sse_frame(_envelope_with_contract_fields(mapped_envelope, thread_role=thread_role))
+                    yield _sse_frame(_envelope_with_contract_fields(event_payload, thread_role=thread_role))
                 except asyncio.TimeoutError:
                     yield ": heartbeat\n\n"
                 if await request.is_disconnected():
@@ -363,22 +317,13 @@ async def resolve_user_input_by_id_v3(
             node_id,
             thread_id,
         )
-        if thread_role == "ask_planning":
-            payload = request.app.state.thread_runtime_service_v3.resolve_user_input(
-                project_id=project_id,
-                node_id=node_id,
-                thread_role=thread_role,
-                request_id=request_id,
-                answers=body.answers,
-            )
-        else:
-            payload = request.app.state.thread_runtime_service_v2.resolve_user_input(
-                project_id=project_id,
-                node_id=node_id,
-                thread_role=thread_role,
-                request_id=request_id,
-                answers=body.answers,
-            )
+        payload = request.app.state.thread_runtime_service_v3.resolve_user_input(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            request_id=request_id,
+            answers=body.answers,
+        )
         return _ok(payload)
     except AppError as exc:
         return _error_response(exc)
@@ -442,14 +387,13 @@ async def apply_plan_action_by_id_v3(
         if int(body.revision) < 0:
             raise InvalidRequest("revision must be a non-negative integer.")
 
-        snapshot_v2 = request.app.state.thread_query_service_v2.get_thread_snapshot(
+        snapshot_v3 = request.app.state.thread_query_service_v3.get_thread_snapshot(
             project_id,
             node_id,
             thread_role,
             publish_repairs=True,
             ensure_binding=False,
         )
-        snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
         plan_ready = snapshot_v3.get("uiSignals", {}).get("planReady", {})
         if not bool(plan_ready.get("ready")) or bool(plan_ready.get("failed")):
             raise InvalidRequest("The current execution thread does not have a ready plan revision.")

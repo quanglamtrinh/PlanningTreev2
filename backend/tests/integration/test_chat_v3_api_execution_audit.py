@@ -546,11 +546,19 @@ def test_v3_execution_resolve_user_input_by_id_updates_snapshot_and_signal(
         request_id: str,
         answers: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, thread_role)
+        if not storage.thread_snapshot_store_v3.exists(project_id, node_id, thread_role):
+            client.app.state.thread_query_service_v3.get_thread_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+                publish_repairs=False,
+                ensure_binding=False,
+            )
+        snapshot = storage.thread_snapshot_store_v3.read_snapshot(project_id, node_id, thread_role)
         snapshot["processingState"] = "idle"
         snapshot["activeTurnId"] = None
         snapshot["snapshotVersion"] = int(snapshot.get("snapshotVersion") or 0) + 1
-        for pending in snapshot.get("pendingRequests", []):
+        for pending in snapshot.get("uiSignals", {}).get("activeUserInputRequests", []):
             if str(pending.get("requestId") or "") != request_id:
                 continue
             pending["status"] = "answered"
@@ -566,7 +574,7 @@ def test_v3_execution_resolve_user_input_by_id_updates_snapshot_and_signal(
             item["answers"] = answers
             item["resolvedAt"] = "2026-04-01T10:02:31Z"
             item["updatedAt"] = "2026-04-01T10:02:31Z"
-        storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, thread_role, snapshot)
+        storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, thread_role, snapshot)
         return {
             "requestId": request_id,
             "itemId": "input-1",
@@ -577,7 +585,7 @@ def test_v3_execution_resolve_user_input_by_id_updates_snapshot_and_signal(
             "submittedAt": "2026-04-01T10:02:30Z",
         }
 
-    client.app.state.thread_runtime_service_v2.resolve_user_input = _fake_resolve_user_input
+    client.app.state.thread_runtime_service_v3.resolve_user_input = _fake_resolve_user_input
 
     resolve_response = client.post(
         f"/v3/projects/{project_id}/threads/by-id/{thread_id}/requests/req-1/resolve",
@@ -670,10 +678,13 @@ def test_v3_ask_resolve_user_input_by_id_updates_snapshot_and_signal(client: Tes
     ) -> dict[str, Any]:
         assert thread_role == "ask_planning"
         if not storage.thread_snapshot_store_v3.exists(project_id, node_id, thread_role):
-            snapshot_v2 = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, thread_role)
-            bridged = workflow_v3_route_module.project_v2_snapshot_to_v3(snapshot_v2)
-            bridged["threadRole"] = "ask_planning"
-            storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, thread_role, bridged)
+            client.app.state.thread_query_service_v3.get_thread_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+                publish_repairs=False,
+                ensure_binding=False,
+            )
         snapshot = storage.thread_snapshot_store_v3.read_snapshot(project_id, node_id, thread_role)
         snapshot["processingState"] = "idle"
         snapshot["activeTurnId"] = None

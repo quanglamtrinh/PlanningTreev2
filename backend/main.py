@@ -62,6 +62,7 @@ from backend.services.split_service import SplitService
 from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
+from backend.streaming.conversation_v2_to_v3_event_relay import RelayingConversationEventBrokerV2
 from backend.streaming.sse_broker import ChatEventBroker, GlobalEventBroker
 
 logger = logging.getLogger(__name__)
@@ -149,8 +150,12 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     )
     request_ledger_service_v2 = RequestLedgerService()
     request_ledger_service_v3 = RequestLedgerServiceV3()
-    conversation_event_broker_v2 = ChatEventBroker()
     conversation_event_broker_v3 = ChatEventBroker()
+    conversation_event_broker_v2 = RelayingConversationEventBrokerV2(
+        conversation_event_broker_v3=conversation_event_broker_v3,
+        snapshot_store_v2=storage.thread_snapshot_store_v2,
+        snapshot_store_v3=storage.thread_snapshot_store_v3,
+    )
     workflow_event_broker_v2 = GlobalEventBroker()
     thread_query_service_v2 = ThreadQueryService(
         storage=storage,

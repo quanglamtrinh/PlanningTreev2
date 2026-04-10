@@ -1,7 +1,7 @@
 migration_id: native_v3_end_to_end_conversion
-status: phase_3_in_progress
-current_phase: 3
-next_phase: 4
+status: phase_4_in_progress
+current_phase: 4
+next_phase: 5
 baseline_date: 2026-04-09
 
 references:
@@ -166,7 +166,7 @@ phases:
 
   - phase: 3
     name: v3_route_native_cutover
-    status: in_progress
+    status: completed
     effort_percent: 12
     estimate_person_days: "4-6"
     depends_on:
@@ -178,10 +178,23 @@ phases:
     notes: >
       Entered in_progress on 2026-04-10 after Phase-2 completion evidence and
       artifact handoff. Scope now is route dependency cutover only.
+      2026-04-10 completion evidence: `/v3` route dependency cutover is now
+      native V3 for query/runtime usage (`workflow_v3.py` no longer references
+      `thread_query_service_v2`, `thread_runtime_service_v2`,
+      `project_v2_snapshot_to_v3`, or `project_v2_envelope_to_v3`), with
+      temporary V2->V3 relay component
+      (`backend/streaming/conversation_v2_to_v3_event_relay.py`) to preserve
+      execution/audit stream parity while execution mutation orchestration
+      remains on `execution_audit_workflow_service_v2` until Phase 4.
+      Artifact updated:
+      `docs/conversion/artifacts/phase-3/route-cutover-diff.md`.
+      Verification passed:
+      `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py backend/tests/unit/test_ask_v3_rollout_phase6_7.py backend/tests/unit/test_thread_query_service_v3.py backend/tests/unit/test_thread_runtime_service_v3.py backend/tests/unit/test_phase3_workflow_v3_route_cutover_guards.py`
+      (38 passed). Additional route grep gate passed for forbidden V2 route dependencies.
 
   - phase: 4
     name: workflow_service_cutover
-    status: pending
+    status: in_progress
     effort_percent: 18
     estimate_person_days: "8-10"
     depends_on:
@@ -190,6 +203,10 @@ phases:
     exit_criteria:
       - finish-task/execution/audit/review services use V3 core only.
       - No execution/audit write path touches legacy chat session transcript.
+    notes: >
+      Entered in_progress on 2026-04-10 after Phase-3 completion evidence and
+      handoff. Focus is execution/audit workflow service migration to native V3
+      core and removal of temporary V2->V3 event relay compatibility.
 
   - phase: 5
     name: frontend_control_plane_v3

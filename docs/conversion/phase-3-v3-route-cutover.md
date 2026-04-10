@@ -1,6 +1,6 @@
 # Phase 3 - `/v3` Route Native Cutover
 
-Status: pending  
+Status: completed  
 Estimate: 4-6 person-days (12%)
 
 ## 1. Goal
@@ -26,20 +26,20 @@ Move `/v3` routes to call native V3 services directly and remove V2 adapter depe
 
 ## 4. Work breakdown
 
-- [ ] Switch route dependencies to:
+- [x] Switch route dependencies to:
   - `thread_query_service_v3`
   - `thread_runtime_service_v3`
   - workflow service may remain `_v2` temporarily until Phase 4
-- [ ] Remove route-level adapters:
+- [x] Remove route-level adapters:
   - remove `project_v2_snapshot_to_v3`
   - remove `project_v2_envelope_to_v3` from stream route path
-- [ ] Preserve by-id role resolution:
+- [x] Preserve by-id role resolution:
   - execution/audit via workflow state
   - ask via registry (with legacy-session seed only when bridge policy allows)
-- [ ] Enforce naming contract:
+- [x] Enforce naming contract:
   - responses/events use canonical `thread_role` (JSON key `threadRole`) as primary contract
   - if needed for rollout safety, keep temporary `lane` dual-emit behind explicit compatibility guard only until frontend Phase 5 completion
-- [ ] Preserve error semantics:
+- [x] Preserve error semantics:
   - `invalid_request` for mismatch/policy
   - `ask_v3_disabled` while ask gate remains enabled
   - `conversation_stream_mismatch` guard
@@ -59,8 +59,8 @@ Move `/v3` routes to call native V3 services directly and remove V2 adapter depe
 
 ## 7. Verification
 
-- [ ] `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py`
-- [ ] `python -m pytest -q backend/tests/unit/test_ask_v3_rollout_phase6_7.py`
+- [x] `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py`
+- [x] `python -m pytest -q backend/tests/unit/test_ask_v3_rollout_phase6_7.py`
 
 ## 8. Risks and mitigations
 
