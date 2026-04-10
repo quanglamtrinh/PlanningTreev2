@@ -1,0 +1,57 @@
+{
+  "run_id": "convv3mig_8737adb686d6",
+  "started_at": "2026-04-10T22:42:02.674494+00:00",
+  "ended_at": "2026-04-10T22:42:02.754551+00:00",
+  "mode": "apply",
+  "bridge_mode": "enabled",
+  "filters": {
+    "all_projects": false,
+    "project_ids": [
+      "e3b89d3460a146d1986767e242075db3",
+      "7dd354e0f5af41fe95b1c6099208f68a"
+    ],
+    "node_ids": [],
+    "thread_roles": []
+  },
+  "totals": {
+    "scanned": 4,
+    "migrated": 3,
+    "skip_existing": 1,
+    "skip_missing_v2": 0,
+    "failed": 0
+  },
+  "checksum": {
+    "algorithm": "sha256",
+    "targets_hash": "a4b8751f9acfc0670de94b1b34c00f1d63471f8d3876fc613ec530f4bef8bc8e",
+    "target_count": 4
+  },
+  "errors": [],
+  "results": [
+    {
+      "project_id": "7dd354e0f5af41fe95b1c6099208f68a",
+      "node_id": "655c187dd1634e469c6f5070164bb551",
+      "thread_role": "ask_planning",
+      "status": "migrated"
+    },
+    {
+      "project_id": "7dd354e0f5af41fe95b1c6099208f68a",
+      "node_id": "655c187dd1634e469c6f5070164bb551",
+      "thread_role": "execution",
+      "status": "skip_existing"
+    },
+    {
+      "project_id": "e3b89d3460a146d1986767e242075db3",
+      "node_id": "9830d4d3366e4924b92168671f6a3f70",
+      "thread_role": "audit",
+      "status": "migrated"
+    },
+    {
+      "project_id": "e3b89d3460a146d1986767e242075db3",
+      "node_id": "9830d4d3366e4924b92168671f6a3f70",
+      "thread_role": "execution",
+      "status": "migrated"
+    }
+  ],
+  "stopped_early": false,
+  "fail_fast_threshold": null
+}

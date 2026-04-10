@@ -1,7 +1,7 @@
 migration_id: native_v3_end_to_end_conversion
-status: phase_6_in_progress
-current_phase: 6
-next_phase: 7
+status: phase_7_in_progress
+current_phase: 7
+next_phase: 8
 baseline_date: 2026-04-09
 
 references:
@@ -264,7 +264,7 @@ phases:
 
   - phase: 6
     name: batch_migration_and_bridge_sunset
-    status: in_progress
+    status: completed
     effort_percent: 10
     estimate_person_days: "4-6"
     depends_on:
@@ -296,10 +296,24 @@ phases:
       (18 passed),
       `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py backend/tests/integration/test_phase6_execution_audit_cutover.py backend/tests/unit/test_conversation_v3_projector.py backend/tests/unit/test_conversation_v3_parity_fixtures.py backend/tests/unit/test_conversation_v3_fixture_replay.py backend/tests/unit/test_conversation_v3_fileschanged_parity_fixtures.py backend/tests/unit/test_ask_v3_rollout_phase6_7.py`
       (44 passed).
+      2026-04-10 rehearsal evidence: executed dry-run/apply/rerun migration
+      waves on sample workspace data root `tmp/phase6_rehearsal/appdata`
+      with published reports:
+      `docs/conversion/artifacts/phase-6/reports/rehearsal-dry-run.json`,
+      `docs/conversion/artifacts/phase-6/reports/rehearsal-apply-wave1.json`,
+      `docs/conversion/artifacts/phase-6/reports/rehearsal-apply-wave1-rerun.json`.
+      Idempotency confirmed (`migrated=0`, `skip_existing=4` on rerun).
+      Disabled-mode API rehearsal verified typed
+      `conversation_v3_missing` with HTTP 409 and `error.details={}`:
+      `docs/conversion/artifacts/phase-6/reports/rehearsal-disabled-mode-check.json`.
+      Rehearsal summary published:
+      `docs/conversion/artifacts/phase-6/rehearsal-evidence.md`.
+      2026-04-10 phase closeout: Phase 6 marked completed and handed off to
+      Phase 7 via `docs/conversion/artifacts/phase-6/handoff-to-phase-7.md`.
 
   - phase: 7
     name: hard_cutover_cleanup
-    status: pending
+    status: in_progress
     effort_percent: 8
     estimate_person_days: "4-5"
     depends_on:
@@ -308,6 +322,9 @@ phases:
     exit_criteria:
       - V2 adapter core removed from production path.
       - Dead code and legacy stores/routes are cleaned up.
+    notes: >
+      Entered in_progress on 2026-04-10 after Phase-6 completion and handoff
+      publication at `docs/conversion/artifacts/phase-6/handoff-to-phase-7.md`.
 
   - phase: 8
     name: stabilization_and_closeout

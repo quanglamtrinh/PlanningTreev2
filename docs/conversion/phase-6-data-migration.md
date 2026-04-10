@@ -1,6 +1,6 @@
 # Phase 6 - Batch Migration And Bridge Sunset
 
-Status: in_progress  
+Status: completed  
 Estimate: 4-6 person-days (10%)
 
 ## 1. Objective
@@ -76,6 +76,13 @@ Complete batch transcript migration from `conversation_v2` to `conversation_v3`,
 - [x] Report schema and runbook artifacts published for rehearsal/checksum workflow:
   - `docs/conversion/artifacts/phase-6/migration-report-template.json`
   - `docs/conversion/artifacts/phase-6/migration-runbook.md`
+- [x] Rehearsal migration reports published:
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-dry-run.json`
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-apply-wave1.json`
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-apply-wave1-rerun.json`
+- [x] Disabled-mode typed error rehearsal published:
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-disabled-mode-check.json`
+  - `docs/conversion/artifacts/phase-6/rehearsal-evidence.md`
 
 ## 8. Risks And Mitigations
 

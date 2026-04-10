@@ -89,4 +89,9 @@ If disabled rollout exposes unexpected misses:
 - `python -m pytest -q backend/tests/unit/test_conversation_v3_migration.py` -> `6 passed`
 - `python -m pytest -q backend/tests/unit/test_conversation_v3_migration.py backend/tests/unit/test_thread_query_service_v3.py backend/tests/unit/test_conversation_v3_stores.py backend/tests/unit/test_conversation_v3_parity_fixtures.py` -> `18 passed`
 - `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py backend/tests/integration/test_phase6_execution_audit_cutover.py backend/tests/unit/test_conversation_v3_projector.py backend/tests/unit/test_conversation_v3_parity_fixtures.py backend/tests/unit/test_conversation_v3_fixture_replay.py backend/tests/unit/test_conversation_v3_fileschanged_parity_fixtures.py backend/tests/unit/test_ask_v3_rollout_phase6_7.py` -> `44 passed`
-
+- Rehearsal run artifacts:
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-dry-run.json`
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-apply-wave1.json`
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-apply-wave1-rerun.json`
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-disabled-mode-check.json`
+  - `docs/conversion/artifacts/phase-6/rehearsal-evidence.md`
