@@ -277,6 +277,25 @@ phases:
     notes: >
       Entered in_progress on 2026-04-10 after Phase-5 completion and handoff
       publication at `docs/conversion/artifacts/phase-5/handoff-to-phase-6.md`.
+      2026-04-10 implementation evidence: added migration CLI
+      `python -m backend.tools.migrate_conversation_v2_to_v3` with scoped
+      filters (`--project-id|--all-projects`, `--node-id`, `--thread-role`),
+      dry-run/apply modes, per-target failure isolation, idempotent skip
+      behavior (`skip_existing`), missing-source handling (`skip_missing_v2`),
+      fail-fast threshold control, and checksum-backed report contract
+      (`run_id`, mode, bridge_mode, totals, errors, checksum).
+      Added unit coverage:
+      `backend/tests/unit/test_conversation_v3_migration.py`.
+      Artifacts published:
+      `docs/conversion/artifacts/phase-6/migration-runbook.md`,
+      `docs/conversion/artifacts/phase-6/migration-report-template.json`.
+      Verification passed:
+      `python -m pytest -q backend/tests/unit/test_conversation_v3_migration.py`
+      (6 passed),
+      `python -m pytest -q backend/tests/unit/test_conversation_v3_migration.py backend/tests/unit/test_thread_query_service_v3.py backend/tests/unit/test_conversation_v3_stores.py backend/tests/unit/test_conversation_v3_parity_fixtures.py`
+      (18 passed),
+      `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py backend/tests/integration/test_phase6_execution_audit_cutover.py backend/tests/unit/test_conversation_v3_projector.py backend/tests/unit/test_conversation_v3_parity_fixtures.py backend/tests/unit/test_conversation_v3_fixture_replay.py backend/tests/unit/test_conversation_v3_fileschanged_parity_fixtures.py backend/tests/unit/test_ask_v3_rollout_phase6_7.py`
+      (44 passed).
 
   - phase: 7
     name: hard_cutover_cleanup

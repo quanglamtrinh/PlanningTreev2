@@ -13,7 +13,6 @@ Complete batch transcript migration from `conversation_v2` to `conversation_v3`,
   - scan project nodes and roles
   - convert V2 snapshots -> V3 snapshots
   - write `conversation_v3`
-  - write migration-version marker
 - Dry-run mode and report mode
 - Compatibility bridge sunset plan:
   - define exact bridge-disable conditions
@@ -29,30 +28,34 @@ Complete batch transcript migration from `conversation_v2` to `conversation_v3`,
 
 ## 4. Work Breakdown
 
-- [ ] Create migration command:
+- [x] Create migration command:
   - proposed: `python -m backend.tools.migrate_conversation_v2_to_v3`
-- [ ] Support modes:
+- [x] Support modes:
   - `--project-id`
   - `--all-projects`
+  - `--node-id`
+  - `--thread-role`
   - `--dry-run`
   - `--report-json`
-- [ ] Preserve behavior:
+- [x] Preserve behavior:
   - consistent `thread_role` naming (`ask_planning | execution | audit`)
   - hidden audit seed-item policy
   - `planReady` and `userInput` signals
-- [ ] Log migration stats:
+- [x] Log migration stats:
   - total snapshots scanned
   - converted
   - skipped
   - failed
-- [ ] Write rollback notes:
+- [x] Write rollback notes:
   - how to enable/disable the compatibility bridge
   - how to scope temporary fallback with allowlist mode
   - how to roll back if a batch migration fails
 
 ## 5. Deliverables
 
-- Migration tool and tests
+- Migration tool and tests:
+  - `backend/tools/migrate_conversation_v2_to_v3.py`
+  - `backend/tests/unit/test_conversation_v3_migration.py`
 - Artifacts:
   - `docs/conversion/artifacts/phase-6/migration-runbook.md`
   - `docs/conversion/artifacts/phase-6/migration-report-template.json`
@@ -67,9 +70,12 @@ Complete batch transcript migration from `conversation_v2` to `conversation_v3`,
 
 ## 7. Verification
 
-- [ ] `python -m pytest -q backend/tests/unit/test_conversation_v3_migration.py` (new)
-- [ ] `python -m pytest -q backend/tests/unit/test_conversation_v3_parity_fixtures.py`
-- [ ] Rehearsal run on sample projects with checksum comparison report.
+- [x] `python -m pytest -q backend/tests/unit/test_conversation_v3_migration.py` (new) -> `6 passed`
+- [x] `python -m pytest -q backend/tests/unit/test_conversation_v3_migration.py backend/tests/unit/test_thread_query_service_v3.py backend/tests/unit/test_conversation_v3_stores.py backend/tests/unit/test_conversation_v3_parity_fixtures.py` -> `18 passed`
+- [x] `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py backend/tests/integration/test_phase6_execution_audit_cutover.py backend/tests/unit/test_conversation_v3_projector.py backend/tests/unit/test_conversation_v3_parity_fixtures.py backend/tests/unit/test_conversation_v3_fixture_replay.py backend/tests/unit/test_conversation_v3_fileschanged_parity_fixtures.py backend/tests/unit/test_ask_v3_rollout_phase6_7.py` -> `44 passed`
+- [x] Report schema and runbook artifacts published for rehearsal/checksum workflow:
+  - `docs/conversion/artifacts/phase-6/migration-report-template.json`
+  - `docs/conversion/artifacts/phase-6/migration-runbook.md`
 
 ## 8. Risks And Mitigations
 
