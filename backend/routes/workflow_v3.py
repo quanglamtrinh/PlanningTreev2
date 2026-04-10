@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from typing import Any, Literal
 
@@ -8,8 +9,10 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from backend.config.app_config import is_conversation_v3_bridge_allowed_for_project, is_v3_lane_compat_enabled
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
+from backend.conversation.domain.types_v3 import normalize_thread_role_v3, thread_role_to_lane_v3
 from backend.conversation.projector.thread_event_projector_v3 import (
     project_v2_envelope_to_v3,
     project_v2_snapshot_to_v3,
@@ -88,6 +91,34 @@ def _is_ask_v3_backend_enabled(request: Request) -> bool:
     return bool(getattr(request.app.state, "ask_v3_backend_enabled", True))
 
 
+def _snapshot_with_contract_fields(snapshot: dict[str, Any], *, thread_role: str) -> dict[str, Any]:
+    prepared = copy.deepcopy(snapshot if isinstance(snapshot, dict) else {})
+    resolved_thread_role = normalize_thread_role_v3(
+        prepared.get("threadRole") or prepared.get("thread_role") or thread_role,
+        default=normalize_thread_role_v3(thread_role, default="ask_planning"),
+    )
+    prepared["threadRole"] = resolved_thread_role
+    if is_v3_lane_compat_enabled():
+        prepared["lane"] = str(prepared.get("lane") or thread_role_to_lane_v3(resolved_thread_role))
+    else:
+        prepared.pop("lane", None)
+    return prepared
+
+
+def _envelope_with_contract_fields(envelope: dict[str, Any], *, thread_role: str) -> dict[str, Any]:
+    prepared = copy.deepcopy(envelope if isinstance(envelope, dict) else {})
+    prepared["threadRole"] = normalize_thread_role_v3(
+        prepared.get("threadRole") or thread_role,
+        default=normalize_thread_role_v3(thread_role, default="ask_planning"),
+    )
+    payload = prepared.get("payload")
+    if isinstance(payload, dict):
+        snapshot = payload.get("snapshot")
+        if isinstance(snapshot, dict):
+            payload["snapshot"] = _snapshot_with_contract_fields(snapshot, thread_role=thread_role)
+    return prepared
+
+
 def _resolve_execution_audit_thread_role_by_state(
     request: Request,
     project_id: str,
@@ -113,7 +144,7 @@ def _resolve_ask_thread_role_from_registry(
     registry_service = request.app.state.thread_registry_service_v2
     entry = registry_service.read_entry(project_id, node_id, "ask_planning")
     ask_thread_id = _normalize_thread_id(entry.get("threadId"))
-    if not ask_thread_id:
+    if not ask_thread_id and is_conversation_v3_bridge_allowed_for_project(project_id):
         legacy_session = request.app.state.storage.chat_state_store.read_session(
             project_id,
             node_id,
@@ -178,14 +209,24 @@ async def get_thread_snapshot_by_id_v3(
             node_id,
             thread_id,
         )
-        snapshot_v2 = request.app.state.thread_query_service_v2.get_thread_snapshot(
-            project_id,
-            node_id,
-            thread_role,
-            publish_repairs=True,
-            ensure_binding=False,
-        )
-        snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+        if thread_role == "ask_planning":
+            snapshot_v3 = request.app.state.thread_query_service_v3.get_thread_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+                publish_repairs=True,
+                ensure_binding=False,
+            )
+        else:
+            snapshot_v2 = request.app.state.thread_query_service_v2.get_thread_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+                publish_repairs=True,
+                ensure_binding=False,
+            )
+            snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+        snapshot_v3 = _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)
         return _ok({"snapshot": snapshot_v3})
     except AppError as exc:
         return _error_response(exc)
@@ -201,9 +242,10 @@ async def thread_events_by_id_v3(
     node_id: str = Query(...),
     after_snapshot_version: int | None = Query(None),
 ):
-    broker = request.app.state.conversation_event_broker_v2
+    broker: Any = None
     queue = None
     thread_role = ""
+    stream_mode = "legacy_v2_projected"
     try:
         thread_role = _resolve_thread_role_by_id_v3(
             request,
@@ -215,14 +257,25 @@ async def thread_events_by_id_v3(
             metrics = getattr(request.app.state, "ask_rollout_metrics_service", None)
             if metrics is not None:
                 metrics.record_stream_session()
-        snapshot_v2 = request.app.state.thread_query_service_v2.build_stream_snapshot(
-            project_id,
-            node_id,
-            thread_role,
-            after_snapshot_version=after_snapshot_version,
-            ensure_binding=False,
-        )
-        snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+            broker = request.app.state.conversation_event_broker_v3
+            snapshot_v3 = request.app.state.thread_query_service_v3.build_stream_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+                after_snapshot_version=after_snapshot_version,
+                ensure_binding=False,
+            )
+            stream_mode = "native_v3"
+        else:
+            broker = request.app.state.conversation_event_broker_v2
+            snapshot_v2 = request.app.state.thread_query_service_v2.build_stream_snapshot(
+                project_id,
+                node_id,
+                thread_role,
+                after_snapshot_version=after_snapshot_version,
+                ensure_binding=False,
+            )
+            snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
         queue = broker.subscribe(project_id, node_id, thread_role=thread_role)
     except AppError as exc:
         if queue is not None:
@@ -239,8 +292,9 @@ async def thread_events_by_id_v3(
         thread_role=thread_role,
         snapshot_version=int(snapshot_v3.get("snapshotVersion") or 0),
         event_type=event_types.THREAD_SNAPSHOT_V3,
-        payload={"snapshot": snapshot_v3},
+        payload={"snapshot": _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)},
     )
+    snapshot_envelope = _envelope_with_contract_fields(snapshot_envelope, thread_role=thread_role)
     first_snapshot_version = int(snapshot_v3.get("snapshotVersion") or 0)
 
     async def event_generator():
@@ -250,10 +304,17 @@ async def thread_events_by_id_v3(
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_INTERVAL_SEC)
-                    event_version = int(event.get("snapshotVersion") or 0)
+                    event_payload = event if isinstance(event, dict) else {}
+                    event_version = int(event_payload.get("snapshotVersion") or 0)
                     if event_version and event_version <= first_snapshot_version:
                         continue
-                    current_snapshot, mapped_events = project_v2_envelope_to_v3(current_snapshot, event)
+                    if stream_mode == "native_v3":
+                        if not event_payload:
+                            continue
+                        yield _sse_frame(_envelope_with_contract_fields(event_payload, thread_role=thread_role))
+                        continue
+
+                    current_snapshot, mapped_events = project_v2_envelope_to_v3(current_snapshot, event_payload)
                     if not mapped_events:
                         continue
                     for mapped in mapped_events:
@@ -267,7 +328,7 @@ async def thread_events_by_id_v3(
                             event_type=str(mapped.get("type") or ""),
                             payload=payload_dict,
                         )
-                        yield _sse_frame(mapped_envelope)
+                        yield _sse_frame(_envelope_with_contract_fields(mapped_envelope, thread_role=thread_role))
                 except asyncio.TimeoutError:
                     yield ": heartbeat\n\n"
                 if await request.is_disconnected():
@@ -302,13 +363,22 @@ async def resolve_user_input_by_id_v3(
             node_id,
             thread_id,
         )
-        payload = request.app.state.thread_runtime_service_v2.resolve_user_input(
-            project_id=project_id,
-            node_id=node_id,
-            thread_role=thread_role,
-            request_id=request_id,
-            answers=body.answers,
-        )
+        if thread_role == "ask_planning":
+            payload = request.app.state.thread_runtime_service_v3.resolve_user_input(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                request_id=request_id,
+                answers=body.answers,
+            )
+        else:
+            payload = request.app.state.thread_runtime_service_v2.resolve_user_input(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                request_id=request_id,
+                answers=body.answers,
+            )
         return _ok(payload)
     except AppError as exc:
         return _error_response(exc)
@@ -336,7 +406,7 @@ async def start_turn_by_id_v3(
                 text=body.text,
             )
         elif thread_role == "ask_planning":
-            payload = request.app.state.thread_runtime_service_v2.start_turn(
+            payload = request.app.state.thread_runtime_service_v3.start_turn(
                 project_id,
                 node_id,
                 thread_role,
@@ -423,7 +493,7 @@ async def reset_thread_by_id_v3(
         thread_role = _resolve_thread_role_by_id_v3(request, project_id, node_id, thread_id)
         if thread_role != "ask_planning":
             raise InvalidRequest("V3 by-id reset is supported only on ask threads.")
-        snapshot = request.app.state.thread_query_service_v2.reset_thread(
+        snapshot = request.app.state.thread_query_service_v3.reset_thread(
             project_id,
             node_id,
             thread_role,

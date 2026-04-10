@@ -152,6 +152,17 @@ def is_conversation_v3_bridge_allowed_for_project(project_id: str) -> bool:
     return str(project_id or "").strip() in get_conversation_v3_bridge_allowlist()
 
 
+def get_v3_lane_compat_mode() -> str:
+    raw = str(os.environ.get("PLANNINGTREE_V3_LANE_COMPAT_MODE", "") or "").strip().lower()
+    if raw in {"enabled", "disabled"}:
+        return raw
+    return "enabled"
+
+
+def is_v3_lane_compat_enabled() -> bool:
+    return get_v3_lane_compat_mode() == "enabled"
+
+
 def get_split_model() -> str:
     return os.environ.get("PLANNINGTREE_SPLIT_MODEL", "gpt-4o")
 

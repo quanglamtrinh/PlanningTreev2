@@ -364,6 +364,7 @@ def test_v3_execution_snapshot_by_id_returns_wrapped_snapshot(client: TestClient
     payload = response.json()
     assert payload["ok"] is True
     snapshot = payload["data"]["snapshot"]
+    assert snapshot["threadRole"] == "execution"
     assert snapshot["lane"] == "execution"
     assert snapshot["threadId"] == thread_id
     assert snapshot["items"][0]["kind"] == "message"
@@ -389,6 +390,7 @@ def test_v3_ask_snapshot_by_id_returns_wrapped_snapshot(client: TestClient, work
     payload = response.json()
     assert payload["ok"] is True
     snapshot = payload["data"]["snapshot"]
+    assert snapshot["threadRole"] == "ask_planning"
     assert snapshot["lane"] == "ask"
     assert snapshot["threadId"] == thread_id
     assert snapshot["items"][0]["kind"] == "message"
@@ -406,10 +408,76 @@ def test_v3_ask_snapshot_by_id_seeds_registry_from_legacy_session(client: TestCl
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
+    assert payload["data"]["snapshot"]["threadRole"] == "ask_planning"
     assert payload["data"]["snapshot"]["lane"] == "ask"
 
     seeded_entry = client.app.state.storage.thread_registry_store.read_entry(project_id, node_id, "ask_planning")
     assert seeded_entry["threadId"] == thread_id
+
+
+def test_v3_ask_snapshot_by_id_omits_lane_when_compat_disabled(client: TestClient, workspace_root, monkeypatch) -> None:
+    monkeypatch.setenv("PLANNINGTREE_V3_LANE_COMPAT_MODE", "disabled")
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    snapshot = payload["data"]["snapshot"]
+    assert snapshot["threadRole"] == "ask_planning"
+    assert "lane" not in snapshot
+
+
+def test_v3_ask_snapshot_by_id_seed_respects_bridge_disabled(client: TestClient, workspace_root, monkeypatch) -> None:
+    monkeypatch.setenv("PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE", "disabled")
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id, seed_registry=False)
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id},
+    )
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_request"
+
+    entry = client.app.state.storage.thread_registry_store.read_entry(project_id, node_id, "ask_planning")
+    assert not str(entry.get("threadId") or "").strip()
+
+
+def test_v3_ask_snapshot_by_id_seed_respects_bridge_allowlist(client: TestClient, workspace_root, monkeypatch) -> None:
+    monkeypatch.setenv("PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE", "allowlist")
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id, seed_registry=False)
+
+    monkeypatch.setenv("PLANNINGTREE_CONVERSATION_V3_BRIDGE_ALLOWLIST", "other-project")
+    denied = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id},
+    )
+    assert denied.status_code == 400
+    denied_payload = denied.json()
+    assert denied_payload["ok"] is False
+    assert denied_payload["error"]["code"] == "invalid_request"
+
+    monkeypatch.setenv("PLANNINGTREE_CONVERSATION_V3_BRIDGE_ALLOWLIST", project_id)
+    allowed = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id},
+    )
+    assert allowed.status_code == 200
+    allowed_payload = allowed.json()
+    assert allowed_payload["ok"] is True
+    assert allowed_payload["data"]["snapshot"]["threadRole"] == "ask_planning"
+    assert allowed_payload["data"]["snapshot"]["lane"] == "ask"
 
 
 def test_v3_by_id_snapshot_rejects_thread_id_mismatch(client: TestClient, workspace_root) -> None:
@@ -564,7 +632,7 @@ def test_v3_ask_turns_by_id_dispatches_to_runtime(client: TestClient, workspace_
             "createdItems": [],
         }
 
-    client.app.state.thread_runtime_service_v2.start_turn = _fake_start_turn
+    client.app.state.thread_runtime_service_v3.start_turn = _fake_start_turn
 
     response = client.post(
         f"/v3/projects/{project_id}/threads/by-id/{thread_id}/turns",
@@ -601,11 +669,16 @@ def test_v3_ask_resolve_user_input_by_id_updates_snapshot_and_signal(client: Tes
         answers: list[dict[str, Any]],
     ) -> dict[str, Any]:
         assert thread_role == "ask_planning"
-        snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, thread_role)
+        if not storage.thread_snapshot_store_v3.exists(project_id, node_id, thread_role):
+            snapshot_v2 = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, thread_role)
+            bridged = workflow_v3_route_module.project_v2_snapshot_to_v3(snapshot_v2)
+            bridged["threadRole"] = "ask_planning"
+            storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, thread_role, bridged)
+        snapshot = storage.thread_snapshot_store_v3.read_snapshot(project_id, node_id, thread_role)
         snapshot["processingState"] = "idle"
         snapshot["activeTurnId"] = None
         snapshot["snapshotVersion"] = int(snapshot.get("snapshotVersion") or 0) + 1
-        for pending in snapshot.get("pendingRequests", []):
+        for pending in snapshot.get("uiSignals", {}).get("activeUserInputRequests", []):
             if str(pending.get("requestId") or "") != request_id:
                 continue
             pending["status"] = "answered"
@@ -621,7 +694,7 @@ def test_v3_ask_resolve_user_input_by_id_updates_snapshot_and_signal(client: Tes
             item["answers"] = answers
             item["resolvedAt"] = "2026-04-01T09:02:31Z"
             item["updatedAt"] = "2026-04-01T09:02:31Z"
-        storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, thread_role, snapshot)
+        storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, thread_role, snapshot)
         return {
             "requestId": request_id,
             "itemId": "ask-input-1",
@@ -632,7 +705,7 @@ def test_v3_ask_resolve_user_input_by_id_updates_snapshot_and_signal(client: Tes
             "submittedAt": "2026-04-01T09:02:30Z",
         }
 
-    client.app.state.thread_runtime_service_v2.resolve_user_input = _fake_resolve_user_input
+    client.app.state.thread_runtime_service_v3.resolve_user_input = _fake_resolve_user_input
 
     resolve_response = client.post(
         f"/v3/projects/{project_id}/threads/by-id/{thread_id}/requests/ask-req-1/resolve",
@@ -765,14 +838,14 @@ def test_v3_ask_reset_by_id_clears_thread_snapshot(client: TestClient, workspace
     assert payload["data"]["threadId"] is None
     assert int(payload["data"]["snapshotVersion"]) >= 1
 
-    snapshot = client.app.state.storage.thread_snapshot_store_v2.read_snapshot(
+    snapshot = client.app.state.storage.thread_snapshot_store_v3.read_snapshot(
         project_id,
         node_id,
         "ask_planning",
     )
     assert snapshot["threadId"] is None
     assert snapshot["items"] == []
-    assert snapshot["pendingRequests"] == []
+    assert snapshot["uiSignals"]["activeUserInputRequests"] == []
 
 
 def test_v3_reset_policy_rejects_execution_and_audit_threads(client: TestClient, workspace_root) -> None:
@@ -877,6 +950,7 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
         first_payload = await _read_sse_payload(response)
         assert first_payload["type"] == event_types.THREAD_SNAPSHOT_V3
         assert first_payload["payload"]["snapshot"]["threadId"] == thread_id
+        assert first_payload["payload"]["snapshot"]["threadRole"] == "ask_planning"
         assert first_payload["payload"]["snapshot"]["lane"] == "ask"
         first_snapshot_version = int(first_payload.get("snapshotVersion") or 0)
 
@@ -885,7 +959,7 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
             node_id=node_id,
             thread_role="ask_planning",
             snapshot_version=max(1, first_snapshot_version + 1),
-            event_type=event_types.CONVERSATION_ITEM_UPSERT,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
             payload={
                 "item": {
                     "id": "ask-msg-2",
@@ -905,7 +979,7 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
                 }
             },
         )
-        client.app.state.conversation_event_broker_v2.publish(
+        client.app.state.conversation_event_broker_v3.publish(
             project_id,
             node_id,
             envelope,
@@ -915,6 +989,31 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
         incremental_payload = await _read_sse_payload(response)
         assert incremental_payload["type"] == event_types.CONVERSATION_ITEM_UPSERT_V3
         assert incremental_payload["payload"]["item"]["id"] == "ask-msg-2"
+    finally:
+        await _close_stream(response, request)
+
+
+@pytest.mark.anyio
+async def test_v3_ask_stream_snapshot_omits_lane_when_compat_disabled(client: TestClient, workspace_root, monkeypatch) -> None:
+    monkeypatch.setenv("PLANNINGTREE_V3_LANE_COMPAT_MODE", "disabled")
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.thread_events_by_id_v3(
+        request,
+        project_id,
+        thread_id,
+        node_id=node_id,
+        after_snapshot_version=1,
+    )
+
+    try:
+        first_payload = await _read_sse_payload(response)
+        snapshot = first_payload["payload"]["snapshot"]
+        assert snapshot["threadRole"] == "ask_planning"
+        assert "lane" not in snapshot
     finally:
         await _close_stream(response, request)
 
