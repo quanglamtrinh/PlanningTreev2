@@ -30,8 +30,15 @@ def _load_scenarios() -> list[dict[str, Any]]:
 def _normalize_snapshot(snapshot_v3: dict[str, Any]) -> dict[str, Any]:
     items = list(snapshot_v3.get("items") or [])
     pending = list(snapshot_v3.get("uiSignals", {}).get("activeUserInputRequests") or [])
+    thread_role = str(snapshot_v3.get("threadRole") or "").strip()
+    if not thread_role:
+        lane = str(snapshot_v3.get("lane") or "").strip()
+        if lane == "ask":
+            thread_role = "ask_planning"
+        elif lane in {"execution", "audit"}:
+            thread_role = lane
     return {
-        "lane": snapshot_v3.get("lane"),
+        "thread_role": thread_role,
         "threadId": snapshot_v3.get("threadId"),
         "item_order": [item.get("id") for item in items],
         "item_kinds": [item.get("kind") for item in items],
@@ -55,7 +62,8 @@ def test_v3_parity_fixtures_project_to_expected_snapshots() -> None:
         expected = dict(scenario["expected"])
         normalized = _normalize_snapshot(projected)
 
-        assert normalized["lane"] == expected["lane"], scenario["id"]
+        expected_thread_role = {"ask": "ask_planning"}.get(expected["lane"], expected["lane"])
+        assert normalized["thread_role"] == expected_thread_role, scenario["id"]
         assert normalized["item_order"] == expected["item_order"], scenario["id"]
         assert normalized["item_kinds"] == expected["item_kinds"], scenario["id"]
         assert normalized["plan_ready"] == expected["plan_ready"], scenario["id"]

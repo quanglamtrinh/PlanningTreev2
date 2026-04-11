@@ -47,7 +47,7 @@ def test_v3_snapshot_projection_maps_execution_items_and_signals() -> None:
 
     snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
 
-    assert snapshot_v3["lane"] == "execution"
+    assert snapshot_v3["threadRole"] == "execution"
     assert snapshot_v3["threadId"] == "exec-thread-1"
     assert [item["kind"] for item in snapshot_v3["items"]] == ["review"]
     assert snapshot_v3["uiSignals"]["planReady"] == {
@@ -71,13 +71,13 @@ def test_v3_snapshot_projection_maps_execution_items_and_signals() -> None:
     ]
 
 
-def test_v3_snapshot_projection_maps_ask_planning_to_ask_lane() -> None:
+def test_v3_snapshot_projection_maps_ask_planning_to_thread_role() -> None:
     snapshot_v2 = default_thread_snapshot("project-1", "node-1", "ask_planning")
     snapshot_v2["threadId"] = "ask-thread-1"
 
     snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
 
-    assert snapshot_v3["lane"] == "ask"
+    assert snapshot_v3["threadRole"] == "ask_planning"
     assert snapshot_v3["threadId"] == "ask-thread-1"
 
 
@@ -111,7 +111,7 @@ def test_v3_projection_maps_upsert_and_patch_events() -> None:
         },
     )
 
-    assert snapshot_v3["lane"] == "audit"
+    assert snapshot_v3["threadRole"] == "audit"
     assert snapshot_v3["items"][0]["kind"] == "message"
     assert upsert_events[0]["type"] == event_types.CONVERSATION_ITEM_UPSERT_V3
     assert upsert_events[0]["payload"]["item"]["id"] == "msg-1"

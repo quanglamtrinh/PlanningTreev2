@@ -366,7 +366,7 @@ def test_v3_execution_snapshot_by_id_returns_wrapped_snapshot(client: TestClient
     assert payload["ok"] is True
     snapshot = payload["data"]["snapshot"]
     assert snapshot["threadRole"] == "execution"
-    assert snapshot["lane"] == "execution"
+    assert "lane" not in snapshot
     assert snapshot["threadId"] == thread_id
     assert snapshot["items"][0]["kind"] == "message"
     assert snapshot["uiSignals"]["planReady"] == {
@@ -392,7 +392,7 @@ def test_v3_ask_snapshot_by_id_returns_wrapped_snapshot(client: TestClient, work
     assert payload["ok"] is True
     snapshot = payload["data"]["snapshot"]
     assert snapshot["threadRole"] == "ask_planning"
-    assert snapshot["lane"] == "ask"
+    assert "lane" not in snapshot
     assert snapshot["threadId"] == thread_id
     assert snapshot["items"][0]["kind"] == "message"
 
@@ -410,29 +410,10 @@ def test_v3_ask_snapshot_by_id_seeds_registry_from_legacy_session(client: TestCl
     payload = response.json()
     assert payload["ok"] is True
     assert payload["data"]["snapshot"]["threadRole"] == "ask_planning"
-    assert payload["data"]["snapshot"]["lane"] == "ask"
+    assert "lane" not in payload["data"]["snapshot"]
 
     seeded_entry = client.app.state.storage.thread_registry_store.read_entry(project_id, node_id, "ask_planning")
     assert seeded_entry["threadId"] == thread_id
-
-
-def test_v3_ask_snapshot_by_id_omits_lane_when_compat_disabled(client: TestClient, workspace_root, monkeypatch) -> None:
-    monkeypatch.setenv("PLANNINGTREE_V3_LANE_COMPAT_MODE", "disabled")
-    project_id, node_id = _setup_project(client, workspace_root)
-    _stub_ask_session_reads(client)
-    thread_id = _seed_ask_thread(client, project_id, node_id)
-
-    response = client.get(
-        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
-        params={"node_id": node_id},
-    )
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["ok"] is True
-    snapshot = payload["data"]["snapshot"]
-    assert snapshot["threadRole"] == "ask_planning"
-    assert "lane" not in snapshot
-
 
 def test_v3_ask_snapshot_by_id_seed_respects_bridge_disabled(client: TestClient, workspace_root, monkeypatch) -> None:
     monkeypatch.setenv("PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE", "disabled")
@@ -478,7 +459,7 @@ def test_v3_ask_snapshot_by_id_seed_respects_bridge_allowlist(client: TestClient
     allowed_payload = allowed.json()
     assert allowed_payload["ok"] is True
     assert allowed_payload["data"]["snapshot"]["threadRole"] == "ask_planning"
-    assert allowed_payload["data"]["snapshot"]["lane"] == "ask"
+    assert "lane" not in allowed_payload["data"]["snapshot"]
 
 
 def test_v3_by_id_snapshot_rejects_thread_id_mismatch(client: TestClient, workspace_root) -> None:
@@ -500,6 +481,10 @@ def test_v2_workflow_state_includes_ask_thread_id_from_registry(client: TestClie
     project_id, node_id = _setup_project(client, workspace_root)
     _stub_ask_session_reads(client)
     ask_thread_id = _seed_ask_thread(client, project_id, node_id, seed_registry=True)
+    workflow_state = client.app.state.storage.workflow_state_store.default_state(node_id)
+    workflow_state["askThreadId"] = ask_thread_id
+    workflow_state["auditLineageThreadId"] = "audit-lineage-v3-1"
+    client.app.state.storage.workflow_state_store.write_state(project_id, node_id, workflow_state)
 
     response = client.get(
         f"/v2/projects/{project_id}/nodes/{node_id}/workflow-state",
@@ -514,6 +499,9 @@ def test_v2_workflow_state_seeds_ask_thread_id_from_legacy_session(client: TestC
     project_id, node_id = _setup_project(client, workspace_root)
     _stub_ask_session_reads(client)
     ask_thread_id = _seed_ask_thread(client, project_id, node_id, seed_registry=False)
+    workflow_state = client.app.state.storage.workflow_state_store.default_state(node_id)
+    workflow_state["auditLineageThreadId"] = "audit-lineage-v3-1"
+    client.app.state.storage.workflow_state_store.write_state(project_id, node_id, workflow_state)
 
     response = client.get(
         f"/v2/projects/{project_id}/nodes/{node_id}/workflow-state",
@@ -560,7 +548,6 @@ def test_v3_workflow_state_endpoint_calls_canonical_service(client: TestClient, 
             raise AssertionError("Legacy workflow service alias should not be used when canonical service is present.")
 
     client.app.state.execution_audit_workflow_service = _CanonicalWorkflowService()
-    client.app.state.execution_audit_workflow_service_v2 = _LegacyWorkflowService()
 
     response = client.get(f"/v3/projects/{project_id}/nodes/{node_id}/workflow-state")
     assert response.status_code == 200
@@ -653,7 +640,6 @@ def test_v3_workflow_action_endpoints_dispatch_to_canonical_service(client: Test
             raise AssertionError("Legacy workflow service alias should not be used when canonical service is present.")
 
     client.app.state.execution_audit_workflow_service = _CanonicalWorkflowService()
-    client.app.state.execution_audit_workflow_service_v2 = _LegacyWorkflowService()
 
     finish_payload = {"idempotencyKey": "idem-finish"}
     finish_response = client.post(
@@ -708,12 +694,7 @@ async def test_v3_workflow_events_endpoint_uses_canonical_broker_and_filters_pro
     project_id, node_id = _setup_project(client, workspace_root)
     canonical_broker = GlobalEventBroker()
 
-    class _LegacyBroker:
-        def subscribe(self):  # pragma: no cover - guard assertion
-            raise AssertionError("Legacy workflow broker should not be used when canonical broker is present.")
-
-    client.app.state.workflow_event_broker_v3 = canonical_broker
-    client.app.state.workflow_event_broker_v2 = _LegacyBroker()
+    client.app.state.workflow_event_broker = canonical_broker
 
     request = _StreamingTestRequest(client.app)
     response = await workflow_v3_route_module.workflow_events_v3(request, project_id)
@@ -988,7 +969,7 @@ def test_v3_execution_plan_actions_by_id_validate_stale_and_dispatch_followup(
             "snapshotVersion": 77,
         }
 
-    client.app.state.execution_audit_workflow_service_v2.start_execution_followup = (
+    client.app.state.execution_audit_workflow_service.start_execution_followup = (
         _fake_start_execution_followup
     )
 
@@ -1177,7 +1158,7 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
         assert first_payload["type"] == event_types.THREAD_SNAPSHOT_V3
         assert first_payload["payload"]["snapshot"]["threadId"] == thread_id
         assert first_payload["payload"]["snapshot"]["threadRole"] == "ask_planning"
-        assert first_payload["payload"]["snapshot"]["lane"] == "ask"
+        assert "lane" not in first_payload["payload"]["snapshot"]
         first_snapshot_version = int(first_payload.get("snapshotVersion") or 0)
 
         envelope = build_thread_envelope(
@@ -1217,32 +1198,6 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
         assert incremental_payload["payload"]["item"]["id"] == "ask-msg-2"
     finally:
         await _close_stream(response, request)
-
-
-@pytest.mark.anyio
-async def test_v3_ask_stream_snapshot_omits_lane_when_compat_disabled(client: TestClient, workspace_root, monkeypatch) -> None:
-    monkeypatch.setenv("PLANNINGTREE_V3_LANE_COMPAT_MODE", "disabled")
-    project_id, node_id = _setup_project(client, workspace_root)
-    _stub_ask_session_reads(client)
-    thread_id = _seed_ask_thread(client, project_id, node_id)
-
-    request = _StreamingTestRequest(client.app)
-    response = await workflow_v3_route_module.thread_events_by_id_v3(
-        request,
-        project_id,
-        thread_id,
-        node_id=node_id,
-        after_snapshot_version=1,
-    )
-
-    try:
-        first_payload = await _read_sse_payload(response)
-        snapshot = first_payload["payload"]["snapshot"]
-        assert snapshot["threadRole"] == "ask_planning"
-        assert "lane" not in snapshot
-    finally:
-        await _close_stream(response, request)
-
 
 @pytest.mark.anyio
 async def test_v3_execution_stream_reconnect_by_version_and_guard(client: TestClient, workspace_root) -> None:

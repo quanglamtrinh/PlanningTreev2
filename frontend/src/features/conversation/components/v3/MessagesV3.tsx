@@ -91,23 +91,11 @@ function isPendingRequestStatus(status: PendingRequestStatus): boolean {
   return status === 'requested' || status === 'answer_submitted'
 }
 
-function legacyLaneToThreadRole(
-  lane: ThreadSnapshotV3['lane'] | null | undefined,
-): ThreadSnapshotV3['threadRole'] | null {
-  if (lane === 'ask') {
-    return 'ask_planning'
-  }
-  if (lane === 'execution' || lane === 'audit') {
-    return lane
-  }
-  return null
-}
-
 function resolveSnapshotThreadRole(snapshot: ThreadSnapshotV3 | null): ThreadSnapshotV3['threadRole'] | null {
   if (!snapshot) {
     return null
   }
-  return snapshot.threadRole ?? legacyLaneToThreadRole(snapshot.lane)
+  return snapshot.threadRole
 }
 
 function buildPlanReadyDismissKey(

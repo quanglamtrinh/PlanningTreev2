@@ -22,7 +22,6 @@ from backend.conversation.domain.types_v3 import (
     ReasoningItemV3,
     ReviewItemV3,
     StatusItemV3,
-    ThreadLaneV3,
     ThreadSnapshotV3,
     ToolItemV3,
     UiSignalsV3,
@@ -30,6 +29,7 @@ from backend.conversation.domain.types_v3 import (
     UserInputItemV3,
     copy_snapshot_v3,
     default_plan_ready_signal_v3,
+    normalize_thread_role_v3,
 )
 from backend.storage.file_utils import iso_now
 
@@ -79,14 +79,6 @@ def _normalize_item_tone(value: Any, *, default: str = "neutral") -> str:
         if normalized in {"neutral", "info", "success", "warning", "danger", "muted"}:
             return normalized
     return default
-
-
-def _lane_from_thread_role(thread_role: str) -> ThreadLaneV3:
-    if thread_role == "ask_planning":
-        return "ask"
-    if thread_role == "audit":
-        return "audit"
-    return "execution"
 
 
 _HIDDEN_AUDIT_SYSTEM_MESSAGE_IDS = {
@@ -528,7 +520,7 @@ def _derive_plan_ready(snapshot: ThreadSnapshotV3) -> dict[str, Any]:
 
 def build_snapshot_v3_from_v2(snapshot: ThreadSnapshotV2 | dict[str, Any]) -> ThreadSnapshotV3:
     source = cast(dict[str, Any], snapshot)
-    thread_role = str(source.get("threadRole") or "execution")
+    thread_role = normalize_thread_role_v3(source.get("threadRole"), default="execution")
     items: list[ConversationItemV3] = []
     for raw_item in source.get("items") if isinstance(source.get("items"), list) else []:
         if not isinstance(raw_item, dict):
@@ -550,8 +542,8 @@ def build_snapshot_v3_from_v2(snapshot: ThreadSnapshotV2 | dict[str, Any]) -> Th
     snapshot_v3: ThreadSnapshotV3 = {
         "projectId": str(source.get("projectId") or ""),
         "nodeId": str(source.get("nodeId") or ""),
+        "threadRole": thread_role,
         "threadId": _normalize_optional_string(source.get("threadId")),
-        "lane": _lane_from_thread_role(thread_role),
         "activeTurnId": _normalize_optional_string(source.get("activeTurnId")),
         "processingState": cast(
             Any,
@@ -986,7 +978,7 @@ def project_v2_envelope_to_v3(
     if event_type == event_types.CONVERSATION_ITEM_UPSERT:
         raw_item = payload_dict.get("item")
         if isinstance(raw_item, dict):
-            if updated.get("lane") == "audit" and _is_hidden_audit_system_item(raw_item):
+            if normalize_thread_role_v3(updated.get("threadRole"), default="execution") == "audit" and _is_hidden_audit_system_item(raw_item):
                 updated["uiSignals"]["planReady"] = _derive_plan_ready(updated)
                 return updated, events
             item_v3 = convert_item_v2_to_v3(raw_item)
@@ -1001,7 +993,7 @@ def project_v2_envelope_to_v3(
         item_id = str(payload_dict.get("itemId") or "").strip()
         raw_patch = payload_dict.get("patch")
         if item_id and isinstance(raw_patch, dict):
-            if updated.get("lane") == "audit" and item_id in _HIDDEN_AUDIT_SYSTEM_MESSAGE_IDS:
+            if normalize_thread_role_v3(updated.get("threadRole"), default="execution") == "audit" and item_id in _HIDDEN_AUDIT_SYSTEM_MESSAGE_IDS:
                 updated["uiSignals"]["planReady"] = _derive_plan_ready(updated)
                 return updated, events
             current_index = _find_item_index(updated, item_id)

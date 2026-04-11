@@ -9,10 +9,10 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from backend.config.app_config import is_conversation_v3_bridge_allowed_for_project, is_v3_lane_compat_enabled
+from backend.config.app_config import is_conversation_v3_bridge_allowed_for_project
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
-from backend.conversation.domain.types_v3 import normalize_thread_role_v3, thread_role_to_lane_v3
+from backend.conversation.domain.types_v3 import normalize_thread_role_v3
 from backend.errors.app_errors import AppError, AskV3Disabled, InvalidRequest
 from backend.storage.file_utils import new_id
 
@@ -92,17 +92,11 @@ class ReviewGuardMutationRequest(WorkflowMutationRequest):
 
 
 def _workflow_service(request: Request) -> Any:
-    service = getattr(request.app.state, "execution_audit_workflow_service", None)
-    if service is not None:
-        return service
-    return request.app.state.execution_audit_workflow_service_v2
+    return request.app.state.execution_audit_workflow_service
 
 
 def _workflow_event_broker(request: Request) -> Any:
-    broker = getattr(request.app.state, "workflow_event_broker_v3", None)
-    if broker is not None:
-        return broker
-    return request.app.state.workflow_event_broker_v2
+    return request.app.state.workflow_event_broker
 
 
 def _normalize_thread_id(value: Any) -> str:
@@ -120,10 +114,7 @@ def _snapshot_with_contract_fields(snapshot: dict[str, Any], *, thread_role: str
         default=normalize_thread_role_v3(thread_role, default="ask_planning"),
     )
     prepared["threadRole"] = resolved_thread_role
-    if is_v3_lane_compat_enabled():
-        prepared["lane"] = str(prepared.get("lane") or thread_role_to_lane_v3(resolved_thread_role))
-    else:
-        prepared.pop("lane", None)
+    prepared.pop("lane", None)
     return prepared
 
 

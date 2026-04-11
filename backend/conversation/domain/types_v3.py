@@ -6,7 +6,6 @@ from typing import Any, Literal, NotRequired, TypedDict, cast
 from backend.storage.file_utils import iso_now
 
 ThreadRoleV3 = Literal["ask_planning", "execution", "audit"]
-ThreadLaneV3 = Literal["ask", "execution", "audit"]
 ProcessingStateV3 = Literal["idle", "running", "waiting_user_input", "failed"]
 ItemStatusV3 = Literal[
     "pending",
@@ -23,7 +22,6 @@ ItemSourceV3 = Literal["upstream", "backend", "local"]
 ItemToneV3 = Literal["neutral", "info", "success", "warning", "danger", "muted"]
 
 THREAD_ROLES_V3: tuple[ThreadRoleV3, ...] = ("ask_planning", "execution", "audit")
-THREAD_LANES_V3: tuple[ThreadLaneV3, ...] = ("ask", "execution", "audit")
 PROCESSING_STATES_V3: tuple[ProcessingStateV3, ...] = ("idle", "running", "waiting_user_input", "failed")
 ITEM_STATUSES_V3: tuple[ItemStatusV3, ...] = (
     "pending",
@@ -209,7 +207,6 @@ class ThreadSnapshotV3(TypedDict):
     nodeId: str
     threadRole: ThreadRoleV3
     threadId: str | None
-    lane: NotRequired[ThreadLaneV3]
     activeTurnId: str | None
     processingState: ProcessingStateV3
     snapshotVersion: int
@@ -359,24 +356,12 @@ def lane_to_thread_role_v3(value: Any, *, default: ThreadRoleV3 = "ask_planning"
     return default
 
 
-def thread_role_to_lane_v3(value: Any, *, default: ThreadLaneV3 = "ask") -> ThreadLaneV3:
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized == "ask_planning":
-            return "ask"
-        if normalized in {"execution", "audit"}:
-            return cast(ThreadLaneV3, normalized)
-        if normalized in THREAD_LANES_V3:
-            return cast(ThreadLaneV3, normalized)
-    return default
-
-
 def normalize_thread_role_v3(value: Any, *, default: ThreadRoleV3 = "ask_planning") -> ThreadRoleV3:
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in THREAD_ROLES_V3:
             return cast(ThreadRoleV3, normalized)
-        if normalized in THREAD_LANES_V3:
+        if normalized in {"ask", "execution", "audit"}:
             return lane_to_thread_role_v3(normalized, default=default)
     return default
 
@@ -784,7 +769,7 @@ def normalize_ui_signals_v3(raw: Any, *, thread_id: str | None = None) -> UiSign
 def default_thread_snapshot_v3(
     project_id: str,
     node_id: str,
-    thread_role: ThreadRoleV3 | ThreadLaneV3 | str,
+    thread_role: ThreadRoleV3 | str,
     *,
     thread_id: str | None = None,
 ) -> ThreadSnapshotV3:
@@ -810,7 +795,7 @@ def normalize_thread_snapshot_v3(
     *,
     project_id: str,
     node_id: str,
-    thread_role: ThreadRoleV3 | ThreadLaneV3 | str,
+    thread_role: ThreadRoleV3 | str,
 ) -> ThreadSnapshotV3:
     default_snapshot = default_thread_snapshot_v3(
         project_id=project_id,

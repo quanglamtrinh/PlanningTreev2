@@ -49,7 +49,6 @@ function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshot
     nodeId: 'node-1',
     threadId: 'thread-1',
     threadRole: 'execution',
-    lane: 'execution',
     activeTurnId: null,
     processingState: 'idle',
     snapshotVersion: 1,
@@ -66,15 +65,6 @@ function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshot
       activeUserInputRequests: [],
     },
     ...overrides,
-  }
-  if (!snapshot.threadRole) {
-    if (snapshot.lane === 'ask') {
-      snapshot.threadRole = 'ask_planning'
-    } else if (snapshot.lane === 'audit') {
-      snapshot.threadRole = 'audit'
-    } else {
-      snapshot.threadRole = 'execution'
-    }
   }
   return snapshot
 }
@@ -449,9 +439,9 @@ describe('threadByIdStoreV3', () => {
     vi.useFakeTimers()
     try {
       apiMock.getThreadSnapshotByIdV3
-        .mockResolvedValueOnce(makeSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning', lane: 'ask' }))
+        .mockResolvedValueOnce(makeSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning' }))
         .mockResolvedValueOnce(
-          makeSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning', lane: 'ask', snapshotVersion: 2 }),
+          makeSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning', snapshotVersion: 2 }),
         )
 
       await act(async () => {

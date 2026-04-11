@@ -303,7 +303,7 @@ def test_v3_fixture_replay_builds_deterministic_snapshot() -> None:
         ]
     )
 
-    assert snapshot["lane"] == "execution"
+    assert snapshot["threadRole"] == "execution"
     assert snapshot["processingState"] == "idle"
     assert snapshot["activeTurnId"] is None
     assert [item["id"] for item in snapshot["items"]] == [

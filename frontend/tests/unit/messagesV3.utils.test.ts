@@ -12,7 +12,6 @@ function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshot
     nodeId: 'node-1',
     threadId: 'thread-1',
     threadRole: 'execution',
-    lane: 'execution',
     activeTurnId: null,
     processingState: 'idle',
     snapshotVersion: 1,

@@ -100,15 +100,6 @@ def get_execution_timeout() -> int:
     return max(10, min(3600, timeout))
 
 
-def is_execution_audit_v2_rehearsal_enabled() -> bool:
-    raw = str(os.environ.get("PLANNINGTREE_EXECUTION_AUDIT_V2_REHEARSAL", "") or "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
-
-
-def is_execution_audit_v2_enabled() -> bool:
-    return _bool_env("PLANNINGTREE_EXECUTION_AUDIT_V2_ENABLED", default=True)
-
-
 def is_ask_v3_backend_enabled() -> bool:
     return _bool_env("PLANNINGTREE_ASK_V3_BACKEND_ENABLED", default=True)
 
@@ -154,17 +145,6 @@ def is_conversation_v3_bridge_allowed_for_project(project_id: str) -> bool:
     if mode == "disabled":
         return False
     return str(project_id or "").strip() in get_conversation_v3_bridge_allowlist()
-
-
-def get_v3_lane_compat_mode() -> str:
-    raw = str(os.environ.get("PLANNINGTREE_V3_LANE_COMPAT_MODE", "") or "").strip().lower()
-    if raw in {"enabled", "disabled"}:
-        return raw
-    return "enabled"
-
-
-def is_v3_lane_compat_enabled() -> bool:
-    return get_v3_lane_compat_mode() == "enabled"
 
 
 def get_split_model() -> str:

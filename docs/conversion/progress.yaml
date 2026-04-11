@@ -1,7 +1,7 @@
 migration_id: native_v3_end_to_end_conversion
-status: phase_7_in_progress
-current_phase: 7
-next_phase: 8
+status: phase_8_in_progress
+current_phase: 8
+next_phase: null
 baseline_date: 2026-04-09
 
 references:
@@ -313,7 +313,7 @@ phases:
 
   - phase: 7
     name: hard_cutover_cleanup
-    status: in_progress
+    status: completed
     effort_percent: 8
     estimate_person_days: "4-5"
     depends_on:
@@ -325,10 +325,31 @@ phases:
     notes: >
       Entered in_progress on 2026-04-10 after Phase-6 completion and handoff
       publication at `docs/conversion/artifacts/phase-6/handoff-to-phase-7.md`.
+      2026-04-10 completion evidence: hard cutover cleanup delivered on active
+      V3 path - removed `/v3` lane compatibility emission and lane-based V3
+      type usage, removed transition env-flag runtime paths
+      (`PLANNINGTREE_V3_LANE_COMPAT_MODE`,
+      `PLANNINGTREE_EXECUTION_AUDIT_V2_ENABLED`,
+      `PLANNINGTREE_EXECUTION_AUDIT_V2_REHEARSAL`), removed dead backend relay
+      `backend/streaming/conversation_v2_to_v3_event_relay.py`, removed dead FE
+      V2 stores/bridge modules and V2-only API client methods with no active
+      consumers, and published artifacts:
+      `docs/conversion/artifacts/phase-7/deletion-log.md`,
+      `docs/conversion/artifacts/phase-7/deprecation-notice.md`,
+      `docs/conversion/artifacts/phase-7/handoff-to-phase-8.md`.
+      Verification passed:
+      `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py`
+      (21 passed),
+      `python -m pytest -q backend/tests/integration/test_phase6_execution_audit_cutover.py`
+      (1 passed),
+      `python -m pytest -q backend/tests/unit/test_conversation_v3_projector.py backend/tests/unit/test_conversation_v3_parity_fixtures.py backend/tests/unit/test_conversation_v3_fixture_replay.py backend/tests/unit/test_conversation_v3_fileschanged_parity_fixtures.py backend/tests/unit/test_ask_v3_rollout_phase6_7.py backend/tests/unit/test_conversation_v3_migration.py backend/tests/unit/test_app_config.py`
+      (32 passed),
+      `npm run typecheck --prefix frontend` (passed),
+      `npm run test:unit --prefix frontend` (35 files, 203 tests passed).
 
   - phase: 8
     name: stabilization_and_closeout
-    status: pending
+    status: in_progress
     effort_percent: 4
     estimate_person_days: "2-3"
     depends_on:
@@ -337,6 +358,9 @@ phases:
     exit_criteria:
       - Release stabilization window passes.
       - Final architecture and operations docs are complete.
+    notes: >
+      Entered in_progress on 2026-04-10 after Phase-7 completion and handoff
+      publication at `docs/conversion/artifacts/phase-7/handoff-to-phase-8.md`.
 
 update_rules:
   - Keep exactly one phase in_progress at a time.

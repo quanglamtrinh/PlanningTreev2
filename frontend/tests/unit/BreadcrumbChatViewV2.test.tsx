@@ -93,7 +93,6 @@ function makeConversationSnapshot(
     nodeId: 'root',
     threadId: 'exec-thread-1',
     threadRole: 'execution',
-    lane: 'execution',
     activeTurnId: null,
     processingState: 'idle',
     snapshotVersion: 1,
@@ -338,7 +337,7 @@ describe('BreadcrumbChatViewV2', () => {
       workflowState: makeWorkflowState({
         askThreadId: 'ask-thread-1',
       }),
-      threadSnapshot: makeConversationSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning', lane: 'ask' }),
+      threadSnapshot: makeConversationSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning' }),
     })
     useThreadByIdStoreV3.setState({
       ...useThreadByIdStoreV3.getState(),
@@ -471,7 +470,7 @@ describe('BreadcrumbChatViewV2', () => {
           createdAt: '2026-03-28T00:02:00Z',
         },
       }),
-      threadSnapshot: makeConversationSnapshot({ threadId: 'audit-thread-1', threadRole: 'audit', lane: 'audit' }),
+      threadSnapshot: makeConversationSnapshot({ threadId: 'audit-thread-1', threadRole: 'audit' }),
     })
     useWorkflowStateStoreV3.setState({
       ...useWorkflowStateStoreV3.getState(),
@@ -513,7 +512,7 @@ describe('BreadcrumbChatViewV2', () => {
       workflowState: makeWorkflowState({
         reviewThreadId: 'audit-thread-1',
       }),
-      threadSnapshot: makeConversationSnapshot({ threadId: 'audit-thread-1', threadRole: 'audit', lane: 'audit' }),
+      threadSnapshot: makeConversationSnapshot({ threadId: 'audit-thread-1', threadRole: 'audit' }),
     })
 
     render(

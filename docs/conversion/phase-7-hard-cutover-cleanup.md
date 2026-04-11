@@ -1,60 +1,52 @@
 # Phase 7 - Hard Cutover Cleanup
 
-Status: pending  
+Status: completed  
 Estimate: 4-5 person-days (8%)
 
 ## 1. Objective
 
-Remove V2 adapter paths from production code after the system is stable.
+Complete hard cutover to V3 canonical on active paths, remove `lane` from `/v3` contract,
+clean dead V2 frontend modules, and keep `/v2` routes in compatibility + deprecated mode.
 
-## 2. In Scope
+## 2. In Scope (Completed)
 
-- Remove or hard-deprecate:
-  - `thread_query_service_v2` production wiring
-  - `thread_runtime_service_v2` production wiring
-  - `project_v2_snapshot_to_v3` and `project_v2_envelope_to_v3` on production route paths
-  - legacy `lane` compatibility branches in V3 snapshot/event serializers
-  - frontend dead stores that are V2-only
-- Rename services/state to clearly indicate "V3 canonical."
-- Update primary architecture documentation.
+- Removed `/v3` `lane` emission and legacy compat branch in route contract handling.
+- Removed V3 `lane` field/type aliases from backend and frontend `ThreadSnapshotV3` types.
+- Removed transition env flags from runtime/config:
+  - `PLANNINGTREE_V3_LANE_COMPAT_MODE`
+  - `PLANNINGTREE_EXECUTION_AUDIT_V2_ENABLED`
+  - `PLANNINGTREE_EXECUTION_AUDIT_V2_REHEARSAL`
+- Removed dead adapter production file:
+  - `backend/streaming/conversation_v2_to_v3_event_relay.py`
+- Removed dead frontend V2 active-path modules and V2-only API client calls.
+- Retained `/v2` routes in compatibility mode and documented deprecation policy.
 
-## 3. Out Of Scope
+## 3. Deliverables
 
-- New features
-- New rollout experiments
+- `docs/conversion/artifacts/phase-7/deletion-log.md`
+- `docs/conversion/artifacts/phase-7/deprecation-notice.md`
+- `docs/conversion/artifacts/phase-7/handoff-to-phase-8.md`
 
-## 4. Work Breakdown
+## 4. Exit Criteria
 
-- [ ] Clean DI in `backend/main.py` so canonical paths no longer use `_v2` naming.
-- [ ] Remove unused compatibility code branches.
-- [ ] Add code-search gates:
-  - no V2 core calls from `/v3` paths
-  - no active frontend workflow calls to `/v2`
-- [ ] Update tests to match new canonical naming.
-- [ ] Define deprecation strategy for V2 APIs if route compatibility is still retained.
+- Code search confirms no V2 adapter dependencies on `/v3` active route path.
+- `/v3` snapshot/event contract is `threadRole`-only.
+- Frontend active path no longer reads `snapshot.lane`.
+- Required backend/frontend verification gates pass.
 
-## 5. Deliverables
+## 5. Verification
 
-- Large cleanup pull request (with checklists)
-- Artifacts:
-  - `docs/conversion/artifacts/phase-7/deletion-log.md`
-  - `docs/conversion/artifacts/phase-7/deprecation-notice.md`
+- [x] `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py` (21 passed)
+- [x] `python -m pytest -q backend/tests/integration/test_phase6_execution_audit_cutover.py` (1 passed)
+- [x] `python -m pytest -q backend/tests/unit/test_conversation_v3_projector.py backend/tests/unit/test_conversation_v3_parity_fixtures.py backend/tests/unit/test_conversation_v3_fixture_replay.py backend/tests/unit/test_conversation_v3_fileschanged_parity_fixtures.py backend/tests/unit/test_ask_v3_rollout_phase6_7.py backend/tests/unit/test_conversation_v3_migration.py backend/tests/unit/test_app_config.py` (32 passed)
+- [x] `npm run typecheck --prefix frontend`
+- [x] `npm run test:unit --prefix frontend` (35 files, 203 tests passed)
+- [x] Search gates:
+  - backend runtime has no removed env-flag refs
+  - frontend active path has no `ThreadSnapshotV3.lane` usage
+  - removed V2 FE store/API references have no active consumers
 
-## 6. Exit Criteria
+## 6. Risks And Follow-Up (Phase 8)
 
-- Code search confirms no V2 adapter dependencies on production paths.
-- Test gates pass after cleanup.
-- Architecture docs reflect native V3 end-to-end reality.
-
-## 7. Verification
-
-- [ ] Full targeted backend suite for conversation/workflow
-- [ ] Frontend typecheck and unit tests
-- [ ] Search-gate scripts (rg-based) pass
-
-## 8. Risks And Mitigations
-
-- Risk: deleting code too early causes hidden edge-case regressions.
-  - Mitigation: run cleanup only after Phase 6 stabilization proof.
-- Risk: hidden transitive V2 imports.
-  - Mitigation: enforce forbidden-import checks in CI.
+- `/v2` compatibility routes remain mounted and must be retired in closeout phase.
+- Some legacy test narratives still include "lane/v2" wording and should be normalized during final documentation cleanup.

@@ -238,7 +238,7 @@ async def workflow_events_v2(
     request: Request,
     project_id: str,
 ):
-    broker = request.app.state.workflow_event_broker_v2
+    broker = request.app.state.workflow_event_broker
     queue = broker.subscribe()
 
     async def event_generator():

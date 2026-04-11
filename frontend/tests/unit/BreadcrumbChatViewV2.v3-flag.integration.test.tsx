@@ -82,7 +82,6 @@ function makeConversationSnapshotV3(
     nodeId: 'root',
     threadId: 'exec-thread-1',
     threadRole: 'execution',
-    lane: 'execution',
     activeTurnId: null,
     processingState: 'idle',
     snapshotVersion: 1,
@@ -230,7 +229,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
 
     useThreadByIdStoreV3.setState({
-      snapshot: makeConversationSnapshotV3({ threadId: 'audit-thread-1', threadRole: 'audit', lane: 'audit' }),
+      snapshot: makeConversationSnapshotV3({ threadId: 'audit-thread-1', threadRole: 'audit' }),
       loadThread: loadThreadV3,
       sendTurn: vi.fn().mockResolvedValue(undefined),
       resolveUserInput: vi.fn().mockResolvedValue(undefined),
@@ -255,7 +254,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     seedBaseStores(makeWorkflowState(), makeProjectSnapshot('original'))
     const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
     useThreadByIdStoreV3.setState({
-      snapshot: makeConversationSnapshotV3({ threadId: 'ask-thread-1', threadRole: 'ask_planning', lane: 'ask' }),
+      snapshot: makeConversationSnapshotV3({ threadId: 'ask-thread-1', threadRole: 'ask_planning' }),
       loadThread: loadThreadV3,
       sendTurn: vi.fn().mockResolvedValue(undefined),
       resolveUserInput: vi.fn().mockResolvedValue(undefined),

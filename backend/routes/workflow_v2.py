@@ -68,10 +68,14 @@ def _sse_frame(envelope: dict[str, object]) -> str:
     return f"data: {data}\n\n"
 
 
+def _workflow_service(request: Request):
+    return request.app.state.execution_audit_workflow_service
+
+
 @router.get("/projects/{project_id}/nodes/{node_id}/workflow-state")
 async def get_workflow_state_v2(request: Request, project_id: str, node_id: str):
     try:
-        payload = request.app.state.execution_audit_workflow_service_v2.get_workflow_state(project_id, node_id)
+        payload = _workflow_service(request).get_workflow_state(project_id, node_id)
         return _ok(payload)
     except AppError as exc:
         return _error_response(exc)
@@ -82,7 +86,7 @@ async def get_workflow_state_v2(request: Request, project_id: str, node_id: str)
 @router.post("/projects/{project_id}/nodes/{node_id}/workflow/finish-task")
 async def finish_task_v2(request: Request, project_id: str, node_id: str, body: WorkflowMutationRequest):
     try:
-        payload = request.app.state.execution_audit_workflow_service_v2.finish_task(
+        payload = _workflow_service(request).finish_task(
             project_id,
             node_id,
             idempotency_key=body.idempotencyKey,
@@ -102,7 +106,7 @@ async def mark_done_from_execution_v2(
     body: WorkspaceGuardMutationRequest,
 ):
     try:
-        payload = request.app.state.execution_audit_workflow_service_v2.mark_done_from_execution(
+        payload = _workflow_service(request).mark_done_from_execution(
             project_id,
             node_id,
             idempotency_key=body.idempotencyKey,
@@ -123,7 +127,7 @@ async def review_in_audit_v2(
     body: WorkspaceGuardMutationRequest,
 ):
     try:
-        payload = request.app.state.execution_audit_workflow_service_v2.review_in_audit(
+        payload = _workflow_service(request).review_in_audit(
             project_id,
             node_id,
             idempotency_key=body.idempotencyKey,
@@ -144,7 +148,7 @@ async def mark_done_from_audit_v2(
     body: ReviewGuardMutationRequest,
 ):
     try:
-        payload = request.app.state.execution_audit_workflow_service_v2.mark_done_from_audit(
+        payload = _workflow_service(request).mark_done_from_audit(
             project_id,
             node_id,
             idempotency_key=body.idempotencyKey,
@@ -165,7 +169,7 @@ async def improve_in_execution_v2(
     body: ReviewGuardMutationRequest,
 ):
     try:
-        payload = request.app.state.execution_audit_workflow_service_v2.improve_in_execution(
+        payload = _workflow_service(request).improve_in_execution(
             project_id,
             node_id,
             idempotency_key=body.idempotencyKey,

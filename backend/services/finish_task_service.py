@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import re
@@ -67,11 +67,9 @@ class FinishTaskService:
         chat_service: ChatService | None = None,
         git_checkpoint_service: Any = None,
         review_service: ReviewService | None = None,
-        thread_runtime_service_v2: ThreadRuntimeService | None = None,
+        thread_runtime_service: ThreadRuntimeService | None = None,
         thread_query_service: Any | None = None,
-        workflow_event_publisher_v2: WorkflowEventPublisher | None = None,
-        execution_audit_v2_enabled: bool = False,
-        execution_audit_v2_rehearsal_enabled: bool = False,
+        workflow_event_publisher: WorkflowEventPublisher | None = None,
         rehearsal_workspace_root: Path | None = None,
     ) -> None:
         self._storage = storage
@@ -84,11 +82,9 @@ class FinishTaskService:
         self._chat_service = chat_service
         self._git_checkpoint_service = git_checkpoint_service
         self._review_service = review_service
-        self._thread_runtime_service_v2 = thread_runtime_service_v2
+        self._thread_runtime_service = thread_runtime_service
         self._thread_query_service = thread_query_service
-        self._workflow_event_publisher_v2 = workflow_event_publisher_v2
-        self._execution_audit_v2_enabled = bool(execution_audit_v2_enabled)
-        self._execution_audit_v2_rehearsal_enabled = bool(execution_audit_v2_rehearsal_enabled)
+        self._workflow_event_publisher = workflow_event_publisher
         self._rehearsal_workspace_root = (
             Path(rehearsal_workspace_root).expanduser().resolve()
             if rehearsal_workspace_root is not None
@@ -110,141 +106,22 @@ class FinishTaskService:
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             frame_content = self._load_confirmed_frame_content(node_dir)
             task_context = build_split_context(snapshot, node, node_index)
-        v2_mode = self._execution_audit_v2_mode()
-        if v2_mode == "production":
-            return self._finish_task_v2(
-                project_id=project_id,
-                node_id=node_id,
-                spec_content=spec_content,
-                frame_content=frame_content,
-                task_context=task_context,
-                workspace_root=workspace_root,
-                node=node,
-                enforce_rehearsal_workspace=False,
-                enable_auto_review=True,
-            )
-        if self._execution_audit_v2_rehearsal_enabled:
-            return self._finish_task_v2_rehearsal(
-                project_id=project_id,
-                node_id=node_id,
-                spec_content=spec_content,
-                frame_content=frame_content,
-                task_context=task_context,
-                workspace_root=workspace_root,
-                node=node,
-            )
-        execution_session = self._ensure_execution_thread(project_id, node_id, workspace_root)
-        thread_id = str(execution_session.get("thread_id") or "").strip()
-        if not thread_id:
-            raise FinishTaskNotAllowed("Execution bootstrap did not return a thread id.")
-
-        turn_id = new_id("exec")
-        assistant_message_id = new_id("msg")
-        now = iso_now()
-        assistant_message = {
-            "message_id": assistant_message_id,
-            "role": "assistant",
-            "content": "",
-            "status": "pending",
-            "error": None,
-            "turn_id": turn_id,
-            "created_at": now,
-            "updated_at": now,
-        }
-        prompt = build_execution_prompt(
+        return self._finish_task_v2(
+            project_id=project_id,
+            node_id=node_id,
             spec_content=spec_content,
             frame_content=frame_content,
             task_context=task_context,
+            workspace_root=workspace_root,
+            node=dict(node),
+            enforce_rehearsal_workspace=False,
+            enable_auto_review=True,
         )
-        initial_sha: str
-
-        with self._storage.project_lock(project_id):
-            snapshot = self._storage.project_store.load_snapshot(project_id)
-            node_index = snapshot.get("tree_state", {}).get("node_index", {})
-            node = node_index.get(node_id)
-            if node is None:
-                raise NodeNotFound(node_id)
-            node_dir = self._resolve_node_dir(snapshot, node_id)
-            self._validate_finish_task_locked(project_id, node_id, snapshot, node, node_dir)
-            initial_sha = self._compute_initial_sha(project_id, node_id, snapshot)
-
-            exec_state = {
-                "status": "executing",
-                "initial_sha": initial_sha,
-                "head_sha": None,
-                "started_at": now,
-                "completed_at": None,
-                "local_review_started_at": None,
-                "local_review_prompt_consumed_at": None,
-            }
-            self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
-
-            if node.get("status") != "in_progress":
-                node["status"] = "in_progress"
-                snapshot["updated_at"] = now
-                self._storage.project_store.save_snapshot(project_id, snapshot)
-
-            session = self._storage.chat_state_store.read_session(
-                project_id,
-                node_id,
-                thread_role="execution",
-            )
-            session["thread_id"] = thread_id
-            session["active_turn_id"] = turn_id
-            session["messages"] = [assistant_message]
-            self._storage.chat_state_store.write_session(
-                project_id,
-                node_id,
-                session,
-                thread_role="execution",
-            )
-            self._mark_live_job(project_id, node_id, turn_id)
-
-        self._chat_event_broker.publish(
-            project_id,
-            node_id,
-            {
-                "type": "message_created",
-                "assistant_message": assistant_message,
-                "active_turn_id": turn_id,
-            },
-            thread_role="execution",
-        )
-
-        # Resolve hierarchical_number and title for commit message
-        h_number = str(node.get("hierarchical_number") or "")
-        title = str(node.get("title") or "")
-
-        threading.Thread(
-            target=self._run_background_execution,
-            kwargs={
-                "project_id": project_id,
-                "node_id": node_id,
-                "turn_id": turn_id,
-                "assistant_message_id": assistant_message_id,
-                "thread_id": thread_id,
-                "prompt": prompt,
-                "workspace_root": workspace_root,
-                "initial_sha": initial_sha,
-                "hierarchical_number": h_number,
-                "title": title,
-            },
-            daemon=True,
-        ).start()
-
-        return self._node_detail_service.get_detail_state(project_id, node_id)
-
-    def _execution_audit_v2_mode(self) -> str | None:
-        if self._execution_audit_v2_enabled:
-            return "production"
-        if self._execution_audit_v2_rehearsal_enabled:
-            return "rehearsal"
-        return None
 
     def _resolve_thread_query_service(self) -> Any | None:
         if self._thread_query_service is not None:
             return self._thread_query_service
-        runtime = self._thread_runtime_service_v2
+        runtime = self._thread_runtime_service
         if runtime is None:
             return None
         return getattr(runtime, "_query_service", None)
@@ -288,7 +165,7 @@ class FinishTaskService:
         enforce_rehearsal_workspace: bool,
         enable_auto_review: bool,
     ) -> dict[str, Any]:
-        if self._thread_runtime_service_v2 is None:
+        if self._thread_runtime_service is None:
             raise FinishTaskNotAllowed("Execution V2 runtime is unavailable.")
         if enforce_rehearsal_workspace:
             self._assert_rehearsal_workspace_allowed(workspace_root)
@@ -303,7 +180,7 @@ class FinishTaskService:
         now = iso_now()
         initial_sha: str
 
-        self._thread_runtime_service_v2.begin_turn(
+        self._thread_runtime_service.begin_turn(
             project_id=project_id,
             node_id=node_id,
             thread_role="execution",
@@ -341,7 +218,7 @@ class FinishTaskService:
 
                 self._mark_live_job(project_id, node_id, turn_id)
         except Exception as exc:
-            error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+            error_item = self._thread_runtime_service.build_error_item_for_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="execution",
@@ -349,7 +226,7 @@ class FinishTaskService:
                 thread_id=thread_id,
                 message=str(exc),
             )
-            self._thread_runtime_service_v2.complete_turn(
+            self._thread_runtime_service.complete_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="execution",
@@ -1335,7 +1212,7 @@ class FinishTaskService:
             stdout = str(result.get("stdout", "") or "")
             final_content = stdout or streamed_content
 
-            # 1. CRITICAL: git commit. Failure → fail_execution()
+            # 1. CRITICAL: git commit. Failure â†’ fail_execution()
             head_sha: str | None = None
             commit_msg: str | None = None
             changed: list[dict[str, Any]] = []
@@ -1362,12 +1239,12 @@ class FinishTaskService:
                         )
                         changed = []
                 else:
-                    commit_msg = None  # No diff → no commit message
+                    commit_msg = None  # No diff â†’ no commit message
             else:
                 from backend.services.workspace_sha import compute_workspace_sha
                 head_sha = compute_workspace_sha(Path(workspace_root)) if workspace_root else None
 
-            # 3. CRITICAL: execution state → completed
+            # 3. CRITICAL: execution state â†’ completed
             self.complete_execution(
                 project_id, node_id,
                 head_sha=head_sha,
@@ -1376,7 +1253,7 @@ class FinishTaskService:
             )
 
             # === POINT OF NO RETURN: execution state is "completed" ===
-            # Errors below are best-effort only — do NOT call fail_execution()
+            # Errors below are best-effort only â€” do NOT call fail_execution()
 
             # 4. BEST-EFFORT: finalize execution chat message first (clears active_turn_id)
             try:
@@ -1485,7 +1362,7 @@ class FinishTaskService:
         title: str = "",
         enable_auto_review: bool,
     ) -> None:
-        if self._thread_runtime_service_v2 is None:
+        if self._thread_runtime_service is None:
             logger.warning(
                 "Skipping V2 execution for %s/%s: runtime unavailable.",
                 project_id,
@@ -1520,7 +1397,7 @@ class FinishTaskService:
                     refresh_synthetic_from_full_diff=True,
                 )
 
-            stream_result = self._thread_runtime_service_v2.stream_agent_turn(
+            stream_result = self._thread_runtime_service.stream_agent_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="execution",
@@ -1534,10 +1411,10 @@ class FinishTaskService:
             )
             result = stream_result["result"]
             turn_status = str(stream_result.get("turnStatus") or "").strip().lower()
-            outcome = self._thread_runtime_service_v2.outcome_from_turn_status(turn_status)
+            outcome = self._thread_runtime_service.outcome_from_turn_status(turn_status)
             if outcome != "completed":
                 error_message = f"Execution rehearsal returned terminal status '{turn_status or 'unknown'}'."
-                error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                error_item = self._thread_runtime_service.build_error_item_for_turn(
                     project_id=project_id,
                     node_id=node_id,
                     thread_role="execution",
@@ -1545,7 +1422,7 @@ class FinishTaskService:
                     thread_id=thread_id,
                     message=error_message,
                 )
-                self._thread_runtime_service_v2.complete_turn(
+                self._thread_runtime_service.complete_turn(
                     project_id=project_id,
                     node_id=node_id,
                     thread_role="execution",
@@ -1603,7 +1480,7 @@ class FinishTaskService:
                 head_sha=head_sha,
                 refresh_synthetic_from_full_diff=True,
             )
-            self._thread_runtime_service_v2.complete_turn(
+            self._thread_runtime_service.complete_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="execution",
@@ -1652,7 +1529,7 @@ class FinishTaskService:
             )
             if not turn_finalized:
                 try:
-                    error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                    error_item = self._thread_runtime_service.build_error_item_for_turn(
                         project_id=project_id,
                         node_id=node_id,
                         thread_role="execution",
@@ -1660,7 +1537,7 @@ class FinishTaskService:
                         thread_id=thread_id,
                         message=str(exc),
                     )
-                    self._thread_runtime_service_v2.complete_turn(
+                    self._thread_runtime_service.complete_turn(
                         project_id=project_id,
                         node_id=node_id,
                         thread_role="execution",
@@ -1880,7 +1757,7 @@ class FinishTaskService:
         if self._git_checkpoint_service is not None:
             if self._git_checkpoint_service.is_git_commit_sha(latest_sha):
                 return latest_sha
-            # K0 uses sha256: format — fall back to k0_git_head_sha
+            # K0 uses sha256: format â€” fall back to k0_git_head_sha
             k0_git_head = review_state.get("k0_git_head_sha")
             if self._git_checkpoint_service.is_git_commit_sha(k0_git_head):
                 return k0_git_head
@@ -1958,17 +1835,17 @@ class FinishTaskService:
         return resolved_workspace_root
 
     def _publish_workflow_refresh(self, *, project_id: str, node_id: str, reason: str) -> None:
-        if self._workflow_event_publisher_v2 is None:
+        if self._workflow_event_publisher is None:
             return
         exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
         execution_status = (str(exec_state.get("status") or "").strip() or None) if exec_state else None
-        self._workflow_event_publisher_v2.publish_workflow_updated(
+        self._workflow_event_publisher.publish_workflow_updated(
             project_id=project_id,
             node_id=node_id,
             execution_state=execution_status,
             review_state=None,
         )
-        self._workflow_event_publisher_v2.publish_detail_invalidate(
+        self._workflow_event_publisher.publish_detail_invalidate(
             project_id=project_id,
             node_id=node_id,
             reason=reason,
@@ -2055,7 +1932,7 @@ class FinishTaskService:
         node_id: str,
         workspace_root: str | None,
     ) -> bool:
-        if self._thread_runtime_service_v2 is None:
+        if self._thread_runtime_service is None:
             raise FinishTaskNotAllowed("Auto-review V2 runtime is unavailable.")
 
         turn_id = new_id("auto_review")
@@ -2084,7 +1961,7 @@ class FinishTaskService:
 
         thread_id = self._ensure_audit_thread_id_v2(project_id, node_id, workspace_root)
         try:
-            self._thread_runtime_service_v2.begin_turn(
+            self._thread_runtime_service.begin_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="audit",
@@ -2145,7 +2022,7 @@ class FinishTaskService:
         thread_id: str,
         workspace_root: str | None,
     ) -> None:
-        if self._thread_runtime_service_v2 is None:
+        if self._thread_runtime_service is None:
             logger.warning(
                 "Skipping V2 auto-review for %s/%s: runtime unavailable.",
                 project_id,
@@ -2162,7 +2039,7 @@ class FinishTaskService:
                 workspace_root,
                 self._git_checkpoint_service,
             )
-            stream_result = self._thread_runtime_service_v2.stream_agent_turn(
+            stream_result = self._thread_runtime_service.stream_agent_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="audit",
@@ -2177,10 +2054,10 @@ class FinishTaskService:
             )
             result = stream_result["result"]
             turn_status = str(stream_result.get("turnStatus") or "").strip().lower()
-            outcome = self._thread_runtime_service_v2.outcome_from_turn_status(turn_status)
+            outcome = self._thread_runtime_service.outcome_from_turn_status(turn_status)
             if outcome != "completed":
                 error_message = f"Auto-review returned terminal status '{turn_status or 'unknown'}'."
-                error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                error_item = self._thread_runtime_service.build_error_item_for_turn(
                     project_id=project_id,
                     node_id=node_id,
                     thread_role="audit",
@@ -2188,7 +2065,7 @@ class FinishTaskService:
                     thread_id=thread_id,
                     message=error_message,
                 )
-                self._thread_runtime_service_v2.complete_turn(
+                self._thread_runtime_service.complete_turn(
                     project_id=project_id,
                     node_id=node_id,
                     thread_role="audit",
@@ -2227,7 +2104,7 @@ class FinishTaskService:
                     }
                     self._storage.execution_state_store.write_state(project_id, node_id, exec_state)
 
-            self._thread_runtime_service_v2.complete_turn(
+            self._thread_runtime_service.complete_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="audit",
@@ -2269,7 +2146,7 @@ class FinishTaskService:
 
             if not turn_finalized:
                 try:
-                    error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                    error_item = self._thread_runtime_service.build_error_item_for_turn(
                         project_id=project_id,
                         node_id=node_id,
                         thread_role="audit",
@@ -2277,7 +2154,7 @@ class FinishTaskService:
                         thread_id=thread_id,
                         message=str(exc),
                     )
-                    self._thread_runtime_service_v2.complete_turn(
+                    self._thread_runtime_service.complete_turn(
                         project_id=project_id,
                         node_id=node_id,
                         thread_role="audit",
@@ -2827,3 +2704,4 @@ class FinishTaskService:
                 project_id, node_id, session, thread_role="audit"
             )
             return True
+
