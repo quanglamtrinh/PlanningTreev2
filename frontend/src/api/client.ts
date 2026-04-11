@@ -13,9 +13,7 @@ import type {
   LocalUsageSnapshot,
   NodeDocument,
   NodeDocumentKind,
-  ResetThreadV2Response,
   ResetThreadV3Response,
-  ResolveUserInputV2Response,
   ProjectSummary,
   ReviewState,
   Snapshot,
@@ -29,9 +27,7 @@ import type {
   SplitMode,
   SplitStatusResponse,
   ResolveUserInputV3Response,
-  ThreadSnapshotV2,
   ThreadSnapshotV3,
-  ThreadRole,
   WorkflowActionAcceptedResponse,
   WorkspaceTextFile,
 } from './types'
@@ -55,15 +51,11 @@ interface V2FailureEnvelope {
 
 const DEFAULT_TIMEOUT_MS = 300_000
 
-function buildThreadPathV2(projectId: string, nodeId: string, threadRole: ThreadRole): string {
-  return `/v2/projects/${projectId}/nodes/${nodeId}/threads/${threadRole}`
+function buildWorkflowStatePathV3(projectId: string, nodeId: string): string {
+  return `/v3/projects/${projectId}/nodes/${nodeId}/workflow-state`
 }
 
-function buildWorkflowStatePathV2(projectId: string, nodeId: string): string {
-  return `/v2/projects/${projectId}/nodes/${nodeId}/workflow-state`
-}
-
-function buildWorkflowActionPathV2(
+function buildWorkflowActionPathV3(
   projectId: string,
   nodeId: string,
   action:
@@ -73,15 +65,7 @@ function buildWorkflowActionPathV2(
     | 'mark-done-from-audit'
     | 'improve-in-execution',
 ): string {
-  return `/v2/projects/${projectId}/nodes/${nodeId}/workflow/${action}`
-}
-
-function buildThreadByIdBasePathV2(projectId: string, threadId: string): string {
-  return `/v2/projects/${projectId}/threads/by-id/${threadId}`
-}
-
-function buildThreadByIdPathV2(projectId: string, threadId: string, nodeId: string): string {
-  return `${buildThreadByIdBasePathV2(projectId, threadId)}?node_id=${encodeURIComponent(nodeId)}`
+  return `/v3/projects/${projectId}/nodes/${nodeId}/workflow/${action}`
 }
 
 function buildThreadByIdBasePathV3(projectId: string, threadId: string): string {
@@ -94,32 +78,6 @@ function buildThreadByIdPathV3(projectId: string, threadId: string, nodeId: stri
 
 function buildThreadByIdTurnPathV3(projectId: string, threadId: string, nodeId: string): string {
   return `${buildThreadByIdBasePathV3(projectId, threadId)}/turns?node_id=${encodeURIComponent(nodeId)}`
-}
-
-export function buildThreadEventsUrlV2(
-  projectId: string,
-  nodeId: string,
-  threadRole: ThreadRole,
-  afterSnapshotVersion?: number | null,
-): string {
-  const base = `${buildThreadPathV2(projectId, nodeId, threadRole)}/events`
-  if (afterSnapshotVersion == null) {
-    return base
-  }
-  return `${base}?after_snapshot_version=${encodeURIComponent(String(afterSnapshotVersion))}`
-}
-
-export function buildThreadByIdEventsUrlV2(
-  projectId: string,
-  nodeId: string,
-  threadId: string,
-  afterSnapshotVersion?: number | null,
-): string {
-  const base = `${buildThreadByIdBasePathV2(projectId, threadId)}/events?node_id=${encodeURIComponent(nodeId)}`
-  if (afterSnapshotVersion == null) {
-    return base
-  }
-  return `${base}&after_snapshot_version=${encodeURIComponent(String(afterSnapshotVersion))}`
 }
 
 export function buildThreadByIdEventsUrlV3(
@@ -135,8 +93,8 @@ export function buildThreadByIdEventsUrlV3(
   return `${base}&after_snapshot_version=${encodeURIComponent(String(afterSnapshotVersion))}`
 }
 
-export function buildProjectEventsUrlV2(projectId: string): string {
-  return `/v2/projects/${projectId}/events`
+export function buildProjectEventsUrlV3(projectId: string): string {
+  return `/v3/projects/${projectId}/events`
 }
 
 let _cachedAuthToken: string | null = null
@@ -375,8 +333,8 @@ export const api = {
   getDetailState(projectId: string, nodeId: string): Promise<DetailState> {
     return jsonFetch<DetailState>(`/v1/projects/${projectId}/nodes/${nodeId}/detail-state`)
   },
-  getWorkflowStateV2(projectId: string, nodeId: string): Promise<NodeWorkflowView> {
-    return jsonFetchV2<NodeWorkflowView>(buildWorkflowStatePathV2(projectId, nodeId))
+  getWorkflowStateV3(projectId: string, nodeId: string): Promise<NodeWorkflowView> {
+    return jsonFetchV2<NodeWorkflowView>(buildWorkflowStatePathV3(projectId, nodeId))
   },
   getReviewState(projectId: string, nodeId: string): Promise<ReviewState> {
     return jsonFetch<ReviewState>(`/v1/projects/${projectId}/nodes/${nodeId}/review-state`)
@@ -491,26 +449,6 @@ export const api = {
   ): Promise<{ status: string; target_sha: string; current_head_sha: string; task_present_in_current_workspace: boolean; detail_state: DetailState }> {
     return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/reset-workspace`, { method: 'POST' }, { target })
   },
-  async getThreadSnapshotV2(
-    projectId: string,
-    nodeId: string,
-    threadRole: ThreadRole,
-  ): Promise<ThreadSnapshotV2> {
-    const response = await jsonFetchV2<{ snapshot: ThreadSnapshotV2 }>(
-      buildThreadPathV2(projectId, nodeId, threadRole),
-    )
-    return response.snapshot
-  },
-  async getThreadSnapshotByIdV2(
-    projectId: string,
-    nodeId: string,
-    threadId: string,
-  ): Promise<ThreadSnapshotV2> {
-    const response = await jsonFetchV2<{ snapshot: ThreadSnapshotV2 }>(
-      buildThreadByIdPathV2(projectId, threadId, nodeId),
-    )
-    return response.snapshot
-  },
   async getThreadSnapshotByIdV3(
     projectId: string,
     nodeId: string,
@@ -575,97 +513,61 @@ export const api = {
       { method: 'POST' },
     )
   },
-  startThreadTurnV2(
-    projectId: string,
-    nodeId: string,
-    threadRole: ThreadRole,
-    text: string,
-    metadata: Record<string, unknown> = {},
-  ): Promise<StartTurnV2Response> {
-    return jsonFetchV2<StartTurnV2Response>(
-      `${buildThreadPathV2(projectId, nodeId, threadRole)}/turns`,
-      { method: 'POST' },
-      { text, metadata },
-    )
-  },
-  resolveThreadUserInputV2(
-    projectId: string,
-    nodeId: string,
-    threadRole: ThreadRole,
-    requestId: string,
-    answers: ResolveUserInputV2Response['answers'],
-  ): Promise<ResolveUserInputV2Response> {
-    return jsonFetchV2<ResolveUserInputV2Response>(
-      `${buildThreadPathV2(projectId, nodeId, threadRole)}/requests/${requestId}/resolve`,
-      { method: 'POST' },
-      { answers },
-    )
-  },
-  resetThreadV2(
-    projectId: string,
-    nodeId: string,
-    threadRole: ThreadRole,
-  ): Promise<ResetThreadV2Response> {
-    return jsonFetchV2<ResetThreadV2Response>(
-      `${buildThreadPathV2(projectId, nodeId, threadRole)}/reset`,
-      { method: 'POST' },
-    )
-  },
-  finishTaskWorkflowV2(
+  finishTaskWorkflowV3(
     projectId: string,
     nodeId: string,
     idempotencyKey: string,
   ): Promise<WorkflowActionAcceptedResponse> {
     return jsonFetchV2<WorkflowActionAcceptedResponse>(
-      buildWorkflowActionPathV2(projectId, nodeId, 'finish-task'),
+      buildWorkflowActionPathV3(projectId, nodeId, 'finish-task'),
       { method: 'POST' },
       { idempotencyKey },
     )
   },
-  markDoneFromExecutionV2(
+  markDoneFromExecutionV3(
     projectId: string,
     nodeId: string,
     idempotencyKey: string,
     expectedWorkspaceHash: string,
   ): Promise<NodeWorkflowView> {
     return jsonFetchV2<NodeWorkflowView>(
-      buildWorkflowActionPathV2(projectId, nodeId, 'mark-done-from-execution'),
+      buildWorkflowActionPathV3(projectId, nodeId, 'mark-done-from-execution'),
       { method: 'POST' },
       { idempotencyKey, expectedWorkspaceHash },
     )
   },
-  reviewInAuditV2(
+  reviewInAuditV3(
     projectId: string,
     nodeId: string,
     idempotencyKey: string,
     expectedWorkspaceHash: string,
   ): Promise<WorkflowActionAcceptedResponse> {
     return jsonFetchV2<WorkflowActionAcceptedResponse>(
-      buildWorkflowActionPathV2(projectId, nodeId, 'review-in-audit'),
+      buildWorkflowActionPathV3(projectId, nodeId, 'review-in-audit'),
       { method: 'POST' },
       { idempotencyKey, expectedWorkspaceHash },
     )
   },
-  markDoneFromAuditV2(
+  markDoneFromAuditV3(
     projectId: string,
     nodeId: string,
     idempotencyKey: string,
     expectedReviewCommitSha: string,
   ): Promise<NodeWorkflowView> {
     return jsonFetchV2<NodeWorkflowView>(
-      buildWorkflowActionPathV2(projectId, nodeId, 'mark-done-from-audit'),
+      buildWorkflowActionPathV3(projectId, nodeId, 'mark-done-from-audit'),
       { method: 'POST' },
       { idempotencyKey, expectedReviewCommitSha },
     )
   },
-  improveInExecutionV2(
+  improveInExecutionV3(
     projectId: string,
     nodeId: string,
     idempotencyKey: string,
     expectedReviewCommitSha: string,
   ): Promise<WorkflowActionAcceptedResponse> {
     return jsonFetchV2<WorkflowActionAcceptedResponse>(
-      buildWorkflowActionPathV2(projectId, nodeId, 'improve-in-execution'),
+      buildWorkflowActionPathV3(projectId, nodeId, 'improve-in-execution'),
       { method: 'POST' },
       { idempotencyKey, expectedReviewCommitSha },
     )

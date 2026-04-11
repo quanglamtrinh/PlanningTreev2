@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from typing import Any, Literal
 
@@ -8,12 +9,10 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from backend.config.app_config import is_conversation_v3_bridge_allowed_for_project
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
-from backend.conversation.projector.thread_event_projector_v3 import (
-    project_v2_envelope_to_v3,
-    project_v2_snapshot_to_v3,
-)
+from backend.conversation.domain.types_v3 import normalize_thread_role_v3
 from backend.errors.app_errors import AppError, AskV3Disabled, InvalidRequest
 from backend.storage.file_utils import new_id
 
@@ -80,12 +79,57 @@ class PlanActionByIdRequest(BaseModel):
     idempotencyKey: str | None = None
 
 
+class WorkflowMutationRequest(BaseModel):
+    idempotencyKey: str
+
+
+class WorkspaceGuardMutationRequest(WorkflowMutationRequest):
+    expectedWorkspaceHash: str
+
+
+class ReviewGuardMutationRequest(WorkflowMutationRequest):
+    expectedReviewCommitSha: str
+
+
+def _workflow_service(request: Request) -> Any:
+    return request.app.state.execution_audit_workflow_service
+
+
+def _workflow_event_broker(request: Request) -> Any:
+    return request.app.state.workflow_event_broker
+
+
 def _normalize_thread_id(value: Any) -> str:
     return str(value or "").strip()
 
 
 def _is_ask_v3_backend_enabled(request: Request) -> bool:
     return bool(getattr(request.app.state, "ask_v3_backend_enabled", True))
+
+
+def _snapshot_with_contract_fields(snapshot: dict[str, Any], *, thread_role: str) -> dict[str, Any]:
+    prepared = copy.deepcopy(snapshot if isinstance(snapshot, dict) else {})
+    resolved_thread_role = normalize_thread_role_v3(
+        prepared.get("threadRole") or prepared.get("thread_role") or thread_role,
+        default=normalize_thread_role_v3(thread_role, default="ask_planning"),
+    )
+    prepared["threadRole"] = resolved_thread_role
+    prepared.pop("lane", None)
+    return prepared
+
+
+def _envelope_with_contract_fields(envelope: dict[str, Any], *, thread_role: str) -> dict[str, Any]:
+    prepared = copy.deepcopy(envelope if isinstance(envelope, dict) else {})
+    prepared["threadRole"] = normalize_thread_role_v3(
+        prepared.get("threadRole") or thread_role,
+        default=normalize_thread_role_v3(thread_role, default="ask_planning"),
+    )
+    payload = prepared.get("payload")
+    if isinstance(payload, dict):
+        snapshot = payload.get("snapshot")
+        if isinstance(snapshot, dict):
+            payload["snapshot"] = _snapshot_with_contract_fields(snapshot, thread_role=thread_role)
+    return prepared
 
 
 def _resolve_execution_audit_thread_role_by_state(
@@ -113,7 +157,7 @@ def _resolve_ask_thread_role_from_registry(
     registry_service = request.app.state.thread_registry_service_v2
     entry = registry_service.read_entry(project_id, node_id, "ask_planning")
     ask_thread_id = _normalize_thread_id(entry.get("threadId"))
-    if not ask_thread_id:
+    if not ask_thread_id and is_conversation_v3_bridge_allowed_for_project(project_id):
         legacy_session = request.app.state.storage.chat_state_store.read_session(
             project_id,
             node_id,
@@ -164,6 +208,155 @@ def _resolve_thread_role_by_id_v3(
     raise InvalidRequest(_THREAD_MISMATCH_ERROR)
 
 
+@router.get("/projects/{project_id}/nodes/{node_id}/workflow-state")
+async def get_workflow_state_v3(request: Request, project_id: str, node_id: str):
+    try:
+        payload = _workflow_service(request).get_workflow_state(project_id, node_id)
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/workflow/finish-task")
+async def finish_task_v3(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: WorkflowMutationRequest,
+):
+    try:
+        payload = _workflow_service(request).finish_task(
+            project_id,
+            node_id,
+            idempotency_key=body.idempotencyKey,
+        )
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/workflow/mark-done-from-execution")
+async def mark_done_from_execution_v3(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: WorkspaceGuardMutationRequest,
+):
+    try:
+        payload = _workflow_service(request).mark_done_from_execution(
+            project_id,
+            node_id,
+            idempotency_key=body.idempotencyKey,
+            expected_workspace_hash=body.expectedWorkspaceHash,
+        )
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/workflow/review-in-audit")
+async def review_in_audit_v3(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: WorkspaceGuardMutationRequest,
+):
+    try:
+        payload = _workflow_service(request).review_in_audit(
+            project_id,
+            node_id,
+            idempotency_key=body.idempotencyKey,
+            expected_workspace_hash=body.expectedWorkspaceHash,
+        )
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/workflow/mark-done-from-audit")
+async def mark_done_from_audit_v3(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: ReviewGuardMutationRequest,
+):
+    try:
+        payload = _workflow_service(request).mark_done_from_audit(
+            project_id,
+            node_id,
+            idempotency_key=body.idempotencyKey,
+            expected_review_commit_sha=body.expectedReviewCommitSha,
+        )
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.post("/projects/{project_id}/nodes/{node_id}/workflow/improve-in-execution")
+async def improve_in_execution_v3(
+    request: Request,
+    project_id: str,
+    node_id: str,
+    body: ReviewGuardMutationRequest,
+):
+    try:
+        payload = _workflow_service(request).improve_in_execution(
+            project_id,
+            node_id,
+            idempotency_key=body.idempotencyKey,
+            expected_review_commit_sha=body.expectedReviewCommitSha,
+        )
+        return _ok(payload)
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.get("/projects/{project_id}/events")
+async def workflow_events_v3(
+    request: Request,
+    project_id: str,
+):
+    broker = _workflow_event_broker(request)
+    queue = broker.subscribe()
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_INTERVAL_SEC)
+                    if str(event.get("projectId") or "") != project_id:
+                        continue
+                    yield _sse_frame(event)
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+                if await request.is_disconnected():
+                    break
+        finally:
+            broker.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/projects/{project_id}/threads/by-id/{thread_id}")
 async def get_thread_snapshot_by_id_v3(
     request: Request,
@@ -178,14 +371,14 @@ async def get_thread_snapshot_by_id_v3(
             node_id,
             thread_id,
         )
-        snapshot_v2 = request.app.state.thread_query_service_v2.get_thread_snapshot(
+        snapshot_v3 = request.app.state.thread_query_service_v3.get_thread_snapshot(
             project_id,
             node_id,
             thread_role,
             publish_repairs=True,
             ensure_binding=False,
         )
-        snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
+        snapshot_v3 = _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)
         return _ok({"snapshot": snapshot_v3})
     except AppError as exc:
         return _error_response(exc)
@@ -201,7 +394,7 @@ async def thread_events_by_id_v3(
     node_id: str = Query(...),
     after_snapshot_version: int | None = Query(None),
 ):
-    broker = request.app.state.conversation_event_broker_v2
+    broker = request.app.state.conversation_event_broker_v3
     queue = None
     thread_role = ""
     try:
@@ -215,14 +408,13 @@ async def thread_events_by_id_v3(
             metrics = getattr(request.app.state, "ask_rollout_metrics_service", None)
             if metrics is not None:
                 metrics.record_stream_session()
-        snapshot_v2 = request.app.state.thread_query_service_v2.build_stream_snapshot(
+        snapshot_v3 = request.app.state.thread_query_service_v3.build_stream_snapshot(
             project_id,
             node_id,
             thread_role,
             after_snapshot_version=after_snapshot_version,
             ensure_binding=False,
         )
-        snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
         queue = broker.subscribe(project_id, node_id, thread_role=thread_role)
     except AppError as exc:
         if queue is not None:
@@ -239,35 +431,24 @@ async def thread_events_by_id_v3(
         thread_role=thread_role,
         snapshot_version=int(snapshot_v3.get("snapshotVersion") or 0),
         event_type=event_types.THREAD_SNAPSHOT_V3,
-        payload={"snapshot": snapshot_v3},
+        payload={"snapshot": _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)},
     )
+    snapshot_envelope = _envelope_with_contract_fields(snapshot_envelope, thread_role=thread_role)
     first_snapshot_version = int(snapshot_v3.get("snapshotVersion") or 0)
 
     async def event_generator():
-        current_snapshot = snapshot_v3
         try:
             yield _sse_frame(snapshot_envelope)
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_INTERVAL_SEC)
-                    event_version = int(event.get("snapshotVersion") or 0)
+                    event_payload = event if isinstance(event, dict) else {}
+                    event_version = int(event_payload.get("snapshotVersion") or 0)
                     if event_version and event_version <= first_snapshot_version:
                         continue
-                    current_snapshot, mapped_events = project_v2_envelope_to_v3(current_snapshot, event)
-                    if not mapped_events:
+                    if not event_payload:
                         continue
-                    for mapped in mapped_events:
-                        mapped_payload = mapped.get("payload")
-                        payload_dict = mapped_payload if isinstance(mapped_payload, dict) else {}
-                        mapped_envelope = build_thread_envelope(
-                            project_id=project_id,
-                            node_id=node_id,
-                            thread_role=thread_role,
-                            snapshot_version=event_version or int(current_snapshot.get("snapshotVersion") or 0),
-                            event_type=str(mapped.get("type") or ""),
-                            payload=payload_dict,
-                        )
-                        yield _sse_frame(mapped_envelope)
+                    yield _sse_frame(_envelope_with_contract_fields(event_payload, thread_role=thread_role))
                 except asyncio.TimeoutError:
                     yield ": heartbeat\n\n"
                 if await request.is_disconnected():
@@ -302,7 +483,7 @@ async def resolve_user_input_by_id_v3(
             node_id,
             thread_id,
         )
-        payload = request.app.state.thread_runtime_service_v2.resolve_user_input(
+        payload = request.app.state.thread_runtime_service_v3.resolve_user_input(
             project_id=project_id,
             node_id=node_id,
             thread_role=thread_role,
@@ -325,7 +506,7 @@ async def start_turn_by_id_v3(
     node_id: str = Query(...),
 ):
     try:
-        workflow_service = request.app.state.execution_audit_workflow_service_v2
+        workflow_service = _workflow_service(request)
         thread_role = _resolve_thread_role_by_id_v3(request, project_id, node_id, thread_id)
         if thread_role == "execution":
             idempotency_key = str(body.metadata.get("idempotencyKey") or new_id("exec_followup"))
@@ -336,7 +517,7 @@ async def start_turn_by_id_v3(
                 text=body.text,
             )
         elif thread_role == "ask_planning":
-            payload = request.app.state.thread_runtime_service_v2.start_turn(
+            payload = request.app.state.thread_runtime_service_v3.start_turn(
                 project_id,
                 node_id,
                 thread_role,
@@ -361,7 +542,7 @@ async def apply_plan_action_by_id_v3(
     node_id: str = Query(...),
 ):
     try:
-        workflow_service = request.app.state.execution_audit_workflow_service_v2
+        workflow_service = _workflow_service(request)
         thread_role = _resolve_thread_role_by_id_v3(request, project_id, node_id, thread_id)
         if thread_role != "execution":
             raise InvalidRequest("Plan-ready actions are supported only on execution threads.")
@@ -372,14 +553,13 @@ async def apply_plan_action_by_id_v3(
         if int(body.revision) < 0:
             raise InvalidRequest("revision must be a non-negative integer.")
 
-        snapshot_v2 = request.app.state.thread_query_service_v2.get_thread_snapshot(
+        snapshot_v3 = request.app.state.thread_query_service_v3.get_thread_snapshot(
             project_id,
             node_id,
             thread_role,
             publish_repairs=True,
             ensure_binding=False,
         )
-        snapshot_v3 = project_v2_snapshot_to_v3(snapshot_v2)
         plan_ready = snapshot_v3.get("uiSignals", {}).get("planReady", {})
         if not bool(plan_ready.get("ready")) or bool(plan_ready.get("failed")):
             raise InvalidRequest("The current execution thread does not have a ready plan revision.")
@@ -423,7 +603,7 @@ async def reset_thread_by_id_v3(
         thread_role = _resolve_thread_role_by_id_v3(request, project_id, node_id, thread_id)
         if thread_role != "ask_planning":
             raise InvalidRequest("V3 by-id reset is supported only on ask threads.")
-        snapshot = request.app.state.thread_query_service_v2.reset_thread(
+        snapshot = request.app.state.thread_query_service_v3.reset_thread(
             project_id,
             node_id,
             thread_role,

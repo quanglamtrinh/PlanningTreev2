@@ -91,6 +91,13 @@ function isPendingRequestStatus(status: PendingRequestStatus): boolean {
   return status === 'requested' || status === 'answer_submitted'
 }
 
+function resolveSnapshotThreadRole(snapshot: ThreadSnapshotV3 | null): ThreadSnapshotV3['threadRole'] | null {
+  if (!snapshot) {
+    return null
+  }
+  return snapshot.threadRole
+}
+
 function buildPlanReadyDismissKey(
   threadId: string | null | undefined,
   planItemId: string | null | undefined,
@@ -1641,7 +1648,7 @@ export function MessagesV3({
     planReadySignal?.revision ?? null,
   )
   const showPlanReadyCard =
-    Boolean(snapshot?.lane === 'execution') &&
+    resolveSnapshotThreadRole(snapshot) === 'execution' &&
     Boolean(planReadySignal?.ready) &&
     !Boolean(planReadySignal?.failed) &&
     Boolean(planReadyDismissKey) &&

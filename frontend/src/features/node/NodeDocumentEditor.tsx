@@ -12,7 +12,7 @@ import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { useProjectStore } from '../../stores/project-store'
 import { useAskShellActionStore } from '../../stores/ask-shell-action-store'
 import { buildChatV2Url } from '../conversation/surfaceRouting'
-import { useWorkflowStateStoreV2 } from '../conversation/state/workflowStateStoreV2'
+import { useWorkflowStateStoreV3 } from '../conversation/state/workflowStateStoreV3'
 import type { WorkflowTab } from './WorkflowStepper'
 import { vscodeMarkdownSyntaxHighlighting } from './codemirror/vscodeMarkdownHighlight'
 import styles from './NodeDetailCard.module.css'
@@ -82,8 +82,8 @@ export function NodeDocumentEditor({
   const markActionSucceeded = useAskShellActionStore((state) => state.markSucceeded)
   const markActionFailed = useAskShellActionStore((state) => state.markFailed)
   const invalidateClarify = useClarifyStore((state) => state.invalidateEntry)
-  const finishTaskWorkflowV2 = useWorkflowStateStoreV2((state) => state.finishTask)
-  const activeWorkflowMutation = useWorkflowStateStoreV2(
+  const finishTaskWorkflowV3 = useWorkflowStateStoreV3((state) => state.finishTask)
+  const activeWorkflowMutation = useWorkflowStateStoreV3(
     (state) => state.activeMutations[detailStateKey] ?? null,
   )
   const [isConfirming, setIsConfirming] = useState(false)
@@ -420,7 +420,7 @@ export function NodeDocumentEditor({
         throw error
       }
       await refreshSnapshot()
-      await finishTaskWorkflowV2(projectId, node.node_id)
+      await finishTaskWorkflowV3(projectId, node.node_id)
       navigate(buildChatV2Url(projectId, node.node_id, 'execution'))
     } catch (error) {
       setConfirmError(error instanceof Error ? error.message : 'Finish task failed')
@@ -430,7 +430,7 @@ export function NodeDocumentEditor({
     }
   }, [
     confirmSpec,
-    finishTaskWorkflowV2,
+    finishTaskWorkflowV3,
     flushDocument,
     isFinishingTask,
     markActionFailed,

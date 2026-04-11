@@ -1,0 +1,51 @@
+{
+  "run_id": "convv3mig_123456789abc",
+  "started_at": "2026-04-10T20:00:00.000000+00:00",
+  "ended_at": "2026-04-10T20:00:03.000000+00:00",
+  "mode": "dry-run",
+  "bridge_mode": "enabled",
+  "filters": {
+    "all_projects": true,
+    "project_ids": [],
+    "node_ids": [],
+    "thread_roles": []
+  },
+  "totals": {
+    "scanned": 12,
+    "migrated": 7,
+    "skip_existing": 3,
+    "skip_missing_v2": 1,
+    "failed": 1
+  },
+  "checksum": {
+    "algorithm": "sha256",
+    "targets_hash": "c4288e26f7e1903eb4da0ab4fc8d26f42dc2e0f13046305209dc6d274566a1cf",
+    "target_count": 13
+  },
+  "errors": [
+    {
+      "project_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "node_id": "node-bad",
+      "thread_role": "execution",
+      "error_type": "JSONDecodeError",
+      "message": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+    }
+  ],
+  "results": [
+    {
+      "project_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "node_id": "node-1",
+      "thread_role": "execution",
+      "status": "migrated"
+    },
+    {
+      "project_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "node_id": "node-2",
+      "thread_role": "execution",
+      "status": "skip_existing"
+    }
+  ],
+  "stopped_early": false,
+  "fail_fast_threshold": null
+}
+

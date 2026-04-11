@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import copy
 import json
@@ -11,7 +11,8 @@ from typing import Any, TypedDict
 
 from backend.ai.execution_prompt_builder import build_execution_prompt
 from backend.ai.split_context_builder import build_split_context
-from backend.conversation.projector.thread_event_projector import upsert_item
+from backend.conversation.projector.thread_event_projector import upsert_item as upsert_item_v2
+from backend.conversation.projector.thread_event_projector_runtime_v3 import upsert_item_v3
 from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.errors.app_errors import FinishTaskNotAllowed, NodeNotFound, ReviewNotAllowed
@@ -381,8 +382,9 @@ class ExecutionAuditWorkflowService:
         tree_service: TreeService,
         finish_task_service: FinishTaskService,
         review_service: ReviewService,
-        thread_runtime_service_v2: ThreadRuntimeService,
-        workflow_event_publisher_v2: WorkflowEventPublisher,
+        thread_runtime_service: ThreadRuntimeService,
+        thread_query_service: Any | None = None,
+        workflow_event_publisher: WorkflowEventPublisher,
         git_checkpoint_service: GitCheckpointService | None,
         codex_client: Any,
     ) -> None:
@@ -390,12 +392,100 @@ class ExecutionAuditWorkflowService:
         self._tree_service = tree_service
         self._finish_task_service = finish_task_service
         self._review_service = review_service
-        self._thread_runtime_service_v2 = thread_runtime_service_v2
-        self._workflow_event_publisher_v2 = workflow_event_publisher_v2
+        self._thread_runtime_service = thread_runtime_service
+        self._thread_query_service = (
+            thread_query_service
+            if thread_query_service is not None
+            else getattr(thread_runtime_service, "_query_service", None)
+        )
+        self._workflow_event_publisher = workflow_event_publisher
         self._codex_client = codex_client
         self._decision_service = WorkflowDecisionService()
         self._metadata_service = WorkflowMetadataService(tree_service, finish_task_service)
         self._artifact_service = GitArtifactService(git_checkpoint_service)
+
+    def _resolve_thread_query_service(self) -> Any | None:
+        query_service = getattr(self, "_thread_query_service", None)
+        if query_service is not None:
+            return query_service
+        runtime_service = getattr(self, "_thread_runtime_service", None)
+        if runtime_service is None:
+            return None
+        return getattr(runtime_service, "_query_service", None)
+
+    def _is_query_service_v3(self) -> bool:
+        query_service = self._resolve_thread_query_service()
+        if query_service is None:
+            return False
+        if hasattr(query_service, "_snapshot_store_v3"):
+            return True
+        return "v3" in type(query_service).__name__.lower()
+
+    def _get_thread_snapshot(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        *,
+        publish_repairs: bool = True,
+        ensure_binding: bool = True,
+        allow_thread_read_hydration: bool | None = None,
+    ) -> dict[str, Any]:
+        query_service = self._resolve_thread_query_service()
+        if query_service is None:
+            raise FinishTaskNotAllowed("Thread query service unavailable.")
+        kwargs: dict[str, Any] = {
+            "publish_repairs": publish_repairs,
+            "ensure_binding": ensure_binding,
+        }
+        if allow_thread_read_hydration is not None:
+            kwargs["allow_thread_read_hydration"] = allow_thread_read_hydration
+        try:
+            return query_service.get_thread_snapshot(project_id, node_id, thread_role, **kwargs)
+        except TypeError:
+            kwargs.pop("allow_thread_read_hydration", None)
+            return query_service.get_thread_snapshot(project_id, node_id, thread_role, **kwargs)
+
+    def _build_stream_snapshot(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        *,
+        after_snapshot_version: int | None,
+    ) -> dict[str, Any]:
+        query_service = self._resolve_thread_query_service()
+        if query_service is None:
+            raise FinishTaskNotAllowed("Thread query service unavailable.")
+        return query_service.build_stream_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            after_snapshot_version=after_snapshot_version,
+            ensure_binding=False,
+        )
+
+    def _persist_thread_mutation(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        snapshot: dict[str, Any],
+        events: list[dict[str, Any]],
+    ) -> None:
+        query_service = self._resolve_thread_query_service()
+        if query_service is None:
+            raise FinishTaskNotAllowed("Thread query service unavailable.")
+        query_service.persist_thread_mutation(project_id, node_id, thread_role, snapshot, events)
+
+    def _upsert_item(
+        self,
+        snapshot: dict[str, Any],
+        item: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        if self._is_query_service_v3():
+            return upsert_item_v3(snapshot, item)
+        return upsert_item_v2(snapshot, item)
 
     def get_workflow_state(self, project_id: str, node_id: str) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
@@ -472,7 +562,7 @@ class ExecutionAuditWorkflowService:
 
     def get_thread_snapshot_by_id(self, project_id: str, node_id: str, thread_id: str) -> dict[str, Any]:
         thread_role = self.resolve_thread_route(project_id, node_id, thread_id)
-        return self._thread_runtime_service_v2._query_service.get_thread_snapshot(
+        return self._get_thread_snapshot(
             project_id,
             node_id,
             thread_role,
@@ -489,12 +579,11 @@ class ExecutionAuditWorkflowService:
         after_snapshot_version: int | None,
     ) -> tuple[str, dict[str, Any]]:
         thread_role = self.resolve_thread_route(project_id, node_id, thread_id)
-        snapshot = self._thread_runtime_service_v2._query_service.build_stream_snapshot(
-            project_id,
-            node_id,
-            thread_role,
+        snapshot = self._build_stream_snapshot(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
             after_snapshot_version=after_snapshot_version,
-            ensure_binding=False,
         )
         return thread_role, snapshot
 
@@ -639,11 +728,12 @@ class ExecutionAuditWorkflowService:
                     workspace_root,
                 )
                 state["executionThreadId"] = resolved_execution_thread_id
-            snapshot = self._thread_runtime_service_v2._query_service.get_thread_snapshot(
+            snapshot = self._get_thread_snapshot(
                 project_id,
                 node_id,
                 "execution",
                 publish_repairs=False,
+                ensure_binding=False,
             )
             turn_id = new_id("exec")
             created_items: list[dict[str, Any]] = []
@@ -656,7 +746,7 @@ class ExecutionAuditWorkflowService:
                         text=local_user_text,
                     )
                 )
-            self._thread_runtime_service_v2.begin_turn(
+            self._thread_runtime_service.begin_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="execution",
@@ -755,7 +845,7 @@ class ExecutionAuditWorkflowService:
                     refresh_synthetic_from_full_diff=True,
                 )
 
-            stream_result = self._thread_runtime_service_v2.stream_agent_turn(
+            stream_result = self._thread_runtime_service.stream_agent_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="execution",
@@ -769,7 +859,7 @@ class ExecutionAuditWorkflowService:
             )
             result = stream_result["result"]
             turn_status = str(stream_result.get("turnStatus") or "").strip().lower()
-            outcome = self._thread_runtime_service_v2.outcome_from_turn_status(turn_status)
+            outcome = self._thread_runtime_service.outcome_from_turn_status(turn_status)
             if outcome != "completed":
                 raise FinishTaskNotAllowed(
                     f"Execution run returned unsupported terminal status {turn_status or 'unknown'}."
@@ -782,7 +872,7 @@ class ExecutionAuditWorkflowService:
                 start_sha=start_sha,
                 refresh_synthetic_from_full_diff=True,
             )
-            self._thread_runtime_service_v2.complete_turn(
+            self._thread_runtime_service.complete_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="execution",
@@ -818,7 +908,7 @@ class ExecutionAuditWorkflowService:
             logger.exception("Execution workflow run failed for %s/%s", project_id, node_id, exc_info=exc)
             if not turn_finalized:
                 try:
-                    error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                    error_item = self._thread_runtime_service.build_error_item_for_turn(
                         project_id=project_id,
                         node_id=node_id,
                         thread_role="execution",
@@ -826,7 +916,7 @@ class ExecutionAuditWorkflowService:
                         thread_id=thread_id,
                         message=str(exc),
                     )
-                    self._thread_runtime_service_v2.complete_turn(
+                    self._thread_runtime_service.complete_turn(
                         project_id=project_id,
                         node_id=node_id,
                         thread_role="execution",
@@ -1184,8 +1274,8 @@ class ExecutionAuditWorkflowService:
             return
         if not isinstance(start_sha, str) or not start_sha.strip():
             return
-        runtime = self._thread_runtime_service_v2
-        if runtime is None:
+        query_service = self._resolve_thread_query_service()
+        if query_service is None:
             return
 
         class _WorktreeRangeDiffSource(ExecutionFileChangeDiffSource):
@@ -1229,8 +1319,7 @@ class ExecutionAuditWorkflowService:
         )
         hydrator = ExecutionFileChangeHydrator(logger=logger)
 
-        query_service = runtime._query_service
-        snapshot = query_service.get_thread_snapshot(
+        snapshot = self._get_thread_snapshot(
             project_id,
             node_id,
             "execution",
@@ -1249,13 +1338,7 @@ class ExecutionAuditWorkflowService:
         )
 
         if pending_events:
-            query_service.persist_thread_mutation(
-                project_id,
-                node_id,
-                "execution",
-                updated_snapshot,
-                pending_events,
-            )
+            self._persist_thread_mutation(project_id, node_id, "execution", updated_snapshot, pending_events)
 
     def review_in_audit(
         self,
@@ -1337,7 +1420,7 @@ class ExecutionAuditWorkflowService:
             self._storage.workflow_state_store.write_state(project_id, node_id, state)
 
         self._bind_audit_thread_to_review_thread(project_id, node_id, review_thread_id)
-        self._thread_runtime_service_v2.begin_turn(
+        self._thread_runtime_service.begin_turn(
             project_id=project_id,
             node_id=node_id,
             thread_role="audit",
@@ -1439,7 +1522,7 @@ class ExecutionAuditWorkflowService:
         review_disposition: str | None = None
 
         try:
-            stream_result = self._thread_runtime_service_v2.stream_agent_turn(
+            stream_result = self._thread_runtime_service.stream_agent_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="audit",
@@ -1453,7 +1536,7 @@ class ExecutionAuditWorkflowService:
             )
             result = stream_result["result"]
             turn_status = str(stream_result.get("turnStatus") or "").strip().lower()
-            outcome = self._thread_runtime_service_v2.outcome_from_turn_status(turn_status)
+            outcome = self._thread_runtime_service.outcome_from_turn_status(turn_status)
             if outcome != "completed":
                 raise ReviewNotAllowed(
                     f"Audit review run returned unsupported terminal status {turn_status or 'unknown'}."
@@ -1483,7 +1566,7 @@ class ExecutionAuditWorkflowService:
                 turn_id=discovered_review_turn_id or local_turn_id,
                 review_text=final_review_text,
             )
-            self._thread_runtime_service_v2.complete_turn(
+            self._thread_runtime_service.complete_turn(
                 project_id=project_id,
                 node_id=node_id,
                 thread_role="audit",
@@ -1521,7 +1604,7 @@ class ExecutionAuditWorkflowService:
             logger.exception("Audit review cycle failed for %s/%s", project_id, node_id, exc_info=exc)
             if not turn_finalized:
                 try:
-                    error_item = self._thread_runtime_service_v2.build_error_item_for_turn(
+                    error_item = self._thread_runtime_service.build_error_item_for_turn(
                         project_id=project_id,
                         node_id=node_id,
                         thread_role="audit",
@@ -1529,7 +1612,7 @@ class ExecutionAuditWorkflowService:
                         thread_id=discovered_review_thread_id or thread_id,
                         message=str(exc),
                     )
-                    self._thread_runtime_service_v2.complete_turn(
+                    self._thread_runtime_service.complete_turn(
                         project_id=project_id,
                         node_id=node_id,
                         thread_role="audit",
@@ -1584,7 +1667,7 @@ class ExecutionAuditWorkflowService:
         turn_id: str,
         review_text: str,
     ) -> None:
-        snapshot = self._thread_runtime_service_v2._query_service.get_thread_snapshot(
+        snapshot = self._get_thread_snapshot(
             project_id,
             node_id,
             "audit",
@@ -1617,14 +1700,8 @@ class ExecutionAuditWorkflowService:
             "text": review_text,
             "format": "markdown",
         }
-        updated, events = upsert_item(snapshot, item)
-        self._thread_runtime_service_v2._query_service.persist_thread_mutation(
-            project_id,
-            node_id,
-            "audit",
-            updated,
-            events,
-        )
+        updated, events = self._upsert_item(snapshot, item)
+        self._persist_thread_mutation(project_id, node_id, "audit", updated, events)
 
     @staticmethod
     def _extract_json_object_from_text(text: str) -> dict[str, Any] | None:
@@ -1680,8 +1757,7 @@ class ExecutionAuditWorkflowService:
         if not text:
             return
 
-        query_service = self._thread_runtime_service_v2._query_service
-        snapshot = query_service.get_thread_snapshot(
+        snapshot = self._get_thread_snapshot(
             project_id,
             node_id,
             "audit",
@@ -1714,17 +1790,11 @@ class ExecutionAuditWorkflowService:
             rewritten["updatedAt"] = iso_now()
             if str(rewritten.get("status") or "") != "failed":
                 rewritten["status"] = "completed"
-            updated, upsert_events = upsert_item(updated, rewritten)
+            updated, upsert_events = self._upsert_item(updated, rewritten)
             events.extend(upsert_events)
 
         if events:
-            query_service.persist_thread_mutation(
-                project_id,
-                node_id,
-                "audit",
-                updated,
-                events,
-            )
+            self._persist_thread_mutation(project_id, node_id, "audit", updated, events)
 
     def _materialize_execution_decision(
         self,
@@ -2176,17 +2246,17 @@ class ExecutionAuditWorkflowService:
             )
 
     def _publish_workflow_refresh(self, *, project_id: str, node_id: str, reason: str) -> None:
-        if self._workflow_event_publisher_v2 is None:
+        if self._workflow_event_publisher is None:
             return
         view = self.get_workflow_state(project_id, node_id)
-        self._workflow_event_publisher_v2.publish_workflow_updated(
+        self._workflow_event_publisher.publish_workflow_updated(
             project_id=project_id,
             node_id=node_id,
             workflow_phase=str(view.get("workflowPhase") or ""),
             active_execution_run_id=str(view.get("activeExecutionRunId") or "") or None,
             active_review_cycle_id=str(view.get("activeReviewCycleId") or "") or None,
         )
-        self._workflow_event_publisher_v2.publish_detail_invalidate(
+        self._workflow_event_publisher.publish_detail_invalidate(
             project_id=project_id,
             node_id=node_id,
             reason=reason,
@@ -2226,3 +2296,4 @@ class ExecutionAuditWorkflowService:
             mutation_cache[cache_key] = copy.deepcopy(payload)
             state["mutationCache"] = mutation_cache
             self._storage.workflow_state_store.write_state(project_id, node_id, state)
+

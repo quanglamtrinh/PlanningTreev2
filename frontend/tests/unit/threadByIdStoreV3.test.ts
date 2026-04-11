@@ -44,11 +44,11 @@ function getEventSourceMock(): EventSourceMockClass {
 }
 
 function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshotV3 {
-  return {
+  const snapshot: ThreadSnapshotV3 = {
     projectId: 'project-1',
     nodeId: 'node-1',
     threadId: 'thread-1',
-    lane: 'execution',
+    threadRole: 'execution',
     activeTurnId: null,
     processingState: 'idle',
     snapshotVersion: 1,
@@ -66,6 +66,7 @@ function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshot
     },
     ...overrides,
   }
+  return snapshot
 }
 
 describe('threadByIdStoreV3', () => {
@@ -87,7 +88,7 @@ describe('threadByIdStoreV3', () => {
     const eventSource = getEventSourceMock().instances[0]
 
     expect(state.snapshot?.threadId).toBe('thread-1')
-    expect(state.snapshot?.lane).toBe('execution')
+    expect(state.snapshot?.threadRole).toBe('execution')
     expect(state.lastSnapshotVersion).toBe(1)
     expect(state.telemetry.firstFrameLatencyMs).not.toBeNull()
     expect(state.telemetry.streamReconnectCount).toBe(0)
@@ -438,8 +439,10 @@ describe('threadByIdStoreV3', () => {
     vi.useFakeTimers()
     try {
       apiMock.getThreadSnapshotByIdV3
-        .mockResolvedValueOnce(makeSnapshot({ threadId: 'ask-thread-1', lane: 'ask' }))
-        .mockResolvedValueOnce(makeSnapshot({ threadId: 'ask-thread-1', lane: 'ask', snapshotVersion: 2 }))
+        .mockResolvedValueOnce(makeSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning' }))
+        .mockResolvedValueOnce(
+          makeSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning', snapshotVersion: 2 }),
+        )
 
       await act(async () => {
         await useThreadByIdStoreV3

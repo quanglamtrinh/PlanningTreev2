@@ -1,8 +1,8 @@
 # Usage Snapshot Phased Roadmap
 
-Status: Phase 4 completed. Phase 5 is queued.
+Status: Phase 7 completed. Usage Snapshot rollout track is closed.
 
-Last updated: 2026-04-06.
+Last updated: 2026-04-09.
 
 ## 1. Scope and locked decisions
 
@@ -245,6 +245,12 @@ Exit criteria:
 - Feature is stable under normal desktop usage.
 - No blocker-class issues remain open.
 
+Completion notes:
+
+- Completed on 2026-04-09.
+- Remediated rollout findings (invalid frontend test command, full-suite parity/spec-test drift).
+- Full verification gate passed, including packaged runtime validation after backend rebuild.
+
 ## Phase 7 (2%) - Cleanup and closeout
 
 Goals:
@@ -260,6 +266,12 @@ Key implementation slices:
 Exit criteria:
 
 - Track is operationally closed and maintainable.
+
+Completion notes:
+
+- Completed on 2026-04-09.
+- Progress tracker, README, and artifacts were finalized.
+- Ownership handoff and follow-up backlog are documented in phase-7 closeout summary.
 
 ## 6. Suggested staffing split for parallel execution
 

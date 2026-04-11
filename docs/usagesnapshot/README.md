@@ -1,8 +1,8 @@
 # Usage Snapshot Rollout Plan
 
-Status: Phase 5 completed. Phase 6 is ready to start.
+Status: Phase 7 completed. Usage Snapshot rollout track is closed.
 
-Last updated: 2026-04-07.
+Last updated: 2026-04-09.
 
 ## Primary docs
 
@@ -19,6 +19,7 @@ Last updated: 2026-04-07.
 - `docs/usagesnapshot/phase-4-sidebar-entrypoint-and-ux-polish.md`
 - `docs/usagesnapshot/phase-4-to-phase-5-handoff.md`
 - `docs/usagesnapshot/phase-5-automated-test-matrix-and-e2e.md`
+- `docs/usagesnapshot/phase-5-to-phase-6-handoff.md`
 - `docs/usagesnapshot/phase-6-rollout-and-stabilization.md`
 - `docs/usagesnapshot/phase-7-cleanup-and-closeout.md`
 - `docs/usagesnapshot/artifacts/README.md`
@@ -55,6 +56,18 @@ Last updated: 2026-04-07.
 
 - `docs/usagesnapshot/phase-5-automated-test-matrix-and-e2e.md`
 - `docs/usagesnapshot/artifacts/phase-5-test-matrix-results.md`
+- `docs/usagesnapshot/phase-5-to-phase-6-handoff.md`
+
+## Phase 6 completion outputs
+
+- `docs/usagesnapshot/phase-6-rollout-and-stabilization.md`
+- `docs/usagesnapshot/artifacts/phase-6-rollout-checklist.md`
+- `docs/usagesnapshot/artifacts/phase-6-stabilization-notes.md`
+
+## Phase 7 completion outputs
+
+- `docs/usagesnapshot/phase-7-cleanup-and-closeout.md`
+- `docs/usagesnapshot/artifacts/phase-7-closeout-summary.md`
 
 ## Locked decisions
 

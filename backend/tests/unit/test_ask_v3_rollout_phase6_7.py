@@ -75,24 +75,6 @@ def test_v1_legacy_chat_ask_handlers_are_disabled(client: TestClient) -> None:
     assert events.json()["code"] == "invalid_request"
 
 
-def test_v2_ask_thread_role_is_rejected(client: TestClient) -> None:
-    snapshot = client.get("/v2/projects/project-x/nodes/node-y/threads/ask_planning")
-    assert snapshot.status_code == 400
-    snapshot_payload = snapshot.json()
-    assert snapshot_payload["ok"] is False
-    assert snapshot_payload["error"]["code"] == "invalid_request"
-    assert "Use /v3 by-id APIs." in snapshot_payload["error"]["message"]
-
-    turn = client.post(
-        "/v2/projects/project-x/nodes/node-y/threads/ask_planning/turns",
-        json={"text": "hello"},
-    )
-    assert turn.status_code == 400
-    turn_payload = turn.json()
-    assert turn_payload["ok"] is False
-    assert turn_payload["error"]["code"] == "invalid_request"
-
-
 def test_v3_ask_by_id_returns_typed_error_when_backend_gate_off(
     client: TestClient,
     workspace_root: Path,

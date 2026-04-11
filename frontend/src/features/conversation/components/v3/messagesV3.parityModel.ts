@@ -10,7 +10,7 @@ type PendingRequestStatus = PendingUserInputRequestV3['status']
 
 export type PlanReadySuppressionReasonV3 =
   | 'none'
-  | 'lane_not_execution'
+  | 'thread_role_not_execution'
   | 'not_ready'
   | 'failed'
   | 'missing_dismiss_key'
@@ -90,8 +90,15 @@ function messageIsPlanSupersedingUserMessage(
   )
 }
 
+function resolveSnapshotThreadRole(snapshot: ThreadSnapshotV3 | null): ThreadSnapshotV3['threadRole'] | null {
+  if (!snapshot) {
+    return null
+  }
+  return snapshot.threadRole
+}
+
 function toSuppressionReason(options: {
-  lane: ThreadSnapshotV3['lane'] | null
+  threadRole: ThreadSnapshotV3['threadRole'] | null
   ready: boolean
   failed: boolean
   hasDismissKey: boolean
@@ -100,8 +107,8 @@ function toSuppressionReason(options: {
   supersededByUserMessage: boolean
   dismissed: boolean
 }): PlanReadySuppressionReasonV3 {
-  if (options.lane !== 'execution') {
-    return 'lane_not_execution'
+  if (options.threadRole !== 'execution') {
+    return 'thread_role_not_execution'
   }
   if (!options.ready) {
     return 'not_ready'
@@ -178,7 +185,7 @@ export function deriveMessagesV3ParityModel(
   )
   const dismissedPlanReadyKeys = new Set(options.dismissedPlanReadyKeys ?? [])
   const suppressionReason = toSuppressionReason({
-    lane: snapshot?.lane ?? null,
+    threadRole: resolveSnapshotThreadRole(snapshot),
     ready: Boolean(planReadySignal?.ready),
     failed: Boolean(planReadySignal?.failed),
     hasDismissKey: Boolean(planReadyDismissKey),

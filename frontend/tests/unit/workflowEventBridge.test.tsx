@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../src/api/client', () => ({
   appendAuthToken: (url: string) => url,
-  buildProjectEventsUrlV2: (projectId: string) => `/v2/projects/${projectId}/events`,
+  buildProjectEventsUrlV3: (projectId: string) => `/v3/projects/${projectId}/events`,
 }))
 
-import { useWorkflowEventBridge } from '../../src/features/conversation/state/workflowEventBridge'
-import { useWorkflowStateStoreV2 } from '../../src/features/conversation/state/workflowStateStoreV2'
+import { useWorkflowEventBridgeV3 } from '../../src/features/conversation/state/workflowEventBridgeV3'
+import { useWorkflowStateStoreV3 } from '../../src/features/conversation/state/workflowStateStoreV3'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 
 type EventSourceMockInstance = {
@@ -36,7 +36,7 @@ function WorkflowBridgeHarness({
   nodeId?: string | null
   enabled?: boolean
 }) {
-  useWorkflowEventBridge(projectId, nodeId, enabled)
+  useWorkflowEventBridgeV3(projectId, nodeId, enabled)
   return null
 }
 
@@ -44,7 +44,7 @@ describe('workflowEventBridge', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
-    useWorkflowStateStoreV2.getState().reset()
+    useWorkflowStateStoreV3.getState().reset()
   })
 
   afterEach(() => {
@@ -62,9 +62,9 @@ describe('workflowEventBridge', () => {
       return undefined
     })
 
-    useWorkflowStateStoreV2.setState({
+    useWorkflowStateStoreV3.setState({
       loadWorkflowState,
-    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV3.getState>>)
     useDetailStateStore.setState({
       refreshExecutionState,
     } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
@@ -126,9 +126,9 @@ describe('workflowEventBridge', () => {
   it('ignores workflow events for other targets or malformed payloads', async () => {
     const loadWorkflowState = vi.fn().mockResolvedValue(undefined)
     const refreshExecutionState = vi.fn().mockResolvedValue(undefined)
-    useWorkflowStateStoreV2.setState({
+    useWorkflowStateStoreV3.setState({
       loadWorkflowState,
-    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV3.getState>>)
     useDetailStateStore.setState({
       refreshExecutionState,
     } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
@@ -166,9 +166,9 @@ describe('workflowEventBridge', () => {
 
     const loadWorkflowState = vi.fn().mockResolvedValue(undefined)
     const refreshExecutionState = vi.fn().mockResolvedValue(undefined)
-    useWorkflowStateStoreV2.setState({
+    useWorkflowStateStoreV3.setState({
       loadWorkflowState,
-    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV3.getState>>)
     useDetailStateStore.setState({
       refreshExecutionState,
     } as Partial<ReturnType<typeof useDetailStateStore.getState>>)

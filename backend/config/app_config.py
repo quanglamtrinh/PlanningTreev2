@@ -100,11 +100,6 @@ def get_execution_timeout() -> int:
     return max(10, min(3600, timeout))
 
 
-def is_execution_audit_v2_rehearsal_enabled() -> bool:
-    raw = str(os.environ.get("PLANNINGTREE_EXECUTION_AUDIT_V2_REHEARSAL", "") or "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
-
-
 def is_ask_v3_backend_enabled() -> bool:
     return _bool_env("PLANNINGTREE_ASK_V3_BACKEND_ENABLED", default=True)
 
@@ -127,6 +122,29 @@ def get_max_chat_message_chars() -> int:
     except (TypeError, ValueError):
         limit = 10000
     return max(1, limit)
+
+
+def get_conversation_v3_bridge_mode() -> str:
+    raw = str(os.environ.get("PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE", "") or "").strip().lower()
+    if raw in {"enabled", "allowlist", "disabled"}:
+        return raw
+    return "enabled"
+
+
+def get_conversation_v3_bridge_allowlist() -> set[str]:
+    raw = str(os.environ.get("PLANNINGTREE_CONVERSATION_V3_BRIDGE_ALLOWLIST", "") or "").strip()
+    if not raw:
+        return set()
+    return {entry.strip() for entry in raw.split(",") if entry.strip()}
+
+
+def is_conversation_v3_bridge_allowed_for_project(project_id: str) -> bool:
+    mode = get_conversation_v3_bridge_mode()
+    if mode == "enabled":
+        return True
+    if mode == "disabled":
+        return False
+    return str(project_id or "").strip() in get_conversation_v3_bridge_allowlist()
 
 
 def get_split_model() -> str:

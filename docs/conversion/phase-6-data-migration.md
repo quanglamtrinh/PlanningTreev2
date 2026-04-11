@@ -1,0 +1,94 @@
+# Phase 6 - Batch Migration And Bridge Sunset
+
+Status: completed  
+Estimate: 4-6 person-days (10%)
+
+## 1. Objective
+
+Complete batch transcript migration from `conversation_v2` to `conversation_v3`, then safely sunset the compatibility bridge.
+
+## 2. In Scope
+
+- Migration script/service:
+  - scan project nodes and roles
+  - convert V2 snapshots -> V3 snapshots
+  - write `conversation_v3`
+- Dry-run mode and report mode
+- Compatibility bridge sunset plan:
+  - define exact bridge-disable conditions
+  - define rollback policy if temporary bridge re-enable is needed
+  - enforce bridge modes `enabled -> allowlist -> disabled`
+  - enforce typed error `conversation_v3_missing` when disabled and V3 snapshot is absent
+- Batch rollout runbook
+
+## 3. Out Of Scope
+
+- Hard deletion of V2 store files
+- Full removal of all V2 code
+
+## 4. Work Breakdown
+
+- [x] Create migration command:
+  - proposed: `python -m backend.tools.migrate_conversation_v2_to_v3`
+- [x] Support modes:
+  - `--project-id`
+  - `--all-projects`
+  - `--node-id`
+  - `--thread-role`
+  - `--dry-run`
+  - `--report-json`
+- [x] Preserve behavior:
+  - consistent `thread_role` naming (`ask_planning | execution | audit`)
+  - hidden audit seed-item policy
+  - `planReady` and `userInput` signals
+- [x] Log migration stats:
+  - total snapshots scanned
+  - converted
+  - skipped
+  - failed
+- [x] Write rollback notes:
+  - how to enable/disable the compatibility bridge
+  - how to scope temporary fallback with allowlist mode
+  - how to roll back if a batch migration fails
+
+## 5. Deliverables
+
+- Migration tool and tests:
+  - `backend/tools/migrate_conversation_v2_to_v3.py`
+  - `backend/tests/unit/test_conversation_v3_migration.py`
+- Artifacts:
+  - `docs/conversion/artifacts/phase-6/migration-runbook.md`
+  - `docs/conversion/artifacts/phase-6/migration-report-template.json`
+
+## 6. Exit Criteria
+
+- Migration tool is idempotent (re-running does not modify already migrated data).
+- Dry-run and real-run pass on sample projects.
+- Migration report exists before production rollout.
+- Bridge-sunset criteria are explicit and validated through sample rollout dry-runs.
+- Disabled-mode behavior (`conversation_v3_missing` with no V2 fallback) is validated in rehearsal.
+
+## 7. Verification
+
+- [x] `python -m pytest -q backend/tests/unit/test_conversation_v3_migration.py` (new) -> `6 passed`
+- [x] `python -m pytest -q backend/tests/unit/test_conversation_v3_migration.py backend/tests/unit/test_thread_query_service_v3.py backend/tests/unit/test_conversation_v3_stores.py backend/tests/unit/test_conversation_v3_parity_fixtures.py` -> `18 passed`
+- [x] `python -m pytest -q backend/tests/integration/test_chat_v3_api_execution_audit.py backend/tests/integration/test_phase6_execution_audit_cutover.py backend/tests/unit/test_conversation_v3_projector.py backend/tests/unit/test_conversation_v3_parity_fixtures.py backend/tests/unit/test_conversation_v3_fixture_replay.py backend/tests/unit/test_conversation_v3_fileschanged_parity_fixtures.py backend/tests/unit/test_ask_v3_rollout_phase6_7.py` -> `44 passed`
+- [x] Report schema and runbook artifacts published for rehearsal/checksum workflow:
+  - `docs/conversion/artifacts/phase-6/migration-report-template.json`
+  - `docs/conversion/artifacts/phase-6/migration-runbook.md`
+- [x] Rehearsal migration reports published:
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-dry-run.json`
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-apply-wave1.json`
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-apply-wave1-rerun.json`
+- [x] Disabled-mode typed error rehearsal published:
+  - `docs/conversion/artifacts/phase-6/reports/rehearsal-disabled-mode-check.json`
+  - `docs/conversion/artifacts/phase-6/rehearsal-evidence.md`
+
+## 8. Risks And Mitigations
+
+- Risk: malformed V2 snapshots in old workspaces.
+  - Mitigation: tolerant parser, per-node failure isolation, and reporting.
+- Risk: interrupted partial migration.
+  - Mitigation: write temp files, then atomic rename, plus migration-marker transaction.
+- Risk: bridge disabled too early and rare fallback cases break.
+  - Mitigation: sunset by canary waves and monitor stream/workflow error rates.

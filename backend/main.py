@@ -12,10 +12,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
-from backend.conversation.services.request_ledger_service import RequestLedgerService
-from backend.conversation.services.thread_query_service import ThreadQueryService
+from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
+from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
-from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
+from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
 from backend.conversation.services.system_message_writer import ConversationSystemMessageWriter
 from backend.conversation.services.thread_transcript_builder import ThreadTranscriptBuilder
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
@@ -33,11 +33,10 @@ from backend.config.app_config import (
     get_split_timeout,
     is_ask_v3_backend_enabled,
     is_ask_v3_frontend_enabled,
-    is_execution_audit_v2_rehearsal_enabled,
 )
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
-from backend.routes import bootstrap, chat, chat_v2, codex, nodes, projects, split, workflow_v2, workflow_v3
+from backend.routes import bootstrap, chat, codex, nodes, projects, split, workflow_v3
 from backend.services.chat_service import ChatService
 from backend.services.ask_rollout_metrics_service import AskRolloutMetricsService
 from backend.services.codex_account_service import CodexAccountService
@@ -69,10 +68,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     storage = Storage(paths)
     tree_service = TreeService()
     git_checkpoint_service = GitCheckpointService()
-    execution_audit_v2_enabled = True
     ask_v3_backend_enabled = is_ask_v3_backend_enabled()
     ask_v3_frontend_enabled = is_ask_v3_frontend_enabled()
-    rehearsal_enabled = is_execution_audit_v2_rehearsal_enabled()
     rehearsal_workspace_root = get_rehearsal_workspace_root()
     ask_rollout_metrics_service = AskRolloutMetricsService()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
@@ -144,32 +141,33 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),
     )
-    request_ledger_service_v2 = RequestLedgerService()
-    conversation_event_broker_v2 = ChatEventBroker()
-    workflow_event_broker_v2 = GlobalEventBroker()
-    thread_query_service_v2 = ThreadQueryService(
+    request_ledger_service_v3 = RequestLedgerServiceV3()
+    conversation_event_broker_v3 = ChatEventBroker()
+    workflow_event_broker = GlobalEventBroker()
+    workflow_event_publisher = WorkflowEventPublisher(workflow_event_broker)
+    thread_query_service_v3 = ThreadQueryServiceV3(
         storage=storage,
         chat_service=chat_service,
         thread_lineage_service=thread_lineage_service,
         codex_client=codex_client,
-        snapshot_store=storage.thread_snapshot_store_v2,
-        registry_service=thread_registry_service_v2,
-        request_ledger_service=request_ledger_service_v2,
-        thread_event_broker=conversation_event_broker_v2,
+        snapshot_store_v3=storage.thread_snapshot_store_v3,
+        snapshot_store_v2=storage.thread_snapshot_store_v2,
+        registry_service_v2=thread_registry_service_v2,
+        request_ledger_service=request_ledger_service_v3,
+        thread_event_broker=conversation_event_broker_v3,
     )
-    workflow_event_publisher_v2 = WorkflowEventPublisher(workflow_event_broker_v2)
-    thread_runtime_service_v2 = ThreadRuntimeService(
+    thread_runtime_service_v3 = ThreadRuntimeServiceV3(
         storage=storage,
         tree_service=tree_service,
         chat_service=chat_service,
         codex_client=codex_client,
-        query_service=thread_query_service_v2,
-        request_ledger_service=request_ledger_service_v2,
+        query_service=thread_query_service_v3,
+        request_ledger_service=request_ledger_service_v3,
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),
         ask_rollout_metrics_service=ask_rollout_metrics_service,
     )
-    system_message_writer_v2.set_runtime_service(thread_runtime_service_v2)
+    system_message_writer_v2.set_runtime_service(thread_runtime_service_v3)
     review_service = ReviewService(
         storage=storage,
         tree_service=tree_service,
@@ -179,10 +177,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_timeout=get_chat_timeout(),
         chat_service=chat_service,
         system_message_writer=system_message_writer_v2,
-        thread_runtime_service_v2=thread_runtime_service_v2,
-        workflow_event_publisher_v2=workflow_event_publisher_v2,
-        execution_audit_v2_enabled=execution_audit_v2_enabled,
-        execution_audit_v2_rehearsal_enabled=rehearsal_enabled,
+        thread_runtime_service=thread_runtime_service_v3,
+        workflow_event_publisher=workflow_event_publisher,
         rehearsal_workspace_root=rehearsal_workspace_root,
     )
     finish_task_service = FinishTaskService(
@@ -196,19 +192,19 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_service=chat_service,
         git_checkpoint_service=git_checkpoint_service,
         review_service=review_service,
-        thread_runtime_service_v2=thread_runtime_service_v2,
-        workflow_event_publisher_v2=workflow_event_publisher_v2,
-        execution_audit_v2_enabled=execution_audit_v2_enabled,
-        execution_audit_v2_rehearsal_enabled=rehearsal_enabled,
+        thread_runtime_service=thread_runtime_service_v3,
+        thread_query_service=thread_query_service_v3,
+        workflow_event_publisher=workflow_event_publisher,
         rehearsal_workspace_root=rehearsal_workspace_root,
     )
-    execution_audit_workflow_service_v2 = ExecutionAuditWorkflowService(
+    execution_audit_workflow_service = ExecutionAuditWorkflowService(
         storage=storage,
         tree_service=tree_service,
         finish_task_service=finish_task_service,
         review_service=review_service,
-        thread_runtime_service_v2=thread_runtime_service_v2,
-        workflow_event_publisher_v2=workflow_event_publisher_v2,
+        thread_runtime_service=thread_runtime_service_v3,
+        thread_query_service=thread_query_service_v3,
+        workflow_event_publisher=workflow_event_publisher,
         git_checkpoint_service=git_checkpoint_service,
         codex_client=codex_client,
     )
@@ -271,17 +267,15 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.review_service = review_service
     app.state.finish_task_service = finish_task_service
     app.state.thread_registry_service_v2 = thread_registry_service_v2
-    app.state.request_ledger_service_v2 = request_ledger_service_v2
-    app.state.conversation_event_broker_v2 = conversation_event_broker_v2
-    app.state.workflow_event_broker_v2 = workflow_event_broker_v2
-    app.state.thread_query_service_v2 = thread_query_service_v2
-    app.state.thread_runtime_service_v2 = thread_runtime_service_v2
+    app.state.request_ledger_service_v3 = request_ledger_service_v3
+    app.state.conversation_event_broker_v3 = conversation_event_broker_v3
+    app.state.workflow_event_broker = workflow_event_broker
+    app.state.thread_query_service_v3 = thread_query_service_v3
+    app.state.thread_runtime_service_v3 = thread_runtime_service_v3
     app.state.thread_transcript_builder_v2 = thread_transcript_builder_v2
-    app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2
+    app.state.workflow_event_publisher = workflow_event_publisher
     app.state.system_message_writer_v2 = system_message_writer_v2
-    app.state.execution_audit_workflow_service_v2 = execution_audit_workflow_service_v2
-    app.state.execution_audit_v2_enabled = execution_audit_v2_enabled
-    app.state.execution_audit_v2_rehearsal_enabled = rehearsal_enabled
+    app.state.execution_audit_workflow_service = execution_audit_workflow_service
     app.state.ask_v3_backend_enabled = ask_v3_backend_enabled
     app.state.ask_v3_frontend_enabled = ask_v3_frontend_enabled
     app.state.ask_rollout_metrics_service = ask_rollout_metrics_service
@@ -314,8 +308,6 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.include_router(nodes.router, prefix="/v1")
     app.include_router(split.router, prefix="/v1")
     app.include_router(chat.router, prefix="/v1")
-    app.include_router(chat_v2.router, prefix="/v2")
-    app.include_router(workflow_v2.router, prefix="/v2")
     app.include_router(workflow_v3.router, prefix="/v3")
 
     if getattr(sys, "frozen", False):

@@ -837,7 +837,6 @@ export type ThreadEventV2 =
 
 // Conversation V3 types (ask/execution/audit)
 
-export type ThreadLaneV3 = 'ask' | 'execution' | 'audit'
 export type ConversationItemKindV3 =
   | 'message'
   | 'reasoning'
@@ -1015,7 +1014,7 @@ export interface ThreadSnapshotV3 {
   projectId: string
   nodeId: string
   threadId: string | null
-  lane: ThreadLaneV3
+  threadRole: ThreadRole
   activeTurnId: string | null
   processingState: ProcessingState
   snapshotVersion: number

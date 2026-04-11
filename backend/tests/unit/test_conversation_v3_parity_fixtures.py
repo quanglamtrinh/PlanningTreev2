@@ -30,14 +30,28 @@ def _load_scenarios() -> list[dict[str, Any]]:
 def _normalize_snapshot(snapshot_v3: dict[str, Any]) -> dict[str, Any]:
     items = list(snapshot_v3.get("items") or [])
     pending = list(snapshot_v3.get("uiSignals", {}).get("activeUserInputRequests") or [])
+    thread_role = str(snapshot_v3.get("threadRole") or "").strip()
+    if not thread_role:
+        lane = str(snapshot_v3.get("lane") or "").strip()
+        if lane == "ask":
+            thread_role = "ask_planning"
+        elif lane in {"execution", "audit"}:
+            thread_role = lane
     return {
-        "lane": snapshot_v3.get("lane"),
+        "thread_role": thread_role,
         "threadId": snapshot_v3.get("threadId"),
         "item_order": [item.get("id") for item in items],
         "item_kinds": [item.get("kind") for item in items],
         "plan_ready": snapshot_v3.get("uiSignals", {}).get("planReady"),
         "pending_request_statuses": [request.get("status") for request in pending],
     }
+
+
+def _normalize_expected_thread_role(expected: dict[str, Any]) -> str:
+    # Prefer canonical fixture key, with legacy lane fallback for backward compatibility.
+    raw = str(expected.get("threadRole") or expected.get("thread_role") or expected.get("lane") or "").strip()
+    assert raw, "Expected fixture must include threadRole (or legacy lane)."
+    return {"ask": "ask_planning"}.get(raw, raw)
 
 
 def test_v3_parity_fixtures_project_to_expected_snapshots() -> None:
@@ -55,7 +69,8 @@ def test_v3_parity_fixtures_project_to_expected_snapshots() -> None:
         expected = dict(scenario["expected"])
         normalized = _normalize_snapshot(projected)
 
-        assert normalized["lane"] == expected["lane"], scenario["id"]
+        expected_thread_role = _normalize_expected_thread_role(expected)
+        assert normalized["thread_role"] == expected_thread_role, scenario["id"]
         assert normalized["item_order"] == expected["item_order"], scenario["id"]
         assert normalized["item_kinds"] == expected["item_kinds"], scenario["id"]
         assert normalized["plan_ready"] == expected["plan_ready"], scenario["id"]

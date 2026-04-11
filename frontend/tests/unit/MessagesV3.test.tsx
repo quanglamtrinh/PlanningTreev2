@@ -5,11 +5,11 @@ import type { ThreadSnapshotV3 } from '../../src/api/types'
 import { MessagesV3 } from '../../src/features/conversation/components/v3/MessagesV3'
 
 function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshotV3 {
-  return {
+  const snapshot: ThreadSnapshotV3 = {
     projectId: 'project-1',
     nodeId: 'node-1',
     threadId: 'thread-1',
-    lane: 'execution',
+    threadRole: 'execution',
     activeTurnId: null,
     processingState: 'idle',
     snapshotVersion: 1,
@@ -27,6 +27,7 @@ function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshot
     },
     ...overrides,
   }
+  return snapshot
 }
 
 describe('MessagesV3', () => {
@@ -520,7 +521,7 @@ describe('MessagesV3', () => {
     render(
       <MessagesV3
         snapshot={makeSnapshot({
-          lane: 'audit',
+          threadRole: 'audit',
           items: [
             {
               id: 'audit-diff-1',
@@ -572,11 +573,11 @@ describe('MessagesV3', () => {
     expect(diffRow).toHaveTextContent(/new/)
   })
 
-  it('falls back to files.patchText in audit lane when canonical changes are absent', () => {
+  it('falls back to files.patchText in audit thread when canonical changes are absent', () => {
     render(
       <MessagesV3
         snapshot={makeSnapshot({
-          lane: 'audit',
+          threadRole: 'audit',
           items: [
             {
               id: 'audit-diff-legacy-1',
@@ -625,7 +626,7 @@ describe('MessagesV3', () => {
     render(
       <MessagesV3
         snapshot={makeSnapshot({
-          lane: 'audit',
+          threadRole: 'audit',
           items: [
             {
               id: 'diff-generic-1',
@@ -706,7 +707,7 @@ describe('MessagesV3', () => {
       render(
         <MessagesV3
           snapshot={makeSnapshot({
-            lane: 'audit',
+            threadRole: 'audit',
             items: [
               {
                 id: 'diff-regression-1',
@@ -1004,7 +1005,7 @@ describe('MessagesV3', () => {
     render(
       <MessagesV3
         snapshot={makeSnapshot({
-          lane: 'audit',
+          threadRole: 'audit',
           items: [
             {
               id: 'audit-msg-1',
@@ -1038,7 +1039,7 @@ describe('MessagesV3', () => {
     render(
       <MessagesV3
         snapshot={makeSnapshot({
-          lane: 'audit',
+          threadRole: 'audit',
           items: [
             {
               id: 'review-1',
