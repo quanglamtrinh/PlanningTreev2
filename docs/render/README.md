@@ -1,6 +1,6 @@
-﻿# Render Optimization Docs
+# Render Optimization Docs
 
-Status: Draft baseline for full-system optimization.
+Status: Draft baseline for full-system optimization, with phase execution docs.
 
 Last updated: 2026-04-11.
 
@@ -14,9 +14,10 @@ The content is intentionally broad and detailed so we can:
 - discuss trade-offs clearly
 - score and prioritize later without re-discovering context
 
-## Primary document
+## Primary documents
 
 - `docs/render/render-optimization-comprehensive.md`
+- `docs/render/phases/README.md`
 
 ## What this includes
 
@@ -27,3 +28,20 @@ The content is intentionally broad and detailed so we can:
 - metrics and test strategy
 - rollout and safety strategy
 - prioritization template for later filtering
+- phase-by-phase execution docs (one file per phase)
+
+## Current execution planning scope
+
+The active phase execution plan intentionally focuses on Layer A-E only:
+
+- backend ingest/projection/persistence
+- SSE reliability/reconnect
+- frontend state apply pipeline
+- render/component performance
+- data volume and queue UX flow
+
+Temporarily excluded from this execution wave:
+
+- Layer F (observability/profiling/test expansion)
+- Layer G (rollout/safety program)
+

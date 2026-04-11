@@ -685,6 +685,11 @@ Template table:
 
 ## 10. Suggested full-system implementation phases
 
+Note:
+
+- The detailed execution plan currently approved for implementation is documented in `docs/render/phases/`.
+- That plan intentionally excludes Layer F and Layer G for this wave.
+
 ### Phase 0 - Instrument first
 
 - Implement `F01-F04`.
