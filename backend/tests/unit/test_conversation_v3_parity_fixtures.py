@@ -47,6 +47,13 @@ def _normalize_snapshot(snapshot_v3: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_expected_thread_role(expected: dict[str, Any]) -> str:
+    # Prefer canonical fixture key, with legacy lane fallback for backward compatibility.
+    raw = str(expected.get("threadRole") or expected.get("thread_role") or expected.get("lane") or "").strip()
+    assert raw, "Expected fixture must include threadRole (or legacy lane)."
+    return {"ask": "ask_planning"}.get(raw, raw)
+
+
 def test_v3_parity_fixtures_project_to_expected_snapshots() -> None:
     scenarios = _load_scenarios()
     assert scenarios, "Expected at least one parity fixture scenario."
@@ -62,7 +69,7 @@ def test_v3_parity_fixtures_project_to_expected_snapshots() -> None:
         expected = dict(scenario["expected"])
         normalized = _normalize_snapshot(projected)
 
-        expected_thread_role = {"ask": "ask_planning"}.get(expected["lane"], expected["lane"])
+        expected_thread_role = _normalize_expected_thread_role(expected)
         assert normalized["thread_role"] == expected_thread_role, scenario["id"]
         assert normalized["item_order"] == expected["item_order"], scenario["id"]
         assert normalized["item_kinds"] == expected["item_kinds"], scenario["id"]
