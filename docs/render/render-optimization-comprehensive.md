@@ -1,4 +1,4 @@
-# PTM Render Optimization - Comprehensive Guide
+﻿# PTM Render Optimization - Comprehensive Guide
 
 Status: Baseline architecture and optimization backlog.
 
@@ -6,317 +6,319 @@ Last updated: 2026-04-11.
 
 ---
 
-## 1. Muc tieu tai lieu
+## 1. Document goal
 
-Tai lieu nay duoc viet de:
+This document is designed to:
 
-1. Mo ta day du vi sao render thread execution/ask dang ton thoi gian.
-2. So sanh cach PTM dang lam voi CodexMonitor va Goose.
-3. Liet ke toan bo cac diem co the cai thien theo tung lop he thong.
-4. Dua workflow before/after de de hieu va de trien khai.
-5. Tao khung de sau nay loc ra thu tu uu tien.
+1. Explain in detail why thread execution/ask rendering currently takes too long.
+2. Compare PTM patterns with CodexMonitor and Goose.
+3. List all meaningful improvement opportunities by system layer.
+4. Provide clear before/after workflows for implementation.
+5. Create a scoring framework so priorities can be chosen later.
 
 ---
 
-## 2. Van de cot loi (de hieu nhanh)
+## 2. Core problem (quick explanation)
 
-Do tre tong cua UI chat thuong den tu cong thuc:
+Most chat/render latency follows this formula:
 
 `Total latency = Event volume x (Backend apply cost + Persist cost + Frontend apply cost + Render cost)`
 
-Neu event stream la rat nhieu chunk nho, va moi chunk deu di qua full pipeline, tong chi phi se bi nhan len rat manh.
+If a streamed turn produces many tiny deltas, and each delta runs through a full pipeline, total cost grows quickly.
 
-### Vi du don gian
+### Simple example
 
-Gia su 1 cau tra loi duoc stream thanh 300 delta:
+Assume one response streams as 300 tiny deltas:
 
-1. Backend xu ly 300 lan.
-2. Store/stream publish 300 lan.
-3. Frontend apply state 300 lan.
-4. Feed render lai nhieu lan.
+1. Backend handles 300 updates.
+2. Store/stream publishes 300 updates.
+3. Frontend applies state 300 times.
+4. Feed re-renders repeatedly.
 
-=> Cam giac UI giat, tre, va CPU tang cao.
+Result: visible UI jank, higher latency, and higher CPU.
 
 ---
 
-## 3. Hien trang PTM (bottleneck map)
+## 3. Current PTM bottleneck map
 
-## 3.1 Backend event/projection path
+### 3.1 Backend event/projection path
 
-PTM hien tai co xu huong xu ly theo tung raw event:
+PTM currently tends to process raw events one by one:
 
 - `thread_runtime_service_v3.py`:
-  - goi `get_thread_snapshot(...)`
-  - `apply_raw_event_v3(...)`
-  - `persist_thread_mutation(...)`
-- File tham chieu:
-  - `backend/conversation/services/thread_runtime_service_v3.py`
-  - `backend/conversation/projector/thread_event_projector_runtime_v3.py`
-  - `backend/conversation/services/thread_query_service_v3.py`
+  - calls `get_thread_snapshot(...)`
+  - calls `apply_raw_event_v3(...)`
+  - calls `persist_thread_mutation(...)`
 
-Rui ro:
+Reference files:
 
-- Nhieu read/write cho moi delta.
-- Nhieu lock contention.
-- Snapshot ghi lai lien tuc.
+- `backend/conversation/services/thread_runtime_service_v3.py`
+- `backend/conversation/projector/thread_event_projector_runtime_v3.py`
+- `backend/conversation/services/thread_query_service_v3.py`
 
-## 3.2 Persist path
+Risk:
 
-- Snapshot v3 dang duoc `atomic_write_json(...)` tren file snapshot.
-- File tham chieu:
+- many reads/writes per delta
+- lock contention
+- frequent snapshot writes in hot path
+
+### 3.2 Persist path
+
+- V3 snapshots are written via `atomic_write_json(...)`.
+- Reference:
   - `backend/conversation/storage/thread_snapshot_store_v3.py`
 
-Rui ro:
+Risk:
 
-- Write amplification cao neu event nhieu.
-- I/O + serialization cost dat vao hot path.
+- high write amplification under heavy streaming
+- serialization and file I/O in critical path
 
-## 3.3 SSE path
+### 3.3 SSE path
 
-- PTM co SSE route va heartbeat.
-- Chua co mo hinh replay buffer + `Last-Event-ID` chuan robust nhu Goose.
-- File tham chieu:
+- PTM has SSE route + heartbeat.
+- It does not yet match Goose-level replay robustness with `Last-Event-ID` buffering.
+- Reference:
   - `backend/routes/workflow_v3.py`
   - `backend/streaming/sse_broker.py`
 
-Rui ro:
+Risk:
 
-- Subscriber cham co the bi mat event.
-- Reconnect de dan den reload lon hon can thiet.
+- slow subscribers can miss events
+- reconnect can cause larger-than-needed reload behavior
 
-## 3.4 Frontend state apply path
+### 3.4 Frontend state apply path
 
-- `threadByIdStoreV3.ts` nhan event va apply lien tuc.
-- `applyThreadEventV3.ts` co branch patch item va sap xep lai items.
-- File tham chieu:
+- `threadByIdStoreV3.ts` applies incoming events continuously.
+- `applyThreadEventV3.ts` includes item patching and sorting behavior.
+- Reference:
   - `frontend/src/features/conversation/state/threadByIdStoreV3.ts`
   - `frontend/src/features/conversation/state/applyThreadEventV3.ts`
 
-Rui ro:
+Risk:
 
-- State churn lon.
-- Render invalidation lan rong.
+- state churn
+- broad invalidation in UI
 
-## 3.5 Render path
+### 3.5 Render path
 
-- `MessagesV3.tsx` tinh toan visible/grouped va map render feed.
-- Nhieu row nang: markdown, diff parse, syntax highlight.
-- File tham chieu:
+- `MessagesV3.tsx` computes visible/grouped state and maps full feed render.
+- Heavy rows include markdown, diff parse, and highlight.
+- Reference:
   - `frontend/src/features/conversation/components/v3/MessagesV3.tsx`
   - `frontend/src/features/conversation/components/FileChangeToolRow.tsx`
   - `frontend/src/features/conversation/components/ConversationMarkdown.tsx`
 
-Rui ro:
+Risk:
 
-- Main-thread cost cao.
-- Dac biet cham voi thread dai va file diff lon.
+- high main-thread cost
+- worse behavior on long threads and large diffs
 
 ---
 
-## 4. So sanh voi CodexMonitor va Goose
+## 4. Comparison with CodexMonitor and Goose
 
-## 4.1 CodexMonitor (diem hoc hoi chinh)
+### 4.1 CodexMonitor (key lessons)
 
-1. Reducer theo slice, action hep scope:
+1. Reducer split by slices with narrower actions:
    - `src/features/threads/hooks/useThreadsReducer.ts`
    - `src/features/threads/hooks/threadReducer/*`
-2. Message rows duoc `memo` rat nhieu:
+2. Extensive `memo` usage for message rows:
    - `src/features/messages/components/MessageRows.tsx`
-3. Co control data volume:
-   - scrollback cap (`src/utils/chatScrollback.ts`)
+3. Data volume controls:
+   - scrollback caps (`src/utils/chatScrollback.ts`)
    - normalize/truncate (`src/utils/threadItems.explore.ts`)
-4. Co queue send khi thread dang processing:
+4. Queue send while thread is processing:
    - `src/features/threads/hooks/useQueuedSend.ts`
-5. Event subscription hub tap trung:
+5. Centralized event hub:
    - `src/services/events.ts`
 
-Y nghia:
+Why it matters:
 
-- Giam rerender lan rong.
-- Giam kich thuoc state.
-- UX on dinh hon khi luong su kien day.
+- lower rerender fanout
+- smaller active state volume
+- more stable UX during heavy event streams
 
-## 4.2 Goose (diem hoc hoi chinh)
+### 4.2 Goose (key lessons)
 
-1. SSE robust:
-   - replay buffer + sequence id + `Last-Event-ID`
-   - detect lag subscriber va reconnect replay
+1. Robust SSE:
+   - replay buffer + sequence IDs + `Last-Event-ID`
+   - lagged subscriber handling via reconnect + replay
    - `crates/goose-server/src/session_event_bus.rs`
    - `crates/goose-server/src/routes/session_events.rs`
-2. Coalesce text chunk o storage:
-   - tranh tao 1 row cho moi token
+2. Text chunk coalescing in storage:
+   - avoid one row per token
    - `crates/goose/src/session/thread_manager.rs`
-3. Progressive render list:
+3. Progressive list rendering:
    - `ui/desktop/src/components/ProgressiveMessageList.tsx`
-4. Markdown/code performance tuning:
+4. Markdown/code path performance tuning:
    - memoized code block
    - `ui/desktop/src/components/MarkdownContent.tsx`
-5. Co streaming markdown buffer an toan:
-   - flush o diem markdown "safe"
+5. Streaming markdown safety buffer:
+   - flush only at markdown-safe boundaries
    - `crates/goose-cli/src/session/streaming_buffer.rs`
 
-Y nghia:
+Why it matters:
 
-- Giam event churn.
-- Tang do ben stream/reconnect.
-- Giam block UI khi thread dai.
+- lower event churn
+- stronger reconnect correctness
+- smoother UX on long sessions
 
 ---
 
 ## 5. Full optimization catalog
 
-Muc nay la backlog tong hop "day du de loc uu tien sau". Moi item gom:
+This is the complete backlog for later prioritization. Each item includes:
 
-- Van de hien tai
-- Huong cai thien
-- Workflow before/after
-- Metric can theo doi
-- Rui ro/chu y
+- current issue
+- optimization direction
+- before/after workflow idea
+- key metric
+- risk notes
 
-## Layer A - Backend ingest, projector, persist
+## Layer A - Backend ingest, projection, persistence
 
 ### A01. Delta coalescing window (30-100ms)
 
-- Van de: moi delta di full pipeline.
-- Cai thien: gom delta theo `thread_id + item_id + kind` trong cua so ngan.
-- Before: 300 delta -> 300 apply/persist.
-- After: 300 delta -> 20-40 batch apply/persist.
+- Issue: every tiny delta runs full pipeline.
+- Improve: coalesce by `thread_id + item_id + kind` in short windows.
+- Before: 300 deltas -> 300 apply/persist.
+- After: 300 deltas -> 20-40 apply/persist batches.
 - Metric: `events_in`, `events_persisted`, `persist_calls_per_turn`.
-- Rui ro: tang do tre nho (vai chuc ms), can tuning cua so.
+- Risk: slight added latency (tens of ms), requires tuning.
 
 ### A02. In-memory thread actor
 
-- Van de: raw event thuong xuyen phai read snapshot hien tai.
-- Cai thien: moi thread co actor state trong RAM, event patch truc tiep vao state nay.
-- Before: read snapshot cho tung event.
-- After: read 1 lan khi bind actor, sau do patch in-memory.
-- Metric: `snapshot_reads_per_turn`, lock wait time.
-- Rui ro: can co eviction policy va recovery strategy.
+- Issue: repeated snapshot reads on hot path.
+- Improve: keep live thread state in memory; patch there first.
+- Before: read snapshot each event.
+- After: read on bind; patch in memory; checkpoint by policy.
+- Metric: `snapshot_reads_per_turn`, lock wait duration.
+- Risk: requires eviction + recovery logic.
 
-### A03. Checkpoint theo moc thay vi moi event
+### A03. Checkpoint by boundary, not per event
 
-- Van de: write file snapshot qua day.
-- Cai thien: checkpoint theo timer (vd 250ms) hoac boundary (`turn_completed`, `turn_failed`, `waiting_user_input`).
-- Metric: `snapshot_writes_per_minute`, disk write bytes.
-- Rui ro: can dam bao crash recovery du.
+- Issue: snapshot write frequency too high.
+- Improve: checkpoint by timer and turn boundaries (`turn_completed`, `turn_failed`, `waiting_user_input`).
+- Metric: `snapshot_writes_per_minute`, write bytes.
+- Risk: recovery design must remain safe.
 
-### A04. Event patch compaction theo item
+### A04. Item-level patch compaction
 
-- Van de: nhieu patch lien tiep tren cung item.
-- Cai thien: merge patch append text/output truoc khi persist/publish.
+- Issue: many consecutive patches hit same item.
+- Improve: merge append patches before persist/publish.
 - Metric: `patches_in` vs `patches_out`.
-- Rui ro: logic merge can dung thu tu sequence.
+- Risk: must preserve sequence correctness.
 
-### A05. Persist item-level delta (hybrid)
+### A05. Hybrid persistence (event log + periodic snapshot)
 
-- Van de: snapshot full JSON cho moi mutation.
-- Cai thien: luu event delta append-only + snapshot dinh ky.
+- Issue: full snapshot rewrite per mutation is expensive.
+- Improve: append-only event log with periodic compact snapshots.
 - Metric: write amplification ratio.
-- Rui ro: can them compaction job.
+- Risk: needs compaction and recovery path.
 
-### A06. Avoid expensive deep copy in broker
+### A06. Reduce expensive deep-copy in broker
 
-- Van de: `copy.deepcopy(event)` moi subscriber.
-- Cai thien: immutable payload + shallow copy metadata, hoac serialize once.
-- Metric: CPU publish path, GC pressure.
-- Rui ro: can dam bao no mutable shared bug.
+- Issue: deep-copy per subscriber increases CPU.
+- Improve: immutable payload sharing or one-time serialization.
+- Metric: broker publish CPU and allocation rate.
+- Risk: must avoid mutable shared-state bugs.
 
 ### A07. Bounded queue + explicit backpressure
 
-- Van de: queue growth khong kiem soat ro rang.
-- Cai thien: set queue max size va strategy (`drop`, `close+replay`, `slow consumer`).
-- Metric: queue depth p95/p99, lag count.
-- Rui ro: can clear contract reconnect.
+- Issue: unbounded queue behavior under load.
+- Improve: max queue depth + clear strategy (`drop`, `close+replay`, `slow consumer`).
+- Metric: queue depth p95/p99, lag incidents.
+- Risk: reconnect contract must be explicit.
 
-### A08. Skip no-op lifecycle/state updates
+### A08. No-op lifecycle/event suppression
 
-- Van de: event trung trang thai van publish.
-- Cai thien: dedupe no-op truoc publish.
+- Issue: identical state transitions still publish.
+- Improve: dedupe no-op transitions before publish.
 - Metric: no-op suppression count.
-- Rui ro: phai tranh bo sot event co side effects.
+- Risk: do not suppress events with real side effects.
 
 ---
 
 ## Layer B - SSE reliability and reconnect
 
-### B01. Add SSE event `id` and replay cursor
+### B01. SSE event IDs + replay cursor
 
-- Cai thien: moi event co `id`, client luu `last_event_id`.
-- Metric: reconnect success rate.
+- Improve: all business events carry stable `id`, client tracks `last_event_id`.
+- Metric: reconnect success rate without full reload.
 
 ### B02. Server replay buffer
 
-- Cai thien: luu N events gan nhat de replay khi reconnect.
-- Before: can reload lon.
-- After: replay phan thieu.
+- Improve: keep recent event history for replay.
+- Before: reconnect often falls back to full snapshot reload.
+- After: replay only missing range.
 - Metric: full reload fallback count.
 
-### B03. Gap detection and controlled resync
+### B03. Gap detection with controlled resync
 
-- Cai thien: neu gap vuot replay window, tra ve mismatch ro rang.
-- Metric: gap mismatch count.
+- Improve: if requested ID is outside replay window, return explicit mismatch path.
+- Metric: replay gap count and recovery latency.
 
-### B04. Heartbeat policy clean
+### B04. Heartbeat policy hygiene
 
-- Cai thien: heartbeat khong "chiem" id event replay, tach heartbeat voi business events.
-- Metric: heartbeat timeout false positive.
+- Improve: heartbeat does not pollute replay/event cursor semantics.
+- Metric: false disconnect rate.
 
-### B05. Client reconnect policy tuning
+### B05. Retry policy tuning
 
-- Cai thien: exponential backoff + jitter + max retry.
-- Metric: reconnect latency, reconnect storm count.
+- Improve: exponential backoff + jitter + caps.
+- Metric: reconnect storm count, reconnect latency.
 
-### B06. First frame handshake optimization
+### B06. First meaningful frame optimization
 
-- Cai thien: gui metadata can thiet som (active request ids, stream state).
+- Improve: send critical stream metadata early (active request IDs, status).
 - Metric: time-to-first-meaningful-frame.
 
 ---
 
 ## Layer C - Frontend state pipeline
 
-### C01. Frame-batched apply queue (RAF batching)
+### C01. Frame-batched event apply (RAF batching)
 
-- Van de: event den la apply ngay -> render thrash.
-- Cai thien: push event vao queue, apply theo frame.
-- Before: 30 event nhanh = 30 apply.
-- After: 30 event nhanh = 1-3 apply/frame.
-- Metric: `apply_calls_per_second`, main-thread long tasks.
+- Issue: immediate apply per event causes render thrash.
+- Improve: queue and apply in animation-frame batches.
+- Before: burst of 30 events -> 30 applies.
+- After: burst of 30 events -> 1-3 applies.
+- Metric: `apply_calls_per_second`, long tasks.
 
-### C02. Normalize conversation state
+### C02. Normalized conversation state
 
-- Cai thien: `itemsById + order + signals` thay cho clone list lon.
-- Metric: object allocations per event.
+- Improve: move toward `itemsById + order + uiSignals`.
+- Metric: allocations per event, apply duration.
 
-### C03. Remove global sort on patch path
+### C03. Remove sort on patch hot path
 
-- Van de: patch item van co cost sort list.
-- Cai thien: sort chi khi them item moi hoac sequence thay doi.
-- Metric: patch apply duration p95.
+- Issue: patch updates still pay list sort cost.
+- Improve: sort only on insert/order change.
+- Metric: patch apply p95/p99.
 
-### C04. Structural sharing stricter
+### C04. Strong structural sharing
 
-- Cai thien: khong tao object moi neu value khong doi.
-- Metric: React rerender count.
+- Improve: avoid new objects when values do not change.
+- Metric: rerender count per event.
 
-### C05. Split store slices by concern
+### C05. Split store concerns
 
-- Cai thien: tach `snapshot/items`, `telemetry`, `stream transport`, `UI controls`.
+- Improve: separate conversation snapshot from telemetry/transport/UI controls.
 - Metric: invalidation fanout.
 
-### C06. Selector narrowing
+### C06. Narrow selectors
 
-- Cai thien: component subscribe dung phan no can.
-- Metric: rendered components per event.
+- Improve: subscribe components only to required slices.
+- Metric: component updates per event.
 
-### C07. Fast-path for text append
+### C07. Fast-path text append
 
-- Cai thien: item text append update theo direct slot thay vi clone full array.
-- Metric: apply time p95/p99.
+- Improve: direct item slot append semantics for streaming text.
+- Metric: event apply duration p95.
 
-### C08. Smarter fallback reload
+### C08. Smarter fallback reload policy
 
-- Cai thien: chi fallback reload khi gap mismatch that su, khong reload voi parse noise nho.
+- Improve: only force reload for true stream mismatch/corruption.
 - Metric: forced snapshot reload count.
 
 ---
@@ -325,280 +327,290 @@ Muc nay la backlog tong hop "day du de loc uu tien sau". Moi item gom:
 
 ### D01. Memoize all V3 row components
 
-- Van de: rows V3 dang la function thuong.
-- Cai thien: `React.memo` + props on dinh.
+- Issue: V3 row functions are not fully isolated from feed rerenders.
+- Improve: `React.memo` + stable props.
 - Metric: row rerender count.
 
-### D02. Stable callback and props identity
+### D02. Stable callback/prop identity
 
-- Cai thien: callback map theo id, tranh tao lai object props moi moi render.
-- Metric: memo hit ratio.
+- Improve: avoid recreating heavy callbacks/objects each render.
+- Metric: memo hit rate.
 
 ### D03. Progressive rendering for long history
 
-- Cai thien: mount theo batch (vd 20-50 rows / tick).
-- Metric: time-to-interactive khi mo thread dai.
+- Improve: batch row mount for large threads.
+- Metric: time-to-interactive when opening long thread.
 
 ### D04. Virtualization for very long feeds
 
-- Cai thien: chi render viewport + overscan.
+- Improve: render viewport + overscan only.
 - Metric: DOM node count, scroll FPS.
 
 ### D05. Lazy markdown rendering
 
-- Cai thien: row collapsed/offscreen thi chua parse markdown.
+- Improve: defer markdown parse for offscreen/collapsed rows.
 - Metric: markdown parse time total.
 
 ### D06. Workerized diff parse/highlight
 
-- Cai thien: parse diff chunk, stats, highlight trong worker.
+- Improve: move expensive parse/highlight off main thread.
 - Metric: main-thread blocking time.
 
-### D07. Incremental command output viewport
+### D07. Incremental command output tail
 
-- Cai thien: append tail thay vi split full text moi lan.
+- Improve: avoid full split/recompute on each output append.
 - Metric: command row update cost p95.
 
-### D08. Heavy row default collapsed
+### D08. Default-collapse heavy rows
 
-- Cai thien: diff/tool lon mac dinh collapse.
-- Metric: initial render time.
+- Improve: collapse large tool/diff rows by default.
+- Metric: initial render duration.
 
 ### D09. Render budget guard
 
-- Cai thien: neu frame budget bi vuot, giam quality tam thoi (defer syntax highlight, reduce batch).
+- Improve: dynamically degrade work if frame budget is exceeded.
 - Metric: dropped frames.
 
-### D10. Cache key by `itemId + updatedAt`
+### D10. Cache by `itemId + updatedAt`
 
-- Cai thien: cache parse result an toan va de invalidate.
-- Metric: cache hit rate.
+- Improve: deterministic cache key for parse-heavy artifacts.
+- Metric: cache hit ratio.
 
 ---
 
 ## Layer E - Data volume and UX flow
 
-### E01. Conversation scrollback cap for V3
+### E01. V3 conversation scrollback cap
 
-- Van de: item list co the phinh vo han.
-- Cai thien: cap configurable (vd 500/1000/2000), van co archive/load more.
-- Metric: heap size per active thread.
+- Issue: active in-memory item list can grow indefinitely.
+- Improve: cap live list (e.g. 500/1000/2000) with load-more/archive path.
+- Metric: heap size by active thread.
 
-### E02. Truncate policy for huge payload
+### E02. Large payload truncation policy
 
-- Cai thien: max chars cho output/diff preview; full content dua vao artifact.
-- Metric: max payload size in render path.
+- Improve: preview + full artifact for very large outputs/diffs.
+- Metric: max render-path payload size.
 
 ### E03. Coalesce consecutive assistant text chunks
 
-- Cai thien: hoc Goose, merge text chunk lien tiep truoc khi luu.
+- Improve: merge neighboring text chunks pre-storage (Goose pattern).
 - Metric: rows created per turn.
 
-### E04. Message queue when processing
+### E04. Queue follow-up messages while processing
 
-- Cai thien: khi thread dang busy, message tiep theo vao queue.
-- Metric: failed send while processing.
+- Improve: enqueue when active turn is running.
+- Metric: send failure during processing.
 
-### E05. Queue pause on user-input/plan-ready
+### E05. Queue pause on gated states
 
-- Cai thien: queue flush tam dung khi can user action, resume sau.
-- Metric: accidental send count during gated states.
+- Improve: pause flush during user-input/plan-ready waits; resume safely.
+- Metric: accidental sends during gated phases.
 
-### E06. User controls for queue reorder/send-now
+### E06. Queue UX controls
 
-- Cai thien: UX ro rang de giam stress va giam race.
-- Metric: queue completion latency.
+- Improve: reorder, remove, send-now controls for clearer user intent.
+- Metric: queue completion latency and manual interventions.
 
 ---
 
-## Layer F - Observability, profiling, test
+## Layer F - Observability, profiling, and tests
 
 ### F01. Stage timing spans
 
-- Them span cho:
-  - backend ingest
-  - projector apply
-  - persist
-  - SSE publish
-  - frontend apply
-  - render commit
-- Metric: p50/p95/p99 tung stage.
+Capture timing for:
 
-### F02. Event volume metrics
+- backend ingest
+- projection apply
+- persist
+- SSE publish
+- frontend event apply
+- React commit
 
-- Theo doi:
-  - raw events in
-  - compacted events out
-  - events dropped/deduped
+Metric: p50/p95/p99 by stage.
 
-### F03. Queue and lag metrics
+### F02. Event-volume metrics
 
-- Theo doi:
-  - SSE queue depth
-  - lagged subscriber count
-  - reconnect count
+Track:
 
-### F04. Render metrics
+- raw events in
+- compacted events out
+- deduped/dropped events
 
-- Theo doi:
-  - commit duration
-  - row rerender count
-  - long task count
+### F03. Queue/lag metrics
+
+Track:
+
+- queue depth
+- lagged subscriber count
+- reconnect count
+
+### F04. Render health metrics
+
+Track:
+
+- commit duration
+- rows rendered per event
+- long task count
 
 ### F05. Synthetic load scenarios
 
-- Tao test profile:
-  - 500 event
-  - 2000 event
-  - diff lon
-  - markdown lon
+Add repeatable scenarios:
+
+- 500 events
+- 2000 events
+- large diff
+- large markdown
 
 ### F06. Replay/reconnect integration tests
 
-- Test:
-  - disconnect giua turn
-  - reconnect voi `Last-Event-ID`
-  - replay gap handling
+Test:
 
-### F07. Perf budget gates in CI
+- disconnect mid-turn
+- reconnect with `Last-Event-ID`
+- replay gap behavior
 
-- Dat budget:
-  - max apply p95
-  - max render p95
-  - max forced reload count
+### F07. CI performance budgets
+
+Set gates for:
+
+- max apply p95
+- max render p95
+- max forced reload count
 
 ### F08. Regression dashboard
 
-- Dashboard theo release:
-  - stream health
-  - render health
-  - user-perceived latency
+Release-over-release dashboard:
+
+- stream health
+- render health
+- user-perceived latency
 
 ---
 
 ## Layer G - Rollout and safety
 
-### G01. Feature flags theo lop
+### G01. Feature flags per layer
 
-- Flag rieng cho:
-  - backend coalescing
-  - replay SSE
-  - frontend frame batching
-  - progressive render/virtualization
+Flags for:
+
+- backend coalescing
+- SSE replay
+- frontend frame batching
+- progressive render/virtualization
 
 ### G02. Canary rollout
 
-- Bat theo % project/workspace.
-- So sanh metric control vs treatment.
+Enable by project/workspace cohort and compare control vs treatment metrics.
 
 ### G03. Fallback strategy
 
-- Neu loi:
-  - tat flag lop do
-  - quay lai behavior cu
-  - giu stream song
+If an optimization fails:
 
-### G04. Data migration safety
+- disable layer-specific flag
+- revert to previous behavior
+- keep stream alive
 
-- Neu doi persistence model:
-  - write dual mode trong giai doan transition
-  - verify parity truoc cutover
+### G04. Migration safety
 
-### G05. Contract freeze for event schema
+If persistence model changes:
 
-- Chot schema truoc khi toi uu lon.
-- Them contract tests producer/consumer.
+- dual-write transition period
+- parity verification before cutover
 
-### G06. Runbook for incident
+### G05. Contract freeze for event schemas
 
-- Incident playbook:
-  - stream lag
-  - queue overflow
-  - reconnect storm
-  - render freeze
+Freeze schemas before large pipeline optimization; enforce producer/consumer contract tests.
+
+### G06. Incident runbook
+
+Runbooks for:
+
+- stream lag
+- queue overflow
+- reconnect storms
+- render freeze
 
 ---
 
 ## 6. Workflow examples (before/after)
 
-## Example 1 - Streaming text append
+### Example 1 - Streaming text append
 
 Before:
 
-1. Delta den.
-2. Backend read snapshot.
-3. Patch.
-4. Persist full snapshot.
-5. Publish event.
-6. Frontend apply + re-render nhieu row.
+1. Delta arrives.
+2. Backend reads snapshot.
+3. Backend patches.
+4. Backend persists full snapshot.
+5. Backend publishes event.
+6. Frontend applies and re-renders broadly.
 
 After (A01 + A02 + C01 + D01):
 
-1. Delta vao coalescing buffer 50ms.
-2. Batch patch vao in-memory actor.
-3. Checkpoint theo moc.
-4. Publish event compact.
-5. Frontend apply theo frame batch.
-6. Chi row item vua doi render lai.
+1. Delta enters 50ms coalescing buffer.
+2. Batch patch applies to in-memory actor.
+3. Checkpoint policy handles persistence.
+4. Compact event is published.
+5. Frontend applies events per frame.
+6. Only the changed row re-renders.
 
-## Example 2 - Network disconnect while stream
+### Example 2 - Network disconnect mid-stream
 
 Before:
 
-1. Client mat ket noi.
-2. Reconnect.
-3. Co the phai reload snapshot lon.
+1. Client disconnects.
+2. Reconnect may force larger snapshot reload.
 
 After (B01 + B02 + B03):
 
-1. Client reconnect gui `Last-Event-ID`.
-2. Server replay phan event thieu.
-3. Neu vuot replay window -> mismatch response co kiem soat + targeted resync.
+1. Client reconnects with `Last-Event-ID`.
+2. Server replays missing events.
+3. If replay window is exceeded, server returns explicit mismatch and targeted resync path.
 
-## Example 3 - Open thread with 2000 messages
+### Example 3 - Opening a 2000-message thread
 
 Before:
 
-1. Mount all rows ngay.
-2. Main thread block.
-3. Scroll va input lag.
+1. UI mounts all rows immediately.
+2. Main thread blocks.
+3. Input and scrolling feel slow.
 
 After (D03 + D04):
 
-1. Render progressive theo batch.
-2. Virtualize offscreen rows.
-3. UI interactive som hon.
+1. Progressive row mount in batches.
+2. Virtualized offscreen rows.
+3. Faster interactivity and smoother scroll.
 
-## Example 4 - Large diff tool output
+### Example 4 - Large diff output
 
 Before:
 
-1. Parse diff/hightlight tren main thread.
-2. Moi update co the parse lai.
+1. Diff parse/highlight runs on main thread.
+2. Repeated updates trigger repeated heavy compute.
 
 After (D06 + D10 + E02):
 
-1. Parse nang sang worker.
-2. Cache theo `itemId+updatedAt`.
-3. Preview truncate + full artifact.
+1. Heavy parse runs in worker.
+2. Parse results cached by `itemId + updatedAt`.
+3. UI shows preview and links to full artifact.
 
-## Example 5 - User gui tiep khi thread dang processing
+### Example 5 - User sends follow-up while active turn is running
 
 Before:
 
-1. Send tiep de gay race/that bai.
+1. Follow-up sends can race with active processing.
 
 After (E04 + E05 + E06):
 
-1. Message vao queue.
-2. Pause queue neu user-input gating.
-3. Resume va flush tu dong khi an toan.
+1. Follow-up is queued.
+2. Queue pauses during gated states.
+3. Queue resumes and flushes safely.
 
 ---
 
-## 7. Metrics framework (de do hieu qua)
+## 7. Metrics framework
 
-## 7.1 Backend
+### 7.1 Backend metrics
 
 - `raw_events_per_turn`
 - `compacted_events_per_turn`
@@ -607,7 +619,7 @@ After (E04 + E05 + E06):
 - `persist_duration_ms_p95`
 - `broker_publish_duration_ms_p95`
 
-## 7.2 Transport/SSE
+### 7.2 Transport/SSE metrics
 
 - `sse_reconnect_count`
 - `replay_events_count`
@@ -615,20 +627,20 @@ After (E04 + E05 + E06):
 - `lagged_subscriber_count`
 - `full_reload_fallback_count`
 
-## 7.3 Frontend state
+### 7.3 Frontend state metrics
 
 - `event_apply_duration_ms_p95`
 - `state_alloc_bytes_per_sec`
 - `forced_snapshot_reload_count`
 
-## 7.4 Render
+### 7.4 Render metrics
 
 - `render_commit_duration_ms_p95`
 - `rows_rendered_per_event`
 - `long_task_count`
-- `scroll_fps_p50/p95`
+- `scroll_fps_p50_p95`
 
-## 7.5 UX
+### 7.5 UX metrics
 
 - `time_to_first_interactive_thread_ms`
 - `time_to_first_delta_visible_ms`
@@ -636,23 +648,23 @@ After (E04 + E05 + E06):
 
 ---
 
-## 8. Dependency graph (high-level)
+## 8. High-level dependency graph
 
-1. F01/F02/F03 (metrics) can lam som nhat.
-2. B01/B02/B03 (replay/reconnect) nen di truoc de giam fallback.
-3. A01/A03 + C01/C03 tao giam tai ro rang nhat.
-4. D01/D03/D04 danh vao UX render thread dai.
-5. D06/E02 xu ly case diff/output rat lon.
+1. Start with observability (`F01-F04`) to establish baseline.
+2. Add stream reliability (`B01-B03`) to reduce expensive fallback reloads.
+3. Reduce backend load (`A01-A04`) and frontend apply churn (`C01-C04`).
+4. Improve rendering (`D01-D05`) for long-thread user experience.
+5. Harden heavy-payload cases (`D06-D07`, `E01-E03`).
 
 ---
 
-## 9. Prioritization template (de loc sau)
+## 9. Prioritization template (for later filtering)
 
-Su dung score:
+Use this scoring model:
 
 `PriorityScore = (Impact x Confidence) / (Effort + Risk + RolloutComplexity)`
 
-Thang diem de xuat:
+Suggested scale:
 
 - Impact: 1-5
 - Confidence: 1-5
@@ -660,7 +672,7 @@ Thang diem de xuat:
 - Risk: 1-5
 - RolloutComplexity: 1-5
 
-Bang mau:
+Template table:
 
 | ID | Impact | Confidence | Effort | Risk | RolloutComplexity | Score | Owner | Notes |
 |---|---:|---:|---:|---:|---:|---:|---|---|
@@ -671,90 +683,90 @@ Bang mau:
 
 ---
 
-## 10. Suggested implementation phases (full-system path)
+## 10. Suggested full-system implementation phases
 
 ### Phase 0 - Instrument first
 
-- F01-F04
-- Baseline benchmark and dashboard
+- Implement `F01-F04`.
+- Capture benchmark baseline.
 
 Exit criteria:
 
-- Co baseline p50/p95 tung stage.
+- stable p50/p95 baseline by stage.
 
 ### Phase 1 - Stream reliability foundation
 
-- B01-B03-B05
-- mot phan G01/G02
+- Implement `B01-B03-B05`.
+- Add base feature flags (`G01`).
 
 Exit criteria:
 
-- reconnect replay hoat dong on dinh, fallback giam ro.
+- replay reconnect works and fallback reloads decrease.
 
 ### Phase 2 - Backend load reduction
 
-- A01-A03-A04-A08
+- Implement `A01-A04-A08`.
 
 Exit criteria:
 
-- persist calls/event volume giam manh.
+- persist frequency and event output decrease significantly.
 
 ### Phase 3 - Frontend apply optimization
 
-- C01-C03-C04-C05
+- Implement `C01-C05`.
 
 Exit criteria:
 
-- event apply p95 giam ro, rerender fanout giam.
+- apply p95 decreases and rerender fanout improves.
 
 ### Phase 4 - Render optimization
 
-- D01-D03-D04-D05-D08
+- Implement `D01-D05-D08`.
 
 Exit criteria:
 
-- mo thread dai khong block, scroll on dinh.
+- long-thread open and scrolling stay responsive.
 
 ### Phase 5 - Heavy payload hardening
 
-- D06-D07-E01-E02-E03
+- Implement `D06-D07-E01-E03`.
 
 Exit criteria:
 
-- case diff/output lon van smooth.
+- large diff/output scenarios avoid UI freezes.
 
-### Phase 6 - UX queue + hardening
+### Phase 6 - UX queue + final hardening
 
-- E04-E05-E06 + F05-F08 + G03-G06
+- Implement `E04-E06`, `F05-F08`, `G02-G06`.
 
 Exit criteria:
 
-- flow user thong suot, perf regression guard day du.
+- queue behavior is reliable and perf regressions are gated.
 
 ---
 
 ## 11. Non-goals and caution notes
 
-1. Khong optimize mu quang khi chua co metrics baseline.
-2. Khong thay doi nhieu lop cung luc ma khong co feature flag.
-3. Khong mix data migration lon voi UI refactor trong cung 1 release window.
-4. Khong bo qua reconnect/replay contract khi sua SSE.
+1. Do not optimize blindly before baseline metrics exist.
+2. Do not change too many layers at once without feature flags.
+3. Do not combine large persistence migration and major UI refactor in the same release window.
+4. Do not modify SSE behavior without preserving reconnect/replay contract.
 
 ---
 
-## 12. Checklist de xac nhan "optimized system"
+## 12. "Optimized system" validation checklist
 
-- [ ] Stream reconnect khong can full reload trong da so truong hop.
-- [ ] Event/apply/render p95 dat budget da chot.
-- [ ] Thread dai van interactive.
-- [ ] Diff/output lon khong freeze main thread.
-- [ ] Queue follow-up khong tao race loan trang thai.
-- [ ] CI co perf regression gates.
-- [ ] Rollout co canary va rollback nhanh.
+- [ ] Reconnect usually recovers via replay without full snapshot reload.
+- [ ] Event/apply/render p95 values meet agreed budgets.
+- [ ] Long threads remain interactive.
+- [ ] Large diff/output cases do not freeze main thread.
+- [ ] Follow-up queue behavior avoids race conditions.
+- [ ] CI has performance regression gates.
+- [ ] Rollout has canary and fast rollback.
 
 ---
 
-## Appendix A - File map tham chieu nhanh
+## Appendix A - Quick file reference map
 
 PTM:
 

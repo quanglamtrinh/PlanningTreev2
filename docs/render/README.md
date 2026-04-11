@@ -1,4 +1,4 @@
-# Render Optimization Docs
+﻿# Render Optimization Docs
 
 Status: Draft baseline for full-system optimization.
 
@@ -6,7 +6,7 @@ Last updated: 2026-04-11.
 
 ## Purpose
 
-This folder defines a full, end-to-end optimization reference for thread execution and ask rendering performance in PlanningTreeMain (PTM).
+This folder defines a complete end-to-end optimization reference for thread execution and ask rendering performance in PlanningTreeMain (PTM).
 
 The content is intentionally broad and detailed so we can:
 
