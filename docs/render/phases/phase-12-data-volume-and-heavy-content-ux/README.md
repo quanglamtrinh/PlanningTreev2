@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: D08, E01, E02, E03.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Control active data volume and heavy content defaults so performance remains stable as threads grow.
@@ -81,4 +84,14 @@ Merge adjacent assistant text chunks before storage/render, reducing row count a
 ## Handoff to Phase 13
 
 With content volume stabilized, queue behavior improvements can focus on active-turn UX and reliability.
+
+
+## Effort Estimate
+
+- Size: Medium
+- Estimated duration: 4-6 engineering days
+- Suggested staffing: 1 frontend + 1 backend (shared)
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 

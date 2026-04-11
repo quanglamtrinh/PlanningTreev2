@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: D03, D04, D09.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Keep long-thread interaction smooth by limiting mount pressure and controlling frame-time budget.
@@ -74,4 +77,14 @@ When frame cost exceeds budget:
 ## Handoff to Phase 11
 
 With base list performance under control, heavy compute offload can focus on specific expensive row types.
+
+
+## Effort Estimate
+
+- Size: Large
+- Estimated duration: 6-8 engineering days
+- Suggested staffing: 1 frontend primary + 1 frontend support
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 

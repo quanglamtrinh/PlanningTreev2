@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: E04, E05, E06.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Make follow-up sending reliable and user-controllable while a turn is still processing or gated.
@@ -81,4 +84,14 @@ Phase 13 closes when:
 1. Follow-up queue behavior is deterministic in active and gated flows.
 2. Manual stress tests show no race-send regressions.
 3. Queue UX controls are stable for both mouse and keyboard interactions.
+
+
+## Effort Estimate
+
+- Size: Medium
+- Estimated duration: 4-6 engineering days
+- Suggested staffing: 1 frontend primary + 1 backend support
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 

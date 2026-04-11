@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: C02, C03, C04.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Lower per-event apply cost by normalizing conversation state, removing avoidable sort work, and enforcing structural sharing.
@@ -76,4 +79,14 @@ Guarantee unchanged branches keep same object identity so memoized selectors/com
 ## Handoff to Phase 08
 
 Once state shape is efficient, splitting stores and narrowing selectors has higher confidence and lower migration risk.
+
+
+## Effort Estimate
+
+- Size: Large
+- Estimated duration: 5-7 engineering days
+- Suggested staffing: 1 frontend primary + 1 frontend reviewer
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 

@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: A01, A04, A08.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Reduce raw event explosion by compacting hot-path deltas before projection, persistence, and publish.
@@ -77,4 +80,14 @@ Before publish:
 ## Handoff to Phase 04
 
 Reduced event volume lowers pressure on in-memory actor and checkpointing work in the next phase.
+
+
+## Effort Estimate
+
+- Size: Medium
+- Estimated duration: 4-6 engineering days
+- Suggested staffing: 1 backend primary + 1 reviewer
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 

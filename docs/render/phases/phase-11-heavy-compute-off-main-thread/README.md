@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: D05, D06, D07.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Prevent main-thread stalls from markdown/diff/command-output heavy rows.
@@ -76,4 +79,14 @@ For streaming command output:
 ## Handoff to Phase 12
 
 After compute offload, data volume governance can further reduce rendering pressure at source.
+
+
+## Effort Estimate
+
+- Size: Large
+- Estimated duration: 6-8 engineering days
+- Suggested staffing: 1 frontend primary + 1 backend/desktop support
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 

@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: B01, B04, B06.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Create a strict, stable SSE event contract so reconnect logic and frontend apply behavior are deterministic.
@@ -105,4 +108,14 @@ Phase 02 can assume:
 - stable `last_event_id` behavior
 - deterministic event ordering
 - clean separation between heartbeat and replayable events
+
+
+## Effort Estimate
+
+- Size: Medium
+- Estimated duration: 3-4 engineering days
+- Suggested staffing: 1 backend + 1 frontend (light FE load)
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 

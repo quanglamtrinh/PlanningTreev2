@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: B02, B03, B05.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Make reconnect behavior robust by replaying only missing events and handling replay gaps explicitly.
@@ -91,4 +94,14 @@ Goal: avoid reconnect storms and reduce thundering herd.
 ## Handoff to Phase 03
 
 After this phase, backend/frontend can reduce event volume safely because reconnect correctness is no longer coupled to full reload behavior.
+
+
+## Effort Estimate
+
+- Size: Medium
+- Estimated duration: 4-6 engineering days
+- Suggested staffing: 1 backend + 1 frontend (shared)
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 

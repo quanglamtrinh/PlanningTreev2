@@ -44,19 +44,42 @@ A phase is considered complete only when all checks below are true:
 
 ## Phase Sequence
 
-1. [phase-01-stream-contract-foundation.md](./phase-01-stream-contract-foundation.md) (B01, B04, B06)
-2. [phase-02-replay-gap-recovery.md](./phase-02-replay-gap-recovery.md) (B02, B03, B05)
-3. [phase-03-backend-delta-compaction.md](./phase-03-backend-delta-compaction.md) (A01, A04, A08)
-4. [phase-04-inmemory-actor-checkpointing.md](./phase-04-inmemory-actor-checkpointing.md) (A02, A03)
-5. [phase-05-persistence-broker-efficiency.md](./phase-05-persistence-broker-efficiency.md) (A05, A06, A07)
-6. [phase-06-frame-batching-fast-append.md](./phase-06-frame-batching-fast-append.md) (C01, C07)
-7. [phase-07-state-shape-hot-path.md](./phase-07-state-shape-hot-path.md) (C02, C03, C04)
-8. [phase-08-store-isolation-selectors.md](./phase-08-store-isolation-selectors.md) (C05, C06, C08)
-9. [phase-09-row-isolation-cache.md](./phase-09-row-isolation-cache.md) (D01, D02, D10)
-10. [phase-10-progressive-virtualized-rendering.md](./phase-10-progressive-virtualized-rendering.md) (D03, D04, D09)
-11. [phase-11-heavy-compute-off-main-thread.md](./phase-11-heavy-compute-off-main-thread.md) (D05, D06, D07)
-12. [phase-12-data-volume-and-heavy-content-ux.md](./phase-12-data-volume-and-heavy-content-ux.md) (D08, E01, E02, E03)
-13. [phase-13-queued-follow-up-flow.md](./phase-13-queued-follow-up-flow.md) (E04, E05, E06)
+1. [phase-01-stream-contract-foundation](./phase-01-stream-contract-foundation/README.md) (B01, B04, B06)
+2. [phase-02-replay-gap-recovery](./phase-02-replay-gap-recovery/README.md) (B02, B03, B05)
+3. [phase-03-backend-delta-compaction](./phase-03-backend-delta-compaction/README.md) (A01, A04, A08)
+4. [phase-04-inmemory-actor-checkpointing](./phase-04-inmemory-actor-checkpointing/README.md) (A02, A03)
+5. [phase-05-persistence-broker-efficiency](./phase-05-persistence-broker-efficiency/README.md) (A05, A06, A07)
+6. [phase-06-frame-batching-fast-append](./phase-06-frame-batching-fast-append/README.md) (C01, C07)
+7. [phase-07-state-shape-hot-path](./phase-07-state-shape-hot-path/README.md) (C02, C03, C04)
+8. [phase-08-store-isolation-selectors](./phase-08-store-isolation-selectors/README.md) (C05, C06, C08)
+9. [phase-09-row-isolation-cache](./phase-09-row-isolation-cache/README.md) (D01, D02, D10)
+10. [phase-10-progressive-virtualized-rendering](./phase-10-progressive-virtualized-rendering/README.md) (D03, D04, D09)
+11. [phase-11-heavy-compute-off-main-thread](./phase-11-heavy-compute-off-main-thread/README.md) (D05, D06, D07)
+12. [phase-12-data-volume-and-heavy-content-ux](./phase-12-data-volume-and-heavy-content-ux/README.md) (D08, E01, E02, E03)
+13. [phase-13-queued-follow-up-flow](./phase-13-queued-follow-up-flow/README.md) (E04, E05, E06)
+
+## Effort Overview
+
+| Phase | Scope IDs | Size | Estimated duration |
+|---|---|---|---|
+| 01 | B01, B04, B06 | Medium | 3-4 engineering days |
+| 02 | B02, B03, B05 | Medium | 4-6 engineering days |
+| 03 | A01, A04, A08 | Medium | 4-6 engineering days |
+| 04 | A02, A03 | Large | 6-8 engineering days |
+| 05 | A05, A06, A07 | Large | 6-9 engineering days |
+| 06 | C01, C07 | Medium | 4-5 engineering days |
+| 07 | C02, C03, C04 | Large | 5-7 engineering days |
+| 08 | C05, C06, C08 | Medium | 4-6 engineering days |
+| 09 | D01, D02, D10 | Medium | 4-5 engineering days |
+| 10 | D03, D04, D09 | Large | 6-8 engineering days |
+| 11 | D05, D06, D07 | Large | 6-8 engineering days |
+| 12 | D08, E01, E02, E03 | Medium | 4-6 engineering days |
+| 13 | E04, E05, E06 | Medium | 4-6 engineering days |
+
+Estimate notes:
+
+- Duration is for implementation + validation in one phase, excluding large refactor surprises.
+- Parallel staffing can reduce calendar time but increases coordination overhead.
 
 ## Dependency Flow
 

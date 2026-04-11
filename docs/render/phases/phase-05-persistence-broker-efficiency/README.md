@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: A05, A06, A07.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Lower persistence and publish overhead by reducing write amplification and controlling subscriber backpressure.
@@ -87,4 +90,14 @@ Define queue behavior under slow consumer:
 ## Handoff to Phase 06
 
 Backend now emits fewer, cheaper events, which improves the impact of frontend frame-batching work.
+
+
+## Effort Estimate
+
+- Size: Large
+- Estimated duration: 6-9 engineering days
+- Suggested staffing: 1 backend primary + 1 backend/infra support
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 

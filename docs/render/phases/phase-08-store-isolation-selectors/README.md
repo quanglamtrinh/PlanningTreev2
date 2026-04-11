@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: C05, C06, C08.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Reduce invalidation fanout by separating store concerns, tightening selectors, and narrowing forced reload behavior.
@@ -77,4 +80,14 @@ Force full reload only for true corruption/mismatch cases:
 ## Handoff to Phase 09
 
 With store invalidation reduced, row-level memoization and render cache can deliver clearer gains.
+
+
+## Effort Estimate
+
+- Size: Medium
+- Estimated duration: 4-6 engineering days
+- Suggested staffing: 1 frontend primary + 1 QA support
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 

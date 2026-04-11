@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: A02, A03.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Replace repeated snapshot reads/writes in the hot path with an in-memory thread actor and policy-driven checkpoints.
@@ -80,4 +83,14 @@ This removes per-delta snapshot writes from critical path.
 ## Handoff to Phase 05
 
 With actor + checkpointing in place, persistence and broker optimizations can be introduced without fighting per-event disk I/O.
+
+
+## Effort Estimate
+
+- Size: Large
+- Estimated duration: 6-8 engineering days
+- Suggested staffing: 1 backend primary + 1 backend reviewer
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 

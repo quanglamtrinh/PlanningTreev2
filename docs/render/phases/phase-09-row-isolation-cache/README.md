@@ -4,6 +4,9 @@ Status: Planned.
 
 Scope IDs: D01, D02, D10.
 
+Subphase workspace: ./subphases/.
+
+
 ## Objective
 
 Isolate row rendering so updates only affect changed rows, then cache parse-heavy artifacts with stable keys.
@@ -70,4 +73,14 @@ For markdown/diff/highlight output:
 ## Handoff to Phase 10
 
 After row isolation, long-thread rendering strategy (progressive mount + virtualization) can be tuned with less noise.
+
+
+## Effort Estimate
+
+- Size: Medium
+- Estimated duration: 4-5 engineering days
+- Suggested staffing: 1 frontend primary
+- Confidence level: Medium (depends on current code-path complexity and test debt)
+
+
 
