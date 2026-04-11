@@ -6,6 +6,25 @@ Scope IDs: A01, A04, A08.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Backend semantic shaping is prioritized to reduce pipeline amplification at the source.
+
+Contract focus:
+
+- Primary: `C1 Event Stream Contract v1`
+- Secondary: `C3 Lifecycle and Gating Contract v1`, `C4 Durability Contract v1`
+
+Must-hold decisions:
+
+- Semantic coalescing is backend-owned and canonical.
+- Frontend must not introduce semantic coalescing logic.
+- Compaction must preserve lifecycle/event ordering guarantees.
+
 
 ## Objective
 
@@ -88,6 +107,7 @@ Reduced event volume lowers pressure on in-memory actor and checkpointing work i
 - Estimated duration: 4-6 engineering days
 - Suggested staffing: 1 backend primary + 1 reviewer
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

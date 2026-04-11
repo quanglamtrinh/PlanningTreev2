@@ -6,6 +6,24 @@ Scope IDs: C02, C03, C04.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Continues CodexMonitor-style state architecture hardening on top of stable stream behavior.
+
+Contract focus:
+
+- Primary: `C5 Frontend State Contract v1`
+
+Must-hold decisions:
+
+- Hot-path patches cannot trigger global sort unless order changes.
+- Structural sharing guarantees are mandatory for unchanged branches.
+- State operations must remain compatible with downstream virtualization requirements.
+
 
 ## Objective
 
@@ -87,6 +105,7 @@ Once state shape is efficient, splitting stores and narrowing selectors has high
 - Estimated duration: 5-7 engineering days
 - Suggested staffing: 1 frontend primary + 1 frontend reviewer
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

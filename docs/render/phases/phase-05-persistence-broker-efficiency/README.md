@@ -6,6 +6,25 @@ Scope IDs: A05, A06, A07.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Extends Phase 04 durability baseline into full hybrid persistence and controlled transport behavior.
+
+Contract focus:
+
+- Primary: `C4 Durability Contract v1`
+- Secondary: `C2 Replay and Resync Contract v1`, `C1 Event Stream Contract v1`
+
+Must-hold decisions:
+
+- Promote mini-journal baseline to full hybrid persistence safely.
+- Backpressure handling must preserve replay/reconnect guarantees.
+- Event ordering and cursor semantics must remain contract-safe.
+
 
 ## Objective
 
@@ -98,6 +117,7 @@ Backend now emits fewer, cheaper events, which improves the impact of frontend f
 - Estimated duration: 6-9 engineering days
 - Suggested staffing: 1 backend primary + 1 backend/infra support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

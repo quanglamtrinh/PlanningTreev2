@@ -6,6 +6,25 @@ Scope IDs: B01, B04, B06.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Starts the `Goose-first hybrid` path by freezing stream contracts before UI-only optimization work.
+
+Contract focus:
+
+- Primary: `C1 Event Stream Contract v1`
+- Secondary: `C2 Replay and Resync Contract v1`
+
+Must-hold decisions:
+
+- `event_id` is monotonic and durable per thread across restart.
+- Heartbeat must never advance replay cursor.
+- Phase exit requires contract compatibility tests.
+
 
 ## Objective
 
@@ -27,7 +46,8 @@ If stream semantics are unstable, every later optimization can create hidden cor
 
 Define one business event envelope used by all stream producers:
 
-- `id`: monotonic per-thread stream ID
+- `schema_version`
+- `event_id`: monotonic per-thread stream ID
 - `event_type`: semantic type (item_patch, lifecycle_update, etc.)
 - `thread_id`
 - `turn_id` (nullable for non-turn events)
@@ -36,8 +56,8 @@ Define one business event envelope used by all stream producers:
 
 Rules:
 
-- Every business event must include `id`.
-- `id` ordering must match apply ordering.
+- Every business event must include `event_id`.
+- `event_id` ordering must match apply ordering.
 - Frontend stores `last_event_id` only from business events.
 
 ### 2. Heartbeat isolation (B04)
@@ -75,8 +95,8 @@ Goal: allow frontend to render stream-aware status quickly without waiting for h
 ## Quality Gates
 
 1. Contract correctness:
-   - 100% business events include valid `id`.
-   - Event IDs strictly monotonic per thread.
+   - 100% business events include valid `event_id`.
+   - Event IDs (`event_id`) are strictly monotonic per thread.
 2. Cursor correctness:
    - Heartbeat never changes `last_event_id`.
 3. UX:
@@ -116,6 +136,7 @@ Phase 02 can assume:
 - Estimated duration: 3-4 engineering days
 - Suggested staffing: 1 backend + 1 frontend (light FE load)
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

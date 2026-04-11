@@ -18,6 +18,7 @@ The content is intentionally broad and detailed so we can:
 
 - `docs/render/render-optimization-comprehensive.md`
 - `docs/render/phases/README.md`
+- `docs/render/decision-pack-v1.md`
 
 ## What this includes
 
@@ -44,4 +45,3 @@ Temporarily excluded from this execution wave:
 
 - Layer F (observability/profiling/test expansion)
 - Layer G (rollout/safety program)
-

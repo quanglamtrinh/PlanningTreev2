@@ -6,6 +6,25 @@ Scope IDs: D08, E01, E02, E03.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Applies data-volume governance after backend canonical event shaping and render hardening.
+
+Contract focus:
+
+- Primary: `C5 Frontend State Contract v1`
+- Secondary: `C4 Durability Contract v1`
+
+Must-hold decisions:
+
+- Semantic text coalescing remains backend-owned and canonical.
+- Frontend truncation/collapse is a view policy, not data mutation.
+- Archived/load-more flow must preserve ordering and recoverability.
+
 
 ## Objective
 
@@ -53,7 +72,7 @@ Merge adjacent assistant text chunks before storage/render, reducing row count a
 1. Add heavy-row classification utility and default collapsed UI behavior.
 2. Implement scrollback window management in state/store pipeline.
 3. Add truncation formatter with explicit "view full" affordance.
-4. Coalesce adjacent text blocks in backend/frontend pipeline (single source of truth preferred).
+4. Coalesce adjacent text blocks in backend pipeline as canonical source of truth; frontend remains presentation-only.
 
 ## Quality Gates
 
@@ -92,6 +111,7 @@ With content volume stabilized, queue behavior improvements can focus on active-
 - Estimated duration: 4-6 engineering days
 - Suggested staffing: 1 frontend + 1 backend (shared)
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

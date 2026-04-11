@@ -6,6 +6,24 @@ Scope IDs: D01, D02, D10.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Uses CodexMonitor-style row isolation and stable props to reduce render fanout.
+
+Contract focus:
+
+- Primary: `C5 Frontend State Contract v1`
+
+Must-hold decisions:
+
+- Cache invalidation keys must stay contract-safe (`itemId + updatedAt + mode`).
+- Memoization cannot suppress legitimate row updates.
+- Row identity behavior must remain stable for later virtualization phases.
+
 
 ## Objective
 
@@ -81,6 +99,7 @@ After row isolation, long-thread rendering strategy (progressive mount + virtual
 - Estimated duration: 4-5 engineering days
 - Suggested staffing: 1 frontend primary
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

@@ -6,6 +6,24 @@ Scope IDs: D05, D06, D07.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Offloads expensive UI compute while keeping deterministic rendering semantics.
+
+Contract focus:
+
+- Primary: `C5 Frontend State Contract v1`
+
+Must-hold decisions:
+
+- Worker paths must use version tokens and discard stale async results.
+- Fallback sync path must remain behaviorally equivalent.
+- Off-main-thread optimization cannot alter message semantics.
+
 
 ## Objective
 
@@ -87,6 +105,7 @@ After compute offload, data volume governance can further reduce rendering press
 - Estimated duration: 6-8 engineering days
 - Suggested staffing: 1 frontend primary + 1 backend/desktop support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

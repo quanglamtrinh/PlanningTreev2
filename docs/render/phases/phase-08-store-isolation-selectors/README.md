@@ -6,6 +6,25 @@ Scope IDs: C05, C06, C08.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Narrows frontend invalidation and reload behavior while preserving transport correctness contracts.
+
+Contract focus:
+
+- Primary: `C5 Frontend State Contract v1`
+- Secondary: `C2 Replay and Resync Contract v1`, `C3 Lifecycle and Gating Contract v1`
+
+Must-hold decisions:
+
+- Forced reload is allowed only for explicit mismatch/corruption paths.
+- Reload reasons must map to contract-defined failure classes.
+- Selector scoping must not hide lifecycle-critical state changes.
+
 
 ## Objective
 
@@ -88,6 +107,7 @@ With store invalidation reduced, row-level memoization and render cache can deli
 - Estimated duration: 4-6 engineering days
 - Suggested staffing: 1 frontend primary + 1 QA support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

@@ -6,6 +6,25 @@ Scope IDs: C01, C07.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Applies CodexMonitor-style frontend throughput improvements after stream contract stabilization.
+
+Contract focus:
+
+- Primary: `C5 Frontend State Contract v1`
+- Secondary: `C1 Event Stream Contract v1`
+
+Must-hold decisions:
+
+- Frontend batching is presentation-only, not semantic coalescing.
+- Final state must remain equivalent to canonical backend event semantics.
+- Apply ordering must remain deterministic under burst traffic.
+
 
 ## Objective
 
@@ -83,6 +102,7 @@ With apply frequency reduced, deeper state-shape optimizations can target remain
 - Estimated duration: 4-5 engineering days
 - Suggested staffing: 1 frontend primary + 1 backend support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

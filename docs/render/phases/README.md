@@ -23,6 +23,14 @@ Temporarily excluded:
 
 The goal is to create execution momentum on core latency and responsiveness first, while keeping each phase small enough to protect quality.
 
+## Decision Authority
+
+All phase implementation decisions in this folder are governed by:
+
+- `docs/render/decision-pack-v1.md`
+
+If a phase note conflicts with the Decision Pack, the Decision Pack wins until explicitly revised.
+
 ## Global Quality Bar (applies to every phase)
 
 A phase is considered complete only when all checks below are true:
@@ -57,6 +65,24 @@ A phase is considered complete only when all checks below are true:
 11. [phase-11-heavy-compute-off-main-thread](./phase-11-heavy-compute-off-main-thread/README.md) (D05, D06, D07)
 12. [phase-12-data-volume-and-heavy-content-ux](./phase-12-data-volume-and-heavy-content-ux/README.md) (D08, E01, E02, E03)
 13. [phase-13-queued-follow-up-flow](./phase-13-queued-follow-up-flow/README.md) (E04, E05, E06)
+
+## Contract Coverage Matrix
+
+| Phase | Primary contracts |
+|---|---|
+| 01 | C1, C2 |
+| 02 | C2, C1 |
+| 03 | C1, C3, C4 |
+| 04 | C4, C3 |
+| 05 | C4, C2, C1 |
+| 06 | C5, C1 |
+| 07 | C5 |
+| 08 | C5, C2, C3 |
+| 09 | C5 |
+| 10 | C5 |
+| 11 | C5 |
+| 12 | C5, C4 |
+| 13 | C6, C3 |
 
 ## Effort Overview
 

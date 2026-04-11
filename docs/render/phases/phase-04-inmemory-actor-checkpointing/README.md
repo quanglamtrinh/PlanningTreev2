@@ -6,6 +6,25 @@ Scope IDs: A02, A03.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Establishes correctness-first runtime ownership and durability boundaries before full persistence expansion.
+
+Contract focus:
+
+- Primary: `C4 Durability Contract v1`
+- Secondary: `C3 Lifecycle and Gating Contract v1`
+
+Must-hold decisions:
+
+- This phase includes mini-journal durability (not snapshot-only).
+- Checkpoint triggers must follow lifecycle contract boundaries.
+- Crash-loss budget must be explicitly defined and validated.
+
 
 ## Objective
 
@@ -15,6 +34,7 @@ Replace repeated snapshot reads/writes in the hot path with an in-memory thread 
 
 1. A02: In-memory thread actor model.
 2. A03: Checkpoint by boundary/timer, not per event.
+3. Decision Pack constraint: include mini-journal durability in this phase.
 
 ## Detailed Improvements
 
@@ -91,6 +111,7 @@ With actor + checkpointing in place, persistence and broker optimizations can be
 - Estimated duration: 6-8 engineering days
 - Suggested staffing: 1 backend primary + 1 backend reviewer
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

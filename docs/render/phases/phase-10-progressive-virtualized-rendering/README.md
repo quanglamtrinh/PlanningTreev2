@@ -6,6 +6,24 @@ Scope IDs: D03, D04, D09.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Improves large-thread UX after state-level correctness and isolation are in place.
+
+Contract focus:
+
+- Primary: `C5 Frontend State Contract v1`
+
+Must-hold decisions:
+
+- Virtualization must preserve anchor/load-more invariants.
+- Progressive rendering must not break deterministic ordering.
+- Budget degradation logic must preserve correctness before aesthetics.
+
 
 ## Objective
 
@@ -85,6 +103,7 @@ With base list performance under control, heavy compute offload can focus on spe
 - Estimated duration: 6-8 engineering days
 - Suggested staffing: 1 frontend primary + 1 frontend support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

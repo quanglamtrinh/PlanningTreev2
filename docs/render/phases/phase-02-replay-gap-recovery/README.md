@@ -6,6 +6,25 @@ Scope IDs: B02, B03, B05.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Implements Goose-style reconnect correctness before downstream performance tuning.
+
+Contract focus:
+
+- Primary: `C2 Replay and Resync Contract v1`
+- Secondary: `C1 Event Stream Contract v1`
+
+Must-hold decisions:
+
+- Reconnect uses `Last-Event-ID` semantics.
+- Replay miss must return explicit mismatch signal and trigger targeted resync.
+- Replay/live boundary must be deduplicated deterministically.
+
 
 ## Objective
 
@@ -102,6 +121,7 @@ After this phase, backend/frontend can reduce event volume safely because reconn
 - Estimated duration: 4-6 engineering days
 - Suggested staffing: 1 backend + 1 frontend (shared)
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

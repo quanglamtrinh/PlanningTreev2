@@ -6,6 +6,25 @@ Scope IDs: E04, E05, E06.
 
 Subphase workspace: ./subphases/.
 
+## Decision Pack Alignment
+
+Decision source: `docs/render/decision-pack-v1.md`.
+
+Model alignment:
+
+- Implements CodexMonitor-style queue UX under strict lifecycle and safety contracts.
+
+Contract focus:
+
+- Primary: `C6 Queue Contract v1`
+- Secondary: `C3 Lifecycle and Gating Contract v1`
+
+Must-hold decisions:
+
+- Queue state machine is deterministic and lifecycle-driven.
+- Confirmation policy is risk-based (not always-confirm, not always-auto-send).
+- Queue controls must preserve message order guarantees.
+
 
 ## Objective
 
@@ -92,6 +111,7 @@ Phase 13 closes when:
 - Estimated duration: 4-6 engineering days
 - Suggested staffing: 1 frontend primary + 1 backend support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 
