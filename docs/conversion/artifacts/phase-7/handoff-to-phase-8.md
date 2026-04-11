@@ -43,9 +43,9 @@ Phase 7 is complete and Phase 8 is ready to execute.
 - `npm run typecheck --prefix frontend` -> passed
 - `npm run test:unit --prefix frontend` -> 35 files passed, 203 tests passed
 
-## 5. Known carry-over for Phase 8
+## 5. Known carry-over for Phase 8 (resolved at closeout)
 
-- `/v2` compatibility routes are still mounted and must be sunset in closeout planning.
+- `/v2` compatibility routes were sunset and hard removed during Phase 8 closeout.
 - Legacy language in some historical docs/tests may still say `lane`/`v2` as narrative context, not active contract behavior.
 - Frontend test output includes non-blocking React Router/`act(...)` warnings; no failing assertions.
 

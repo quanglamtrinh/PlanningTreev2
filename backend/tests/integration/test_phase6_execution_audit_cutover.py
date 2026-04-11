@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from backend.main import create_app
 from backend.services.thread_lineage_service import _ROLLOUT_BOOTSTRAP_PROMPT
 from backend.tests.conftest import init_git_repo
-from backend.tests.integration.test_phase5_execution_audit_rehearsal import (
+from backend.tests.integration.phase5_rehearsal_helpers import (
     _assert_file_change_item_strict,
     _confirm_spec,
     _do_lazy_split,

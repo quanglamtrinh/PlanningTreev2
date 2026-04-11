@@ -1,6 +1,6 @@
 # Native V3 End-to-End Conversion Playbook
 
-Updated: 2026-04-10  
+Updated: 2026-04-10 (Phase 8 closeout)  
 Owner: PTM Core Team
 
 ## 1. Goal
@@ -16,19 +16,14 @@ Move PTM from the current model ("V3 at UI/API, V2 in core engine") to a fully *
 
 ## 2. Current baseline
 
-Confirmed codebase reality:
+Final closeout state:
 
-- `backend/main.py` active `/v3` route path still depends on `thread_query_service_v2`, `thread_runtime_service_v2`, and `execution_audit_workflow_service_v2` (Phase 2 also wires V3 services in parallel for internal use/tests).
-- `backend/routes/workflow_v3.py` currently:
-  - reads V2 snapshots
-  - maps `project_v2_snapshot_to_v3`
-  - streams V2 events then maps `project_v2_envelope_to_v3`
-  - dispatches mutations into V2 runtime/workflow services
-- Canonical transcript storage is currently `.planningtree/conversation_v2/...`.
-- Ask runtime still includes legacy mirroring into `chat_state_store`.
-- Frontend transcript already uses V3 by-id store, but workflow state/mutation/event bridge still use `/v2`.
-
-Consequence: public-facing contract is V3, but core runtime/storage remains V2.
+- Active backend API surface is `/v3` for conversation by-id and workflow control-plane routes.
+- `/v2` backend routers are unmounted (hard removed); representative `/v2/**` requests return `404`.
+- Active `/v3` route/runtime path is native V3; production `/v3` path does not use V2 snapshot/envelope adapter mapping.
+- Canonical transcript storage is `.planningtree/conversation_v3/...`.
+- Frontend active workflow control-plane path uses `/v3` endpoints only.
+- Public thread naming contract on active V3 path is `threadRole` (no `lane` emission).
 
 ## 3. Migration principles
 
@@ -94,7 +89,7 @@ Total effort baseline: 100% (estimated 42-57 person-days, staffing-dependent).
 - Gate B (after Phase 3): `/v3` route stack is fully on native V3 services.
 - Gate C (after Phase 5): frontend workflow control-plane is V3-only in active path.
 - Gate D (after Phase 6): batch migration passes and bridge sunset plan is validated.
-- Gate E (after Phase 8): no production path depends on V2 core runtime.
+- Gate E (after Phase 8): no production path depends on V2 core runtime. (passed)
 
 ## 7. Source-of-truth files
 

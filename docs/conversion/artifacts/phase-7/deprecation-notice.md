@@ -1,4 +1,4 @@
-# Phase 7 Deprecation Notice - `/v2` Compatibility
+# Phase 7 Deprecation Notice - `/v2` Compatibility (Superseded in Phase 8)
 
 Effective date: 2026-04-10
 
@@ -6,13 +6,13 @@ Effective date: 2026-04-10
 
 `/v3` is the canonical active conversation/workflow contract.
 
-`/v2` routes are retained only for temporary compatibility and are now officially deprecated.
+As of Phase 8 closeout, `/v2` routes are hard removed from backend API mounts.
 
 ## Policy
 
 - No new features will be added to `/v2`.
 - No new client integrations should target `/v2`.
-- `/v2` behavior is best-effort compatibility and may be removed in Phase 8 closeout.
+- `/v2` behavior is no longer available on backend API routes after Phase 8 (`404` for `/v2/**`).
 - Canonical role naming for active clients is `threadRole`; `/v3` no longer emits `lane`.
 
 ## Client guidance
@@ -24,11 +24,7 @@ Use these `/v3` endpoints for active UI/runtime flows:
 - `GET /v3/projects/{project_id}/events`
 - by-id conversation endpoints under `/v3/projects/{project_id}/threads/by-id/{thread_id}`
 
-## Scope retained for compatibility
+## Final Removal Outcome
 
-- `/v2` workflow routes remain mounted.
-- `/v2` route wire shapes are retained as-is for backward compatibility during Phase 7.
-
-## Planned removal window
-
-- Phase 8 stabilization/closeout will decide and execute final `/v2` removal sequencing.
+- `/v2` workflow and conversation route mounts were removed in Phase 8.
+- Any remaining `/v2` references in historical docs are archival context only.

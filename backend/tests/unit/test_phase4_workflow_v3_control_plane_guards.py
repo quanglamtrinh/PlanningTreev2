@@ -28,5 +28,5 @@ def test_workflow_v3_prefers_canonical_workflow_service_state() -> None:
 
     assert "def _workflow_service(request: Request)" in content
     assert "execution_audit_workflow_service" in content
-    # Keep only one fallback reference to legacy alias inside the helper.
-    assert content.count("execution_audit_workflow_service_v2") == 1
+    # Phase-8 hard cutover removes legacy v2 workflow alias references.
+    assert "execution_audit_workflow_service_v2" not in content
