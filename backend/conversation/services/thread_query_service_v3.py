@@ -52,6 +52,41 @@ class ThreadQueryServiceV3:
         self._request_ledger_service = request_ledger_service
         self._thread_event_broker = thread_event_broker
 
+    def issue_stream_event_id(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        *,
+        thread_id: str | None,
+    ) -> str:
+        with self._storage.project_lock(project_id):
+            return self._registry_service_v2.issue_next_event_id(
+                project_id,
+                node_id,
+                thread_role,
+                thread_id=thread_id,
+            )
+
+    def _resolve_stream_thread_id(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        snapshot: ThreadSnapshotV3,
+    ) -> str:
+        thread_id = str(snapshot.get("threadId") or "").strip()
+        if thread_id:
+            return thread_id
+        entry = self._registry_service_v2.read_entry(project_id, node_id, thread_role)
+        entry_thread_id = str(entry.get("threadId") or "").strip()
+        if entry_thread_id:
+            return entry_thread_id
+        cursor_thread_id = str(entry.get("eventCursorThreadId") or "").strip()
+        if cursor_thread_id:
+            return cursor_thread_id
+        return f"unbound::{thread_role}"
+
     def get_thread_snapshot(
         self,
         project_id: str,
@@ -95,6 +130,13 @@ class ThreadQueryServiceV3:
             updated["updatedAt"] = iso_now()
             updated = self._snapshot_store_v3.write_snapshot(project_id, node_id, thread_role, updated)
             if publish_repairs:
+                resolved_thread_id = self._resolve_stream_thread_id(project_id, node_id, thread_role, updated)
+                event_id = self._registry_service_v2.issue_next_event_id(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    thread_id=resolved_thread_id,
+                )
                 envelope = build_thread_envelope(
                     project_id=project_id,
                     node_id=node_id,
@@ -102,6 +144,8 @@ class ThreadQueryServiceV3:
                     snapshot_version=updated["snapshotVersion"],
                     event_type=event_types.THREAD_SNAPSHOT_V3,
                     payload={"snapshot": updated},
+                    event_id=event_id,
+                    thread_id=resolved_thread_id,
                 )
                 self._thread_event_broker.publish(project_id, node_id, envelope, thread_role=thread_role)
             return updated
@@ -211,11 +255,18 @@ class ThreadQueryServiceV3:
             updated["snapshotVersion"] = int(updated.get("snapshotVersion") or 0) + 1
             updated["updatedAt"] = iso_now()
             updated = self._snapshot_store_v3.write_snapshot(project_id, node_id, thread_role, updated)
+            resolved_thread_id = self._resolve_stream_thread_id(project_id, node_id, thread_role, updated)
             envelopes: list[dict[str, Any]] = []
             for event in events:
                 payload = event.get("payload", {})
                 if event.get("type") == event_types.THREAD_SNAPSHOT_V3:
                     payload = {"snapshot": updated}
+                event_id = self._registry_service_v2.issue_next_event_id(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    thread_id=resolved_thread_id,
+                )
                 envelope = build_thread_envelope(
                     project_id=project_id,
                     node_id=node_id,
@@ -223,6 +274,8 @@ class ThreadQueryServiceV3:
                     snapshot_version=updated["snapshotVersion"],
                     event_type=str(event.get("type") or ""),
                     payload=payload if isinstance(payload, dict) else {},
+                    event_id=event_id,
+                    thread_id=resolved_thread_id,
                 )
                 envelopes.append(envelope)
                 self._thread_event_broker.publish(project_id, node_id, envelope, thread_role=thread_role)
@@ -257,4 +310,3 @@ class ThreadQueryServiceV3:
         if after_snapshot_version is not None and int(after_snapshot_version) > int(snapshot.get("snapshotVersion") or 0):
             raise ConversationStreamMismatch()
         return snapshot
-

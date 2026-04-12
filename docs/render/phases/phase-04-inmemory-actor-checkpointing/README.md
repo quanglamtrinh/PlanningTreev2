@@ -1,4 +1,4 @@
-# Phase 04 - In-Memory Actor and Checkpointing
+﻿# Phase 04 - In-Memory Actor and Checkpointing
 
 Status: Planned.
 
@@ -16,8 +16,8 @@ Model alignment:
 
 Contract focus:
 
-- Primary: `C4 Durability Contract v1`
-- Secondary: `C3 Lifecycle and Gating Contract v1`
+- Primary: `C4` Durability Contract v1
+- Secondary: `C3` Lifecycle and Gating Contract v1
 
 Must-hold decisions:
 
@@ -111,6 +111,7 @@ With actor + checkpointing in place, persistence and broker optimizations can be
 - Estimated duration: 6-8 engineering days
 - Suggested staffing: 1 backend primary + 1 backend reviewer
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

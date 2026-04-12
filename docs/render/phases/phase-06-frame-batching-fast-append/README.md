@@ -1,4 +1,4 @@
-# Phase 06 - Frame Batching and Fast Text Append
+﻿# Phase 06 - Frame Batching and Fast Text Append
 
 Status: Planned.
 
@@ -16,8 +16,8 @@ Model alignment:
 
 Contract focus:
 
-- Primary: `C5 Frontend State Contract v1`
-- Secondary: `C1 Event Stream Contract v1`
+- Primary: `C5` Frontend State Contract v1
+- Secondary: `C1` Event Stream Contract v1
 
 Must-hold decisions:
 
@@ -102,6 +102,7 @@ With apply frequency reduced, deeper state-shape optimizations can target remain
 - Estimated duration: 4-5 engineering days
 - Suggested staffing: 1 frontend primary + 1 backend support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

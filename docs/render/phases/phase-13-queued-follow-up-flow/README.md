@@ -1,4 +1,4 @@
-# Phase 13 - Queued Follow-up Flow
+﻿# Phase 13 - Queued Follow-up Flow
 
 Status: Planned.
 
@@ -16,8 +16,8 @@ Model alignment:
 
 Contract focus:
 
-- Primary: `C6 Queue Contract v1`
-- Secondary: `C3 Lifecycle and Gating Contract v1`
+- Primary: `C6` Queue Contract v1
+- Secondary: `C3` Lifecycle and Gating Contract v1
 
 Must-hold decisions:
 
@@ -111,6 +111,7 @@ Phase 13 closes when:
 - Estimated duration: 4-6 engineering days
 - Suggested staffing: 1 frontend primary + 1 backend support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

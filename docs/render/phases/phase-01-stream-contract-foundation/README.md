@@ -1,4 +1,4 @@
-# Phase 01 - Stream Contract Foundation
+﻿# Phase 01 - Stream Contract Foundation
 
 Status: Planned.
 
@@ -16,8 +16,8 @@ Model alignment:
 
 Contract focus:
 
-- Primary: `C1 Event Stream Contract v1`
-- Secondary: `C2 Replay and Resync Contract v1`
+- Primary: `C1` Event Stream Contract v1
+- Secondary: `C2` Replay and Resync Contract v1
 
 Must-hold decisions:
 
@@ -136,6 +136,7 @@ Phase 02 can assume:
 - Estimated duration: 3-4 engineering days
 - Suggested staffing: 1 backend + 1 frontend (light FE load)
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

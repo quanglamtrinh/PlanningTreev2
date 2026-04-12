@@ -1,4 +1,4 @@
-# Phase 09 - Row Isolation and Parse Cache
+﻿# Phase 09 - Row Isolation and Parse Cache
 
 Status: Planned.
 
@@ -16,7 +16,7 @@ Model alignment:
 
 Contract focus:
 
-- Primary: `C5 Frontend State Contract v1`
+- Primary: `C5` Frontend State Contract v1
 
 Must-hold decisions:
 
@@ -99,6 +99,7 @@ After row isolation, long-thread rendering strategy (progressive mount + virtual
 - Estimated duration: 4-5 engineering days
 - Suggested staffing: 1 frontend primary
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

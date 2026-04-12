@@ -114,7 +114,14 @@ describe('threadByIdStoreV3', () => {
     await act(async () => {
       eventSource.emitMessage(
         JSON.stringify({
-          eventId: 'evt-2',
+          schema_version: 1,
+          event_id: '2',
+          event_type: 'thread.snapshot.v3',
+          thread_id: 'thread-1',
+          turn_id: null,
+          snapshot_version: 2,
+          occurred_at_ms: Date.parse('2026-04-01T00:01:00Z'),
+          eventId: '2',
           channel: 'thread',
           projectId: 'project-1',
           nodeId: 'node-1',
@@ -153,8 +160,146 @@ describe('threadByIdStoreV3', () => {
     const state = useThreadByIdStoreV3.getState()
     expect(state.snapshot?.snapshotVersion).toBe(2)
     expect(state.snapshot?.items).toHaveLength(1)
-    expect(state.lastEventId).toBe('evt-2')
+    expect(state.lastEventId).toBe('2')
     expect(state.isLoading).toBe(false)
+  })
+
+  it('handles stream_open without advancing lastEventId cursor', async () => {
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeSnapshot())
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      eventSource.emitMessage(
+        JSON.stringify({
+          schema_version: 1,
+          event_type: 'stream_open',
+          thread_id: 'thread-1',
+          turn_id: null,
+          snapshot_version: 1,
+          occurred_at_ms: Date.parse('2026-04-01T00:00:01Z'),
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'execution',
+          occurredAt: '2026-04-01T00:00:01Z',
+          snapshotVersion: 1,
+          type: 'stream_open',
+          payload: {
+            streamStatus: 'open',
+            threadId: 'thread-1',
+            threadRole: 'execution',
+            snapshotVersion: 1,
+            processingState: 'idle',
+            activeTurnId: null,
+          },
+        }),
+      )
+    })
+
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.streamStatus).toBe('open')
+    expect(state.lastEventId).toBeNull()
+    expect(state.telemetry.heartbeat_cursor_pollution_count).toBe(0)
+    expect(state.telemetry.firstMeaningfulFrameLatencyMs).not.toBeNull()
+  })
+
+  it('uses legacy fallback parser path and tracks fallback counter', async () => {
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeSnapshot())
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      eventSource.emitMessage(
+        JSON.stringify({
+          eventId: '4',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'execution',
+          occurredAt: '2026-04-01T00:01:00Z',
+          snapshotVersion: 2,
+          type: 'thread.snapshot.v3',
+          payload: {
+            snapshot: makeSnapshot({
+              snapshotVersion: 2,
+              updatedAt: '2026-04-01T00:01:00Z',
+            }),
+          },
+        }),
+      )
+    })
+
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.snapshot?.snapshotVersion).toBe(2)
+    expect(state.lastEventId).toBe('4')
+    expect(state.telemetry.legacy_fallback_used_count).toBe(1)
+  })
+
+  it('treats canonical/legacy mismatch as hard contract error and reloads snapshot', async () => {
+    apiMock.getThreadSnapshotByIdV3
+      .mockResolvedValueOnce(makeSnapshot())
+      .mockResolvedValueOnce(makeSnapshot({ snapshotVersion: 2 }))
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      eventSource.emitMessage(
+        JSON.stringify({
+          schema_version: 1,
+          event_id: '10',
+          event_type: 'thread.snapshot.v3',
+          thread_id: 'thread-1',
+          turn_id: null,
+          snapshot_version: 2,
+          occurred_at_ms: Date.parse('2026-04-01T00:01:00Z'),
+          eventId: '11',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'execution',
+          occurredAt: '2026-04-01T00:01:00Z',
+          snapshotVersion: 2,
+          type: 'thread.snapshot.v3',
+          payload: {
+            snapshot: makeSnapshot({
+              snapshotVersion: 2,
+              updatedAt: '2026-04-01T00:01:00Z',
+            }),
+          },
+        }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
+    })
+
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.telemetry.envelope_validation_failure_count).toBe(1)
+    expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)
+    expect(state.lastEventId).toBeNull()
   })
 
   it('reloads snapshot when event patch cannot be applied', async () => {
@@ -196,7 +341,14 @@ describe('threadByIdStoreV3', () => {
     await act(async () => {
       eventSource.emitMessage(
         JSON.stringify({
-          eventId: 'evt-bad',
+          schema_version: 1,
+          event_id: '3',
+          event_type: 'conversation.item.patch.v3',
+          thread_id: 'thread-1',
+          turn_id: null,
+          snapshot_version: 2,
+          occurred_at_ms: Date.parse('2026-04-01T00:01:00Z'),
+          eventId: '3',
           channel: 'thread',
           projectId: 'project-1',
           nodeId: 'node-1',

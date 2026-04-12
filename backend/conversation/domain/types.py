@@ -199,6 +199,9 @@ class ThreadRegistryEntry(TypedDict):
     forkedFromRole: ThreadRole | None
     forkReason: str | None
     lineageRootThreadId: str | None
+    eventCursorThreadId: str | None
+    lastEventSequence: int
+    lastEventId: str | None
     createdAt: str
     updatedAt: str
 
@@ -278,6 +281,14 @@ def _normalize_optional_text(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     return value if value.strip() else None
+
+
+def _coerce_nonnegative_int(value: Any, *, default: int = 0) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return int(default)
+    return parsed if parsed >= 0 else int(default)
 
 
 def _normalize_tool_change_kind(value: Any, *, fallback: Literal["add", "modify", "delete"] = "modify") -> Literal["add", "modify", "delete"]:
@@ -374,6 +385,9 @@ def default_thread_registry_entry(project_id: str, node_id: str, thread_role: Th
         "forkedFromRole": None,
         "forkReason": None,
         "lineageRootThreadId": None,
+        "eventCursorThreadId": None,
+        "lastEventSequence": 0,
+        "lastEventId": None,
         "createdAt": now,
         "updatedAt": now,
     }
@@ -393,6 +407,14 @@ def normalize_thread_registry_entry(payload: Any, *, project_id: str, node_id: s
         "forkedFromRole": normalize_thread_role(raw_role, default="ask_planning") if _normalize_optional_string(raw_role) else None,
         "forkReason": _normalize_optional_string(source.get("forkReason") or source.get("fork_reason")),
         "lineageRootThreadId": _normalize_optional_string(source.get("lineageRootThreadId") or source.get("lineage_root_thread_id")),
+        "eventCursorThreadId": _normalize_optional_string(
+            source.get("eventCursorThreadId") or source.get("event_cursor_thread_id")
+        ),
+        "lastEventSequence": _coerce_nonnegative_int(
+            source.get("lastEventSequence") if "lastEventSequence" in source else source.get("last_event_sequence"),
+            default=0,
+        ),
+        "lastEventId": _normalize_optional_string(source.get("lastEventId") or source.get("last_event_id")),
         "createdAt": source.get("createdAt") if isinstance(source.get("createdAt"), str) else default["createdAt"],
         "updatedAt": source.get("updatedAt") if isinstance(source.get("updatedAt"), str) else default["updatedAt"],
     }

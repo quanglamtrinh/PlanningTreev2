@@ -2,7 +2,7 @@
 
 Status: Draft baseline for full-system optimization, with phase execution docs.
 
-Last updated: 2026-04-11.
+Last updated: 2026-04-12.
 
 ## Purpose
 
@@ -19,6 +19,7 @@ The content is intentionally broad and detailed so we can:
 - `docs/render/render-optimization-comprehensive.md`
 - `docs/render/phases/README.md`
 - `docs/render/decision-pack-v1.md`
+- `docs/render/system-freeze/README.md`
 
 ## What this includes
 
@@ -45,3 +46,13 @@ Temporarily excluded from this execution wave:
 
 - Layer F (observability/profiling/test expansion)
 - Layer G (rollout/safety program)
+
+## Required Governance Check
+
+Before implementing any phase, run:
+
+```powershell
+npm run check:render_freeze
+```
+
+The phase can proceed only when this check is PASS.

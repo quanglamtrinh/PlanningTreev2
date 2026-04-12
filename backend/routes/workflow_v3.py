@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from backend.config.app_config import is_conversation_v3_bridge_allowed_for_project
 from backend.conversation.domain import events as event_types
-from backend.conversation.domain.events import build_thread_envelope
+from backend.conversation.domain.events import build_stream_open_envelope, build_thread_envelope
 from backend.conversation.domain.types_v3 import normalize_thread_role_v3
 from backend.errors.app_errors import AppError, AskV3Disabled, InvalidRequest
 from backend.storage.file_utils import new_id
@@ -55,7 +55,7 @@ def _unexpected_error_response() -> JSONResponse:
 
 
 def _sse_frame(envelope: dict[str, object]) -> str:
-    event_id = str(envelope.get("eventId") or "")
+    event_id = str(envelope.get("event_id") or envelope.get("eventId") or "")
     data = json.dumps(envelope, ensure_ascii=True)
     if event_id:
         return f"id: {event_id}\ndata: {data}\n\n"
@@ -425,6 +425,17 @@ async def thread_events_by_id_v3(
             broker.unsubscribe(project_id, node_id, queue, thread_role=thread_role)
         return _unexpected_error_response()
 
+    resolved_thread_id = (
+        _normalize_thread_id(thread_id)
+        or _normalize_thread_id(snapshot_v3.get("threadId"))
+        or f"unbound::{thread_role}"
+    )
+    snapshot_event_id = request.app.state.thread_query_service_v3.issue_stream_event_id(
+        project_id,
+        node_id,
+        thread_role,
+        thread_id=resolved_thread_id,
+    )
     snapshot_envelope = build_thread_envelope(
         project_id=project_id,
         node_id=node_id,
@@ -432,12 +443,32 @@ async def thread_events_by_id_v3(
         snapshot_version=int(snapshot_v3.get("snapshotVersion") or 0),
         event_type=event_types.THREAD_SNAPSHOT_V3,
         payload={"snapshot": _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)},
+        event_id=snapshot_event_id,
+        thread_id=resolved_thread_id,
+        turn_id=str(snapshot_v3.get("activeTurnId") or "").strip() or None,
     )
     snapshot_envelope = _envelope_with_contract_fields(snapshot_envelope, thread_role=thread_role)
     first_snapshot_version = int(snapshot_v3.get("snapshotVersion") or 0)
+    stream_open_envelope = build_stream_open_envelope(
+        project_id=project_id,
+        node_id=node_id,
+        thread_role=thread_role,
+        thread_id=resolved_thread_id,
+        snapshot_version=first_snapshot_version,
+        turn_id=str(snapshot_v3.get("activeTurnId") or "").strip() or None,
+        payload={
+            "streamStatus": "open",
+            "threadId": resolved_thread_id,
+            "threadRole": thread_role,
+            "snapshotVersion": first_snapshot_version,
+            "processingState": snapshot_v3.get("processingState"),
+            "activeTurnId": snapshot_v3.get("activeTurnId"),
+        },
+    )
 
     async def event_generator():
         try:
+            yield _sse_frame(stream_open_envelope)
             yield _sse_frame(snapshot_envelope)
             while True:
                 try:

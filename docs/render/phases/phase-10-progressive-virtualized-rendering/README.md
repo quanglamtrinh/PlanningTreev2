@@ -1,4 +1,4 @@
-# Phase 10 - Progressive and Virtualized Rendering
+﻿# Phase 10 - Progressive and Virtualized Rendering
 
 Status: Planned.
 
@@ -16,7 +16,7 @@ Model alignment:
 
 Contract focus:
 
-- Primary: `C5 Frontend State Contract v1`
+- Primary: `C5` Frontend State Contract v1
 
 Must-hold decisions:
 
@@ -103,6 +103,7 @@ With base list performance under control, heavy compute offload can focus on spe
 - Estimated duration: 6-8 engineering days
 - Suggested staffing: 1 frontend primary + 1 frontend support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

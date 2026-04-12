@@ -1,4 +1,4 @@
-# Phase 02 - Replay and Gap Recovery
+﻿# Phase 02 - Replay and Gap Recovery
 
 Status: Planned.
 
@@ -16,8 +16,8 @@ Model alignment:
 
 Contract focus:
 
-- Primary: `C2 Replay and Resync Contract v1`
-- Secondary: `C1 Event Stream Contract v1`
+- Primary: `C2` Replay and Resync Contract v1
+- Secondary: `C1` Event Stream Contract v1
 
 Must-hold decisions:
 
@@ -121,6 +121,7 @@ After this phase, backend/frontend can reduce event volume safely because reconn
 - Estimated duration: 4-6 engineering days
 - Suggested staffing: 1 backend + 1 frontend (shared)
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

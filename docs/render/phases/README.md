@@ -2,7 +2,7 @@
 
 Status: Draft approved for implementation planning.
 
-Last updated: 2026-04-11.
+Last updated: 2026-04-12.
 
 ## Scope Boundary
 
@@ -28,8 +28,18 @@ The goal is to create execution momentum on core latency and responsiveness firs
 All phase implementation decisions in this folder are governed by:
 
 - `docs/render/decision-pack-v1.md`
+- `docs/render/system-freeze/README.md`
 
 If a phase note conflicts with the Decision Pack, the Decision Pack wins until explicitly revised.
+
+## Required Preflight
+
+Before starting any phase implementation:
+
+1. Run `npm run check:render_freeze`.
+2. Confirm the corresponding phase entry criteria in `docs/render/system-freeze/phase-manifest-v1.json`.
+3. Confirm phase gate IDs and targets in `docs/render/system-freeze/phase-gates-v1.json`.
+4. Record phase-specific implementation values in the phase technical design note.
 
 ## Global Quality Bar (applies to every phase)
 

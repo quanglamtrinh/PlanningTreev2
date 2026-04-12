@@ -8,6 +8,7 @@ import type {
   UserInputAnswer,
 } from '../../../api/types'
 import { applyThreadEventV3, ThreadEventApplyErrorV3 } from './applyThreadEventV3'
+import type { ThreadStreamOpenEnvelopeV3 } from './threadEventRouter'
 import { parseThreadEventEnvelopeV3 } from './threadEventRouter'
 
 const SSE_RECONNECT_RETRY_MS = 1000
@@ -19,7 +20,11 @@ export type ThreadByIdTelemetryV3 = {
   applyErrorCount: number
   forcedSnapshotReloadCount: number
   firstFrameLatencyMs: number | null
+  firstMeaningfulFrameLatencyMs: number | null
   renderErrorCount: number
+  legacy_fallback_used_count: number
+  envelope_validation_failure_count: number
+  heartbeat_cursor_pollution_count: number
 }
 
 export type ThreadByIdStoreV3State = {
@@ -72,7 +77,11 @@ const DEFAULT_TELEMETRY_V3: ThreadByIdTelemetryV3 = {
   applyErrorCount: 0,
   forcedSnapshotReloadCount: 0,
   firstFrameLatencyMs: null,
+  firstMeaningfulFrameLatencyMs: null,
   renderErrorCount: 0,
+  legacy_fallback_used_count: 0,
+  envelope_validation_failure_count: 0,
+  heartbeat_cursor_pollution_count: 0,
 }
 
 function resetTelemetryV3(): ThreadByIdTelemetryV3 {
@@ -199,6 +208,21 @@ function isStreamHealthy(state: Pick<ThreadByIdStoreV3State, 'streamStatus'>) {
     threadEventSource !== null &&
     (state.streamStatus === 'open' || state.streamStatus === 'connecting')
   )
+}
+
+function compareEventIdCursor(previous: string | null, current: string): number {
+  if (previous == null) {
+    return -1
+  }
+  const prev = BigInt(previous)
+  const next = BigInt(current)
+  if (next > prev) {
+    return -1
+  }
+  if (next === prev) {
+    return 0
+  }
+  return 1
 }
 
 async function reloadThreadSnapshot(
@@ -386,8 +410,68 @@ function openThreadEventStream(
   const eventSource = new EventSource(url)
   threadEventSource = eventSource
   set({ streamStatus: 'connecting' })
+  const streamSubscribedAt = Date.now()
 
-  const applyEnvelope = (event: ThreadEventV3) => {
+  const failContract = (reason: string) => {
+    if (threadRole === 'ask_planning') {
+      void api.reportAskRolloutMetricEvent('stream_error').catch(() => undefined)
+    }
+    set((state) => ({
+      error: reason,
+      streamStatus: 'error',
+      telemetry: {
+        ...state.telemetry,
+        envelope_validation_failure_count: state.telemetry.envelope_validation_failure_count + 1,
+      },
+    }))
+    void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
+      setLoading: false,
+      reason,
+      countAsForcedReload: true,
+    })
+  }
+
+  const applyStreamOpen = (
+    envelope: ThreadStreamOpenEnvelopeV3,
+    legacyFallbackUsed: boolean,
+  ) => {
+    const currentState = get()
+    if (
+      !isCurrentGeneration(generation) ||
+      !isActiveTarget(currentState, projectId, nodeId, threadId, threadRole)
+    ) {
+      return
+    }
+    if (
+      envelope.projectId !== projectId ||
+      envelope.nodeId !== nodeId ||
+      envelope.threadRole !== threadRole
+    ) {
+      return
+    }
+    set((state) => {
+      if (
+        !isCurrentGeneration(generation) ||
+        !isActiveTarget(state, projectId, nodeId, threadId, threadRole)
+      ) {
+        return {}
+      }
+      return {
+        streamStatus: 'open',
+        lastSnapshotVersion: envelope.snapshotVersion ?? state.lastSnapshotVersion,
+        telemetry: {
+          ...state.telemetry,
+          legacy_fallback_used_count:
+            state.telemetry.legacy_fallback_used_count + (legacyFallbackUsed ? 1 : 0),
+          firstMeaningfulFrameLatencyMs:
+            state.telemetry.firstMeaningfulFrameLatencyMs ??
+            Math.max(0, Date.now() - streamSubscribedAt),
+        },
+      }
+    })
+  }
+
+  const applyEnvelope = (event: ThreadEventV3, legacyFallbackUsed: boolean) => {
     const currentState = get()
     if (
       !isCurrentGeneration(generation) ||
@@ -400,6 +484,20 @@ function openThreadEventStream(
       event.nodeId !== nodeId ||
       event.threadRole !== threadRole
     ) {
+      return
+    }
+    try {
+      const cursorOrder = compareEventIdCursor(currentState.lastEventId, event.eventId)
+      if (cursorOrder >= 0) {
+        const reason =
+          cursorOrder === 0
+            ? `Duplicate event_id detected: ${event.eventId}.`
+            : `Non-monotonic event_id detected: ${event.eventId} after ${currentState.lastEventId}.`
+        failContract(reason)
+        return
+      }
+    } catch {
+      failContract(`Invalid event_id cursor state. last_event_id=${currentState.lastEventId}`)
       return
     }
 
@@ -445,6 +543,11 @@ function openThreadEventStream(
         lastEventId: event.eventId,
         lastSnapshotVersion: event.snapshotVersion ?? nextSnapshot.snapshotVersion,
         streamStatus: 'open',
+        telemetry: {
+          ...state.telemetry,
+          legacy_fallback_used_count:
+            state.telemetry.legacy_fallback_used_count + (legacyFallbackUsed ? 1 : 0),
+        },
       }
 
       if (event.type === 'thread.snapshot.v3') {
@@ -497,22 +600,15 @@ function openThreadEventStream(
       return
     }
     try {
-      const event = parseThreadEventEnvelopeV3(message.data)
-      applyEnvelope(event)
+      const frame = parseThreadEventEnvelopeV3(message.data)
+      if (frame.kind === 'stream_open') {
+        applyStreamOpen(frame.envelope, frame.legacyFallbackUsed)
+        return
+      }
+      applyEnvelope(frame.event, frame.legacyFallbackUsed)
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
-      if (threadRole === 'ask_planning') {
-        void api.reportAskRolloutMetricEvent('stream_error').catch(() => undefined)
-      }
-      set({
-        error: reason,
-        streamStatus: 'error',
-      })
-      void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
-        setLoading: false,
-        reason,
-        countAsForcedReload: true,
-      })
+      failContract(reason)
     }
   }
 

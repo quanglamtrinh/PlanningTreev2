@@ -1,4 +1,4 @@
-# Phase 12 - Data Volume and Heavy Content UX
+﻿# Phase 12 - Data Volume and Heavy Content UX
 
 Status: Planned.
 
@@ -16,8 +16,8 @@ Model alignment:
 
 Contract focus:
 
-- Primary: `C5 Frontend State Contract v1`
-- Secondary: `C4 Durability Contract v1`
+- Primary: `C5` Frontend State Contract v1
+- Secondary: `C4` Durability Contract v1
 
 Must-hold decisions:
 
@@ -111,6 +111,7 @@ With content volume stabilized, queue behavior improvements can focus on active-
 - Estimated duration: 4-6 engineering days
 - Suggested staffing: 1 frontend + 1 backend (shared)
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

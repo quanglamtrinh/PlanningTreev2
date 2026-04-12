@@ -1052,8 +1052,19 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
     )
 
     try:
-        first_payload = await _read_sse_payload(response)
+        stream_open_chunk = await _read_stream_chunk(response)
+        assert not any(line.startswith("id: ") for line in stream_open_chunk.splitlines())
+        stream_open_payload = _parse_sse_chunk(stream_open_chunk)
+        assert stream_open_payload["type"] == event_types.STREAM_OPEN
+        assert int(stream_open_payload["snapshotVersion"]) >= 1
+
+        snapshot_chunk = await _read_stream_chunk(response)
+        assert snapshot_chunk.startswith("id: ")
+        first_payload = _parse_sse_chunk(snapshot_chunk)
         assert first_payload["type"] == event_types.THREAD_SNAPSHOT_V3
+        assert first_payload["event_id"] == first_payload["eventId"]
+        snapshot_id_line = next(line for line in snapshot_chunk.splitlines() if line.startswith("id: "))
+        assert snapshot_id_line == f"id: {first_payload['event_id']}"
         assert first_payload["payload"]["snapshot"]["threadId"] == thread_id
         first_snapshot_version = int(first_payload.get("snapshotVersion") or 0)
 
@@ -1063,6 +1074,8 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
             thread_role="execution",
             snapshot_version=max(1, first_snapshot_version + 1),
             event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="200",
+            thread_id=thread_id,
             payload={
                 "item": {
                     "id": "msg-2",
@@ -1091,6 +1104,7 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
 
         incremental_payload = await _read_sse_payload(response)
         assert incremental_payload["type"] == event_types.CONVERSATION_ITEM_UPSERT_V3
+        assert incremental_payload["event_id"] == "200"
         assert incremental_payload["payload"]["item"]["id"] == "msg-2"
     finally:
         await _close_stream(response, request)
@@ -1112,8 +1126,18 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
     )
 
     try:
-        first_payload = await _read_sse_payload(response)
+        stream_open_chunk = await _read_stream_chunk(response)
+        assert not any(line.startswith("id: ") for line in stream_open_chunk.splitlines())
+        stream_open_payload = _parse_sse_chunk(stream_open_chunk)
+        assert stream_open_payload["type"] == event_types.STREAM_OPEN
+        assert stream_open_payload["payload"]["threadRole"] == "ask_planning"
+
+        snapshot_chunk = await _read_stream_chunk(response)
+        assert snapshot_chunk.startswith("id: ")
+        first_payload = _parse_sse_chunk(snapshot_chunk)
         assert first_payload["type"] == event_types.THREAD_SNAPSHOT_V3
+        snapshot_id_line = next(line for line in snapshot_chunk.splitlines() if line.startswith("id: "))
+        assert snapshot_id_line == f"id: {first_payload['event_id']}"
         assert first_payload["payload"]["snapshot"]["threadId"] == thread_id
         assert first_payload["payload"]["snapshot"]["threadRole"] == "ask_planning"
         assert "lane" not in first_payload["payload"]["snapshot"]
@@ -1125,6 +1149,8 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
             thread_role="ask_planning",
             snapshot_version=max(1, first_snapshot_version + 1),
             event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="300",
+            thread_id=thread_id,
             payload={
                 "item": {
                     "id": "ask-msg-2",
@@ -1153,6 +1179,7 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
 
         incremental_payload = await _read_sse_payload(response)
         assert incremental_payload["type"] == event_types.CONVERSATION_ITEM_UPSERT_V3
+        assert incremental_payload["event_id"] == "300"
         assert incremental_payload["payload"]["item"]["id"] == "ask-msg-2"
     finally:
         await _close_stream(response, request)
@@ -1177,6 +1204,8 @@ async def test_v3_execution_stream_reconnect_by_version_and_guard(client: TestCl
     )
 
     try:
+        stream_open_payload = await _read_sse_payload(response)
+        assert stream_open_payload["type"] == event_types.STREAM_OPEN
         payload = await _read_sse_payload(response)
         assert payload["type"] == event_types.THREAD_SNAPSHOT_V3
         assert int(payload["snapshotVersion"]) >= 2

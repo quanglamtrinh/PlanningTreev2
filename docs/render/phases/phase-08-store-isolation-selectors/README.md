@@ -1,4 +1,4 @@
-# Phase 08 - Store Isolation and Selectors
+﻿# Phase 08 - Store Isolation and Selectors
 
 Status: Planned.
 
@@ -16,8 +16,8 @@ Model alignment:
 
 Contract focus:
 
-- Primary: `C5 Frontend State Contract v1`
-- Secondary: `C2 Replay and Resync Contract v1`, `C3 Lifecycle and Gating Contract v1`
+- Primary: `C5` Frontend State Contract v1
+- Secondary: `C2` Replay and Resync Contract v1, `C3` Lifecycle and Gating Contract v1
 
 Must-hold decisions:
 
@@ -107,6 +107,7 @@ With store invalidation reduced, row-level memoization and render cache can deli
 - Estimated duration: 4-6 engineering days
 - Suggested staffing: 1 frontend primary + 1 QA support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

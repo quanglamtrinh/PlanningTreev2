@@ -1,4 +1,4 @@
-# Phase 07 - State Shape and Hot Path Cleanup
+﻿# Phase 07 - State Shape and Hot Path Cleanup
 
 Status: Planned.
 
@@ -16,7 +16,7 @@ Model alignment:
 
 Contract focus:
 
-- Primary: `C5 Frontend State Contract v1`
+- Primary: `C5` Frontend State Contract v1
 
 Must-hold decisions:
 
@@ -105,6 +105,7 @@ Once state shape is efficient, splitting stores and narrowing selectors has high
 - Estimated duration: 5-7 engineering days
 - Suggested staffing: 1 frontend primary + 1 frontend reviewer
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

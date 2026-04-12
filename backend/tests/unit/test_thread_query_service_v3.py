@@ -236,3 +236,63 @@ def test_build_stream_snapshot_v3_guard_raises_mismatch(storage, workspace_root,
             "execution",
             after_snapshot_version=99,
         )
+
+
+def test_issue_stream_event_id_v3_is_monotonic_and_durable(storage, workspace_root) -> None:
+    service, project_id, node_id = _build_service(storage, workspace_root)
+
+    first = service.issue_stream_event_id(
+        project_id,
+        node_id,
+        "execution",
+        thread_id="execution-thread-1",
+    )
+    second = service.issue_stream_event_id(
+        project_id,
+        node_id,
+        "execution",
+        thread_id="execution-thread-1",
+    )
+    assert first == "1"
+    assert second == "2"
+
+    restarted_service, _, _ = _build_service(storage, workspace_root)
+    third = restarted_service.issue_stream_event_id(
+        project_id,
+        node_id,
+        "execution",
+        thread_id="execution-thread-1",
+    )
+    assert third == "3"
+
+
+def test_issue_stream_event_id_v3_scopes_sequence_per_thread(storage, workspace_root) -> None:
+    service, project_id, node_id = _build_service(storage, workspace_root)
+
+    assert (
+        service.issue_stream_event_id(
+            project_id,
+            node_id,
+            "execution",
+            thread_id="execution-thread-1",
+        )
+        == "1"
+    )
+    assert (
+        service.issue_stream_event_id(
+            project_id,
+            node_id,
+            "execution",
+            thread_id="execution-thread-1",
+        )
+        == "2"
+    )
+    assert (
+        service.issue_stream_event_id(
+            project_id,
+            node_id,
+            "execution",
+            thread_id="execution-thread-2",
+        )
+        == "1"
+    )

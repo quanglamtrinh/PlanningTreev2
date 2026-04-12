@@ -1,4 +1,4 @@
-# Phase 05 - Persistence and Broker Efficiency
+﻿# Phase 05 - Persistence and Broker Efficiency
 
 Status: Planned.
 
@@ -16,8 +16,8 @@ Model alignment:
 
 Contract focus:
 
-- Primary: `C4 Durability Contract v1`
-- Secondary: `C2 Replay and Resync Contract v1`, `C1 Event Stream Contract v1`
+- Primary: `C4` Durability Contract v1
+- Secondary: `C2` Replay and Resync Contract v1, `C1` Event Stream Contract v1
 
 Must-hold decisions:
 
@@ -117,6 +117,7 @@ Backend now emits fewer, cheaper events, which improves the impact of frontend f
 - Estimated duration: 6-9 engineering days
 - Suggested staffing: 1 backend primary + 1 backend/infra support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
+
 
 
 

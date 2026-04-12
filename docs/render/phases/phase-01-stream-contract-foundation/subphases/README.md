@@ -4,6 +4,10 @@ Use this folder to split the parent phase into smaller execution slices when nee
 
 Suggested naming: `subphase-01-<topic>.md`, `subphase-02-<topic>.md`.
 
+Current implementation note:
+
+- `subphase-01-stream-contract-foundation-implementation.md`
+
 ## Required Alignment
 
 - Follow the parent phase `README.md` and `docs/render/decision-pack-v1.md`.

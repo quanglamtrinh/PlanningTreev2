@@ -16,6 +16,7 @@
     "build:electron": "electron-builder --win",
     "build": "npm run build:backend && npm run build:electron",
     "validate:build": "node scripts/validate-build.js",
+    "check:render_freeze": "python scripts/validate_render_freeze.py",
     "check:phase6_3_cleanup": "python scripts/check_phase6_3_cleanup.py",
     "check:gitcommit_phase6_smoke": "python scripts/gitcommit_phase6_smoke.py --repeat 1",
     "check:gitcommit_phase7_cleanup": "python scripts/check_gitcommit_phase7_cleanup.py",
