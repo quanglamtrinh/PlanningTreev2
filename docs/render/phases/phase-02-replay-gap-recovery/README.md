@@ -34,6 +34,10 @@ Make reconnect behavior robust by replaying only missing events and handling rep
 
 Phase 01 completed (stable event IDs and cursor semantics).
 
+Reference handoff:
+
+- `docs/render/phases/phase-01-stream-contract-foundation/handoff-to-phase-02.md`
+
 ## In Scope
 
 1. B02: Server replay buffer.

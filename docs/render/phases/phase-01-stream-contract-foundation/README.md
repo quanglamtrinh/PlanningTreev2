@@ -1,6 +1,6 @@
 ﻿# Phase 01 - Stream Contract Foundation
 
-Status: Planned.
+Status: Completed (owner-approved) on 2026-04-12.
 
 Scope IDs: B01, B04, B06.
 
@@ -24,6 +24,24 @@ Must-hold decisions:
 - `event_id` is monotonic and durable per thread across restart.
 - Heartbeat must never advance replay cursor.
 - Phase exit requires contract compatibility tests.
+
+
+## Completion Snapshot
+
+Implementation status:
+
+- Canonical C1 envelope + legacy dual-write bridge is implemented.
+- SSE `id` is aligned to canonical `event_id` for replayable business frames.
+- `stream_open` is emitted as a non-replayable control frame without SSE `id`.
+- Heartbeat remains transport-only comment frame and does not affect cursor semantics.
+- Frontend parser and store enforce canonical-first contract behavior with controlled legacy fallback and hard-error reload fallback.
+
+Recorded artifacts:
+
+- Implementation note:
+  - `docs/render/phases/phase-01-stream-contract-foundation/subphases/subphase-01-stream-contract-foundation-implementation.md`
+- Handoff pack for next phase:
+  - `docs/render/phases/phase-01-stream-contract-foundation/handoff-to-phase-02.md`
 
 
 ## Objective
@@ -128,6 +146,10 @@ Phase 02 can assume:
 - stable `last_event_id` behavior
 - deterministic event ordering
 - clean separation between heartbeat and replayable events
+
+Handoff document:
+
+- `docs/render/phases/phase-01-stream-contract-foundation/handoff-to-phase-02.md`
 
 
 ## Effort Estimate
