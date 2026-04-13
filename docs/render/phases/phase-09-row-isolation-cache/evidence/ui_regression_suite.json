@@ -1,0 +1,27 @@
+{
+  "phase": "09",
+  "generated_at": "2026-04-13T20:33:19Z",
+  "source": "ui_regression_suite",
+  "evidence_mode": "candidate",
+  "gate_eligible": true,
+  "status": "pass",
+  "metric": "stale_render_artifact_incidents",
+  "value": 0.0,
+  "target": 0.0,
+  "operator": "lte",
+  "pass": true,
+  "context": {
+    "scenario": "phase09_ui_regression_suite_v1",
+    "regression_case_count": 42,
+    "regression_case_fail_count": 0,
+    "candidate_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/candidates/ui-regression-suite-candidate.json",
+    "candidate_commit_sha": "deadbeef"
+  },
+  "baseline_metadata": {
+    "label": "phase09_pre_row_isolation_baseline_v1",
+    "captured_at": "2026-04-13T00:00:00Z",
+    "workload": "synthetic_v3_feed_streaming_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/baseline-manifest-v1.json"
+  }
+}

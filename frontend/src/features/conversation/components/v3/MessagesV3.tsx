@@ -36,6 +36,7 @@ import {
   saveMessagesV3ViewState,
   type MessagesV3ViewState,
 } from './messagesV3.viewState'
+import { emitRowRenderProfile } from './messagesV3ProfilingHooks'
 
 const SCROLL_THRESHOLD_PX = 120
 const MAX_COMMAND_OUTPUT_LINES = 200
@@ -532,7 +533,16 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
           className={`${styles.messageShell} ${item.role === 'user' ? styles.messageShellUser : styles.messageShellAssistant}`}
         >
           <div className={`${styles.messageBubble} ${bubbleClass}`}>
-            <ConversationMarkdown content={renderedText} />
+            <ConversationMarkdown
+              content={renderedText}
+              parseTrace={{
+                threadId: item.threadId,
+                itemId: item.id,
+                updatedAt: item.updatedAt,
+                mode: 'message_markdown',
+                source: 'messages_v3.message_row',
+              }}
+            />
           </div>
         </div>
       </div>
@@ -970,7 +980,16 @@ function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'revi
             </div>
             <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-          <ConversationMarkdown content={renderedText} />
+          <ConversationMarkdown
+            content={renderedText}
+            parseTrace={{
+              threadId: item.threadId,
+              itemId: item.id,
+              updatedAt: item.updatedAt,
+              mode: 'message_markdown',
+              source: 'messages_v3.review_row',
+            }}
+          />
         </div>
       </div>
     </article>
@@ -989,7 +1008,16 @@ function ExploreRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'exp
             </div>
             <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-          <ConversationMarkdown content={item.text} />
+          <ConversationMarkdown
+            content={item.text}
+            parseTrace={{
+              threadId: item.threadId,
+              itemId: item.id,
+              updatedAt: item.updatedAt,
+              mode: 'message_markdown',
+              source: 'messages_v3.explore_row',
+            }}
+          />
         </div>
       </div>
     </article>
@@ -1344,6 +1372,15 @@ function renderItemRowV3({
   onToggleExpanded: (itemId: string) => void
   onRequestAutoScroll: () => void
 }) {
+  emitRowRenderProfile({
+    threadId: item.threadId,
+    itemId: item.id,
+    kind: item.kind,
+    status: item.status,
+    updatedAt: item.updatedAt,
+    sequence: item.sequence,
+  })
+
   if (item.kind === 'message') {
     return <MessageRowV3 item={item} />
   }

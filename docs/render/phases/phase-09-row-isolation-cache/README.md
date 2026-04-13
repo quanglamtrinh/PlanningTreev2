@@ -1,6 +1,6 @@
 ﻿# Phase 09 - Row Isolation and Parse Cache
 
-Status: Planned.
+Status: Planned (pre-phase hardening baseline prepared).
 
 Scope IDs: D01, D02, D10.
 
@@ -20,7 +20,7 @@ Contract focus:
 
 Must-hold decisions:
 
-- Cache invalidation keys must stay contract-safe (`itemId + updatedAt + mode`).
+- Cache invalidation keys must stay contract-safe (`threadId + itemId + updatedAt + mode + rendererVersion`).
 - Memoization cannot suppress legitimate row updates.
 - Row identity behavior must remain stable for later virtualization phases.
 
@@ -29,11 +29,16 @@ Must-hold decisions:
 
 Isolate row rendering so updates only affect changed rows, then cache parse-heavy artifacts with stable keys.
 
+Implementation scope authority:
+
+- Implementation scope for this phase is `D01`, `D02`, `D10` from `docs/render/system-freeze/phase-manifest-v1.json`.
+- Phase 08 handoff is input context only and does not redefine Phase 09 scope IDs.
+
 ## In Scope
 
 1. D01: Memoize V3 row components.
 2. D02: Stable callback and prop identity.
-3. D10: Cache by `itemId + updatedAt`.
+3. D10: Cache by canonical key contract (`threadId + itemId + updatedAt + mode + rendererVersion`).
 
 ## Detailed Improvements
 
@@ -53,8 +58,46 @@ Prevent unnecessary memo misses by:
 
 For markdown/diff/highlight output:
 
-- cache key = `itemId + updatedAt + parseMode`
+- cache key = `threadId + itemId + updatedAt + parseMode + rendererVersion`
 - invalidate only when relevant source changes
+
+## Pre-Phase 09 Hardening Baseline
+
+### 1. Frozen entry artifact
+
+- `row-cache-invalidation-policy-v1.md` is the Phase 09 entry artifact for `row_cache_invalidation_policy_frozen`.
+
+### 2. Frozen frontend contract utility
+
+- `frontend/src/features/conversation/components/v3/parseCacheContract.ts` defines:
+  - `ParseCacheMode`
+  - `ParseCacheKeyInput`
+  - `buildParseCacheKey`
+  - `CACHE_SCHEMA_VERSION`
+  - default Phase 09 policy constants (`LRU=1500`, `TTL=10m`, renderer version `v1`)
+
+### 3. Profiling-only instrumentation hooks
+
+- `frontend/src/features/conversation/components/v3/messagesV3ProfilingHooks.ts` provides test-only hooks for:
+  - row render profiling
+  - parse trace hit/miss telemetry
+
+Guardrail:
+
+- hooks are measurement-only and must not change user-visible behavior.
+
+### 4. Gate harness and evidence contract
+
+Phase 09 source scripts:
+
+1. `scripts/phase09_row_render_profile.py`
+2. `scripts/phase09_parse_cache_trace.py`
+3. `scripts/phase09_ui_regression_suite.py`
+4. `scripts/phase09_gate_report.py`
+
+Evidence workspace:
+
+- `docs/render/phases/phase-09-row-isolation-cache/evidence/`
 
 ## Implementation Plan
 

@@ -1,0 +1,7 @@
+{
+  "candidate_metrics": {
+    "total_row_render_events": 1500,
+    "changed_row_render_events": 1435,
+    "unchanged_row_rerender_rate_pct": 4.333
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "candidate_metrics": {
+    "stale_render_artifact_incidents": 0,
+    "regression_case_count": 42,
+    "regression_case_fail_count": 0
+  }
+}

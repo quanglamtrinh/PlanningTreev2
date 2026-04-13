@@ -6,6 +6,11 @@ import {
   getToolPlaceholderText,
   hasMeaningfulToolContent,
 } from './toolPresentation'
+import {
+  buildParseCacheKey,
+  PARSE_CACHE_RENDERER_VERSION,
+} from './v3/parseCacheContract'
+import { emitParseCacheTrace } from './v3/messagesV3ProfilingHooks'
 
 function normalizeText(value: string | null | undefined): string {
   return String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
@@ -691,9 +696,44 @@ export function FileChangeToolRow({
   dataTestId?: string
 }) {
   const headline = getToolHeadline(item)
+  const parseKeyDiffUnified = buildParseCacheKey({
+    threadId: item.threadId,
+    itemId: item.id,
+    updatedAt: item.updatedAt,
+    mode: 'diff_unified',
+    rendererVersion: PARSE_CACHE_RENDERER_VERSION,
+  })
+  const parseKeyDiffStats = buildParseCacheKey({
+    threadId: item.threadId,
+    itemId: item.id,
+    updatedAt: item.updatedAt,
+    mode: 'diff_stats',
+    rendererVersion: PARSE_CACHE_RENDERER_VERSION,
+  })
   const fileRows = useMemo(() => resolveCanonicalFileRows(item), [item])
   const primaryRow = fileRows[0]
   const isMultiFile = fileRows.length > 1
+
+  useEffect(() => {
+    emitParseCacheTrace({
+      source: 'file_change_tool_row.diff_unified',
+      threadId: item.threadId,
+      itemId: item.id,
+      updatedAt: item.updatedAt,
+      mode: 'diff_unified',
+      rendererVersion: PARSE_CACHE_RENDERER_VERSION,
+      key: parseKeyDiffUnified,
+    })
+    emitParseCacheTrace({
+      source: 'file_change_tool_row.diff_stats',
+      threadId: item.threadId,
+      itemId: item.id,
+      updatedAt: item.updatedAt,
+      mode: 'diff_stats',
+      rendererVersion: PARSE_CACHE_RENDERER_VERSION,
+      key: parseKeyDiffStats,
+    })
+  })
 
   const blobSourceText = useMemo(() => {
     const out = item.outputText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')

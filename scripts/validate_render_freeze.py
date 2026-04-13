@@ -22,6 +22,9 @@ ENTRY_CRITERIA_FILE_RULES = {
     "normalized_state_shape_frozen": Path(
         "docs/render/phases/phase-07-state-shape-hot-path/normalized-state-shape-v1.md"
     ),
+    "row_cache_invalidation_policy_frozen": Path(
+        "docs/render/phases/phase-09-row-isolation-cache/row-cache-invalidation-policy-v1.md"
+    ),
 }
 
 
@@ -238,6 +241,8 @@ def main() -> int:
             errors.append("Phase 04: missing reference to c4-mini-journal-spec-v1.md in README.")
         if pid == "07" and "normalized-state-shape-v1.md" not in text:
             errors.append("Phase 07: missing reference to normalized-state-shape-v1.md in README.")
+        if pid == "09" and "row-cache-invalidation-policy-v1.md" not in text:
+            errors.append("Phase 09: missing reference to row-cache-invalidation-policy-v1.md in README.")
 
         link_fragment = f"./{entry.get('slug')}/README.md"
         if link_fragment not in phase_index_text:

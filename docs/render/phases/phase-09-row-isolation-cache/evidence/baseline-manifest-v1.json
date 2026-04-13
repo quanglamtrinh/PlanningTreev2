@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "phase": "09",
+  "baseline": {
+    "label": "phase09_pre_row_isolation_baseline_v1",
+    "captured_at": "2026-04-13T00:00:00Z",
+    "workload": "synthetic_v3_feed_streaming_v1"
+  },
+  "baseline_metrics": {
+    "unchanged_row_rerender_rate_pct": 18.5,
+    "parse_cache_hit_rate_pct": 39.2,
+    "stale_render_artifact_incidents": 1
+  }
+}

@@ -6,7 +6,12 @@ Date: 2026-04-13.
 
 Source phase: `phase-08-store-isolation-selectors` (C05, C06, C08).
 
-Target phase: `phase-09-row-isolation-cache` (C06, C09).
+Target phase: `phase-09-row-isolation-cache` (D01, D02, D10).
+
+Scope authority note:
+
+- This handoff captures Phase 08 outputs and assumptions only.
+- Phase 09 implementation scope IDs are defined by `docs/render/system-freeze/phase-manifest-v1.json`.
 
 ## 1. Handoff Summary
 

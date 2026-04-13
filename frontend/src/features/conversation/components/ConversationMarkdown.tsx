@@ -1,9 +1,25 @@
+import { useEffect } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import styles from './ConversationMarkdown.module.css'
 import {
   getConversationMarkdownDesktopHooks,
 } from './markdownDesktopHooks'
+import {
+  buildParseCacheKey,
+  PARSE_CACHE_RENDERER_VERSION,
+  type ParseCacheMode,
+} from './v3/parseCacheContract'
+import { emitParseCacheTrace } from './v3/messagesV3ProfilingHooks'
+
+export type ConversationMarkdownParseTrace = {
+  threadId: string | null | undefined
+  itemId: string
+  updatedAt: string
+  mode: ParseCacheMode
+  rendererVersion?: string | null
+  source?: string
+}
 
 function decodeHref(value: string): string {
   try {
@@ -54,12 +70,45 @@ function transformMarkdownUrl(url: string, key: string): string {
   return defaultUrlTransform(url)
 }
 
-export function ConversationMarkdown({ content }: { content: string }) {
+export function ConversationMarkdown({
+  content,
+  parseTrace,
+}: {
+  content: string
+  parseTrace?: ConversationMarkdownParseTrace
+}) {
   if (!content.trim()) {
     return null
   }
 
   const desktopHooks = getConversationMarkdownDesktopHooks()
+  const traceSource = parseTrace?.source ?? 'conversation_markdown'
+  const traceRendererVersion = parseTrace?.rendererVersion ?? PARSE_CACHE_RENDERER_VERSION
+  const traceKey =
+    parseTrace == null
+      ? null
+      : buildParseCacheKey({
+          threadId: parseTrace.threadId,
+          itemId: parseTrace.itemId,
+          updatedAt: parseTrace.updatedAt,
+          mode: parseTrace.mode,
+          rendererVersion: traceRendererVersion,
+        })
+
+  useEffect(() => {
+    if (parseTrace == null || traceKey == null) {
+      return
+    }
+    emitParseCacheTrace({
+      source: traceSource,
+      threadId: parseTrace.threadId ?? null,
+      itemId: parseTrace.itemId,
+      updatedAt: parseTrace.updatedAt,
+      mode: parseTrace.mode,
+      rendererVersion: traceRendererVersion,
+      key: traceKey,
+    })
+  })
 
   return (
     <div className={styles.root}>
