@@ -29,6 +29,15 @@ Templates:
 Gate command:
 
 ```powershell
+python scripts/phase06_frontend_event_burst_scenario.py `
+  --out docs/render/phases/phase-06-frame-batching-fast-append/evidence/frontend-event-burst-scenario.json
+
+python scripts/phase06_interactive_stream_smoke.py `
+  --out docs/render/phases/phase-06-frame-batching-fast-append/evidence/interactive-stream-smoke.json
+
+python scripts/phase06_apply_order_integration_tests.py `
+  --out docs/render/phases/phase-06-frame-batching-fast-append/evidence/apply-order-integration-tests.json
+
 python scripts/phase06_gate_report.py `
   --burst docs/render/phases/phase-06-frame-batching-fast-append/evidence/frontend-event-burst-scenario.json `
   --interactive docs/render/phases/phase-06-frame-batching-fast-append/evidence/interactive-stream-smoke.json `

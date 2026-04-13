@@ -2,11 +2,15 @@
   "run_meta": {
     "phase": "06",
     "scenario": "apply_order_integration_tests",
-    "timestamp_utc": "2026-04-13T00:00:00Z",
-    "git_sha": "<sample>",
-    "sample_data": true
+    "timestamp_utc": "2026-04-13T06:05:17.647925Z",
+    "harness": "deterministic_order_invariant_suite_v1",
+    "inputs": {
+      "cases": 24,
+      "events_per_case": 10
+    }
   },
   "candidate_metrics": {
-    "batch_order_violations": 0
+    "batch_order_violations": 0,
+    "cases_executed": 24
   }
 }

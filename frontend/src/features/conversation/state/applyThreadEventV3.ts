@@ -34,6 +34,23 @@ export class ThreadEventApplyErrorV3 extends Error {
   }
 }
 
+export type ThreadEventApplyDiagnosticsV3 = {
+  fastAppendUsed: boolean
+  fastAppendFallback: boolean
+}
+
+function markFastAppendUsed(diagnostics?: ThreadEventApplyDiagnosticsV3): void {
+  if (diagnostics) {
+    diagnostics.fastAppendUsed = true
+  }
+}
+
+function markFastAppendFallback(diagnostics?: ThreadEventApplyDiagnosticsV3): void {
+  if (diagnostics) {
+    diagnostics.fastAppendFallback = true
+  }
+}
+
 function sortItems(items: ConversationItemV3[]): ConversationItemV3[] {
   return [...items].sort((left, right) => {
     if (left.sequence !== right.sequence) {
@@ -287,6 +304,7 @@ function applyItemPatch(item: ConversationItemV3, patch: ItemPatchV3): Conversat
 export function applyThreadEventV3(
   snapshot: ThreadSnapshotV3 | null,
   event: ThreadEventV3,
+  diagnostics?: ThreadEventApplyDiagnosticsV3,
 ): ThreadSnapshotV3 {
   if (event.type === 'thread.snapshot.v3') {
     return event.payload.snapshot
@@ -318,6 +336,39 @@ export function applyThreadEventV3(
           'missing_item',
           `Cannot patch missing conversation item ${event.payload.itemId}.`,
         )
+      }
+      if (event.payload.patch.kind === 'message') {
+        const patch = event.payload.patch
+        const target = snapshot.items[index]
+        const patchRecord = patch as unknown as Record<string, unknown>
+        const patchKeys = Object.keys(patchRecord)
+        const isAppendSafePatch = patchKeys.every((key) =>
+          key === 'kind' || key === 'textAppend' || key === 'status' || key === 'updatedAt',
+        )
+        if (
+          target.kind === 'message' &&
+          isAppendSafePatch &&
+          typeof patch.textAppend === 'string' &&
+          patch.textAppend.length > 0
+        ) {
+          const nextItems = [...snapshot.items]
+          nextItems[index] = {
+            ...target,
+            text: `${target.text}${patch.textAppend}`,
+            status: patch.status ?? target.status,
+            updatedAt: patch.updatedAt,
+          }
+          markFastAppendUsed(diagnostics)
+          return {
+            ...snapshot,
+            items: nextItems,
+            snapshotVersion: nextSnapshotVersion,
+            updatedAt: patch.updatedAt,
+          }
+        }
+        if (typeof patch.textAppend === 'string') {
+          markFastAppendFallback(diagnostics)
+        }
       }
       const nextItems = [...snapshot.items]
       nextItems[index] = applyItemPatch(nextItems[index], event.payload.patch)

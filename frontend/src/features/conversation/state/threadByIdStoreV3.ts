@@ -6,18 +6,29 @@ import type {
   ThreadSnapshotV3,
   UserInputAnswer,
 } from '../../../api/types'
-import { applyThreadEventV3, ThreadEventApplyErrorV3 } from './applyThreadEventV3'
+import {
+  applyThreadEventV3,
+  ThreadEventApplyDiagnosticsV3,
+  ThreadEventApplyErrorV3,
+} from './applyThreadEventV3'
 import type { ThreadBusinessEventV3, ThreadStreamOpenEnvelopeV3 } from './threadEventRouter'
 import { parseThreadEventEnvelopeV3 } from './threadEventRouter'
 
 const SSE_RECONNECT_RETRY_MS = 1000
 const USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS = 1500
+const FRAME_BATCH_FALLBACK_FLUSH_MS = 16
+const FRAME_BATCH_MAX_QUEUE_AGE_MS = 50
 
 export type ThreadByIdStreamStatusV3 = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'error'
 export type ThreadByIdTelemetryV3 = {
   streamReconnectCount: number
   applyErrorCount: number
   forcedSnapshotReloadCount: number
+  batchedFlushCount: number
+  batchedEventsApplied: number
+  forcedFlushCount: number
+  fastAppendHitCount: number
+  fastAppendFallbackCount: number
   firstFrameLatencyMs: number | null
   firstMeaningfulFrameLatencyMs: number | null
   renderErrorCount: number
@@ -62,6 +73,7 @@ export type ThreadByIdStoreV3State = {
 }
 
 let threadEventSource: EventSource | null = null
+let clearThreadEventStreamBuffers: (() => void) | null = null
 let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 const resolveFallbackTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
 let threadGeneration = 0
@@ -75,6 +87,11 @@ const DEFAULT_TELEMETRY_V3: ThreadByIdTelemetryV3 = {
   streamReconnectCount: 0,
   applyErrorCount: 0,
   forcedSnapshotReloadCount: 0,
+  batchedFlushCount: 0,
+  batchedEventsApplied: 0,
+  forcedFlushCount: 0,
+  fastAppendHitCount: 0,
+  fastAppendFallbackCount: 0,
   firstFrameLatencyMs: null,
   firstMeaningfulFrameLatencyMs: null,
   renderErrorCount: 0,
@@ -157,6 +174,10 @@ function clearResolveFallbackTimers() {
 }
 
 function closeThreadEventSource() {
+  if (clearThreadEventStreamBuffers) {
+    clearThreadEventStreamBuffers()
+    clearThreadEventStreamBuffers = null
+  }
   if (threadEventSource) {
     threadEventSource.close()
     threadEventSource = null
@@ -482,8 +503,42 @@ async function openThreadEventStream(
   threadEventSource = eventSource
   set({ streamStatus: 'connecting' })
   const streamSubscribedAt = Date.now()
+  type QueuedBusinessFrame = {
+    event: ThreadBusinessEventV3
+    legacyFallbackUsed: boolean
+  }
+  type FlushReason = 'raf' | 'fallback' | 'forced' | 'max_age'
+  const queuedBusinessFrames: QueuedBusinessFrame[] = []
+  let queuedSinceMs: number | null = null
+  let rafFlushHandle: number | null = null
+  let fallbackFlushTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+  let maxAgeFlushTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+
+  const clearScheduledFlush = () => {
+    if (rafFlushHandle !== null && typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(rafFlushHandle)
+    }
+    rafFlushHandle = null
+    if (fallbackFlushTimer !== null) {
+      globalThis.clearTimeout(fallbackFlushTimer)
+      fallbackFlushTimer = null
+    }
+    if (maxAgeFlushTimer !== null) {
+      globalThis.clearTimeout(maxAgeFlushTimer)
+      maxAgeFlushTimer = null
+    }
+  }
+
+  const clearQueuedBusinessFrames = () => {
+    queuedBusinessFrames.length = 0
+    queuedSinceMs = null
+    clearScheduledFlush()
+  }
+
+  clearThreadEventStreamBuffers = clearQueuedBusinessFrames
 
   const failContract = (reason: string) => {
+    clearQueuedBusinessFrames()
     if (threadRole === 'ask_planning') {
       void api.reportAskRolloutMetricEvent('stream_error').catch(() => undefined)
     }
@@ -542,7 +597,32 @@ async function openThreadEventStream(
     })
   }
 
-  const applyEnvelope = (event: ThreadBusinessEventV3, legacyFallbackUsed: boolean) => {
+  const shouldForceFlush = (event: ThreadBusinessEventV3): boolean => {
+    if (
+      event.type === 'thread.snapshot.v3' ||
+      event.type === 'thread.error.v3' ||
+      event.type === 'conversation.ui.user_input.v3'
+    ) {
+      return true
+    }
+    if (event.type === 'thread.lifecycle.v3') {
+      return (
+        event.payload.state === 'waiting_user_input' ||
+        event.payload.state === 'turn_completed' ||
+        event.payload.state === 'turn_failed'
+      )
+    }
+    return false
+  }
+
+  const flushQueuedBusinessFrames = (reason: FlushReason) => {
+    if (queuedBusinessFrames.length === 0) {
+      return
+    }
+    const frames = queuedBusinessFrames.splice(0, queuedBusinessFrames.length)
+    queuedSinceMs = null
+    clearScheduledFlush()
+
     const currentState = get()
     if (
       !isCurrentGeneration(generation) ||
@@ -550,63 +630,134 @@ async function openThreadEventStream(
     ) {
       return
     }
-    if (event.threadId !== threadId) {
-      failContract(
-        `Thread event thread_id mismatch: expected ${threadId} but received ${event.threadId}.`,
-      )
-      return
-    }
-    if (
-      event.projectId !== projectId ||
-      event.nodeId !== nodeId ||
-      event.threadRole !== threadRole
-    ) {
-      return
-    }
-    try {
-      const cursorOrder = compareEventIdCursor(currentState.lastEventId, event.eventId)
-      if (cursorOrder >= 0) {
-        const reason =
-          cursorOrder === 0
-            ? `Duplicate event_id detected: ${event.eventId}.`
-            : `Non-monotonic event_id detected: ${event.eventId} after ${currentState.lastEventId}.`
-        failContract(reason)
+
+    let workingSnapshot = currentState.snapshot
+    let workingLastEventId = currentState.lastEventId
+    let workingLastSnapshotVersion = currentState.lastSnapshotVersion
+    let workingError = currentState.error
+    let workingIsLoading = currentState.isLoading
+    let processingTelemetry = selectProcessingTelemetry(currentState)
+    let shouldReconcileResolveFallback = false
+    let legacyFallbackUsedCount = 0
+    let appliedEventCount = 0
+    let fastAppendHitCount = 0
+    let fastAppendFallbackCount = 0
+
+    for (const frame of frames) {
+      const event = frame.event
+      if (event.threadId !== threadId) {
+        failContract(`Thread event thread_id mismatch: expected ${threadId} but received ${event.threadId}.`)
         return
       }
-    } catch {
-      failContract(`Invalid event_id cursor state. last_event_id=${currentState.lastEventId}`)
+      if (
+        event.projectId !== projectId ||
+        event.nodeId !== nodeId ||
+        event.threadRole !== threadRole
+      ) {
+        continue
+      }
+      try {
+        const cursorOrder = compareEventIdCursor(workingLastEventId, event.eventId)
+        if (cursorOrder >= 0) {
+          const orderReason =
+            cursorOrder === 0
+              ? `Duplicate event_id detected: ${event.eventId}.`
+              : `Non-monotonic event_id detected: ${event.eventId} after ${workingLastEventId}.`
+          failContract(orderReason)
+          return
+        }
+      } catch {
+        failContract(`Invalid event_id cursor state. last_event_id=${workingLastEventId}`)
+        return
+      }
+
+      const beforeSnapshot = workingSnapshot
+      const diagnostics: ThreadEventApplyDiagnosticsV3 = {
+        fastAppendUsed: false,
+        fastAppendFallback: false,
+      }
+      let nextSnapshot: ThreadSnapshotV3
+      try {
+        nextSnapshot = applyThreadEventV3(workingSnapshot, event, diagnostics)
+      } catch (error) {
+        if (error instanceof ThreadEventApplyErrorV3) {
+          clearQueuedBusinessFrames()
+          set((state) => ({
+            error: error.message,
+            streamStatus: 'error',
+            telemetry: {
+              ...state.telemetry,
+              applyErrorCount: state.telemetry.applyErrorCount + 1,
+            },
+          }))
+          void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
+            setLoading: false,
+            reason: error.message,
+            countAsForcedReload: true,
+          })
+          return
+        }
+        throw error
+      }
+
+      workingSnapshot = nextSnapshot
+      workingLastEventId = event.eventId
+      workingLastSnapshotVersion = event.snapshotVersion ?? nextSnapshot.snapshotVersion
+      appliedEventCount += 1
+      if (frame.legacyFallbackUsed) {
+        legacyFallbackUsedCount += 1
+      }
+      if (diagnostics.fastAppendUsed) {
+        fastAppendHitCount += 1
+      }
+      if (diagnostics.fastAppendFallback) {
+        fastAppendFallbackCount += 1
+      }
+
+      if (event.type === 'thread.snapshot.v3') {
+        shouldReconcileResolveFallback = true
+        workingIsLoading = false
+        workingError = null
+        if (
+          (beforeSnapshot?.processingState === 'running' ||
+            beforeSnapshot?.processingState === 'waiting_user_input') &&
+          (nextSnapshot.processingState === 'idle' || nextSnapshot.processingState === 'failed')
+        ) {
+          processingTelemetry = completeProcessingTelemetry(processingTelemetry)
+        } else {
+          processingTelemetry = seedRunningTelemetry(processingTelemetry, nextSnapshot)
+        }
+      } else if (event.type === 'conversation.ui.user_input.v3') {
+        shouldReconcileResolveFallback = true
+      } else if (event.type === 'thread.error.v3') {
+        workingError = event.payload.errorItem.message
+      } else if (event.type === 'thread.lifecycle.v3') {
+        if (
+          event.payload.state === 'turn_started' ||
+          event.payload.state === 'waiting_user_input'
+        ) {
+          processingTelemetry = {
+            ...processingTelemetry,
+            processingStartedAt: processingTelemetry.processingStartedAt ?? Date.now(),
+          }
+        } else if (
+          event.payload.state === 'turn_completed' ||
+          event.payload.state === 'turn_failed'
+        ) {
+          processingTelemetry = completeProcessingTelemetry(processingTelemetry)
+        }
+      }
+    }
+
+    if (!appliedEventCount) {
       return
     }
 
-    let nextSnapshot: ThreadSnapshotV3
-    try {
-      nextSnapshot = applyThreadEventV3(currentState.snapshot, event)
-    } catch (error) {
-      if (error instanceof ThreadEventApplyErrorV3) {
-        set((state) => ({
-          error: error.message,
-          streamStatus: 'error',
-          telemetry: {
-            ...state.telemetry,
-            applyErrorCount: state.telemetry.applyErrorCount + 1,
-          },
-        }))
-        void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
-          setLoading: false,
-          reason: error.message,
-          countAsForcedReload: true,
-        })
-        return
-      }
-      throw error
+    if (shouldReconcileResolveFallback && workingSnapshot) {
+      reconcileResolveFallbackTimers(workingSnapshot)
     }
 
-    if (event.type === 'thread.snapshot.v3') {
-      reconcileResolveFallbackTimers(nextSnapshot)
-    } else if (event.type === 'conversation.ui.user_input.v3') {
-      reconcileResolveFallbackTimers(nextSnapshot)
-    }
-
+    const forcedFlushDelta = reason === 'forced' || reason === 'max_age' ? 1 : 0
     set((state) => {
       if (
         !isCurrentGeneration(generation) ||
@@ -614,51 +765,60 @@ async function openThreadEventStream(
       ) {
         return {}
       }
-
-      const nextState: Partial<ThreadByIdStoreV3State> = {
-        snapshot: nextSnapshot,
-        lastEventId: event.eventId,
-        lastSnapshotVersion: event.snapshotVersion ?? nextSnapshot.snapshotVersion,
+      return {
+        snapshot: workingSnapshot,
+        lastEventId: workingLastEventId,
+        lastSnapshotVersion: workingLastSnapshotVersion,
         streamStatus: 'open',
+        isLoading: workingIsLoading,
+        error: workingError,
+        ...processingTelemetry,
         telemetry: {
           ...state.telemetry,
-          legacy_fallback_used_count:
-            state.telemetry.legacy_fallback_used_count + (legacyFallbackUsed ? 1 : 0),
+          legacy_fallback_used_count: state.telemetry.legacy_fallback_used_count + legacyFallbackUsedCount,
+          batchedFlushCount: state.telemetry.batchedFlushCount + 1,
+          batchedEventsApplied: state.telemetry.batchedEventsApplied + appliedEventCount,
+          forcedFlushCount: state.telemetry.forcedFlushCount + forcedFlushDelta,
+          fastAppendHitCount: state.telemetry.fastAppendHitCount + fastAppendHitCount,
+          fastAppendFallbackCount: state.telemetry.fastAppendFallbackCount + fastAppendFallbackCount,
         },
       }
-
-      if (event.type === 'thread.snapshot.v3') {
-        nextState.isLoading = false
-        nextState.error = null
-        if (
-          (state.snapshot?.processingState === 'running' ||
-            state.snapshot?.processingState === 'waiting_user_input') &&
-          (nextSnapshot.processingState === 'idle' || nextSnapshot.processingState === 'failed')
-        ) {
-          Object.assign(nextState, completeProcessingTelemetry(state))
-        } else {
-          Object.assign(nextState, seedRunningTelemetry(state, nextSnapshot))
-        }
-      } else if (event.type === 'thread.error.v3') {
-        nextState.error = event.payload.errorItem.message
-      } else if (event.type === 'thread.lifecycle.v3') {
-        if (
-          event.payload.state === 'turn_started' ||
-          event.payload.state === 'waiting_user_input'
-        ) {
-          Object.assign(nextState, {
-            processingStartedAt: state.processingStartedAt ?? Date.now(),
-          })
-        } else if (
-          event.payload.state === 'turn_completed' ||
-          event.payload.state === 'turn_failed'
-        ) {
-          Object.assign(nextState, completeProcessingTelemetry(state))
-        }
-      }
-
-      return nextState
     })
+  }
+
+  const scheduleQueuedBusinessFlush = () => {
+    if (rafFlushHandle === null && typeof globalThis.requestAnimationFrame === 'function') {
+      rafFlushHandle = globalThis.requestAnimationFrame(() => {
+        rafFlushHandle = null
+        flushQueuedBusinessFrames('raf')
+      })
+    }
+    if (fallbackFlushTimer === null) {
+      fallbackFlushTimer = globalThis.setTimeout(() => {
+        fallbackFlushTimer = null
+        flushQueuedBusinessFrames('fallback')
+      }, FRAME_BATCH_FALLBACK_FLUSH_MS)
+    }
+    if (maxAgeFlushTimer === null && queuedSinceMs !== null) {
+      const ageMs = Math.max(0, Date.now() - queuedSinceMs)
+      const waitMs = Math.max(0, FRAME_BATCH_MAX_QUEUE_AGE_MS - ageMs)
+      maxAgeFlushTimer = globalThis.setTimeout(() => {
+        maxAgeFlushTimer = null
+        flushQueuedBusinessFrames('max_age')
+      }, waitMs)
+    }
+  }
+
+  const enqueueBusinessEvent = (event: ThreadBusinessEventV3, legacyFallbackUsed: boolean) => {
+    if (queuedBusinessFrames.length === 0) {
+      queuedSinceMs = Date.now()
+    }
+    queuedBusinessFrames.push({ event, legacyFallbackUsed })
+    if (shouldForceFlush(event)) {
+      flushQueuedBusinessFrames('forced')
+      return
+    }
+    scheduleQueuedBusinessFlush()
   }
 
   eventSource.onopen = () => {
@@ -682,7 +842,7 @@ async function openThreadEventStream(
         applyStreamOpen(frame.envelope, frame.legacyFallbackUsed)
         return
       }
-      applyEnvelope(frame.event, frame.legacyFallbackUsed)
+      enqueueBusinessEvent(frame.event, frame.legacyFallbackUsed)
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       failContract(reason)
@@ -700,6 +860,7 @@ async function openThreadEventStream(
     if (threadRole === 'ask_planning') {
       void api.reportAskRolloutMetricEvent('stream_error').catch(() => undefined)
     }
+    clearQueuedBusinessFrames()
     closeThreadEventSource()
     scheduleStreamReopen(get, set, projectId, nodeId, threadId, threadRole, generation)
   }

@@ -10,6 +10,6 @@
     }
   },
   "candidate_metrics": {
-    "visible_stream_lag_p95_ms": 98.0
+    "visible_stream_lag_p95_ms": 100.0
   }
 }

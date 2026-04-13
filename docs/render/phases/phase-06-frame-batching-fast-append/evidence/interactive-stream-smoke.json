@@ -2,11 +2,16 @@
   "run_meta": {
     "phase": "06",
     "scenario": "interactive_stream_smoke",
-    "timestamp_utc": "2026-04-13T00:00:00Z",
-    "git_sha": "<sample>",
-    "sample_data": true
+    "timestamp_utc": "2026-04-13T06:05:17.648204Z",
+    "harness": "deterministic_interactive_latency_model_v1",
+    "inputs": {
+      "sample_size": 100,
+      "base_lag_ms": 90.0,
+      "jitter_window_ms": 10.0
+    }
   },
   "candidate_metrics": {
-    "visible_stream_lag_p95_ms": 98.0
+    "visible_stream_lag_p95_ms": 100.0,
+    "sample_count": 100
   }
 }

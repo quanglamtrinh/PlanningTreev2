@@ -1,6 +1,6 @@
 ﻿# Phase 06 - Frame Batching and Fast Text Append
 
-Status: Planned.
+Status: Implemented (2026-04-13).
 
 Scope IDs: C01, C07.
 
@@ -36,6 +36,27 @@ Required frozen artifact:
 ## Objective
 
 Reduce frontend apply thrash by batching event application per animation frame and using a fast path for streaming text append.
+
+## Execution Snapshot
+
+Implemented outcomes:
+
+- frame-batched event apply pipeline in the V3 thread-by-id stream store.
+- guarded fast-path for append-only message text patches with strict fallback.
+- internal batching telemetry counters for gate evidence generation.
+
+Gate results (current evidence):
+
+- `P06-G1` apply reduction: `65.0%` (target `>= 50%`).
+- `P06-G2` visible lag p95: `100.0 ms` (target `<= 120 ms`).
+- `P06-G3` batch order violations: `0` (target `<= 0`).
+
+Evidence files:
+
+- `docs/render/phases/phase-06-frame-batching-fast-append/evidence/frontend-event-burst-scenario.json`.
+- `docs/render/phases/phase-06-frame-batching-fast-append/evidence/interactive-stream-smoke.json`.
+- `docs/render/phases/phase-06-frame-batching-fast-append/evidence/apply-order-integration-tests.json`.
+- `docs/render/phases/phase-06-frame-batching-fast-append/evidence/phase06-gate-report.json`.
 
 ## In Scope
 
@@ -101,6 +122,15 @@ For streaming assistant text chunks:
    - Mitigation: max queue age and forced flush policy.
 2. Risk: fast path bypasses side-effects.
    - Mitigation: strict eligibility checks and fallback to generic path.
+
+## Known Trade-offs and Residual Risks
+
+1. Frame batching introduces bounded render delay by design.
+   - Current mitigation: fallback flush timer and max queue age forced flush.
+2. Fast path only optimizes message append patches in this phase.
+   - Broader patch hot-path optimization remains in Phase 07 scope.
+3. Gate source scripts are deterministic harnesses, not runtime observability.
+   - Layer F observability remains explicitly out-of-scope for this wave.
 
 ## Handoff to Phase 07
 

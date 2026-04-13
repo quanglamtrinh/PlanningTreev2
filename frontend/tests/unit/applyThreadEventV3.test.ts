@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import type { DiffItemV3, ThreadEventV3, ThreadSnapshotV3 } from '../../src/api/types'
+import type {
+  ConversationMessageItemV3,
+  DiffItemV3,
+  ThreadEventV3,
+  ThreadSnapshotV3,
+} from '../../src/api/types'
 import { applyThreadEventV3 } from '../../src/features/conversation/state/applyThreadEventV3'
 
 function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshotV3 {
@@ -59,6 +64,26 @@ function makeDiffItem(overrides: Partial<DiffItemV3> = {}): DiffItemV3 {
         summary: 'main update',
       },
     ],
+    ...overrides,
+  }
+}
+
+function makeMessageItem(overrides: Partial<ConversationMessageItemV3> = {}): ConversationMessageItemV3 {
+  return {
+    id: 'msg-1',
+    kind: 'message',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    sequence: 1,
+    createdAt: '2026-04-01T00:00:00Z',
+    updatedAt: '2026-04-01T00:00:00Z',
+    status: 'in_progress',
+    source: 'upstream',
+    tone: 'neutral',
+    metadata: {},
+    role: 'assistant',
+    text: 'Hello',
+    format: 'markdown',
     ...overrides,
   }
 }
@@ -321,5 +346,114 @@ describe('applyThreadEventV3', () => {
         summary: 'new file',
       },
     ])
+  })
+
+  it('uses fast append path for message text patches when guards pass', () => {
+    const snapshot = makeSnapshot({
+      items: [makeMessageItem()],
+    })
+    const event: ThreadEventV3 = {
+      eventId: 'evt-fast-1',
+      channel: 'thread',
+      projectId: 'project-1',
+      nodeId: 'node-1',
+      threadRole: 'execution',
+      occurredAt: '2026-04-01T00:06:00Z',
+      snapshotVersion: 7,
+      type: 'conversation.item.patch.v3',
+      payload: {
+        itemId: 'msg-1',
+        patch: {
+          kind: 'message',
+          textAppend: ' world',
+          updatedAt: '2026-04-01T00:06:00Z',
+        },
+      },
+    }
+
+    const diagnostics = { fastAppendUsed: false, fastAppendFallback: false }
+    const next = applyThreadEventV3(snapshot, event, diagnostics)
+
+    expect((next.items[0] as ConversationMessageItemV3).text).toBe('Hello world')
+    expect(next.items).toHaveLength(1)
+    expect(diagnostics.fastAppendUsed).toBe(true)
+    expect(diagnostics.fastAppendFallback).toBe(false)
+  })
+
+  it('falls back from fast append when patch shape is not append-safe', () => {
+    const snapshot = makeSnapshot({
+      items: [makeMessageItem()],
+    })
+    const event = {
+      eventId: 'evt-fast-2',
+      channel: 'thread',
+      projectId: 'project-1',
+      nodeId: 'node-1',
+      threadRole: 'execution',
+      occurredAt: '2026-04-01T00:07:00Z',
+      snapshotVersion: 8,
+      type: 'conversation.item.patch.v3',
+      payload: {
+        itemId: 'msg-1',
+        patch: {
+          kind: 'message',
+          textAppend: ' fallback',
+          updatedAt: '2026-04-01T00:07:00Z',
+          extraShape: 'force-generic',
+        },
+      },
+    } as unknown as ThreadEventV3
+
+    const diagnostics = { fastAppendUsed: false, fastAppendFallback: false }
+    const next = applyThreadEventV3(snapshot, event, diagnostics)
+
+    expect((next.items[0] as ConversationMessageItemV3).text).toBe('Hello fallback')
+    expect(diagnostics.fastAppendUsed).toBe(false)
+    expect(diagnostics.fastAppendFallback).toBe(true)
+  })
+
+  it('keeps fast-path parity with generic patch result for equivalent message append semantics', () => {
+    const snapshot = makeSnapshot({
+      items: [makeMessageItem()],
+    })
+    const fastEvent: ThreadEventV3 = {
+      eventId: 'evt-fast-3a',
+      channel: 'thread',
+      projectId: 'project-1',
+      nodeId: 'node-1',
+      threadRole: 'execution',
+      occurredAt: '2026-04-01T00:08:00Z',
+      snapshotVersion: 9,
+      type: 'conversation.item.patch.v3',
+      payload: {
+        itemId: 'msg-1',
+        patch: {
+          kind: 'message',
+          textAppend: ' parity',
+          status: 'completed',
+          updatedAt: '2026-04-01T00:08:00Z',
+        },
+      },
+    }
+    const genericEvent = {
+      ...fastEvent,
+      eventId: 'evt-fast-3b',
+      payload: {
+        ...fastEvent.payload,
+        patch: {
+          ...fastEvent.payload.patch,
+          extraShape: 'force-generic',
+        },
+      },
+    } as unknown as ThreadEventV3
+
+    const fastDiagnostics = { fastAppendUsed: false, fastAppendFallback: false }
+    const genericDiagnostics = { fastAppendUsed: false, fastAppendFallback: false }
+    const fastResult = applyThreadEventV3(snapshot, fastEvent, fastDiagnostics)
+    const genericResult = applyThreadEventV3(snapshot, genericEvent, genericDiagnostics)
+
+    expect(fastResult).toEqual(genericResult)
+    expect(fastDiagnostics.fastAppendUsed).toBe(true)
+    expect(genericDiagnostics.fastAppendFallback).toBe(true)
   })
 })

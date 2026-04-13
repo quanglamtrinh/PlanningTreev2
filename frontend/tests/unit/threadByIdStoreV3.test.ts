@@ -71,6 +71,72 @@ function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshot
   return snapshot
 }
 
+function makeMessageUpsertEnvelope(eventId: string, sequence: number, text: string) {
+  return {
+    schema_version: 1,
+    event_id: eventId,
+    event_type: 'conversation.item.upsert.v3',
+    thread_id: 'thread-1',
+    turn_id: `turn-${sequence}`,
+    snapshot_version: sequence,
+    occurred_at_ms: Date.parse(`2026-04-01T00:0${sequence}:00Z`),
+    eventId,
+    channel: 'thread',
+    projectId: 'project-1',
+    nodeId: 'node-1',
+    threadRole: 'execution',
+    occurredAt: `2026-04-01T00:0${sequence}:00Z`,
+    snapshotVersion: sequence,
+    type: 'conversation.item.upsert.v3',
+    payload: {
+      item: {
+        id: 'msg-1',
+        kind: 'message',
+        threadId: 'thread-1',
+        turnId: `turn-${sequence}`,
+        sequence,
+        createdAt: `2026-04-01T00:0${sequence}:00Z`,
+        updatedAt: `2026-04-01T00:0${sequence}:00Z`,
+        status: 'in_progress',
+        source: 'upstream',
+        tone: 'neutral',
+        metadata: {},
+        role: 'assistant',
+        text,
+        format: 'markdown',
+      },
+    },
+  }
+}
+
+function makeMessagePatchEnvelope(eventId: string, sequence: number, textAppend: string) {
+  return {
+    schema_version: 1,
+    event_id: eventId,
+    event_type: 'conversation.item.patch.v3',
+    thread_id: 'thread-1',
+    turn_id: `turn-${sequence}`,
+    snapshot_version: sequence,
+    occurred_at_ms: Date.parse(`2026-04-01T00:0${sequence}:01Z`),
+    eventId,
+    channel: 'thread',
+    projectId: 'project-1',
+    nodeId: 'node-1',
+    threadRole: 'execution',
+    occurredAt: `2026-04-01T00:0${sequence}:01Z`,
+    snapshotVersion: sequence,
+    type: 'conversation.item.patch.v3',
+    payload: {
+      itemId: 'msg-1',
+      patch: {
+        kind: 'message',
+        textAppend,
+        updatedAt: `2026-04-01T00:0${sequence}:01Z`,
+      },
+    },
+  }
+}
+
 describe('threadByIdStoreV3', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -763,6 +829,152 @@ describe('threadByIdStoreV3', () => {
       expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)
       expect(getEventSourceMock().instances).toHaveLength(2)
       expect(getEventSourceMock().instances[1]?.url).not.toContain('last_event_id=')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('batches burst business events into one flush while preserving order and cursor', async () => {
+    vi.useFakeTimers()
+    try {
+      apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeSnapshot())
+
+      await act(async () => {
+        await useThreadByIdStoreV3
+          .getState()
+          .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+      })
+
+      const eventSource = getEventSourceMock().instances[0]
+      eventSource.emitOpen()
+
+      await act(async () => {
+        eventSource.emitMessage(JSON.stringify(makeMessageUpsertEnvelope('2', 2, 'Hello')))
+        eventSource.emitMessage(JSON.stringify(makeMessagePatchEnvelope('3', 3, ' there')))
+        eventSource.emitMessage(JSON.stringify(makeMessagePatchEnvelope('4', 4, '!')))
+      })
+
+      expect(useThreadByIdStoreV3.getState().lastEventId).toBeNull()
+      expect(useThreadByIdStoreV3.getState().telemetry.batchedEventsApplied).toBe(0)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20)
+      })
+
+      const state = useThreadByIdStoreV3.getState()
+      expect(state.lastEventId).toBe('4')
+      expect(state.snapshot?.items).toHaveLength(1)
+      expect(state.snapshot?.items[0].kind).toBe('message')
+      expect((state.snapshot?.items[0] as { text: string }).text).toBe('Hello there!')
+      expect(state.telemetry.batchedFlushCount).toBe(1)
+      expect(state.telemetry.batchedEventsApplied).toBe(3)
+      expect(state.telemetry.forcedFlushCount).toBe(0)
+      expect(state.telemetry.fastAppendHitCount).toBe(2)
+      expect(state.telemetry.fastAppendFallbackCount).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('forces immediate flush for critical lifecycle boundaries', async () => {
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeSnapshot())
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      eventSource.emitMessage(
+        JSON.stringify({
+          schema_version: 1,
+          event_id: '2',
+          event_type: 'thread.lifecycle.v3',
+          thread_id: 'thread-1',
+          turn_id: 'turn-2',
+          snapshot_version: 2,
+          occurred_at_ms: Date.parse('2026-04-01T00:02:00Z'),
+          eventId: '2',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'execution',
+          occurredAt: '2026-04-01T00:02:00Z',
+          snapshotVersion: 2,
+          type: 'thread.lifecycle.v3',
+          payload: {
+            activeTurnId: 'turn-2',
+            processingState: 'waiting_user_input',
+            state: 'waiting_user_input',
+            detail: null,
+          },
+        }),
+      )
+    })
+
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.lastEventId).toBe('2')
+    expect(state.telemetry.batchedFlushCount).toBe(1)
+    expect(state.telemetry.forcedFlushCount).toBe(1)
+    expect(state.snapshot?.processingState).toBe('waiting_user_input')
+  })
+
+  it('clears queued events on stream error before reconnect to avoid stale apply', async () => {
+    vi.useFakeTimers()
+    try {
+      apiMock.getThreadSnapshotByIdV3.mockResolvedValue(
+        makeSnapshot({
+          items: [
+            {
+              id: 'msg-1',
+              kind: 'message',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 1,
+              createdAt: '2026-04-01T00:00:00Z',
+              updatedAt: '2026-04-01T00:00:00Z',
+              status: 'in_progress',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              role: 'assistant',
+              text: 'Base',
+              format: 'markdown',
+            },
+          ],
+        }),
+      )
+
+      await act(async () => {
+        await useThreadByIdStoreV3
+          .getState()
+          .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+      })
+
+      const eventSource = getEventSourceMock().instances[0]
+      eventSource.emitOpen()
+
+      await act(async () => {
+        eventSource.emitMessage(JSON.stringify(makeMessagePatchEnvelope('2', 2, ' stale')))
+      })
+
+      await act(async () => {
+        eventSource.emitError()
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1100)
+      })
+
+      const state = useThreadByIdStoreV3.getState()
+      expect(state.lastEventId).toBeNull()
+      expect(state.telemetry.batchedEventsApplied).toBe(0)
+      expect((state.snapshot?.items[0] as { text: string }).text).toBe('Base')
+      expect(getEventSourceMock().instances).toHaveLength(2)
     } finally {
       vi.useRealTimers()
     }
