@@ -17,7 +17,7 @@ import {
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { MessagesV3 } from './components/v3/MessagesV3'
 import { MessagesV3ErrorBoundary } from './components/v3/MessagesV3ErrorBoundary'
-import { useThreadByIdStoreV3 } from './state/threadByIdStoreV3'
+import { selectCore, selectUiControl, useThreadByIdStoreV3 } from './state/threadByIdStoreV3'
 import { useWorkflowEventBridgeV3 } from './state/workflowEventBridgeV3'
 import { useWorkflowStateStoreV3 } from './state/workflowStateStoreV3'
 
@@ -59,20 +59,24 @@ export function BreadcrumbChatViewV2() {
     recordRenderError: recordV3RenderError,
     disconnectThread: disconnectThreadV3,
   } = useThreadByIdStoreV3(
-    useShallow((state) => ({
-      snapshot: state.snapshot,
-      isLoading: state.isLoading,
-      isSending: state.isSending,
-      lastCompletedAt: state.lastCompletedAt,
-      lastDurationMs: state.lastDurationMs,
-      error: state.error,
-      loadThread: state.loadThread,
-      sendTurn: state.sendTurn,
-      resolveUserInput: state.resolveUserInput,
-      runPlanAction: state.runPlanAction,
-      recordRenderError: state.recordRenderError,
-      disconnectThread: state.disconnectThread,
-    })),
+    useShallow((state) => {
+      const core = selectCore(state)
+      const uiControl = selectUiControl(state)
+      return {
+        snapshot: core.snapshot,
+        isLoading: uiControl.isLoading,
+        isSending: uiControl.isSending,
+        lastCompletedAt: core.lastCompletedAt,
+        lastDurationMs: core.lastDurationMs,
+        error: uiControl.error,
+        loadThread: state.loadThread,
+        sendTurn: state.sendTurn,
+        resolveUserInput: state.resolveUserInput,
+        runPlanAction: state.runPlanAction,
+        recordRenderError: state.recordRenderError,
+        disconnectThread: state.disconnectThread,
+      }
+    }),
   )
 
   const {

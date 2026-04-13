@@ -28,7 +28,12 @@ vi.mock('../../src/api/client', () => ({
 }))
 
 import type { ThreadSnapshotV3 } from '../../src/api/types'
-import { useThreadByIdStoreV3 } from '../../src/features/conversation/state/threadByIdStoreV3'
+import {
+  selectCore,
+  selectTransport,
+  selectUiControl,
+  useThreadByIdStoreV3,
+} from '../../src/features/conversation/state/threadByIdStoreV3'
 
 type EventSourceMockInstance = {
   url: string
@@ -137,6 +142,56 @@ function makeMessagePatchEnvelope(eventId: string, sequence: number, textAppend:
   }
 }
 
+function makePendingUserInputSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshotV3 {
+  return makeSnapshot({
+    snapshotVersion: 5,
+    processingState: 'waiting_user_input',
+    items: [
+      {
+        id: 'input-1',
+        kind: 'userInput',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        sequence: 3,
+        createdAt: '2026-04-01T00:00:10Z',
+        updatedAt: '2026-04-01T00:00:10Z',
+        status: 'requested',
+        source: 'upstream',
+        tone: 'info',
+        metadata: {},
+        requestId: 'req-1',
+        title: 'Need answer',
+        questions: [],
+        answers: [],
+        requestedAt: '2026-04-01T00:00:10Z',
+        resolvedAt: null,
+      },
+    ],
+    uiSignals: {
+      planReady: {
+        planItemId: null,
+        revision: null,
+        ready: false,
+        failed: false,
+      },
+      activeUserInputRequests: [
+        {
+          requestId: 'req-1',
+          itemId: 'input-1',
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          status: 'requested',
+          createdAt: '2026-04-01T00:00:10Z',
+          submittedAt: null,
+          resolvedAt: null,
+          answers: [],
+        },
+      ],
+    },
+    ...overrides,
+  })
+}
+
 describe('threadByIdStoreV3', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -162,9 +217,32 @@ describe('threadByIdStoreV3', () => {
     expect(state.telemetry.streamReconnectCount).toBe(0)
     expect(state.telemetry.applyErrorCount).toBe(0)
     expect(state.telemetry.forcedSnapshotReloadCount).toBe(0)
+    expect(state.telemetry.lastForcedReloadReason).toBeNull()
     expect(eventSource?.url).toContain(
       '/v3/projects/project-1/threads/by-id/thread-1/events?node_id=node-1&after_snapshot_version=1',
     )
+  })
+
+  it('exposes guardrail selectors for core/transport/ui-control domains', async () => {
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeSnapshot())
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    const state = useThreadByIdStoreV3.getState()
+    const core = selectCore(state)
+    const transport = selectTransport(state)
+    const uiControl = selectUiControl(state)
+
+    expect(core.snapshot?.threadId).toBe('thread-1')
+    expect(core.lastSnapshotVersion).toBe(1)
+    expect(transport.activeProjectId).toBe('project-1')
+    expect(transport.streamStatus).toBe('connecting')
+    expect(uiControl.isLoading).toBe(false)
+    expect(uiControl.error).toBeNull()
   })
 
   it('applies thread.snapshot.v3 events', async () => {
@@ -367,6 +445,7 @@ describe('threadByIdStoreV3', () => {
     const state = useThreadByIdStoreV3.getState()
     expect(state.telemetry.envelope_validation_failure_count).toBe(1)
     expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)
+    expect(state.telemetry.lastForcedReloadReason).toBe('CONTRACT_ENVELOPE_INVALID')
     expect(state.lastEventId).toBeNull()
   })
 
@@ -420,6 +499,7 @@ describe('threadByIdStoreV3', () => {
     const state = useThreadByIdStoreV3.getState()
     expect(state.telemetry.envelope_validation_failure_count).toBe(1)
     expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)
+    expect(state.telemetry.lastForcedReloadReason).toBe('CONTRACT_THREAD_ID_MISMATCH')
     expect(state.lastEventId).toBeNull()
   })
 
@@ -495,6 +575,9 @@ describe('threadByIdStoreV3', () => {
     })
     expect(useThreadByIdStoreV3.getState().telemetry.applyErrorCount).toBe(1)
     expect(useThreadByIdStoreV3.getState().telemetry.forcedSnapshotReloadCount).toBe(1)
+    expect(useThreadByIdStoreV3.getState().telemetry.lastForcedReloadReason).toBe(
+      'APPLY_EVENT_FAILED',
+    )
   })
 
   it('runs plan action through dedicated V3 endpoint and updates turn state', async () => {
@@ -709,9 +792,80 @@ describe('threadByIdStoreV3', () => {
       expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
       expect(useThreadByIdStoreV3.getState().snapshot?.snapshotVersion).toBe(6)
       expect(useThreadByIdStoreV3.getState().telemetry.forcedSnapshotReloadCount).toBe(1)
+      expect(useThreadByIdStoreV3.getState().telemetry.lastForcedReloadReason).toBe(
+        'USER_INPUT_RESOLVE_TIMEOUT',
+      )
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('forces snapshot reload with STREAM_HEALTHCHECK_FAILED when stream is unhealthy after resolve submit', async () => {
+    apiMock.getThreadSnapshotByIdV3
+      .mockResolvedValueOnce(makePendingUserInputSnapshot())
+      .mockResolvedValueOnce(
+        makePendingUserInputSnapshot({
+          snapshotVersion: 6,
+          processingState: 'idle',
+        }),
+      )
+    apiMock.resolveThreadUserInputByIdV3.mockResolvedValue({
+      requestId: 'req-1',
+      itemId: 'input-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      status: 'answer_submitted',
+      answers: [{ questionId: 'q1', value: 'yes', label: 'Yes' }],
+      submittedAt: '2026-04-01T00:00:11Z',
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    useThreadByIdStoreV3.setState({ streamStatus: 'error' })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().resolveUserInput('req-1', [
+        { questionId: 'q1', value: 'yes', label: 'Yes' },
+      ])
+    })
+
+    expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)
+    expect(state.telemetry.lastForcedReloadReason).toBe('STREAM_HEALTHCHECK_FAILED')
+  })
+
+  it('forces snapshot reload with USER_INPUT_RESOLVE_REQUEST_FAILED when resolve API fails', async () => {
+    apiMock.getThreadSnapshotByIdV3
+      .mockResolvedValueOnce(makePendingUserInputSnapshot())
+      .mockResolvedValueOnce(
+        makePendingUserInputSnapshot({
+          snapshotVersion: 6,
+          processingState: 'failed',
+        }),
+      )
+    apiMock.resolveThreadUserInputByIdV3.mockRejectedValue(new Error('resolve failed'))
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().resolveUserInput('req-1', [
+        { questionId: 'q1', value: 'yes', label: 'Yes' },
+      ])
+    })
+
+    expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)
+    expect(state.telemetry.lastForcedReloadReason).toBe('USER_INPUT_RESOLVE_REQUEST_FAILED')
   })
 
   it('increments reconnect telemetry when stream errors and reopens stream without snapshot reload', async () => {
@@ -732,6 +886,7 @@ describe('threadByIdStoreV3', () => {
 
       expect(useThreadByIdStoreV3.getState().streamStatus).toBe('reconnecting')
       expect(useThreadByIdStoreV3.getState().telemetry.streamReconnectCount).toBe(1)
+      expect(useThreadByIdStoreV3.getState().telemetry.lastForcedReloadReason).toBeNull()
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1100)
@@ -864,6 +1019,7 @@ describe('threadByIdStoreV3', () => {
       const state = useThreadByIdStoreV3.getState()
       expect(state.lastEventId).toBeNull()
       expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)
+      expect(state.telemetry.lastForcedReloadReason).toBe('REPLAY_MISS')
       expect(getEventSourceMock().instances).toHaveLength(2)
       expect(getEventSourceMock().instances[1]?.url).not.toContain('last_event_id=')
     } finally {

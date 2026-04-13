@@ -1,6 +1,6 @@
 # Phase 07 to Phase 08 Handoff
 
-Status: Ready for execution handoff (all P07 gates passed).
+Status: Ready for execution handoff with pre-phase-8 hardening constraints.
 
 Date: 2026-04-13.
 
@@ -17,7 +17,8 @@ Phase 07 implementation is complete and validated:
 - structural sharing rules enforced for unchanged branches.
 - compatibility adapter keeps `snapshot.items` stable for existing UI consumers.
 
-Quantitative Phase 07 gates (`P07-G1/G2/G3`) pass with committed evidence.
+Quantitative Phase 07 gates (`P07-G1/G2/G3`) passed in the original closeout run.
+Pre-phase-8 hardening now requires candidate-backed evidence eligibility before any new gate closure.
 
 ## 2. Guarantees Intended for Phase 08
 
@@ -55,6 +56,10 @@ Completed validations:
 - `scripts/phase07_gate_report.py` -> pass (`P07-G1=32.857`, `P07-G2=3.0`, `P07-G3=0.0`).
 - `scripts/validate_render_freeze.py` -> pass.
 - Required P06 regression rerun -> pass.
+- Pre-phase-8 hardening baseline prepared:
+  - typed forced reload reason taxonomy in frontend store
+  - candidate eligibility enforcement in P07 source scripts and gate report
+  - selector guardrail entrypoints (`selectCore`, `selectTransport`, `selectUiControl`)
 
 Evidence artifacts:
 
@@ -67,7 +72,8 @@ Evidence artifacts:
 
 1. Phase 08 store splitting and selector narrowing must consume existing C5 structural-sharing behavior, not bypass it.
 2. Keep forced reload decisions contract-driven (`C2`/`C3`) and avoid broad fallback widening.
-3. If Phase 08 changes V3 apply/store paths materially, rerun both P07 and P06 gate scripts before closure.
+3. Regenerate Phase 07 gate evidence with candidate-backed artifacts (no synthetic evidence) before phase closure.
+4. If Phase 08 changes V3 apply/store paths materially, rerun both P07 and P06 gate scripts before closure.
 
 ## 6. Risk Notes for Phase 08
 
@@ -82,7 +88,7 @@ This handoff remains governed by:
 - `docs/render/decision-pack-v1.md`.
 - `docs/render/phases/phase-07-state-shape-hot-path/normalized-state-shape-v1.md`.
 - `docs/render/phases/phase-07-state-shape-hot-path/close-phase-v1.md`.
+- `docs/render/phases/phase-08-store-isolation-selectors/pre-phase-8-hardening-v1.md`.
 - `docs/render/system-freeze/contracts/c2-replay-resync-contract-v1.md`.
 - `docs/render/system-freeze/contracts/c3-lifecycle-gating-contract-v1.md`.
 - `docs/render/system-freeze/contracts/c5-frontend-state-contract-v1.md`.
-

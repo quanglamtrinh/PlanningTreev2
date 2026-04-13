@@ -98,7 +98,7 @@ def _baseline_metadata(baseline_path: Path | None) -> dict[str, Any] | None:
     return metadata
 
 
-def _load_source_metric(*, artifact_path: Path, gate: dict[str, Any]) -> float:
+def _load_source_artifact(*, artifact_path: Path, gate: dict[str, Any]) -> dict[str, Any]:
     if not artifact_path.exists():
         raise ValueError(f"Missing source artifact for {gate['id']}: {artifact_path.as_posix()}")
     payload = _load_json(artifact_path)
@@ -115,7 +115,42 @@ def _load_source_metric(*, artifact_path: Path, gate: dict[str, Any]) -> float:
     value = payload.get("value")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{artifact_path.as_posix()}: missing numeric field 'value' for metric '{metric}'.")
-    return float(value)
+    status = str(payload.get("status") or "").strip()
+    if status not in {"pass", "fail"}:
+        raise ValueError(f"{artifact_path.as_posix()}: missing/invalid status field.")
+    evidence_mode = str(payload.get("evidence_mode") or "").strip()
+    gate_eligible = payload.get("gate_eligible")
+    context = payload.get("context")
+    if not isinstance(context, dict):
+        raise ValueError(f"{artifact_path.as_posix()}: missing object field 'context'.")
+    candidate_path = context.get("candidate_path")
+    candidate_commit_sha = context.get("candidate_commit_sha")
+
+    eligibility_issues: list[str] = []
+    if evidence_mode not in {"candidate", "synthetic"}:
+        eligibility_issues.append("invalid evidence_mode (expected candidate|synthetic)")
+    if not isinstance(gate_eligible, bool):
+        eligibility_issues.append("gate_eligible must be boolean")
+    if evidence_mode == "candidate":
+        if gate_eligible is not True:
+            eligibility_issues.append("candidate evidence must set gate_eligible=true")
+        if not isinstance(candidate_path, str) or not candidate_path.strip():
+            eligibility_issues.append("candidate evidence requires non-empty context.candidate_path")
+        if not isinstance(candidate_commit_sha, str) or not candidate_commit_sha.strip():
+            eligibility_issues.append("candidate evidence requires non-empty context.candidate_commit_sha")
+    elif evidence_mode == "synthetic":
+        if gate_eligible is not False:
+            eligibility_issues.append("synthetic evidence must set gate_eligible=false")
+
+    return {
+        "value": float(value),
+        "status": status,
+        "evidence_mode": evidence_mode,
+        "gate_eligible": bool(gate_eligible) if isinstance(gate_eligible, bool) else False,
+        "candidate_path": candidate_path,
+        "candidate_commit_sha": candidate_commit_sha,
+        "eligibility_issues": eligibility_issues,
+    }
 
 
 def _build_report(
@@ -127,12 +162,22 @@ def _build_report(
 ) -> dict[str, Any]:
     gate_results: list[dict[str, Any]] = []
     pass_count = 0
+    eligibility_fail_count = 0
     for gate in gates:
         artifact_path = evidence_dir / f"{gate['source']}.json"
-        value = _load_source_metric(artifact_path=artifact_path, gate=gate)
-        passed = _evaluate(str(gate["operator"]), value, float(gate["target"]))
+        source_artifact = _load_source_artifact(artifact_path=artifact_path, gate=gate)
+        value = float(source_artifact["value"])
+        metric_passed = _evaluate(str(gate["operator"]), value, float(gate["target"]))
+        eligible = (
+            source_artifact["evidence_mode"] == "candidate"
+            and source_artifact["gate_eligible"] is True
+            and len(source_artifact["eligibility_issues"]) == 0
+        )
+        passed = metric_passed and eligible
         if passed:
             pass_count += 1
+        if not eligible:
+            eligibility_fail_count += 1
         gate_results.append(
             {
                 "id": str(gate["id"]),
@@ -142,6 +187,13 @@ def _build_report(
                 "operator": str(gate["operator"]),
                 "target": float(gate["target"]),
                 "pass": passed,
+                "metric_pass": metric_passed,
+                "artifact_status": source_artifact["status"],
+                "evidence_mode": source_artifact["evidence_mode"],
+                "gate_eligible": source_artifact["gate_eligible"],
+                "candidate_path": source_artifact["candidate_path"],
+                "candidate_commit_sha": source_artifact["candidate_commit_sha"],
+                "eligibility_issues": source_artifact["eligibility_issues"],
                 "artifact": artifact_path.as_posix(),
             }
         )
@@ -161,11 +213,13 @@ def _build_report(
             "evidence_dir": evidence_dir.as_posix(),
             "candidate_path": candidate_path.as_posix() if candidate_path is not None else None,
             "gate_count": len(gates),
+            "eligibility_fail_count": eligibility_fail_count,
         },
         "summary": {
             "all_pass": all_pass,
             "pass_count": pass_count,
             "total_gates": len(gates),
+            "eligibility_fail_count": eligibility_fail_count,
         },
         "gates": gate_results,
     }
@@ -176,7 +230,7 @@ def _build_report(
 
 
 def _validate_contract(payload: dict[str, Any]) -> None:
-    required_fields = ["phase", "generated_at", "source", "status", "metric", "value", "target", "operator", "pass", "context", "gates"]
+    required_fields = ["phase", "generated_at", "source", "status", "metric", "value", "target", "operator", "pass", "context", "summary", "gates"]
     for field in required_fields:
         if field not in payload:
             raise ValueError(f"Self-test: missing required field '{field}'.")
@@ -196,15 +250,43 @@ def _validate_contract(payload: dict[str, Any]) -> None:
         raise ValueError("Self-test: pass must be boolean.")
     if not isinstance(payload["context"], dict):
         raise ValueError("Self-test: context must be object.")
+    summary = payload["summary"]
+    if not isinstance(summary, dict):
+        raise ValueError("Self-test: summary must be object.")
+    eligibility_fail_count = summary.get("eligibility_fail_count")
+    if isinstance(eligibility_fail_count, bool) or not isinstance(eligibility_fail_count, int):
+        raise ValueError("Self-test: summary.eligibility_fail_count must be int.")
     gates = payload["gates"]
     if not isinstance(gates, list) or len(gates) < 1:
         raise ValueError("Self-test: gates must be a non-empty list.")
     for gate in gates:
         if not isinstance(gate, dict):
             raise ValueError("Self-test: gate entries must be objects.")
-        for field in ("id", "source", "metric", "value", "operator", "target", "pass", "artifact"):
+        for field in (
+            "id",
+            "source",
+            "metric",
+            "value",
+            "operator",
+            "target",
+            "pass",
+            "artifact",
+            "metric_pass",
+            "artifact_status",
+            "evidence_mode",
+            "gate_eligible",
+            "candidate_path",
+            "candidate_commit_sha",
+            "eligibility_issues",
+        ):
             if field not in gate:
                 raise ValueError(f"Self-test: gate missing field '{field}'.")
+        if gate["evidence_mode"] not in {"candidate", "synthetic"}:
+            raise ValueError("Self-test: gate.evidence_mode must be candidate/synthetic.")
+        if not isinstance(gate["gate_eligible"], bool):
+            raise ValueError("Self-test: gate.gate_eligible must be boolean.")
+        if not isinstance(gate["eligibility_issues"], list):
+            raise ValueError("Self-test: gate.eligibility_issues must be list.")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -253,4 +335,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

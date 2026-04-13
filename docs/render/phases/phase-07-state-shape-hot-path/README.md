@@ -49,6 +49,11 @@ Preflight baseline and evidence conventions:
 - `docs/render/phases/phase-07-state-shape-hot-path/evidence/reducer_identity_tests.json`.
 - `docs/render/phases/phase-07-state-shape-hot-path/evidence/phase07-gate-report.json`.
 
+Pre-phase-8 hardening note:
+
+- Phase 07 gate closure now requires candidate-backed source evidence (`evidence_mode="candidate"`, `gate_eligible=true`).
+- Synthetic evidence is allowed only for local dry-run and cannot be used for gate closure.
+
 Closeout artifacts:
 
 - `docs/render/phases/phase-07-state-shape-hot-path/close-phase-v1.md`.

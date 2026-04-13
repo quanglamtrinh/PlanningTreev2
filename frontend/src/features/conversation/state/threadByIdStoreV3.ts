@@ -21,10 +21,21 @@ const FRAME_BATCH_FALLBACK_FLUSH_MS = 16
 const FRAME_BATCH_MAX_QUEUE_AGE_MS = 50
 
 export type ThreadByIdStreamStatusV3 = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'error'
+export type ReloadReasonCode =
+  | 'REPLAY_MISS'
+  | 'CONTRACT_ENVELOPE_INVALID'
+  | 'CONTRACT_THREAD_ID_MISMATCH'
+  | 'CONTRACT_EVENT_CURSOR_INVALID'
+  | 'APPLY_EVENT_FAILED'
+  | 'USER_INPUT_RESOLVE_TIMEOUT'
+  | 'USER_INPUT_RESOLVE_REQUEST_FAILED'
+  | 'STREAM_HEALTHCHECK_FAILED'
+  | 'MANUAL_RETRY'
 export type ThreadByIdTelemetryV3 = {
   streamReconnectCount: number
   applyErrorCount: number
   forcedSnapshotReloadCount: number
+  lastForcedReloadReason: ReloadReasonCode | null
   batchedFlushCount: number
   batchedEventsApplied: number
   forcedFlushCount: number
@@ -73,6 +84,49 @@ export type ThreadByIdStoreV3State = {
   disconnectThread: () => void
 }
 
+export type ThreadCoreState = Pick<
+  ThreadByIdStoreV3State,
+  'snapshot' | 'lastEventId' | 'lastSnapshotVersion' | 'processingStartedAt' | 'lastCompletedAt' | 'lastDurationMs'
+>
+export type ThreadTransportState = Pick<
+  ThreadByIdStoreV3State,
+  'activeProjectId' | 'activeNodeId' | 'activeThreadId' | 'activeThreadRole' | 'streamStatus'
+>
+export type ThreadUiControlState = Pick<
+  ThreadByIdStoreV3State,
+  'isLoading' | 'isSending' | 'error' | 'telemetry'
+>
+
+export function selectCore(state: ThreadByIdStoreV3State): ThreadCoreState {
+  return {
+    snapshot: state.snapshot,
+    lastEventId: state.lastEventId,
+    lastSnapshotVersion: state.lastSnapshotVersion,
+    processingStartedAt: state.processingStartedAt,
+    lastCompletedAt: state.lastCompletedAt,
+    lastDurationMs: state.lastDurationMs,
+  }
+}
+
+export function selectTransport(state: ThreadByIdStoreV3State): ThreadTransportState {
+  return {
+    activeProjectId: state.activeProjectId,
+    activeNodeId: state.activeNodeId,
+    activeThreadId: state.activeThreadId,
+    activeThreadRole: state.activeThreadRole,
+    streamStatus: state.streamStatus,
+  }
+}
+
+export function selectUiControl(state: ThreadByIdStoreV3State): ThreadUiControlState {
+  return {
+    isLoading: state.isLoading,
+    isSending: state.isSending,
+    error: state.error,
+    telemetry: state.telemetry,
+  }
+}
+
 let threadEventSource: EventSource | null = null
 let clearThreadEventStreamBuffers: (() => void) | null = null
 let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
@@ -88,6 +142,7 @@ const DEFAULT_TELEMETRY_V3: ThreadByIdTelemetryV3 = {
   streamReconnectCount: 0,
   applyErrorCount: 0,
   forcedSnapshotReloadCount: 0,
+  lastForcedReloadReason: null,
   batchedFlushCount: 0,
   batchedEventsApplied: 0,
   forcedFlushCount: 0,
@@ -246,6 +301,99 @@ function compareEventIdCursor(previous: string | null, current: string): number 
   return 1
 }
 
+type ReloadPolicyV3 =
+  | {
+      kind: 'forced'
+      reason: ReloadReasonCode
+      setLoading?: boolean
+      message?: string | null
+    }
+  | {
+      kind: 'soft'
+      setLoading?: boolean
+      reason?: string | null
+      message?: string | null
+    }
+
+type ReloadTriggerV3 =
+  | { type: 'stream_replay_miss'; message: string }
+  | { type: 'contract_envelope_invalid'; message: string }
+  | { type: 'contract_thread_id_mismatch'; message: string }
+  | { type: 'contract_event_cursor_invalid'; message: string }
+  | { type: 'apply_event_failed'; message: string }
+  | { type: 'user_input_resolve_timeout' }
+  | { type: 'user_input_resolve_request_failed'; message: string }
+  | { type: 'stream_healthcheck_failed'; setLoading: boolean }
+  | { type: 'manual_retry'; setLoading?: boolean; message?: string | null }
+
+export function decideReloadPolicy(trigger: ReloadTriggerV3): ReloadPolicyV3 {
+  switch (trigger.type) {
+    case 'stream_replay_miss':
+      return {
+        kind: 'forced',
+        reason: 'REPLAY_MISS',
+        setLoading: false,
+        message: trigger.message,
+      }
+    case 'contract_envelope_invalid':
+      return {
+        kind: 'forced',
+        reason: 'CONTRACT_ENVELOPE_INVALID',
+        setLoading: false,
+        message: trigger.message,
+      }
+    case 'contract_thread_id_mismatch':
+      return {
+        kind: 'forced',
+        reason: 'CONTRACT_THREAD_ID_MISMATCH',
+        setLoading: false,
+        message: trigger.message,
+      }
+    case 'contract_event_cursor_invalid':
+      return {
+        kind: 'forced',
+        reason: 'CONTRACT_EVENT_CURSOR_INVALID',
+        setLoading: false,
+        message: trigger.message,
+      }
+    case 'apply_event_failed':
+      return {
+        kind: 'forced',
+        reason: 'APPLY_EVENT_FAILED',
+        setLoading: false,
+        message: trigger.message,
+      }
+    case 'user_input_resolve_timeout':
+      return {
+        kind: 'forced',
+        reason: 'USER_INPUT_RESOLVE_TIMEOUT',
+        setLoading: false,
+      }
+    case 'user_input_resolve_request_failed':
+      return {
+        kind: 'forced',
+        reason: 'USER_INPUT_RESOLVE_REQUEST_FAILED',
+        setLoading: false,
+        message: trigger.message,
+      }
+    case 'stream_healthcheck_failed':
+      return {
+        kind: 'forced',
+        reason: 'STREAM_HEALTHCHECK_FAILED',
+        setLoading: trigger.setLoading,
+      }
+    case 'manual_retry':
+      return {
+        kind: 'forced',
+        reason: 'MANUAL_RETRY',
+        setLoading: trigger.setLoading,
+        message: trigger.message,
+      }
+    default:
+      return { kind: 'soft', setLoading: false }
+  }
+}
+
 async function reloadThreadSnapshot(
   get: () => ThreadByIdStoreV3State,
   set: (
@@ -258,29 +406,27 @@ async function reloadThreadSnapshot(
   threadId: string,
   threadRole: ThreadRole,
   generation: number,
-  options: {
-    setLoading?: boolean
-    reason?: string | null
-    countAsForcedReload?: boolean
-  } = {},
+  policy: ReloadPolicyV3 = { kind: 'soft', setLoading: false },
 ) {
   clearReconnectTimer()
   closeThreadEventSource()
 
-  if (options.countAsForcedReload) {
+  if (policy.kind === 'forced') {
     set((state) => ({
       telemetry: {
         ...state.telemetry,
         forcedSnapshotReloadCount: state.telemetry.forcedSnapshotReloadCount + 1,
+        lastForcedReloadReason: policy.reason,
       },
     }))
   }
 
-  if (options.setLoading) {
+  if (policy.setLoading) {
+    const errorMessage = policy.message ?? (policy.kind === 'soft' ? policy.reason ?? null : null)
     set({
       isLoading: true,
       streamStatus: 'connecting',
-      error: options.reason ?? null,
+      error: errorMessage,
     })
   }
 
@@ -365,6 +511,7 @@ function scheduleStreamReopen(
     }
     if (!state.snapshot) {
       void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
+        kind: 'soft',
         setLoading: false,
         reason: state.error,
       })
@@ -414,11 +561,16 @@ function scheduleResolveFallbackReload(
     if (!pending || pending.status !== 'answer_submitted') {
       return
     }
-    void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
-      setLoading: false,
-      reason: null,
-      countAsForcedReload: true,
-    })
+    void reloadThreadSnapshot(
+      get,
+      set,
+      projectId,
+      nodeId,
+      threadId,
+      threadRole,
+      generation,
+      decideReloadPolicy({ type: 'user_input_resolve_timeout' }),
+    )
   }, USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS)
   resolveFallbackTimers.set(requestId, timer)
 }
@@ -467,11 +619,16 @@ async function openThreadEventStream(
           streamStatus: 'error',
           error: reason,
         })
-        void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
-          setLoading: false,
-          reason,
-          countAsForcedReload: true,
-        })
+        void reloadThreadSnapshot(
+          get,
+          set,
+          projectId,
+          nodeId,
+          threadId,
+          threadRole,
+          generation,
+          decideReloadPolicy({ type: 'stream_replay_miss', message: reason }),
+        )
         return
       }
     } catch (error) {
@@ -538,7 +695,13 @@ async function openThreadEventStream(
 
   clearThreadEventStreamBuffers = clearQueuedBusinessFrames
 
-  const failContract = (reason: string) => {
+  const failContract = (
+    trigger:
+      | { type: 'contract_envelope_invalid'; message: string }
+      | { type: 'contract_thread_id_mismatch'; message: string }
+      | { type: 'contract_event_cursor_invalid'; message: string },
+  ) => {
+    const reason = trigger.message
     clearQueuedBusinessFrames()
     if (threadRole === 'ask_planning') {
       void api.reportAskRolloutMetricEvent('stream_error').catch(() => undefined)
@@ -551,11 +714,16 @@ async function openThreadEventStream(
         envelope_validation_failure_count: state.telemetry.envelope_validation_failure_count + 1,
       },
     }))
-    void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
-      setLoading: false,
-      reason,
-      countAsForcedReload: true,
-    })
+    void reloadThreadSnapshot(
+      get,
+      set,
+      projectId,
+      nodeId,
+      threadId,
+      threadRole,
+      generation,
+      decideReloadPolicy(trigger),
+    )
   }
 
   const applyStreamOpen = (
@@ -647,7 +815,10 @@ async function openThreadEventStream(
     for (const frame of frames) {
       const event = frame.event
       if (event.threadId !== threadId) {
-        failContract(`Thread event thread_id mismatch: expected ${threadId} but received ${event.threadId}.`)
+        failContract({
+          type: 'contract_thread_id_mismatch',
+          message: `Thread event thread_id mismatch: expected ${threadId} but received ${event.threadId}.`,
+        })
         return
       }
       if (
@@ -664,11 +835,17 @@ async function openThreadEventStream(
             cursorOrder === 0
               ? `Duplicate event_id detected: ${event.eventId}.`
               : `Non-monotonic event_id detected: ${event.eventId} after ${workingLastEventId}.`
-          failContract(orderReason)
+          failContract({
+            type: 'contract_event_cursor_invalid',
+            message: orderReason,
+          })
           return
         }
       } catch {
-        failContract(`Invalid event_id cursor state. last_event_id=${workingLastEventId}`)
+        failContract({
+          type: 'contract_event_cursor_invalid',
+          message: `Invalid event_id cursor state. last_event_id=${workingLastEventId}`,
+        })
         return
       }
 
@@ -691,11 +868,16 @@ async function openThreadEventStream(
               applyErrorCount: state.telemetry.applyErrorCount + 1,
             },
           }))
-          void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
-            setLoading: false,
-            reason: error.message,
-            countAsForcedReload: true,
-          })
+          void reloadThreadSnapshot(
+            get,
+            set,
+            projectId,
+            nodeId,
+            threadId,
+            threadRole,
+            generation,
+            decideReloadPolicy({ type: 'apply_event_failed', message: error.message }),
+          )
           return
         }
         throw error
@@ -846,7 +1028,10 @@ async function openThreadEventStream(
       enqueueBusinessEvent(frame.event, frame.legacyFallbackUsed)
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
-      failContract(reason)
+      failContract({
+        type: 'contract_envelope_invalid',
+        message: reason,
+      })
     }
   }
 
@@ -1104,11 +1289,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           activeThreadId,
           activeThreadRole,
           generation,
-          {
+          decideReloadPolicy({
+            type: 'stream_healthcheck_failed',
             setLoading: isLoading && streamStatus === 'connecting',
-            reason: null,
-            countAsForcedReload: true,
-          },
+          }),
         )
         return
       }
@@ -1142,11 +1326,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         activeThreadId,
         activeThreadRole,
         generation,
-        {
-          setLoading: false,
-          reason,
-          countAsForcedReload: true,
-        },
+        decideReloadPolicy({
+          type: 'user_input_resolve_request_failed',
+          message: reason,
+        }),
       )
     }
   },

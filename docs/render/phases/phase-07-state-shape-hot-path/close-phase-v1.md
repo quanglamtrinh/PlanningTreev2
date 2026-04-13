@@ -6,6 +6,8 @@ Date: 2026-04-13.
 
 Phase: `phase-07-state-shape-hot-path` (C02, C03, C04).
 
+Note: this closeout reflects the original Phase 07 execution. Pre-phase-8 hardening introduced stricter evidence eligibility rules; use `docs/render/phases/phase-08-store-isolation-selectors/pre-phase-8-hardening-v1.md` for the current rerun runbook.
+
 ## 1. Closeout Summary
 
 Implemented scope:
@@ -87,4 +89,3 @@ Required evidence files for gate closure:
 - [x] P06 regression gates rerun and still pass.
 - [x] Phase 07 README status updated to `Completed`.
 - [x] `handoff-to-phase-08.md` prepared for execution handoff.
-

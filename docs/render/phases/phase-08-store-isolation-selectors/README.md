@@ -1,6 +1,6 @@
 ﻿# Phase 08 - Store Isolation and Selectors
 
-Status: Planned.
+Status: Planned (pre-phase-8 hardening complete).
 
 Scope IDs: C05, C06, C08.
 
@@ -24,6 +24,21 @@ Must-hold decisions:
 - Forced reload is allowed only for explicit mismatch/corruption paths.
 - Reload reasons must map to contract-defined failure classes.
 - Selector scoping must not hide lifecycle-critical state changes.
+
+## Pre-Phase-8 Hardening Baseline
+
+Completed hardening package (must remain true while implementing Phase 08):
+
+1. Phase 07 evidence gating requires candidate-backed artifacts (`evidence_mode="candidate"` and `gate_eligible=true`).
+2. Forced reload classification is centralized and reason-coded (`ReloadReasonCode` taxonomy).
+3. Store guardrail selector entrypoints exist for migration:
+   - `selectCore`
+   - `selectTransport`
+   - `selectUiControl`
+
+Runbook and checklist:
+
+- `docs/render/phases/phase-08-store-isolation-selectors/pre-phase-8-hardening-v1.md`.
 
 
 ## Objective
@@ -63,6 +78,7 @@ Force full reload only for true corruption/mismatch cases:
 - explicit replay gap mismatch
 - unrecoverable schema mismatch
 - invalid order invariant breach
+- explicit typed forced-reload reasons (no null forced reason)
 
 ## Implementation Plan
 

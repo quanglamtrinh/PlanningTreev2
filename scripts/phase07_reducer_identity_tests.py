@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -103,22 +104,49 @@ def _baseline_metadata(baseline_path: Path | None) -> dict[str, Any] | None:
     return metadata
 
 
+def _resolve_evidence_inputs(
+    *,
+    candidate_path: Path | None,
+    allow_synthetic: bool,
+    candidate_commit_sha: str | None,
+) -> tuple[str, bool, Path | None, str]:
+    normalized_candidate_commit_sha = str(candidate_commit_sha or "").strip()
+    if candidate_path is None:
+        if not allow_synthetic:
+            raise ValueError(
+                "Missing --candidate. Provide candidate identity evidence or use --allow-synthetic for local dry-run only."
+            )
+        return ("synthetic", False, None, "synthetic-local")
+    if not candidate_path.exists():
+        raise ValueError(f"Candidate file not found: {candidate_path}")
+    if not normalized_candidate_commit_sha:
+        raise ValueError(
+            "Missing candidate commit SHA. Provide --candidate-commit-sha or set PTM_CANDIDATE_COMMIT_SHA."
+        )
+    return ("candidate", True, candidate_path, normalized_candidate_commit_sha)
+
+
 def _build_payload(
     *,
     gate: dict[str, Any],
     baseline_path: Path | None,
     candidate_path: Path | None,
+    allow_synthetic: bool,
+    candidate_commit_sha: str | None,
 ) -> dict[str, Any]:
+    evidence_mode, gate_eligible, resolved_candidate_path, resolved_candidate_commit_sha = _resolve_evidence_inputs(
+        candidate_path=candidate_path,
+        allow_synthetic=allow_synthetic,
+        candidate_commit_sha=candidate_commit_sha,
+    )
     total_cases = 120.0
     identity_break_cases = 0.0
     unchanged_items_checked = 3200.0
     unchanged_order_cases = 95.0
     unchanged_signal_cases = 88.0
 
-    if candidate_path is not None:
-        if not candidate_path.exists():
-            raise ValueError(f"Candidate file not found: {candidate_path}")
-        candidate_payload = _load_json(candidate_path)
+    if resolved_candidate_path is not None:
+        candidate_payload = _load_json(resolved_candidate_path)
         extracted_total_cases = _first_number(candidate_payload, ["context.total_cases", "candidate_metrics.total_cases"])
         if extracted_total_cases is not None and extracted_total_cases > 0:
             total_cases = extracted_total_cases
@@ -147,6 +175,8 @@ def _build_payload(
         "phase": PHASE_ID,
         "generated_at": _now_iso(),
         "source": SOURCE,
+        "evidence_mode": evidence_mode,
+        "gate_eligible": gate_eligible,
         "status": "pass" if passed else "fail",
         "metric": str(gate["metric"]),
         "value": value,
@@ -160,7 +190,8 @@ def _build_payload(
             "unchanged_items_checked": int(unchanged_items_checked),
             "unchanged_order_cases": int(unchanged_order_cases),
             "unchanged_signal_cases": int(unchanged_signal_cases),
-            "candidate_path": candidate_path.as_posix() if candidate_path is not None else None,
+            "candidate_path": resolved_candidate_path.as_posix() if resolved_candidate_path is not None else None,
+            "candidate_commit_sha": resolved_candidate_commit_sha,
         },
     }
     metadata = _baseline_metadata(baseline_path)
@@ -170,7 +201,20 @@ def _build_payload(
 
 
 def _validate_contract(payload: dict[str, Any]) -> None:
-    required_fields = ["phase", "generated_at", "source", "status", "metric", "value", "target", "operator", "pass", "context"]
+    required_fields = [
+        "phase",
+        "generated_at",
+        "source",
+        "evidence_mode",
+        "gate_eligible",
+        "status",
+        "metric",
+        "value",
+        "target",
+        "operator",
+        "pass",
+        "context",
+    ]
     for field in required_fields:
         if field not in payload:
             raise ValueError(f"Self-test: missing required field '{field}'.")
@@ -179,6 +223,10 @@ def _validate_contract(payload: dict[str, Any]) -> None:
         raise ValueError(f"Self-test: phase must be '{PHASE_ID}'.")
     if payload["source"] != SOURCE:
         raise ValueError(f"Self-test: source must be '{SOURCE}'.")
+    if payload["evidence_mode"] not in {"candidate", "synthetic"}:
+        raise ValueError("Self-test: evidence_mode must be candidate/synthetic.")
+    if not isinstance(payload["gate_eligible"], bool):
+        raise ValueError("Self-test: gate_eligible must be boolean.")
     if payload["status"] not in {"pass", "fail"}:
         raise ValueError("Self-test: status must be pass/fail.")
     if isinstance(payload["value"], bool) or not isinstance(payload["value"], (int, float)):
@@ -192,6 +240,20 @@ def _validate_contract(payload: dict[str, Any]) -> None:
     if not isinstance(payload["context"], dict):
         raise ValueError("Self-test: context must be object.")
 
+    context = payload["context"]
+    candidate_path = context.get("candidate_path")
+    candidate_commit_sha = context.get("candidate_commit_sha")
+    if not isinstance(candidate_commit_sha, str) or not candidate_commit_sha.strip():
+        raise ValueError("Self-test: context.candidate_commit_sha must be non-empty string.")
+    if payload["evidence_mode"] == "candidate":
+        if payload["gate_eligible"] is not True:
+            raise ValueError("Self-test: candidate evidence must be gate_eligible=true.")
+        if not isinstance(candidate_path, str) or not candidate_path.strip():
+            raise ValueError("Self-test: candidate evidence requires non-empty context.candidate_path.")
+    else:
+        if payload["gate_eligible"] is not False:
+            raise ValueError("Self-test: synthetic evidence must be gate_eligible=false.")
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -202,7 +264,21 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_BASELINE,
         help="Optional baseline manifest or metrics JSON path.",
     )
-    parser.add_argument("--candidate", type=Path, help="Optional candidate identity JSON path.")
+    parser.add_argument(
+        "--candidate",
+        type=Path,
+        help="Candidate identity JSON path. Required unless --allow-synthetic is set.",
+    )
+    parser.add_argument(
+        "--candidate-commit-sha",
+        type=str,
+        help="Candidate commit SHA (required with --candidate). Can also come from PTM_CANDIDATE_COMMIT_SHA.",
+    )
+    parser.add_argument(
+        "--allow-synthetic",
+        action="store_true",
+        help="Allow synthetic fallback evidence for local dry-run only (marks gate_eligible=false).",
+    )
     parser.add_argument("--self-test", action="store_true", help="Validate output contract before exit.")
     parser.add_argument(
         "--gates-file",
@@ -216,11 +292,14 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     try:
+        candidate_commit_sha = args.candidate_commit_sha or os.environ.get("PTM_CANDIDATE_COMMIT_SHA")
         gate = _gate_contract(args.gates_file)
         payload = _build_payload(
             gate=gate,
             baseline_path=args.baseline,
             candidate_path=args.candidate,
+            allow_synthetic=args.allow_synthetic,
+            candidate_commit_sha=candidate_commit_sha,
         )
         if args.self_test:
             _validate_contract(payload)
@@ -237,4 +316,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
