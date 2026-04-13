@@ -138,6 +138,13 @@ def get_conversation_v3_bridge_allowlist() -> set[str]:
     return {entry.strip() for entry in raw.split(",") if entry.strip()}
 
 
+def get_thread_actor_mode() -> str:
+    raw = str(os.environ.get("PLANNINGTREE_THREAD_ACTOR_MODE", "") or "").strip().lower()
+    if raw in {"off", "shadow", "on"}:
+        return raw
+    return "off"
+
+
 def is_conversation_v3_bridge_allowed_for_project(project_id: str) -> bool:
     mode = get_conversation_v3_bridge_mode()
     if mode == "enabled":

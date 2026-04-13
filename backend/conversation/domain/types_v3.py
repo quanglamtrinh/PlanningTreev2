@@ -20,6 +20,14 @@ ItemStatusV3 = Literal[
 ]
 ItemSourceV3 = Literal["upstream", "backend", "local"]
 ItemToneV3 = Literal["neutral", "info", "success", "warning", "danger", "muted"]
+ThreadActorModeV3 = Literal["off", "shadow", "on"]
+MiniJournalBoundaryTypeV3 = Literal[
+    "turn_completed",
+    "turn_failed",
+    "waiting_user_input",
+    "eviction",
+    "timer_checkpoint",
+]
 
 THREAD_ROLES_V3: tuple[ThreadRoleV3, ...] = ("ask_planning", "execution", "audit")
 PROCESSING_STATES_V3: tuple[ProcessingStateV3, ...] = ("idle", "running", "waiting_user_input", "failed")
@@ -36,6 +44,28 @@ ITEM_STATUSES_V3: tuple[ItemStatusV3, ...] = (
 )
 ITEM_SOURCES_V3: tuple[ItemSourceV3, ...] = ("upstream", "backend", "local")
 ITEM_TONES_V3: tuple[ItemToneV3, ...] = ("neutral", "info", "success", "warning", "danger", "muted")
+THREAD_ACTOR_MODES_V3: tuple[ThreadActorModeV3, ...] = ("off", "shadow", "on")
+MINI_JOURNAL_BOUNDARY_TYPES_V3: tuple[MiniJournalBoundaryTypeV3, ...] = (
+    "turn_completed",
+    "turn_failed",
+    "waiting_user_input",
+    "eviction",
+    "timer_checkpoint",
+)
+
+
+class MiniJournalRecordV3(TypedDict):
+    journalSeq: int
+    projectId: str
+    nodeId: str
+    threadRole: str
+    threadId: str
+    turnId: str | None
+    eventIdStart: int
+    eventIdEnd: int
+    boundaryType: MiniJournalBoundaryTypeV3
+    snapshotVersionAtWrite: int
+    createdAt: str
 
 
 class ItemBaseV3(TypedDict):

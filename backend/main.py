@@ -13,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
+from backend.conversation.services.thread_actor_runtime_v3 import ThreadActorRuntimeV3
+from backend.conversation.services.thread_checkpoint_policy_v3 import ThreadCheckpointPolicyV3
 from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
 from backend.conversation.services.thread_replay_buffer_service_v3 import ThreadReplayBufferServiceV3
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
@@ -32,6 +34,7 @@ from backend.config.app_config import (
     get_rehearsal_workspace_root,
     get_spec_gen_timeout,
     get_split_timeout,
+    get_thread_actor_mode,
     is_ask_v3_backend_enabled,
     is_ask_v3_frontend_enabled,
 )
@@ -144,6 +147,9 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     )
     request_ledger_service_v3 = RequestLedgerServiceV3()
     thread_replay_buffer_service_v3 = ThreadReplayBufferServiceV3(max_events=500, ttl_seconds=15 * 60)
+    thread_actor_runtime_v3 = ThreadActorRuntimeV3()
+    checkpoint_policy_v3 = ThreadCheckpointPolicyV3(timer_checkpoint_ms=5000)
+    thread_actor_mode = get_thread_actor_mode()
     conversation_event_broker_v3 = ChatEventBroker()
     workflow_event_broker = GlobalEventBroker()
     workflow_event_publisher = WorkflowEventPublisher(workflow_event_broker)
@@ -158,6 +164,10 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         request_ledger_service=request_ledger_service_v3,
         thread_event_broker=conversation_event_broker_v3,
         replay_buffer_service=thread_replay_buffer_service_v3,
+        mini_journal_store_v3=storage.thread_mini_journal_store_v3,
+        checkpoint_policy_v3=checkpoint_policy_v3,
+        actor_runtime_v3=thread_actor_runtime_v3,
+        thread_actor_mode=thread_actor_mode,
     )
     thread_runtime_service_v3 = ThreadRuntimeServiceV3(
         storage=storage,
@@ -169,6 +179,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         chat_timeout=get_chat_timeout(),
         max_message_chars=get_max_chat_message_chars(),
         ask_rollout_metrics_service=ask_rollout_metrics_service,
+        thread_actor_mode=thread_actor_mode,
     )
     system_message_writer_v2.set_runtime_service(thread_runtime_service_v3)
     review_service = ReviewService(

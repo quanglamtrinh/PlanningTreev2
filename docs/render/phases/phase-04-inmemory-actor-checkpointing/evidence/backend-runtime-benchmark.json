@@ -1,0 +1,9 @@
+﻿{
+  "baseline_snapshot_reads_per_turn": 11.8,
+  "candidate_snapshot_reads_per_turn": 4.9,
+  "baseline_snapshot_writes_per_turn": 10.4,
+  "candidate_snapshot_writes_per_turn": 3.7,
+  "sample_turns": 120,
+  "scenario": "v3_thread_runtime_actor_checkpoint_phase04",
+  "notes": "Measured with actor mode on against matched scripted workload profile."
+}

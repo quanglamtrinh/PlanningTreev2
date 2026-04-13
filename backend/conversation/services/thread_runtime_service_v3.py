@@ -7,9 +7,11 @@ import threading
 import time
 from typing import Any, Callable
 
+from backend.config.app_config import get_thread_actor_mode
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.types_v3 import (
     ConversationItemV3,
+    ThreadActorModeV3,
     ThreadRoleV3,
     ThreadSnapshotV3,
     UserInputAnswerV3,
@@ -223,6 +225,7 @@ class ThreadRuntimeServiceV3:
         ask_rollout_metrics_service: Any | None = None,
         coalescing_window_ms: int = _COMPACTION_WINDOW_MS_DEFAULT,
         coalescing_max_batch_size: int = _COMPACTION_MAX_BATCH_SIZE_DEFAULT,
+        thread_actor_mode: ThreadActorModeV3 | str | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -238,6 +241,27 @@ class ThreadRuntimeServiceV3:
             min(_COMPACTION_WINDOW_MS_MAX, int(coalescing_window_ms)),
         )
         self._coalescing_max_batch_size = max(1, int(coalescing_max_batch_size))
+        resolved_mode = str(thread_actor_mode or get_thread_actor_mode()).strip().lower()
+        if resolved_mode not in {"off", "shadow", "on"}:
+            resolved_mode = "off"
+        self._thread_actor_mode: ThreadActorModeV3 = resolved_mode  # type: ignore[assignment]
+
+    def _persist_mutation_v3(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        snapshot: ThreadSnapshotV3,
+        events: list[dict[str, Any]],
+    ) -> tuple[ThreadSnapshotV3, list[dict[str, Any]]]:
+        return self._query_service.persist_thread_mutation(
+            project_id,
+            node_id,
+            thread_role,
+            snapshot,
+            events,
+        )
 
     def start_turn(
         self,
@@ -336,12 +360,12 @@ class ThreadRuntimeServiceV3:
             active_turn_id=resolved_turn_id,
         )
         events.extend(lifecycle_events)
-        persisted, _ = self._query_service.persist_thread_mutation(
-            project_id,
-            node_id,
-            thread_role,
-            updated,
-            events,
+        persisted, _ = self._persist_mutation_v3(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            snapshot=updated,
+            events=events,
         )
         self._chat_service.register_external_live_turn(
             project_id,
@@ -374,12 +398,12 @@ class ThreadRuntimeServiceV3:
             error_item=error_item,
         )
 
-        persisted, _ = self._query_service.persist_thread_mutation(
-            project_id,
-            node_id,
-            thread_role,
-            updated,
-            events,
+        persisted, _ = self._persist_mutation_v3(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            snapshot=updated,
+            events=events,
         )
         if outcome == "waiting_user_input":
             return persisted
@@ -421,12 +445,12 @@ class ThreadRuntimeServiceV3:
                 "updatedAt": submitted_at,
             },
         )
-        self._query_service.persist_thread_mutation(
-            project_id,
-            node_id,
-            thread_role,
-            updated,
-            submit_events,
+        self._persist_mutation_v3(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            snapshot=updated,
+            events=submit_events,
         )
 
         rpc_answers = {str(answer["questionId"]): answer.get("value") for answer in normalized_answers}
@@ -462,12 +486,12 @@ class ThreadRuntimeServiceV3:
                 active_turn_id=None,
             )
             resolved_events.extend(lifecycle_events)
-        persisted, _ = self._query_service.persist_thread_mutation(
-            project_id,
-            node_id,
-            thread_role,
-            updated,
-            resolved_events,
+        persisted, _ = self._persist_mutation_v3(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            snapshot=updated,
+            events=resolved_events,
         )
         if str(persisted.get("activeTurnId") or "") != str(pending.get("turnId") or ""):
             turn_id = str(pending.get("turnId") or "").strip()
@@ -519,12 +543,12 @@ class ThreadRuntimeServiceV3:
             "format": "markdown",
         }
         updated, events = upsert_item_v3(snapshot, item)
-        persisted, _ = self._query_service.persist_thread_mutation(
-            project_id,
-            node_id,
-            thread_role,
-            updated,
-            events,
+        persisted, _ = self._persist_mutation_v3(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            snapshot=updated,
+            events=events,
         )
         return persisted
 
@@ -714,12 +738,12 @@ class ThreadRuntimeServiceV3:
             events.extend(raw_batch_events)
 
         if events:
-            self._query_service.persist_thread_mutation(
-                project_id,
-                node_id,
-                thread_role,
-                updated,
-                events,
+            self._persist_mutation_v3(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                snapshot=updated,
+                events=events,
             )
         return resolved_turn_status
 
@@ -1098,12 +1122,12 @@ class ThreadRuntimeServiceV3:
             provisional_tool_calls,
         )
         if events:
-            self._query_service.persist_thread_mutation(
-                project_id,
-                node_id,
-                thread_role,
-                updated,
-                events,
+            self._persist_mutation_v3(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                snapshot=updated,
+                events=events,
             )
 
     def _finalize_unmatched_provisional_tools(

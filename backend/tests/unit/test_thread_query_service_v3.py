@@ -9,6 +9,8 @@ from backend.conversation.domain import events as event_types
 from backend.conversation.domain.types import default_thread_snapshot
 from backend.conversation.domain.types_v3 import default_thread_snapshot_v3
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
+from backend.conversation.services.thread_actor_runtime_v3 import ThreadActorRuntimeV3
+from backend.conversation.services.thread_checkpoint_policy_v3 import ThreadCheckpointPolicyV3
 from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
 from backend.errors.app_errors import ConversationStreamMismatch, ConversationV3Missing
@@ -69,7 +71,13 @@ class _CaptureBroker:
         self.events.append(dict(envelope))
 
 
-def _build_service(storage, workspace_root: Path, *, broker: _CaptureBroker | None = None) -> tuple[ThreadQueryServiceV3, str, str]:
+def _build_service(
+    storage,
+    workspace_root: Path,
+    *,
+    broker: _CaptureBroker | None = None,
+    thread_actor_mode: str = "off",
+) -> tuple[ThreadQueryServiceV3, str, str]:
     project_id = ProjectService(storage).attach_project_folder(str(workspace_root))["project"]["id"]
     root_snapshot = storage.project_store.load_snapshot(project_id)
     node_id = root_snapshot["tree_state"]["root_node_id"]
@@ -91,6 +99,10 @@ def _build_service(storage, workspace_root: Path, *, broker: _CaptureBroker | No
         registry_service_v2=registry,
         request_ledger_service=RequestLedgerServiceV3(),
         thread_event_broker=capture,  # type: ignore[arg-type]
+        mini_journal_store_v3=storage.thread_mini_journal_store_v3,
+        checkpoint_policy_v3=ThreadCheckpointPolicyV3(timer_checkpoint_ms=5000),
+        actor_runtime_v3=ThreadActorRuntimeV3(),
+        thread_actor_mode=thread_actor_mode,
     )
     return service, project_id, node_id
 
@@ -387,3 +399,148 @@ def test_persist_thread_mutation_v3_never_suppresses_non_lifecycle_events(storag
         envelope for envelope in broker.events if envelope.get("type") == event_types.CONVERSATION_ITEM_PATCH_V3
     ]
     assert len(patch_envelopes) == 2
+
+
+def test_persist_thread_mutation_v3_actor_on_splits_publish_and_checkpoint(storage, workspace_root) -> None:
+    broker = _CaptureBroker()
+    service, project_id, node_id = _build_service(
+        storage,
+        workspace_root,
+        broker=broker,
+        thread_actor_mode="on",
+    )
+    snapshot = default_thread_snapshot_v3(project_id, node_id, "execution")
+    snapshot["threadId"] = "execution-thread-1"
+    snapshot["snapshotVersion"] = 0
+    storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, "execution", snapshot)
+
+    patch_event = {
+        "type": event_types.CONVERSATION_ITEM_PATCH_V3,
+        "payload": {
+            "itemId": "item-1",
+            "patch": {"kind": "message", "textAppend": "x"},
+        },
+    }
+    first_updated, _ = service.persist_thread_mutation(project_id, node_id, "execution", snapshot, [patch_event])
+    persisted_after_patch = storage.thread_snapshot_store_v3.read_snapshot(project_id, node_id, "execution")
+
+    assert int(first_updated["snapshotVersion"]) == 1
+    assert int(persisted_after_patch["snapshotVersion"]) == 0
+
+    lifecycle_event = {
+        "type": event_types.THREAD_LIFECYCLE_V3,
+        "payload": {
+            "state": event_types.WAITING_USER_INPUT,
+            "processingState": "waiting_user_input",
+            "activeTurnId": "turn-1",
+            "detail": None,
+        },
+    }
+    second_updated, _ = service.persist_thread_mutation(
+        project_id,
+        node_id,
+        "execution",
+        first_updated,
+        [lifecycle_event],
+    )
+    persisted_after_boundary = storage.thread_snapshot_store_v3.read_snapshot(project_id, node_id, "execution")
+
+    assert int(second_updated["snapshotVersion"]) == 2
+    assert int(persisted_after_boundary["snapshotVersion"]) == 2
+
+    journal_tail = storage.thread_mini_journal_store_v3.read_tail_after(
+        project_id,
+        node_id,
+        "execution",
+        thread_id="execution-thread-1",
+        cursor=0,
+    )
+    assert len(journal_tail) == 1
+    assert journal_tail[0]["boundaryType"] == "waiting_user_input"
+
+
+def test_get_thread_snapshot_v3_actor_on_fails_closed_on_journal_gap(storage, workspace_root) -> None:
+    service, project_id, node_id = _build_service(
+        storage,
+        workspace_root,
+        thread_actor_mode="on",
+    )
+    snapshot = default_thread_snapshot_v3(project_id, node_id, "execution")
+    snapshot["threadId"] = "execution-thread-1"
+    snapshot["snapshotVersion"] = 7
+    storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, "execution", snapshot)
+
+    storage.thread_mini_journal_store_v3.append_boundary_record(
+        project_id,
+        node_id,
+        "execution",
+        {
+            "journalSeq": 1,
+            "projectId": project_id,
+            "nodeId": node_id,
+            "threadRole": "execution",
+            "threadId": "execution-thread-1",
+            "turnId": "turn-1",
+            "eventIdStart": 10,
+            "eventIdEnd": 12,
+            "boundaryType": "turn_completed",
+            "snapshotVersionAtWrite": 7,
+            "createdAt": "2026-04-12T00:00:00Z",
+        },
+    )
+    storage.thread_mini_journal_store_v3.append_boundary_record(
+        project_id,
+        node_id,
+        "execution",
+        {
+            "journalSeq": 3,
+            "projectId": project_id,
+            "nodeId": node_id,
+            "threadRole": "execution",
+            "threadId": "execution-thread-1",
+            "turnId": "turn-2",
+            "eventIdStart": 13,
+            "eventIdEnd": 14,
+            "boundaryType": "turn_completed",
+            "snapshotVersionAtWrite": 7,
+            "createdAt": "2026-04-12T00:00:01Z",
+        },
+    )
+
+    with pytest.raises(ValueError):
+        service.get_thread_snapshot(project_id, node_id, "execution")
+
+
+def test_persist_thread_mutation_v3_shadow_keeps_legacy_authoritative(storage, workspace_root) -> None:
+    broker = _CaptureBroker()
+    service, project_id, node_id = _build_service(
+        storage,
+        workspace_root,
+        broker=broker,
+        thread_actor_mode="shadow",
+    )
+    snapshot = default_thread_snapshot_v3(project_id, node_id, "execution")
+    snapshot["threadId"] = "execution-thread-1"
+    snapshot["snapshotVersion"] = 0
+    storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, "execution", snapshot)
+
+    patch_event = {
+        "type": event_types.CONVERSATION_ITEM_PATCH_V3,
+        "payload": {
+            "itemId": "item-1",
+            "patch": {"kind": "message", "textAppend": "x"},
+        },
+    }
+    updated, _ = service.persist_thread_mutation(project_id, node_id, "execution", snapshot, [patch_event])
+    persisted = storage.thread_snapshot_store_v3.read_snapshot(project_id, node_id, "execution")
+    journal_tail = storage.thread_mini_journal_store_v3.read_tail_after(
+        project_id,
+        node_id,
+        "execution",
+        thread_id="execution-thread-1",
+        cursor=0,
+    )
+
+    assert int(updated["snapshotVersion"]) == 1
+    assert int(persisted["snapshotVersion"]) == 1
+    assert journal_tail == []
