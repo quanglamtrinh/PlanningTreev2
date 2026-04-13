@@ -116,6 +116,7 @@ def main() -> int:
         freeze_root / "contracts" / "c2-replay-resync-contract-v1.md",
         freeze_root / "contracts" / "c3-lifecycle-gating-contract-v1.md",
         freeze_root / "contracts" / "c4-durability-contract-v1.md",
+        freeze_root / "contracts" / "c4-mini-journal-spec-v1.md",
         freeze_root / "contracts" / "c5-frontend-state-contract-v1.md",
         freeze_root / "contracts" / "c6-queue-contract-v1.md",
         phases_root / "README.md",
@@ -210,6 +211,9 @@ def main() -> int:
         for cid in contract_ids:
             if f"`{cid}`" not in text:
                 errors.append(f"Phase {pid}: contract {cid} not referenced in README.")
+
+        if pid == "04" and "c4-mini-journal-spec-v1.md" not in text:
+            errors.append("Phase 04: missing reference to c4-mini-journal-spec-v1.md in README.")
 
         link_fragment = f"./{entry.get('slug')}/README.md"
         if link_fragment not in phase_index_text:

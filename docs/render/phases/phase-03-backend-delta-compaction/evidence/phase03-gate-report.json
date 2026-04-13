@@ -1,0 +1,34 @@
+{
+  "phase": "03",
+  "summary": {
+    "all_pass": true,
+    "baseline_persisted_events_per_turn": 18.4,
+    "candidate_persisted_events_per_turn": 9.8
+  },
+  "gates": [
+    {
+      "id": "P03-G1",
+      "metric": "persisted_events_per_turn_reduction_pct",
+      "value": 46.7391304347826,
+      "operator": "gte",
+      "target": 40.0,
+      "pass": true
+    },
+    {
+      "id": "P03-G2",
+      "metric": "semantic_mismatch_cases_vs_baseline",
+      "value": 0,
+      "operator": "lte",
+      "target": 0.0,
+      "pass": true
+    },
+    {
+      "id": "P03-G3",
+      "metric": "added_stream_latency_p95_ms",
+      "value": 34.7,
+      "operator": "lte",
+      "target": 80.0,
+      "pass": true
+    }
+  ]
+}

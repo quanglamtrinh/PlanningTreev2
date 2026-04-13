@@ -1,6 +1,6 @@
 # Phase 03 Closeout v1
 
-Status: Pending gate evidence before final close.
+Status: Completed (all gates passed).
 
 Date: 2026-04-12.
 
@@ -39,7 +39,7 @@ Unit test coverage:
 - `backend/tests/unit/test_thread_runtime_service_v3.py`
 - `backend/tests/unit/test_thread_query_service_v3.py`
 
-## 3. Validation Evidence (currently available)
+## 3. Validation Evidence
 
 Executed checks:
 
@@ -51,6 +51,7 @@ Interpretation:
 
 - correctness and regression checks are green for implemented logic.
 - governance alignment check is green.
+- quantitative gate evidence is present and all exit gates pass.
 
 ## 4. Exit Gates (P03) Status
 
@@ -60,9 +61,9 @@ Gate targets come from:
 
 | Gate | Metric | Target | Current value | Status |
 |---|---|---|---|---|
-| P03-G1 | persisted_events_per_turn_reduction_pct | `>= 40` | pending measurement | pending |
-| P03-G2 | semantic_mismatch_cases_vs_baseline | `<= 0` | pending measurement | pending |
-| P03-G3 | added_stream_latency_p95_ms | `<= 80` ms | pending measurement | pending |
+| P03-G1 | persisted_events_per_turn_reduction_pct | `>= 40` | `46.7391304347826` | pass |
+| P03-G2 | semantic_mismatch_cases_vs_baseline | `<= 0` | `0` | pass |
+| P03-G3 | added_stream_latency_p95_ms | `<= 80` ms | `34.7` ms | pass |
 
 Required evidence files for gate closure:
 
@@ -87,12 +88,7 @@ python scripts/phase03_gate_report.py `
 - [x] Entry artifacts frozen (`backend_coalescing_rules_frozen`).
 - [x] Implementation for A01/A04/A08 merged in codebase.
 - [x] Unit and integration regression checks green.
-- [ ] P03 gate evidence generated and committed.
-- [ ] `phase03-gate-report.json` shows all gates pass.
-- [ ] Phase 03 README status updated to `Completed`.
-- [ ] `handoff-to-phase-04.md` promoted from draft to ready.
-
-Current decision:
-
-- **No-Go for final close** until P03 gate evidence is filled and passes.
-
+- [x] P03 gate evidence generated and committed.
+- [x] `phase03-gate-report.json` shows all gates pass.
+- [x] Phase 03 README status updated to `Completed`.
+- [x] `handoff-to-phase-04.md` promoted from draft to ready.

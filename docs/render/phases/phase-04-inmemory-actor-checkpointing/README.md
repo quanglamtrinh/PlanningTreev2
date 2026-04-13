@@ -1,10 +1,24 @@
 ﻿# Phase 04 - In-Memory Actor and Checkpointing
 
-Status: Planned.
+Status: Planned (entry blockers cleared and preflight frozen).
 
 Scope IDs: A02, A03.
 
 Subphase workspace: ./subphases/.
+
+## Entry Criteria Artifacts
+
+`phase-manifest-v1.json` entry criteria for Phase 04:
+
+- `phase_03_passed`
+- `mini_journal_spec_frozen`
+
+Phase 04 entry artifacts:
+
+- `docs/render/phases/phase-03-backend-delta-compaction/evidence/phase03-gate-report.json`
+- `docs/render/system-freeze/contracts/c4-mini-journal-spec-v1.md`
+- `docs/render/phases/phase-04-inmemory-actor-checkpointing/preflight-v1.md`
+- `docs/render/phases/phase-04-inmemory-actor-checkpointing/evidence/README.md`
 
 ## Decision Pack Alignment
 
@@ -24,6 +38,7 @@ Must-hold decisions:
 - This phase includes mini-journal durability (not snapshot-only).
 - Checkpoint triggers must follow lifecycle contract boundaries.
 - Crash-loss budget must be explicitly defined and validated.
+- Mini-journal schema and recovery sequence are frozen in `c4-mini-journal-spec-v1.md`.
 
 
 ## Objective
@@ -72,7 +87,19 @@ This removes per-delta snapshot writes from critical path.
    - Move snapshot write trigger to checkpoint policy.
    - Keep explicit flush API for forced consistency points.
 3. Recovery:
-   - On restart, rebuild actor state from latest snapshot + pending events (if available).
+   - On restart, rebuild actor state deterministically from latest snapshot plus mini-journal tail replayed by `journalSeq`.
+   - Fail closed on journal gap or invalid event range instead of silent continuation.
+
+## Public Interfaces for Phase 04
+
+1. Mini-journal store:
+   - `append_boundary_record(record)`
+   - `read_tail_after(cursor)`
+   - `prune_before(cursor)`
+2. Checkpoint policy:
+   - `should_checkpoint(boundary_type, elapsed_ms, dirty_events_count)`
+3. Gate report CLI:
+   - `python scripts/phase04_gate_report.py --benchmark <file> --recovery <file> --out <file>`
 
 ## Quality Gates
 

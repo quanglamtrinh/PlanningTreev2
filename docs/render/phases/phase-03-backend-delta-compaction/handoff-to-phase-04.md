@@ -1,6 +1,6 @@
 # Phase 03 to Phase 04 Handoff
 
-Status: Draft (pending Phase 03 gate closure).
+Status: Ready for execution handoff (all P03 gates passed).
 
 Date: 2026-04-12.
 
@@ -17,7 +17,7 @@ Phase 03 implementation is in place and regression checks are green:
 - lifecycle no-op and terminal duplicate suppression implemented at publish path
 - replay/stream integration tests continue to pass
 
-Final phase closure is blocked only by missing numeric gate evidence (`P03-G1/G2/G3`).
+Phase 03 is marked complete with quantitative gate evidence committed (`P03-G1/G2/G3` all pass).
 
 ## 2. Guarantees Intended for Phase 04
 
@@ -48,20 +48,20 @@ Completed validations:
 - `python scripts/validate_render_freeze.py` -> pass
 - unit suite for new Phase 03 logic -> pass
 - V3 execution/audit integration suite -> pass
+- `scripts/phase03_gate_report.py` -> pass (`P03-G1=46.7391304347826`, `P03-G2=0`, `P03-G3=34.7`)
 
-Pending validations:
+Evidence artifacts:
 
-- benchmark/equivalence/latency evidence for `P03-G1/G2/G3`
-- generated `phase03-gate-report.json` showing all gates pass
+- `docs/render/phases/phase-03-backend-delta-compaction/evidence/baseline-commit.txt`
+- `docs/render/phases/phase-03-backend-delta-compaction/evidence/backend-stream-benchmark.json`
+- `docs/render/phases/phase-03-backend-delta-compaction/evidence/golden-replay-equivalence.json`
+- `docs/render/phases/phase-03-backend-delta-compaction/evidence/stream-latency-probe.json`
+- `docs/render/phases/phase-03-backend-delta-compaction/evidence/phase03-gate-report.json`
 
-## 5. Required Actions Before Promoting Handoff to Ready
+## 5. Follow-up Actions (post-handoff)
 
-1. Fill evidence files in `phase-03-backend-delta-compaction/evidence/`.
-2. Run `scripts/phase03_gate_report.py` and confirm all gates pass.
-3. Update:
-   - `close-phase-v1.md` checklist
-   - Phase 03 README status to `Completed`
-   - this handoff status to `Ready for execution handoff`
+1. Keep P03 measurement scenario reproducible when Phase 04 changes runtime internals.
+2. Re-run P03 gate measurement on major compaction policy changes.
 
 ## 6. Risk Notes for Phase 04
 
@@ -78,4 +78,3 @@ This handoff remains governed by:
 - `docs/render/system-freeze/contracts/c1-event-stream-contract-v1.md`
 - `docs/render/system-freeze/contracts/c3-lifecycle-gating-contract-v1.md`
 - `docs/render/system-freeze/contracts/c4-durability-contract-v1.md`
-

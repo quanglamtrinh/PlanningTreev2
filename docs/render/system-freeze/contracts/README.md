@@ -11,6 +11,7 @@ This directory stores canonical phase contracts frozen for the v1 optimization w
 - `c2-replay-resync-contract-v1.md`
 - `c3-lifecycle-gating-contract-v1.md`
 - `c4-durability-contract-v1.md`
+- `c4-mini-journal-spec-v1.md`
 - `c5-frontend-state-contract-v1.md`
 - `c6-queue-contract-v1.md`
 - `fixtures/`:

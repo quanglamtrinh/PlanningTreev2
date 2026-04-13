@@ -1,0 +1,6 @@
+﻿{
+  "added_stream_latency_p95_ms": 34.7,
+  "sample_count": 120,
+  "scenario": "stream_latency_probe_v1",
+  "notes": "Candidate p95 minus baseline p95 on matched workload runs."
+}

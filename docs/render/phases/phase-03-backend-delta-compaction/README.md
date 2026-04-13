@@ -1,6 +1,6 @@
 ﻿# Phase 03 - Backend Delta Compaction
 
-Status: Planned (entry artifacts frozen).
+Status: Completed (all P03 gates passed with committed evidence).
 
 Scope IDs: A01, A04, A08.
 
@@ -25,6 +25,13 @@ Phase closure artifacts:
 
 - `close-phase-v1.md`
 - `handoff-to-phase-04.md`
+- `evidence/phase03-gate-report.json`
+
+Phase closure snapshot:
+
+- `P03-G1`: `46.7391304347826` (`>= 40`)
+- `P03-G2`: `0` (`<= 0`)
+- `P03-G3`: `34.7` ms (`<= 80`)
 
 ## Decision Pack Alignment
 
