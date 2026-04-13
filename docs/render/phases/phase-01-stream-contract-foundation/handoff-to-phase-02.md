@@ -38,6 +38,8 @@ Phase 02 may assume the following are stable:
    - only validated replayable business events advance `lastEventId`
    - heartbeat does not affect cursor
    - `stream_open` does not affect cursor
+   - replay cursor transport supports both `Last-Event-ID` header and `last_event_id` query
+   - when both cursor transports are present, header takes precedence
 
 ## 3. Implemented Components
 
@@ -67,7 +69,7 @@ Preflight:
 Backend stream-contract tests:
 
 - `python -m pytest backend/tests/unit/test_thread_query_service_v3.py backend/tests/integration/test_chat_v3_api_execution_audit.py -q`
-- result: `27 passed`
+- result: `32 passed`
 
 Frontend parser/store tests:
 
@@ -79,7 +81,7 @@ Frontend parser/store tests:
 
 Out of scope in Phase 01 and expected in Phase 02:
 
-1. Full selective replay by reconnect cursor (`Last-Event-ID` semantics end-to-end).
+1. Full selective replay by reconnect cursor (`event_id` semantics end-to-end with header/query transport precedence).
 2. Replay buffer retention window and eviction policy.
 3. Explicit `replay_miss` flow and targeted resync boundary behavior.
 4. Replay/live overlap dedupe at reconnect boundary.

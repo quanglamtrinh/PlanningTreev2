@@ -14,9 +14,10 @@ from backend.streaming.sse_broker import GlobalEventBroker
 
 
 class _StreamingTestRequest:
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: Any, *, headers: dict[str, str] | None = None) -> None:
         self.app = app
         self._is_disconnected = False
+        self.headers = headers or {}
 
     async def is_disconnected(self) -> bool:
         return self._is_disconnected
@@ -1418,3 +1419,263 @@ async def test_v3_execution_stream_reconnect_by_version_and_guard(client: TestCl
     mismatch_payload = mismatch_response.json()
     assert mismatch_payload["ok"] is False
     assert mismatch_payload["error"]["code"] == "conversation_stream_mismatch"
+
+
+@pytest.mark.anyio
+async def test_v3_execution_stream_replays_cursor_range_and_dedupes_live_boundary(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    client.app.state.thread_query_service_v3.get_thread_snapshot(
+        project_id,
+        node_id,
+        "execution",
+        publish_repairs=False,
+        ensure_binding=False,
+    )
+
+    replay_buffer = client.app.state.thread_replay_buffer_service_v3
+    replay_envelope = build_thread_envelope(
+        project_id=project_id,
+        node_id=node_id,
+        thread_role="execution",
+        snapshot_version=2,
+        event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+        event_id="201",
+        thread_id=thread_id,
+        payload={
+            "item": {
+                "id": "msg-replay-201",
+                "kind": "message",
+                "threadId": thread_id,
+                "turnId": "turn-2",
+                "sequence": 2,
+                "createdAt": "2026-04-01T10:02:00Z",
+                "updatedAt": "2026-04-01T10:02:00Z",
+                "status": "completed",
+                "source": "upstream",
+                "tone": "neutral",
+                "metadata": {},
+                "role": "assistant",
+                "text": "Replay event",
+                "format": "markdown",
+            }
+        },
+    )
+    replay_buffer.append_business_event(
+        project_id=project_id,
+        node_id=node_id,
+        thread_role="execution",
+        thread_id=thread_id,
+        envelope=replay_envelope,
+    )
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.thread_events_by_id_v3(
+        request,
+        project_id,
+        thread_id,
+        node_id=node_id,
+        last_event_id="200",
+    )
+
+    try:
+        stream_open_payload = await _read_sse_payload(response)
+        assert stream_open_payload["type"] == event_types.STREAM_OPEN
+
+        replay_payload = await _read_sse_payload(response)
+        assert replay_payload["event_id"] == "201"
+        assert replay_payload["type"] == event_types.CONVERSATION_ITEM_UPSERT_V3
+
+        duplicate_boundary = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            snapshot_version=2,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="201",
+            thread_id=thread_id,
+            payload={
+                "item": {
+                    "id": "msg-replay-201-dup",
+                    "kind": "message",
+                    "threadId": thread_id,
+                    "turnId": "turn-2",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T10:02:01Z",
+                    "updatedAt": "2026-04-01T10:02:01Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Duplicate boundary event",
+                    "format": "markdown",
+                }
+            },
+        )
+        live_next = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            snapshot_version=3,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="202",
+            thread_id=thread_id,
+            payload={
+                "item": {
+                    "id": "msg-live-202",
+                    "kind": "message",
+                    "threadId": thread_id,
+                    "turnId": "turn-3",
+                    "sequence": 3,
+                    "createdAt": "2026-04-01T10:03:00Z",
+                    "updatedAt": "2026-04-01T10:03:00Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Live event",
+                    "format": "markdown",
+                }
+            },
+        )
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            duplicate_boundary,
+            thread_role="execution",
+        )
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            live_next,
+            thread_role="execution",
+        )
+
+        next_payload = await _read_sse_payload(response)
+        assert next_payload["event_id"] == "202"
+        assert next_payload["payload"]["item"]["id"] == "msg-live-202"
+    finally:
+        await _close_stream(response, request)
+
+
+def test_v3_execution_stream_replay_miss_returns_409(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    client.app.state.thread_query_service_v3.get_thread_snapshot(
+        project_id,
+        node_id,
+        "execution",
+        publish_repairs=False,
+        ensure_binding=False,
+    )
+
+    replay_buffer = client.app.state.thread_replay_buffer_service_v3
+    replay_buffer._max_events = 1  # type: ignore[attr-defined]
+
+    for event_id, version in [("100", 2), ("101", 3)]:
+        replay_buffer.append_business_event(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            thread_id=thread_id,
+            envelope=build_thread_envelope(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="execution",
+                snapshot_version=version,
+                event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+                event_id=event_id,
+                thread_id=thread_id,
+                payload={
+                    "item": {
+                        "id": f"msg-{event_id}",
+                        "kind": "message",
+                        "threadId": thread_id,
+                        "turnId": f"turn-{event_id}",
+                        "sequence": version,
+                        "createdAt": "2026-04-01T10:04:00Z",
+                        "updatedAt": "2026-04-01T10:04:00Z",
+                        "status": "completed",
+                        "source": "upstream",
+                        "tone": "neutral",
+                        "metadata": {},
+                        "role": "assistant",
+                        "text": f"Event {event_id}",
+                        "format": "markdown",
+                    }
+                },
+            ),
+        )
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/events",
+        params={"node_id": node_id, "last_event_id": "99"},
+    )
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "conversation_stream_mismatch"
+    assert "replay_miss" in str(payload["error"]["message"])
+
+
+def test_v3_execution_stream_cursor_header_precedence_over_query(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    client.app.state.thread_query_service_v3.get_thread_snapshot(
+        project_id,
+        node_id,
+        "execution",
+        publish_repairs=False,
+        ensure_binding=False,
+    )
+
+    replay_buffer = client.app.state.thread_replay_buffer_service_v3
+    replay_buffer._max_events = 1  # type: ignore[attr-defined]
+
+    for event_id, version in [("100", 2), ("101", 3)]:
+        replay_buffer.append_business_event(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            thread_id=thread_id,
+            envelope=build_thread_envelope(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="execution",
+                snapshot_version=version,
+                event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+                event_id=event_id,
+                thread_id=thread_id,
+                payload={
+                    "item": {
+                        "id": f"msg-{event_id}",
+                        "kind": "message",
+                        "threadId": thread_id,
+                        "turnId": f"turn-{event_id}",
+                        "sequence": version,
+                        "createdAt": "2026-04-01T10:05:00Z",
+                        "updatedAt": "2026-04-01T10:05:00Z",
+                        "status": "completed",
+                        "source": "upstream",
+                        "tone": "neutral",
+                        "metadata": {},
+                        "role": "assistant",
+                        "text": f"Event {event_id}",
+                        "format": "markdown",
+                    }
+                },
+            ),
+        )
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/events",
+        params={"node_id": node_id, "last_event_id": "101"},
+        headers={"Last-Event-ID": "99"},
+    )
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "conversation_stream_mismatch"
+    assert "replay_miss" in str(payload["error"]["message"])

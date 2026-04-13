@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.ai.codex_client import CodexAppClient, StdioTransport
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
 from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
+from backend.conversation.services.thread_replay_buffer_service_v3 import ThreadReplayBufferServiceV3
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
 from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
 from backend.conversation.services.system_message_writer import ConversationSystemMessageWriter
@@ -142,6 +143,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         max_message_chars=get_max_chat_message_chars(),
     )
     request_ledger_service_v3 = RequestLedgerServiceV3()
+    thread_replay_buffer_service_v3 = ThreadReplayBufferServiceV3(max_events=500, ttl_seconds=15 * 60)
     conversation_event_broker_v3 = ChatEventBroker()
     workflow_event_broker = GlobalEventBroker()
     workflow_event_publisher = WorkflowEventPublisher(workflow_event_broker)
@@ -155,6 +157,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         registry_service_v2=thread_registry_service_v2,
         request_ledger_service=request_ledger_service_v3,
         thread_event_broker=conversation_event_broker_v3,
+        replay_buffer_service=thread_replay_buffer_service_v3,
     )
     thread_runtime_service_v3 = ThreadRuntimeServiceV3(
         storage=storage,
@@ -268,6 +271,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.finish_task_service = finish_task_service
     app.state.thread_registry_service_v2 = thread_registry_service_v2
     app.state.request_ledger_service_v3 = request_ledger_service_v3
+    app.state.thread_replay_buffer_service_v3 = thread_replay_buffer_service_v3
     app.state.conversation_event_broker_v3 = conversation_event_broker_v3
     app.state.workflow_event_broker = workflow_event_broker
     app.state.thread_query_service_v3 = thread_query_service_v3

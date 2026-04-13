@@ -275,12 +275,13 @@ async function reloadThreadSnapshot(
       snapshot,
       isLoading: false,
       error: null,
+      lastEventId: null,
       lastSnapshotVersion: snapshot.snapshotVersion,
       streamStatus: 'connecting',
       ...seedRunningTelemetry(get(), snapshot),
     })
     reconcileResolveFallbackTimers(snapshot)
-    openThreadEventStream(
+    void openThreadEventStream(
       get,
       set,
       projectId,
@@ -289,6 +290,7 @@ async function reloadThreadSnapshot(
       threadRole,
       generation,
       snapshot.snapshotVersion,
+      null,
     )
   } catch (error) {
     const latestState = get()
@@ -339,10 +341,24 @@ function scheduleStreamReopen(
     ) {
       return
     }
-    void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
-      setLoading: false,
-      reason: state.error,
-    })
+    if (!state.snapshot) {
+      void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
+        setLoading: false,
+        reason: state.error,
+      })
+      return
+    }
+    void openThreadEventStream(
+      get,
+      set,
+      projectId,
+      nodeId,
+      threadId,
+      threadRole,
+      generation,
+      state.lastSnapshotVersion,
+      state.lastEventId,
+    )
   }, SSE_RECONNECT_RETRY_MS)
 }
 
@@ -385,7 +401,7 @@ function scheduleResolveFallbackReload(
   resolveFallbackTimers.set(requestId, timer)
 }
 
-function openThreadEventStream(
+async function openThreadEventStream(
   get: () => ThreadByIdStoreV3State,
   set: (
     partial:
@@ -398,13 +414,69 @@ function openThreadEventStream(
   threadRole: ThreadRole,
   generation: number,
   afterSnapshotVersion: number | null,
+  lastEventId: string | null,
 ) {
   clearReconnectTimer()
   clearResolveFallbackTimers()
   closeThreadEventSource()
 
+  const normalizedLastEventId =
+    typeof lastEventId === 'string' && lastEventId.trim().length > 0 ? lastEventId.trim() : null
+
+  if (normalizedLastEventId != null) {
+    try {
+      const probe = await api.probeThreadByIdEventsCursorV3(
+        projectId,
+        nodeId,
+        threadId,
+        normalizedLastEventId,
+      )
+      const stateAfterProbe = get()
+      if (
+        !isCurrentGeneration(generation) ||
+        !isActiveTarget(stateAfterProbe, projectId, nodeId, threadId, threadRole)
+      ) {
+        return
+      }
+      if (probe === 'mismatch') {
+        const reason =
+          'replay_miss: reconnect cursor is outside replay window; running targeted resync.'
+        set({
+          streamStatus: 'error',
+          error: reason,
+        })
+        void reloadThreadSnapshot(get, set, projectId, nodeId, threadId, threadRole, generation, {
+          setLoading: false,
+          reason,
+          countAsForcedReload: true,
+        })
+        return
+      }
+    } catch (error) {
+      const stateAfterProbeFailure = get()
+      if (
+        !isCurrentGeneration(generation) ||
+        !isActiveTarget(stateAfterProbeFailure, projectId, nodeId, threadId, threadRole)
+      ) {
+        return
+      }
+      set({
+        streamStatus: 'error',
+        error: error instanceof Error ? error.message : String(error),
+      })
+      scheduleStreamReopen(get, set, projectId, nodeId, threadId, threadRole, generation)
+      return
+    }
+  }
+
   const url = appendAuthToken(
-    buildThreadByIdEventsUrlV3(projectId, nodeId, threadId, afterSnapshotVersion),
+    buildThreadByIdEventsUrlV3(
+      projectId,
+      nodeId,
+      threadId,
+      afterSnapshotVersion,
+      normalizedLastEventId,
+    ),
   )
   const eventSource = new EventSource(url)
   threadEventSource = eventSource
@@ -707,7 +779,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         ...seedRunningTelemetry(get(), snapshot),
       }))
       reconcileResolveFallbackTimers(snapshot)
-      openThreadEventStream(
+      void openThreadEventStream(
         get,
         set,
         projectId,
@@ -716,6 +788,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         threadRole,
         generation,
         snapshot.snapshotVersion,
+        null,
       )
     } catch (error) {
       const latestState = get()

@@ -4,6 +4,7 @@ import asyncio
 import copy
 import json
 import logging
+import re
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
@@ -14,7 +15,7 @@ from backend.config.app_config import is_conversation_v3_bridge_allowed_for_proj
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_stream_open_envelope, build_thread_envelope
 from backend.conversation.domain.types_v3 import normalize_thread_role_v3
-from backend.errors.app_errors import AppError, AskV3Disabled, InvalidRequest
+from backend.errors.app_errors import AppError, AskV3Disabled, ConversationStreamMismatch, InvalidRequest
 from backend.storage.file_utils import new_id
 
 router = APIRouter(tags=["workflow-v3"])
@@ -131,6 +132,36 @@ def _resolve_event_thread_id(envelope: dict[str, Any]) -> str:
             return item_thread_id
 
     return ""
+
+
+_NUMERIC_CURSOR_PATTERN = re.compile(r"^\d+$")
+
+
+def _normalize_numeric_cursor(value: Any, *, field_name: str) -> str | None:
+    cursor = str(value or "").strip()
+    if not cursor:
+        return None
+    if not _NUMERIC_CURSOR_PATTERN.match(cursor):
+        raise InvalidRequest(f"{field_name} must be a numeric string.")
+    return cursor
+
+
+def _resolve_replay_cursor(request: Request, *, query_cursor: str | None) -> str | None:
+    headers = getattr(request, "headers", {}) or {}
+    header_get = headers.get if hasattr(headers, "get") else lambda *_args, **_kwargs: None
+    header_cursor = _normalize_numeric_cursor(
+        header_get("Last-Event-ID"),
+        field_name="Last-Event-ID",
+    )
+    query_cursor_value = _normalize_numeric_cursor(query_cursor, field_name="last_event_id")
+    return header_cursor if header_cursor is not None else query_cursor_value
+
+
+def _resolve_event_id_int(envelope: dict[str, Any]) -> int | None:
+    event_id = str(envelope.get("event_id") or envelope.get("eventId") or "").strip()
+    if not event_id or not _NUMERIC_CURSOR_PATTERN.match(event_id):
+        return None
+    return int(event_id)
 
 
 def _is_ask_v3_backend_enabled(request: Request) -> bool:
@@ -422,11 +453,15 @@ async def thread_events_by_id_v3(
     project_id: str,
     thread_id: str,
     node_id: str = Query(...),
-    after_snapshot_version: int | None = Query(None),
+    after_snapshot_version: int | None = None,
+    last_event_id: str | None = None,
 ):
     broker = request.app.state.conversation_event_broker_v3
     queue = None
     thread_role = ""
+    replay_cursor = None
+    replay_frames: tuple[dict[str, Any], ...] = ()
+    replay_tail_event_id: int | None = None
     try:
         thread_role = _resolve_thread_role_by_id_v3(
             request,
@@ -434,6 +469,7 @@ async def thread_events_by_id_v3(
             node_id,
             thread_id,
         )
+        replay_cursor = _resolve_replay_cursor(request, query_cursor=last_event_id)
         if thread_role == "ask_planning":
             metrics = getattr(request.app.state, "ask_rollout_metrics_service", None)
             if metrics is not None:
@@ -460,25 +496,55 @@ async def thread_events_by_id_v3(
         or _normalize_thread_id(snapshot_v3.get("threadId"))
         or f"unbound::{thread_role}"
     )
-    snapshot_event_id = request.app.state.thread_query_service_v3.issue_stream_event_id(
-        project_id,
-        node_id,
-        thread_role,
-        thread_id=resolved_thread_id,
-    )
-    snapshot_envelope = build_thread_envelope(
-        project_id=project_id,
-        node_id=node_id,
-        thread_role=thread_role,
-        snapshot_version=int(snapshot_v3.get("snapshotVersion") or 0),
-        event_type=event_types.THREAD_SNAPSHOT_V3,
-        payload={"snapshot": _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)},
-        event_id=snapshot_event_id,
-        thread_id=resolved_thread_id,
-        turn_id=str(snapshot_v3.get("activeTurnId") or "").strip() or None,
-    )
-    snapshot_envelope = _envelope_with_contract_fields(snapshot_envelope, thread_role=thread_role)
     first_snapshot_version = int(snapshot_v3.get("snapshotVersion") or 0)
+
+    if replay_cursor is not None:
+        replay_buffer = getattr(request.app.state, "thread_replay_buffer_service_v3", None)
+        replay_result = (
+            replay_buffer.read_business_events_since(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                thread_id=resolved_thread_id,
+                last_event_id=replay_cursor,
+            )
+            if replay_buffer is not None
+            else None
+        )
+        if replay_result is None or replay_result.replay_miss:
+            if queue is not None:
+                broker.unsubscribe(project_id, node_id, queue, thread_role=thread_role)
+            return _error_response(
+                ConversationStreamMismatch(
+                    "replay_miss: requested cursor is outside replay window; targeted resync required."
+                )
+            )
+        replay_tail_event_id = replay_result.replay_tail_event_id
+        replay_frames = tuple(
+            _envelope_with_contract_fields(event, thread_role=thread_role) for event in replay_result.events
+        )
+
+    snapshot_envelope = None
+    if replay_cursor is None:
+        snapshot_event_id = request.app.state.thread_query_service_v3.issue_stream_event_id(
+            project_id,
+            node_id,
+            thread_role,
+            thread_id=resolved_thread_id,
+        )
+        snapshot_envelope = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            snapshot_version=first_snapshot_version,
+            event_type=event_types.THREAD_SNAPSHOT_V3,
+            payload={"snapshot": _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)},
+            event_id=snapshot_event_id,
+            thread_id=resolved_thread_id,
+            turn_id=str(snapshot_v3.get("activeTurnId") or "").strip() or None,
+        )
+        snapshot_envelope = _envelope_with_contract_fields(snapshot_envelope, thread_role=thread_role)
+
     stream_open_envelope = build_stream_open_envelope(
         project_id=project_id,
         node_id=node_id,
@@ -499,7 +565,11 @@ async def thread_events_by_id_v3(
     async def event_generator():
         try:
             yield _sse_frame(stream_open_envelope)
-            yield _sse_frame(snapshot_envelope)
+            if snapshot_envelope is not None:
+                yield _sse_frame(snapshot_envelope)
+            elif replay_frames:
+                for replay_frame in replay_frames:
+                    yield _sse_frame(replay_frame)
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_INTERVAL_SEC)
@@ -518,6 +588,9 @@ async def thread_events_by_id_v3(
                             str(event_payload.get("event_type") or event_payload.get("type") or ""),
                             str(event_payload.get("event_id") or event_payload.get("eventId") or ""),
                         )
+                        continue
+                    event_id = _resolve_event_id_int(event_payload)
+                    if replay_tail_event_id is not None and event_id is not None and event_id <= replay_tail_event_id:
                         continue
                     event_version = int(event_payload.get("snapshotVersion") or 0)
                     if event_version and event_version <= first_snapshot_version:

@@ -85,12 +85,18 @@ export function buildThreadByIdEventsUrlV3(
   nodeId: string,
   threadId: string,
   afterSnapshotVersion?: number | null,
+  lastEventId?: string | null,
 ): string {
-  const base = `${buildThreadByIdBasePathV3(projectId, threadId)}/events?node_id=${encodeURIComponent(nodeId)}`
-  if (afterSnapshotVersion == null) {
-    return base
+  const queryParts = [`node_id=${encodeURIComponent(nodeId)}`]
+  if (afterSnapshotVersion != null) {
+    queryParts.push(`after_snapshot_version=${encodeURIComponent(String(afterSnapshotVersion))}`)
   }
-  return `${base}&after_snapshot_version=${encodeURIComponent(String(afterSnapshotVersion))}`
+  const normalizedLastEventId =
+    typeof lastEventId === 'string' && lastEventId.trim().length > 0 ? lastEventId.trim() : null
+  if (normalizedLastEventId != null) {
+    queryParts.push(`last_event_id=${encodeURIComponent(normalizedLastEventId)}`)
+  }
+  return `${buildThreadByIdBasePathV3(projectId, threadId)}/events?${queryParts.join('&')}`
 }
 
 export function buildProjectEventsUrlV3(projectId: string): string {
@@ -458,6 +464,59 @@ export const api = {
       buildThreadByIdPathV3(projectId, threadId, nodeId),
     )
     return response.snapshot
+  },
+  async probeThreadByIdEventsCursorV3(
+    projectId: string,
+    nodeId: string,
+    threadId: string,
+    lastEventId: string,
+  ): Promise<'ok' | 'mismatch'> {
+    const authHeaders = await getElectronAuthHeaders()
+    const response = await withRequestTimeout(
+      fetch(buildThreadByIdEventsUrlV3(projectId, nodeId, threadId, null, lastEventId), {
+        method: 'GET',
+        headers: {
+          ...authHeaders,
+        },
+      }),
+    )
+
+    if (response.status === 409) {
+      let payload: V2FailureEnvelope | ErrorPayload | null = null
+      try {
+        payload = (await response.json()) as V2FailureEnvelope | ErrorPayload
+      } catch {
+        payload = null
+      }
+      const envelopeErrorCode =
+        payload && 'ok' in payload && payload.ok === false ? payload.error?.code ?? null : null
+      const bareErrorCode = payload && 'code' in payload ? (payload.code ?? null) : null
+      const code = envelopeErrorCode ?? bareErrorCode
+      if (code === 'conversation_stream_mismatch') {
+        return 'mismatch'
+      }
+      throw new ApiError(
+        response.status,
+        payload && 'ok' in payload && payload.ok === false ? payload.error ?? null : (payload as ErrorPayload),
+      )
+    }
+
+    if (!response.ok) {
+      let payload: ErrorPayload | null = null
+      try {
+        payload = (await response.json()) as ErrorPayload
+      } catch {
+        payload = null
+      }
+      throw new ApiError(response.status, payload)
+    }
+
+    try {
+      await response.body?.cancel()
+    } catch {
+      // no-op
+    }
+    return 'ok'
   },
   resolveThreadUserInputByIdV3(
     projectId: string,

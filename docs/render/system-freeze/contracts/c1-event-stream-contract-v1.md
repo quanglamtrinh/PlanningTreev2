@@ -37,7 +37,7 @@ Schema:
 Canonical fields:
 
 - `schema_version` (integer)
-- `event_type` (`stream_open` or `replay_miss`)
+- `event_type` (`stream_open`; `replay_miss` reserved semantic)
 - `thread_id` (string)
 - `turn_id` (string or null)
 - `snapshot_version` (integer or null)
@@ -76,7 +76,11 @@ Replayable business frames:
 Control frames:
 
 - `stream_open` (stream metadata frame)
-- `replay_miss` (explicit out-of-window replay signal)
+- `replay_miss` (reserved explicit out-of-window replay semantic)
+
+Current transport note:
+
+- Phase 2 runtime returns replay miss as HTTP `409 conversation_stream_mismatch` with `replay_miss` message semantics (no SSE control-frame emission on mismatch).
 
 ## Prohibited Behaviors
 

@@ -18,6 +18,7 @@ from backend.conversation.domain.types_v3 import (
 from backend.conversation.projector.thread_event_projector_runtime_v3 import apply_reset_v3
 from backend.conversation.projector.thread_event_projector_v3 import project_v2_snapshot_to_v3
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
+from backend.conversation.services.thread_replay_buffer_service_v3 import ThreadReplayBufferServiceV3
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
 from backend.conversation.storage.thread_snapshot_store_v2 import ThreadSnapshotStoreV2
 from backend.conversation.storage.thread_snapshot_store_v3 import ThreadSnapshotStoreV3
@@ -41,6 +42,7 @@ class ThreadQueryServiceV3:
         registry_service_v2: ThreadRegistryService,
         request_ledger_service: RequestLedgerServiceV3,
         thread_event_broker: ChatEventBroker,
+        replay_buffer_service: ThreadReplayBufferServiceV3 | None = None,
     ) -> None:
         self._storage = storage
         self._chat_service = chat_service
@@ -51,6 +53,7 @@ class ThreadQueryServiceV3:
         self._registry_service_v2 = registry_service_v2
         self._request_ledger_service = request_ledger_service
         self._thread_event_broker = thread_event_broker
+        self._replay_buffer_service = replay_buffer_service
 
     def issue_stream_event_id(
         self,
@@ -86,6 +89,24 @@ class ThreadQueryServiceV3:
         if cursor_thread_id:
             return cursor_thread_id
         return f"unbound::{thread_role}"
+
+    def _publish_thread_envelope(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        thread_id: str,
+        envelope: dict[str, Any],
+    ) -> None:
+        if self._replay_buffer_service is not None:
+            self._replay_buffer_service.append_business_event(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                thread_id=thread_id,
+                envelope=envelope,
+            )
+        self._thread_event_broker.publish(project_id, node_id, envelope, thread_role=thread_role)
 
     def get_thread_snapshot(
         self,
@@ -147,7 +168,13 @@ class ThreadQueryServiceV3:
                     event_id=event_id,
                     thread_id=resolved_thread_id,
                 )
-                self._thread_event_broker.publish(project_id, node_id, envelope, thread_role=thread_role)
+                self._publish_thread_envelope(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    resolved_thread_id,
+                    envelope,
+                )
             return updated
 
     def _load_or_bridge_snapshot_locked(
@@ -278,7 +305,13 @@ class ThreadQueryServiceV3:
                     thread_id=resolved_thread_id,
                 )
                 envelopes.append(envelope)
-                self._thread_event_broker.publish(project_id, node_id, envelope, thread_role=thread_role)
+                self._publish_thread_envelope(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    resolved_thread_id,
+                    envelope,
+                )
             return updated, envelopes
 
     def reset_thread(self, project_id: str, node_id: str, thread_role: ThreadRoleV3) -> ThreadSnapshotV3:

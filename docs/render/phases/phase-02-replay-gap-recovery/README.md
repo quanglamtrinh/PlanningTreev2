@@ -21,8 +21,9 @@ Contract focus:
 
 Must-hold decisions:
 
-- Reconnect uses `Last-Event-ID` semantics.
-- Replay miss must return explicit mismatch signal and trigger targeted resync.
+- Reconnect cursor uses canonical `event_id`.
+- Cursor transport supports both `Last-Event-ID` header and `last_event_id` query, with header precedence.
+- Replay miss must return HTTP `409` with `conversation_stream_mismatch` and `replay_miss` semantics, then trigger targeted resync.
 - Replay/live boundary must be deduplicated deterministically.
 
 
@@ -78,15 +79,15 @@ Goal: avoid reconnect storms and reduce thundering herd.
 ## Implementation Plan
 
 1. Backend:
-   - Add replay buffer storage and retention policy.
-   - Expose replay fetch by `last_event_id`.
-   - Return mismatch metadata for out-of-window requests.
+   - Add replay buffer storage and retention policy (`max_events=500`, `ttl=15m`, business events only).
+   - Expose replay fetch by cursor (`Last-Event-ID` header or `last_event_id` query; header wins).
+   - Return explicit `409 conversation_stream_mismatch` with `replay_miss` semantics for out-of-window cursor.
 2. Frontend:
    - Persist latest known cursor.
-   - On reconnect, request replay from cursor.
-   - If mismatch, trigger targeted snapshot/event resync flow.
+   - On reconnect, request replay from cursor via `last_event_id` query (EventSource-compatible path).
+   - If mismatch (`409`), trigger targeted snapshot/event resync flow.
 3. Transport:
-   - Keep retry/backoff parameters configurable.
+   - Keep retry/backoff parameters configurable and cursor-safe.
 
 ## Quality Gates
 
@@ -100,12 +101,12 @@ Goal: avoid reconnect storms and reduce thundering herd.
 ## Test Plan
 
 1. Integration tests:
-   - disconnect and reconnect within replay window.
-   - disconnect and reconnect outside replay window (gap).
+   - disconnect/reconnect within replay window (no loss, no duplicate).
+   - disconnect/reconnect outside replay window (explicit `409 replay_miss` contract).
 2. Fault injection:
    - intermittent network drop simulation with repeated reconnects.
 3. Manual checks:
-   - verify no duplicate apply when replaying.
+   - verify no duplicate apply at replay/live boundary.
 
 ## Risks and Mitigations
 

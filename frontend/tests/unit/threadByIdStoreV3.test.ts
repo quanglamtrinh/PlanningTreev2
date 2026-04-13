@@ -7,6 +7,7 @@ const { apiMock } = vi.hoisted(() => ({
     startThreadTurnByIdV3: vi.fn(),
     resolveThreadUserInputByIdV3: vi.fn(),
     planActionByIdV3: vi.fn(),
+    probeThreadByIdEventsCursorV3: vi.fn().mockResolvedValue('ok'),
     reportAskRolloutMetricEvent: vi.fn().mockResolvedValue({ ok: true }),
   },
 }))
@@ -19,10 +20,11 @@ vi.mock('../../src/api/client', () => ({
     nodeId: string,
     threadId: string,
     afterSnapshotVersion?: number | null,
+    lastEventId?: string | null,
   ) =>
-    afterSnapshotVersion == null
-      ? `/v3/projects/${projectId}/threads/by-id/${threadId}/events?node_id=${nodeId}`
-      : `/v3/projects/${projectId}/threads/by-id/${threadId}/events?node_id=${nodeId}&after_snapshot_version=${afterSnapshotVersion}`,
+    `/v3/projects/${projectId}/threads/by-id/${threadId}/events?node_id=${nodeId}${
+      afterSnapshotVersion == null ? '' : `&after_snapshot_version=${afterSnapshotVersion}`
+    }${lastEventId == null || lastEventId === '' ? '' : `&last_event_id=${lastEventId}`}`,
 }))
 
 import type { ThreadSnapshotV3 } from '../../src/api/types'
@@ -609,12 +611,10 @@ describe('threadByIdStoreV3', () => {
     }
   })
 
-  it('increments reconnect telemetry when stream errors and schedules reload', async () => {
+  it('increments reconnect telemetry when stream errors and reopens stream without snapshot reload', async () => {
     vi.useFakeTimers()
     try {
-      apiMock.getThreadSnapshotByIdV3
-        .mockResolvedValueOnce(makeSnapshot())
-        .mockResolvedValueOnce(makeSnapshot({ snapshotVersion: 2 }))
+      apiMock.getThreadSnapshotByIdV3.mockResolvedValueOnce(makeSnapshot())
 
       await act(async () => {
         await useThreadByIdStoreV3
@@ -634,7 +634,135 @@ describe('threadByIdStoreV3', () => {
         await vi.advanceTimersByTimeAsync(1100)
       })
 
+      expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(1)
+      expect(getEventSourceMock().instances).toHaveLength(2)
+      expect(apiMock.probeThreadByIdEventsCursorV3).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reconnects with last_event_id query when cursor is available', async () => {
+    vi.useFakeTimers()
+    try {
+      apiMock.getThreadSnapshotByIdV3.mockResolvedValueOnce(makeSnapshot())
+      apiMock.probeThreadByIdEventsCursorV3.mockResolvedValue('ok')
+
+      await act(async () => {
+        await useThreadByIdStoreV3
+          .getState()
+          .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+      })
+
+      const firstSource = getEventSourceMock().instances[0]
+      firstSource.emitOpen()
+
+      await act(async () => {
+        firstSource.emitMessage(
+          JSON.stringify({
+            schema_version: 1,
+            event_id: '2',
+            event_type: 'thread.snapshot.v3',
+            thread_id: 'thread-1',
+            turn_id: null,
+            snapshot_version: 2,
+            occurred_at_ms: Date.parse('2026-04-01T00:01:00Z'),
+            eventId: '2',
+            channel: 'thread',
+            projectId: 'project-1',
+            nodeId: 'node-1',
+            threadRole: 'execution',
+            occurredAt: '2026-04-01T00:01:00Z',
+            snapshotVersion: 2,
+            type: 'thread.snapshot.v3',
+            payload: {
+              snapshot: makeSnapshot({
+                snapshotVersion: 2,
+                updatedAt: '2026-04-01T00:01:00Z',
+              }),
+            },
+          }),
+        )
+      })
+
+      await act(async () => {
+        firstSource.emitError()
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1100)
+      })
+
+      expect(apiMock.probeThreadByIdEventsCursorV3).toHaveBeenCalledWith(
+        'project-1',
+        'node-1',
+        'thread-1',
+        '2',
+      )
+      const secondSource = getEventSourceMock().instances[1]
+      expect(secondSource.url).toContain('last_event_id=2')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('handles replay_miss by targeted snapshot resync and cursor reset', async () => {
+    vi.useFakeTimers()
+    try {
+      apiMock.getThreadSnapshotByIdV3
+        .mockResolvedValueOnce(makeSnapshot())
+        .mockResolvedValueOnce(makeSnapshot({ snapshotVersion: 3 }))
+      apiMock.probeThreadByIdEventsCursorV3.mockResolvedValue('mismatch')
+
+      await act(async () => {
+        await useThreadByIdStoreV3
+          .getState()
+          .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+      })
+
+      const firstSource = getEventSourceMock().instances[0]
+      firstSource.emitOpen()
+
+      await act(async () => {
+        firstSource.emitMessage(
+          JSON.stringify({
+            schema_version: 1,
+            event_id: '2',
+            event_type: 'thread.snapshot.v3',
+            thread_id: 'thread-1',
+            turn_id: null,
+            snapshot_version: 2,
+            occurred_at_ms: Date.parse('2026-04-01T00:01:00Z'),
+            eventId: '2',
+            channel: 'thread',
+            projectId: 'project-1',
+            nodeId: 'node-1',
+            threadRole: 'execution',
+            occurredAt: '2026-04-01T00:01:00Z',
+            snapshotVersion: 2,
+            type: 'thread.snapshot.v3',
+            payload: {
+              snapshot: makeSnapshot({
+                snapshotVersion: 2,
+                updatedAt: '2026-04-01T00:01:00Z',
+              }),
+            },
+          }),
+        )
+      })
+
+      await act(async () => {
+        firstSource.emitError()
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1100)
+      })
+
       expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
+      const state = useThreadByIdStoreV3.getState()
+      expect(state.lastEventId).toBeNull()
+      expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)
+      expect(getEventSourceMock().instances).toHaveLength(2)
+      expect(getEventSourceMock().instances[1]?.url).not.toContain('last_event_id=')
     } finally {
       vi.useRealTimers()
     }

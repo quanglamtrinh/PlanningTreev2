@@ -49,8 +49,8 @@ Expected outcome:
 
 Decision:
 
-- add thin telemetry only for phase pass/fail gates
-- do not expand into full observability platform in this wave
+- use test-only evidence for phase pass/fail gates (contract checks, integration tests, and scripted smoke)
+- do not add runtime telemetry/observability scope in this wave
 
 Expected outcome:
 
@@ -103,7 +103,9 @@ Rules:
 
 Rules:
 
-- client reconnect uses `Last-Event-ID`
+- replay cursor source-of-truth is canonical `event_id`
+- transport accepts both `Last-Event-ID` header and `last_event_id` query (header takes precedence when both exist)
+- EventSource reconnect path uses app-managed `last_event_id` query
 - server replays events with `event_id > last_event_id` when available
 - if replay window is exceeded, server returns explicit replay-miss signal
 - client executes targeted resync flow (not silent continuation)
@@ -222,4 +224,3 @@ Any change to decisions in this document requires:
 1. explicit proposal in `docs/render/`
 2. impact note on phase ordering/risk
 3. approval before implementation divergence
-

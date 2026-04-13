@@ -207,10 +207,10 @@ class ChatNotAllowed(AppError):
 
 
 class ConversationStreamMismatch(AppError):
-    def __init__(self) -> None:
+    def __init__(self, message: str | None = None) -> None:
         super().__init__(
             "conversation_stream_mismatch",
-            "The requested stream is no longer the active live stream for this conversation.",
+            message or "The requested stream is no longer the active live stream for this conversation.",
             409,
         )
 
