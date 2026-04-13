@@ -1,10 +1,36 @@
-﻿# Phase 05 - Persistence and Broker Efficiency
+# Phase 05 - Persistence and Broker Efficiency
 
-Status: Planned.
+Status: Completed (all P05 gates passed with committed evidence).
 
 Scope IDs: A05, A06, A07.
 
 Subphase workspace: ./subphases/.
+
+## Entry Criteria Artifacts
+
+`phase-manifest-v1.json` entry criteria for Phase 05:
+
+- `phase_04_passed`.
+- `broker_backpressure_policy_frozen`.
+
+Phase 05 entry artifacts:
+
+- `docs/render/phases/phase-04-inmemory-actor-checkpointing/evidence/phase04-gate-report.json`.
+- `docs/render/phases/phase-05-persistence-broker-efficiency/broker-backpressure-policy-v1.md`.
+- `docs/render/phases/phase-05-persistence-broker-efficiency/preflight-v1.md`.
+- `docs/render/phases/phase-05-persistence-broker-efficiency/technical-design-v1.md`.
+
+Phase closure artifacts:
+
+- `docs/render/phases/phase-05-persistence-broker-efficiency/close-phase-v1.md`.
+- `docs/render/phases/phase-05-persistence-broker-efficiency/handoff-to-phase-06.md`.
+- `docs/render/phases/phase-05-persistence-broker-efficiency/evidence/phase05-gate-report.json`.
+
+Phase closure snapshot:
+
+- `P05-G1`: `96.0` (`>= 30`).
+- `P05-G2`: `95.0` (`>= 25`).
+- `P05-G3`: `0` (`<= 0`).
 
 ## Decision Pack Alignment
 
@@ -12,113 +38,87 @@ Decision source: `docs/render/decision-pack-v1.md`.
 
 Model alignment:
 
-- Extends Phase 04 durability baseline into full hybrid persistence and controlled transport behavior.
+- Extends Phase 04 durability baseline into hybrid persistence and controlled transport behavior.
 
 Contract focus:
 
-- Primary: `C4` Durability Contract v1
-- Secondary: `C2` Replay and Resync Contract v1, `C1` Event Stream Contract v1
+- Primary: `C4` Durability Contract v1.
+- Secondary: `C2` Replay and Resync Contract v1, `C1` Event Stream Contract v1.
 
 Must-hold decisions:
 
 - Promote mini-journal baseline to full hybrid persistence safely.
 - Backpressure handling must preserve replay/reconnect guarantees.
 - Event ordering and cursor semantics must remain contract-safe.
-
+- C1/C2 public envelope/event-type shape remains unchanged in this phase.
 
 ## Objective
 
 Lower persistence and publish overhead by reducing write amplification and controlling subscriber backpressure.
 
-## Prerequisite
-
-Phase 04 actor/checkpoint model is active.
-
 ## In Scope
 
-1. A05: Hybrid persistence (event log + periodic snapshot).
-2. A06: Reduce expensive deep-copy in broker.
-3. A07: Bounded queue + explicit backpressure policy.
+1. A05: Hybrid persistence (append event-log + periodic snapshot checkpoint + compaction).
+2. A06: Replace deep-copy-per-subscriber publish with single-copy fanout.
+3. A07: Bounded queue + explicit `disconnect_and_replay` policy for slow subscribers.
 
-## Detailed Improvements
+## Implemented Changes
 
 ### 1. Hybrid persistence layout (A05)
 
-Storage model:
-
-- append-only event log for frequent incremental changes
-- periodic compact snapshot for fast load
-
-Benefits:
-
-- lower rewrite cost
-- better recovery flexibility
+- Added append-only thread event-log store (`*.event_log.jsonl`) with typed records.
+- Actor-on path now appends replayable envelopes into event-log on mutation publish.
+- Actor bootstrap now validates event-log continuity and replays tail envelopes after the persisted snapshot.
+- Post-checkpoint compaction prunes event-log entries before checkpoint cursor when log size threshold is reached.
 
 ### 2. Broker payload sharing (A06)
 
-Current risk is repeated deep-copy per subscriber. Improve by:
-
-- immutable payload object policy, or
-- one-time serialization with shared byte payload fan-out
+- Broker publish now clones payload once per publish operation, then fans out shared object references to subscribers.
+- Removed deep-copy-per-subscriber behavior from hot publish loop.
 
 ### 3. Backpressure contract (A07)
 
-Define queue behavior under slow consumer:
+- Subscriber queues are now bounded (`maxsize` runtime-configurable; default `128`).
+- Queue-full condition sets lagged signal for that subscriber.
+- SSE routes close lagged stream intentionally; reconnect + replay remains canonical recovery path.
 
-- max queue depth
-- policy per mode (`drop oldest`, `close and rely on replay`, `slow-consumer warning`)
-- explicit diagnostics for lagged subscribers
+## Public Interfaces Added
 
-## Implementation Plan
-
-1. Persistence:
-   - Introduce append log writer and snapshot compactor.
-   - Update read path to reconstruct from latest snapshot + tail events.
-2. Broker:
-   - Refactor publish path to avoid per-subscriber deep-copy.
-   - Add queue depth tracking and threshold handling.
-3. Error handling:
-   - clear close codes/reasons for slow consumers.
+1. Runtime config:
+   - `PLANNINGTREE_SSE_SUBSCRIBER_QUEUE_MAX` (default `128`).
+   - `PLANNINGTREE_P05_LOG_COMPACT_MIN_EVENTS` (default `200`).
+2. Internal durability type:
+   - `ThreadEventLogRecordV3`.
+3. Storage adapter:
+   - `ThreadEventLogStoreV3` (`append_event_record`, read-tail helpers, prune helper).
 
 ## Quality Gates
 
-1. I/O efficiency:
-   - reduced write amplification and persist latency under stream load.
-2. Broker efficiency:
-   - lower publish CPU/allocation profile.
-3. Backpressure behavior:
-   - predictable handling when subscriber cannot keep up.
+1. `P05-G1` write amplification reduction:
+   - result `96.0` (`>= 30`).
+2. `P05-G2` broker publish allocation reduction:
+   - result `95.0` (`>= 25`).
+3. `P05-G3` unhandled slow-consumer incidents:
+   - result `0` (`<= 0`).
 
-## Test Plan
+## Test Plan (Executed)
 
-1. Unit tests:
-   - log append + snapshot compaction reconstruction correctness.
-   - backpressure policy trigger behavior.
-2. Integration tests:
-   - multi-subscriber streaming with one intentionally slow consumer.
-3. Load test:
-   - sustained event burst with queue depth observation.
+1. Unit:
+   - `backend/tests/unit/test_sse_broker.py`.
+   - `backend/tests/unit/test_thread_event_log_store_v3.py`.
+   - `backend/tests/unit/test_thread_query_service_v3.py`.
+2. Integration:
+   - `backend/tests/integration/test_chat_v3_api_execution_audit.py`.
+3. Governance:
+   - `npm run check:render_freeze`.
 
 ## Risks and Mitigations
 
-1. Risk: reconstruction bugs from hybrid read path.
-   - Mitigation: snapshot/log parity tests and deterministic replay tests.
-2. Risk: shared payload mutability issues.
-   - Mitigation: immutable payload contract and copy-on-write guard.
+1. Risk: replay divergence from event-log replay on bootstrap.
+   - Mitigation: fail-closed validation on log sequence/order and envelope invariants.
+2. Risk: queue backpressure closes streams too aggressively under burst.
+   - Mitigation: bounded queue threshold is runtime configurable and reconnect path is contract-safe.
 
 ## Handoff to Phase 06
 
-Backend now emits fewer, cheaper events, which improves the impact of frontend frame-batching work.
-
-
-## Effort Estimate
-
-- Size: Large
-- Estimated duration: 6-9 engineering days
-- Suggested staffing: 1 backend primary + 1 backend/infra support
-- Confidence level: Medium (depends on current code-path complexity and test debt)
-
-
-
-
-
+Backend now emits cheaper fanout and reduced persistence overhead; frontend frame-batching can proceed on unchanged C1/C2 contracts.

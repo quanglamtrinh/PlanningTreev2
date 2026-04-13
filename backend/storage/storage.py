@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from backend.config.app_config import AppPaths
+from backend.conversation.storage.thread_event_log_store_v3 import ThreadEventLogStoreV3
 from backend.conversation.storage.thread_registry_store import ThreadRegistryStore
 from backend.conversation.storage.thread_mini_journal_store_v3 import ThreadMiniJournalStoreV3
 from backend.conversation.storage.thread_snapshot_store_v3 import ThreadSnapshotStoreV3
@@ -36,6 +37,7 @@ class Storage:
         self.thread_snapshot_store_v2 = ThreadSnapshotStoreV2(paths, self.workspace_store, self._project_locks)
         self.thread_snapshot_store_v3 = ThreadSnapshotStoreV3(paths, self.workspace_store, self._project_locks)
         self.thread_mini_journal_store_v3 = ThreadMiniJournalStoreV3(paths, self.workspace_store, self._project_locks)
+        self.thread_event_log_store_v3 = ThreadEventLogStoreV3(paths, self.workspace_store, self._project_locks)
         self.thread_registry_store = ThreadRegistryStore(paths, self.workspace_store, self._project_locks)
 
     def project_lock(self, project_id: str):

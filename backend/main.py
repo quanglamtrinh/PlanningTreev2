@@ -31,7 +31,9 @@ from backend.config.app_config import (
     get_frame_gen_timeout,
     get_max_chat_message_chars,
     get_port,
+    get_phase5_log_compact_min_events,
     get_rehearsal_workspace_root,
+    get_sse_subscriber_queue_max,
     get_spec_gen_timeout,
     get_split_timeout,
     get_thread_actor_mode,
@@ -75,6 +77,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     ask_v3_backend_enabled = is_ask_v3_backend_enabled()
     ask_v3_frontend_enabled = is_ask_v3_frontend_enabled()
     rehearsal_workspace_root = get_rehearsal_workspace_root()
+    sse_subscriber_queue_max = get_sse_subscriber_queue_max()
+    phase5_log_compact_min_events = get_phase5_log_compact_min_events()
     ask_rollout_metrics_service = AskRolloutMetricsService()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
     project_service = ProjectService(
@@ -99,7 +103,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         thread_registry_service_v2=thread_registry_service_v2,
     )
     thread_transcript_builder_v2 = ThreadTranscriptBuilder(storage, storage.thread_snapshot_store_v2)
-    codex_event_broker = GlobalEventBroker()
+    codex_event_broker = GlobalEventBroker(subscriber_queue_max=sse_subscriber_queue_max)
     codex_account_service = CodexAccountService(
         codex_client=codex_client,
         event_broker=codex_event_broker,
@@ -135,7 +139,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         thread_lineage_service=thread_lineage_service,
         spec_gen_timeout=get_spec_gen_timeout(),
     )
-    chat_event_broker = ChatEventBroker()
+    chat_event_broker = ChatEventBroker(subscriber_queue_max=sse_subscriber_queue_max)
     chat_service = ChatService(
         storage=storage,
         tree_service=tree_service,
@@ -150,8 +154,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     thread_actor_runtime_v3 = ThreadActorRuntimeV3()
     checkpoint_policy_v3 = ThreadCheckpointPolicyV3(timer_checkpoint_ms=5000)
     thread_actor_mode = get_thread_actor_mode()
-    conversation_event_broker_v3 = ChatEventBroker()
-    workflow_event_broker = GlobalEventBroker()
+    conversation_event_broker_v3 = ChatEventBroker(subscriber_queue_max=sse_subscriber_queue_max)
+    workflow_event_broker = GlobalEventBroker(subscriber_queue_max=sse_subscriber_queue_max)
     workflow_event_publisher = WorkflowEventPublisher(workflow_event_broker)
     thread_query_service_v3 = ThreadQueryServiceV3(
         storage=storage,
@@ -165,9 +169,11 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         thread_event_broker=conversation_event_broker_v3,
         replay_buffer_service=thread_replay_buffer_service_v3,
         mini_journal_store_v3=storage.thread_mini_journal_store_v3,
+        event_log_store_v3=storage.thread_event_log_store_v3,
         checkpoint_policy_v3=checkpoint_policy_v3,
         actor_runtime_v3=thread_actor_runtime_v3,
         thread_actor_mode=thread_actor_mode,
+        log_compact_min_events=phase5_log_compact_min_events,
     )
     thread_runtime_service_v3 = ThreadRuntimeServiceV3(
         storage=storage,

@@ -100,9 +100,11 @@ def _build_service(
         request_ledger_service=RequestLedgerServiceV3(),
         thread_event_broker=capture,  # type: ignore[arg-type]
         mini_journal_store_v3=storage.thread_mini_journal_store_v3,
+        event_log_store_v3=storage.thread_event_log_store_v3,
         checkpoint_policy_v3=ThreadCheckpointPolicyV3(timer_checkpoint_ms=5000),
         actor_runtime_v3=ThreadActorRuntimeV3(),
         thread_actor_mode=thread_actor_mode,
+        log_compact_min_events=2,
     )
     return service, project_id, node_id
 
@@ -455,8 +457,82 @@ def test_persist_thread_mutation_v3_actor_on_splits_publish_and_checkpoint(stora
         thread_id="execution-thread-1",
         cursor=0,
     )
+    event_log_tail = storage.thread_event_log_store_v3.read_tail_after_log_seq(
+        project_id,
+        node_id,
+        "execution",
+        thread_id="execution-thread-1",
+        cursor=0,
+    )
     assert len(journal_tail) == 1
     assert journal_tail[0]["boundaryType"] == "waiting_user_input"
+    assert event_log_tail == []
+
+
+def test_get_thread_snapshot_v3_actor_on_replays_event_log_tail(storage, workspace_root) -> None:
+    service, project_id, node_id = _build_service(
+        storage,
+        workspace_root,
+        thread_actor_mode="on",
+    )
+    baseline_snapshot = default_thread_snapshot_v3(project_id, node_id, "execution")
+    baseline_snapshot["threadId"] = "execution-thread-1"
+    baseline_snapshot["snapshotVersion"] = 0
+    storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, "execution", baseline_snapshot)
+
+    next_snapshot = default_thread_snapshot_v3(project_id, node_id, "execution")
+    next_snapshot["threadId"] = "execution-thread-1"
+    next_snapshot["snapshotVersion"] = 0
+    next_snapshot["items"] = [
+        {
+            "id": "msg-log-1",
+            "kind": "message",
+            "threadId": "execution-thread-1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-04-12T00:00:00Z",
+            "updatedAt": "2026-04-12T00:00:00Z",
+            "status": "completed",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "role": "assistant",
+            "text": "Recovered from log",
+            "format": "markdown",
+        }
+    ]
+    upsert_event = {
+        "type": event_types.CONVERSATION_ITEM_UPSERT_V3,
+        "payload": {
+            "item": next_snapshot["items"][0],
+        },
+    }
+
+    updated, _ = service.persist_thread_mutation(project_id, node_id, "execution", next_snapshot, [upsert_event])
+    persisted_snapshot = storage.thread_snapshot_store_v3.read_snapshot(project_id, node_id, "execution")
+    assert int(updated["snapshotVersion"]) == 1
+    assert int(persisted_snapshot["snapshotVersion"]) == 0
+
+    restarted_service = ThreadQueryServiceV3(
+        storage=storage,
+        chat_service=_FakeChatService(storage, workspace_root),
+        thread_lineage_service=_FakeThreadLineageService(),
+        codex_client=_FakeCodexClient(),
+        snapshot_store_v3=storage.thread_snapshot_store_v3,
+        snapshot_store_v2=storage.thread_snapshot_store_v2,
+        registry_service_v2=ThreadRegistryService(storage.thread_registry_store),
+        request_ledger_service=RequestLedgerServiceV3(),
+        thread_event_broker=_CaptureBroker(),  # type: ignore[arg-type]
+        mini_journal_store_v3=storage.thread_mini_journal_store_v3,
+        event_log_store_v3=storage.thread_event_log_store_v3,
+        checkpoint_policy_v3=ThreadCheckpointPolicyV3(timer_checkpoint_ms=5000),
+        actor_runtime_v3=ThreadActorRuntimeV3(),
+        thread_actor_mode="on",
+        log_compact_min_events=2,
+    )
+    recovered = restarted_service.get_thread_snapshot(project_id, node_id, "execution")
+    assert int(recovered["snapshotVersion"]) == 1
+    assert any(str(item.get("id") or "") == "msg-log-1" for item in recovered.get("items", []))
 
 
 def test_get_thread_snapshot_v3_actor_on_fails_closed_on_journal_gap(storage, workspace_root) -> None:

@@ -68,6 +68,18 @@ class MiniJournalRecordV3(TypedDict):
     createdAt: str
 
 
+class ThreadEventLogRecordV3(TypedDict):
+    logSeq: int
+    projectId: str
+    nodeId: str
+    threadRole: str
+    threadId: str
+    eventId: int
+    snapshotVersionAtAppend: int
+    payload: dict[str, Any]
+    createdAt: str
+
+
 class ItemBaseV3(TypedDict):
     id: str
     kind: Literal["message", "reasoning", "tool", "explore", "userInput", "review", "diff", "status", "error"]

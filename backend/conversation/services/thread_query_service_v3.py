@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import logging
 import threading
 from typing import Any
@@ -13,6 +14,7 @@ from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
 from backend.conversation.domain.types_v3 import (
     MINI_JOURNAL_BOUNDARY_TYPES_V3,
+    ThreadEventLogRecordV3,
     MiniJournalBoundaryTypeV3,
     MiniJournalRecordV3,
     ThreadRoleV3,
@@ -21,13 +23,19 @@ from backend.conversation.domain.types_v3 import (
     copy_snapshot_v3,
     normalize_thread_snapshot_v3,
 )
-from backend.conversation.projector.thread_event_projector_runtime_v3 import apply_reset_v3
+from backend.conversation.projector.thread_event_projector_runtime_v3 import (
+    apply_lifecycle_v3,
+    apply_reset_v3,
+    patch_item_v3,
+    upsert_item_v3,
+)
 from backend.conversation.projector.thread_event_projector_v3 import project_v2_snapshot_to_v3
 from backend.conversation.services.thread_actor_runtime_v3 import ThreadActorRuntimeV3
 from backend.conversation.services.thread_checkpoint_policy_v3 import ThreadCheckpointPolicyV3
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
 from backend.conversation.services.thread_replay_buffer_service_v3 import ThreadReplayBufferServiceV3
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
+from backend.conversation.storage.thread_event_log_store_v3 import ThreadEventLogStoreV3
 from backend.conversation.storage.thread_mini_journal_store_v3 import ThreadMiniJournalStoreV3
 from backend.conversation.storage.thread_snapshot_store_v2 import ThreadSnapshotStoreV2
 from backend.conversation.storage.thread_snapshot_store_v3 import ThreadSnapshotStoreV3
@@ -55,9 +63,11 @@ class ThreadQueryServiceV3:
         thread_event_broker: ChatEventBroker,
         replay_buffer_service: ThreadReplayBufferServiceV3 | None = None,
         mini_journal_store_v3: ThreadMiniJournalStoreV3 | None = None,
+        event_log_store_v3: ThreadEventLogStoreV3 | None = None,
         checkpoint_policy_v3: ThreadCheckpointPolicyV3 | None = None,
         actor_runtime_v3: ThreadActorRuntimeV3 | None = None,
         thread_actor_mode: ThreadActorModeV3 | str | None = None,
+        log_compact_min_events: int = 200,
     ) -> None:
         self._storage = storage
         self._chat_service = chat_service
@@ -74,6 +84,8 @@ class ThreadQueryServiceV3:
             resolved_mode = "off"
         self._thread_actor_mode: ThreadActorModeV3 = resolved_mode  # type: ignore[assignment]
         self._mini_journal_store_v3 = mini_journal_store_v3
+        self._event_log_store_v3 = event_log_store_v3
+        self._log_compact_min_events = max(1, int(log_compact_min_events))
         self._checkpoint_policy_v3 = checkpoint_policy_v3 or ThreadCheckpointPolicyV3()
         self._actor_runtime_v3 = actor_runtime_v3 or ThreadActorRuntimeV3()
         self._lifecycle_guard_lock = threading.Lock()
@@ -207,6 +219,228 @@ class ThreadQueryServiceV3:
                 f"(journalSeq={first_pending.get('journalSeq')}, snapshotVersionAtWrite={first_pending.get('snapshotVersionAtWrite')}, snapshotVersion={snapshot_version})."
             )
 
+    def _validate_event_log_tail(
+        self,
+        records: list[ThreadEventLogRecordV3],
+    ) -> None:
+        if not records:
+            return
+        last_seq = 0
+        last_event_id = 0
+        for record in records:
+            seq = int(record.get("logSeq") or 0)
+            event_id = int(record.get("eventId") or 0)
+            payload = record.get("payload")
+            if seq <= 0:
+                raise ValueError("Thread event-log recovery validation failed: logSeq must be > 0.")
+            if event_id <= 0:
+                raise ValueError("Thread event-log recovery validation failed: eventId must be > 0.")
+            if not isinstance(payload, dict):
+                raise ValueError("Thread event-log recovery validation failed: payload must be an object.")
+            if last_seq and seq != last_seq + 1:
+                raise ValueError(
+                    f"Thread event-log recovery validation failed: logSeq gap detected ({last_seq} -> {seq})."
+                )
+            if last_event_id and event_id <= last_event_id:
+                raise ValueError(
+                    "Thread event-log recovery validation failed: non-monotonic eventId sequence "
+                    f"({last_event_id} -> {event_id})."
+                )
+            last_seq = seq
+            last_event_id = event_id
+
+    def _apply_event_log_envelope_to_snapshot(
+        self,
+        snapshot: ThreadSnapshotV3,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        envelope: dict[str, Any],
+    ) -> ThreadSnapshotV3:
+        event_type = str(envelope.get("event_type") or envelope.get("type") or "").strip()
+        payload = envelope.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+
+        updated = copy_snapshot_v3(snapshot)
+        try:
+            if event_type == event_types.THREAD_SNAPSHOT_V3:
+                replay_snapshot = payload.get("snapshot")
+                if not isinstance(replay_snapshot, dict):
+                    raise ValueError("Thread event-log replay failed: snapshot payload is missing.")
+                updated = normalize_thread_snapshot_v3(
+                    replay_snapshot,
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role=thread_role,
+                )
+            elif event_type == event_types.CONVERSATION_ITEM_UPSERT_V3:
+                item = payload.get("item")
+                if not isinstance(item, dict):
+                    raise ValueError("Thread event-log replay failed: upsert payload.item is missing.")
+                updated, _ = upsert_item_v3(updated, item)
+            elif event_type == event_types.CONVERSATION_ITEM_PATCH_V3:
+                item_id = str(payload.get("itemId") or "").strip()
+                patch = payload.get("patch")
+                if not item_id or not isinstance(patch, dict):
+                    raise ValueError("Thread event-log replay failed: patch payload is invalid.")
+                updated, _ = patch_item_v3(updated, item_id, patch)
+            elif event_type == event_types.THREAD_LIFECYCLE_V3:
+                lifecycle_state = str(payload.get("state") or "").strip()
+                if not lifecycle_state:
+                    raise ValueError("Thread event-log replay failed: lifecycle payload.state is missing.")
+                processing_state = str(payload.get("processingState") or updated.get("processingState") or "").strip()
+                active_turn_id = self._normalize_optional_string(payload.get("activeTurnId"))
+                detail = self._normalize_optional_string(payload.get("detail"))
+                updated, _ = apply_lifecycle_v3(
+                    updated,
+                    state=lifecycle_state,
+                    processing_state=processing_state,
+                    active_turn_id=active_turn_id,
+                    detail=detail,
+                )
+            elif event_type == event_types.CONVERSATION_UI_PLAN_READY_V3:
+                plan_ready = payload.get("planReady")
+                if not isinstance(plan_ready, dict):
+                    raise ValueError("Thread event-log replay failed: planReady payload is invalid.")
+                updated["uiSignals"]["planReady"] = copy.deepcopy(plan_ready)
+            elif event_type == event_types.CONVERSATION_UI_USER_INPUT_V3:
+                active_requests = payload.get("activeUserInputRequests")
+                if not isinstance(active_requests, list):
+                    raise ValueError("Thread event-log replay failed: activeUserInputRequests payload is invalid.")
+                updated["uiSignals"]["activeUserInputRequests"] = copy.deepcopy(active_requests)
+            elif event_type == event_types.THREAD_ERROR_V3:
+                error_item = payload.get("errorItem")
+                if not isinstance(error_item, dict):
+                    raise ValueError("Thread event-log replay failed: errorItem payload is missing.")
+                updated, _ = upsert_item_v3(updated, error_item)
+            else:
+                raise ValueError(f"Thread event-log replay failed: unsupported event_type '{event_type}'.")
+        except ConversationStreamMismatch as exc:
+            raise ValueError("Thread event-log replay failed: envelope violates stream invariants.") from exc
+
+        event_snapshot_version = int(
+            envelope.get("snapshotVersion") or envelope.get("snapshot_version") or updated.get("snapshotVersion") or 0
+        )
+        if event_snapshot_version < int(snapshot.get("snapshotVersion") or 0):
+            raise ValueError(
+                "Thread event-log replay failed: snapshot version regression detected "
+                f"({snapshot.get('snapshotVersion')} -> {event_snapshot_version})."
+            )
+        updated["snapshotVersion"] = max(event_snapshot_version, int(updated.get("snapshotVersion") or 0))
+        updated["updatedAt"] = iso_now()
+        return updated
+
+    def _recover_snapshot_from_event_log_locked(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        thread_id: str,
+        snapshot: ThreadSnapshotV3,
+    ) -> tuple[ThreadSnapshotV3, int]:
+        if self._event_log_store_v3 is None:
+            return snapshot, 0
+        all_records = self._event_log_store_v3.read_tail_after_log_seq(
+            project_id,
+            node_id,
+            thread_role,
+            thread_id=thread_id,
+            cursor=0,
+        )
+        self._validate_event_log_tail(all_records)
+        if not all_records:
+            return snapshot, 0
+
+        recovered = copy_snapshot_v3(snapshot)
+        snapshot_version = int(recovered.get("snapshotVersion") or 0)
+        pending_records = [
+            record for record in all_records if int(record.get("snapshotVersionAtAppend") or 0) > snapshot_version
+        ]
+        for record in pending_records:
+            payload = record.get("payload")
+            envelope = payload if isinstance(payload, dict) else {}
+            recovered = self._apply_event_log_envelope_to_snapshot(
+                recovered,
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                envelope=envelope,
+            )
+
+        return recovered, int(all_records[-1].get("logSeq") or 0)
+
+    def _append_event_log_tail_locked(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        thread_id: str,
+        snapshot: ThreadSnapshotV3,
+        envelopes: list[dict[str, Any]],
+    ) -> None:
+        if self._event_log_store_v3 is None or not envelopes:
+            return
+        next_seq = self._event_log_store_v3.latest_log_seq(
+            project_id,
+            node_id,
+            thread_role,
+            thread_id=thread_id,
+        ) + 1
+        snapshot_version = int(snapshot.get("snapshotVersion") or 0)
+        for envelope in envelopes:
+            event_id = self._parse_event_id(envelope)
+            if event_id is None or event_id <= 0:
+                continue
+            record: ThreadEventLogRecordV3 = {
+                "logSeq": next_seq,
+                "projectId": str(project_id or "").strip(),
+                "nodeId": str(node_id or "").strip(),
+                "threadRole": str(thread_role or "").strip(),
+                "threadId": str(thread_id or "").strip(),
+                "eventId": int(event_id),
+                "snapshotVersionAtAppend": snapshot_version,
+                "payload": copy.deepcopy(envelope),
+                "createdAt": iso_now(),
+            }
+            self._event_log_store_v3.append_event_record(
+                project_id,
+                node_id,
+                thread_role,
+                record,
+            )
+            next_seq += 1
+
+    def _compact_event_log_after_checkpoint_locked(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        thread_id: str,
+        event_id_cursor: int,
+    ) -> None:
+        if self._event_log_store_v3 is None or event_id_cursor <= 0:
+            return
+        count = self._event_log_store_v3.count_entries(
+            project_id,
+            node_id,
+            thread_role,
+            thread_id=thread_id,
+        )
+        if count < self._log_compact_min_events:
+            return
+        self._event_log_store_v3.prune_before_event_id(
+            project_id,
+            node_id,
+            thread_role,
+            thread_id=thread_id,
+            event_id=event_id_cursor,
+        )
+
     def _bootstrap_actor_from_snapshot_locked(
         self,
         *,
@@ -224,6 +458,7 @@ class ThreadQueryServiceV3:
                 return actor_snapshot
             return snapshot
 
+        recovered_snapshot = copy_snapshot_v3(snapshot)
         last_journal_seq = 0
         if self._mini_journal_store_v3 is not None:
             recovery_tail = self._mini_journal_store_v3.read_tail_after(
@@ -235,21 +470,29 @@ class ThreadQueryServiceV3:
             )
             self._validate_recovery_tail(
                 recovery_tail,
-                snapshot_version=int(snapshot.get("snapshotVersion") or 0),
+                snapshot_version=int(recovered_snapshot.get("snapshotVersion") or 0),
             )
             if recovery_tail:
                 last_journal_seq = int(recovery_tail[-1].get("journalSeq") or 0)
+
+        recovered_snapshot, _ = self._recover_snapshot_from_event_log_locked(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            thread_id=resolved_thread_id,
+            snapshot=recovered_snapshot,
+        )
 
         self._actor_runtime_v3.bootstrap_actor(
             project_id=project_id,
             node_id=node_id,
             thread_role=thread_role,
             thread_id=resolved_thread_id,
-            snapshot=snapshot,
+            snapshot=recovered_snapshot,
             last_journal_seq=last_journal_seq,
         )
         actor_snapshot = self._actor_runtime_v3.get_actor_snapshot(project_id, node_id, thread_role, resolved_thread_id)
-        return actor_snapshot or snapshot
+        return actor_snapshot or recovered_snapshot
 
     def _checkpoint_actor_if_needed_locked(
         self,
@@ -330,6 +573,24 @@ class ThreadQueryServiceV3:
             snapshot=checkpointed,
             journal_seq=next_seq,
         )
+        if dirty_events_count > 0 and event_end > 0:
+            try:
+                self._compact_event_log_after_checkpoint_locked(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role=thread_role,
+                    thread_id=thread_id,
+                    event_id_cursor=event_end,
+                )
+            except Exception:
+                logger.warning(
+                    "Thread event-log compaction skipped after checkpoint for %s/%s/%s (thread_id=%s).",
+                    project_id,
+                    node_id,
+                    thread_role,
+                    thread_id,
+                    exc_info=True,
+                )
         return checkpointed
 
     def _lifecycle_signature_from_envelope(
@@ -715,6 +976,14 @@ class ThreadQueryServiceV3:
             events,
         )
         resolved_thread_id = self._resolve_stream_thread_id(project_id, node_id, thread_role, updated)
+        self._append_event_log_tail_locked(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            thread_id=resolved_thread_id,
+            snapshot=updated,
+            envelopes=envelopes,
+        )
         self._actor_runtime_v3.apply_events(
             project_id=project_id,
             node_id=node_id,

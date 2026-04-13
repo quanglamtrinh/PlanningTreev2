@@ -145,6 +145,24 @@ def get_thread_actor_mode() -> str:
     return "off"
 
 
+def get_sse_subscriber_queue_max() -> int:
+    raw = os.environ.get("PLANNINGTREE_SSE_SUBSCRIBER_QUEUE_MAX", "128")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 128
+    return max(1, min(4096, value))
+
+
+def get_phase5_log_compact_min_events() -> int:
+    raw = os.environ.get("PLANNINGTREE_P05_LOG_COMPACT_MIN_EVENTS", "200")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 200
+    return max(1, value)
+
+
 def is_conversation_v3_bridge_allowed_for_project(project_id: str) -> bool:
     mode = get_conversation_v3_bridge_mode()
     if mode == "enabled":
