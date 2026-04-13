@@ -26,6 +26,13 @@ Must-hold decisions:
 - Apply ordering must remain deterministic under burst traffic.
 
 
+## Entry Criteria Lock
+
+Required frozen artifact:
+
+- `docs/render/phases/phase-06-frame-batching-fast-append/frontend-batching-policy-v1.md`.
+
+
 ## Objective
 
 Reduce frontend apply thrash by batching event application per animation frame and using a fast path for streaming text append.
@@ -82,7 +89,11 @@ For streaming assistant text chunks:
 2. Integration tests:
    - high-frequency text streaming burst.
 3. Manual checks:
-   - compare visual smoothness before/after.
+    - compare visual smoothness before/after.
+4. Gate harness:
+   - run `scripts/phase06_gate_report.py` with Phase 06 evidence sources.
+   - canonical report output:
+     - `docs/render/phases/phase-06-frame-batching-fast-append/evidence/phase06-gate-report.json`.
 
 ## Risks and Mitigations
 

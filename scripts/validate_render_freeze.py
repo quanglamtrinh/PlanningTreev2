@@ -12,6 +12,14 @@ from typing import Any
 EXPECTED_PHASE_IDS = [f"{i:02d}" for i in range(1, 14)]
 EXPECTED_CONTRACTS = {"C1", "C2", "C3", "C4", "C5", "C6"}
 ALLOWED_OPERATORS = {"gte", "lte", "eq"}
+ENTRY_CRITERIA_FILE_RULES = {
+    "broker_backpressure_policy_frozen": Path(
+        "docs/render/phases/phase-05-persistence-broker-efficiency/broker-backpressure-policy-v1.md"
+    ),
+    "frontend_batching_policy_frozen": Path(
+        "docs/render/phases/phase-06-frame-batching-fast-append/frontend-batching-policy-v1.md"
+    ),
+}
 
 
 def _load_json(path: Path) -> Any:
@@ -193,6 +201,17 @@ def main() -> int:
         if not readme_path.exists():
             errors.append(f"Phase {pid}: missing README path {readme_rel}")
             continue
+
+        entry_criteria = [str(item) for item in entry.get("entry_criteria", [])]
+        for criterion in entry_criteria:
+            required_rel_path = ENTRY_CRITERIA_FILE_RULES.get(criterion)
+            if required_rel_path is None:
+                continue
+            required_path = repo_root / required_rel_path
+            if not required_path.exists():
+                errors.append(
+                    f"Phase {pid}: missing required artifact for entry criterion '{criterion}': {required_rel_path}"
+                )
 
         text = readme_path.read_text(encoding="utf-8")
         missing_headers = _contains_all(

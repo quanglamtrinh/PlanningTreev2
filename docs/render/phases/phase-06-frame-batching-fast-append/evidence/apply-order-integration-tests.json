@@ -1,0 +1,12 @@
+{
+  "run_meta": {
+    "phase": "06",
+    "scenario": "apply_order_integration_tests",
+    "timestamp_utc": "2026-04-13T00:00:00Z",
+    "git_sha": "<sample>",
+    "sample_data": true
+  },
+  "candidate_metrics": {
+    "batch_order_violations": 0
+  }
+}

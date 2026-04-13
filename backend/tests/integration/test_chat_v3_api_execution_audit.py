@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
 from backend.routes import workflow_v3 as workflow_v3_route_module
-from backend.streaming.sse_broker import GlobalEventBroker
+from backend.streaming.sse_broker import ChatEventBroker, GlobalEventBroker
 
 
 class _StreamingTestRequest:
@@ -41,6 +41,11 @@ async def _read_sse_payload(response: Any, *, timeout_sec: float = 1.0) -> dict[
         if chunk.lstrip().startswith(":"):
             continue
         return _parse_sse_chunk(chunk)
+
+
+async def _assert_stream_closed(response: Any, *, timeout_sec: float = 1.0) -> None:
+    with pytest.raises(StopAsyncIteration):
+        await _read_stream_chunk(response, timeout_sec=timeout_sec)
 
 
 async def _close_stream(response: Any, request: _StreamingTestRequest) -> None:
@@ -685,6 +690,34 @@ async def test_v3_workflow_events_endpoint_uses_canonical_broker_and_filters_pro
         await _close_stream(response, request)
 
 
+@pytest.mark.anyio
+async def test_v3_workflow_events_endpoint_closes_lagged_subscriber_without_silent_continuation(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    lagged_broker = GlobalEventBroker(subscriber_queue_max=1)
+    client.app.state.workflow_event_broker = lagged_broker
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.workflow_events_v3(request, project_id)
+    try:
+        for idx in range(4):
+            lagged_broker.publish(
+                {
+                    "eventId": f"evt-lagged-{idx}",
+                    "projectId": project_id,
+                    "nodeId": node_id,
+                    "type": "node.workflow.updated",
+                    "payload": {"reason": "lagged"},
+                }
+            )
+        await asyncio.sleep(0)
+        await _assert_stream_closed(response, timeout_sec=1.0)
+    finally:
+        await _close_stream(response, request)
+
+
 def test_v3_execution_resolve_user_input_by_id_updates_snapshot_and_signal(
     client: TestClient, workspace_root
 ) -> None:
@@ -1107,6 +1140,70 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
         assert incremental_payload["type"] == event_types.CONVERSATION_ITEM_UPSERT_V3
         assert incremental_payload["event_id"] == "200"
         assert incremental_payload["payload"]["item"]["id"] == "msg-2"
+    finally:
+        await _close_stream(response, request)
+
+
+@pytest.mark.anyio
+async def test_v3_thread_events_stream_closes_lagged_subscriber_without_silent_continuation(
+    client: TestClient, workspace_root
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    lagged_broker = ChatEventBroker(subscriber_queue_max=1)
+    client.app.state.conversation_event_broker_v3 = lagged_broker
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.thread_events_by_id_v3(
+        request,
+        project_id,
+        thread_id,
+        node_id=node_id,
+        after_snapshot_version=1,
+    )
+    try:
+        stream_open_payload = await _read_sse_payload(response)
+        assert stream_open_payload["type"] == event_types.STREAM_OPEN
+        snapshot_payload = await _read_sse_payload(response)
+        assert snapshot_payload["type"] == event_types.THREAD_SNAPSHOT_V3
+        first_snapshot_version = int(snapshot_payload.get("snapshotVersion") or 0)
+
+        for idx in range(4):
+            event_id = str(900 + idx)
+            lagged_broker.publish(
+                project_id,
+                node_id,
+                build_thread_envelope(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role="execution",
+                    snapshot_version=max(1, first_snapshot_version + idx + 1),
+                    event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+                    event_id=event_id,
+                    thread_id=thread_id,
+                    payload={
+                        "item": {
+                            "id": f"msg-{event_id}",
+                            "kind": "message",
+                            "threadId": thread_id,
+                            "turnId": f"turn-{event_id}",
+                            "sequence": first_snapshot_version + idx + 1,
+                            "createdAt": "2026-04-01T10:06:00Z",
+                            "updatedAt": "2026-04-01T10:06:00Z",
+                            "status": "completed",
+                            "source": "upstream",
+                            "tone": "neutral",
+                            "metadata": {},
+                            "role": "assistant",
+                            "text": f"Lagged event {event_id}",
+                            "format": "markdown",
+                        }
+                    },
+                ),
+                thread_role="execution",
+            )
+        await asyncio.sleep(0)
+        await _assert_stream_closed(response, timeout_sec=1.0)
     finally:
         await _close_stream(response, request)
 

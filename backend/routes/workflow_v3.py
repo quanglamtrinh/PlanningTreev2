@@ -399,6 +399,12 @@ async def workflow_events_v3(
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=1.0)
                     heartbeat_ticks = 0
+                    if broker.consume_lagged_disconnect(queue):
+                        logger.warning(
+                            "Closing workflow SSE stream for lagged subscriber (project=%s).",
+                            project_id,
+                        )
+                        break
                     if str(event.get("projectId") or "") != project_id:
                         continue
                     yield _sse_frame(event)
@@ -586,6 +592,15 @@ async def thread_events_by_id_v3(
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=1.0)
                     heartbeat_ticks = 0
+                    if broker.consume_lagged_disconnect(project_id, node_id, queue, thread_role=thread_role):
+                        logger.warning(
+                            "Closing thread SSE stream for lagged subscriber (project=%s node=%s role=%s thread_id=%s).",
+                            project_id,
+                            node_id,
+                            thread_role,
+                            resolved_thread_id,
+                        )
+                        break
                     event_payload = event if isinstance(event, dict) else {}
                     if not event_payload:
                         continue
