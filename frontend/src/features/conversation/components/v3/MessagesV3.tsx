@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -36,7 +37,20 @@ import {
   saveMessagesV3ViewState,
   type MessagesV3ViewState,
 } from './messagesV3.viewState'
-import { emitRowRenderProfile } from './messagesV3ProfilingHooks'
+import {
+  emitRowRenderProfile,
+  resetMessagesV3ProfilingState,
+} from './messagesV3ProfilingHooks'
+import {
+  buildParseCacheKey,
+  PARSE_CACHE_RENDERER_VERSION,
+} from './parseCacheContract'
+import {
+  buildParseArtifactVariantKey,
+  readOrComputeParseArtifact,
+  resetParseArtifactCache,
+  resetParseArtifactCacheForThread,
+} from './parseArtifactCache'
 
 const SCROLL_THRESHOLD_PX = 120
 const MAX_COMMAND_OUTPUT_LINES = 200
@@ -389,6 +403,31 @@ function formatDurationV3(durationMs: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
+function emitRowRenderProfileForItem(item: ConversationItemV3): void {
+  emitRowRenderProfile({
+    threadId: item.threadId,
+    itemId: item.id,
+    kind: item.kind,
+    status: item.status,
+    updatedAt: item.updatedAt,
+    sequence: item.sequence,
+  })
+}
+
+function sameRenderableItemVersion(
+  prev: Pick<ConversationItemV3, 'id' | 'kind' | 'threadId' | 'sequence' | 'status' | 'updatedAt'>,
+  next: Pick<ConversationItemV3, 'id' | 'kind' | 'threadId' | 'sequence' | 'status' | 'updatedAt'>,
+): boolean {
+  return (
+    prev.id === next.id &&
+    prev.kind === next.kind &&
+    prev.threadId === next.threadId &&
+    prev.sequence === next.sequence &&
+    prev.status === next.status &&
+    prev.updatedAt === next.updatedAt
+  )
+}
+
 function IconCommandLineChevron({ expanded }: { expanded: boolean }) {
   return (
     <svg
@@ -508,6 +547,8 @@ function CommandOutputViewportV3({
 }
 
 function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'message' }> }) {
+  emitRowRenderProfileForItem(item)
+
   const roleClass =
     item.role === 'user'
       ? styles.rowMessageUser
@@ -521,10 +562,20 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
       : item.role === 'system'
         ? styles.messageBubbleSystem
         : styles.messageBubbleAssistant
-  const renderedText =
-    item.role === 'assistant'
-      ? extractReviewSummaryText(item.text) ?? item.text
-      : item.text
+  const messageParseKey = buildParseCacheKey({
+    threadId: item.threadId,
+    itemId: item.id,
+    updatedAt: item.updatedAt,
+    mode: 'message_markdown',
+    rendererVersion: PARSE_CACHE_RENDERER_VERSION,
+  })
+  const renderedText = readOrComputeParseArtifact<string>(
+    buildParseArtifactVariantKey(messageParseKey, 'rendered_message_text'),
+    () =>
+      item.role === 'assistant'
+        ? extractReviewSummaryText(item.text) ?? item.text
+        : item.text,
+  ).value
 
   return (
     <article className={`${styles.row} ${roleClass}`} data-testid="conversation-v3-item-message">
@@ -561,6 +612,8 @@ function ReasoningRowV3({
   isExpanded: boolean
   onToggle: (itemId: string) => void
 }) {
+  emitRowRenderProfileForItem(item)
+
   return (
     <article className={`${styles.row} ${styles.reasoningRow}`} data-testid="conversation-v3-item-reasoning">
       <div className={styles.reasoningRail}>
@@ -731,10 +784,14 @@ function ToolRowV3({
   onToggle: (itemId: string) => void
   onRequestAutoScroll?: () => void
 }) {
-  const effectiveChanges = useMemo(() => toolChangesFromOutputFiles(item.outputFiles), [item.outputFiles])
+  emitRowRenderProfileForItem(item)
 
-  if (item.toolType === 'fileChange') {
-    const fileChangeItem: ToolItemV2 = {
+  const effectiveChanges = useMemo(() => toolChangesFromOutputFiles(item.outputFiles), [item.outputFiles])
+  const fileChangeItem = useMemo<ToolItemV2 | null>(() => {
+    if (item.toolType !== 'fileChange') {
+      return null
+    }
+    return {
       ...item,
       kind: 'tool',
       toolType: 'fileChange',
@@ -747,9 +804,12 @@ function ToolRowV3({
       })),
       changes: effectiveChanges,
     }
+  }, [effectiveChanges, item])
+
+  if (item.toolType === 'fileChange') {
     return (
       <FileChangeToolRow
-        item={fileChangeItem}
+        item={fileChangeItem as ToolItemV2}
         isExpanded={isExpanded}
         onToggle={onToggle}
         dataTestId="conversation-v3-item-tool"
@@ -968,7 +1028,19 @@ function isFileChangeSemanticDiff(item: Extract<ConversationItemV3, { kind: 'dif
 }
 
 function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'review' }> }) {
-  const renderedText = extractReviewSummaryText(item.text) ?? item.text
+  emitRowRenderProfileForItem(item)
+
+  const reviewParseKey = buildParseCacheKey({
+    threadId: item.threadId,
+    itemId: item.id,
+    updatedAt: item.updatedAt,
+    mode: 'message_markdown',
+    rendererVersion: PARSE_CACHE_RENDERER_VERSION,
+  })
+  const renderedText = readOrComputeParseArtifact<string>(
+    buildParseArtifactVariantKey(reviewParseKey, 'rendered_review_text'),
+    () => extractReviewSummaryText(item.text) ?? item.text,
+  ).value
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-review">
       <div className={styles.rowRail}>
@@ -997,6 +1069,8 @@ function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'revi
 }
 
 function ExploreRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'explore' }> }) {
+  emitRowRenderProfileForItem(item)
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-explore">
       <div className={styles.rowRail}>
@@ -1033,11 +1107,19 @@ function DiffRowV3({
   isExpanded: boolean
   onToggle: (itemId: string) => void
 }) {
+  emitRowRenderProfileForItem(item)
+
+  const syntheticFileChangeItem = useMemo<ToolItemV2 | null>(() => {
+    if (!isFileChangeSemanticDiff(item)) {
+      return null
+    }
+    return diffItemV3ToSyntheticFileChangeTool(item)
+  }, [item])
+
   if (isFileChangeSemanticDiff(item)) {
-    const synthetic = diffItemV3ToSyntheticFileChangeTool(item)
     return (
       <FileChangeToolRow
-        item={synthetic}
+        item={syntheticFileChangeItem as ToolItemV2}
         isExpanded={isExpanded}
         onToggle={onToggle}
         dataTestId="conversation-v3-item-diff"
@@ -1078,6 +1160,8 @@ function DiffRowV3({
 }
 
 function StatusRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'status' }> }) {
+  emitRowRenderProfileForItem(item)
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-status">
       <div className={styles.rowRail}>
@@ -1097,6 +1181,8 @@ function StatusRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'stat
 }
 
 function ErrorRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'error' }> }) {
+  emitRowRenderProfileForItem(item)
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-error">
       <div className={styles.rowRail}>
@@ -1124,6 +1210,8 @@ function UserInputInlineRowV3({
   status: PendingRequestStatus
   answers: UserInputAnswerV3[]
 }) {
+  emitRowRenderProfileForItem(item)
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-userInput-inline">
       <div className={styles.rowRail}>
@@ -1147,6 +1235,129 @@ function UserInputInlineRowV3({
     </article>
   )
 }
+
+type MessageRowProps = { item: Extract<ConversationItemV3, { kind: 'message' }> }
+type ReasoningRowProps = {
+  item: Extract<ConversationItemV3, { kind: 'reasoning' }>
+  meta?: ReasoningPresentationMetaV3
+  isExpanded: boolean
+  onToggle: (itemId: string) => void
+}
+type ToolRowProps = {
+  item: Extract<ConversationItemV3, { kind: 'tool' }>
+  isExpanded: boolean
+  onToggle: (itemId: string) => void
+  onRequestAutoScroll?: () => void
+}
+type ReviewRowProps = { item: Extract<ConversationItemV3, { kind: 'review' }> }
+type ExploreRowProps = { item: Extract<ConversationItemV3, { kind: 'explore' }> }
+type DiffRowProps = {
+  item: Extract<ConversationItemV3, { kind: 'diff' }>
+  isExpanded: boolean
+  onToggle: (itemId: string) => void
+}
+type StatusRowProps = { item: Extract<ConversationItemV3, { kind: 'status' }> }
+type ErrorRowProps = { item: Extract<ConversationItemV3, { kind: 'error' }> }
+type UserInputInlineRowProps = {
+  item: Extract<ConversationItemV3, { kind: 'userInput' }>
+  status: PendingRequestStatus
+  answers: UserInputAnswerV3[]
+}
+
+function areMessageRowPropsEqual(prev: MessageRowProps, next: MessageRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.item.role === next.item.role &&
+    prev.item.text === next.item.text &&
+    prev.item.format === next.item.format
+  )
+}
+
+function areReasoningRowPropsEqual(prev: ReasoningRowProps, next: ReasoningRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.isExpanded === next.isExpanded &&
+    prev.onToggle === next.onToggle &&
+    prev.meta?.hasBody === next.meta?.hasBody &&
+    prev.meta?.visibleSummary === next.meta?.visibleSummary &&
+    prev.meta?.visibleDetail === next.meta?.visibleDetail &&
+    prev.meta?.workingLabel === next.meta?.workingLabel
+  )
+}
+
+function areToolRowPropsEqual(prev: ToolRowProps, next: ToolRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.isExpanded === next.isExpanded &&
+    prev.onToggle === next.onToggle &&
+    prev.onRequestAutoScroll === next.onRequestAutoScroll &&
+    prev.item.toolType === next.item.toolType
+  )
+}
+
+function areReviewRowPropsEqual(prev: ReviewRowProps, next: ReviewRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.item.title === next.item.title &&
+    prev.item.text === next.item.text &&
+    prev.item.disposition === next.item.disposition
+  )
+}
+
+function areExploreRowPropsEqual(prev: ExploreRowProps, next: ExploreRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.item.title === next.item.title &&
+    prev.item.text === next.item.text
+  )
+}
+
+function areDiffRowPropsEqual(prev: DiffRowProps, next: DiffRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.isExpanded === next.isExpanded &&
+    prev.onToggle === next.onToggle
+  )
+}
+
+function areStatusRowPropsEqual(prev: StatusRowProps, next: StatusRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.item.code === next.item.code &&
+    prev.item.label === next.item.label &&
+    prev.item.detail === next.item.detail
+  )
+}
+
+function areErrorRowPropsEqual(prev: ErrorRowProps, next: ErrorRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.item.code === next.item.code &&
+    prev.item.title === next.item.title &&
+    prev.item.message === next.item.message
+  )
+}
+
+function areUserInputInlineRowPropsEqual(
+  prev: UserInputInlineRowProps,
+  next: UserInputInlineRowProps,
+): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.status === next.status &&
+    prev.answers === next.answers
+  )
+}
+
+const MemoMessageRowV3 = memo(MessageRowV3, areMessageRowPropsEqual)
+const MemoReasoningRowV3 = memo(ReasoningRowV3, areReasoningRowPropsEqual)
+const MemoToolRowV3 = memo(ToolRowV3, areToolRowPropsEqual)
+const MemoReviewRowV3 = memo(ReviewRowV3, areReviewRowPropsEqual)
+const MemoExploreRowV3 = memo(ExploreRowV3, areExploreRowPropsEqual)
+const MemoDiffRowV3 = memo(DiffRowV3, areDiffRowPropsEqual)
+const MemoStatusRowV3 = memo(StatusRowV3, areStatusRowPropsEqual)
+const MemoErrorRowV3 = memo(ErrorRowV3, areErrorRowPropsEqual)
+const MemoUserInputInlineRowV3 = memo(UserInputInlineRowV3, areUserInputInlineRowPropsEqual)
 
 function PendingUserInputCardV3({
   request,
@@ -1372,64 +1583,57 @@ function renderItemRowV3({
   onToggleExpanded: (itemId: string) => void
   onRequestAutoScroll: () => void
 }) {
-  emitRowRenderProfile({
-    threadId: item.threadId,
-    itemId: item.id,
-    kind: item.kind,
-    status: item.status,
-    updatedAt: item.updatedAt,
-    sequence: item.sequence,
-  })
+  const isExpanded = expandedItemIds.has(item.id)
 
   if (item.kind === 'message') {
-    return <MessageRowV3 item={item} />
+    return <MemoMessageRowV3 item={item} />
   }
   if (item.kind === 'reasoning') {
     return (
-      <ReasoningRowV3
+      <MemoReasoningRowV3
         item={item}
         meta={reasoningMeta}
-        isExpanded={expandedItemIds.has(item.id)}
+        isExpanded={isExpanded}
         onToggle={onToggleExpanded}
       />
     )
   }
   if (item.kind === 'tool') {
     return (
-      <ToolRowV3
+      <MemoToolRowV3
         item={item}
-        isExpanded={expandedItemIds.has(item.id)}
+        isExpanded={isExpanded}
         onToggle={onToggleExpanded}
         onRequestAutoScroll={onRequestAutoScroll}
       />
     )
   }
   if (item.kind === 'review') {
-    return <ReviewRowV3 item={item} />
+    return <MemoReviewRowV3 item={item} />
   }
   if (item.kind === 'diff') {
     return (
-      <DiffRowV3
+      <MemoDiffRowV3
         item={item}
-        isExpanded={expandedItemIds.has(item.id)}
+        isExpanded={isExpanded}
         onToggle={onToggleExpanded}
       />
     )
   }
   if (item.kind === 'explore') {
-    return <ExploreRowV3 item={item} />
+    return <MemoExploreRowV3 item={item} />
   }
   if (item.kind === 'status') {
-    return <StatusRowV3 item={item} />
+    return <MemoStatusRowV3 item={item} />
   }
   if (item.kind === 'error') {
-    return <ErrorRowV3 item={item} />
+    return <MemoErrorRowV3 item={item} />
   }
   if (item.kind === 'userInput') {
     const request = requestMapByRequestId.get(item.requestId)
     const status = request?.status ?? effectiveUserInputStatus(item, requestMapByRequestId)
     const answers = request?.answers.length ? request.answers : item.answers
-    return <UserInputInlineRowV3 item={item} status={status} answers={answers} />
+    return <MemoUserInputInlineRowV3 item={item} status={status} answers={answers} />
   }
   return null
 }
@@ -1466,6 +1670,7 @@ export function MessagesV3({
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const autoScrollRef = useRef(true)
   const manuallyToggledExpandedRef = useRef<Set<string>>(new Set())
+  const previousThreadIdRef = useRef<string | null>(null)
   const snapshotRef = useRef(snapshot)
   snapshotRef.current = snapshot
 
@@ -1475,6 +1680,18 @@ export function MessagesV3({
   const threadId = snapshot?.threadId ?? null
   const pendingRequests = snapshot?.uiSignals.activeUserInputRequests ?? []
   const requestMapByRequestId = useMemo(() => requestByRequestId(pendingRequests), [pendingRequests])
+
+  useEffect(() => {
+    resetMessagesV3ProfilingState()
+    const previousThreadId = previousThreadIdRef.current
+    if (previousThreadId && previousThreadId !== threadId) {
+      resetParseArtifactCacheForThread(previousThreadId)
+    }
+    if (threadId == null) {
+      resetParseArtifactCache()
+    }
+    previousThreadIdRef.current = threadId
+  }, [threadId])
 
   const itemById = useMemo(() => {
     const map = new Map<string, ConversationItemV3>()

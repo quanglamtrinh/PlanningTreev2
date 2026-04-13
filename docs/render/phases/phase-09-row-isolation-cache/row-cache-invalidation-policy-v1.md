@@ -91,6 +91,13 @@ Reference:
 Guardrail:
 
 - profiling hooks must not alter user-visible behavior.
+- profiling is opt-in outside tests:
+  1. enabled in `test` mode
+  2. or enabled with `VITE_ENABLE_MESSAGES_V3_PROFILING=1`
+  3. or enabled by an attached profiling subscriber
+- when profiling is disabled, emit calls are state no-ops (no tracked parse-key growth).
+- parse-key tracking is bounded by `MAX_TRACKED_PARSE_KEYS = 2000` with FIFO eviction.
+- tracked parse keys reset when `MessagesV3` thread lifecycle (`threadId`) changes.
 
 ## 7. Entry Criterion Mapping
 

@@ -10,6 +10,10 @@ import {
   buildParseCacheKey,
   PARSE_CACHE_RENDERER_VERSION,
 } from './v3/parseCacheContract'
+import {
+  buildParseArtifactVariantKey,
+  readOrComputeParseArtifact,
+} from './v3/parseArtifactCache'
 import { emitParseCacheTrace } from './v3/messagesV3ProfilingHooks'
 
 function normalizeText(value: string | null | undefined): string {
@@ -710,7 +714,14 @@ export function FileChangeToolRow({
     mode: 'diff_stats',
     rendererVersion: PARSE_CACHE_RENDERER_VERSION,
   })
-  const fileRows = useMemo(() => resolveCanonicalFileRows(item), [item])
+  const fileRows = useMemo(
+    () =>
+      readOrComputeParseArtifact<FileChangeRow[]>(
+        buildParseArtifactVariantKey(parseKeyDiffUnified, 'canonical_file_rows'),
+        () => resolveCanonicalFileRows(item),
+      ).value,
+    [item, parseKeyDiffUnified],
+  )
   const primaryRow = fileRows[0]
   const isMultiFile = fileRows.length > 1
 
@@ -733,7 +744,13 @@ export function FileChangeToolRow({
       rendererVersion: PARSE_CACHE_RENDERER_VERSION,
       key: parseKeyDiffStats,
     })
-  })
+  }, [
+    item.id,
+    item.threadId,
+    item.updatedAt,
+    parseKeyDiffStats,
+    parseKeyDiffUnified,
+  ])
 
   const blobSourceText = useMemo(() => {
     const out = item.outputText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
@@ -766,13 +783,27 @@ export function FileChangeToolRow({
   const canToggle = hasArguments || hasOutput || hasFiles
   const showBody = !canToggle || isExpanded
 
-  const diffChunks = useMemo(() => parseUnifiedDiffChunks(blobSourceText), [blobSourceText])
-  const blobLines = useMemo(() => {
-    if (!blobSourceText.trim()) {
-      return [] as string[]
-    }
-    return blobSourceText.split('\n')
-  }, [blobSourceText])
+  const diffChunks = useMemo(
+    () =>
+      readOrComputeParseArtifact<UnifiedDiffChunk[]>(
+        buildParseArtifactVariantKey(parseKeyDiffUnified, 'unified_diff_chunks'),
+        () => parseUnifiedDiffChunks(blobSourceText),
+      ).value,
+    [blobSourceText, parseKeyDiffUnified],
+  )
+  const blobLines = useMemo(
+    () =>
+      readOrComputeParseArtifact<string[]>(
+        buildParseArtifactVariantKey(parseKeyDiffUnified, 'unified_blob_lines'),
+        () => {
+          if (!blobSourceText.trim()) {
+            return []
+          }
+          return blobSourceText.split('\n')
+        },
+      ).value,
+    [blobSourceText, parseKeyDiffUnified],
+  )
   const multiFileRows = useMemo(
     () =>
       fileRows.map((row, index) => {
@@ -815,6 +846,14 @@ export function FileChangeToolRow({
   }, [fileRows.length, headline, isMultiFile, item.title, primaryRow])
 
   const badgeLabel = primaryRow ? changeTypeLabel(primaryRow.changeType) : 'UPDATED'
+  const sourceStats = useMemo(
+    () =>
+      readOrComputeParseArtifact<ResolvedDiffStats>(
+        buildParseArtifactVariantKey(parseKeyDiffStats, 'source_diff_stats'),
+        () => resolvedDiffStatsFromText(sourceText),
+      ).value,
+    [parseKeyDiffStats, sourceText],
+  )
   const stats = useMemo(() => {
     if (multiFileRows.length > 0) {
       const knownRows = multiFileRows.filter((row) => row.statsKnown)
@@ -824,12 +863,11 @@ export function FileChangeToolRow({
       const aggregate = aggregateStatsFromRows(knownRows)
       return { ...aggregate, known: true }
     }
-    const fromSource = resolvedDiffStatsFromText(sourceText)
-    if (fromSource.known) {
-      return fromSource
+    if (sourceStats.known) {
+      return sourceStats
     }
     return { added: 0, removed: 0, known: false }
-  }, [multiFileRows, sourceText])
+  }, [multiFileRows, sourceStats])
 
   const singleBodyText = useMemo(() => {
     if (isMultiFile) {
@@ -840,12 +878,19 @@ export function FileChangeToolRow({
     }
     return sourceText
   }, [isMultiFile, primaryRow?.diff, sourceText])
-  const lines = useMemo(() => {
-    if (!singleBodyText.trim()) {
-      return [] as string[]
-    }
-    return singleBodyText.split('\n')
-  }, [singleBodyText])
+  const lines = useMemo(
+    () =>
+      readOrComputeParseArtifact<string[]>(
+        buildParseArtifactVariantKey(parseKeyDiffUnified, 'single_body_lines'),
+        () => {
+          if (!singleBodyText.trim()) {
+            return []
+          }
+          return singleBodyText.split('\n')
+        },
+      ).value,
+    [parseKeyDiffUnified, singleBodyText],
+  )
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [expandedMultiKey, setExpandedMultiKey] = useState<string | null>(null)

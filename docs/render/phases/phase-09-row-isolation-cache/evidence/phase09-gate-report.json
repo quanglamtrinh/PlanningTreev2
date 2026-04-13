@@ -1,6 +1,6 @@
 {
   "phase": "09",
-  "generated_at": "2026-04-13T20:33:25Z",
+  "generated_at": "2026-04-13T21:53:42Z",
   "source": "phase09_gate_report",
   "status": "pass",
   "metric": "phase09_gate_pass_count",
@@ -10,7 +10,7 @@
   "pass": true,
   "context": {
     "evidence_dir": "docs/render/phases/phase-09-row-isolation-cache/evidence",
-    "candidate_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/candidates/row-render-profile-candidate.json",
+    "candidate_path": null,
     "gate_count": 3,
     "eligibility_fail_count": 0
   },

@@ -108,7 +108,15 @@ export function ConversationMarkdown({
       rendererVersion: traceRendererVersion,
       key: traceKey,
     })
-  })
+  }, [
+    traceKey,
+    parseTrace?.itemId,
+    parseTrace?.mode,
+    parseTrace?.threadId,
+    parseTrace?.updatedAt,
+    traceRendererVersion,
+    traceSource,
+  ])
 
   return (
     <div className={styles.root}>

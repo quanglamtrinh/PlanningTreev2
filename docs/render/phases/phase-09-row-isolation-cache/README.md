@@ -85,6 +85,13 @@ For markdown/diff/highlight output:
 Guardrail:
 
 - hooks are measurement-only and must not change user-visible behavior.
+- profiling is opt-in outside tests. It is enabled only when one of the following is true:
+  - runtime mode is `test`
+  - `VITE_ENABLE_MESSAGES_V3_PROFILING=1`
+  - a real profiling subscriber is attached via `setMessagesV3ProfilingHooks`
+- when profiling is off, emit functions are no-op for state (no parse-key accumulation).
+- parse-key retention is bounded (`MAX_TRACKED_PARSE_KEYS=2000`) with FIFO eviction.
+- parse-key tracking resets on `threadId` lifecycle change in `MessagesV3`.
 
 ### 4. Gate harness and evidence contract
 
