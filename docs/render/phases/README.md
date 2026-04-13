@@ -1,6 +1,6 @@
 # Render Optimization Phase Plan (A-E Only)
 
-Status: Active execution plan (Phase 01-05 completed; Phase 06-13 planned).
+Status: Active execution plan (Phase 01-06 completed; Phase 07-13 planned).
 
 Last updated: 2026-04-13.
 
@@ -67,7 +67,7 @@ A phase is considered complete only when all checks below are true:
 3. [phase-03-backend-delta-compaction](./phase-03-backend-delta-compaction/README.md) (A01, A04, A08)
 4. [phase-04-inmemory-actor-checkpointing](./phase-04-inmemory-actor-checkpointing/README.md) (A02, A03)
 5. [phase-05-persistence-broker-efficiency](./phase-05-persistence-broker-efficiency/README.md) (A05, A06, A07) - Completed
-6. [phase-06-frame-batching-fast-append](./phase-06-frame-batching-fast-append/README.md) (C01, C07)
+6. [phase-06-frame-batching-fast-append](./phase-06-frame-batching-fast-append/README.md) (C01, C07) - Completed
 7. [phase-07-state-shape-hot-path](./phase-07-state-shape-hot-path/README.md) (C02, C03, C04)
 8. [phase-08-store-isolation-selectors](./phase-08-store-isolation-selectors/README.md) (C05, C06, C08)
 9. [phase-09-row-isolation-cache](./phase-09-row-isolation-cache/README.md) (D01, D02, D10)

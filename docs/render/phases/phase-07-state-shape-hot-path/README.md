@@ -29,6 +29,14 @@ Must-hold decisions:
 
 Lower per-event apply cost by normalizing conversation state, removing avoidable sort work, and enforcing structural sharing.
 
+## Prerequisite
+
+Phase 06 completed (all `P06` gates pass with committed evidence).
+
+Reference handoff:
+
+- `docs/render/phases/phase-06-frame-batching-fast-append/handoff-to-phase-07.md`.
+
 ## In Scope
 
 1. C02: Normalized conversation state model.

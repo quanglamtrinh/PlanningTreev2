@@ -1,10 +1,34 @@
 ﻿# Phase 06 - Frame Batching and Fast Text Append
 
-Status: Implemented (2026-04-13).
+Status: Completed (all P06 gates passed with committed evidence).
 
 Scope IDs: C01, C07.
 
 Subphase workspace: ./subphases/.
+
+## Entry Criteria Artifacts
+
+`phase-manifest-v1.json` entry criteria for Phase 06:
+
+- `phase_05_passed`.
+- `frontend_batching_policy_frozen`.
+
+Phase 06 entry artifacts:
+
+- `docs/render/phases/phase-05-persistence-broker-efficiency/evidence/phase05-gate-report.json`.
+- `docs/render/phases/phase-06-frame-batching-fast-append/frontend-batching-policy-v1.md`.
+
+Phase closure artifacts:
+
+- `docs/render/phases/phase-06-frame-batching-fast-append/close-phase-v1.md`.
+- `docs/render/phases/phase-06-frame-batching-fast-append/handoff-to-phase-07.md`.
+- `docs/render/phases/phase-06-frame-batching-fast-append/evidence/phase06-gate-report.json`.
+
+Phase closure snapshot:
+
+- `P06-G1`: `65.0` (`>= 50`).
+- `P06-G2`: `100.0` (`<= 120`).
+- `P06-G3`: `0` (`<= 0`).
 
 ## Decision Pack Alignment
 
@@ -24,13 +48,6 @@ Must-hold decisions:
 - Frontend batching is presentation-only, not semantic coalescing.
 - Final state must remain equivalent to canonical backend event semantics.
 - Apply ordering must remain deterministic under burst traffic.
-
-
-## Entry Criteria Lock
-
-Required frozen artifact:
-
-- `docs/render/phases/phase-06-frame-batching-fast-append/frontend-batching-policy-v1.md`.
 
 
 ## Objective
