@@ -1,6 +1,8 @@
-﻿# Phase 10 - Progressive and Virtualized Rendering
+# Phase 10 - Progressive and Virtualized Rendering
 
-Status: Planned.
+Status: Planned (preflight frozen).
+
+Date: 2026-04-13.
 
 Scope IDs: D03, D04, D09.
 
@@ -24,10 +26,14 @@ Must-hold decisions:
 - Progressive rendering must not break deterministic ordering.
 - Budget degradation logic must preserve correctness before aesthetics.
 
-
 ## Objective
 
 Keep long-thread interaction smooth by limiting mount pressure and controlling frame-time budget.
+
+Frozen preflight artifacts:
+
+1. `preflight-v1.md`
+2. `list-anchor-invariants-v1.md` (`list_anchor_invariants_frozen`)
 
 ## In Scope
 
@@ -61,6 +67,14 @@ When frame cost exceeds budget:
 - defer non-critical decoration work
 - keep interaction path responsive
 
+## Preflight-locked Defaults
+
+1. Virtualization unit v1 is `groupedEntries` (no row flattening in first implementation pass).
+2. Anchor policy v1 preserves viewport anchor for prepend/load-more.
+3. Auto-scroll pinning remains allowed only when viewport is already near bottom.
+4. Correctness fallback is mandatory: if anchor invariant breaks, degrade to safe non-virtualized mode.
+5. No `C1`-`C6` contract expansion is allowed in preflight.
+
 ## Implementation Plan
 
 1. Integrate progressive list behavior into message feed.
@@ -75,6 +89,17 @@ When frame cost exceeds budget:
    - stable scroll with low jank under long histories.
 3. Budget control:
    - guard activates only under stress and preserves correctness.
+
+Gate harness:
+
+1. `scripts/phase10_long_thread_open_scenario.py`
+2. `scripts/phase10_scroll_smoothness_profile.py`
+3. `scripts/phase10_virtualization_anchor_tests.py`
+4. `scripts/phase10_gate_report.py`
+
+Evidence contract:
+
+- `docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/README.md`
 
 ## Test Plan
 
@@ -96,15 +121,9 @@ When frame cost exceeds budget:
 
 With base list performance under control, heavy compute offload can focus on specific expensive row types.
 
-
 ## Effort Estimate
 
 - Size: Large
 - Estimated duration: 6-8 engineering days
 - Suggested staffing: 1 frontend primary + 1 frontend support
 - Confidence level: Medium (depends on current code-path complexity and test debt)
-
-
-
-
-

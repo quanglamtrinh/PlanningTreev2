@@ -1,0 +1,8 @@
+{
+  "candidate_metrics": {
+    "anchor_test_case_count": 42,
+    "prepend_anchor_case_count": 18,
+    "load_more_anchor_case_count": 24,
+    "anchor_break_incidents": 0
+  }
+}

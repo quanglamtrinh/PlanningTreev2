@@ -25,6 +25,9 @@ ENTRY_CRITERIA_FILE_RULES = {
     "row_cache_invalidation_policy_frozen": Path(
         "docs/render/phases/phase-09-row-isolation-cache/row-cache-invalidation-policy-v1.md"
     ),
+    "list_anchor_invariants_frozen": Path(
+        "docs/render/phases/phase-10-progressive-virtualized-rendering/list-anchor-invariants-v1.md"
+    ),
 }
 
 

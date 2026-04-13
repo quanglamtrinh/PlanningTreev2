@@ -1,0 +1,28 @@
+{
+  "phase": "10",
+  "generated_at": "2026-04-13T23:24:07Z",
+  "source": "virtualization_anchor_tests",
+  "evidence_mode": "candidate",
+  "gate_eligible": true,
+  "status": "pass",
+  "metric": "anchor_break_incidents",
+  "value": 0.0,
+  "target": 0.0,
+  "operator": "lte",
+  "pass": true,
+  "context": {
+    "scenario": "phase10_virtualization_anchor_tests_v1",
+    "anchor_test_case_count": 42,
+    "prepend_anchor_case_count": 18,
+    "load_more_anchor_case_count": 24,
+    "candidate_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/candidates/virtualization-anchor-tests-candidate.json",
+    "candidate_commit_sha": "641b285b5a01ea72a1eda03d3519b84f46374c4b"
+  },
+  "baseline_metadata": {
+    "label": "phase10_pre_progressive_virtualization_baseline_v1",
+    "captured_at": "2026-04-13T00:00:00Z",
+    "workload": "synthetic_v3_long_thread_mixed_rows_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/baseline-manifest-v1.json"
+  }
+}
