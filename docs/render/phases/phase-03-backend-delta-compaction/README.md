@@ -21,6 +21,11 @@ Phase 03 freeze artifacts:
 - `gate-measurement-plan-v1.md`
 - `evidence/README.md`
 
+Phase closure artifacts:
+
+- `close-phase-v1.md`
+- `handoff-to-phase-04.md`
+
 ## Decision Pack Alignment
 
 Decision source: `docs/render/decision-pack-v1.md`.
