@@ -1,6 +1,6 @@
 # Render Optimization Phase Plan (A-E Only)
 
-Status: Active execution plan (Phase 01-06 completed; Phase 07-13 planned).
+Status: Active execution plan (Phase 01-08 completed; Phase 09-13 planned).
 
 Last updated: 2026-04-13.
 
@@ -68,8 +68,8 @@ A phase is considered complete only when all checks below are true:
 4. [phase-04-inmemory-actor-checkpointing](./phase-04-inmemory-actor-checkpointing/README.md) (A02, A03)
 5. [phase-05-persistence-broker-efficiency](./phase-05-persistence-broker-efficiency/README.md) (A05, A06, A07) - Completed
 6. [phase-06-frame-batching-fast-append](./phase-06-frame-batching-fast-append/README.md) (C01, C07) - Completed
-7. [phase-07-state-shape-hot-path](./phase-07-state-shape-hot-path/README.md) (C02, C03, C04)
-8. [phase-08-store-isolation-selectors](./phase-08-store-isolation-selectors/README.md) (C05, C06, C08)
+7. [phase-07-state-shape-hot-path](./phase-07-state-shape-hot-path/README.md) (C02, C03, C04) - Completed
+8. [phase-08-store-isolation-selectors](./phase-08-store-isolation-selectors/README.md) (C05, C06, C08) - Completed
 9. [phase-09-row-isolation-cache](./phase-09-row-isolation-cache/README.md) (D01, D02, D10)
 10. [phase-10-progressive-virtualized-rendering](./phase-10-progressive-virtualized-rendering/README.md) (D03, D04, D09)
 11. [phase-11-heavy-compute-off-main-thread](./phase-11-heavy-compute-off-main-thread/README.md) (D05, D06, D07)
