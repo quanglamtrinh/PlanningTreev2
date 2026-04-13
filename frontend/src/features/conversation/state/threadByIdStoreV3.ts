@@ -96,6 +96,42 @@ export type ThreadUiControlState = Pick<
   ThreadByIdStoreV3State,
   'isLoading' | 'isSending' | 'error' | 'telemetry'
 >
+export type ThreadActionHandlers = Pick<
+  ThreadByIdStoreV3State,
+  | 'loadThread'
+  | 'sendTurn'
+  | 'resolveUserInput'
+  | 'runPlanAction'
+  | 'recordRenderError'
+  | 'disconnectThread'
+>
+export type ThreadFeedRenderState = {
+  snapshot: ThreadSnapshotV3 | null
+  isLoading: boolean
+  isSending: boolean
+  error: string | null
+  lastCompletedAt: number | null
+  lastDurationMs: number | null
+}
+export type ThreadComposerState = {
+  snapshot: ThreadSnapshotV3 | null
+  isLoading: boolean
+  isSending: boolean
+  isActiveTurn: boolean
+}
+export type ThreadTransportBannerState = {
+  streamStatus: ThreadByIdStreamStatusV3
+  error: string | null
+  forcedReloadCount: number
+  lastForcedReloadReason: ReloadReasonCode | null
+}
+export type ThreadWorkflowActionState = {
+  snapshot: ThreadSnapshotV3 | null
+  isLoading: boolean
+  isSending: boolean
+  lastCompletedAt: number | null
+  lastDurationMs: number | null
+}
 
 export function selectCore(state: ThreadByIdStoreV3State): ThreadCoreState {
   return {
@@ -125,6 +161,86 @@ export function selectUiControl(state: ThreadByIdStoreV3State): ThreadUiControlS
     error: state.error,
     telemetry: state.telemetry,
   }
+}
+
+export function selectThreadActions(state: ThreadByIdStoreV3State): ThreadActionHandlers {
+  return {
+    loadThread: state.loadThread,
+    sendTurn: state.sendTurn,
+    resolveUserInput: state.resolveUserInput,
+    runPlanAction: state.runPlanAction,
+    recordRenderError: state.recordRenderError,
+    disconnectThread: state.disconnectThread,
+  }
+}
+
+export function selectFeedRenderState(state: ThreadByIdStoreV3State): ThreadFeedRenderState {
+  const core = selectCore(state)
+  const uiControl = selectUiControl(state)
+  return {
+    snapshot: core.snapshot,
+    isLoading: uiControl.isLoading,
+    isSending: uiControl.isSending,
+    error: uiControl.error,
+    lastCompletedAt: core.lastCompletedAt,
+    lastDurationMs: core.lastDurationMs,
+  }
+}
+
+export function selectComposerState(state: ThreadByIdStoreV3State): ThreadComposerState {
+  return {
+    snapshot: state.snapshot,
+    isLoading: state.isLoading,
+    isSending: state.isSending,
+    isActiveTurn: Boolean(state.snapshot?.activeTurnId),
+  }
+}
+
+export function selectTransportBannerState(
+  state: ThreadByIdStoreV3State,
+): ThreadTransportBannerState {
+  return {
+    streamStatus: state.streamStatus,
+    error: state.error,
+    forcedReloadCount: state.telemetry.forcedSnapshotReloadCount,
+    lastForcedReloadReason: state.telemetry.lastForcedReloadReason,
+  }
+}
+
+export function selectWorkflowActionState(state: ThreadByIdStoreV3State): ThreadWorkflowActionState {
+  return {
+    snapshot: state.snapshot,
+    isLoading: state.isLoading,
+    isSending: state.isSending,
+    lastCompletedAt: state.lastCompletedAt,
+    lastDurationMs: state.lastDurationMs,
+  }
+}
+
+type ThreadCorePatch = Partial<ThreadCoreState>
+type ThreadTransportPatch = Partial<ThreadTransportState>
+type ThreadUiControlPatch = Partial<ThreadUiControlState>
+type ThreadRuntimeStateV3 = Omit<ThreadByIdStoreV3State, keyof ThreadActionHandlers>
+type ThreadDomainPatch = {
+  core?: ThreadCorePatch
+  transport?: ThreadTransportPatch
+  uiControl?: ThreadUiControlPatch
+}
+
+function composeDomainPatch(...patches: ThreadDomainPatch[]): Partial<ThreadByIdStoreV3State> {
+  const merged: Partial<ThreadByIdStoreV3State> = {}
+  for (const patch of patches) {
+    if (patch.core) {
+      Object.assign(merged, patch.core)
+    }
+    if (patch.transport) {
+      Object.assign(merged, patch.transport)
+    }
+    if (patch.uiControl) {
+      Object.assign(merged, patch.uiControl)
+    }
+  }
+  return merged
 }
 
 let threadEventSource: EventSource | null = null
@@ -205,6 +321,88 @@ function completeProcessingTelemetry(state: ProcessingTelemetryState): Processin
         ? Math.max(0, completedAt - telemetry.processingStartedAt)
         : telemetry.lastDurationMs,
   }
+}
+
+function buildDisconnectedStatePatch(): ThreadRuntimeStateV3 {
+  return {
+    snapshot: null,
+    activeProjectId: null,
+    activeNodeId: null,
+    activeThreadId: null,
+    activeThreadRole: null,
+    isLoading: false,
+    isSending: false,
+    streamStatus: 'idle',
+    lastEventId: null,
+    lastSnapshotVersion: null,
+    ...resetProcessingTelemetry(),
+    telemetry: resetTelemetryV3(),
+    error: null,
+  }
+}
+
+function buildThreadLoadStartPatch(
+  projectId: string,
+  nodeId: string,
+  threadId: string,
+  threadRole: ThreadRole,
+): Partial<ThreadByIdStoreV3State> {
+  return composeDomainPatch(
+    {
+      core: {
+        snapshot: null,
+        lastEventId: null,
+        lastSnapshotVersion: null,
+        ...resetProcessingTelemetry(),
+      },
+    },
+    {
+      transport: {
+        activeProjectId: projectId,
+        activeNodeId: nodeId,
+        activeThreadId: threadId,
+        activeThreadRole: threadRole,
+        streamStatus: 'connecting',
+      },
+    },
+    {
+      uiControl: {
+        isLoading: true,
+        isSending: false,
+        telemetry: resetTelemetryV3(),
+        error: null,
+      },
+    },
+  )
+}
+
+function buildSnapshotHydratedPatch(
+  state: ThreadByIdStoreV3State,
+  snapshot: ThreadSnapshotV3,
+  options: { telemetry?: ThreadByIdTelemetryV3 } = {},
+): Partial<ThreadByIdStoreV3State> {
+  return composeDomainPatch(
+    {
+      core: {
+        snapshot,
+        lastEventId: null,
+        lastSnapshotVersion: snapshot.snapshotVersion,
+        ...seedRunningTelemetry(state, snapshot),
+      },
+    },
+    {
+      transport: {
+        streamStatus: 'connecting',
+      },
+    },
+    {
+      uiControl: {
+        isLoading: false,
+        error: null,
+        ...(options.telemetry ? { telemetry: options.telemetry } : {}),
+      },
+    },
+  )
 }
 
 function clearReconnectTimer() {
@@ -412,22 +610,36 @@ async function reloadThreadSnapshot(
   closeThreadEventSource()
 
   if (policy.kind === 'forced') {
-    set((state) => ({
-      telemetry: {
-        ...state.telemetry,
-        forcedSnapshotReloadCount: state.telemetry.forcedSnapshotReloadCount + 1,
-        lastForcedReloadReason: policy.reason,
-      },
-    }))
+    set((state) =>
+      composeDomainPatch({
+        uiControl: {
+          telemetry: {
+            ...state.telemetry,
+            forcedSnapshotReloadCount: state.telemetry.forcedSnapshotReloadCount + 1,
+            lastForcedReloadReason: policy.reason,
+          },
+        },
+      }),
+    )
   }
 
   if (policy.setLoading) {
     const errorMessage = policy.message ?? (policy.kind === 'soft' ? policy.reason ?? null : null)
-    set({
-      isLoading: true,
-      streamStatus: 'connecting',
-      error: errorMessage,
-    })
+    set(
+      composeDomainPatch(
+        {
+          transport: {
+            streamStatus: 'connecting',
+          },
+        },
+        {
+          uiControl: {
+            isLoading: true,
+            error: errorMessage,
+          },
+        },
+      ),
+    )
   }
 
   try {
@@ -439,15 +651,7 @@ async function reloadThreadSnapshot(
     ) {
       return
     }
-    set({
-      snapshot,
-      isLoading: false,
-      error: null,
-      lastEventId: null,
-      lastSnapshotVersion: snapshot.snapshotVersion,
-      streamStatus: 'connecting',
-      ...seedRunningTelemetry(get(), snapshot),
-    })
+    set(buildSnapshotHydratedPatch(latestState, snapshot))
     reconcileResolveFallbackTimers(snapshot)
     void openThreadEventStream(
       get,
@@ -468,11 +672,21 @@ async function reloadThreadSnapshot(
     ) {
       return
     }
-    set({
-      isLoading: false,
-      streamStatus: 'error',
-      error: error instanceof Error ? error.message : String(error),
-    })
+    set(
+      composeDomainPatch(
+        {
+          transport: {
+            streamStatus: 'error',
+          },
+        },
+        {
+          uiControl: {
+            isLoading: false,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        },
+      ),
+    )
   }
 }
 
@@ -493,13 +707,23 @@ function scheduleStreamReopen(
   if (threadRole === 'ask_planning') {
     void api.reportAskRolloutMetricEvent('stream_reconnect').catch(() => undefined)
   }
-  set((state) => ({
-    streamStatus: 'reconnecting',
-    telemetry: {
-      ...state.telemetry,
-      streamReconnectCount: state.telemetry.streamReconnectCount + 1,
-    },
-  }))
+  set((state) =>
+    composeDomainPatch(
+      {
+        transport: {
+          streamStatus: 'reconnecting',
+        },
+      },
+      {
+        uiControl: {
+          telemetry: {
+            ...state.telemetry,
+            streamReconnectCount: state.telemetry.streamReconnectCount + 1,
+          },
+        },
+      },
+    ),
+  )
   reconnectTimer = globalThis.setTimeout(() => {
     reconnectTimer = null
     const state = get()
@@ -615,10 +839,20 @@ async function openThreadEventStream(
       if (probe === 'mismatch') {
         const reason =
           'replay_miss: reconnect cursor is outside replay window; running targeted resync.'
-        set({
-          streamStatus: 'error',
-          error: reason,
-        })
+        set(
+          composeDomainPatch(
+            {
+              transport: {
+                streamStatus: 'error',
+              },
+            },
+            {
+              uiControl: {
+                error: reason,
+              },
+            },
+          ),
+        )
         void reloadThreadSnapshot(
           get,
           set,
@@ -639,10 +873,20 @@ async function openThreadEventStream(
       ) {
         return
       }
-      set({
-        streamStatus: 'error',
-        error: error instanceof Error ? error.message : String(error),
-      })
+      set(
+        composeDomainPatch(
+          {
+            transport: {
+              streamStatus: 'error',
+            },
+          },
+          {
+            uiControl: {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          },
+        ),
+      )
       scheduleStreamReopen(get, set, projectId, nodeId, threadId, threadRole, generation)
       return
     }
@@ -659,7 +903,13 @@ async function openThreadEventStream(
   )
   const eventSource = new EventSource(url)
   threadEventSource = eventSource
-  set({ streamStatus: 'connecting' })
+  set(
+    composeDomainPatch({
+      transport: {
+        streamStatus: 'connecting',
+      },
+    }),
+  )
   const streamSubscribedAt = Date.now()
   type QueuedBusinessFrame = {
     event: ThreadBusinessEventV3
@@ -706,14 +956,25 @@ async function openThreadEventStream(
     if (threadRole === 'ask_planning') {
       void api.reportAskRolloutMetricEvent('stream_error').catch(() => undefined)
     }
-    set((state) => ({
-      error: reason,
-      streamStatus: 'error',
-      telemetry: {
-        ...state.telemetry,
-        envelope_validation_failure_count: state.telemetry.envelope_validation_failure_count + 1,
-      },
-    }))
+    set((state) =>
+      composeDomainPatch(
+        {
+          transport: {
+            streamStatus: 'error',
+          },
+        },
+        {
+          uiControl: {
+            error: reason,
+            telemetry: {
+              ...state.telemetry,
+              envelope_validation_failure_count:
+                state.telemetry.envelope_validation_failure_count + 1,
+            },
+          },
+        },
+      ),
+    )
     void reloadThreadSnapshot(
       get,
       set,
@@ -751,18 +1012,30 @@ async function openThreadEventStream(
       ) {
         return {}
       }
-      return {
-        streamStatus: 'open',
-        lastSnapshotVersion: envelope.snapshotVersion ?? state.lastSnapshotVersion,
-        telemetry: {
-          ...state.telemetry,
-          legacy_fallback_used_count:
-            state.telemetry.legacy_fallback_used_count + (legacyFallbackUsed ? 1 : 0),
-          firstMeaningfulFrameLatencyMs:
-            state.telemetry.firstMeaningfulFrameLatencyMs ??
-            Math.max(0, Date.now() - streamSubscribedAt),
+      return composeDomainPatch(
+        {
+          core: {
+            lastSnapshotVersion: envelope.snapshotVersion ?? state.lastSnapshotVersion,
+          },
         },
-      }
+        {
+          transport: {
+            streamStatus: 'open',
+          },
+        },
+        {
+          uiControl: {
+            telemetry: {
+              ...state.telemetry,
+              legacy_fallback_used_count:
+                state.telemetry.legacy_fallback_used_count + (legacyFallbackUsed ? 1 : 0),
+              firstMeaningfulFrameLatencyMs:
+                state.telemetry.firstMeaningfulFrameLatencyMs ??
+                Math.max(0, Date.now() - streamSubscribedAt),
+            },
+          },
+        },
+      )
     })
   }
 
@@ -860,14 +1133,24 @@ async function openThreadEventStream(
       } catch (error) {
         if (error instanceof ThreadEventApplyErrorV3) {
           clearQueuedBusinessFrames()
-          set((state) => ({
-            error: error.message,
-            streamStatus: 'error',
-            telemetry: {
-              ...state.telemetry,
-              applyErrorCount: state.telemetry.applyErrorCount + 1,
-            },
-          }))
+          set((state) =>
+            composeDomainPatch(
+              {
+                transport: {
+                  streamStatus: 'error',
+                },
+              },
+              {
+                uiControl: {
+                  error: error.message,
+                  telemetry: {
+                    ...state.telemetry,
+                    applyErrorCount: state.telemetry.applyErrorCount + 1,
+                  },
+                },
+              },
+            ),
+          )
           void reloadThreadSnapshot(
             get,
             set,
@@ -948,24 +1231,37 @@ async function openThreadEventStream(
       ) {
         return {}
       }
-      return {
-        snapshot: workingSnapshot,
-        lastEventId: workingLastEventId,
-        lastSnapshotVersion: workingLastSnapshotVersion,
-        streamStatus: 'open',
-        isLoading: workingIsLoading,
-        error: workingError,
-        ...processingTelemetry,
-        telemetry: {
-          ...state.telemetry,
-          legacy_fallback_used_count: state.telemetry.legacy_fallback_used_count + legacyFallbackUsedCount,
-          batchedFlushCount: state.telemetry.batchedFlushCount + 1,
-          batchedEventsApplied: state.telemetry.batchedEventsApplied + appliedEventCount,
-          forcedFlushCount: state.telemetry.forcedFlushCount + forcedFlushDelta,
-          fastAppendHitCount: state.telemetry.fastAppendHitCount + fastAppendHitCount,
-          fastAppendFallbackCount: state.telemetry.fastAppendFallbackCount + fastAppendFallbackCount,
+      return composeDomainPatch(
+        {
+          core: {
+            snapshot: workingSnapshot,
+            lastEventId: workingLastEventId,
+            lastSnapshotVersion: workingLastSnapshotVersion,
+            ...processingTelemetry,
+          },
         },
-      }
+        {
+          transport: {
+            streamStatus: 'open',
+          },
+        },
+        {
+          uiControl: {
+            isLoading: workingIsLoading,
+            error: workingError,
+            telemetry: {
+              ...state.telemetry,
+              legacy_fallback_used_count:
+                state.telemetry.legacy_fallback_used_count + legacyFallbackUsedCount,
+              batchedFlushCount: state.telemetry.batchedFlushCount + 1,
+              batchedEventsApplied: state.telemetry.batchedEventsApplied + appliedEventCount,
+              forcedFlushCount: state.telemetry.forcedFlushCount + forcedFlushDelta,
+              fastAppendHitCount: state.telemetry.fastAppendHitCount + fastAppendHitCount,
+              fastAppendFallbackCount: state.telemetry.fastAppendFallbackCount + fastAppendFallbackCount,
+            },
+          },
+        },
+      )
     })
   }
 
@@ -1012,7 +1308,13 @@ async function openThreadEventStream(
     if (!isActiveTarget(state, projectId, nodeId, threadId, threadRole)) {
       return
     }
-    set({ streamStatus: 'open' })
+    set(
+      composeDomainPatch({
+        transport: {
+          streamStatus: 'open',
+        },
+      }),
+    )
   }
 
   eventSource.onmessage = (message) => {
@@ -1053,21 +1355,7 @@ async function openThreadEventStream(
 }
 
 export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) => ({
-  snapshot: null,
-  activeProjectId: null,
-  activeNodeId: null,
-  activeThreadId: null,
-  activeThreadRole: null,
-  isLoading: false,
-  isSending: false,
-  streamStatus: 'idle',
-  lastEventId: null,
-  lastSnapshotVersion: null,
-  processingStartedAt: null,
-  lastCompletedAt: null,
-  lastDurationMs: null,
-  telemetry: resetTelemetryV3(),
-  error: null,
+  ...buildDisconnectedStatePatch(),
 
   async loadThread(projectId: string, nodeId: string, threadId: string, threadRole: ThreadRole) {
     const current = get()
@@ -1088,21 +1376,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
 
     const generation = ++threadGeneration
     const loadStartedAt = Date.now()
-    set({
-      snapshot: null,
-      activeProjectId: projectId,
-      activeNodeId: nodeId,
-      activeThreadId: threadId,
-      activeThreadRole: threadRole,
-      isLoading: true,
-      isSending: false,
-      streamStatus: 'connecting',
-      lastEventId: null,
-      lastSnapshotVersion: null,
-      ...resetProcessingTelemetry(),
-      telemetry: resetTelemetryV3(),
-      error: null,
-    })
+    set(buildThreadLoadStartPatch(projectId, nodeId, threadId, threadRole))
 
     try {
       const snapshot = await api.getThreadSnapshotByIdV3(projectId, nodeId, threadId)
@@ -1113,18 +1387,14 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       ) {
         return
       }
-      set((state) => ({
-        snapshot,
-        isLoading: false,
-        error: null,
-        lastSnapshotVersion: snapshot.snapshotVersion,
-        streamStatus: 'connecting',
-        telemetry: {
-          ...state.telemetry,
-          firstFrameLatencyMs: Math.max(0, Date.now() - loadStartedAt),
-        },
-        ...seedRunningTelemetry(get(), snapshot),
-      }))
+      set((state) =>
+        buildSnapshotHydratedPatch(state, snapshot, {
+          telemetry: {
+            ...state.telemetry,
+            firstFrameLatencyMs: Math.max(0, Date.now() - loadStartedAt),
+          },
+        }),
+      )
       reconcileResolveFallbackTimers(snapshot)
       void openThreadEventStream(
         get,
@@ -1145,11 +1415,21 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       ) {
         return
       }
-      set({
-        isLoading: false,
-        streamStatus: 'error',
-        error: error instanceof Error ? error.message : String(error),
-      })
+      set(
+        composeDomainPatch(
+          {
+            transport: {
+              streamStatus: 'error',
+            },
+          },
+          {
+            uiControl: {
+              isLoading: false,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          },
+        ),
+      )
     }
   },
 
@@ -1164,7 +1444,14 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
 
     const generation = threadGeneration
     const sendingRole = activeThreadRole
-    set({ isSending: true, error: null })
+    set(
+      composeDomainPatch({
+        uiControl: {
+          isSending: true,
+          error: null,
+        },
+      }),
+    )
 
     try {
       const response = await api.startThreadTurnByIdV3(
@@ -1189,24 +1476,32 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         ) {
           return {}
         }
-        return {
-          isSending: false,
-          snapshot: {
-            ...state.snapshot,
-            threadId: response.threadId ?? state.snapshot.threadId,
-            activeTurnId: response.turnId,
-            processingState: 'running',
-            snapshotVersion: Math.max(
-              state.snapshot.snapshotVersion,
-              response.snapshotVersion ?? state.snapshot.snapshotVersion,
-            ),
+        return composeDomainPatch(
+          {
+            core: {
+              snapshot: {
+                ...state.snapshot,
+                threadId: response.threadId ?? state.snapshot.threadId,
+                activeTurnId: response.turnId,
+                processingState: 'running',
+                snapshotVersion: Math.max(
+                  state.snapshot.snapshotVersion,
+                  response.snapshotVersion ?? state.snapshot.snapshotVersion,
+                ),
+              },
+              lastSnapshotVersion: Math.max(
+                state.lastSnapshotVersion ?? 0,
+                response.snapshotVersion ?? 0,
+              ),
+              processingStartedAt: state.processingStartedAt ?? Date.now(),
+            },
           },
-          lastSnapshotVersion: Math.max(
-            state.lastSnapshotVersion ?? 0,
-            response.snapshotVersion ?? 0,
-          ),
-          processingStartedAt: state.processingStartedAt ?? Date.now(),
-        }
+          {
+            uiControl: {
+              isSending: false,
+            },
+          },
+        )
       })
     } catch (error) {
       const state = get()
@@ -1223,10 +1518,14 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       ) {
         return
       }
-      set({
-        isSending: false,
-        error: error instanceof Error ? error.message : String(error),
-      })
+      set(
+        composeDomainPatch({
+          uiControl: {
+            isSending: false,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        }),
+      )
     }
   },
 
@@ -1254,15 +1553,23 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       ) {
         return {}
       }
-      return {
-        error: null,
-        snapshot: applyOptimisticUserInputSubmissionV3(
-          state.snapshot,
-          requestId,
-          answers,
-          submittedAt,
-        ),
-      }
+      return composeDomainPatch(
+        {
+          core: {
+            snapshot: applyOptimisticUserInputSubmissionV3(
+              state.snapshot,
+              requestId,
+              answers,
+              submittedAt,
+            ),
+          },
+        },
+        {
+          uiControl: {
+            error: null,
+          },
+        },
+      )
     })
 
     try {
@@ -1315,9 +1622,13 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         return
       }
       const reason = error instanceof Error ? error.message : String(error)
-      set({
-        error: reason,
-      })
+      set(
+        composeDomainPatch({
+          uiControl: {
+            error: reason,
+          },
+        }),
+      )
       await reloadThreadSnapshot(
         get,
         set,
@@ -1349,7 +1660,14 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     }
 
     const generation = threadGeneration
-    set({ isSending: true, error: null })
+    set(
+      composeDomainPatch({
+        uiControl: {
+          isSending: true,
+          error: null,
+        },
+      }),
+    )
     try {
       const response = await api.planActionByIdV3(activeProjectId, activeNodeId, activeThreadId, {
         action,
@@ -1366,21 +1684,32 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         ) {
           return {}
         }
-        return {
-          isSending: false,
-          snapshot: {
-            ...state.snapshot,
-            threadId: response.threadId ?? state.snapshot.threadId,
-            activeTurnId: response.turnId ?? state.snapshot.activeTurnId,
-            processingState: 'running',
-            snapshotVersion: Math.max(
-              state.snapshot.snapshotVersion,
-              response.snapshotVersion ?? state.snapshot.snapshotVersion,
-            ),
+        return composeDomainPatch(
+          {
+            core: {
+              snapshot: {
+                ...state.snapshot,
+                threadId: response.threadId ?? state.snapshot.threadId,
+                activeTurnId: response.turnId ?? state.snapshot.activeTurnId,
+                processingState: 'running',
+                snapshotVersion: Math.max(
+                  state.snapshot.snapshotVersion,
+                  response.snapshotVersion ?? state.snapshot.snapshotVersion,
+                ),
+              },
+              lastSnapshotVersion: Math.max(
+                state.lastSnapshotVersion ?? 0,
+                response.snapshotVersion ?? 0,
+              ),
+              processingStartedAt: state.processingStartedAt ?? Date.now(),
+            },
           },
-          lastSnapshotVersion: Math.max(state.lastSnapshotVersion ?? 0, response.snapshotVersion ?? 0),
-          processingStartedAt: state.processingStartedAt ?? Date.now(),
-        }
+          {
+            uiControl: {
+              isSending: false,
+            },
+          },
+        )
       })
     } catch (error) {
       const state = get()
@@ -1391,21 +1720,29 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       ) {
         return
       }
-      set({
-        isSending: false,
-        error: error instanceof Error ? error.message : String(error),
-      })
+      set(
+        composeDomainPatch({
+          uiControl: {
+            isSending: false,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        }),
+      )
     }
   },
 
   recordRenderError(reason: string) {
-    set((state) => ({
-      error: reason,
-      telemetry: {
-        ...state.telemetry,
-        renderErrorCount: state.telemetry.renderErrorCount + 1,
-      },
-    }))
+    set((state) =>
+      composeDomainPatch({
+        uiControl: {
+          error: reason,
+          telemetry: {
+            ...state.telemetry,
+            renderErrorCount: state.telemetry.renderErrorCount + 1,
+          },
+        },
+      }),
+    )
   },
 
   disconnectThread() {
@@ -1413,20 +1750,6 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     clearReconnectTimer()
     clearResolveFallbackTimers()
     closeThreadEventSource()
-    set({
-      snapshot: null,
-      activeProjectId: null,
-      activeNodeId: null,
-      activeThreadId: null,
-      activeThreadRole: null,
-      isLoading: false,
-      isSending: false,
-      streamStatus: 'idle',
-      lastEventId: null,
-      lastSnapshotVersion: null,
-      ...resetProcessingTelemetry(),
-      telemetry: resetTelemetryV3(),
-      error: null,
-    })
+    set(buildDisconnectedStatePatch())
   },
 }))

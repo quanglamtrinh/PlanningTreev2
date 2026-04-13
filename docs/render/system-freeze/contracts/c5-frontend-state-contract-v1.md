@@ -74,3 +74,43 @@ Required selector entrypoints:
 - `selectCore`
 - `selectTransport`
 - `selectUiControl`
+
+## Phase 08 Selector Narrowing Contract
+
+Phase 08 stabilizes focused selector entrypoints for chat-lane subscriptions:
+
+- `selectFeedRenderState`
+- `selectComposerState`
+- `selectTransportBannerState`
+- `selectWorkflowActionState`
+- `selectThreadActions`
+
+Rules:
+
+- main chat containers must subscribe through focused selector entrypoints
+- broad root subscriptions in phase-8 touched chat surfaces are disallowed
+- selector outputs are treated as stable migration contracts for later phases
+
+## Phase 08 Store Isolation Contract
+
+Runtime remains a single Zustand store in this phase, but internal writes are domain-scoped:
+
+- `core`: snapshot/cursor/processing telemetry
+- `transport`: stream lifecycle/reconnect/probe
+- `ui-control`: loading/sending/error/reload telemetry
+
+Rules:
+
+- external action API remains unchanged
+- behavior parity is required while introducing internal domain boundaries
+- `snapshot.items` compatibility remains intact
+
+## Reload Message and Reason Separation
+
+Forced reload reason codes remain contract/debug truth, while user-visible message text remains separate in UI-control error handling.
+
+Rules:
+
+- reason code taxonomy is canonical for forced reload classification
+- user-facing message text must not replace reason code classification
+- transient reconnect path remains soft and must not increase forced reload telemetry

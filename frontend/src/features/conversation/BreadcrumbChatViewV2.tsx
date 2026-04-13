@@ -17,7 +17,14 @@ import {
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { MessagesV3 } from './components/v3/MessagesV3'
 import { MessagesV3ErrorBoundary } from './components/v3/MessagesV3ErrorBoundary'
-import { selectCore, selectUiControl, useThreadByIdStoreV3 } from './state/threadByIdStoreV3'
+import {
+  selectComposerState,
+  selectFeedRenderState,
+  selectThreadActions,
+  selectTransportBannerState,
+  selectWorkflowActionState,
+  useThreadByIdStoreV3,
+} from './state/threadByIdStoreV3'
 import { useWorkflowEventBridgeV3 } from './state/workflowEventBridgeV3'
 import { useWorkflowStateStoreV3 } from './state/workflowStateStoreV3'
 
@@ -45,39 +52,18 @@ export function BreadcrumbChatViewV2() {
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
 
+  const feedRenderStateV3 = useThreadByIdStoreV3(useShallow(selectFeedRenderState))
+  const composerStateV3 = useThreadByIdStoreV3(useShallow(selectComposerState))
+  const transportBannerStateV3 = useThreadByIdStoreV3(useShallow(selectTransportBannerState))
+  const workflowActionStateV3 = useThreadByIdStoreV3(useShallow(selectWorkflowActionState))
   const {
-    snapshot: conversationSnapshotV3,
-    isLoading: isLoadingV3,
-    isSending: isSendingV3,
-    lastCompletedAt: lastCompletedAtV3,
-    lastDurationMs: lastDurationMsV3,
-    error: errorV3,
     loadThread: loadThreadV3,
     sendTurn: sendTurnV3,
     resolveUserInput: resolveUserInputV3,
     runPlanAction: runPlanActionV3,
     recordRenderError: recordV3RenderError,
     disconnectThread: disconnectThreadV3,
-  } = useThreadByIdStoreV3(
-    useShallow((state) => {
-      const core = selectCore(state)
-      const uiControl = selectUiControl(state)
-      return {
-        snapshot: core.snapshot,
-        isLoading: uiControl.isLoading,
-        isSending: uiControl.isSending,
-        lastCompletedAt: core.lastCompletedAt,
-        lastDurationMs: core.lastDurationMs,
-        error: uiControl.error,
-        loadThread: state.loadThread,
-        sendTurn: state.sendTurn,
-        resolveUserInput: state.resolveUserInput,
-        runPlanAction: state.runPlanAction,
-        recordRenderError: state.recordRenderError,
-        disconnectThread: state.disconnectThread,
-      }
-    }),
-  )
+  } = useThreadByIdStoreV3(useShallow(selectThreadActions))
 
   const {
     activeProjectId,
@@ -144,12 +130,11 @@ export function BreadcrumbChatViewV2() {
     isReviewNode,
   })
   const threadTab: ThreadTab = routeTarget.threadTab
-  const conversationSnapshot = conversationSnapshotV3
-  const isLoading = isLoadingV3
-  const isSending = isSendingV3
-  const lastCompletedAt = lastCompletedAtV3
-  const lastDurationMs = lastDurationMsV3
-  const error = errorV3
+  const isLoading = feedRenderStateV3.isLoading
+  const isSending = feedRenderStateV3.isSending
+  const lastCompletedAt = workflowActionStateV3.lastCompletedAt
+  const lastDurationMs = workflowActionStateV3.lastDurationMs
+  const error = transportBannerStateV3.error ?? feedRenderStateV3.error
   const loadThread = loadThreadV3
   const sendTurn = sendTurnV3
   const resolveUserInput = resolveUserInputV3
@@ -330,24 +315,24 @@ export function BreadcrumbChatViewV2() {
   }, [activeProjectId, detailCardState, detailNode, nodeId, projectError, projectId, snapshot])
 
   const showAuditShell = threadTab === 'audit' && !workflowState?.reviewThreadId
-  const isActiveTurn = Boolean(conversationSnapshot?.activeTurnId)
+  const isActiveTurn = composerStateV3.isActiveTurn
   const composerDisabled = useMemo(() => {
-    if (!conversationSnapshot) {
+    if (!composerStateV3.snapshot) {
       return true
     }
     if (threadTab === 'ask') {
-      return isActiveTurn || isSending || isLoading
+      return isActiveTurn || composerStateV3.isSending || composerStateV3.isLoading
     }
     if (threadTab === 'execution') {
       return (
         workflowState?.canSendExecutionMessage !== true ||
         isActiveTurn ||
-        isSending ||
-        isLoading
+        composerStateV3.isSending ||
+        composerStateV3.isLoading
       )
     }
     return true
-  }, [conversationSnapshot, isActiveTurn, isLoading, isSending, threadTab, workflowState])
+  }, [composerStateV3.isLoading, composerStateV3.isSending, composerStateV3.snapshot, isActiveTurn, threadTab, workflowState])
 
   const combinedError = error ?? workflowError ?? null
   const currentExecutionDecision = workflowState?.currentExecutionDecision ?? null
@@ -588,7 +573,7 @@ export function BreadcrumbChatViewV2() {
                   onRenderError={handleV3RenderError}
                 >
                   <MessagesV3
-                    snapshot={conversationSnapshotV3}
+                    snapshot={feedRenderStateV3.snapshot}
                     isLoading={isLoading || isWorkflowLoading}
                     isSending={isSending}
                     onResolveUserInput={resolveUserInput}

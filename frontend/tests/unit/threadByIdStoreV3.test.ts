@@ -29,9 +29,15 @@ vi.mock('../../src/api/client', () => ({
 
 import type { ThreadSnapshotV3 } from '../../src/api/types'
 import {
+  decideReloadPolicy,
+  selectComposerState,
   selectCore,
+  selectFeedRenderState,
+  selectThreadActions,
+  selectTransportBannerState,
   selectTransport,
   selectUiControl,
+  selectWorkflowActionState,
   useThreadByIdStoreV3,
 } from '../../src/features/conversation/state/threadByIdStoreV3'
 
@@ -243,6 +249,65 @@ describe('threadByIdStoreV3', () => {
     expect(transport.streamStatus).toBe('connecting')
     expect(uiControl.isLoading).toBe(false)
     expect(uiControl.error).toBeNull()
+  })
+
+  it('exposes focused phase-8 selectors for feed/composer/transport/workflow domains', async () => {
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(
+      makeSnapshot({
+        activeTurnId: 'turn-1',
+      }),
+    )
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    const state = useThreadByIdStoreV3.getState()
+    const feed = selectFeedRenderState(state)
+    const composer = selectComposerState(state)
+    const transportBanner = selectTransportBannerState(state)
+    const workflowAction = selectWorkflowActionState(state)
+    const actions = selectThreadActions(state)
+
+    expect(Object.keys(feed).sort()).toEqual(
+      ['error', 'isLoading', 'isSending', 'lastCompletedAt', 'lastDurationMs', 'snapshot'].sort(),
+    )
+    expect(Object.keys(composer).sort()).toEqual(
+      ['isActiveTurn', 'isLoading', 'isSending', 'snapshot'].sort(),
+    )
+    expect(Object.keys(transportBanner).sort()).toEqual(
+      ['error', 'forcedReloadCount', 'lastForcedReloadReason', 'streamStatus'].sort(),
+    )
+    expect(Object.keys(workflowAction).sort()).toEqual(
+      ['isLoading', 'isSending', 'lastCompletedAt', 'lastDurationMs', 'snapshot'].sort(),
+    )
+    expect(composer.isActiveTurn).toBe(true)
+    expect(transportBanner.streamStatus).toBe('connecting')
+    expect(actions.loadThread).toBe(state.loadThread)
+    expect(actions.disconnectThread).toBe(state.disconnectThread)
+  })
+
+  it('maps every forced reload trigger to a non-empty reason code', () => {
+    const forcedPolicies = [
+      decideReloadPolicy({ type: 'stream_replay_miss', message: 'replay miss' }),
+      decideReloadPolicy({ type: 'contract_envelope_invalid', message: 'invalid envelope' }),
+      decideReloadPolicy({ type: 'contract_thread_id_mismatch', message: 'thread mismatch' }),
+      decideReloadPolicy({ type: 'contract_event_cursor_invalid', message: 'cursor invalid' }),
+      decideReloadPolicy({ type: 'apply_event_failed', message: 'apply failed' }),
+      decideReloadPolicy({ type: 'user_input_resolve_timeout' }),
+      decideReloadPolicy({ type: 'user_input_resolve_request_failed', message: 'resolve failed' }),
+      decideReloadPolicy({ type: 'stream_healthcheck_failed', setLoading: true }),
+      decideReloadPolicy({ type: 'manual_retry', setLoading: true, message: 'manual retry' }),
+    ]
+
+    for (const policy of forcedPolicies) {
+      expect(policy.kind).toBe('forced')
+      if (policy.kind === 'forced') {
+        expect(policy.reason).toBeTruthy()
+      }
+    }
   })
 
   it('applies thread.snapshot.v3 events', async () => {
@@ -501,6 +566,81 @@ describe('threadByIdStoreV3', () => {
     expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)
     expect(state.telemetry.lastForcedReloadReason).toBe('CONTRACT_THREAD_ID_MISMATCH')
     expect(state.lastEventId).toBeNull()
+  })
+
+  it('rejects duplicate event_id cursor and reloads with CONTRACT_EVENT_CURSOR_INVALID', async () => {
+    apiMock.getThreadSnapshotByIdV3
+      .mockResolvedValueOnce(makeSnapshot())
+      .mockResolvedValueOnce(makeSnapshot({ snapshotVersion: 3 }))
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      eventSource.emitMessage(
+        JSON.stringify({
+          schema_version: 1,
+          event_id: '2',
+          event_type: 'thread.snapshot.v3',
+          thread_id: 'thread-1',
+          turn_id: null,
+          snapshot_version: 2,
+          occurred_at_ms: Date.parse('2026-04-01T00:01:00Z'),
+          eventId: '2',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'execution',
+          occurredAt: '2026-04-01T00:01:00Z',
+          snapshotVersion: 2,
+          type: 'thread.snapshot.v3',
+          payload: {
+            snapshot: makeSnapshot({
+              snapshotVersion: 2,
+              updatedAt: '2026-04-01T00:01:00Z',
+            }),
+          },
+        }),
+      )
+      eventSource.emitMessage(
+        JSON.stringify({
+          schema_version: 1,
+          event_id: '2',
+          event_type: 'thread.snapshot.v3',
+          thread_id: 'thread-1',
+          turn_id: null,
+          snapshot_version: 3,
+          occurred_at_ms: Date.parse('2026-04-01T00:01:01Z'),
+          eventId: '2',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'execution',
+          occurredAt: '2026-04-01T00:01:01Z',
+          snapshotVersion: 3,
+          type: 'thread.snapshot.v3',
+          payload: {
+            snapshot: makeSnapshot({
+              snapshotVersion: 3,
+              updatedAt: '2026-04-01T00:01:01Z',
+            }),
+          },
+        }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
+    })
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)
+    expect(state.telemetry.lastForcedReloadReason).toBe('CONTRACT_EVENT_CURSOR_INVALID')
   })
 
   it('reloads snapshot when event patch cannot be applied', async () => {

@@ -1,6 +1,8 @@
-﻿# Phase 08 - Store Isolation and Selectors
+# Phase 08 - Store Isolation and Selectors
 
-Status: Planned (pre-phase-8 hardening complete).
+Status: Completed.
+
+Date: 2026-04-13.
 
 Scope IDs: C05, C06, C08.
 
@@ -12,7 +14,7 @@ Decision source: `docs/render/decision-pack-v1.md`.
 
 Model alignment:
 
-- Narrows frontend invalidation and reload behavior while preserving transport correctness contracts.
+- Implements Goose-first hybrid boundaries by keeping stream/replay correctness strict while narrowing frontend render invalidation.
 
 Contract focus:
 
@@ -21,110 +23,120 @@ Contract focus:
 
 Must-hold decisions:
 
-- Forced reload is allowed only for explicit mismatch/corruption paths.
-- Reload reasons must map to contract-defined failure classes.
-- Selector scoping must not hide lifecycle-critical state changes.
-
-## Pre-Phase-8 Hardening Baseline
-
-Completed hardening package (must remain true while implementing Phase 08):
-
-1. Phase 07 evidence gating requires candidate-backed artifacts (`evidence_mode="candidate"` and `gate_eligible=true`).
-2. Forced reload classification is centralized and reason-coded (`ReloadReasonCode` taxonomy).
-3. Store guardrail selector entrypoints exist for migration:
-   - `selectCore`
-   - `selectTransport`
-   - `selectUiControl`
-
-Runbook and checklist:
-
-- `docs/render/phases/phase-08-store-isolation-selectors/pre-phase-8-hardening-v1.md`.
-
+- forced reload remains contract-classified with typed reason codes
+- transient reconnect remains soft and does not inflate forced reload counts
+- selector narrowing must not change user-visible behavior or lane semantics
 
 ## Objective
 
-Reduce invalidation fanout by separating store concerns, tightening selectors, and narrowing forced reload behavior.
+Reduce invalidation fanout and reload ambiguity without changing backend APIs, replay semantics, or user flow behavior.
 
-## In Scope
+## Implemented Scope
 
-1. C05: Split store concerns.
-2. C06: Narrow selectors.
-3. C08: Smarter fallback reload policy.
+### 1. Store Isolation (C05)
 
-## Detailed Improvements
+Implemented in `frontend/src/features/conversation/state/threadByIdStoreV3.ts`.
 
-### 1. Store concern separation (C05)
+- Kept one runtime Zustand store as source of truth.
+- Added internal domain boundaries with helper patch composition:
+  - `core` domain
+  - `transport` domain
+  - `ui-control` domain
+- Refactored state writes in load/reload/stream/apply/action paths to domain-scoped patches.
+- Kept external action API unchanged:
+  - `loadThread`
+  - `sendTurn`
+  - `resolveUserInput`
+  - `runPlanAction`
+  - `recordRenderError`
+  - `disconnectThread`
 
-Split data domains:
+### 2. Selector Narrowing (C06)
 
-- conversation/core thread state
-- transport/connection state
-- UI control/interaction state
+Implemented in:
 
-This prevents unrelated updates from invalidating message-heavy views.
+- `frontend/src/features/conversation/state/threadByIdStoreV3.ts`
+- `frontend/src/features/conversation/BreadcrumbChatViewV2.tsx`
 
-### 2. Selector narrowing (C06)
+Added focused selector entrypoints:
 
-Ensure components subscribe only to required fields:
+1. `selectFeedRenderState`
+2. `selectComposerState`
+3. `selectTransportBannerState`
+4. `selectWorkflowActionState`
+5. `selectThreadActions`
 
-- row components: one item by ID + minimal flags
-- status components: transport/lifecycle only
-- avoid broad root selectors
+Migration completed for chat lane surface:
 
-### 3. Reload policy hardening (C08)
+- `BreadcrumbChatViewV2` now subscribes through focused selector entrypoints instead of broad store picks.
 
-Force full reload only for true corruption/mismatch cases:
+### 3. Reload Policy Completion (C08)
 
-- explicit replay gap mismatch
-- unrecoverable schema mismatch
-- invalid order invariant breach
-- explicit typed forced-reload reasons (no null forced reason)
+Forced reload policy uses centralized classification (`decideReloadPolicy`) and fixed reason taxonomy:
 
-## Implementation Plan
+1. `REPLAY_MISS`
+2. `CONTRACT_ENVELOPE_INVALID`
+3. `CONTRACT_THREAD_ID_MISMATCH`
+4. `CONTRACT_EVENT_CURSOR_INVALID`
+5. `APPLY_EVENT_FAILED`
+6. `USER_INPUT_RESOLVE_TIMEOUT`
+7. `USER_INPUT_RESOLVE_REQUEST_FAILED`
+8. `STREAM_HEALTHCHECK_FAILED`
+9. `MANUAL_RETRY`
 
-1. Introduce clear store modules with stable interfaces.
-2. Replace broad selectors with targeted memoized selectors.
-3. Add reload-reason enum and centralized decision function.
+Implementation outcomes:
 
-## Quality Gates
+- no forced reload with null/empty reason
+- forced reload reason code is stored separately from user-visible error message handling
+- transient reconnect remains soft and does not increment forced reload telemetry
 
-1. Fanout:
-   - reduced component invalidation per event.
-2. Stability:
-   - fewer unnecessary full reloads.
-3. Debuggability:
-   - every forced reload has explicit reason code.
+### 4. Docs, Gates, and Handoff (P8.4)
 
-## Test Plan
+Added Phase 08 evidence and gate tooling:
 
-1. Unit tests:
-   - selector dependency isolation.
-   - reload decision logic matrix.
-2. Integration tests:
-   - event stream with transient reconnect issues should avoid unnecessary reload.
-3. Manual checks:
-   - inspect rerender behavior in active thread.
+- `scripts/phase08_render_fanout_profile.py`
+- `scripts/phase08_stream_resilience_scenario.py`
+- `scripts/phase08_reload_reason_audit.py`
+- `scripts/phase08_gate_report.py`
 
-## Risks and Mitigations
+Evidence folder:
 
-1. Risk: selector bugs show stale UI fragments.
-   - Mitigation: strict tests for critical selectors and row updates.
-2. Risk: under-triggered reload causes divergence.
-   - Mitigation: keep explicit invariant checks and safe fallback path.
+- `docs/render/phases/phase-08-store-isolation-selectors/evidence/README.md`
+- `docs/render/phases/phase-08-store-isolation-selectors/evidence/baseline-manifest-v1.json`
 
-## Handoff to Phase 09
+## Validation Snapshot
 
-With store invalidation reduced, row-level memoization and render cache can deliver clearer gains.
+Code and test checks:
 
+1. `npm run typecheck --prefix frontend` -> pass
+2. `npm run test:unit --prefix frontend -- applyThreadEventV3.test.ts threadByIdStoreV3.test.ts` -> pass
 
-## Effort Estimate
+Phase 08 evidence contract checks:
 
-- Size: Medium
-- Estimated duration: 4-6 engineering days
-- Suggested staffing: 1 frontend primary + 1 QA support
-- Confidence level: Medium (depends on current code-path complexity and test debt)
+1. each source script without `--candidate` -> fail (expected)
+2. each source script with `--allow-synthetic --self-test` -> pass, `gate_eligible=false` (expected local-only mode)
+3. `phase08_gate_report.py` over synthetic sources -> fail (expected, ineligible evidence)
+4. candidate-backed source artifacts + `phase08_gate_report.py --self-test` -> pass
 
+## Exit Gates (P08)
 
+Gate targets from `docs/render/system-freeze/phase-gates-v1.json`.
 
+| Gate | Metric | Target | Current value | Status |
+|---|---|---|---|---|
+| P08-G1 | component_invalidation_reduction_pct | `>= 30` | `34.737` | pass |
+| P08-G2 | forced_reload_rate_pct | `<= 3` | `2.308` | pass |
+| P08-G3 | unclassified_reload_reason_events | `<= 0` | `0.0` | pass |
 
+Gate artifacts:
 
+1. `docs/render/phases/phase-08-store-isolation-selectors/evidence/render_fanout_profile.json`
+2. `docs/render/phases/phase-08-store-isolation-selectors/evidence/stream_resilience_scenario.json`
+3. `docs/render/phases/phase-08-store-isolation-selectors/evidence/reload_reason_audit.json`
+4. `docs/render/phases/phase-08-store-isolation-selectors/evidence/phase08-gate-report.json`
+
+## Residual Risks
+
+1. Selector fanout is reduced at container level; row-level memo and parse cache gains are deferred to Phase 09.
+2. `MANUAL_RETRY` reason is contract-mapped but not yet exercised by a dedicated user-triggered UI path.
+3. Candidate evidence currently uses synthetic workload fixtures and should be replaced by CI-produced candidate profiles for production closure.
