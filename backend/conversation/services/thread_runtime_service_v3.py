@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import threading
+import time
 from typing import Any, Callable
 
 from backend.conversation.domain import events as event_types
@@ -33,6 +35,178 @@ _ASK_READ_ONLY_POLICY_ERROR = (
     "Ask lane is read-only. File-change output is not allowed in ask turns."
 )
 
+_COMPACTION_WINDOW_MS_DEFAULT = 50
+_COMPACTION_WINDOW_MS_MIN = 40
+_COMPACTION_WINDOW_MS_MAX = 60
+_COMPACTION_MAX_BATCH_SIZE_DEFAULT = 64
+
+_COMPACTION_MERGE_SAFE_METHODS = {
+    "item/agentMessage/delta",
+    "item/plan/delta",
+    "item/reasoning/summaryDelta",
+    "item/reasoning/detailDelta",
+    "item/commandExecution/outputDelta",
+    "item/fileChange/outputDelta",
+}
+
+_COMPACTION_BOUNDARY_METHODS = {
+    "item/completed",
+    "turn/completed",
+    "item/tool/requestUserInput",
+    "serverRequest/resolved",
+    "thread/status/changed",
+}
+
+_FILE_CHANGE_OUTPUT_DELTA_METHOD = "item/fileChange/outputDelta"
+
+
+def _normalize_optional_id(value: Any) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+class _RawEventCompactorV3:
+    def __init__(
+        self,
+        *,
+        default_thread_id: str | None,
+        default_turn_id: str | None,
+        window_ms: int,
+        max_batch_size: int,
+        now_ms: Callable[[], int] | None = None,
+    ) -> None:
+        self._default_thread_id = _normalize_optional_id(default_thread_id)
+        self._default_turn_id = _normalize_optional_id(default_turn_id)
+        self._window_ms = max(1, int(window_ms))
+        self._max_batch_size = max(1, int(max_batch_size))
+        self._now_ms = now_ms if callable(now_ms) else lambda: int(time.monotonic() * 1000)
+        self._pending: list[dict[str, Any]] = []
+        self._batch_started_ms: int | None = None
+
+    def push(self, raw_event: dict[str, Any]) -> list[dict[str, Any]]:
+        method = str(raw_event.get("method") or "").strip()
+        if not method:
+            return []
+
+        ready = self._flush_due_to_window_fail_open()
+        if method in _COMPACTION_BOUNDARY_METHODS:
+            ready.extend(self.flush())
+            ready.append(copy.deepcopy(raw_event))
+            return ready
+
+        if method not in _COMPACTION_MERGE_SAFE_METHODS:
+            ready.extend(self.flush())
+            ready.append(copy.deepcopy(raw_event))
+            return ready
+
+        candidate = copy.deepcopy(raw_event)
+        if not self._is_merge_payload_compatible(candidate):
+            ready.extend(self.flush())
+            ready.append(candidate)
+            return ready
+
+        if not self._try_merge_into_tail(candidate):
+            self._append_pending(candidate)
+
+        if len(self._pending) >= self._max_batch_size:
+            ready.extend(self.flush())
+        return ready
+
+    def flush(self) -> list[dict[str, Any]]:
+        if not self._pending:
+            return []
+        out = self._pending
+        self._pending = []
+        self._batch_started_ms = None
+        return out
+
+    def _resolve_thread_id(self, raw_event: dict[str, Any]) -> str | None:
+        return _normalize_optional_id(raw_event.get("thread_id") or raw_event.get("threadId") or self._default_thread_id)
+
+    def _resolve_turn_id(self, raw_event: dict[str, Any]) -> str | None:
+        return _normalize_optional_id(raw_event.get("turn_id") or raw_event.get("turnId") or self._default_turn_id)
+
+    def _resolve_item_id(self, raw_event: dict[str, Any]) -> str | None:
+        return _normalize_optional_id(raw_event.get("item_id") or raw_event.get("itemId"))
+
+    def _merge_key(self, raw_event: dict[str, Any]) -> tuple[str, str, str, str] | None:
+        method = str(raw_event.get("method") or "").strip()
+        if method not in _COMPACTION_MERGE_SAFE_METHODS:
+            return None
+        thread_id = self._resolve_thread_id(raw_event)
+        turn_id = self._resolve_turn_id(raw_event)
+        item_id = self._resolve_item_id(raw_event)
+        if not thread_id or not turn_id or not item_id:
+            return None
+        return (thread_id, turn_id, item_id, method)
+
+    @staticmethod
+    def _params_for_event(raw_event: dict[str, Any]) -> dict[str, Any] | None:
+        params = raw_event.get("params", {})
+        return params if isinstance(params, dict) else None
+
+    def _is_merge_payload_compatible(self, raw_event: dict[str, Any]) -> bool:
+        method = str(raw_event.get("method") or "").strip()
+        if self._merge_key(raw_event) is None:
+            return False
+        params = self._params_for_event(raw_event)
+        if params is None:
+            return False
+        allowed_fields = {"delta", "files"} if method == _FILE_CHANGE_OUTPUT_DELTA_METHOD else {"delta"}
+        return all(str(key) in allowed_fields for key in params.keys())
+
+    def _try_merge_into_tail(self, candidate: dict[str, Any]) -> bool:
+        if not self._pending:
+            return False
+        tail = self._pending[-1]
+        if self._merge_key(tail) != self._merge_key(candidate):
+            return False
+        if not self._is_merge_payload_compatible(tail):
+            return False
+
+        method = str(candidate.get("method") or "").strip()
+        tail_params = self._params_for_event(tail)
+        candidate_params = self._params_for_event(candidate)
+        if tail_params is None or candidate_params is None:
+            return False
+
+        tail_delta = str(tail_params.get("delta") or "")
+        candidate_delta = str(candidate_params.get("delta") or "")
+        tail_params["delta"] = tail_delta + candidate_delta
+
+        if method == _FILE_CHANGE_OUTPUT_DELTA_METHOD:
+            candidate_files = candidate_params.get("files")
+            if isinstance(candidate_files, list) and candidate_files:
+                existing_files = tail_params.get("files")
+                existing_files_list = list(existing_files) if isinstance(existing_files, list) else []
+                existing_files_list.extend(copy.deepcopy(candidate_files))
+                tail_params["files"] = existing_files_list
+        return True
+
+    def _append_pending(self, raw_event: dict[str, Any]) -> None:
+        if not self._pending:
+            started_at = self._safe_now_ms()
+            self._batch_started_ms = started_at if started_at is not None else 0
+        self._pending.append(raw_event)
+
+    def _flush_due_to_window_fail_open(self) -> list[dict[str, Any]]:
+        if not self._pending:
+            return []
+        now_ms = self._safe_now_ms()
+        if now_ms is None:
+            return self.flush()
+        started_ms = self._batch_started_ms if self._batch_started_ms is not None else now_ms
+        if now_ms - started_ms >= self._window_ms:
+            return self.flush()
+        return []
+
+    def _safe_now_ms(self) -> int | None:
+        try:
+            return int(self._now_ms())
+        except Exception:
+            logger.debug("Raw-event compaction clock failed; forcing fail-open flush.", exc_info=True)
+            return None
+
 
 class ThreadRuntimeServiceV3:
     def __init__(
@@ -47,6 +221,8 @@ class ThreadRuntimeServiceV3:
         chat_timeout: int,
         max_message_chars: int = 10000,
         ask_rollout_metrics_service: Any | None = None,
+        coalescing_window_ms: int = _COMPACTION_WINDOW_MS_DEFAULT,
+        coalescing_max_batch_size: int = _COMPACTION_MAX_BATCH_SIZE_DEFAULT,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -57,6 +233,11 @@ class ThreadRuntimeServiceV3:
         self._chat_timeout = int(chat_timeout)
         self._max_message_chars = int(max_message_chars)
         self._ask_rollout_metrics_service = ask_rollout_metrics_service
+        self._coalescing_window_ms = max(
+            _COMPACTION_WINDOW_MS_MIN,
+            min(_COMPACTION_WINDOW_MS_MAX, int(coalescing_window_ms)),
+        )
+        self._coalescing_max_batch_size = max(1, int(coalescing_max_batch_size))
 
     def start_turn(
         self,
@@ -365,6 +546,19 @@ class ThreadRuntimeServiceV3:
     ) -> dict[str, Any]:
         provisional_tool_calls: dict[str, dict[str, Any]] = {}
         final_turn_status = "completed"
+        compactor = self._build_raw_event_compactor(thread_id=thread_id, turn_id=turn_id)
+
+        def process_ready_raw_events(ready_raw_events: list[dict[str, Any]]) -> None:
+            nonlocal final_turn_status
+            final_turn_status = self._apply_raw_event_batch_v3(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                raw_events=ready_raw_events,
+                provisional_tool_calls=provisional_tool_calls,
+                apply_turn_completed_event=True,
+                final_turn_status=final_turn_status,
+            )
 
         def handle_raw_event(raw_event: dict[str, Any]) -> None:
             nonlocal final_turn_status
@@ -398,41 +592,9 @@ class ThreadRuntimeServiceV3:
                             exc_info=True,
                         )
                 return
-
-            current = self._query_service.get_thread_snapshot(
-                project_id,
-                node_id,
-                thread_role,
-                publish_repairs=False,
-                ensure_binding=False,
-            )
-            updated = current
-            events: list[dict[str, Any]] = []
-
-            if method == "item/started":
-                self._enrich_started_item_from_provisional_call(raw_event, provisional_tool_calls)
-
-            if method == "turn/completed":
-                params = raw_event.get("params", {})
-                turn_payload = params.get("turn", {}) if isinstance(params, dict) else {}
-                raw_status = (
-                    str(turn_payload.get("status") or params.get("status") or "").strip().lower()
-                    if isinstance(turn_payload, dict)
-                    else str(params.get("status") or "").strip().lower()
-                )
-                if raw_status:
-                    final_turn_status = raw_status
-
-            updated, raw_events = apply_raw_event_v3(updated, raw_event)
-            events.extend(raw_events)
-            if events:
-                self._query_service.persist_thread_mutation(
-                    project_id,
-                    node_id,
-                    thread_role,
-                    updated,
-                    events,
-                )
+            ready_raw_events = compactor.push(raw_event)
+            if ready_raw_events:
+                process_ready_raw_events(ready_raw_events)
 
             if callable(on_raw_event_applied):
                 try:
@@ -456,6 +618,7 @@ class ThreadRuntimeServiceV3:
                 on_raw_event=handle_raw_event,
                 output_schema=output_schema,
             )
+            process_ready_raw_events(compactor.flush())
             returned_status = str(result.get("turn_status") or "").strip().lower()
             if returned_status:
                 final_turn_status = returned_status
@@ -470,6 +633,7 @@ class ThreadRuntimeServiceV3:
                 "turnStatus": final_turn_status,
             }
         except Exception:
+            process_ready_raw_events(compactor.flush())
             self._flush_unmatched_provisional_tools(
                 project_id=project_id,
                 node_id=node_id,
@@ -486,6 +650,78 @@ class ThreadRuntimeServiceV3:
         if normalized in {"failed", "error", "interrupted", "cancelled"}:
             return "failed"
         return "completed"
+
+    def _build_raw_event_compactor(self, *, thread_id: str | None, turn_id: str | None) -> _RawEventCompactorV3:
+        return _RawEventCompactorV3(
+            default_thread_id=thread_id,
+            default_turn_id=turn_id,
+            window_ms=self._coalescing_window_ms,
+            max_batch_size=self._coalescing_max_batch_size,
+        )
+
+    @staticmethod
+    def _extract_turn_status_from_raw_event(raw_event: dict[str, Any]) -> str | None:
+        params = raw_event.get("params", {})
+        turn_payload = params.get("turn", {}) if isinstance(params, dict) else {}
+        raw_status = (
+            str(turn_payload.get("status") or params.get("status") or "").strip().lower()
+            if isinstance(turn_payload, dict)
+            else str(params.get("status") or "").strip().lower()
+        )
+        return raw_status or None
+
+    def _apply_raw_event_batch_v3(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        raw_events: list[dict[str, Any]],
+        provisional_tool_calls: dict[str, dict[str, Any]],
+        apply_turn_completed_event: bool,
+        final_turn_status: str,
+    ) -> str:
+        if not raw_events:
+            return final_turn_status
+
+        current = self._query_service.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=False,
+            ensure_binding=False,
+        )
+        updated = current
+        events: list[dict[str, Any]] = []
+        resolved_turn_status = final_turn_status
+
+        for raw_event in raw_events:
+            method = str(raw_event.get("method") or "").strip()
+            if not method:
+                continue
+
+            if method == "item/started":
+                self._enrich_started_item_from_provisional_call(raw_event, provisional_tool_calls)
+
+            if method == "turn/completed":
+                maybe_status = self._extract_turn_status_from_raw_event(raw_event)
+                if maybe_status:
+                    resolved_turn_status = maybe_status
+                if not apply_turn_completed_event:
+                    continue
+
+            updated, raw_batch_events = apply_raw_event_v3(updated, raw_event)
+            events.extend(raw_batch_events)
+
+        if events:
+            self._query_service.persist_thread_mutation(
+                project_id,
+                node_id,
+                thread_role,
+                updated,
+                events,
+            )
+        return resolved_turn_status
 
     @staticmethod
     def _looks_like_patch_text(text: str) -> bool:
@@ -603,6 +839,19 @@ class ThreadRuntimeServiceV3:
         provisional_tool_calls: dict[str, dict[str, Any]] = {}
         final_turn_status = "completed"
         boundary_prompt_kind: str | None = None
+        compactor = self._build_raw_event_compactor(thread_id=thread_id, turn_id=turn_id)
+
+        def process_ready_raw_events(ready_raw_events: list[dict[str, Any]]) -> None:
+            nonlocal final_turn_status
+            final_turn_status = self._apply_raw_event_batch_v3(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                raw_events=ready_raw_events,
+                provisional_tool_calls=provisional_tool_calls,
+                apply_turn_completed_event=False,
+                final_turn_status=final_turn_status,
+            )
 
         def handle_raw_event(raw_event: dict[str, Any]) -> None:
             nonlocal final_turn_status
@@ -626,42 +875,9 @@ class ThreadRuntimeServiceV3:
                     "matched": False,
                 }
                 return
-
-            current = self._query_service.get_thread_snapshot(
-                project_id,
-                node_id,
-                thread_role,
-                publish_repairs=False,
-                ensure_binding=False,
-            )
-            updated = current
-            events: list[dict[str, Any]] = []
-
-            if method == "item/started":
-                self._enrich_started_item_from_provisional_call(raw_event, provisional_tool_calls)
-
-            if method == "turn/completed":
-                params = raw_event.get("params", {})
-                turn_payload = params.get("turn", {}) if isinstance(params, dict) else {}
-                raw_status = (
-                    str(turn_payload.get("status") or params.get("status") or "").strip().lower()
-                    if isinstance(turn_payload, dict)
-                    else str(params.get("status") or "").strip().lower()
-                )
-                if raw_status:
-                    final_turn_status = raw_status
-                return
-
-            updated, raw_events = apply_raw_event_v3(updated, raw_event)
-            events.extend(raw_events)
-            if events:
-                self._query_service.persist_thread_mutation(
-                    project_id,
-                    node_id,
-                    thread_role,
-                    updated,
-                    events,
-                )
+            ready_raw_events = compactor.push(raw_event)
+            if ready_raw_events:
+                process_ready_raw_events(ready_raw_events)
 
         try:
             snapshot = self._storage.project_store.load_snapshot(project_id)
@@ -687,6 +903,7 @@ class ThreadRuntimeServiceV3:
                 sandbox_profile="read_only" if thread_role == "ask_planning" else None,
                 on_raw_event=handle_raw_event,
             )
+            process_ready_raw_events(compactor.flush())
             returned_status = str(result.get("turn_status") or "").strip().lower()
             if returned_status:
                 final_turn_status = returned_status
@@ -753,6 +970,7 @@ class ThreadRuntimeServiceV3:
                 exc_info=True,
             )
             try:
+                process_ready_raw_events(compactor.flush())
                 self._flush_unmatched_provisional_tools(
                     project_id=project_id,
                     node_id=node_id,

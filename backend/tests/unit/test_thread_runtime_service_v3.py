@@ -6,11 +6,12 @@ from typing import Any
 import pytest
 
 import backend.conversation.services.thread_runtime_service_v3 as thread_runtime_service_v3_module
+from backend.conversation.domain import events as event_types
 from backend.conversation.domain.types_v3 import default_thread_snapshot_v3
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
 from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
-from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
+from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3, _RawEventCompactorV3
 from backend.services.project_service import ProjectService
 from backend.services.tree_service import TreeService
 
@@ -186,6 +187,138 @@ def _build_runtime(
         max_message_chars=10000,
     )
     return runtime, query, broker, project_id, node_id, chat_service, codex
+
+
+def test_raw_event_compactor_v3_merges_safe_delta_by_key() -> None:
+    compactor = _RawEventCompactorV3(
+        default_thread_id="thread-1",
+        default_turn_id="turn-1",
+        window_ms=50,
+        max_batch_size=64,
+    )
+    first = {
+        "method": "item/agentMessage/delta",
+        "thread_id": "thread-1",
+        "turn_id": "turn-1",
+        "item_id": "msg-1",
+        "params": {"delta": "Hel"},
+    }
+    second = {
+        "method": "item/agentMessage/delta",
+        "thread_id": "thread-1",
+        "turn_id": "turn-1",
+        "item_id": "msg-1",
+        "params": {"delta": "lo"},
+    }
+    assert compactor.push(first) == []
+    assert compactor.push(second) == []
+    merged = compactor.flush()
+    assert len(merged) == 1
+    assert merged[0]["params"]["delta"] == "Hello"
+
+
+def test_raw_event_compactor_v3_does_not_merge_cross_method() -> None:
+    compactor = _RawEventCompactorV3(
+        default_thread_id="thread-1",
+        default_turn_id="turn-1",
+        window_ms=50,
+        max_batch_size=64,
+    )
+    first = {
+        "method": "item/agentMessage/delta",
+        "thread_id": "thread-1",
+        "turn_id": "turn-1",
+        "item_id": "item-1",
+        "params": {"delta": "a"},
+    }
+    second = {
+        "method": "item/plan/delta",
+        "thread_id": "thread-1",
+        "turn_id": "turn-1",
+        "item_id": "item-1",
+        "params": {"delta": "b"},
+    }
+    assert compactor.push(first) == []
+    assert compactor.push(second) == []
+    flushed = compactor.flush()
+    assert [event.get("method") for event in flushed] == ["item/agentMessage/delta", "item/plan/delta"]
+
+
+def test_raw_event_compactor_v3_flushes_on_boundary_event() -> None:
+    compactor = _RawEventCompactorV3(
+        default_thread_id="thread-1",
+        default_turn_id="turn-1",
+        window_ms=50,
+        max_batch_size=64,
+    )
+    first = {
+        "method": "item/fileChange/outputDelta",
+        "thread_id": "thread-1",
+        "turn_id": "turn-1",
+        "item_id": "diff-1",
+        "params": {"delta": "part-1", "files": [{"path": "a.txt"}]},
+    }
+    second = {
+        "method": "item/fileChange/outputDelta",
+        "thread_id": "thread-1",
+        "turn_id": "turn-1",
+        "item_id": "diff-1",
+        "params": {"delta": "part-2", "files": [{"path": "b.txt"}]},
+    }
+    boundary = {
+        "method": "item/completed",
+        "thread_id": "thread-1",
+        "turn_id": "turn-1",
+        "item_id": "diff-1",
+        "params": {},
+    }
+    assert compactor.push(first) == []
+    assert compactor.push(second) == []
+    emitted = compactor.push(boundary)
+    assert len(emitted) == 2
+    assert emitted[0]["method"] == "item/fileChange/outputDelta"
+    assert emitted[0]["params"]["delta"] == "part-1part-2"
+    assert [entry.get("path") for entry in emitted[0]["params"]["files"]] == ["a.txt", "b.txt"]
+    assert emitted[1]["method"] == "item/completed"
+
+
+def test_raw_event_compactor_v3_fail_open_flushes_when_clock_fails() -> None:
+    calls = {"count": 0}
+
+    def _clock() -> int:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return 0
+        raise RuntimeError("clock failure")
+
+    compactor = _RawEventCompactorV3(
+        default_thread_id="thread-1",
+        default_turn_id="turn-1",
+        window_ms=50,
+        max_batch_size=64,
+        now_ms=_clock,
+    )
+    first = {
+        "method": "item/agentMessage/delta",
+        "thread_id": "thread-1",
+        "turn_id": "turn-1",
+        "item_id": "msg-1",
+        "params": {"delta": "a"},
+    }
+    second = {
+        "method": "item/agentMessage/delta",
+        "thread_id": "thread-1",
+        "turn_id": "turn-1",
+        "item_id": "msg-2",
+        "params": {"delta": "b"},
+    }
+    assert compactor.push(first) == []
+    flushed_early = compactor.push(second)
+    assert len(flushed_early) == 1
+    assert flushed_early[0]["item_id"] == "msg-1"
+    remaining = compactor.flush()
+    assert len(remaining) == 1
+    assert remaining[0]["item_id"] == "msg-2"
 
 
 def test_thread_runtime_service_v3_begin_complete_lifecycle(storage, workspace_root) -> None:
@@ -486,3 +619,92 @@ def test_thread_runtime_service_v3_stream_raw_event_mapping_core_items(storage, 
     assert all(str(item.get("id") or "") != "tool-call:call-1" for item in updated["items"])
     diff_item = next(item for item in updated["items"] if item.get("kind") == "diff")
     assert diff_item["files"][0]["path"] == "final.txt"
+
+
+def test_thread_runtime_service_v3_stream_compacts_message_deltas(storage, workspace_root) -> None:
+    runtime, query, broker, project_id, node_id, _, codex = _build_runtime(storage, workspace_root, thread_role="execution")
+    snapshot = query.get_thread_snapshot(project_id, node_id, "execution")
+    user_item = runtime._build_local_user_item(
+        snapshot=snapshot,
+        thread_id=str(snapshot.get("threadId") or ""),
+        turn_id="turn-compact-1",
+        text="compact",
+    )
+    runtime.begin_turn(
+        project_id=project_id,
+        node_id=node_id,
+        thread_role="execution",
+        origin="test",
+        created_items=[user_item],
+        turn_id="turn-compact-1",
+    )
+    codex.raw_events = [
+        {
+            "method": "item/started",
+            "received_at": "2026-04-10T00:00:01Z",
+            "item_id": "msg-compact-1",
+            "turn_id": "turn-compact-1",
+            "params": {"item": {"type": "agentMessage", "id": "msg-compact-1"}},
+        },
+        {
+            "method": "item/agentMessage/delta",
+            "received_at": "2026-04-10T00:00:02Z",
+            "item_id": "msg-compact-1",
+            "turn_id": "turn-compact-1",
+            "params": {"delta": "hello "},
+        },
+        {
+            "method": "item/agentMessage/delta",
+            "received_at": "2026-04-10T00:00:03Z",
+            "item_id": "msg-compact-1",
+            "turn_id": "turn-compact-1",
+            "params": {"delta": "world"},
+        },
+        {
+            "method": "item/agentMessage/delta",
+            "received_at": "2026-04-10T00:00:04Z",
+            "item_id": "msg-compact-1",
+            "turn_id": "turn-compact-1",
+            "params": {"delta": "!"},
+        },
+        {
+            "method": "item/completed",
+            "received_at": "2026-04-10T00:00:05Z",
+            "item_id": "msg-compact-1",
+            "turn_id": "turn-compact-1",
+            "params": {"item": {"type": "agentMessage", "id": "msg-compact-1"}},
+        },
+        {
+            "method": "turn/completed",
+            "received_at": "2026-04-10T00:00:06Z",
+            "turn_id": "turn-compact-1",
+            "params": {"turn": {"status": "completed", "id": "turn-compact-1"}},
+        },
+    ]
+    result = runtime.stream_agent_turn(
+        project_id=project_id,
+        node_id=node_id,
+        thread_role="execution",
+        thread_id=str(snapshot.get("threadId") or ""),
+        turn_id="turn-compact-1",
+        prompt="run",
+        cwd=str(workspace_root),
+    )
+    assert result["turnStatus"] == "completed"
+
+    patch_events = [
+        envelope
+        for envelope in broker.events
+        if envelope.get("type") == event_types.CONVERSATION_ITEM_PATCH_V3
+        and isinstance(envelope.get("payload"), dict)
+        and str(envelope["payload"].get("itemId") or "") == "msg-compact-1"
+        and isinstance(envelope["payload"].get("patch"), dict)
+        and "textAppend" in envelope["payload"]["patch"]
+    ]
+    assert len(patch_events) == 1
+    patch_payload = patch_events[0]["payload"]["patch"]
+    assert patch_payload["textAppend"] == "hello world!"
+
+    updated = query.get_thread_snapshot(project_id, node_id, "execution", publish_repairs=False)
+    message_item = next(item for item in updated["items"] if str(item.get("id") or "") == "msg-compact-1")
+    assert message_item["text"] == "hello world!"

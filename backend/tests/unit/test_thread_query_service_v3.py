@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from backend.conversation.domain import events as event_types
 from backend.conversation.domain.types import default_thread_snapshot
 from backend.conversation.domain.types_v3 import default_thread_snapshot_v3
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
@@ -296,3 +297,93 @@ def test_issue_stream_event_id_v3_scopes_sequence_per_thread(storage, workspace_
         )
         == "1"
     )
+
+
+def test_persist_thread_mutation_v3_suppresses_duplicate_lifecycle_noop(storage, workspace_root) -> None:
+    broker = _CaptureBroker()
+    service, project_id, node_id = _build_service(storage, workspace_root, broker=broker)
+    snapshot = default_thread_snapshot_v3(project_id, node_id, "execution")
+    snapshot["threadId"] = "execution-thread-1"
+    storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, "execution", snapshot)
+
+    lifecycle_event = {
+        "type": event_types.THREAD_LIFECYCLE_V3,
+        "payload": {
+            "state": event_types.TURN_COMPLETED,
+            "processingState": "idle",
+            "activeTurnId": None,
+            "detail": None,
+        },
+    }
+
+    updated, _ = service.persist_thread_mutation(project_id, node_id, "execution", snapshot, [lifecycle_event])
+    service.persist_thread_mutation(project_id, node_id, "execution", updated, [lifecycle_event])
+
+    lifecycle_envelopes = [
+        envelope for envelope in broker.events if envelope.get("type") == event_types.THREAD_LIFECYCLE_V3
+    ]
+    assert len(lifecycle_envelopes) == 1
+
+
+def test_persist_thread_mutation_v3_suppresses_terminal_duplicate_for_same_turn(storage, workspace_root) -> None:
+    broker = _CaptureBroker()
+    service, project_id, node_id = _build_service(storage, workspace_root, broker=broker)
+    snapshot = default_thread_snapshot_v3(project_id, node_id, "execution")
+    snapshot["threadId"] = "execution-thread-1"
+    storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, "execution", snapshot)
+
+    terminal_event = {
+        "type": event_types.THREAD_LIFECYCLE_V3,
+        "payload": {
+            "state": event_types.TURN_COMPLETED,
+            "processingState": "idle",
+            "activeTurnId": "turn-dup-1",
+            "detail": None,
+        },
+    }
+    started_event = {
+        "type": event_types.THREAD_LIFECYCLE_V3,
+        "payload": {
+            "state": event_types.TURN_STARTED,
+            "processingState": "running",
+            "activeTurnId": "turn-dup-1",
+            "detail": None,
+        },
+    }
+
+    updated, _ = service.persist_thread_mutation(project_id, node_id, "execution", snapshot, [terminal_event])
+    updated, _ = service.persist_thread_mutation(project_id, node_id, "execution", updated, [started_event])
+    service.persist_thread_mutation(project_id, node_id, "execution", updated, [terminal_event])
+
+    lifecycle_envelopes = [
+        envelope for envelope in broker.events if envelope.get("type") == event_types.THREAD_LIFECYCLE_V3
+    ]
+    assert len(lifecycle_envelopes) == 2
+    assert [envelope["payload"]["state"] for envelope in lifecycle_envelopes] == [
+        event_types.TURN_COMPLETED,
+        event_types.TURN_STARTED,
+    ]
+
+
+def test_persist_thread_mutation_v3_never_suppresses_non_lifecycle_events(storage, workspace_root) -> None:
+    broker = _CaptureBroker()
+    service, project_id, node_id = _build_service(storage, workspace_root, broker=broker)
+    snapshot = default_thread_snapshot_v3(project_id, node_id, "execution")
+    snapshot["threadId"] = "execution-thread-1"
+    storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, "execution", snapshot)
+
+    patch_event = {
+        "type": event_types.CONVERSATION_ITEM_PATCH_V3,
+        "payload": {
+            "itemId": "item-1",
+            "patch": {"kind": "message", "textAppend": "x"},
+        },
+    }
+
+    updated, _ = service.persist_thread_mutation(project_id, node_id, "execution", snapshot, [patch_event])
+    service.persist_thread_mutation(project_id, node_id, "execution", updated, [patch_event])
+
+    patch_envelopes = [
+        envelope for envelope in broker.events if envelope.get("type") == event_types.CONVERSATION_ITEM_PATCH_V3
+    ]
+    assert len(patch_envelopes) == 2

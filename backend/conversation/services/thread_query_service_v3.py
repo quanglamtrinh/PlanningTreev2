@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from backend.config.app_config import (
@@ -28,6 +29,8 @@ from backend.streaming.sse_broker import ChatEventBroker
 
 logger = logging.getLogger(__name__)
 
+_MAX_TERMINAL_LIFECYCLE_GUARD_ENTRIES = 128
+
 
 class ThreadQueryServiceV3:
     def __init__(
@@ -54,6 +57,15 @@ class ThreadQueryServiceV3:
         self._request_ledger_service = request_ledger_service
         self._thread_event_broker = thread_event_broker
         self._replay_buffer_service = replay_buffer_service
+        self._lifecycle_guard_lock = threading.Lock()
+        self._last_lifecycle_signature_by_thread: dict[
+            tuple[str, str, str, str],
+            tuple[str, str, str | None, str | None],
+        ] = {}
+        self._terminal_lifecycle_signature_by_turn: dict[
+            tuple[str, str, str, str],
+            dict[str, tuple[str, str, str | None, str | None]],
+        ] = {}
 
     def issue_stream_event_id(
         self,
@@ -90,6 +102,71 @@ class ThreadQueryServiceV3:
             return cursor_thread_id
         return f"unbound::{thread_role}"
 
+    @staticmethod
+    def _normalize_optional_string(value: Any) -> str | None:
+        normalized = str(value or "").strip()
+        return normalized or None
+
+    def _lifecycle_signature_from_envelope(
+        self,
+        envelope: dict[str, Any],
+    ) -> tuple[str, str, str | None, str | None] | None:
+        event_type = str(envelope.get("event_type") or envelope.get("type") or "").strip()
+        if event_type != event_types.THREAD_LIFECYCLE_V3:
+            return None
+        payload = envelope.get("payload", {})
+        if not isinstance(payload, dict):
+            return None
+        state = str(payload.get("state") or "").strip()
+        processing_state = str(payload.get("processingState") or "").strip()
+        active_turn_id = self._normalize_optional_string(payload.get("activeTurnId"))
+        detail = self._normalize_optional_string(payload.get("detail"))
+        return (state, processing_state, active_turn_id, detail)
+
+    @staticmethod
+    def _is_terminal_lifecycle_state(state: str) -> bool:
+        return state in {event_types.TURN_COMPLETED, event_types.TURN_FAILED}
+
+    def _should_suppress_lifecycle_publish(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        thread_id: str,
+        envelope: dict[str, Any],
+    ) -> bool:
+        signature = self._lifecycle_signature_from_envelope(envelope)
+        if signature is None:
+            return False
+        state, _, active_turn_id, _ = signature
+        envelope_turn_id = self._normalize_optional_string(envelope.get("turn_id") or envelope.get("turnId"))
+        turn_id = envelope_turn_id or active_turn_id
+        key = (
+            str(project_id or "").strip(),
+            str(node_id or "").strip(),
+            str(thread_role or "").strip(),
+            str(thread_id or "").strip(),
+        )
+
+        with self._lifecycle_guard_lock:
+            previous_signature = self._last_lifecycle_signature_by_thread.get(key)
+            if previous_signature == signature:
+                return True
+
+            if turn_id is not None and self._is_terminal_lifecycle_state(state):
+                by_turn = self._terminal_lifecycle_signature_by_turn.setdefault(key, {})
+                if by_turn.get(turn_id) == signature:
+                    self._last_lifecycle_signature_by_thread[key] = signature
+                    return True
+                by_turn[turn_id] = signature
+                while len(by_turn) > _MAX_TERMINAL_LIFECYCLE_GUARD_ENTRIES:
+                    oldest_turn_id = next(iter(by_turn))
+                    by_turn.pop(oldest_turn_id, None)
+
+            self._last_lifecycle_signature_by_thread[key] = signature
+            return False
+
     def _publish_thread_envelope(
         self,
         project_id: str,
@@ -98,6 +175,14 @@ class ThreadQueryServiceV3:
         thread_id: str,
         envelope: dict[str, Any],
     ) -> None:
+        if self._should_suppress_lifecycle_publish(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            thread_id=thread_id,
+            envelope=envelope,
+        ):
+            return
         if self._replay_buffer_service is not None:
             self._replay_buffer_service.append_business_event(
                 project_id=project_id,
