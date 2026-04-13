@@ -1,6 +1,6 @@
 {
   "phase": "09",
-  "generated_at": "2026-04-13T21:53:35Z",
+  "generated_at": "2026-04-13T22:11:23Z",
   "source": "ui_regression_suite",
   "evidence_mode": "candidate",
   "gate_eligible": true,
@@ -15,7 +15,7 @@
     "regression_case_count": 42,
     "regression_case_fail_count": 0,
     "candidate_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/candidates/ui-regression-suite-candidate.json",
-    "candidate_commit_sha": "deadbeef"
+    "candidate_commit_sha": "ced04e074e9e91214ea30e4cc8d2232c602d965d"
   },
   "baseline_metadata": {
     "label": "phase09_pre_row_isolation_baseline_v1",

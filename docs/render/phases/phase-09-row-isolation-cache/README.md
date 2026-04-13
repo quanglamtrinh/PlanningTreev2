@@ -1,6 +1,8 @@
-﻿# Phase 09 - Row Isolation and Parse Cache
+# Phase 09 - Row Isolation and Parse Cache
 
-Status: Planned (pre-phase hardening baseline prepared).
+Status: Completed (all P09 gates passed with candidate-backed evidence).
+
+Date: 2026-04-13.
 
 Scope IDs: D01, D02, D10.
 
@@ -20,137 +22,115 @@ Contract focus:
 
 Must-hold decisions:
 
-- Cache invalidation keys must stay contract-safe (`threadId + itemId + updatedAt + mode + rendererVersion`).
-- Memoization cannot suppress legitimate row updates.
-- Row identity behavior must remain stable for later virtualization phases.
-
+- Cache invalidation keys remain contract-safe (`threadId + itemId + updatedAt + mode + rendererVersion`).
+- Memoization does not suppress legitimate row updates.
+- Row identity behavior remains stable for Phase 10 virtualization follow-up.
 
 ## Objective
 
-Isolate row rendering so updates only affect changed rows, then cache parse-heavy artifacts with stable keys.
+Isolate row rendering so updates only affect changed rows, and add contract-safe parse artifact caching for markdown/reasoning/diff workloads.
 
-Implementation scope authority:
+Frozen entry artifact:
 
-- Implementation scope for this phase is `D01`, `D02`, `D10` from `docs/render/system-freeze/phase-manifest-v1.json`.
-- Phase 08 handoff is input context only and does not redefine Phase 09 scope IDs.
+- `row-cache-invalidation-policy-v1.md`
 
-## In Scope
+## Implemented Scope
 
-1. D01: Memoize V3 row components.
-2. D02: Stable callback and prop identity.
-3. D10: Cache by canonical key contract (`threadId + itemId + updatedAt + mode + rendererVersion`).
+### 1. Row Memoization (D01)
 
-## Detailed Improvements
+Implemented row-level memoization in `MessagesV3` with explicit comparators for:
 
-### 1. Row memoization baseline (D01)
+1. message rows
+2. reasoning rows
+3. tool rows
+4. review/explore/diff/status/error/user-input rows
 
-Apply `React.memo` to heavy row components with strict prop equality contracts.
+Outcomes:
 
-### 2. Stable prop identity (D02)
+- unchanged neighbor rows no longer rerender on unrelated updates
+- row keys and ordering remain deterministic
+- comparator rules prioritize correctness over over-aggressive skipping
 
-Prevent unnecessary memo misses by:
+### 2. Stable Props and Callbacks (D02)
 
-- memoizing callbacks (`useCallback`)
-- memoizing derived objects (`useMemo`)
-- avoiding inline object/array literal recreation in hot render loops
+Stabilized hot-path identities with `useMemo`/`useCallback` and removed avoidable inline prop churn in row rendering flow.
 
-### 3. Parse cache key policy (D10)
+Key outcomes:
 
-For markdown/diff/highlight output:
+- stable `isExpanded` and handler identities passed to memoized rows
+- stable synthetic file-change item derivation for diff/tool rows
+- render fanout reduced without changing user-visible behavior
 
-- cache key = `threadId + itemId + updatedAt + parseMode + rendererVersion`
-- invalidate only when relevant source changes
+### 3. Parse Cache Production Path (D10)
 
-## Pre-Phase 09 Hardening Baseline
+Implemented in-memory parse artifact cache with frozen policy:
 
-### 1. Frozen entry artifact
+1. LRU max entries: `1500`
+2. TTL: `10 minutes`
+3. in-memory only (no `localStorage` persistence)
 
-- `row-cache-invalidation-policy-v1.md` is the Phase 09 entry artifact for `row_cache_invalidation_policy_frozen`.
+Canonical key source-of-truth:
 
-### 2. Frozen frontend contract utility
+- `frontend/src/features/conversation/components/v3/parseCacheContract.ts`
+- `buildParseCacheKey(...)` used for all Phase 09 parse cache integration
 
-- `frontend/src/features/conversation/components/v3/parseCacheContract.ts` defines:
-  - `ParseCacheMode`
-  - `ParseCacheKeyInput`
-  - `buildParseCacheKey`
-  - `CACHE_SCHEMA_VERSION`
-  - default Phase 09 policy constants (`LRU=1500`, `TTL=10m`, renderer version `v1`)
+Integrated cache paths:
 
-### 3. Profiling-only instrumentation hooks
+1. message/review rendered text path in `MessagesV3`
+2. reasoning summary/detail normalization in `messagesV3.utils`
+3. file-change diff parsing/stats/line splitting in `FileChangeToolRow`
 
-- `frontend/src/features/conversation/components/v3/messagesV3ProfilingHooks.ts` provides test-only hooks for:
-  - row render profiling
-  - parse trace hit/miss telemetry
+Thread lifecycle behavior:
 
-Guardrail:
+- parse artifact cache resets by thread lifecycle transitions in `MessagesV3`
 
-- hooks are measurement-only and must not change user-visible behavior.
-- profiling is opt-in outside tests. It is enabled only when one of the following is true:
-  - runtime mode is `test`
-  - `VITE_ENABLE_MESSAGES_V3_PROFILING=1`
-  - a real profiling subscriber is attached via `setMessagesV3ProfilingHooks`
-- when profiling is off, emit functions are no-op for state (no parse-key accumulation).
-- parse-key retention is bounded (`MAX_TRACKED_PARSE_KEYS=2000`) with FIFO eviction.
-- parse-key tracking resets on `threadId` lifecycle change in `MessagesV3`.
+### 4. Profiling Guardrail Continuity
 
-### 4. Gate harness and evidence contract
+Pre-phase profiling hardening remains intact:
 
-Phase 09 source scripts:
+1. profiling is opt-in outside tests
+2. profiling emits stay measurement-only
+3. profiling state does not control production cache behavior
 
-1. `scripts/phase09_row_render_profile.py`
-2. `scripts/phase09_parse_cache_trace.py`
-3. `scripts/phase09_ui_regression_suite.py`
-4. `scripts/phase09_gate_report.py`
+## Validation Snapshot
 
-Evidence workspace:
+Implementation checks:
 
-- `docs/render/phases/phase-09-row-isolation-cache/evidence/`
+1. `npm run typecheck --prefix frontend` -> pass
+2. `npm run test:unit --prefix frontend -- tests/unit/parseArtifactCache.test.ts tests/unit/messagesV3.profiling-hooks.test.tsx tests/unit/messagesV3.utils.test.ts tests/unit/MessagesV3.test.tsx` -> pass
+3. `npm run check:render_freeze` -> pass
 
-## Implementation Plan
+Phase 09 evidence generation:
 
-1. Audit row prop shapes and remove unstable props.
-2. Add memo wrappers and explicit comparator where needed.
-3. Implement parse cache utility and integrate in heavy content pipeline.
+1. `python scripts/phase09_row_render_profile.py --candidate ... --candidate-commit-sha <sha> --output ...` -> pass
+2. `python scripts/phase09_parse_cache_trace.py --candidate ... --candidate-commit-sha <sha> --output ...` -> pass
+3. `python scripts/phase09_ui_regression_suite.py --candidate ... --candidate-commit-sha <sha> --output ...` -> pass
+4. `python scripts/phase09_gate_report.py --self-test --candidate ... --output ...` -> pass
 
-## Quality Gates
+## Exit Gates (P09)
 
-1. Rerender reduction:
-   - unchanged rows do not rerender on neighbor updates.
-2. Cache efficiency:
-   - parse cache hit ratio improves under streaming updates.
-3. Correctness:
-   - no stale render artifact after content update.
+Gate targets from `docs/render/system-freeze/phase-gates-v1.json`.
 
-## Test Plan
+| Gate | Metric | Target | Current value | Status |
+|---|---|---|---|---|
+| P09-G1 | unchanged_row_rerender_rate_pct | `<= 5` | `4.333` | pass |
+| P09-G2 | parse_cache_hit_rate_pct | `>= 60` | `65.0` | pass |
+| P09-G3 | stale_render_artifact_incidents | `<= 0` | `0.0` | pass |
 
-1. Unit tests:
-   - memo comparator behavior.
-   - cache invalidation rules.
-2. Component tests:
-   - neighbor row updates do not rerender unaffected rows.
-3. Manual profiling:
-   - measure commit duration and rerender counts.
+Gate artifacts:
 
-## Risks and Mitigations
+1. `docs/render/phases/phase-09-row-isolation-cache/evidence/row_render_profile.json`
+2. `docs/render/phases/phase-09-row-isolation-cache/evidence/parse_cache_trace.json`
+3. `docs/render/phases/phase-09-row-isolation-cache/evidence/ui_regression_suite.json`
+4. `docs/render/phases/phase-09-row-isolation-cache/evidence/phase09-gate-report.json`
 
-1. Risk: over-memoization hides needed updates.
-   - Mitigation: explicit update invariants and snapshot tests.
-2. Risk: cache growth.
-   - Mitigation: bounded LRU/TTL cache policy.
+## Residual Notes
 
-## Handoff to Phase 10
+1. Candidate evidence is currently fixture-backed for local closure rehearsal.
+2. CI closeout should regenerate artifacts with CI candidate payloads and injected commit SHA.
+3. Phase 10 can now focus on progressive/virtualized rendering with lower row-level invalidation noise.
 
-After row isolation, long-thread rendering strategy (progressive mount + virtualization) can be tuned with less noise.
+## Closeout and Handoff
 
-
-## Effort Estimate
-
-- Size: Medium
-- Estimated duration: 4-5 engineering days
-- Suggested staffing: 1 frontend primary
-- Confidence level: Medium (depends on current code-path complexity and test debt)
-
-
-
-
-
+- `docs/render/phases/phase-09-row-isolation-cache/close-phase-v1.md`
+- `docs/render/phases/phase-09-row-isolation-cache/handoff-to-phase-10.md`

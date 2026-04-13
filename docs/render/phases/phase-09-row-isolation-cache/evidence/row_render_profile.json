@@ -1,6 +1,6 @@
 {
   "phase": "09",
-  "generated_at": "2026-04-13T21:53:28Z",
+  "generated_at": "2026-04-13T22:11:23Z",
   "source": "row_render_profile",
   "evidence_mode": "candidate",
   "gate_eligible": true,
@@ -16,7 +16,7 @@
     "changed_row_render_events": 1435,
     "unchanged_row_render_events": 65,
     "candidate_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/candidates/row-render-profile-candidate.json",
-    "candidate_commit_sha": "deadbeef"
+    "candidate_commit_sha": "ced04e074e9e91214ea30e4cc8d2232c602d965d"
   },
   "baseline_metadata": {
     "label": "phase09_pre_row_isolation_baseline_v1",

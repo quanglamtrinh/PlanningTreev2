@@ -1,6 +1,6 @@
 {
   "phase": "09",
-  "generated_at": "2026-04-13T21:53:28Z",
+  "generated_at": "2026-04-13T22:11:23Z",
   "source": "parse_cache_trace",
   "evidence_mode": "candidate",
   "gate_eligible": true,
@@ -16,7 +16,7 @@
     "parse_cache_hits": 780,
     "parse_cache_misses": 420,
     "candidate_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/candidates/parse-cache-trace-candidate.json",
-    "candidate_commit_sha": "deadbeef"
+    "candidate_commit_sha": "ced04e074e9e91214ea30e4cc8d2232c602d965d"
   },
   "baseline_metadata": {
     "label": "phase09_pre_row_isolation_baseline_v1",

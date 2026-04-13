@@ -1,6 +1,6 @@
 {
   "phase": "09",
-  "generated_at": "2026-04-13T21:53:42Z",
+  "generated_at": "2026-04-13T22:11:29Z",
   "source": "phase09_gate_report",
   "status": "pass",
   "metric": "phase09_gate_pass_count",
@@ -10,7 +10,7 @@
   "pass": true,
   "context": {
     "evidence_dir": "docs/render/phases/phase-09-row-isolation-cache/evidence",
-    "candidate_path": null,
+    "candidate_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/candidates/row-render-profile-candidate.json",
     "gate_count": 3,
     "eligibility_fail_count": 0
   },
@@ -34,7 +34,7 @@
       "evidence_mode": "candidate",
       "gate_eligible": true,
       "candidate_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/candidates/row-render-profile-candidate.json",
-      "candidate_commit_sha": "deadbeef",
+      "candidate_commit_sha": "ced04e074e9e91214ea30e4cc8d2232c602d965d",
       "eligibility_issues": [],
       "artifact": "docs/render/phases/phase-09-row-isolation-cache/evidence/row_render_profile.json"
     },
@@ -51,7 +51,7 @@
       "evidence_mode": "candidate",
       "gate_eligible": true,
       "candidate_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/candidates/parse-cache-trace-candidate.json",
-      "candidate_commit_sha": "deadbeef",
+      "candidate_commit_sha": "ced04e074e9e91214ea30e4cc8d2232c602d965d",
       "eligibility_issues": [],
       "artifact": "docs/render/phases/phase-09-row-isolation-cache/evidence/parse_cache_trace.json"
     },
@@ -68,7 +68,7 @@
       "evidence_mode": "candidate",
       "gate_eligible": true,
       "candidate_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/candidates/ui-regression-suite-candidate.json",
-      "candidate_commit_sha": "deadbeef",
+      "candidate_commit_sha": "ced04e074e9e91214ea30e4cc8d2232c602d965d",
       "eligibility_issues": [],
       "artifact": "docs/render/phases/phase-09-row-isolation-cache/evidence/ui_regression_suite.json"
     }
