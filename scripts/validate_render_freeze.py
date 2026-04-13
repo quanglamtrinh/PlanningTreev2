@@ -26,6 +26,70 @@ def _contains_all(text: str, required_fragments: list[str]) -> list[str]:
     return missing
 
 
+def _matches_type(value: Any, expected: str) -> bool:
+    if expected == "null":
+        return value is None
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    return True
+
+
+def _validate_fixture_against_schema(payload: Any, schema: dict[str, Any]) -> list[str]:
+    if not isinstance(payload, dict):
+        return ["Fixture payload must be a JSON object."]
+
+    errors: list[str] = []
+    required_fields = [str(name) for name in schema.get("required", [])]
+    properties = schema.get("properties", {})
+
+    for field in required_fields:
+        if field not in payload:
+            errors.append(f"Missing required field: {field}")
+
+    for field, rules in properties.items():
+        if field not in payload or not isinstance(rules, dict):
+            continue
+
+        value = payload[field]
+        expected_types_raw = rules.get("type")
+        expected_types: list[str]
+        if isinstance(expected_types_raw, list):
+            expected_types = [str(item) for item in expected_types_raw]
+        elif isinstance(expected_types_raw, str):
+            expected_types = [expected_types_raw]
+        else:
+            expected_types = []
+
+        if expected_types and not any(_matches_type(value, expected) for expected in expected_types):
+            errors.append(f"Field {field} failed type check. Expected {expected_types}, got {type(value).__name__}.")
+            continue
+
+        if value is None:
+            continue
+
+        enum_values = rules.get("enum")
+        if isinstance(enum_values, list) and value not in enum_values:
+            errors.append(f"Field {field} value {value!r} is not in enum {enum_values}.")
+
+        min_length = rules.get("minLength")
+        if isinstance(min_length, int) and isinstance(value, str) and len(value) < min_length:
+            errors.append(f"Field {field} violates minLength={min_length}.")
+
+        minimum = rules.get("minimum")
+        if isinstance(minimum, int) and isinstance(value, int) and not isinstance(value, bool) and value < minimum:
+            errors.append(f"Field {field} violates minimum={minimum}.")
+
+    return errors
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     freeze_root = repo_root / "docs" / "render" / "system-freeze"
@@ -43,7 +107,12 @@ def main() -> int:
         freeze_root / "contracts" / "README.md",
         freeze_root / "contracts" / "c1-event-stream-contract-v1.md",
         freeze_root / "contracts" / "c1-event-stream-envelope-v1.schema.json",
+        freeze_root / "contracts" / "c1-event-stream-control-envelope-v1.schema.json",
         freeze_root / "contracts" / "c1-event-stream-bridge-policy-v1.md",
+        freeze_root / "contracts" / "fixtures" / "c1-business-valid-v1.json",
+        freeze_root / "contracts" / "fixtures" / "c1-business-invalid-missing-event-id-v1.json",
+        freeze_root / "contracts" / "fixtures" / "c1-control-valid-v1.json",
+        freeze_root / "contracts" / "fixtures" / "c1-control-invalid-missing-thread-id-v1.json",
         freeze_root / "contracts" / "c2-replay-resync-contract-v1.md",
         freeze_root / "contracts" / "c3-lifecycle-gating-contract-v1.md",
         freeze_root / "contracts" / "c4-durability-contract-v1.md",
@@ -70,6 +139,26 @@ def main() -> int:
 
     if manifest.get("model") != "goose-first-hybrid":
         errors.append("Manifest model must be 'goose-first-hybrid'.")
+
+    business_schema = _load_json(freeze_root / "contracts" / "c1-event-stream-envelope-v1.schema.json")
+    control_schema = _load_json(freeze_root / "contracts" / "c1-event-stream-control-envelope-v1.schema.json")
+    fixture_expectations = [
+        ("c1-business-valid-v1.json", business_schema, True),
+        ("c1-business-invalid-missing-event-id-v1.json", business_schema, False),
+        ("c1-control-valid-v1.json", control_schema, True),
+        ("c1-control-invalid-missing-thread-id-v1.json", control_schema, False),
+    ]
+    fixture_root = freeze_root / "contracts" / "fixtures"
+    for fixture_name, schema, should_pass in fixture_expectations:
+        payload = _load_json(fixture_root / fixture_name)
+        fixture_errors = _validate_fixture_against_schema(payload, schema)
+        passed = not fixture_errors
+        if should_pass and not passed:
+            errors.append(
+                f"C1 fixture {fixture_name} expected pass but failed: {'; '.join(fixture_errors)}"
+            )
+        if not should_pass and passed:
+            errors.append(f"C1 fixture {fixture_name} expected fail but passed.")
 
     manifest_contracts = set(manifest.get("contracts", []))
     if manifest_contracts != EXPECTED_CONTRACTS:
@@ -216,4 +305,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

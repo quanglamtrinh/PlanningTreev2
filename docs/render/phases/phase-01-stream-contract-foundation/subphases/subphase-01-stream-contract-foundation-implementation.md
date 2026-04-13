@@ -37,7 +37,7 @@ Owner: PTM core conversation pipeline.
   - `stream_open` does not advance cursor
   - non-monotonic or duplicate `event_id` triggers controlled error + snapshot reload fallback
   - `frontend/src/features/conversation/state/threadByIdStoreV3.ts`
-- Required counters (thin metrics for Phase 1):
+- Optional local debugging counters (non-gating in this wave):
   - `legacy_fallback_used_count`
   - `envelope_validation_failure_count`
   - `heartbeat_cursor_pollution_count`
@@ -65,8 +65,10 @@ Measurement method:
 
 1. Heartbeat remains SSE comment frame (`: heartbeat`) with no payload envelope and no `id`.
 2. `stream_open` is non-replayable and no-cursor.
-3. Frontend counter `heartbeat_cursor_pollution_count` must remain zero.
-4. Verified by stream integration + store unit tests where `lastEventId` only advances for replayable business events.
+3. Verified by automated assertions:
+   - stream integration tests assert heartbeat frames are comments and not replayable business envelopes
+   - store unit tests assert `stream_open` does not advance `lastEventId`
+   - store unit tests assert only validated business frames advance `lastEventId`
 
 ### P01-G3
 
@@ -76,8 +78,8 @@ Measurement method:
 
 1. Start timestamp captured when EventSource subscription opens.
 2. First meaningful frame is `stream_open`.
-3. Client records `firstMeaningfulFrameLatencyMs` when first `stream_open` arrives.
-4. Aggregate p95 from this telemetry field in Phase 1 smoke runs.
+3. Stream smoke harness captures first meaningful frame timing from subscription start to first `stream_open`.
+4. p95 gate is evaluated from smoke-test output artifacts (test-driven evidence, not runtime telemetry).
 
 ## Preflight Evidence
 
@@ -92,4 +94,3 @@ Measurement method:
 - Legacy fallback parse path remains supported in migration window.
 - Hard contract error path covers canonical/legacy mismatch handling.
 - Monotonic event id issuance continuity covered across service restart.
-

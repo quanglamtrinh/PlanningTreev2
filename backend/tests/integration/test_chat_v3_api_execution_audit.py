@@ -1111,6 +1111,204 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
 
 
 @pytest.mark.anyio
+async def test_v3_execution_stream_drops_mismatched_thread_id_events(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.thread_events_by_id_v3(
+        request,
+        project_id,
+        thread_id,
+        node_id=node_id,
+        after_snapshot_version=1,
+    )
+
+    try:
+        _ = await _read_stream_chunk(response)  # stream_open
+        snapshot_chunk = await _read_stream_chunk(response)
+        first_payload = _parse_sse_chunk(snapshot_chunk)
+        first_snapshot_version = int(first_payload.get("snapshotVersion") or 0)
+        next_snapshot_version = max(1, first_snapshot_version + 1)
+
+        mismatched_envelope = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            snapshot_version=next_snapshot_version,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="400",
+            thread_id="exec-thread-v3-2",
+            payload={
+                "item": {
+                    "id": "msg-mismatch",
+                    "kind": "message",
+                    "threadId": "exec-thread-v3-2",
+                    "turnId": "turn-2",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T10:01:00Z",
+                    "updatedAt": "2026-04-01T10:01:00Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Wrong thread",
+                    "format": "markdown",
+                }
+            },
+        )
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            mismatched_envelope,
+            thread_role="execution",
+        )
+
+        valid_envelope = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            snapshot_version=next_snapshot_version,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="401",
+            thread_id=thread_id,
+            payload={
+                "item": {
+                    "id": "msg-valid",
+                    "kind": "message",
+                    "threadId": thread_id,
+                    "turnId": "turn-2",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T10:01:01Z",
+                    "updatedAt": "2026-04-01T10:01:01Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Correct thread",
+                    "format": "markdown",
+                }
+            },
+        )
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            valid_envelope,
+            thread_role="execution",
+        )
+
+        payload = await _read_sse_payload(response)
+        assert payload["event_id"] == "401"
+        assert payload["payload"]["item"]["threadId"] == thread_id
+    finally:
+        await _close_stream(response, request)
+
+
+@pytest.mark.anyio
+async def test_v3_execution_stream_drops_missing_thread_id_events_and_stays_healthy(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.thread_events_by_id_v3(
+        request,
+        project_id,
+        thread_id,
+        node_id=node_id,
+        after_snapshot_version=1,
+    )
+
+    try:
+        _ = await _read_stream_chunk(response)  # stream_open
+        snapshot_chunk = await _read_stream_chunk(response)
+        first_payload = _parse_sse_chunk(snapshot_chunk)
+        first_snapshot_version = int(first_payload.get("snapshotVersion") or 0)
+        next_snapshot_version = max(1, first_snapshot_version + 1)
+
+        missing_thread_envelope = {
+            "schema_version": 1,
+            "event_id": "500",
+            "event_type": event_types.CONVERSATION_ITEM_UPSERT_V3,
+            "turn_id": None,
+            "snapshot_version": next_snapshot_version,
+            "occurred_at_ms": int(first_payload.get("occurred_at_ms") or 0) + 1,
+            "payload": {
+                "item": {
+                    "id": "msg-missing-thread",
+                    "kind": "message",
+                    "turnId": "turn-2",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T10:01:00Z",
+                    "updatedAt": "2026-04-01T10:01:00Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Missing thread id",
+                    "format": "markdown",
+                }
+            },
+            "eventId": "500",
+            "channel": "thread",
+            "projectId": project_id,
+            "nodeId": node_id,
+            "threadRole": "execution",
+            "occurredAt": "2026-04-01T10:01:00Z",
+            "snapshotVersion": next_snapshot_version,
+            "type": event_types.CONVERSATION_ITEM_UPSERT_V3,
+        }
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            missing_thread_envelope,
+            thread_role="execution",
+        )
+
+        valid_envelope = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            snapshot_version=next_snapshot_version,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="501",
+            thread_id=thread_id,
+            payload={
+                "item": {
+                    "id": "msg-valid-after-drop",
+                    "kind": "message",
+                    "threadId": thread_id,
+                    "turnId": "turn-2",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T10:01:01Z",
+                    "updatedAt": "2026-04-01T10:01:01Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Still healthy",
+                    "format": "markdown",
+                }
+            },
+        )
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            valid_envelope,
+            thread_role="execution",
+        )
+
+        payload = await _read_sse_payload(response)
+        assert payload["event_id"] == "501"
+        assert payload["payload"]["item"]["id"] == "msg-valid-after-drop"
+    finally:
+        await _close_stream(response, request)
+
+
+@pytest.mark.anyio
 async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestClient, workspace_root) -> None:
     project_id, node_id = _setup_project(client, workspace_root)
     _stub_ask_session_reads(client)

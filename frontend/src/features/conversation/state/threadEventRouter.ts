@@ -27,10 +27,14 @@ export type ThreadStreamOpenEnvelopeV3 = {
   payload: Record<string, unknown>
 }
 
+export type ThreadBusinessEventV3 = ThreadEventV3 & {
+  threadId: string
+}
+
 export type ParsedThreadStreamFrameV3 =
   | {
       kind: 'business'
-      event: ThreadEventV3
+      event: ThreadBusinessEventV3
       legacyFallbackUsed: boolean
     }
   | {
@@ -238,11 +242,12 @@ export function parseThreadEventEnvelopeV3(data: string): ParsedThreadStreamFram
     projectId,
     nodeId,
     threadRole,
+    threadId,
     occurredAt,
     snapshotVersion,
     type: eventType as ThreadEventV3['type'],
     payload: payload as ThreadEventV3['payload'],
-  } as ThreadEventV3
+  } as ThreadBusinessEventV3
 
   return {
     kind: 'business',

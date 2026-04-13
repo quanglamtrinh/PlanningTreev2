@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
@@ -17,6 +18,7 @@ from backend.errors.app_errors import AppError, AskV3Disabled, InvalidRequest
 from backend.storage.file_utils import new_id
 
 router = APIRouter(tags=["workflow-v3"])
+logger = logging.getLogger(__name__)
 
 SSE_HEARTBEAT_INTERVAL_SEC = 15
 _THREAD_MISMATCH_ERROR = "Thread id does not match any active route for this node."
@@ -101,6 +103,34 @@ def _workflow_event_broker(request: Request) -> Any:
 
 def _normalize_thread_id(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _resolve_event_thread_id(envelope: dict[str, Any]) -> str:
+    canonical_thread_id = _normalize_thread_id(envelope.get("thread_id"))
+    if canonical_thread_id:
+        return canonical_thread_id
+
+    legacy_thread_id = _normalize_thread_id(envelope.get("threadId"))
+    if legacy_thread_id:
+        return legacy_thread_id
+
+    payload = envelope.get("payload")
+    if not isinstance(payload, dict):
+        return ""
+
+    snapshot = payload.get("snapshot")
+    if isinstance(snapshot, dict):
+        snapshot_thread_id = _normalize_thread_id(snapshot.get("threadId") or snapshot.get("thread_id"))
+        if snapshot_thread_id:
+            return snapshot_thread_id
+
+    item = payload.get("item")
+    if isinstance(item, dict):
+        item_thread_id = _normalize_thread_id(item.get("threadId") or item.get("thread_id"))
+        if item_thread_id:
+            return item_thread_id
+
+    return ""
 
 
 def _is_ask_v3_backend_enabled(request: Request) -> bool:
@@ -474,10 +504,23 @@ async def thread_events_by_id_v3(
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_INTERVAL_SEC)
                     event_payload = event if isinstance(event, dict) else {}
+                    if not event_payload:
+                        continue
+                    event_thread_id = _resolve_event_thread_id(event_payload)
+                    if event_thread_id != resolved_thread_id:
+                        logger.warning(
+                            "Dropping thread event with mismatched thread_id: requested=%s event=%s project=%s node=%s role=%s event_type=%s event_id=%s",
+                            resolved_thread_id,
+                            event_thread_id or "<missing>",
+                            project_id,
+                            node_id,
+                            thread_role,
+                            str(event_payload.get("event_type") or event_payload.get("type") or ""),
+                            str(event_payload.get("event_id") or event_payload.get("eventId") or ""),
+                        )
+                        continue
                     event_version = int(event_payload.get("snapshotVersion") or 0)
                     if event_version and event_version <= first_snapshot_version:
-                        continue
-                    if not event_payload:
                         continue
                     yield _sse_frame(_envelope_with_contract_fields(event_payload, thread_role=thread_role))
                 except asyncio.TimeoutError:

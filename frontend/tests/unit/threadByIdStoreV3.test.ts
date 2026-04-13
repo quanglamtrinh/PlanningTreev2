@@ -302,6 +302,59 @@ describe('threadByIdStoreV3', () => {
     expect(state.lastEventId).toBeNull()
   })
 
+  it('rejects business event with mismatched thread_id and reloads snapshot', async () => {
+    apiMock.getThreadSnapshotByIdV3
+      .mockResolvedValueOnce(makeSnapshot())
+      .mockResolvedValueOnce(makeSnapshot({ snapshotVersion: 2 }))
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      eventSource.emitMessage(
+        JSON.stringify({
+          schema_version: 1,
+          event_id: '12',
+          event_type: 'thread.snapshot.v3',
+          thread_id: 'thread-2',
+          turn_id: null,
+          snapshot_version: 2,
+          occurred_at_ms: Date.parse('2026-04-01T00:01:00Z'),
+          eventId: '12',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'execution',
+          occurredAt: '2026-04-01T00:01:00Z',
+          snapshotVersion: 2,
+          type: 'thread.snapshot.v3',
+          payload: {
+            snapshot: makeSnapshot({
+              threadId: 'thread-2',
+              snapshotVersion: 2,
+              updatedAt: '2026-04-01T00:01:00Z',
+            }),
+          },
+        }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
+    })
+
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.telemetry.envelope_validation_failure_count).toBe(1)
+    expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)
+    expect(state.lastEventId).toBeNull()
+  })
+
   it('reloads snapshot when event patch cannot be applied', async () => {
     apiMock.getThreadSnapshotByIdV3
       .mockResolvedValueOnce(makeSnapshot())

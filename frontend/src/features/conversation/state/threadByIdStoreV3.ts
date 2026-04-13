@@ -2,13 +2,12 @@ import { create } from 'zustand'
 import { api, appendAuthToken, buildThreadByIdEventsUrlV3 } from '../../../api/client'
 import type {
   PlanActionV3,
-  ThreadEventV3,
   ThreadRole,
   ThreadSnapshotV3,
   UserInputAnswer,
 } from '../../../api/types'
 import { applyThreadEventV3, ThreadEventApplyErrorV3 } from './applyThreadEventV3'
-import type { ThreadStreamOpenEnvelopeV3 } from './threadEventRouter'
+import type { ThreadBusinessEventV3, ThreadStreamOpenEnvelopeV3 } from './threadEventRouter'
 import { parseThreadEventEnvelopeV3 } from './threadEventRouter'
 
 const SSE_RECONNECT_RETRY_MS = 1000
@@ -471,12 +470,18 @@ function openThreadEventStream(
     })
   }
 
-  const applyEnvelope = (event: ThreadEventV3, legacyFallbackUsed: boolean) => {
+  const applyEnvelope = (event: ThreadBusinessEventV3, legacyFallbackUsed: boolean) => {
     const currentState = get()
     if (
       !isCurrentGeneration(generation) ||
       !isActiveTarget(currentState, projectId, nodeId, threadId, threadRole)
     ) {
+      return
+    }
+    if (event.threadId !== threadId) {
+      failContract(
+        `Thread event thread_id mismatch: expected ${threadId} but received ${event.threadId}.`,
+      )
       return
     }
     if (

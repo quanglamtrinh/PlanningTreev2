@@ -69,7 +69,7 @@ Define one business event envelope used by all stream producers:
 - `event_type`: semantic type (item_patch, lifecycle_update, etc.)
 - `thread_id`
 - `turn_id` (nullable for non-turn events)
-- `created_at_ms`
+- `occurred_at_ms`
 - `payload`
 
 Rules:
