@@ -1,6 +1,6 @@
 ﻿# Phase 02 - Replay and Gap Recovery
 
-Status: Planned.
+Status: Completed (ready for Phase 03 handoff).
 
 Scope IDs: B02, B03, B05.
 
@@ -38,6 +38,10 @@ Phase 01 completed (stable event IDs and cursor semantics).
 Reference handoff:
 
 - `docs/render/phases/phase-01-stream-contract-foundation/handoff-to-phase-02.md`
+
+Output handoff:
+
+- `docs/render/phases/phase-02-replay-gap-recovery/handoff-to-phase-03.md`
 
 ## In Scope
 
