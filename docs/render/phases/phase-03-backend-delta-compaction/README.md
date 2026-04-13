@@ -1,10 +1,25 @@
 ﻿# Phase 03 - Backend Delta Compaction
 
-Status: Planned.
+Status: Planned (entry artifacts frozen).
 
 Scope IDs: A01, A04, A08.
 
 Subphase workspace: ./subphases/.
+
+## Entry Criteria Artifacts
+
+`phase-manifest-v1.json` entry criteria for Phase 03:
+
+- `phase_02_passed`
+- `backend_coalescing_rules_frozen`
+
+Phase 03 freeze artifacts:
+
+- `coalescing-rules-frozen-v1.md`
+- `coalescing-rules-matrix-v1.json`
+- `fixtures/phase03-coalescing-cases-v1.json`
+- `gate-measurement-plan-v1.md`
+- `evidence/README.md`
 
 ## Decision Pack Alignment
 
