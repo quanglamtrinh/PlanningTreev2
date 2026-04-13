@@ -1,6 +1,6 @@
 ﻿# Phase 04 - In-Memory Actor and Checkpointing
 
-Status: Planned (entry blockers cleared and preflight frozen).
+Status: Completed (all P04 gates passed with committed evidence).
 
 Scope IDs: A02, A03.
 
@@ -19,6 +19,18 @@ Phase 04 entry artifacts:
 - `docs/render/system-freeze/contracts/c4-mini-journal-spec-v1.md`
 - `docs/render/phases/phase-04-inmemory-actor-checkpointing/preflight-v1.md`
 - `docs/render/phases/phase-04-inmemory-actor-checkpointing/evidence/README.md`
+
+Phase closure artifacts:
+
+- `docs/render/phases/phase-04-inmemory-actor-checkpointing/close-phase-v1.md`
+- `docs/render/phases/phase-04-inmemory-actor-checkpointing/handoff-to-phase-05.md`
+- `docs/render/phases/phase-04-inmemory-actor-checkpointing/evidence/phase04-gate-report.json`
+
+Phase closure snapshot:
+
+- `P04-G1`: `58.47457627118644` (`>= 50`)
+- `P04-G2`: `64.42307692307693` (`>= 60`)
+- `P04-G3`: `0` (`<= 0`)
 
 ## Decision Pack Alignment
 
