@@ -2,7 +2,7 @@
   "run_meta": {
     "phase": "06",
     "scenario": "frontend_event_burst_scenario",
-    "timestamp_utc": "2026-04-13T06:05:17.647996Z",
+    "timestamp_utc": "2026-04-13T07:11:54.530174Z",
     "harness": "deterministic_frame_batch_model_v1",
     "inputs": {
       "burst_events": 400,

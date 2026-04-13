@@ -1,6 +1,6 @@
 ﻿# Phase 07 - State Shape and Hot Path Cleanup
 
-Status: Planned.
+Status: Completed (all P07 gates passed with committed evidence).
 
 Scope IDs: C02, C03, C04.
 
@@ -48,6 +48,11 @@ Preflight baseline and evidence conventions:
 - `docs/render/phases/phase-07-state-shape-hot-path/evidence/state_hot_path_trace.json`.
 - `docs/render/phases/phase-07-state-shape-hot-path/evidence/reducer_identity_tests.json`.
 - `docs/render/phases/phase-07-state-shape-hot-path/evidence/phase07-gate-report.json`.
+
+Closeout artifacts:
+
+- `docs/render/phases/phase-07-state-shape-hot-path/close-phase-v1.md`.
+- `docs/render/phases/phase-07-state-shape-hot-path/handoff-to-phase-08.md`.
 
 ## In Scope
 

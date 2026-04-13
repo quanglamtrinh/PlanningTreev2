@@ -542,6 +542,22 @@ describe('threadByIdStoreV3', () => {
             processingState: 'waiting_user_input',
             items: [
               {
+                id: 'msg-0',
+                kind: 'message',
+                threadId: 'thread-1',
+                turnId: 'turn-1',
+                sequence: 1,
+                createdAt: '2026-04-01T00:00:05Z',
+                updatedAt: '2026-04-01T00:00:05Z',
+                status: 'completed',
+                source: 'upstream',
+                tone: 'neutral',
+                metadata: {},
+                role: 'assistant',
+                text: 'Context',
+                format: 'markdown',
+              },
+              {
                 id: 'input-1',
                 kind: 'userInput',
                 threadId: 'thread-1',
@@ -589,6 +605,22 @@ describe('threadByIdStoreV3', () => {
             snapshotVersion: 6,
             processingState: 'idle',
             items: [
+              {
+                id: 'msg-0',
+                kind: 'message',
+                threadId: 'thread-1',
+                turnId: 'turn-1',
+                sequence: 1,
+                createdAt: '2026-04-01T00:00:05Z',
+                updatedAt: '2026-04-01T00:00:05Z',
+                status: 'completed',
+                source: 'upstream',
+                tone: 'neutral',
+                metadata: {},
+                role: 'assistant',
+                text: 'Context',
+                format: 'markdown',
+              },
               {
                 id: 'input-1',
                 kind: 'userInput',
@@ -647,12 +679,15 @@ describe('threadByIdStoreV3', () => {
           .getState()
           .loadThread('project-1', 'node-1', 'thread-1', 'execution')
       })
+      const beforeResolveSnapshot = useThreadByIdStoreV3.getState().snapshot
+      const beforeResolveMessageRef = beforeResolveSnapshot?.items[0]
 
       await act(async () => {
         await useThreadByIdStoreV3.getState().resolveUserInput('req-1', [
           { questionId: 'q1', value: 'yes', label: 'Yes' },
         ])
       })
+      const afterOptimisticSnapshot = useThreadByIdStoreV3.getState().snapshot
 
       expect(apiMock.resolveThreadUserInputByIdV3).toHaveBeenCalledWith(
         'project-1',
@@ -664,6 +699,8 @@ describe('threadByIdStoreV3', () => {
       expect(
         useThreadByIdStoreV3.getState().snapshot?.uiSignals.activeUserInputRequests[0]?.status,
       ).toBe('answer_submitted')
+      expect(afterOptimisticSnapshot?.items.map((item) => item.id)).toEqual(['msg-0', 'input-1'])
+      expect(afterOptimisticSnapshot?.items[0]).toBe(beforeResolveMessageRef)
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2000)

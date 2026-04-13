@@ -2,7 +2,7 @@
   "run_meta": {
     "phase": "06",
     "scenario": "apply_order_integration_tests",
-    "timestamp_utc": "2026-04-13T06:05:17.647925Z",
+    "timestamp_utc": "2026-04-13T07:11:54.869683Z",
     "harness": "deterministic_order_invariant_suite_v1",
     "inputs": {
       "cases": 24,

@@ -7,6 +7,7 @@ import type {
   UserInputAnswer,
 } from '../../../api/types'
 import {
+  applyOptimisticUserInputSubmissionV3,
   applyThreadEventV3,
   ThreadEventApplyDiagnosticsV3,
   ThreadEventApplyErrorV3,
@@ -1070,35 +1071,12 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       }
       return {
         error: null,
-        snapshot: {
-          ...state.snapshot,
-          updatedAt: submittedAt,
-          items: state.snapshot.items.map((item) => {
-            if (item.kind !== 'userInput' || item.requestId !== requestId) {
-              return item
-            }
-            return {
-              ...item,
-              answers: [...answers],
-              status: 'answer_submitted',
-              updatedAt: submittedAt,
-            }
-          }),
-          uiSignals: {
-            ...state.snapshot.uiSignals,
-            activeUserInputRequests: state.snapshot.uiSignals.activeUserInputRequests.map(
-              (request) =>
-                request.requestId === requestId
-                  ? {
-                      ...request,
-                      status: 'answer_submitted',
-                      answers: [...answers],
-                      submittedAt,
-                    }
-                  : request,
-            ),
-          },
-        },
+        snapshot: applyOptimisticUserInputSubmissionV3(
+          state.snapshot,
+          requestId,
+          answers,
+          submittedAt,
+        ),
       }
     })
 

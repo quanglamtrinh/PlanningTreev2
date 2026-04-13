@@ -2,7 +2,7 @@
   "run_meta": {
     "phase": "06",
     "scenario": "interactive_stream_smoke",
-    "timestamp_utc": "2026-04-13T06:05:17.648204Z",
+    "timestamp_utc": "2026-04-13T07:11:54.694054Z",
     "harness": "deterministic_interactive_latency_model_v1",
     "inputs": {
       "sample_size": 100,
