@@ -37,6 +37,18 @@ Reference handoff:
 
 - `docs/render/phases/phase-06-frame-batching-fast-append/handoff-to-phase-07.md`.
 
+Phase 07 entry artifact (`normalized_state_shape_frozen`):
+
+- `docs/render/phases/phase-07-state-shape-hot-path/normalized-state-shape-v1.md`.
+
+Preflight baseline and evidence conventions:
+
+- `docs/render/phases/phase-07-state-shape-hot-path/evidence/baseline-manifest-v1.json`.
+- `docs/render/phases/phase-07-state-shape-hot-path/evidence/state_hot_path_benchmark.json`.
+- `docs/render/phases/phase-07-state-shape-hot-path/evidence/state_hot_path_trace.json`.
+- `docs/render/phases/phase-07-state-shape-hot-path/evidence/reducer_identity_tests.json`.
+- `docs/render/phases/phase-07-state-shape-hot-path/evidence/phase07-gate-report.json`.
+
 ## In Scope
 
 1. C02: Normalized conversation state model.
