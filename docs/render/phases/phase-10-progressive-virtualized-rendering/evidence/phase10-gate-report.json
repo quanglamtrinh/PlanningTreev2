@@ -1,6 +1,6 @@
 {
   "phase": "10",
-  "generated_at": "2026-04-13T23:24:11Z",
+  "generated_at": "2026-04-14T02:40:41Z",
   "source": "phase10_gate_report",
   "status": "pass",
   "metric": "phase10_gate_pass_count",
@@ -34,7 +34,7 @@
       "evidence_mode": "candidate",
       "gate_eligible": true,
       "candidate_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/candidates/long-thread-open-scenario-candidate.json",
-      "candidate_commit_sha": "641b285b5a01ea72a1eda03d3519b84f46374c4b",
+      "candidate_commit_sha": "24dd584b6d9e54761f14b96f8faf09d3067e42a2",
       "eligibility_issues": [],
       "artifact": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/long_thread_open_scenario.json"
     },
@@ -51,7 +51,7 @@
       "evidence_mode": "candidate",
       "gate_eligible": true,
       "candidate_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/candidates/scroll-smoothness-profile-candidate.json",
-      "candidate_commit_sha": "641b285b5a01ea72a1eda03d3519b84f46374c4b",
+      "candidate_commit_sha": "24dd584b6d9e54761f14b96f8faf09d3067e42a2",
       "eligibility_issues": [],
       "artifact": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/scroll_smoothness_profile.json"
     },
@@ -68,7 +68,7 @@
       "evidence_mode": "candidate",
       "gate_eligible": true,
       "candidate_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/candidates/virtualization-anchor-tests-candidate.json",
-      "candidate_commit_sha": "641b285b5a01ea72a1eda03d3519b84f46374c4b",
+      "candidate_commit_sha": "24dd584b6d9e54761f14b96f8faf09d3067e42a2",
       "eligibility_issues": [],
       "artifact": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/virtualization_anchor_tests.json"
     }

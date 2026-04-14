@@ -1,6 +1,6 @@
 {
   "phase": "10",
-  "generated_at": "2026-04-13T23:24:07Z",
+  "generated_at": "2026-04-14T02:40:38Z",
   "source": "virtualization_anchor_tests",
   "evidence_mode": "candidate",
   "gate_eligible": true,
@@ -16,7 +16,7 @@
     "prepend_anchor_case_count": 18,
     "load_more_anchor_case_count": 24,
     "candidate_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/candidates/virtualization-anchor-tests-candidate.json",
-    "candidate_commit_sha": "641b285b5a01ea72a1eda03d3519b84f46374c4b"
+    "candidate_commit_sha": "24dd584b6d9e54761f14b96f8faf09d3067e42a2"
   },
   "baseline_metadata": {
     "label": "phase10_pre_progressive_virtualization_baseline_v1",

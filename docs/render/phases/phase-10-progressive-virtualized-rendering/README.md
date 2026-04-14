@@ -1,8 +1,8 @@
 # Phase 10 - Progressive and Virtualized Rendering
 
-Status: Planned (preflight frozen).
+Status: Completed (all P10 gates passed with candidate-backed evidence).
 
-Date: 2026-04-13.
+Date: 2026-04-14.
 
 Scope IDs: D03, D04, D09.
 
@@ -41,54 +41,36 @@ Frozen preflight artifacts:
 2. D04: Virtualization for very long feeds.
 3. D09: Render budget guard.
 
-## Detailed Improvements
+## Implemented Scope
 
 ### 1. Progressive row mount (D03)
 
-On large thread open:
+Implemented in `MessagesV3` with frozen defaults:
 
-- mount initial visible chunk first
-- mount remaining rows in controlled batches
-- prioritize keeping input/scroll responsive
+- threshold: `groupedEntries.length >= 250`
+- initial chunk: `120` groups
+- per-frame batch: `40` groups with adaptive degrade limits
+- rollout mode support: `off -> shadow -> on`
+- deterministic order and row identity preserved
 
 ### 2. Viewport virtualization (D04)
 
-Render only visible rows + overscan:
+Implemented with `@tanstack/react-virtual`:
 
-- reduce DOM node count
-- reduce layout/paint cost
-- maintain anchor correctness on prepend/load-more
+- virtualization unit v1: `groupedEntries` (no flatten)
+- activation threshold: `groupedEntries.length >= 300` when mode=`on`
+- stable keys: `item.id` and `toolGroup.id`
+- dynamic measurement via `measureElement`
+- correctness fallback latch to safe non-virtualized path on anchor invariant break
 
 ### 3. Render budget guard (D09)
 
-When frame cost exceeds budget:
+Implemented adaptive guard with correctness-first policy:
 
-- reduce per-frame mount batch size
-- defer non-critical decoration work
-- keep interaction path responsive
-
-## Preflight-locked Defaults
-
-1. Virtualization unit v1 is `groupedEntries` (no row flattening in first implementation pass).
-2. Anchor policy v1 preserves viewport anchor for prepend/load-more.
-3. Auto-scroll pinning remains allowed only when viewport is already near bottom.
-4. Correctness fallback is mandatory: if anchor invariant breaks, degrade to safe non-virtualized mode.
-5. No `C1`-`C6` contract expansion is allowed in preflight.
-
-## Implementation Plan
-
-1. Integrate progressive list behavior into message feed.
-2. Add virtualization layer with stable key and dynamic height strategy.
-3. Add runtime budget monitor for adaptive degrade behavior.
-
-## Quality Gates
-
-1. Long-thread open:
-   - improved time-to-interactive for large threads.
-2. Scroll quality:
-   - stable scroll with low jank under long histories.
-3. Budget control:
-   - guard activates only under stress and preserves correctness.
+- level 1 on sustained slow frames: reduce batch + overscan
+- level 2 on sustained severe slow frames: stronger batch/overscan reduction + defer non-critical decorations
+- recovery path on stable frame window
+- no change to content semantics or ordering
 
 Gate harness:
 
@@ -101,25 +83,58 @@ Evidence contract:
 
 - `docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/README.md`
 
-## Test Plan
+## Implemented Code Areas
 
-1. Component tests:
-   - anchor stability while loading additional history.
-2. Integration tests:
-   - open large thread scenarios with mixed content rows.
-3. Manual checks:
-   - scroll smoothness and input responsiveness.
+Frontend render path:
 
-## Risks and Mitigations
+- `frontend/src/features/conversation/components/v3/MessagesV3.tsx`
+- `frontend/src/features/conversation/components/v3/MessagesV3.module.css`
+- `frontend/src/features/conversation/components/v3/messagesV3ProfilingHooks.ts`
+- `frontend/src/vite-env.d.ts`
+- `frontend/package.json`
 
-1. Risk: virtualization breaks sticky behaviors or anchors.
-   - Mitigation: explicit anchor tests and fallback mode.
-2. Risk: adaptive guard causes visible content delay.
-   - Mitigation: cap degrade level and preserve critical content priority.
+Tests:
+
+- `frontend/tests/unit/messagesV3.phase10.test.tsx`
+- `frontend/tests/unit/MessagesV3.test.tsx`
+- `frontend/tests/unit/messagesV3.profiling-hooks.test.tsx`
+- `frontend/tests/unit/messagesV3.utils.test.ts`
+
+## Validation Snapshot
+
+Executed checks:
+
+1. `npm run typecheck --prefix frontend` -> `PASS`.
+2. `npx vitest run tests/unit/messagesV3.phase10.test.tsx tests/unit/MessagesV3.test.tsx tests/unit/messagesV3.profiling-hooks.test.tsx tests/unit/messagesV3.utils.test.ts` -> `PASS`.
+3. `npm run check:render_freeze` -> `PASS`.
+4. candidate-backed evidence source scripts (`phase10_long_thread_open_scenario.py`, `phase10_scroll_smoothness_profile.py`, `phase10_virtualization_anchor_tests.py`) -> `PASS`.
+5. candidate-backed gate aggregation (`phase10_gate_report.py`) -> `PASS`.
+
+## Exit Gates (P10) Status
+
+Gate targets come from `docs/render/system-freeze/phase-gates-v1.json`.
+
+| Gate | Metric | Target | Current value | Status |
+|---|---|---|---|---|
+| P10-G1 | long_thread_open_tti_p95_ms | `<= 2000` | `1812.4` | pass |
+| P10-G2 | scroll_jank_frames_pct | `<= 3` | `1.807` | pass |
+| P10-G3 | anchor_break_incidents | `<= 0` | `0.0` | pass |
+
+Required evidence files for closure:
+
+- `docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/long_thread_open_scenario.json`
+- `docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/scroll_smoothness_profile.json`
+- `docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/virtualization_anchor_tests.json`
+- `docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/phase10-gate-report.json`
 
 ## Handoff to Phase 11
 
-With base list performance under control, heavy compute offload can focus on specific expensive row types.
+With base list performance and anchor safety stabilized, Phase 11 can focus on heavy compute off-main-thread optimizations (D05, D06, D07) without changing feed semantics.
+
+Handoff and closeout artifacts:
+
+- `close-phase-v1.md`
+- `handoff-to-phase-11.md`
 
 ## Effort Estimate
 
