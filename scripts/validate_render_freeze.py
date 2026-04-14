@@ -28,6 +28,9 @@ ENTRY_CRITERIA_FILE_RULES = {
     "list_anchor_invariants_frozen": Path(
         "docs/render/phases/phase-10-progressive-virtualized-rendering/list-anchor-invariants-v1.md"
     ),
+    "worker_result_versioning_policy_frozen": Path(
+        "docs/render/phases/phase-11-heavy-compute-off-main-thread/worker-result-versioning-policy-v1.md"
+    ),
 }
 
 
@@ -246,6 +249,8 @@ def main() -> int:
             errors.append("Phase 07: missing reference to normalized-state-shape-v1.md in README.")
         if pid == "09" and "row-cache-invalidation-policy-v1.md" not in text:
             errors.append("Phase 09: missing reference to row-cache-invalidation-policy-v1.md in README.")
+        if pid == "11" and "worker-result-versioning-policy-v1.md" not in text:
+            errors.append("Phase 11: missing reference to worker-result-versioning-policy-v1.md in README.")
 
         link_fragment = f"./{entry.get('slug')}/README.md"
         if link_fragment not in phase_index_text:

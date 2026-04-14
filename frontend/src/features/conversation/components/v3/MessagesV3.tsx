@@ -56,6 +56,15 @@ import {
   resetParseArtifactCache,
   resetParseArtifactCacheForThread,
 } from './parseArtifactCache'
+import {
+  computeTrailingCommandOutput,
+  computeTrailingCommandOutputIncremental,
+  type CommandOutputTailCache,
+} from './commandOutputTail'
+import {
+  PHASE11_DEFAULT_DEFERRED_TIMEOUT_MS,
+  resolveMessagesV3Phase11Mode,
+} from './phase11Config'
 
 const SCROLL_THRESHOLD_PX = 120
 const MAX_COMMAND_OUTPUT_LINES = 200
@@ -64,6 +73,7 @@ const LARGE_COMMAND_OUTPUT_LINE_THRESHOLD = 12
 const VIEW_STATE_PERSIST_DEBOUNCE_MS = 150
 const EMPTY_USER_INPUT_ANSWERS: UserInputAnswerV3[] = []
 const PHASE10_MODE_ENV_FLAG = 'VITE_PTM_PHASE10_PROGRESSIVE_VIRTUALIZATION_MODE'
+const PHASE11_MARKDOWN_DEFERRED_TIMEOUT_MS = PHASE11_DEFAULT_DEFERRED_TIMEOUT_MS
 const PHASE10_PROGRESSIVE_THRESHOLD = 250
 const PHASE10_VIRTUALIZATION_THRESHOLD = 300
 const PHASE10_PROGRESSIVE_INITIAL_CHUNK = 120
@@ -371,15 +381,6 @@ function commandRanLabel(status: ItemStatus): string {
   return status === 'in_progress' ? 'Running' : 'Ran'
 }
 
-function trailingCommandOutput(outputText: string): string {
-  const normalized = outputText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  const lines = normalized.split('\n')
-  if (lines.length <= MAX_COMMAND_OUTPUT_LINES) {
-    return normalized
-  }
-  return lines.slice(-MAX_COMMAND_OUTPUT_LINES).join('\n')
-}
-
 function normalizeDiffKind(
   value: string | null | undefined,
   fallback: ToolChange['kind'] = 'modify',
@@ -650,18 +651,39 @@ function WorkingIndicatorV3({
 
 function CommandOutputViewportV3({
   itemId,
+  itemUpdatedAt,
   outputText,
   onRequestAutoScroll,
 }: {
   itemId: string
+  itemUpdatedAt: string
   outputText: string
   onRequestAutoScroll?: () => void
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const pinnedRef = useRef(true)
   const [, setPinnedVersion] = useState(0)
+  const incrementalTailRef = useRef<CommandOutputTailCache | null>(null)
+  const phase11Mode = resolveMessagesV3Phase11Mode(null)
 
-  const visibleOutput = useMemo(() => trailingCommandOutput(outputText), [outputText])
+  const visibleOutput = useMemo(() => {
+    const itemKey = `command_output:${itemId}:${itemUpdatedAt}`
+    const baseline = computeTrailingCommandOutput(outputText, MAX_COMMAND_OUTPUT_LINES)
+    if (phase11Mode === 'off') {
+      return baseline
+    }
+    const incremental = computeTrailingCommandOutputIncremental({
+      previous: incrementalTailRef.current,
+      itemKey,
+      outputText,
+      maxLines: MAX_COMMAND_OUTPUT_LINES,
+    })
+    incrementalTailRef.current = incremental.cache
+    if (phase11Mode === 'shadow') {
+      return baseline
+    }
+    return incremental.visibleOutput
+  }, [itemId, itemUpdatedAt, outputText, phase11Mode])
 
   const updatePinnedState = useCallback(() => {
     const viewport = viewportRef.current
@@ -696,6 +718,7 @@ function CommandOutputViewportV3({
 
 function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'message' }> }) {
   emitRowRenderProfileForItem(item)
+  const phase11Mode = resolveMessagesV3Phase11Mode(null)
 
   const roleClass =
     item.role === 'user'
@@ -734,6 +757,8 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
           <div className={`${styles.messageBubble} ${bubbleClass}`}>
             <ConversationMarkdown
               content={renderedText}
+              phase11Mode={phase11Mode}
+              phase11DeferredTimeoutMs={PHASE11_MARKDOWN_DEFERRED_TIMEOUT_MS}
               parseTrace={{
                 threadId: item.threadId,
                 itemId: item.id,
@@ -883,6 +908,7 @@ function CommandToolRowV3({
                 {hasOutput ? (
                   <CommandOutputViewportV3
                     itemId={item.id}
+                    itemUpdatedAt={item.updatedAt}
                     outputText={item.outputText}
                     onRequestAutoScroll={onRequestAutoScroll}
                   />
@@ -1177,6 +1203,7 @@ function isFileChangeSemanticDiff(item: Extract<ConversationItemV3, { kind: 'dif
 
 function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'review' }> }) {
   emitRowRenderProfileForItem(item)
+  const phase11Mode = resolveMessagesV3Phase11Mode(null)
 
   const reviewParseKey = buildParseCacheKey({
     threadId: item.threadId,
@@ -1202,6 +1229,8 @@ function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'revi
           </div>
           <ConversationMarkdown
             content={renderedText}
+            phase11Mode={phase11Mode}
+            phase11DeferredTimeoutMs={PHASE11_MARKDOWN_DEFERRED_TIMEOUT_MS}
             parseTrace={{
               threadId: item.threadId,
               itemId: item.id,
@@ -1218,6 +1247,7 @@ function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'revi
 
 function ExploreRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'explore' }> }) {
   emitRowRenderProfileForItem(item)
+  const phase11Mode = resolveMessagesV3Phase11Mode(null)
 
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-explore">
@@ -1232,6 +1262,8 @@ function ExploreRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'exp
           </div>
           <ConversationMarkdown
             content={item.text}
+            phase11Mode={phase11Mode}
+            phase11DeferredTimeoutMs={PHASE11_MARKDOWN_DEFERRED_TIMEOUT_MS}
             parseTrace={{
               threadId: item.threadId,
               itemId: item.id,

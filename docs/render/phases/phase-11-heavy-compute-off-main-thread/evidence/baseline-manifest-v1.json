@@ -1,0 +1,14 @@
+﻿{
+  "version": "1.0.0",
+  "phase": "11",
+  "baseline": {
+    "label": "phase11_pre_heavy_compute_offload_baseline_v1",
+    "captured_at": "2026-04-14T00:00:00Z",
+    "workload": "synthetic_v3_heavy_diff_markdown_stream_v1"
+  },
+  "baseline_metrics": {
+    "main_thread_long_task_reduction_pct": 0.0,
+    "stale_worker_result_applies": 3,
+    "interaction_freeze_events_over_50ms": 12
+  }
+}

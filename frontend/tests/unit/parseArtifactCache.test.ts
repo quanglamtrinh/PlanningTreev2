@@ -5,17 +5,23 @@ import {
   PARSE_CACHE_RENDERER_VERSION,
 } from '../../src/features/conversation/components/v3/parseCacheContract'
 import {
+  buildParseArtifactJobToken,
   buildParseArtifactVariantKey,
   getParseArtifactCacheSizeForTests,
+  isLatestParseArtifactRequest,
+  markLatestParseArtifactRequest,
+  readOrComputeParseArtifactAsync,
   readOrComputeParseArtifact,
   resetParseArtifactCache,
   resetParseArtifactCacheForThread,
+  resetParseArtifactRequestTrackingForTests,
   setParseArtifactCacheNowOverrideForTests,
 } from '../../src/features/conversation/components/v3/parseArtifactCache'
 
 afterEach(() => {
   setParseArtifactCacheNowOverrideForTests(null)
   resetParseArtifactCache()
+  resetParseArtifactRequestTrackingForTests()
 })
 
 describe('parseArtifactCache', () => {
@@ -148,5 +154,43 @@ describe('parseArtifactCache', () => {
 
     expect(readOrComputeParseArtifact(threadAKey, () => 'A2').hit).toBe(false)
     expect(readOrComputeParseArtifact(threadBKey, () => 'B2').hit).toBe(true)
+  })
+
+  it('deduplicates concurrent async compute for the same key', async () => {
+    const key = 'cache_schema=1|renderer=v1|mode=diff_unified|thread=t|item=i|updated_at=u|artifact=async'
+    let computeCount = 0
+    const compute = async () => {
+      computeCount += 1
+      await Promise.resolve()
+      return { value: 'async' }
+    }
+
+    const [left, right] = await Promise.all([
+      readOrComputeParseArtifactAsync(key, compute),
+      readOrComputeParseArtifactAsync(key, compute),
+    ])
+
+    expect(computeCount).toBe(1)
+    expect(left.value).toEqual({ value: 'async' })
+    expect(right.value).toEqual({ value: 'async' })
+  })
+
+  it('tracks latest request sequence per version token base', () => {
+    const tokenBase = buildParseArtifactVariantKey('base', 'phase11_worker_diff_artifacts')
+
+    markLatestParseArtifactRequest(tokenBase, 3)
+    expect(isLatestParseArtifactRequest(tokenBase, 2)).toBe(false)
+    expect(isLatestParseArtifactRequest(tokenBase, 3)).toBe(true)
+
+    markLatestParseArtifactRequest(tokenBase, 4)
+    expect(isLatestParseArtifactRequest(tokenBase, 3)).toBe(false)
+    expect(isLatestParseArtifactRequest(tokenBase, 4)).toBe(true)
+  })
+
+  it('builds deterministic parse artifact job token format', () => {
+    const token = buildParseArtifactJobToken('base-key', 'worker_artifact', 7)
+    expect(token).toContain('base-key')
+    expect(token).toContain('artifact=worker_artifact')
+    expect(token).toContain('request_seq=7')
   })
 })

@@ -75,3 +75,13 @@
   border-top: 1px solid var(--border-subtle);
   margin: 4px 0;
 }
+
+.lazyPlainText {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: color-mix(in srgb, var(--text-primary) 90%, transparent);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.7;
+}

@@ -1,10 +1,15 @@
 ﻿# Phase 11 - Heavy Compute Off Main Thread
 
-Status: Planned.
+Status: In progress.
 
 Scope IDs: D05, D06, D07.
 
 Subphase workspace: ./subphases/.
+
+Frozen preflight artifacts:
+
+1. `preflight-v1.md`
+2. `worker-result-versioning-policy-v1.md` (`worker_result_versioning_policy_frozen`)
 
 ## Decision Pack Alignment
 
@@ -68,6 +73,25 @@ For streaming command output:
 2. Build worker interface for diff/highlight tasks.
 3. Replace full recompute command-output path with incremental tail algorithm.
 
+## Runtime Controls
+
+Environment flags:
+
+1. `VITE_PTM_PHASE11_HEAVY_COMPUTE_MODE` (`off` | `shadow` | `on`)
+2. `VITE_PTM_PHASE11_WORKER_DIFF_THRESHOLD_CHARS`
+3. `VITE_PTM_PHASE11_WORKER_TIMEOUT_MS`
+
+Default worker offload thresholds:
+
+1. payload size `>= 8 KB`, or
+2. payload line count `>= 400`.
+
+Mode semantics:
+
+1. `off`: sync path only.
+2. `shadow`: worker executes but UI applies sync artifacts only.
+3. `on`: worker apply is allowed only when version-token freshness check passes.
+
 ## Quality Gates
 
 1. Main-thread health:
@@ -86,6 +110,13 @@ For streaming command output:
    - large diff and large markdown scenarios.
 3. Manual checks:
    - UI remains interactive while heavy content arrives.
+
+Gate harness scripts:
+
+1. `scripts/phase11_heavy_payload_profile.py`
+2. `scripts/phase11_worker_versioning_tests.py`
+3. `scripts/phase11_heavy_content_interaction_smoke.py`
+4. `scripts/phase11_gate_report.py`
 
 ## Risks and Mitigations
 

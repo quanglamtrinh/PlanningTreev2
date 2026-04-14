@@ -1,0 +1,8 @@
+﻿{
+  "candidate_metrics": {
+    "main_thread_long_task_reduction_pct": 56.4,
+    "long_task_count_before": 48,
+    "long_task_count_after": 21,
+    "sample_count": 30
+  }
+}
