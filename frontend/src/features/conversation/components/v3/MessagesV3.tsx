@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type {
   ConversationItemV3,
   ItemStatus,
@@ -38,8 +39,12 @@ import {
   type MessagesV3ViewState,
 } from './messagesV3.viewState'
 import {
+  emitPhase10AnchorRestore,
+  emitPhase10Fallback,
+  emitPhase10ProgressiveBatch,
   emitRowRenderProfile,
   resetMessagesV3ProfilingState,
+  type MessagesV3Phase10Mode,
 } from './messagesV3ProfilingHooks'
 import {
   buildParseCacheKey,
@@ -58,6 +63,27 @@ const LARGE_COMMAND_OUTPUT_CHAR_THRESHOLD = 600
 const LARGE_COMMAND_OUTPUT_LINE_THRESHOLD = 12
 const VIEW_STATE_PERSIST_DEBOUNCE_MS = 150
 const EMPTY_USER_INPUT_ANSWERS: UserInputAnswerV3[] = []
+const PHASE10_MODE_ENV_FLAG = 'VITE_PTM_PHASE10_PROGRESSIVE_VIRTUALIZATION_MODE'
+const PHASE10_PROGRESSIVE_THRESHOLD = 250
+const PHASE10_VIRTUALIZATION_THRESHOLD = 300
+const PHASE10_PROGRESSIVE_INITIAL_CHUNK = 120
+const PHASE10_PROGRESSIVE_BASE_BATCH = 40
+const PHASE10_VIRTUAL_BOOTSTRAP_COUNT = 40
+const PHASE10_PROGRESSIVE_BATCH_MIN_LEVEL1 = 10
+const PHASE10_PROGRESSIVE_BATCH_LEVEL2 = 6
+const PHASE10_PROGRESSIVE_FRAME_BUDGET_MS = 8
+const PHASE10_OVERSCAN_BASE = 8
+const PHASE10_OVERSCAN_LEVEL1 = 6
+const PHASE10_OVERSCAN_LEVEL2 = 4
+const PHASE10_ANCHOR_DRIFT_BREAK_PX = 2
+const PHASE10_ANCHOR_RESTORE_TOLERANCE_PX = 0.5
+
+type RenderBudgetDegradeLevel = 0 | 1 | 2
+
+type StreamAnchorSnapshot = {
+  entryKey: string
+  offsetWithinViewportPx: number
+}
 
 type PendingRequestStatus = PendingUserInputRequestV3['status']
 
@@ -217,6 +243,128 @@ function primeManualExpandedIdsFromSavedView(
 
 function isNearBottom(node: HTMLDivElement): boolean {
   return node.scrollHeight - node.scrollTop - node.clientHeight <= SCROLL_THRESHOLD_PX
+}
+
+export function normalizeMessagesV3Phase10Mode(
+  value: string | null | undefined,
+): MessagesV3Phase10Mode {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'shadow') {
+    return 'shadow'
+  }
+  if (normalized === 'on') {
+    return 'on'
+  }
+  return 'off'
+}
+
+function resolveMessagesV3Phase10Mode(
+  modeOverride: MessagesV3Phase10Mode | null | undefined,
+): MessagesV3Phase10Mode {
+  if (modeOverride) {
+    return normalizeMessagesV3Phase10Mode(modeOverride)
+  }
+  const env = import.meta.env as Record<string, unknown>
+  return normalizeMessagesV3Phase10Mode(String(env[PHASE10_MODE_ENV_FLAG] ?? 'off'))
+}
+
+function getStreamEntryKey(entry: ToolGroupEntryV3 | null | undefined): string {
+  if (!entry) {
+    return 'stream_entry:missing'
+  }
+  if (entry.kind === 'item') {
+    return `item:${entry.item.id}`
+  }
+  return `tool_group:${entry.group.id}`
+}
+
+function estimateStreamEntrySize(entry: ToolGroupEntryV3): number {
+  if (entry.kind === 'toolGroup') {
+    return Math.max(260, 110 * entry.group.items.length)
+  }
+  if (entry.item.kind === 'message') {
+    return 220
+  }
+  if (entry.item.kind === 'reasoning') {
+    return 280
+  }
+  if (entry.item.kind === 'tool' || entry.item.kind === 'diff') {
+    return 320
+  }
+  if (entry.item.kind === 'review' || entry.item.kind === 'explore') {
+    return 240
+  }
+  return 180
+}
+
+function effectiveProgressiveBatchSize(level: RenderBudgetDegradeLevel): number {
+  if (level === 2) {
+    return PHASE10_PROGRESSIVE_BATCH_LEVEL2
+  }
+  if (level === 1) {
+    return Math.max(
+      PHASE10_PROGRESSIVE_BATCH_MIN_LEVEL1,
+      Math.floor(PHASE10_PROGRESSIVE_BASE_BATCH / 2),
+    )
+  }
+  return PHASE10_PROGRESSIVE_BASE_BATCH
+}
+
+function effectiveVirtualOverscan(level: RenderBudgetDegradeLevel): number {
+  if (level === 2) {
+    return PHASE10_OVERSCAN_LEVEL2
+  }
+  if (level === 1) {
+    return PHASE10_OVERSCAN_LEVEL1
+  }
+  return PHASE10_OVERSCAN_BASE
+}
+
+function captureVisibleAnchor(container: HTMLDivElement): StreamAnchorSnapshot | null {
+  const containerTop = container.getBoundingClientRect().top
+  const entryNodes = container.querySelectorAll<HTMLElement>('[data-stream-entry-key]')
+  let firstEntryKey: string | null = null
+  for (const node of entryNodes) {
+    if (!firstEntryKey) {
+      const fallbackEntryKey = String(node.dataset.streamEntryKey ?? '').trim()
+      if (fallbackEntryKey) {
+        firstEntryKey = fallbackEntryKey
+      }
+    }
+    const rect = node.getBoundingClientRect()
+    if (rect.bottom <= containerTop) {
+      continue
+    }
+    const entryKey = String(node.dataset.streamEntryKey ?? '').trim()
+    if (!entryKey) {
+      continue
+    }
+    return {
+      entryKey,
+      offsetWithinViewportPx: rect.top - containerTop,
+    }
+  }
+  // JSDOM and some hidden-layout states can report zero-sized rects for all rows.
+  // Fall back to the first rendered entry so anchor checks still have a stable key.
+  if (firstEntryKey) {
+    return {
+      entryKey: firstEntryKey,
+      offsetWithinViewportPx: 0,
+    }
+  }
+  return null
+}
+
+function findStreamEntryNode(container: HTMLDivElement, entryKey: string): HTMLElement | null {
+  const entryNodes = container.querySelectorAll<HTMLElement>('[data-stream-entry-key]')
+  for (const node of entryNodes) {
+    if (String(node.dataset.streamEntryKey ?? '') === entryKey) {
+      return node
+    }
+  }
+  return null
 }
 
 function commandRanLabel(status: ItemStatus): string {
@@ -1649,6 +1797,7 @@ export function MessagesV3({
   lastCompletedAt,
   lastDurationMs,
   threadChatFlatCanvas = false,
+  phase10ModeOverride = null,
 }: {
   snapshot: ThreadSnapshotV3 | null
   isLoading: boolean
@@ -1665,6 +1814,7 @@ export function MessagesV3({
   ) => Promise<void> | void
   lastCompletedAt?: number | null
   lastDurationMs?: number | null
+  phase10ModeOverride?: MessagesV3Phase10Mode | null
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -1676,8 +1826,27 @@ export function MessagesV3({
 
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
   const [dismissedPlanReadyKeys, setDismissedPlanReadyKeys] = useState<Set<string>>(new Set())
+  const [progressiveVisibleCount, setProgressiveVisibleCount] = useState(0)
+  const [budgetDegradeLevel, setBudgetDegradeLevel] = useState<RenderBudgetDegradeLevel>(0)
+  const [phase10FallbackVersion, setPhase10FallbackVersion] = useState(0)
+  const [deferNonCriticalDecorations, setDeferNonCriticalDecorations] = useState(false)
+  const fallbackReasonsByThreadRef = useRef<Map<string, string>>(new Map())
+  const anchorSnapshotRef = useRef<StreamAnchorSnapshot | null>(null)
+  const previousThreadForProgressiveRef = useRef<string | null>(null)
+  const previousFrameTsRef = useRef<number | null>(null)
+  const consecutiveFramesOver16Ref = useRef(0)
+  const consecutiveFramesOver24Ref = useRef(0)
+  const stableFrameCountRef = useRef(0)
 
   const threadId = snapshot?.threadId ?? null
+  const phase10Mode = resolveMessagesV3Phase10Mode(phase10ModeOverride)
+  const threadFallbackReason = useMemo(() => {
+    if (!threadId) {
+      return null
+    }
+    return fallbackReasonsByThreadRef.current.get(threadId) ?? null
+  }, [phase10FallbackVersion, threadId])
+  const threadFallbackActive = threadFallbackReason != null
   const pendingRequests = snapshot?.uiSignals.activeUserInputRequests ?? []
   const requestMapByRequestId = useMemo(() => requestByRequestId(pendingRequests), [pendingRequests])
 
@@ -1690,6 +1859,14 @@ export function MessagesV3({
     if (threadId == null) {
       resetParseArtifactCache()
     }
+    anchorSnapshotRef.current = null
+    previousThreadForProgressiveRef.current = null
+    previousFrameTsRef.current = null
+    consecutiveFramesOver16Ref.current = 0
+    consecutiveFramesOver24Ref.current = 0
+    stableFrameCountRef.current = 0
+    setBudgetDegradeLevel(0)
+    setDeferNonCriticalDecorations(false)
     previousThreadIdRef.current = threadId
   }, [threadId])
 
@@ -1736,6 +1913,233 @@ export function MessagesV3({
     [requestMapByRequestId, visibleState.visibleItems],
   )
   const groupedEntries = useMemo(() => buildToolGroupsV3(visibleItems), [visibleItems])
+  const phase10ComputationEnabled =
+    phase10Mode !== 'off' &&
+    !threadFallbackActive &&
+    groupedEntries.length >= PHASE10_PROGRESSIVE_THRESHOLD
+  const phase10ProgressiveRenderEnabled =
+    phase10Mode === 'on' &&
+    !threadFallbackActive &&
+    groupedEntries.length >= PHASE10_PROGRESSIVE_THRESHOLD
+  const phase10VirtualizationEnabled =
+    phase10Mode === 'on' &&
+    !threadFallbackActive &&
+    groupedEntries.length >= PHASE10_VIRTUALIZATION_THRESHOLD
+
+  const activatePhase10Fallback = useCallback(
+    (
+      reason:
+        | 'anchor_missing'
+        | 'anchor_drift'
+        | 'virtualization_anchor_missing'
+        | 'virtualization_anchor_drift',
+      details?: { entryKey?: string | null; driftPx?: number | null },
+    ) => {
+      if (!threadId || phase10Mode !== 'on') {
+        return
+      }
+      const existingReason = fallbackReasonsByThreadRef.current.get(threadId)
+      if (existingReason) {
+        return
+      }
+      fallbackReasonsByThreadRef.current.set(threadId, reason)
+      setPhase10FallbackVersion((previous) => previous + 1)
+      setProgressiveVisibleCount(groupedEntries.length)
+      setBudgetDegradeLevel(0)
+      setDeferNonCriticalDecorations(false)
+      emitPhase10Fallback({
+        threadId,
+        mode: phase10Mode,
+        reason,
+        entryKey: details?.entryKey ?? null,
+        driftPx: details?.driftPx ?? null,
+      })
+    },
+    [groupedEntries.length, phase10Mode, threadId],
+  )
+
+  useEffect(() => {
+    const entryCount = groupedEntries.length
+    const isThreadChanged = previousThreadForProgressiveRef.current !== threadId
+    previousThreadForProgressiveRef.current = threadId
+    if (!phase10ComputationEnabled) {
+      setProgressiveVisibleCount(entryCount)
+      return
+    }
+    const initialCount = Math.min(PHASE10_PROGRESSIVE_INITIAL_CHUNK, entryCount)
+    if (isThreadChanged) {
+      setProgressiveVisibleCount(initialCount)
+      return
+    }
+    setProgressiveVisibleCount((previous) => {
+      if (previous <= 0) {
+        return initialCount
+      }
+      if (previous > entryCount) {
+        return entryCount
+      }
+      return previous
+    })
+  }, [groupedEntries.length, phase10ComputationEnabled, threadId])
+
+  useEffect(() => {
+    if (!phase10ComputationEnabled) {
+      previousFrameTsRef.current = null
+      consecutiveFramesOver16Ref.current = 0
+      consecutiveFramesOver24Ref.current = 0
+      stableFrameCountRef.current = 0
+      setBudgetDegradeLevel(0)
+      setDeferNonCriticalDecorations(false)
+      return
+    }
+    let rafId = 0
+    let cancelled = false
+    const onFrame = (timestamp: number) => {
+      if (cancelled) {
+        return
+      }
+      const previousTs = previousFrameTsRef.current
+      previousFrameTsRef.current = timestamp
+      if (previousTs != null) {
+        const frameDurationMs = Math.max(0, timestamp - previousTs)
+        if (frameDurationMs > 24) {
+          consecutiveFramesOver24Ref.current += 1
+          consecutiveFramesOver16Ref.current += 1
+          stableFrameCountRef.current = 0
+        } else if (frameDurationMs > 16) {
+          consecutiveFramesOver24Ref.current = 0
+          consecutiveFramesOver16Ref.current += 1
+          stableFrameCountRef.current = 0
+        } else if (frameDurationMs <= 12) {
+          consecutiveFramesOver24Ref.current = 0
+          consecutiveFramesOver16Ref.current = 0
+          stableFrameCountRef.current += 1
+        } else {
+          consecutiveFramesOver24Ref.current = 0
+          consecutiveFramesOver16Ref.current = 0
+          stableFrameCountRef.current = 0
+        }
+
+        setBudgetDegradeLevel((previousLevel) => {
+          let nextLevel = previousLevel
+          if (consecutiveFramesOver24Ref.current >= 3) {
+            nextLevel = 2
+            consecutiveFramesOver24Ref.current = 0
+            consecutiveFramesOver16Ref.current = 0
+            stableFrameCountRef.current = 0
+          } else if (consecutiveFramesOver16Ref.current >= 3 && previousLevel < 1) {
+            nextLevel = 1
+            consecutiveFramesOver16Ref.current = 0
+            stableFrameCountRef.current = 0
+          } else if (stableFrameCountRef.current >= 120 && previousLevel > 0) {
+            nextLevel = previousLevel === 2 ? 1 : 0
+            stableFrameCountRef.current = 0
+          }
+          if (nextLevel !== previousLevel) {
+            setDeferNonCriticalDecorations(nextLevel === 2)
+          }
+          return nextLevel
+        })
+      }
+      rafId = globalThis.requestAnimationFrame(onFrame)
+    }
+    rafId = globalThis.requestAnimationFrame(onFrame)
+    return () => {
+      cancelled = true
+      if (rafId) {
+        globalThis.cancelAnimationFrame(rafId)
+      }
+    }
+  }, [phase10ComputationEnabled])
+
+  const progressiveBatchSize = useMemo(
+    () => effectiveProgressiveBatchSize(budgetDegradeLevel),
+    [budgetDegradeLevel],
+  )
+  const virtualOverscan = useMemo(
+    () => effectiveVirtualOverscan(budgetDegradeLevel),
+    [budgetDegradeLevel],
+  )
+
+  useEffect(() => {
+    if (!phase10ComputationEnabled) {
+      return
+    }
+    if (progressiveVisibleCount >= groupedEntries.length) {
+      return
+    }
+    let cancelled = false
+    let rafId = 0
+    rafId = globalThis.requestAnimationFrame(() => {
+      if (cancelled) {
+        return
+      }
+      const frameStart = performance.now()
+      setProgressiveVisibleCount((previous) => {
+        if (previous >= groupedEntries.length) {
+          return previous
+        }
+        const nextCount = Math.min(groupedEntries.length, previous + progressiveBatchSize)
+        const frameDurationMs = Math.max(0, performance.now() - frameStart)
+        emitPhase10ProgressiveBatch({
+          threadId,
+          mode: phase10Mode,
+          previousVisibleCount: previous,
+          nextVisibleCount: nextCount,
+          totalCount: groupedEntries.length,
+          batchSize: progressiveBatchSize,
+          frameDurationMs,
+          frameBudgetMs: PHASE10_PROGRESSIVE_FRAME_BUDGET_MS,
+          budgetDegradeLevel,
+          virtualized: phase10VirtualizationEnabled,
+        })
+        return nextCount
+      })
+    })
+    return () => {
+      cancelled = true
+      if (rafId) {
+        globalThis.cancelAnimationFrame(rafId)
+      }
+    }
+  }, [
+    budgetDegradeLevel,
+    groupedEntries.length,
+    phase10ComputationEnabled,
+    phase10Mode,
+    phase10VirtualizationEnabled,
+    progressiveBatchSize,
+    progressiveVisibleCount,
+    threadId,
+  ])
+
+  const streamEntries = useMemo(() => {
+    if (!phase10ProgressiveRenderEnabled) {
+      return groupedEntries
+    }
+    const seedCount =
+      progressiveVisibleCount > 0
+        ? progressiveVisibleCount
+        : Math.min(PHASE10_PROGRESSIVE_INITIAL_CHUNK, groupedEntries.length)
+    return groupedEntries.slice(0, Math.max(0, seedCount))
+  }, [groupedEntries, phase10ProgressiveRenderEnabled, progressiveVisibleCount])
+  const streamEntryKeys = useMemo(
+    () => streamEntries.map((entry) => getStreamEntryKey(entry)),
+    [streamEntries],
+  )
+  const streamEntryKeysSet = useMemo(() => new Set(streamEntryKeys), [streamEntryKeys])
+  const streamEntrySignature = useMemo(() => streamEntryKeys.join('|'), [streamEntryKeys])
+
+  const rowVirtualizer = useVirtualizer({
+    count: streamEntries.length,
+    getScrollElement: () => containerRef.current,
+    estimateSize: (index) => estimateStreamEntrySize(streamEntries[index]),
+    overscan: virtualOverscan,
+    getItemKey: (index) => getStreamEntryKey(streamEntries[index]),
+    measureElement: (element) => element.getBoundingClientRect().height,
+    enabled: phase10Mode !== 'off' && streamEntries.length > 0,
+    initialRect: { width: 0, height: 720 },
+  })
 
   const requestAutoScroll = useCallback(() => {
     const container = containerRef.current
@@ -1755,14 +2159,17 @@ export function MessagesV3({
       return
     }
     autoScrollRef.current = isNearBottom(containerRef.current)
+    anchorSnapshotRef.current = captureVisibleAnchor(containerRef.current)
   }, [])
 
   useLayoutEffect(() => {
     autoScrollRef.current = true
     manuallyToggledExpandedRef.current = new Set()
+    anchorSnapshotRef.current = null
     if (!threadId) {
       setExpandedItemIds(new Set())
       setDismissedPlanReadyKeys(new Set())
+      setProgressiveVisibleCount(0)
       return
     }
     const saved = loadMessagesV3ViewState(threadId)
@@ -1868,21 +2275,158 @@ export function MessagesV3({
       .join('|')
     const plan = snapshot?.uiSignals.planReady
     const planKey = `${plan?.planItemId ?? ''}:${plan?.revision ?? ''}:${String(plan?.ready ?? false)}:${String(plan?.failed ?? false)}`
-    return `${itemKey}::${pendingKey}::${planKey}`
-  }, [pendingRequests, snapshot?.uiSignals.planReady, visibleItems])
+    return `${itemKey}::${pendingKey}::${planKey}::${streamEntrySignature}`
+  }, [pendingRequests, snapshot?.uiSignals.planReady, streamEntrySignature, visibleItems])
 
   useLayoutEffect(() => {
     const container = containerRef.current
+    const previousAnchor = container ? anchorSnapshotRef.current : null
     const shouldScroll = autoScrollRef.current || (container ? isNearBottom(container) : true)
+    let verificationRafId = 0
     if (!shouldScroll) {
-      return
+      if (container && previousAnchor && phase10Mode !== 'off') {
+        if (!streamEntryKeysSet.has(previousAnchor.entryKey)) {
+          emitPhase10AnchorRestore({
+            threadId,
+            mode: phase10Mode,
+            entryKey: previousAnchor.entryKey,
+            restored: false,
+            appliedScrollAdjustment: false,
+            driftPx: null,
+            virtualized: phase10VirtualizationEnabled,
+            reason: 'anchor_missing',
+          })
+          if (phase10Mode === 'on') {
+            activatePhase10Fallback('anchor_missing', {
+              entryKey: previousAnchor.entryKey,
+            })
+          }
+        } else {
+          const anchorNode = findStreamEntryNode(container, previousAnchor.entryKey)
+          if (!anchorNode) {
+            emitPhase10AnchorRestore({
+              threadId,
+              mode: phase10Mode,
+              entryKey: previousAnchor.entryKey,
+              restored: false,
+              appliedScrollAdjustment: false,
+              driftPx: null,
+              virtualized: phase10VirtualizationEnabled,
+              reason: 'anchor_missing',
+            })
+            if (phase10Mode === 'on') {
+              activatePhase10Fallback('anchor_missing', {
+                entryKey: previousAnchor.entryKey,
+              })
+            }
+            if (container) {
+              anchorSnapshotRef.current = captureVisibleAnchor(container)
+            }
+            return () => {
+              if (verificationRafId) {
+                globalThis.cancelAnimationFrame(verificationRafId)
+              }
+            }
+          }
+          const containerTop = container.getBoundingClientRect().top
+          const currentOffset = anchorNode.getBoundingClientRect().top - containerTop
+          const delta = currentOffset - previousAnchor.offsetWithinViewportPx
+          const shouldAdjust = phase10Mode === 'on' && Math.abs(delta) > PHASE10_ANCHOR_RESTORE_TOLERANCE_PX
+          if (shouldAdjust) {
+            container.scrollTop += delta
+          }
+          const offsetAfterAdjust = anchorNode.getBoundingClientRect().top - containerTop
+          const driftAfterAdjust = offsetAfterAdjust - previousAnchor.offsetWithinViewportPx
+          emitPhase10AnchorRestore({
+            threadId,
+            mode: phase10Mode,
+            entryKey: previousAnchor.entryKey,
+            restored: Math.abs(driftAfterAdjust) <= PHASE10_ANCHOR_DRIFT_BREAK_PX,
+            appliedScrollAdjustment: shouldAdjust,
+            driftPx: driftAfterAdjust,
+            virtualized: phase10VirtualizationEnabled,
+            reason: 'anchor_restored',
+          })
+          verificationRafId = globalThis.requestAnimationFrame(() => {
+            const latestContainer = containerRef.current
+            if (!latestContainer) {
+              return
+            }
+            const verifiedAnchorNode = findStreamEntryNode(latestContainer, previousAnchor.entryKey)
+            if (!verifiedAnchorNode) {
+              emitPhase10AnchorRestore({
+                threadId,
+                mode: phase10Mode,
+                entryKey: previousAnchor.entryKey,
+                restored: false,
+                appliedScrollAdjustment: shouldAdjust,
+                driftPx: null,
+                virtualized: phase10VirtualizationEnabled,
+                reason: 'anchor_missing_after_stabilization',
+              })
+              if (phase10Mode === 'on') {
+                activatePhase10Fallback('anchor_missing', { entryKey: previousAnchor.entryKey })
+              }
+              return
+            }
+            const latestTop = latestContainer.getBoundingClientRect().top
+            const verifiedOffset = verifiedAnchorNode.getBoundingClientRect().top - latestTop
+            const verifiedDrift = verifiedOffset - previousAnchor.offsetWithinViewportPx
+            if (Math.abs(verifiedDrift) > PHASE10_ANCHOR_DRIFT_BREAK_PX) {
+              emitPhase10AnchorRestore({
+                threadId,
+                mode: phase10Mode,
+                entryKey: previousAnchor.entryKey,
+                restored: false,
+                appliedScrollAdjustment: shouldAdjust,
+                driftPx: verifiedDrift,
+                virtualized: phase10VirtualizationEnabled,
+                reason: 'anchor_drift_after_stabilization',
+              })
+              if (phase10Mode === 'on') {
+                activatePhase10Fallback('anchor_drift', {
+                  entryKey: previousAnchor.entryKey,
+                  driftPx: verifiedDrift,
+                })
+              }
+            }
+          })
+        }
+      }
+      if (container) {
+        anchorSnapshotRef.current = captureVisibleAnchor(container)
+      }
+      return () => {
+        if (verificationRafId) {
+          globalThis.cancelAnimationFrame(verificationRafId)
+        }
+      }
     }
     if (container) {
       container.scrollTop = container.scrollHeight
-      return
+      anchorSnapshotRef.current = captureVisibleAnchor(container)
+      return () => {
+        if (verificationRafId) {
+          globalThis.cancelAnimationFrame(verificationRafId)
+        }
+      }
     }
     bottomRef.current?.scrollIntoView({ block: 'end' })
-  }, [scrollKey, snapshot?.activeTurnId, snapshot?.processingState, threadId])
+    return () => {
+      if (verificationRafId) {
+        globalThis.cancelAnimationFrame(verificationRafId)
+      }
+    }
+  }, [
+    activatePhase10Fallback,
+    phase10Mode,
+    phase10VirtualizationEnabled,
+    scrollKey,
+    snapshot?.activeTurnId,
+    snapshot?.processingState,
+    streamEntryKeysSet,
+    threadId,
+  ])
 
   const planReadySignal = snapshot?.uiSignals.planReady
   const planReadyDismissKey = buildPlanReadyDismissKey(
@@ -1940,7 +2484,7 @@ export function MessagesV3({
             ? visibleState.reasoningMetaById.get(entry.item.id)
             : undefined
         return (
-          <div key={entry.item.id} className={styles.streamEntry}>
+          <div className={styles.streamEntry}>
             {renderItemRowV3({
               item: entry.item,
               requestMapByRequestId,
@@ -1955,7 +2499,6 @@ export function MessagesV3({
 
       return (
         <section
-          key={entry.group.id}
           className={`${styles.row} ${styles.rowCard}`}
           data-testid={`conversation-v3-tool-group-${entry.group.id}`}
         >
@@ -1994,6 +2537,15 @@ export function MessagesV3({
       visibleState.reasoningMetaById,
     ],
   )
+  const virtualItems = rowVirtualizer.getVirtualItems()
+  const shouldRenderVirtualizedStream = phase10VirtualizationEnabled
+  const virtualBootstrapEntries = useMemo(() => {
+    if (!shouldRenderVirtualizedStream || virtualItems.length > 0) {
+      return [] as ToolGroupEntryV3[]
+    }
+    return streamEntries.slice(0, Math.min(streamEntries.length, PHASE10_VIRTUAL_BOOTSTRAP_COUNT))
+  }, [shouldRenderVirtualizedStream, streamEntries, virtualItems.length])
+  const showNonCriticalSuffix = !deferNonCriticalDecorations
 
   return (
     <div
@@ -2004,12 +2556,86 @@ export function MessagesV3({
     >
       {prefix}
 
-      {groupedEntries.length === 0 && pendingRequestCards.length === 0 && !isLoading ? (
+      {streamEntries.length === 0 && pendingRequestCards.length === 0 && !isLoading ? (
         <div className={styles.empty}>No conversation items yet.</div>
       ) : null}
 
-      <div className={styles.streamStack} data-testid="messages-v3-stream-stack">
-        {groupedEntries.map(renderGroupedEntry)}
+      <div
+        className={styles.streamStack}
+        data-testid="messages-v3-stream-stack"
+        data-phase10-mode={phase10Mode}
+        data-phase10-fallback={threadFallbackReason ?? ''}
+        data-phase10-degrade-level={String(budgetDegradeLevel)}
+      >
+        {shouldRenderVirtualizedStream ? (
+          <div
+            className={styles.virtualizedViewport}
+            data-testid="messages-v3-virtualized-viewport"
+            style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+          >
+            {virtualItems.length > 0
+              ? virtualItems.map((virtualItem) => {
+                  const entry = streamEntries[virtualItem.index]
+                  if (!entry) {
+                    return null
+                  }
+                  const entryKey = getStreamEntryKey(entry)
+                  return (
+                    <div
+                      key={String(virtualItem.key)}
+                      ref={(node) => {
+                        if (node) {
+                          rowVirtualizer.measureElement(node)
+                        }
+                      }}
+                      className={styles.streamVirtualItemHost}
+                      data-testid="messages-v3-stream-entry-host"
+                      data-index={String(virtualItem.index)}
+                      data-stream-entry-key={entryKey}
+                      data-stream-entry-index={String(virtualItem.index)}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${virtualItem.start}px)`,
+                      }}
+                    >
+                      {renderGroupedEntry(entry)}
+                    </div>
+                  )
+                })
+              : virtualBootstrapEntries.map((entry, index) => {
+                  const entryKey = getStreamEntryKey(entry)
+                  return (
+                    <div
+                      key={`bootstrap:${entryKey}`}
+                      className={styles.streamEntryHost}
+                      data-testid="messages-v3-stream-entry-host"
+                      data-stream-entry-key={entryKey}
+                      data-stream-entry-index={String(index)}
+                    >
+                      {renderGroupedEntry(entry)}
+                    </div>
+                  )
+                })}
+          </div>
+        ) : (
+          streamEntries.map((entry, index) => {
+            const entryKey = getStreamEntryKey(entry)
+            return (
+              <div
+                key={entryKey}
+                className={styles.streamEntryHost}
+                data-testid="messages-v3-stream-entry-host"
+                data-stream-entry-key={entryKey}
+                data-stream-entry-index={String(index)}
+              >
+                {renderGroupedEntry(entry)}
+              </div>
+            )
+          })
+        )}
       </div>
 
       {pendingRequestCards.length > 0 ? (
@@ -2046,11 +2672,11 @@ export function MessagesV3({
         />
       ) : null}
 
-      {isLoading && groupedEntries.length === 0 ? (
+      {isLoading && streamEntries.length === 0 ? (
         <div className={styles.empty}>Loading conversation...</div>
       ) : null}
 
-      {suffix ? <div className={styles.feedSuffix}>{suffix}</div> : null}
+      {suffix && showNonCriticalSuffix ? <div className={styles.feedSuffix}>{suffix}</div> : null}
       <div ref={bottomRef} />
     </div>
   )

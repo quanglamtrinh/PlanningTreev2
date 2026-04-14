@@ -23,9 +23,54 @@ export type ParseCacheTraceEvent = {
 
 export type ParseCacheTraceInput = Omit<ParseCacheTraceEvent, 'hit'>
 
+export type MessagesV3Phase10Mode = 'off' | 'shadow' | 'on'
+
+export type Phase10ProgressiveBatchEvent = {
+  threadId: string | null
+  mode: MessagesV3Phase10Mode
+  previousVisibleCount: number
+  nextVisibleCount: number
+  totalCount: number
+  batchSize: number
+  frameDurationMs: number
+  frameBudgetMs: number
+  budgetDegradeLevel: 0 | 1 | 2
+  virtualized: boolean
+}
+
+export type Phase10AnchorRestoreEvent = {
+  threadId: string | null
+  mode: MessagesV3Phase10Mode
+  entryKey: string | null
+  restored: boolean
+  appliedScrollAdjustment: boolean
+  driftPx: number | null
+  virtualized: boolean
+  reason:
+    | 'anchor_restored'
+    | 'anchor_missing'
+    | 'anchor_missing_after_stabilization'
+    | 'anchor_drift_after_stabilization'
+}
+
+export type Phase10FallbackEvent = {
+  threadId: string | null
+  mode: MessagesV3Phase10Mode
+  reason:
+    | 'anchor_missing'
+    | 'anchor_drift'
+    | 'virtualization_anchor_missing'
+    | 'virtualization_anchor_drift'
+  entryKey: string | null
+  driftPx: number | null
+}
+
 export type MessagesV3ProfilingHooks = {
   onRowRender?: (event: RowRenderProfileEvent) => void
   onParseCacheTrace?: (event: ParseCacheTraceEvent) => void
+  onPhase10ProgressiveBatch?: (event: Phase10ProgressiveBatchEvent) => void
+  onPhase10AnchorRestore?: (event: Phase10AnchorRestoreEvent) => void
+  onPhase10Fallback?: (event: Phase10FallbackEvent) => void
 }
 
 type ProfilingRuntimeOverrideForTests = {
@@ -39,6 +84,9 @@ export const PROFILING_ENV_FLAG = 'VITE_ENABLE_MESSAGES_V3_PROFILING'
 const NOOP_HOOKS: MessagesV3ProfilingHooks = {
   onRowRender: () => undefined,
   onParseCacheTrace: () => undefined,
+  onPhase10ProgressiveBatch: () => undefined,
+  onPhase10AnchorRestore: () => undefined,
+  onPhase10Fallback: () => undefined,
 }
 
 let activeHooks: MessagesV3ProfilingHooks = NOOP_HOOKS
@@ -102,7 +150,11 @@ export function setMessagesV3ProfilingHooks(overrides: Partial<MessagesV3Profili
     ...overrides,
   }
   hasHookSubscribers =
-    typeof overrides.onRowRender === 'function' || typeof overrides.onParseCacheTrace === 'function'
+    typeof overrides.onRowRender === 'function' ||
+    typeof overrides.onParseCacheTrace === 'function' ||
+    typeof overrides.onPhase10ProgressiveBatch === 'function' ||
+    typeof overrides.onPhase10AnchorRestore === 'function' ||
+    typeof overrides.onPhase10Fallback === 'function'
 }
 
 export function resetMessagesV3ProfilingHooks(): void {
@@ -137,6 +189,27 @@ export function emitParseCacheTrace(input: ParseCacheTraceInput): ParseCacheTrac
   }
   activeHooks.onParseCacheTrace?.(event)
   return event
+}
+
+export function emitPhase10ProgressiveBatch(event: Phase10ProgressiveBatchEvent): void {
+  if (!isProfilingEnabled()) {
+    return
+  }
+  activeHooks.onPhase10ProgressiveBatch?.(event)
+}
+
+export function emitPhase10AnchorRestore(event: Phase10AnchorRestoreEvent): void {
+  if (!isProfilingEnabled()) {
+    return
+  }
+  activeHooks.onPhase10AnchorRestore?.(event)
+}
+
+export function emitPhase10Fallback(event: Phase10FallbackEvent): void {
+  if (!isProfilingEnabled()) {
+    return
+  }
+  activeHooks.onPhase10Fallback?.(event)
 }
 
 export function setMessagesV3ProfilingRuntimeOverrideForTests(

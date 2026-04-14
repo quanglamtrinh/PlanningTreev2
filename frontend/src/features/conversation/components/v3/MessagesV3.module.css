@@ -36,6 +36,22 @@
   gap: 20px;
 }
 
+.streamEntryHost {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.virtualizedViewport {
+  position: relative;
+  width: 100%;
+}
+
+.streamVirtualItemHost {
+  min-width: 0;
+  will-change: transform;
+}
+
 .pendingStack {
   margin-top: 4px;
 }
