@@ -1,0 +1,28 @@
+{
+  "phase": "08",
+  "generated_at": "2026-04-13T18:24:42Z",
+  "source": "reload_reason_audit",
+  "evidence_mode": "candidate",
+  "gate_eligible": true,
+  "status": "pass",
+  "metric": "unclassified_reload_reason_events",
+  "value": 0.0,
+  "target": 0.0,
+  "operator": "lte",
+  "pass": true,
+  "context": {
+    "scenario": "phase08_reload_reason_contract_audit_v1",
+    "forced_reload_event_count": 18,
+    "invalid_forced_reason_count": 0,
+    "forced_reason_coverage_pct": 100.0,
+    "candidate_path": "docs/render/phases/phase-08-store-isolation-selectors/evidence/candidates/reload-reason-candidate.json",
+    "candidate_commit_sha": "deadbeef"
+  },
+  "baseline_metadata": {
+    "label": "phase08_pre_refactor_baseline_v1",
+    "captured_at": "2026-04-13T00:00:00Z",
+    "workload": "synthetic_chat_lane_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-08-store-isolation-selectors/evidence/baseline-manifest-v1.json"
+  }
+}

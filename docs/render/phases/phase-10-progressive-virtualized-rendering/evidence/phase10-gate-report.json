@@ -1,0 +1,83 @@
+{
+  "phase": "10",
+  "generated_at": "2026-04-14T02:40:41Z",
+  "source": "phase10_gate_report",
+  "status": "pass",
+  "metric": "phase10_gate_pass_count",
+  "value": 3.0,
+  "target": 3.0,
+  "operator": "eq",
+  "pass": true,
+  "context": {
+    "evidence_dir": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence",
+    "candidate_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/candidates/long-thread-open-scenario-candidate.json",
+    "gate_count": 3,
+    "eligibility_fail_count": 0
+  },
+  "summary": {
+    "all_pass": true,
+    "pass_count": 3,
+    "total_gates": 3,
+    "eligibility_fail_count": 0
+  },
+  "gates": [
+    {
+      "id": "P10-G1",
+      "source": "long_thread_open_scenario",
+      "metric": "long_thread_open_tti_p95_ms",
+      "value": 1812.4,
+      "operator": "lte",
+      "target": 2000.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/candidates/long-thread-open-scenario-candidate.json",
+      "candidate_commit_sha": "24dd584b6d9e54761f14b96f8faf09d3067e42a2",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/long_thread_open_scenario.json"
+    },
+    {
+      "id": "P10-G2",
+      "source": "scroll_smoothness_profile",
+      "metric": "scroll_jank_frames_pct",
+      "value": 1.807,
+      "operator": "lte",
+      "target": 3.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/candidates/scroll-smoothness-profile-candidate.json",
+      "candidate_commit_sha": "24dd584b6d9e54761f14b96f8faf09d3067e42a2",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/scroll_smoothness_profile.json"
+    },
+    {
+      "id": "P10-G3",
+      "source": "virtualization_anchor_tests",
+      "metric": "anchor_break_incidents",
+      "value": 0.0,
+      "operator": "lte",
+      "target": 0.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/candidates/virtualization-anchor-tests-candidate.json",
+      "candidate_commit_sha": "24dd584b6d9e54761f14b96f8faf09d3067e42a2",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/virtualization_anchor_tests.json"
+    }
+  ],
+  "baseline_metadata": {
+    "label": "phase10_pre_progressive_virtualization_baseline_v1",
+    "captured_at": "2026-04-13T00:00:00Z",
+    "workload": "synthetic_v3_long_thread_mixed_rows_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/baseline-manifest-v1.json"
+  }
+}

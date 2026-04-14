@@ -1,0 +1,63 @@
+{
+  "phase": "07",
+  "generated_at": "2026-04-13T07:11:55Z",
+  "source": "phase07_gate_report",
+  "status": "pass",
+  "metric": "phase07_gate_pass_count",
+  "value": 3.0,
+  "target": 3.0,
+  "operator": "eq",
+  "pass": true,
+  "context": {
+    "evidence_dir": "docs/render/phases/phase-07-state-shape-hot-path/evidence",
+    "candidate_path": null,
+    "gate_count": 3
+  },
+  "summary": {
+    "all_pass": true,
+    "pass_count": 3,
+    "total_gates": 3
+  },
+  "gates": [
+    {
+      "id": "P07-G1",
+      "source": "state_hot_path_benchmark",
+      "metric": "apply_duration_p95_reduction_pct",
+      "value": 32.857,
+      "operator": "gte",
+      "target": 30.0,
+      "pass": true,
+      "artifact": "docs/render/phases/phase-07-state-shape-hot-path/evidence/state_hot_path_benchmark.json"
+    },
+    {
+      "id": "P07-G2",
+      "source": "state_hot_path_trace",
+      "metric": "unnecessary_global_sort_invocations_per_1000_events",
+      "value": 3.0,
+      "operator": "lte",
+      "target": 5.0,
+      "pass": true,
+      "artifact": "docs/render/phases/phase-07-state-shape-hot-path/evidence/state_hot_path_trace.json"
+    },
+    {
+      "id": "P07-G3",
+      "source": "reducer_identity_tests",
+      "metric": "structural_identity_break_cases",
+      "value": 0.0,
+      "operator": "lte",
+      "target": 0.0,
+      "pass": true,
+      "artifact": "docs/render/phases/phase-07-state-shape-hot-path/evidence/reducer_identity_tests.json"
+    }
+  ],
+  "baseline_metadata": {
+    "source_phase": "06",
+    "closing_commit_sha": "5863825a6d485de588d16fd31be69ef1b23f7952",
+    "closing_commit_subject": "render-phase-6.3",
+    "closing_commit_timestamp": "2026-04-12T23:25:25-07:00",
+    "closeout_doc": "docs/render/phases/phase-06-frame-batching-fast-append/close-phase-v1.md",
+    "gate_report": "docs/render/phases/phase-06-frame-batching-fast-append/evidence/phase06-gate-report.json",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-07-state-shape-hot-path/evidence/baseline-manifest-v1.json"
+  }
+}

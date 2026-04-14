@@ -1,0 +1,27 @@
+{
+  "run_meta": {
+    "phase": "05",
+    "scenario": "slow_subscriber_stress",
+    "timestamp_utc": "2026-04-13T00:00:00Z",
+    "git_sha": "<sha>",
+    "inputs": {
+      "queue_max": 128,
+      "publish_events": 512
+    }
+  },
+  "baseline_metrics": {
+    "slow_subscribers_total": 1,
+    "slow_subscribers_lagged_detected": 0,
+    "unhandled_slow_consumer_incidents": 1,
+    "fast_subscriber_events_observed": 512
+  },
+  "candidate_metrics": {
+    "slow_subscribers_total": 1,
+    "slow_subscribers_lagged_detected": 1,
+    "unhandled_slow_consumer_incidents": 0,
+    "fast_subscriber_events_observed": 128
+  },
+  "delta_pct": {
+    "unhandled_slow_consumer_reduction_pct": 100.0
+  }
+}

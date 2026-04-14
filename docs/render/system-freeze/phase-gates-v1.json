@@ -1,0 +1,345 @@
+{
+  "version": "1.0.0",
+  "policy": "balanced",
+  "phases": {
+    "01": [
+      {
+        "id": "P01-G1",
+        "metric": "contract_envelope_validation_pass_rate_pct",
+        "operator": "gte",
+        "target": 100,
+        "unit": "pct",
+        "source": "contract_compatibility_suite"
+      },
+      {
+        "id": "P01-G2",
+        "metric": "heartbeat_cursor_pollution_events",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "stream_contract_tests"
+      },
+      {
+        "id": "P01-G3",
+        "metric": "time_to_first_meaningful_frame_p95_ms",
+        "operator": "lte",
+        "target": 1200,
+        "unit": "ms",
+        "source": "frontend_stream_smoke"
+      }
+    ],
+    "02": [
+      {
+        "id": "P02-G1",
+        "metric": "replay_reconnect_success_rate_pct",
+        "operator": "gte",
+        "target": 99,
+        "unit": "pct",
+        "source": "disconnect_reconnect_integration"
+      },
+      {
+        "id": "P02-G2",
+        "metric": "replay_boundary_duplicate_events",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "replay_handoff_tests"
+      },
+      {
+        "id": "P02-G3",
+        "metric": "full_reload_fallback_rate_pct",
+        "operator": "lte",
+        "target": 5,
+        "unit": "pct",
+        "source": "reconnect_load_scenarios"
+      }
+    ],
+    "03": [
+      {
+        "id": "P03-G1",
+        "metric": "persisted_events_per_turn_reduction_pct",
+        "operator": "gte",
+        "target": 40,
+        "unit": "pct",
+        "source": "backend_stream_benchmark"
+      },
+      {
+        "id": "P03-G2",
+        "metric": "semantic_mismatch_cases_vs_baseline",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "golden_replay_equivalence"
+      },
+      {
+        "id": "P03-G3",
+        "metric": "added_stream_latency_p95_ms",
+        "operator": "lte",
+        "target": 80,
+        "unit": "ms",
+        "source": "stream_latency_probe"
+      }
+    ],
+    "04": [
+      {
+        "id": "P04-G1",
+        "metric": "snapshot_reads_per_turn_reduction_pct",
+        "operator": "gte",
+        "target": 50,
+        "unit": "pct",
+        "source": "backend_runtime_benchmark"
+      },
+      {
+        "id": "P04-G2",
+        "metric": "snapshot_writes_per_turn_reduction_pct",
+        "operator": "gte",
+        "target": 60,
+        "unit": "pct",
+        "source": "backend_runtime_benchmark"
+      },
+      {
+        "id": "P04-G3",
+        "metric": "crash_recovery_boundary_data_loss_events",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "recovery_fault_injection"
+      }
+    ],
+    "05": [
+      {
+        "id": "P05-G1",
+        "metric": "write_amplification_reduction_pct",
+        "operator": "gte",
+        "target": 30,
+        "unit": "pct",
+        "source": "persist_load_benchmark"
+      },
+      {
+        "id": "P05-G2",
+        "metric": "broker_publish_allocation_reduction_pct",
+        "operator": "gte",
+        "target": 25,
+        "unit": "pct",
+        "source": "broker_profile_run"
+      },
+      {
+        "id": "P05-G3",
+        "metric": "unhandled_slow_consumer_incidents",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "slow_subscriber_stress"
+      }
+    ],
+    "06": [
+      {
+        "id": "P06-G1",
+        "metric": "apply_calls_per_burst_reduction_pct",
+        "operator": "gte",
+        "target": 50,
+        "unit": "pct",
+        "source": "frontend_event_burst_scenario"
+      },
+      {
+        "id": "P06-G2",
+        "metric": "visible_stream_lag_p95_ms",
+        "operator": "lte",
+        "target": 120,
+        "unit": "ms",
+        "source": "interactive_stream_smoke"
+      },
+      {
+        "id": "P06-G3",
+        "metric": "batch_order_violations",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "apply_order_integration_tests"
+      }
+    ],
+    "07": [
+      {
+        "id": "P07-G1",
+        "metric": "apply_duration_p95_reduction_pct",
+        "operator": "gte",
+        "target": 30,
+        "unit": "pct",
+        "source": "state_hot_path_benchmark"
+      },
+      {
+        "id": "P07-G2",
+        "metric": "unnecessary_global_sort_invocations_per_1000_events",
+        "operator": "lte",
+        "target": 5,
+        "unit": "count",
+        "source": "state_hot_path_trace"
+      },
+      {
+        "id": "P07-G3",
+        "metric": "structural_identity_break_cases",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "reducer_identity_tests"
+      }
+    ],
+    "08": [
+      {
+        "id": "P08-G1",
+        "metric": "component_invalidation_reduction_pct",
+        "operator": "gte",
+        "target": 30,
+        "unit": "pct",
+        "source": "render_fanout_profile"
+      },
+      {
+        "id": "P08-G2",
+        "metric": "forced_reload_rate_pct",
+        "operator": "lte",
+        "target": 3,
+        "unit": "pct",
+        "source": "stream_resilience_scenario"
+      },
+      {
+        "id": "P08-G3",
+        "metric": "unclassified_reload_reason_events",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "reload_reason_audit"
+      }
+    ],
+    "09": [
+      {
+        "id": "P09-G1",
+        "metric": "unchanged_row_rerender_rate_pct",
+        "operator": "lte",
+        "target": 5,
+        "unit": "pct",
+        "source": "row_render_profile"
+      },
+      {
+        "id": "P09-G2",
+        "metric": "parse_cache_hit_rate_pct",
+        "operator": "gte",
+        "target": 60,
+        "unit": "pct",
+        "source": "parse_cache_trace"
+      },
+      {
+        "id": "P09-G3",
+        "metric": "stale_render_artifact_incidents",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "ui_regression_suite"
+      }
+    ],
+    "10": [
+      {
+        "id": "P10-G1",
+        "metric": "long_thread_open_tti_p95_ms",
+        "operator": "lte",
+        "target": 2000,
+        "unit": "ms",
+        "source": "long_thread_open_scenario"
+      },
+      {
+        "id": "P10-G2",
+        "metric": "scroll_jank_frames_pct",
+        "operator": "lte",
+        "target": 3,
+        "unit": "pct",
+        "source": "scroll_smoothness_profile"
+      },
+      {
+        "id": "P10-G3",
+        "metric": "anchor_break_incidents",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "virtualization_anchor_tests"
+      }
+    ],
+    "11": [
+      {
+        "id": "P11-G1",
+        "metric": "main_thread_long_task_reduction_pct",
+        "operator": "gte",
+        "target": 50,
+        "unit": "pct",
+        "source": "heavy_payload_profile"
+      },
+      {
+        "id": "P11-G2",
+        "metric": "stale_worker_result_applies",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "worker_versioning_tests"
+      },
+      {
+        "id": "P11-G3",
+        "metric": "interaction_freeze_events_over_50ms",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "heavy_content_interaction_smoke"
+      }
+    ],
+    "12": [
+      {
+        "id": "P12-G1",
+        "metric": "live_items_exceeds_scrollback_cap_events",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "long_session_volume_tests"
+      },
+      {
+        "id": "P12-G2",
+        "metric": "heavy_row_default_collapse_accuracy_pct",
+        "operator": "gte",
+        "target": 95,
+        "unit": "pct",
+        "source": "heavy_row_classification_suite"
+      },
+      {
+        "id": "P12-G3",
+        "metric": "full_artifact_access_failures",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "preview_to_full_navigation_tests"
+      }
+    ],
+    "13": [
+      {
+        "id": "P13-G1",
+        "metric": "queued_message_loss_events",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "queue_state_machine_suite"
+      },
+      {
+        "id": "P13-G2",
+        "metric": "queue_order_violation_events",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "queue_reorder_integration"
+      },
+      {
+        "id": "P13-G3",
+        "metric": "stale_intent_unconfirmed_send_events",
+        "operator": "lte",
+        "target": 0,
+        "unit": "count",
+        "source": "queue_risk_policy_tests"
+      }
+    ]
+  }
+}
+

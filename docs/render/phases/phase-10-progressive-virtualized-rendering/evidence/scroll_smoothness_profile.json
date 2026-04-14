@@ -1,0 +1,28 @@
+{
+  "phase": "10",
+  "generated_at": "2026-04-14T02:40:38Z",
+  "source": "scroll_smoothness_profile",
+  "evidence_mode": "candidate",
+  "gate_eligible": true,
+  "status": "pass",
+  "metric": "scroll_jank_frames_pct",
+  "value": 1.807,
+  "target": 3.0,
+  "operator": "lte",
+  "pass": true,
+  "context": {
+    "scenario": "phase10_scroll_smoothness_profile_v1",
+    "sample_count": 28,
+    "total_frames": 5700,
+    "jank_frames": 103,
+    "candidate_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/candidates/scroll-smoothness-profile-candidate.json",
+    "candidate_commit_sha": "24dd584b6d9e54761f14b96f8faf09d3067e42a2"
+  },
+  "baseline_metadata": {
+    "label": "phase10_pre_progressive_virtualization_baseline_v1",
+    "captured_at": "2026-04-13T00:00:00Z",
+    "workload": "synthetic_v3_long_thread_mixed_rows_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-10-progressive-virtualized-rendering/evidence/baseline-manifest-v1.json"
+  }
+}

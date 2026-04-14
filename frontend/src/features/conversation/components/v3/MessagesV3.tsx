@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -7,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type {
   ConversationItemV3,
   ItemStatus,
@@ -36,13 +38,67 @@ import {
   saveMessagesV3ViewState,
   type MessagesV3ViewState,
 } from './messagesV3.viewState'
+import {
+  emitPhase10AnchorRestore,
+  emitPhase10Fallback,
+  emitPhase10ProgressiveBatch,
+  emitRowRenderProfile,
+  resetMessagesV3ProfilingState,
+  type MessagesV3Phase10Mode,
+} from './messagesV3ProfilingHooks'
+import {
+  buildParseCacheKey,
+  PARSE_CACHE_RENDERER_VERSION,
+} from './parseCacheContract'
+import {
+  buildParseArtifactVariantKey,
+  readOrComputeParseArtifact,
+  resetParseArtifactCache,
+  resetParseArtifactCacheForThread,
+} from './parseArtifactCache'
+import {
+  computeTrailingCommandOutput,
+  computeTrailingCommandOutputIncremental,
+  type CommandOutputTailCache,
+} from './commandOutputTail'
+import {
+  PHASE11_DEFAULT_DEFERRED_TIMEOUT_MS,
+  resolveMessagesV3Phase11Mode,
+} from './phase11Config'
 
 const SCROLL_THRESHOLD_PX = 120
 const MAX_COMMAND_OUTPUT_LINES = 200
-const LARGE_COMMAND_OUTPUT_CHAR_THRESHOLD = 600
-const LARGE_COMMAND_OUTPUT_LINE_THRESHOLD = 12
+const HEAVY_COMMAND_OUTPUT_CHAR_THRESHOLD = 600
+const HEAVY_COMMAND_OUTPUT_LINE_THRESHOLD = 12
+const HEAVY_DIFF_FILE_COUNT_THRESHOLD = 5
+const HEAVY_DIFF_PAYLOAD_CHAR_THRESHOLD = 3000
+const HEAVY_GENERIC_OUTPUT_CHAR_THRESHOLD = 2000
+const PAYLOAD_PREVIEW_MAX_CHARS = 1200
+const PAYLOAD_PREVIEW_MAX_LINES = 60
 const VIEW_STATE_PERSIST_DEBOUNCE_MS = 150
 const EMPTY_USER_INPUT_ANSWERS: UserInputAnswerV3[] = []
+const PHASE10_MODE_ENV_FLAG = 'VITE_PTM_PHASE10_PROGRESSIVE_VIRTUALIZATION_MODE'
+const PHASE11_MARKDOWN_DEFERRED_TIMEOUT_MS = PHASE11_DEFAULT_DEFERRED_TIMEOUT_MS
+const PHASE10_PROGRESSIVE_THRESHOLD = 250
+const PHASE10_VIRTUALIZATION_THRESHOLD = 300
+const PHASE10_PROGRESSIVE_INITIAL_CHUNK = 120
+const PHASE10_PROGRESSIVE_BASE_BATCH = 40
+const PHASE10_VIRTUAL_BOOTSTRAP_COUNT = 40
+const PHASE10_PROGRESSIVE_BATCH_MIN_LEVEL1 = 10
+const PHASE10_PROGRESSIVE_BATCH_LEVEL2 = 6
+const PHASE10_PROGRESSIVE_FRAME_BUDGET_MS = 8
+const PHASE10_OVERSCAN_BASE = 8
+const PHASE10_OVERSCAN_LEVEL1 = 6
+const PHASE10_OVERSCAN_LEVEL2 = 4
+const PHASE10_ANCHOR_DRIFT_BREAK_PX = 2
+const PHASE10_ANCHOR_RESTORE_TOLERANCE_PX = 0.5
+
+type RenderBudgetDegradeLevel = 0 | 1 | 2
+
+type StreamAnchorSnapshot = {
+  entryKey: string
+  offsetWithinViewportPx: number
+}
 
 type PendingRequestStatus = PendingUserInputRequestV3['status']
 
@@ -141,7 +197,7 @@ function collectPlanReadyKeys(snapshot: ThreadSnapshotV3 | null): Set<string> {
   return keys
 }
 
-function isLargeCommandOutput(item: ToolItemV3): boolean {
+function isHeavyCommandOutput(item: ToolItemV3): boolean {
   if (item.toolType !== 'commandExecution') {
     return false
   }
@@ -151,9 +207,86 @@ function isLargeCommandOutput(item: ToolItemV3): boolean {
   }
   const lineCount = output.split('\n').length
   return (
-    output.length >= LARGE_COMMAND_OUTPUT_CHAR_THRESHOLD ||
-    lineCount >= LARGE_COMMAND_OUTPUT_LINE_THRESHOLD
+    output.length >= HEAVY_COMMAND_OUTPUT_CHAR_THRESHOLD ||
+    lineCount >= HEAVY_COMMAND_OUTPUT_LINE_THRESHOLD
   )
+}
+
+function computeFilePayloadChars(files: ToolItemV3['outputFiles']): number {
+  let total = 0
+  for (const file of files) {
+    total += normalizeText(file.summary).length
+    total += normalizeText(file.diff ?? null).length
+  }
+  return total
+}
+
+function isHeavyToolItem(item: ToolItemV3): boolean {
+  if (item.toolType === 'commandExecution') {
+    return isHeavyCommandOutput(item)
+  }
+  if (item.toolType === 'fileChange') {
+    const fileCount = item.outputFiles.length
+    const payloadChars =
+      normalizeText(item.argumentsText).length +
+      normalizeText(item.outputText).length +
+      computeFilePayloadChars(item.outputFiles)
+    return (
+      fileCount >= HEAVY_DIFF_FILE_COUNT_THRESHOLD ||
+      payloadChars >= HEAVY_DIFF_PAYLOAD_CHAR_THRESHOLD
+    )
+  }
+  const outputChars = normalizeText(item.outputText).length
+  return outputChars >= HEAVY_GENERIC_OUTPUT_CHAR_THRESHOLD
+}
+
+function computeDiffPayloadChars(item: Extract<ConversationItemV3, { kind: 'diff' }>): number {
+  let total = normalizeText(item.summaryText).length
+  for (const change of item.changes) {
+    total += normalizeText(change.summary).length
+    total += normalizeText(change.diff).length
+  }
+  for (const file of item.files) {
+    total += normalizeText(file.summary).length
+    total += normalizeText(file.patchText).length
+  }
+  return total
+}
+
+function isHeavyDiffItem(item: Extract<ConversationItemV3, { kind: 'diff' }>): boolean {
+  const fileCount = Math.max(item.changes.length, item.files.length)
+  const payloadChars = computeDiffPayloadChars(item)
+  return (
+    fileCount >= HEAVY_DIFF_FILE_COUNT_THRESHOLD ||
+    payloadChars >= HEAVY_DIFF_PAYLOAD_CHAR_THRESHOLD
+  )
+}
+
+type PayloadPreview = {
+  previewText: string
+  truncated: boolean
+  originalCharCount: number
+  originalLineCount: number
+}
+
+function buildPayloadPreview(
+  value: string | null | undefined,
+  maxChars: number = PAYLOAD_PREVIEW_MAX_CHARS,
+  maxLines: number = PAYLOAD_PREVIEW_MAX_LINES,
+): PayloadPreview {
+  const normalized = String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lineParts = normalized.split('\n')
+  const originalLineCount = lineParts.length
+  const originalCharCount = normalized.length
+  const byLines = lineParts.slice(0, Math.max(1, maxLines)).join('\n')
+  const byChars = byLines.slice(0, Math.max(1, maxChars))
+  const truncated = byChars.length < originalCharCount || originalLineCount > maxLines
+  return {
+    previewText: truncated ? `${byChars}\n\n[Preview truncated]` : byChars,
+    truncated,
+    originalCharCount,
+    originalLineCount,
+  }
 }
 
 /** Keeps persisted expand state from being cleared by auto-expand/collapse sync on thread load. */
@@ -174,18 +307,15 @@ function primeManualExpandedIdsFromSavedView(
       continue
     }
     if (item.kind === 'tool') {
-      if (item.toolType === 'commandExecution') {
-        const shouldAutoExpand = item.status === 'in_progress' || isLargeCommandOutput(item)
-        if (!shouldAutoExpand) {
-          target.add(id)
-        }
-      } else {
-        const hasArguments = Boolean(normalizeText(item.argumentsText))
-        const hasOutput = Boolean(normalizeText(item.outputText))
-        const hasFiles = item.outputFiles.length > 0
-        if (hasArguments || hasOutput || hasFiles) {
-          target.add(id)
-        }
+      const hasArguments = Boolean(normalizeText(item.argumentsText))
+      const hasOutput = Boolean(normalizeText(item.outputText))
+      const hasFiles = item.outputFiles.length > 0
+      const hasBody = hasArguments || hasOutput || hasFiles
+      const shouldAutoExpand =
+        item.status === 'in_progress' ||
+        (item.toolType !== 'commandExecution' && hasBody && !isHeavyToolItem(item))
+      if (!shouldAutoExpand) {
+        target.add(id)
       }
       continue
     }
@@ -204,17 +334,130 @@ function isNearBottom(node: HTMLDivElement): boolean {
   return node.scrollHeight - node.scrollTop - node.clientHeight <= SCROLL_THRESHOLD_PX
 }
 
-function commandRanLabel(status: ItemStatus): string {
-  return status === 'in_progress' ? 'Running' : 'Ran'
+export function normalizeMessagesV3Phase10Mode(
+  value: string | null | undefined,
+): MessagesV3Phase10Mode {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'shadow') {
+    return 'shadow'
+  }
+  if (normalized === 'on') {
+    return 'on'
+  }
+  return 'off'
 }
 
-function trailingCommandOutput(outputText: string): string {
-  const normalized = outputText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  const lines = normalized.split('\n')
-  if (lines.length <= MAX_COMMAND_OUTPUT_LINES) {
-    return normalized
+function resolveMessagesV3Phase10Mode(
+  modeOverride: MessagesV3Phase10Mode | null | undefined,
+): MessagesV3Phase10Mode {
+  if (modeOverride) {
+    return normalizeMessagesV3Phase10Mode(modeOverride)
   }
-  return lines.slice(-MAX_COMMAND_OUTPUT_LINES).join('\n')
+  const env = import.meta.env as Record<string, unknown>
+  return normalizeMessagesV3Phase10Mode(String(env[PHASE10_MODE_ENV_FLAG] ?? 'off'))
+}
+
+function getStreamEntryKey(entry: ToolGroupEntryV3 | null | undefined): string {
+  if (!entry) {
+    return 'stream_entry:missing'
+  }
+  if (entry.kind === 'item') {
+    return `item:${entry.item.id}`
+  }
+  return `tool_group:${entry.group.id}`
+}
+
+function estimateStreamEntrySize(entry: ToolGroupEntryV3): number {
+  if (entry.kind === 'toolGroup') {
+    return Math.max(260, 110 * entry.group.items.length)
+  }
+  if (entry.item.kind === 'message') {
+    return 220
+  }
+  if (entry.item.kind === 'reasoning') {
+    return 280
+  }
+  if (entry.item.kind === 'tool' || entry.item.kind === 'diff') {
+    return 320
+  }
+  if (entry.item.kind === 'review' || entry.item.kind === 'explore') {
+    return 240
+  }
+  return 180
+}
+
+function effectiveProgressiveBatchSize(level: RenderBudgetDegradeLevel): number {
+  if (level === 2) {
+    return PHASE10_PROGRESSIVE_BATCH_LEVEL2
+  }
+  if (level === 1) {
+    return Math.max(
+      PHASE10_PROGRESSIVE_BATCH_MIN_LEVEL1,
+      Math.floor(PHASE10_PROGRESSIVE_BASE_BATCH / 2),
+    )
+  }
+  return PHASE10_PROGRESSIVE_BASE_BATCH
+}
+
+function effectiveVirtualOverscan(level: RenderBudgetDegradeLevel): number {
+  if (level === 2) {
+    return PHASE10_OVERSCAN_LEVEL2
+  }
+  if (level === 1) {
+    return PHASE10_OVERSCAN_LEVEL1
+  }
+  return PHASE10_OVERSCAN_BASE
+}
+
+function captureVisibleAnchor(container: HTMLDivElement): StreamAnchorSnapshot | null {
+  const containerTop = container.getBoundingClientRect().top
+  const entryNodes = container.querySelectorAll<HTMLElement>('[data-stream-entry-key]')
+  let firstEntryKey: string | null = null
+  for (const node of entryNodes) {
+    if (!firstEntryKey) {
+      const fallbackEntryKey = String(node.dataset.streamEntryKey ?? '').trim()
+      if (fallbackEntryKey) {
+        firstEntryKey = fallbackEntryKey
+      }
+    }
+    const rect = node.getBoundingClientRect()
+    if (rect.bottom <= containerTop) {
+      continue
+    }
+    const entryKey = String(node.dataset.streamEntryKey ?? '').trim()
+    if (!entryKey) {
+      continue
+    }
+    return {
+      entryKey,
+      offsetWithinViewportPx: rect.top - containerTop,
+    }
+  }
+  // JSDOM and some hidden-layout states can report zero-sized rects for all rows.
+  // Fall back to the first rendered entry so anchor checks still have a stable key.
+  if (firstEntryKey) {
+    return {
+      entryKey: firstEntryKey,
+      offsetWithinViewportPx: 0,
+    }
+  }
+  return null
+}
+
+function findStreamEntryNode(container: HTMLDivElement, entryKey: string): HTMLElement | null {
+  const entryNodes = container.querySelectorAll<HTMLElement>('[data-stream-entry-key]')
+  for (const node of entryNodes) {
+    if (String(node.dataset.streamEntryKey ?? '') === entryKey) {
+      return node
+    }
+  }
+  return null
+}
+
+function commandRanLabel(status: ItemStatus): string {
+  return status === 'in_progress' ? 'Running' : 'Ran'
 }
 
 function normalizeDiffKind(
@@ -388,6 +631,31 @@ function formatDurationV3(durationMs: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
+function emitRowRenderProfileForItem(item: ConversationItemV3): void {
+  emitRowRenderProfile({
+    threadId: item.threadId,
+    itemId: item.id,
+    kind: item.kind,
+    status: item.status,
+    updatedAt: item.updatedAt,
+    sequence: item.sequence,
+  })
+}
+
+function sameRenderableItemVersion(
+  prev: Pick<ConversationItemV3, 'id' | 'kind' | 'threadId' | 'sequence' | 'status' | 'updatedAt'>,
+  next: Pick<ConversationItemV3, 'id' | 'kind' | 'threadId' | 'sequence' | 'status' | 'updatedAt'>,
+): boolean {
+  return (
+    prev.id === next.id &&
+    prev.kind === next.kind &&
+    prev.threadId === next.threadId &&
+    prev.sequence === next.sequence &&
+    prev.status === next.status &&
+    prev.updatedAt === next.updatedAt
+  )
+}
+
 function IconCommandLineChevron({ expanded }: { expanded: boolean }) {
   return (
     <svg
@@ -462,18 +730,39 @@ function WorkingIndicatorV3({
 
 function CommandOutputViewportV3({
   itemId,
+  itemUpdatedAt,
   outputText,
   onRequestAutoScroll,
 }: {
   itemId: string
+  itemUpdatedAt: string
   outputText: string
   onRequestAutoScroll?: () => void
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const pinnedRef = useRef(true)
   const [, setPinnedVersion] = useState(0)
+  const incrementalTailRef = useRef<CommandOutputTailCache | null>(null)
+  const phase11Mode = resolveMessagesV3Phase11Mode(null)
 
-  const visibleOutput = useMemo(() => trailingCommandOutput(outputText), [outputText])
+  const visibleOutput = useMemo(() => {
+    const itemKey = `command_output:${itemId}:${itemUpdatedAt}`
+    const baseline = computeTrailingCommandOutput(outputText, MAX_COMMAND_OUTPUT_LINES)
+    if (phase11Mode === 'off') {
+      return baseline
+    }
+    const incremental = computeTrailingCommandOutputIncremental({
+      previous: incrementalTailRef.current,
+      itemKey,
+      outputText,
+      maxLines: MAX_COMMAND_OUTPUT_LINES,
+    })
+    incrementalTailRef.current = incremental.cache
+    if (phase11Mode === 'shadow') {
+      return baseline
+    }
+    return incremental.visibleOutput
+  }, [itemId, itemUpdatedAt, outputText, phase11Mode])
 
   const updatePinnedState = useCallback(() => {
     const viewport = viewportRef.current
@@ -507,6 +796,9 @@ function CommandOutputViewportV3({
 }
 
 function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'message' }> }) {
+  emitRowRenderProfileForItem(item)
+  const phase11Mode = resolveMessagesV3Phase11Mode(null)
+
   const roleClass =
     item.role === 'user'
       ? styles.rowMessageUser
@@ -520,10 +812,20 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
       : item.role === 'system'
         ? styles.messageBubbleSystem
         : styles.messageBubbleAssistant
-  const renderedText =
-    item.role === 'assistant'
-      ? extractReviewSummaryText(item.text) ?? item.text
-      : item.text
+  const messageParseKey = buildParseCacheKey({
+    threadId: item.threadId,
+    itemId: item.id,
+    updatedAt: item.updatedAt,
+    mode: 'message_markdown',
+    rendererVersion: PARSE_CACHE_RENDERER_VERSION,
+  })
+  const renderedText = readOrComputeParseArtifact<string>(
+    buildParseArtifactVariantKey(messageParseKey, 'rendered_message_text'),
+    () =>
+      item.role === 'assistant'
+        ? extractReviewSummaryText(item.text) ?? item.text
+        : item.text,
+  ).value
 
   return (
     <article className={`${styles.row} ${roleClass}`} data-testid="conversation-v3-item-message">
@@ -532,7 +834,18 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
           className={`${styles.messageShell} ${item.role === 'user' ? styles.messageShellUser : styles.messageShellAssistant}`}
         >
           <div className={`${styles.messageBubble} ${bubbleClass}`}>
-            <ConversationMarkdown content={renderedText} />
+            <ConversationMarkdown
+              content={renderedText}
+              phase11Mode={phase11Mode}
+              phase11DeferredTimeoutMs={PHASE11_MARKDOWN_DEFERRED_TIMEOUT_MS}
+              parseTrace={{
+                threadId: item.threadId,
+                itemId: item.id,
+                updatedAt: item.updatedAt,
+                mode: 'message_markdown',
+                source: 'messages_v3.message_row',
+              }}
+            />
           </div>
         </div>
       </div>
@@ -551,6 +864,8 @@ function ReasoningRowV3({
   isExpanded: boolean
   onToggle: (itemId: string) => void
 }) {
+  emitRowRenderProfileForItem(item)
+
   return (
     <article className={`${styles.row} ${styles.reasoningRow}`} data-testid="conversation-v3-item-reasoning">
       <div className={styles.reasoningRail}>
@@ -578,11 +893,13 @@ function CommandToolRowV3({
   isExpanded,
   onToggle,
   onRequestAutoScroll,
+  onOpenFullArtifact,
 }: {
   item: Extract<ConversationItemV3, { kind: 'tool' }>
   isExpanded: boolean
   onToggle: (itemId: string) => void
   onRequestAutoScroll?: () => void
+  onOpenFullArtifact: (title: string, content: string) => void
 }) {
   const headline =
     normalizeText(item.argumentsText) ||
@@ -594,6 +911,7 @@ function CommandToolRowV3({
   const hasBody = Boolean(normalizeText(item.argumentsText) || hasOutput || hasFiles)
   const showBody = !hasBody || isExpanded
   const ranLabel = commandRanLabel(item.status)
+  const outputPreview = useMemo(() => buildPayloadPreview(item.outputText), [item.outputText])
 
   const commandBar =
     hasBody && !showBody ? (
@@ -670,11 +988,30 @@ function CommandToolRowV3({
                 </div>
 
                 {hasOutput ? (
-                  <CommandOutputViewportV3
-                    itemId={item.id}
-                    outputText={item.outputText}
-                    onRequestAutoScroll={onRequestAutoScroll}
-                  />
+                  <>
+                    <CommandOutputViewportV3
+                      itemId={item.id}
+                      itemUpdatedAt={item.updatedAt}
+                      outputText={outputPreview.truncated ? outputPreview.previewText : item.outputText}
+                      onRequestAutoScroll={onRequestAutoScroll}
+                    />
+                    {outputPreview.truncated ? (
+                      <div className={styles.actionRow}>
+                        <button
+                          type="button"
+                          className={styles.secondaryButton}
+                          onClick={() =>
+                            onOpenFullArtifact(
+                              `Command output (${outputPreview.originalLineCount} lines)`,
+                              item.outputText,
+                            )
+                          }
+                        >
+                          View full output
+                        </button>
+                      </div>
+                    ) : null}
+                  </>
                 ) : null}
               </>
             ) : null}
@@ -715,16 +1052,22 @@ function ToolRowV3({
   isExpanded,
   onToggle,
   onRequestAutoScroll,
+  onOpenFullArtifact,
 }: {
   item: Extract<ConversationItemV3, { kind: 'tool' }>
   isExpanded: boolean
   onToggle: (itemId: string) => void
   onRequestAutoScroll?: () => void
+  onOpenFullArtifact: (title: string, content: string) => void
 }) {
-  const effectiveChanges = useMemo(() => toolChangesFromOutputFiles(item.outputFiles), [item.outputFiles])
+  emitRowRenderProfileForItem(item)
 
-  if (item.toolType === 'fileChange') {
-    const fileChangeItem: ToolItemV2 = {
+  const effectiveChanges = useMemo(() => toolChangesFromOutputFiles(item.outputFiles), [item.outputFiles])
+  const fileChangeItem = useMemo<ToolItemV2 | null>(() => {
+    if (item.toolType !== 'fileChange') {
+      return null
+    }
+    return {
       ...item,
       kind: 'tool',
       toolType: 'fileChange',
@@ -737,9 +1080,12 @@ function ToolRowV3({
       })),
       changes: effectiveChanges,
     }
+  }, [effectiveChanges, item])
+
+  if (item.toolType === 'fileChange') {
     return (
       <FileChangeToolRow
-        item={fileChangeItem}
+        item={fileChangeItem as ToolItemV2}
         isExpanded={isExpanded}
         onToggle={onToggle}
         dataTestId="conversation-v3-item-tool"
@@ -754,6 +1100,7 @@ function ToolRowV3({
         isExpanded={isExpanded}
         onToggle={onToggle}
         onRequestAutoScroll={onRequestAutoScroll}
+        onOpenFullArtifact={onOpenFullArtifact}
       />
     )
   }
@@ -764,6 +1111,7 @@ function ToolRowV3({
   const hasFiles = item.outputFiles.length > 0
   const hasBody = hasArguments || hasOutput || hasFiles
   const showBody = !hasBody || isExpanded
+  const outputPreview = useMemo(() => buildPayloadPreview(item.outputText), [item.outputText])
 
   const toolBar = (
     <div
@@ -839,7 +1187,25 @@ function ToolRowV3({
           {showBody && hasOutput ? (
             <div className={styles.section}>
               <div className={styles.sectionTitle}>Output</div>
-              <pre className={styles.plainPre}>{item.outputText}</pre>
+              <pre className={styles.plainPre}>
+                {outputPreview.truncated ? outputPreview.previewText : item.outputText}
+              </pre>
+              {outputPreview.truncated ? (
+                <div className={styles.actionRow}>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() =>
+                      onOpenFullArtifact(
+                        `Tool output (${outputPreview.originalLineCount} lines)`,
+                        item.outputText,
+                      )
+                    }
+                  >
+                    View full output
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -958,7 +1324,20 @@ function isFileChangeSemanticDiff(item: Extract<ConversationItemV3, { kind: 'dif
 }
 
 function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'review' }> }) {
-  const renderedText = extractReviewSummaryText(item.text) ?? item.text
+  emitRowRenderProfileForItem(item)
+  const phase11Mode = resolveMessagesV3Phase11Mode(null)
+
+  const reviewParseKey = buildParseCacheKey({
+    threadId: item.threadId,
+    itemId: item.id,
+    updatedAt: item.updatedAt,
+    mode: 'message_markdown',
+    rendererVersion: PARSE_CACHE_RENDERER_VERSION,
+  })
+  const renderedText = readOrComputeParseArtifact<string>(
+    buildParseArtifactVariantKey(reviewParseKey, 'rendered_review_text'),
+    () => extractReviewSummaryText(item.text) ?? item.text,
+  ).value
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-review">
       <div className={styles.rowRail}>
@@ -970,7 +1349,18 @@ function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'revi
             </div>
             <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-          <ConversationMarkdown content={renderedText} />
+          <ConversationMarkdown
+            content={renderedText}
+            phase11Mode={phase11Mode}
+            phase11DeferredTimeoutMs={PHASE11_MARKDOWN_DEFERRED_TIMEOUT_MS}
+            parseTrace={{
+              threadId: item.threadId,
+              itemId: item.id,
+              updatedAt: item.updatedAt,
+              mode: 'message_markdown',
+              source: 'messages_v3.review_row',
+            }}
+          />
         </div>
       </div>
     </article>
@@ -978,6 +1368,9 @@ function ReviewRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'revi
 }
 
 function ExploreRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'explore' }> }) {
+  emitRowRenderProfileForItem(item)
+  const phase11Mode = resolveMessagesV3Phase11Mode(null)
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-explore">
       <div className={styles.rowRail}>
@@ -989,7 +1382,18 @@ function ExploreRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'exp
             </div>
             <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-          <ConversationMarkdown content={item.text} />
+          <ConversationMarkdown
+            content={item.text}
+            phase11Mode={phase11Mode}
+            phase11DeferredTimeoutMs={PHASE11_MARKDOWN_DEFERRED_TIMEOUT_MS}
+            parseTrace={{
+              threadId: item.threadId,
+              itemId: item.id,
+              updatedAt: item.updatedAt,
+              mode: 'message_markdown',
+              source: 'messages_v3.explore_row',
+            }}
+          />
         </div>
       </div>
     </article>
@@ -1000,22 +1404,37 @@ function DiffRowV3({
   item,
   isExpanded,
   onToggle,
+  onOpenFullArtifact,
 }: {
   item: Extract<ConversationItemV3, { kind: 'diff' }>
   isExpanded: boolean
   onToggle: (itemId: string) => void
+  onOpenFullArtifact: (title: string, content: string) => void
 }) {
+  emitRowRenderProfileForItem(item)
+
+  const syntheticFileChangeItem = useMemo<ToolItemV2 | null>(() => {
+    if (!isFileChangeSemanticDiff(item)) {
+      return null
+    }
+    return diffItemV3ToSyntheticFileChangeTool(item)
+  }, [item])
+
   if (isFileChangeSemanticDiff(item)) {
-    const synthetic = diffItemV3ToSyntheticFileChangeTool(item)
     return (
       <FileChangeToolRow
-        item={synthetic}
+        item={syntheticFileChangeItem as ToolItemV2}
         isExpanded={isExpanded}
         onToggle={onToggle}
         dataTestId="conversation-v3-item-diff"
       />
     )
   }
+
+  const hasBody = Boolean(item.summaryText) || item.files.length > 0
+  const heavy = isHeavyDiffItem(item)
+  const showBody = !hasBody || !heavy || item.status === 'in_progress' || isExpanded
+  const summaryPreview = useMemo(() => buildPayloadPreview(item.summaryText), [item.summaryText])
 
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-diff">
@@ -1028,9 +1447,59 @@ function DiffRowV3({
             </div>
             <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-          {item.summaryText ? <div className={styles.subtleText}>{item.summaryText}</div> : null}
 
-          {item.files.length ? (
+          {hasBody && heavy ? (
+            <button
+              type="button"
+              className={styles.commandLineBarButton}
+              onClick={() => onToggle(item.id)}
+              aria-expanded={showBody}
+              aria-label={showBody ? 'Collapse diff details' : 'Expand diff details'}
+            >
+              <div
+                className={`${styles.commandLineBar} ${
+                  showBody ? styles.commandLineBarExpanded : styles.commandLineBarCollapsed
+                }`}
+              >
+                <div className={styles.commandLineBarTop}>
+                  <span className={styles.commandCardEyebrow}>Diff</span>
+                  <span className={styles.commandLineTextCollapsed}>
+                    {item.files.length > 0 ? `${item.files.length} files` : 'Large diff payload'}
+                  </span>
+                  <span className={styles.commandChevronSlot}>
+                    <IconCommandLineChevron expanded={showBody} />
+                  </span>
+                </div>
+              </div>
+            </button>
+          ) : null}
+
+          {showBody && item.summaryText ? (
+            <div className={styles.section}>
+              <div className={styles.sectionTitle}>Summary</div>
+              <div className={styles.subtleText}>
+                {summaryPreview.truncated ? summaryPreview.previewText : item.summaryText}
+              </div>
+              {summaryPreview.truncated ? (
+                <div className={styles.actionRow}>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() =>
+                      onOpenFullArtifact(
+                        `Diff summary (${summaryPreview.originalLineCount} lines)`,
+                        item.summaryText ?? '',
+                      )
+                    }
+                  >
+                    View full summary
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {showBody && item.files.length ? (
             <div className={styles.fileList}>
               {item.files.map((file) => (
                 <div key={`${file.path}-${file.changeType}`} className={styles.fileItem}>
@@ -1050,6 +1519,8 @@ function DiffRowV3({
 }
 
 function StatusRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'status' }> }) {
+  emitRowRenderProfileForItem(item)
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-status">
       <div className={styles.rowRail}>
@@ -1069,6 +1540,8 @@ function StatusRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'stat
 }
 
 function ErrorRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'error' }> }) {
+  emitRowRenderProfileForItem(item)
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-error">
       <div className={styles.rowRail}>
@@ -1096,6 +1569,8 @@ function UserInputInlineRowV3({
   status: PendingRequestStatus
   answers: UserInputAnswerV3[]
 }) {
+  emitRowRenderProfileForItem(item)
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-userInput-inline">
       <div className={styles.rowRail}>
@@ -1119,6 +1594,133 @@ function UserInputInlineRowV3({
     </article>
   )
 }
+
+type MessageRowProps = { item: Extract<ConversationItemV3, { kind: 'message' }> }
+type ReasoningRowProps = {
+  item: Extract<ConversationItemV3, { kind: 'reasoning' }>
+  meta?: ReasoningPresentationMetaV3
+  isExpanded: boolean
+  onToggle: (itemId: string) => void
+}
+type ToolRowProps = {
+  item: Extract<ConversationItemV3, { kind: 'tool' }>
+  isExpanded: boolean
+  onToggle: (itemId: string) => void
+  onRequestAutoScroll?: () => void
+  onOpenFullArtifact: (title: string, content: string) => void
+}
+type ReviewRowProps = { item: Extract<ConversationItemV3, { kind: 'review' }> }
+type ExploreRowProps = { item: Extract<ConversationItemV3, { kind: 'explore' }> }
+type DiffRowProps = {
+  item: Extract<ConversationItemV3, { kind: 'diff' }>
+  isExpanded: boolean
+  onToggle: (itemId: string) => void
+  onOpenFullArtifact: (title: string, content: string) => void
+}
+type StatusRowProps = { item: Extract<ConversationItemV3, { kind: 'status' }> }
+type ErrorRowProps = { item: Extract<ConversationItemV3, { kind: 'error' }> }
+type UserInputInlineRowProps = {
+  item: Extract<ConversationItemV3, { kind: 'userInput' }>
+  status: PendingRequestStatus
+  answers: UserInputAnswerV3[]
+}
+
+function areMessageRowPropsEqual(prev: MessageRowProps, next: MessageRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.item.role === next.item.role &&
+    prev.item.text === next.item.text &&
+    prev.item.format === next.item.format
+  )
+}
+
+function areReasoningRowPropsEqual(prev: ReasoningRowProps, next: ReasoningRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.isExpanded === next.isExpanded &&
+    prev.onToggle === next.onToggle &&
+    prev.meta?.hasBody === next.meta?.hasBody &&
+    prev.meta?.visibleSummary === next.meta?.visibleSummary &&
+    prev.meta?.visibleDetail === next.meta?.visibleDetail &&
+    prev.meta?.workingLabel === next.meta?.workingLabel
+  )
+}
+
+function areToolRowPropsEqual(prev: ToolRowProps, next: ToolRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.isExpanded === next.isExpanded &&
+    prev.onToggle === next.onToggle &&
+    prev.onRequestAutoScroll === next.onRequestAutoScroll &&
+    prev.onOpenFullArtifact === next.onOpenFullArtifact &&
+    prev.item.toolType === next.item.toolType
+  )
+}
+
+function areReviewRowPropsEqual(prev: ReviewRowProps, next: ReviewRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.item.title === next.item.title &&
+    prev.item.text === next.item.text &&
+    prev.item.disposition === next.item.disposition
+  )
+}
+
+function areExploreRowPropsEqual(prev: ExploreRowProps, next: ExploreRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.item.title === next.item.title &&
+    prev.item.text === next.item.text
+  )
+}
+
+function areDiffRowPropsEqual(prev: DiffRowProps, next: DiffRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.isExpanded === next.isExpanded &&
+    prev.onToggle === next.onToggle &&
+    prev.onOpenFullArtifact === next.onOpenFullArtifact
+  )
+}
+
+function areStatusRowPropsEqual(prev: StatusRowProps, next: StatusRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.item.code === next.item.code &&
+    prev.item.label === next.item.label &&
+    prev.item.detail === next.item.detail
+  )
+}
+
+function areErrorRowPropsEqual(prev: ErrorRowProps, next: ErrorRowProps): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.item.code === next.item.code &&
+    prev.item.title === next.item.title &&
+    prev.item.message === next.item.message
+  )
+}
+
+function areUserInputInlineRowPropsEqual(
+  prev: UserInputInlineRowProps,
+  next: UserInputInlineRowProps,
+): boolean {
+  return (
+    sameRenderableItemVersion(prev.item, next.item) &&
+    prev.status === next.status &&
+    prev.answers === next.answers
+  )
+}
+
+const MemoMessageRowV3 = memo(MessageRowV3, areMessageRowPropsEqual)
+const MemoReasoningRowV3 = memo(ReasoningRowV3, areReasoningRowPropsEqual)
+const MemoToolRowV3 = memo(ToolRowV3, areToolRowPropsEqual)
+const MemoReviewRowV3 = memo(ReviewRowV3, areReviewRowPropsEqual)
+const MemoExploreRowV3 = memo(ExploreRowV3, areExploreRowPropsEqual)
+const MemoDiffRowV3 = memo(DiffRowV3, areDiffRowPropsEqual)
+const MemoStatusRowV3 = memo(StatusRowV3, areStatusRowPropsEqual)
+const MemoErrorRowV3 = memo(ErrorRowV3, areErrorRowPropsEqual)
+const MemoUserInputInlineRowV3 = memo(UserInputInlineRowV3, areUserInputInlineRowPropsEqual)
 
 function PendingUserInputCardV3({
   request,
@@ -1336,6 +1938,7 @@ function renderItemRowV3({
   expandedItemIds,
   onToggleExpanded,
   onRequestAutoScroll,
+  onOpenFullArtifact,
 }: {
   item: ConversationItemV3
   requestMapByRequestId: Map<string, PendingUserInputRequestV3>
@@ -1343,56 +1946,61 @@ function renderItemRowV3({
   expandedItemIds: Set<string>
   onToggleExpanded: (itemId: string) => void
   onRequestAutoScroll: () => void
+  onOpenFullArtifact: (title: string, content: string) => void
 }) {
+  const isExpanded = expandedItemIds.has(item.id)
+
   if (item.kind === 'message') {
-    return <MessageRowV3 item={item} />
+    return <MemoMessageRowV3 item={item} />
   }
   if (item.kind === 'reasoning') {
     return (
-      <ReasoningRowV3
+      <MemoReasoningRowV3
         item={item}
         meta={reasoningMeta}
-        isExpanded={expandedItemIds.has(item.id)}
+        isExpanded={isExpanded}
         onToggle={onToggleExpanded}
       />
     )
   }
   if (item.kind === 'tool') {
     return (
-      <ToolRowV3
+      <MemoToolRowV3
         item={item}
-        isExpanded={expandedItemIds.has(item.id)}
+        isExpanded={isExpanded}
         onToggle={onToggleExpanded}
         onRequestAutoScroll={onRequestAutoScroll}
+        onOpenFullArtifact={onOpenFullArtifact}
       />
     )
   }
   if (item.kind === 'review') {
-    return <ReviewRowV3 item={item} />
+    return <MemoReviewRowV3 item={item} />
   }
   if (item.kind === 'diff') {
     return (
-      <DiffRowV3
+      <MemoDiffRowV3
         item={item}
-        isExpanded={expandedItemIds.has(item.id)}
+        isExpanded={isExpanded}
         onToggle={onToggleExpanded}
+        onOpenFullArtifact={onOpenFullArtifact}
       />
     )
   }
   if (item.kind === 'explore') {
-    return <ExploreRowV3 item={item} />
+    return <MemoExploreRowV3 item={item} />
   }
   if (item.kind === 'status') {
-    return <StatusRowV3 item={item} />
+    return <MemoStatusRowV3 item={item} />
   }
   if (item.kind === 'error') {
-    return <ErrorRowV3 item={item} />
+    return <MemoErrorRowV3 item={item} />
   }
   if (item.kind === 'userInput') {
     const request = requestMapByRequestId.get(item.requestId)
     const status = request?.status ?? effectiveUserInputStatus(item, requestMapByRequestId)
     const answers = request?.answers.length ? request.answers : item.answers
-    return <UserInputInlineRowV3 item={item} status={status} answers={answers} />
+    return <MemoUserInputInlineRowV3 item={item} status={status} answers={answers} />
   }
   return null
 }
@@ -1401,6 +2009,9 @@ export function MessagesV3({
   snapshot,
   isLoading,
   isSending = false,
+  hasOlderHistory = false,
+  isLoadingHistory = false,
+  onLoadMoreHistory,
   prefix,
   suffix,
   onResolveUserInput,
@@ -1408,10 +2019,14 @@ export function MessagesV3({
   lastCompletedAt,
   lastDurationMs,
   threadChatFlatCanvas = false,
+  phase10ModeOverride = null,
 }: {
   snapshot: ThreadSnapshotV3 | null
   isLoading: boolean
   isSending?: boolean
+  hasOlderHistory?: boolean
+  isLoadingHistory?: boolean
+  onLoadMoreHistory?: () => void
   prefix?: ReactNode
   suffix?: ReactNode
   /** Breadcrumb thread: one #fcf9f7 canvas (no gray “cards” in the scroll area). */
@@ -1424,20 +2039,63 @@ export function MessagesV3({
   ) => Promise<void> | void
   lastCompletedAt?: number | null
   lastDurationMs?: number | null
+  phase10ModeOverride?: MessagesV3Phase10Mode | null
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const autoScrollRef = useRef(true)
   const manuallyToggledExpandedRef = useRef<Set<string>>(new Set())
+  const previousThreadIdRef = useRef<string | null>(null)
   const snapshotRef = useRef(snapshot)
   snapshotRef.current = snapshot
 
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
   const [dismissedPlanReadyKeys, setDismissedPlanReadyKeys] = useState<Set<string>>(new Set())
+  const [progressiveVisibleCount, setProgressiveVisibleCount] = useState(0)
+  const [budgetDegradeLevel, setBudgetDegradeLevel] = useState<RenderBudgetDegradeLevel>(0)
+  const [phase10FallbackVersion, setPhase10FallbackVersion] = useState(0)
+  const [deferNonCriticalDecorations, setDeferNonCriticalDecorations] = useState(false)
+  const [fullArtifactView, setFullArtifactView] = useState<{ title: string; content: string } | null>(null)
+  const fallbackReasonsByThreadRef = useRef<Map<string, string>>(new Map())
+  const anchorSnapshotRef = useRef<StreamAnchorSnapshot | null>(null)
+  const previousThreadForProgressiveRef = useRef<string | null>(null)
+  const previousFrameTsRef = useRef<number | null>(null)
+  const consecutiveFramesOver16Ref = useRef(0)
+  const consecutiveFramesOver24Ref = useRef(0)
+  const stableFrameCountRef = useRef(0)
 
   const threadId = snapshot?.threadId ?? null
+  const phase10Mode = resolveMessagesV3Phase10Mode(phase10ModeOverride)
+  const threadFallbackReason = useMemo(() => {
+    if (!threadId) {
+      return null
+    }
+    return fallbackReasonsByThreadRef.current.get(threadId) ?? null
+  }, [phase10FallbackVersion, threadId])
+  const threadFallbackActive = threadFallbackReason != null
   const pendingRequests = snapshot?.uiSignals.activeUserInputRequests ?? []
   const requestMapByRequestId = useMemo(() => requestByRequestId(pendingRequests), [pendingRequests])
+
+  useEffect(() => {
+    resetMessagesV3ProfilingState()
+    const previousThreadId = previousThreadIdRef.current
+    if (previousThreadId && previousThreadId !== threadId) {
+      resetParseArtifactCacheForThread(previousThreadId)
+    }
+    if (threadId == null) {
+      resetParseArtifactCache()
+    }
+    anchorSnapshotRef.current = null
+    previousThreadForProgressiveRef.current = null
+    previousFrameTsRef.current = null
+    consecutiveFramesOver16Ref.current = 0
+    consecutiveFramesOver24Ref.current = 0
+    stableFrameCountRef.current = 0
+    setBudgetDegradeLevel(0)
+    setDeferNonCriticalDecorations(false)
+    setFullArtifactView(null)
+    previousThreadIdRef.current = threadId
+  }, [threadId])
 
   const itemById = useMemo(() => {
     const map = new Map<string, ConversationItemV3>()
@@ -1482,6 +2140,233 @@ export function MessagesV3({
     [requestMapByRequestId, visibleState.visibleItems],
   )
   const groupedEntries = useMemo(() => buildToolGroupsV3(visibleItems), [visibleItems])
+  const phase10ComputationEnabled =
+    phase10Mode !== 'off' &&
+    !threadFallbackActive &&
+    groupedEntries.length >= PHASE10_PROGRESSIVE_THRESHOLD
+  const phase10ProgressiveRenderEnabled =
+    phase10Mode === 'on' &&
+    !threadFallbackActive &&
+    groupedEntries.length >= PHASE10_PROGRESSIVE_THRESHOLD
+  const phase10VirtualizationEnabled =
+    phase10Mode === 'on' &&
+    !threadFallbackActive &&
+    groupedEntries.length >= PHASE10_VIRTUALIZATION_THRESHOLD
+
+  const activatePhase10Fallback = useCallback(
+    (
+      reason:
+        | 'anchor_missing'
+        | 'anchor_drift'
+        | 'virtualization_anchor_missing'
+        | 'virtualization_anchor_drift',
+      details?: { entryKey?: string | null; driftPx?: number | null },
+    ) => {
+      if (!threadId || phase10Mode !== 'on') {
+        return
+      }
+      const existingReason = fallbackReasonsByThreadRef.current.get(threadId)
+      if (existingReason) {
+        return
+      }
+      fallbackReasonsByThreadRef.current.set(threadId, reason)
+      setPhase10FallbackVersion((previous) => previous + 1)
+      setProgressiveVisibleCount(groupedEntries.length)
+      setBudgetDegradeLevel(0)
+      setDeferNonCriticalDecorations(false)
+      emitPhase10Fallback({
+        threadId,
+        mode: phase10Mode,
+        reason,
+        entryKey: details?.entryKey ?? null,
+        driftPx: details?.driftPx ?? null,
+      })
+    },
+    [groupedEntries.length, phase10Mode, threadId],
+  )
+
+  useEffect(() => {
+    const entryCount = groupedEntries.length
+    const isThreadChanged = previousThreadForProgressiveRef.current !== threadId
+    previousThreadForProgressiveRef.current = threadId
+    if (!phase10ComputationEnabled) {
+      setProgressiveVisibleCount(entryCount)
+      return
+    }
+    const initialCount = Math.min(PHASE10_PROGRESSIVE_INITIAL_CHUNK, entryCount)
+    if (isThreadChanged) {
+      setProgressiveVisibleCount(initialCount)
+      return
+    }
+    setProgressiveVisibleCount((previous) => {
+      if (previous <= 0) {
+        return initialCount
+      }
+      if (previous > entryCount) {
+        return entryCount
+      }
+      return previous
+    })
+  }, [groupedEntries.length, phase10ComputationEnabled, threadId])
+
+  useEffect(() => {
+    if (!phase10ComputationEnabled) {
+      previousFrameTsRef.current = null
+      consecutiveFramesOver16Ref.current = 0
+      consecutiveFramesOver24Ref.current = 0
+      stableFrameCountRef.current = 0
+      setBudgetDegradeLevel(0)
+      setDeferNonCriticalDecorations(false)
+      return
+    }
+    let rafId = 0
+    let cancelled = false
+    const onFrame = (timestamp: number) => {
+      if (cancelled) {
+        return
+      }
+      const previousTs = previousFrameTsRef.current
+      previousFrameTsRef.current = timestamp
+      if (previousTs != null) {
+        const frameDurationMs = Math.max(0, timestamp - previousTs)
+        if (frameDurationMs > 24) {
+          consecutiveFramesOver24Ref.current += 1
+          consecutiveFramesOver16Ref.current += 1
+          stableFrameCountRef.current = 0
+        } else if (frameDurationMs > 16) {
+          consecutiveFramesOver24Ref.current = 0
+          consecutiveFramesOver16Ref.current += 1
+          stableFrameCountRef.current = 0
+        } else if (frameDurationMs <= 12) {
+          consecutiveFramesOver24Ref.current = 0
+          consecutiveFramesOver16Ref.current = 0
+          stableFrameCountRef.current += 1
+        } else {
+          consecutiveFramesOver24Ref.current = 0
+          consecutiveFramesOver16Ref.current = 0
+          stableFrameCountRef.current = 0
+        }
+
+        setBudgetDegradeLevel((previousLevel) => {
+          let nextLevel = previousLevel
+          if (consecutiveFramesOver24Ref.current >= 3) {
+            nextLevel = 2
+            consecutiveFramesOver24Ref.current = 0
+            consecutiveFramesOver16Ref.current = 0
+            stableFrameCountRef.current = 0
+          } else if (consecutiveFramesOver16Ref.current >= 3 && previousLevel < 1) {
+            nextLevel = 1
+            consecutiveFramesOver16Ref.current = 0
+            stableFrameCountRef.current = 0
+          } else if (stableFrameCountRef.current >= 120 && previousLevel > 0) {
+            nextLevel = previousLevel === 2 ? 1 : 0
+            stableFrameCountRef.current = 0
+          }
+          if (nextLevel !== previousLevel) {
+            setDeferNonCriticalDecorations(nextLevel === 2)
+          }
+          return nextLevel
+        })
+      }
+      rafId = globalThis.requestAnimationFrame(onFrame)
+    }
+    rafId = globalThis.requestAnimationFrame(onFrame)
+    return () => {
+      cancelled = true
+      if (rafId) {
+        globalThis.cancelAnimationFrame(rafId)
+      }
+    }
+  }, [phase10ComputationEnabled])
+
+  const progressiveBatchSize = useMemo(
+    () => effectiveProgressiveBatchSize(budgetDegradeLevel),
+    [budgetDegradeLevel],
+  )
+  const virtualOverscan = useMemo(
+    () => effectiveVirtualOverscan(budgetDegradeLevel),
+    [budgetDegradeLevel],
+  )
+
+  useEffect(() => {
+    if (!phase10ComputationEnabled) {
+      return
+    }
+    if (progressiveVisibleCount >= groupedEntries.length) {
+      return
+    }
+    let cancelled = false
+    let rafId = 0
+    rafId = globalThis.requestAnimationFrame(() => {
+      if (cancelled) {
+        return
+      }
+      const frameStart = performance.now()
+      setProgressiveVisibleCount((previous) => {
+        if (previous >= groupedEntries.length) {
+          return previous
+        }
+        const nextCount = Math.min(groupedEntries.length, previous + progressiveBatchSize)
+        const frameDurationMs = Math.max(0, performance.now() - frameStart)
+        emitPhase10ProgressiveBatch({
+          threadId,
+          mode: phase10Mode,
+          previousVisibleCount: previous,
+          nextVisibleCount: nextCount,
+          totalCount: groupedEntries.length,
+          batchSize: progressiveBatchSize,
+          frameDurationMs,
+          frameBudgetMs: PHASE10_PROGRESSIVE_FRAME_BUDGET_MS,
+          budgetDegradeLevel,
+          virtualized: phase10VirtualizationEnabled,
+        })
+        return nextCount
+      })
+    })
+    return () => {
+      cancelled = true
+      if (rafId) {
+        globalThis.cancelAnimationFrame(rafId)
+      }
+    }
+  }, [
+    budgetDegradeLevel,
+    groupedEntries.length,
+    phase10ComputationEnabled,
+    phase10Mode,
+    phase10VirtualizationEnabled,
+    progressiveBatchSize,
+    progressiveVisibleCount,
+    threadId,
+  ])
+
+  const streamEntries = useMemo(() => {
+    if (!phase10ProgressiveRenderEnabled) {
+      return groupedEntries
+    }
+    const seedCount =
+      progressiveVisibleCount > 0
+        ? progressiveVisibleCount
+        : Math.min(PHASE10_PROGRESSIVE_INITIAL_CHUNK, groupedEntries.length)
+    return groupedEntries.slice(0, Math.max(0, seedCount))
+  }, [groupedEntries, phase10ProgressiveRenderEnabled, progressiveVisibleCount])
+  const streamEntryKeys = useMemo(
+    () => streamEntries.map((entry) => getStreamEntryKey(entry)),
+    [streamEntries],
+  )
+  const streamEntryKeysSet = useMemo(() => new Set(streamEntryKeys), [streamEntryKeys])
+  const streamEntrySignature = useMemo(() => streamEntryKeys.join('|'), [streamEntryKeys])
+
+  const rowVirtualizer = useVirtualizer({
+    count: streamEntries.length,
+    getScrollElement: () => containerRef.current,
+    estimateSize: (index) => estimateStreamEntrySize(streamEntries[index]),
+    overscan: virtualOverscan,
+    getItemKey: (index) => getStreamEntryKey(streamEntries[index]),
+    measureElement: (element) => element.getBoundingClientRect().height,
+    enabled: phase10Mode !== 'off' && streamEntries.length > 0,
+    initialRect: { width: 0, height: 720 },
+  })
 
   const requestAutoScroll = useCallback(() => {
     const container = containerRef.current
@@ -1501,14 +2386,17 @@ export function MessagesV3({
       return
     }
     autoScrollRef.current = isNearBottom(containerRef.current)
+    anchorSnapshotRef.current = captureVisibleAnchor(containerRef.current)
   }, [])
 
   useLayoutEffect(() => {
     autoScrollRef.current = true
     manuallyToggledExpandedRef.current = new Set()
+    anchorSnapshotRef.current = null
     if (!threadId) {
       setExpandedItemIds(new Set())
       setDismissedPlanReadyKeys(new Set())
+      setProgressiveVisibleCount(0)
       return
     }
     const saved = loadMessagesV3ViewState(threadId)
@@ -1549,7 +2437,13 @@ export function MessagesV3({
           continue
         }
         if (item.kind === 'tool') {
-          const shouldExpand = item.status === 'in_progress' || isLargeCommandOutput(item)
+          const hasArguments = Boolean(normalizeText(item.argumentsText))
+          const hasOutput = Boolean(normalizeText(item.outputText))
+          const hasFiles = item.outputFiles.length > 0
+          const hasBody = hasArguments || hasOutput || hasFiles
+          const shouldExpand =
+            item.status === 'in_progress' ||
+            (item.toolType !== 'commandExecution' && hasBody && !isHeavyToolItem(item))
           if (shouldExpand && !next.has(item.id)) {
             next.add(item.id)
             changed = true
@@ -1602,6 +2496,17 @@ export function MessagesV3({
     })
   }, [])
 
+  const openFullArtifact = useCallback((title: string, content: string) => {
+    setFullArtifactView({
+      title,
+      content,
+    })
+  }, [])
+
+  const closeFullArtifact = useCallback(() => {
+    setFullArtifactView(null)
+  }, [])
+
   const scrollKey = useMemo(() => {
     const itemKey = visibleItems
       .map((item) => `${item.id}:${item.updatedAt}:${item.status}`)
@@ -1614,21 +2519,158 @@ export function MessagesV3({
       .join('|')
     const plan = snapshot?.uiSignals.planReady
     const planKey = `${plan?.planItemId ?? ''}:${plan?.revision ?? ''}:${String(plan?.ready ?? false)}:${String(plan?.failed ?? false)}`
-    return `${itemKey}::${pendingKey}::${planKey}`
-  }, [pendingRequests, snapshot?.uiSignals.planReady, visibleItems])
+    return `${itemKey}::${pendingKey}::${planKey}::${streamEntrySignature}`
+  }, [pendingRequests, snapshot?.uiSignals.planReady, streamEntrySignature, visibleItems])
 
   useLayoutEffect(() => {
     const container = containerRef.current
+    const previousAnchor = container ? anchorSnapshotRef.current : null
     const shouldScroll = autoScrollRef.current || (container ? isNearBottom(container) : true)
+    let verificationRafId = 0
     if (!shouldScroll) {
-      return
+      if (container && previousAnchor && phase10Mode !== 'off') {
+        if (!streamEntryKeysSet.has(previousAnchor.entryKey)) {
+          emitPhase10AnchorRestore({
+            threadId,
+            mode: phase10Mode,
+            entryKey: previousAnchor.entryKey,
+            restored: false,
+            appliedScrollAdjustment: false,
+            driftPx: null,
+            virtualized: phase10VirtualizationEnabled,
+            reason: 'anchor_missing',
+          })
+          if (phase10Mode === 'on') {
+            activatePhase10Fallback('anchor_missing', {
+              entryKey: previousAnchor.entryKey,
+            })
+          }
+        } else {
+          const anchorNode = findStreamEntryNode(container, previousAnchor.entryKey)
+          if (!anchorNode) {
+            emitPhase10AnchorRestore({
+              threadId,
+              mode: phase10Mode,
+              entryKey: previousAnchor.entryKey,
+              restored: false,
+              appliedScrollAdjustment: false,
+              driftPx: null,
+              virtualized: phase10VirtualizationEnabled,
+              reason: 'anchor_missing',
+            })
+            if (phase10Mode === 'on') {
+              activatePhase10Fallback('anchor_missing', {
+                entryKey: previousAnchor.entryKey,
+              })
+            }
+            if (container) {
+              anchorSnapshotRef.current = captureVisibleAnchor(container)
+            }
+            return () => {
+              if (verificationRafId) {
+                globalThis.cancelAnimationFrame(verificationRafId)
+              }
+            }
+          }
+          const containerTop = container.getBoundingClientRect().top
+          const currentOffset = anchorNode.getBoundingClientRect().top - containerTop
+          const delta = currentOffset - previousAnchor.offsetWithinViewportPx
+          const shouldAdjust = phase10Mode === 'on' && Math.abs(delta) > PHASE10_ANCHOR_RESTORE_TOLERANCE_PX
+          if (shouldAdjust) {
+            container.scrollTop += delta
+          }
+          const offsetAfterAdjust = anchorNode.getBoundingClientRect().top - containerTop
+          const driftAfterAdjust = offsetAfterAdjust - previousAnchor.offsetWithinViewportPx
+          emitPhase10AnchorRestore({
+            threadId,
+            mode: phase10Mode,
+            entryKey: previousAnchor.entryKey,
+            restored: Math.abs(driftAfterAdjust) <= PHASE10_ANCHOR_DRIFT_BREAK_PX,
+            appliedScrollAdjustment: shouldAdjust,
+            driftPx: driftAfterAdjust,
+            virtualized: phase10VirtualizationEnabled,
+            reason: 'anchor_restored',
+          })
+          verificationRafId = globalThis.requestAnimationFrame(() => {
+            const latestContainer = containerRef.current
+            if (!latestContainer) {
+              return
+            }
+            const verifiedAnchorNode = findStreamEntryNode(latestContainer, previousAnchor.entryKey)
+            if (!verifiedAnchorNode) {
+              emitPhase10AnchorRestore({
+                threadId,
+                mode: phase10Mode,
+                entryKey: previousAnchor.entryKey,
+                restored: false,
+                appliedScrollAdjustment: shouldAdjust,
+                driftPx: null,
+                virtualized: phase10VirtualizationEnabled,
+                reason: 'anchor_missing_after_stabilization',
+              })
+              if (phase10Mode === 'on') {
+                activatePhase10Fallback('anchor_missing', { entryKey: previousAnchor.entryKey })
+              }
+              return
+            }
+            const latestTop = latestContainer.getBoundingClientRect().top
+            const verifiedOffset = verifiedAnchorNode.getBoundingClientRect().top - latestTop
+            const verifiedDrift = verifiedOffset - previousAnchor.offsetWithinViewportPx
+            if (Math.abs(verifiedDrift) > PHASE10_ANCHOR_DRIFT_BREAK_PX) {
+              emitPhase10AnchorRestore({
+                threadId,
+                mode: phase10Mode,
+                entryKey: previousAnchor.entryKey,
+                restored: false,
+                appliedScrollAdjustment: shouldAdjust,
+                driftPx: verifiedDrift,
+                virtualized: phase10VirtualizationEnabled,
+                reason: 'anchor_drift_after_stabilization',
+              })
+              if (phase10Mode === 'on') {
+                activatePhase10Fallback('anchor_drift', {
+                  entryKey: previousAnchor.entryKey,
+                  driftPx: verifiedDrift,
+                })
+              }
+            }
+          })
+        }
+      }
+      if (container) {
+        anchorSnapshotRef.current = captureVisibleAnchor(container)
+      }
+      return () => {
+        if (verificationRafId) {
+          globalThis.cancelAnimationFrame(verificationRafId)
+        }
+      }
     }
     if (container) {
       container.scrollTop = container.scrollHeight
-      return
+      anchorSnapshotRef.current = captureVisibleAnchor(container)
+      return () => {
+        if (verificationRafId) {
+          globalThis.cancelAnimationFrame(verificationRafId)
+        }
+      }
     }
     bottomRef.current?.scrollIntoView({ block: 'end' })
-  }, [scrollKey, snapshot?.activeTurnId, snapshot?.processingState, threadId])
+    return () => {
+      if (verificationRafId) {
+        globalThis.cancelAnimationFrame(verificationRafId)
+      }
+    }
+  }, [
+    activatePhase10Fallback,
+    phase10Mode,
+    phase10VirtualizationEnabled,
+    scrollKey,
+    snapshot?.activeTurnId,
+    snapshot?.processingState,
+    streamEntryKeysSet,
+    threadId,
+  ])
 
   const planReadySignal = snapshot?.uiSignals.planReady
   const planReadyDismissKey = buildPlanReadyDismissKey(
@@ -1686,7 +2728,7 @@ export function MessagesV3({
             ? visibleState.reasoningMetaById.get(entry.item.id)
             : undefined
         return (
-          <div key={entry.item.id} className={styles.streamEntry}>
+          <div className={styles.streamEntry}>
             {renderItemRowV3({
               item: entry.item,
               requestMapByRequestId,
@@ -1694,6 +2736,7 @@ export function MessagesV3({
               expandedItemIds,
               onToggleExpanded: toggleExpanded,
               onRequestAutoScroll: requestAutoScroll,
+              onOpenFullArtifact: openFullArtifact,
             })}
           </div>
         )
@@ -1701,7 +2744,6 @@ export function MessagesV3({
 
       return (
         <section
-          key={entry.group.id}
           className={`${styles.row} ${styles.rowCard}`}
           data-testid={`conversation-v3-tool-group-${entry.group.id}`}
         >
@@ -1722,6 +2764,7 @@ export function MessagesV3({
                         expandedItemIds,
                         onToggleExpanded: toggleExpanded,
                         onRequestAutoScroll: requestAutoScroll,
+                        onOpenFullArtifact: openFullArtifact,
                       })}
                     </div>
                   )
@@ -1737,9 +2780,19 @@ export function MessagesV3({
       requestMapByRequestId,
       requestAutoScroll,
       toggleExpanded,
+      openFullArtifact,
       visibleState.reasoningMetaById,
     ],
   )
+  const virtualItems = rowVirtualizer.getVirtualItems()
+  const shouldRenderVirtualizedStream = phase10VirtualizationEnabled
+  const virtualBootstrapEntries = useMemo(() => {
+    if (!shouldRenderVirtualizedStream || virtualItems.length > 0) {
+      return [] as ToolGroupEntryV3[]
+    }
+    return streamEntries.slice(0, Math.min(streamEntries.length, PHASE10_VIRTUAL_BOOTSTRAP_COUNT))
+  }, [shouldRenderVirtualizedStream, streamEntries, virtualItems.length])
+  const showNonCriticalSuffix = !deferNonCriticalDecorations
 
   return (
     <div
@@ -1750,12 +2803,100 @@ export function MessagesV3({
     >
       {prefix}
 
-      {groupedEntries.length === 0 && pendingRequestCards.length === 0 && !isLoading ? (
+      {streamEntries.length === 0 && pendingRequestCards.length === 0 && !isLoading ? (
         <div className={styles.empty}>No conversation items yet.</div>
       ) : null}
 
-      <div className={styles.streamStack} data-testid="messages-v3-stream-stack">
-        {groupedEntries.map(renderGroupedEntry)}
+      {hasOlderHistory && onLoadMoreHistory ? (
+        <div className={styles.loadMoreRow}>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={onLoadMoreHistory}
+            disabled={isLoadingHistory}
+            data-testid="messages-v3-load-more-history"
+          >
+            {isLoadingHistory ? 'Loading older messages...' : 'Load older messages'}
+          </button>
+        </div>
+      ) : null}
+
+      <div
+        className={styles.streamStack}
+        data-testid="messages-v3-stream-stack"
+        data-phase10-mode={phase10Mode}
+        data-phase10-fallback={threadFallbackReason ?? ''}
+        data-phase10-degrade-level={String(budgetDegradeLevel)}
+      >
+        {shouldRenderVirtualizedStream ? (
+          <div
+            className={styles.virtualizedViewport}
+            data-testid="messages-v3-virtualized-viewport"
+            style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+          >
+            {virtualItems.length > 0
+              ? virtualItems.map((virtualItem) => {
+                  const entry = streamEntries[virtualItem.index]
+                  if (!entry) {
+                    return null
+                  }
+                  const entryKey = getStreamEntryKey(entry)
+                  return (
+                    <div
+                      key={String(virtualItem.key)}
+                      ref={(node) => {
+                        if (node) {
+                          rowVirtualizer.measureElement(node)
+                        }
+                      }}
+                      className={styles.streamVirtualItemHost}
+                      data-testid="messages-v3-stream-entry-host"
+                      data-index={String(virtualItem.index)}
+                      data-stream-entry-key={entryKey}
+                      data-stream-entry-index={String(virtualItem.index)}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${virtualItem.start}px)`,
+                      }}
+                    >
+                      {renderGroupedEntry(entry)}
+                    </div>
+                  )
+                })
+              : virtualBootstrapEntries.map((entry, index) => {
+                  const entryKey = getStreamEntryKey(entry)
+                  return (
+                    <div
+                      key={`bootstrap:${entryKey}`}
+                      className={styles.streamEntryHost}
+                      data-testid="messages-v3-stream-entry-host"
+                      data-stream-entry-key={entryKey}
+                      data-stream-entry-index={String(index)}
+                    >
+                      {renderGroupedEntry(entry)}
+                    </div>
+                  )
+                })}
+          </div>
+        ) : (
+          streamEntries.map((entry, index) => {
+            const entryKey = getStreamEntryKey(entry)
+            return (
+              <div
+                key={entryKey}
+                className={styles.streamEntryHost}
+                data-testid="messages-v3-stream-entry-host"
+                data-stream-entry-key={entryKey}
+                data-stream-entry-index={String(index)}
+              >
+                {renderGroupedEntry(entry)}
+              </div>
+            )
+          })
+        )}
       </div>
 
       {pendingRequestCards.length > 0 ? (
@@ -1792,11 +2933,32 @@ export function MessagesV3({
         />
       ) : null}
 
-      {isLoading && groupedEntries.length === 0 ? (
+      {isLoading && streamEntries.length === 0 ? (
         <div className={styles.empty}>Loading conversation...</div>
       ) : null}
 
-      {suffix ? <div className={styles.feedSuffix}>{suffix}</div> : null}
+      {suffix && showNonCriticalSuffix ? <div className={styles.feedSuffix}>{suffix}</div> : null}
+
+      {fullArtifactView ? (
+        <div
+          className={styles.fullArtifactOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-label={fullArtifactView.title}
+          onClick={closeFullArtifact}
+        >
+          <div className={styles.fullArtifactModal} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.fullArtifactHeader}>
+              <h3 className={styles.fullArtifactTitle}>{fullArtifactView.title}</h3>
+              <button type="button" className={styles.secondaryButton} onClick={closeFullArtifact}>
+                Close
+              </button>
+            </div>
+            <pre className={styles.fullArtifactPre}>{fullArtifactView.content}</pre>
+          </div>
+        </div>
+      ) : null}
+
       <div ref={bottomRef} />
     </div>
   )

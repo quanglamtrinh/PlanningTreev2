@@ -1,0 +1,11 @@
+{
+  "candidate_metrics": {
+    "queued_message_loss_events": 0,
+    "single_flight_violation_events": 0,
+    "local_storage_rehydrate_loss_events": 0,
+    "idempotency_key_missing_events": 0
+  },
+  "context": {
+    "scenario": "phase13_queue_state_machine_suite_candidate_v1"
+  }
+}

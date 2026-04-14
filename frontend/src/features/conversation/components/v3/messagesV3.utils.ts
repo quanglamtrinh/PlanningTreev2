@@ -3,6 +3,14 @@ import type {
   ReasoningItemV3,
   ThreadSnapshotV3,
 } from '../../../../api/types'
+import {
+  buildParseCacheKey,
+  PARSE_CACHE_RENDERER_VERSION,
+} from './parseCacheContract'
+import {
+  buildParseArtifactVariantKey,
+  readOrComputeParseArtifact,
+} from './parseArtifactCache'
 
 export type ReasoningPresentationMetaV3 = {
   hasBody: boolean
@@ -58,14 +66,43 @@ function toWorkingLabel(summaryText: string): string | null {
 }
 
 export function getReasoningPresentationMetaV3(item: ReasoningItemV3): ReasoningPresentationMetaV3 {
-  const visibleSummary = normalizeBlockText(item.summaryText)
-  const detail = normalizeBlockText(item.detailText)
-  return {
-    hasBody: visibleSummary.length > 0 || detail.length > 0,
-    visibleSummary,
-    visibleDetail: detail || null,
-    workingLabel: toWorkingLabel(visibleSummary),
-  }
+  const summaryKey = buildParseCacheKey({
+    threadId: item.threadId,
+    itemId: item.id,
+    updatedAt: item.updatedAt,
+    mode: 'reasoning_summary',
+    rendererVersion: PARSE_CACHE_RENDERER_VERSION,
+  })
+  const detailKey = buildParseCacheKey({
+    threadId: item.threadId,
+    itemId: item.id,
+    updatedAt: item.updatedAt,
+    mode: 'reasoning_detail',
+    rendererVersion: PARSE_CACHE_RENDERER_VERSION,
+  })
+
+  const visibleSummary = readOrComputeParseArtifact<string>(
+    buildParseArtifactVariantKey(summaryKey, 'normalized_text'),
+    () => normalizeBlockText(item.summaryText),
+  ).value
+  const detail = readOrComputeParseArtifact<string>(
+    buildParseArtifactVariantKey(detailKey, 'normalized_text'),
+    () => normalizeBlockText(item.detailText),
+  ).value
+  const workingLabel = readOrComputeParseArtifact<string | null>(
+    buildParseArtifactVariantKey(summaryKey, 'working_label'),
+    () => toWorkingLabel(visibleSummary),
+  ).value
+
+  return readOrComputeParseArtifact<ReasoningPresentationMetaV3>(
+    `${buildParseArtifactVariantKey(summaryKey, 'presentation_meta')}|detail_key=${encodeURIComponent(detailKey)}`,
+    () => ({
+      hasBody: visibleSummary.length > 0 || detail.length > 0,
+      visibleSummary,
+      visibleDetail: detail || null,
+      workingLabel,
+    }),
+  ).value
 }
 
 function isVisibleConversationItemV3(

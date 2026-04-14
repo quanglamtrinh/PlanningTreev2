@@ -1,0 +1,11 @@
+{
+  "candidate_metrics": {
+    "heavy_row_default_collapse_accuracy_pct": 97.6,
+    "sample_count": 430,
+    "false_positive_count": 7,
+    "false_negative_count": 3
+  },
+  "context": {
+    "scenario": "phase12_heavy_row_classification_suite_candidate_v1"
+  }
+}

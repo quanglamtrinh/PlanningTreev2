@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "event_id": "101",
+  "event_type": "thread.snapshot.v3",
+  "thread_id": "thread-1",
+  "turn_id": null,
+  "snapshot_version": 2,
+  "occurred_at_ms": 1760000000000,
+  "payload": {
+    "snapshot": {
+      "threadId": "thread-1"
+    }
+  }
+}

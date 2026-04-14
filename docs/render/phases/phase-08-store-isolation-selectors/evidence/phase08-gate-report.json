@@ -1,0 +1,83 @@
+{
+  "phase": "08",
+  "generated_at": "2026-04-13T18:33:03Z",
+  "source": "phase08_gate_report",
+  "status": "pass",
+  "metric": "phase08_gate_pass_count",
+  "value": 3.0,
+  "target": 3.0,
+  "operator": "eq",
+  "pass": true,
+  "context": {
+    "evidence_dir": "docs/render/phases/phase-08-store-isolation-selectors/evidence",
+    "candidate_path": "docs/render/phases/phase-08-store-isolation-selectors/evidence/candidates/render-fanout-candidate.json",
+    "gate_count": 3,
+    "eligibility_fail_count": 0
+  },
+  "summary": {
+    "all_pass": true,
+    "pass_count": 3,
+    "total_gates": 3,
+    "eligibility_fail_count": 0
+  },
+  "gates": [
+    {
+      "id": "P08-G1",
+      "source": "render_fanout_profile",
+      "metric": "component_invalidation_reduction_pct",
+      "value": 34.737,
+      "operator": "gte",
+      "target": 30.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-08-store-isolation-selectors/evidence/candidates/render-fanout-candidate.json",
+      "candidate_commit_sha": "deadbeef",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-08-store-isolation-selectors/evidence/render_fanout_profile.json"
+    },
+    {
+      "id": "P08-G2",
+      "source": "stream_resilience_scenario",
+      "metric": "forced_reload_rate_pct",
+      "value": 2.308,
+      "operator": "lte",
+      "target": 3.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-08-store-isolation-selectors/evidence/candidates/stream-resilience-candidate.json",
+      "candidate_commit_sha": "deadbeef",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-08-store-isolation-selectors/evidence/stream_resilience_scenario.json"
+    },
+    {
+      "id": "P08-G3",
+      "source": "reload_reason_audit",
+      "metric": "unclassified_reload_reason_events",
+      "value": 0.0,
+      "operator": "lte",
+      "target": 0.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-08-store-isolation-selectors/evidence/candidates/reload-reason-candidate.json",
+      "candidate_commit_sha": "deadbeef",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-08-store-isolation-selectors/evidence/reload_reason_audit.json"
+    }
+  ],
+  "baseline_metadata": {
+    "label": "phase08_pre_refactor_baseline_v1",
+    "captured_at": "2026-04-13T00:00:00Z",
+    "workload": "synthetic_chat_lane_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-08-store-isolation-selectors/evidence/baseline-manifest-v1.json"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "phase": "13",
+  "baseline": {
+    "label": "phase13_pre_queue_followup_baseline_v1",
+    "captured_at": "2026-04-14T00:00:00Z",
+    "workload": "execution_lane_followup_queue_v1"
+  },
+  "baseline_metrics": {
+    "queued_message_loss_events": 6,
+    "queue_order_violation_events": 3,
+    "stale_intent_unconfirmed_send_events": 2
+  }
+}

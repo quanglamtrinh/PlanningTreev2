@@ -1,0 +1,29 @@
+{
+  "phase": "12",
+  "generated_at": "2026-04-14T05:59:04Z",
+  "source": "preview_to_full_navigation_tests",
+  "evidence_mode": "candidate",
+  "gate_eligible": true,
+  "status": "pass",
+  "metric": "full_artifact_access_failures",
+  "value": 0.0,
+  "target": 0.0,
+  "operator": "lte",
+  "pass": true,
+  "context": {
+    "scenario": "phase12_preview_to_full_navigation_tests_v1",
+    "full_artifact_access_failures": 0.0,
+    "preview_click_count": 63,
+    "full_view_open_count": 63,
+    "modal_close_success_count": 63,
+    "candidate_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/preview-to-full-navigation-tests-candidate.json",
+    "candidate_commit_sha": "bd4ba63"
+  },
+  "baseline_metadata": {
+    "label": "phase12_pre_volume_heavy_content_baseline_v1",
+    "captured_at": "2026-04-14T00:00:00Z",
+    "workload": "synthetic_v3_long_thread_heavy_payload_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/baseline-manifest-v1.json"
+  }
+}

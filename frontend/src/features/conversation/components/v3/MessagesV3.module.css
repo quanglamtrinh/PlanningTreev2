@@ -36,8 +36,34 @@
   gap: 20px;
 }
 
+.streamEntryHost {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.virtualizedViewport {
+  position: relative;
+  width: 100%;
+}
+
+.streamVirtualItemHost {
+  min-width: 0;
+  will-change: transform;
+}
+
 .pendingStack {
   margin-top: 4px;
+}
+
+.loadMoreRow {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  max-width: 860px;
+  margin: 2px auto 4px;
+  padding: 0 20px;
+  box-sizing: border-box;
 }
 
 .planReadyZone {
@@ -63,6 +89,57 @@
   padding: 0 20px 10px;
   box-sizing: border-box;
   flex-shrink: 0;
+}
+
+.fullArtifactOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: color-mix(in srgb, black 55%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.fullArtifactModal {
+  width: min(980px, 100%);
+  max-height: min(86vh, 920px);
+  background: var(--v3-surface);
+  border: 1px solid var(--v3-border-strong);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px color-mix(in srgb, black 28%, transparent);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fullArtifactHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--v3-border-soft);
+}
+
+.fullArtifactTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--v3-text-primary);
+}
+
+.fullArtifactPre {
+  margin: 0;
+  padding: 12px 14px 16px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--v3-mono);
+  font-size: 12px;
+  line-height: 1.52;
+  color: var(--v3-text-primary);
+  background: var(--v3-surface-muted);
 }
 
 .empty {

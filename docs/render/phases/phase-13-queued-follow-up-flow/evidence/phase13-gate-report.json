@@ -1,0 +1,83 @@
+{
+  "phase": "13",
+  "generated_at": "2026-04-14T07:25:21Z",
+  "source": "phase13_gate_report",
+  "status": "pass",
+  "metric": "phase13_gate_pass_count",
+  "value": 3.0,
+  "target": 3.0,
+  "operator": "eq",
+  "pass": true,
+  "context": {
+    "evidence_dir": "docs/render/phases/phase-13-queued-follow-up-flow/evidence",
+    "candidate_path": "docs/render/phases/phase-13-queued-follow-up-flow/evidence/candidates",
+    "gate_count": 3,
+    "eligibility_fail_count": 0
+  },
+  "summary": {
+    "all_pass": true,
+    "pass_count": 3,
+    "total_gates": 3,
+    "eligibility_fail_count": 0
+  },
+  "gates": [
+    {
+      "id": "P13-G1",
+      "source": "queue_state_machine_suite",
+      "metric": "queued_message_loss_events",
+      "value": 0.0,
+      "operator": "lte",
+      "target": 0.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-13-queued-follow-up-flow/evidence/candidates/queue-state-machine-suite-candidate.json",
+      "candidate_commit_sha": "ef1fe6e",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-13-queued-follow-up-flow/evidence/queue_state_machine_suite.json"
+    },
+    {
+      "id": "P13-G2",
+      "source": "queue_reorder_integration",
+      "metric": "queue_order_violation_events",
+      "value": 0.0,
+      "operator": "lte",
+      "target": 0.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-13-queued-follow-up-flow/evidence/candidates/queue-reorder-integration-candidate.json",
+      "candidate_commit_sha": "ef1fe6e",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-13-queued-follow-up-flow/evidence/queue_reorder_integration.json"
+    },
+    {
+      "id": "P13-G3",
+      "source": "queue_risk_policy_tests",
+      "metric": "stale_intent_unconfirmed_send_events",
+      "value": 0.0,
+      "operator": "lte",
+      "target": 0.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-13-queued-follow-up-flow/evidence/candidates/queue-risk-policy-tests-candidate.json",
+      "candidate_commit_sha": "ef1fe6e",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-13-queued-follow-up-flow/evidence/queue_risk_policy_tests.json"
+    }
+  ],
+  "baseline_metadata": {
+    "label": "phase13_pre_queue_followup_baseline_v1",
+    "captured_at": "2026-04-14T00:00:00Z",
+    "workload": "execution_lane_followup_queue_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-13-queued-follow-up-flow/evidence/baseline-manifest-v1.json"
+  }
+}

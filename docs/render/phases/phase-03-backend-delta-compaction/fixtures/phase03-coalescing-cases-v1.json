@@ -1,0 +1,154 @@
+{
+  "version": "1.0.0",
+  "status": "frozen-fixtures",
+  "cases": [
+    {
+      "id": "merge-message-delta-same-item",
+      "description": "Two consecutive message deltas on same item merge into one concatenated delta.",
+      "input_raw_methods": [
+        {
+          "method": "item/agentMessage/delta",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "msg-1",
+          "params": {
+            "delta": "Hel"
+          }
+        },
+        {
+          "method": "item/agentMessage/delta",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "msg-1",
+          "params": {
+            "delta": "lo"
+          }
+        }
+      ],
+      "expected_coalesced_methods": [
+        {
+          "method": "item/agentMessage/delta",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "msg-1",
+          "params": {
+            "delta": "Hello"
+          }
+        }
+      ]
+    },
+    {
+      "id": "do-not-merge-cross-method",
+      "description": "Different methods on same item are not merged.",
+      "input_raw_methods": [
+        {
+          "method": "item/agentMessage/delta",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "msg-1",
+          "params": {
+            "delta": "a"
+          }
+        },
+        {
+          "method": "item/plan/delta",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "msg-1",
+          "params": {
+            "delta": "b"
+          }
+        }
+      ],
+      "expected_coalesced_methods": [
+        {
+          "method": "item/agentMessage/delta",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "msg-1",
+          "params": {
+            "delta": "a"
+          }
+        },
+        {
+          "method": "item/plan/delta",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "msg-1",
+          "params": {
+            "delta": "b"
+          }
+        }
+      ]
+    },
+    {
+      "id": "flush-on-item-completed-boundary",
+      "description": "Boundary event forces flush of pending deltas before completion frame.",
+      "input_raw_methods": [
+        {
+          "method": "item/commandExecution/outputDelta",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "tool-1",
+          "params": {
+            "delta": "line1"
+          }
+        },
+        {
+          "method": "item/commandExecution/outputDelta",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "tool-1",
+          "params": {
+            "delta": "line2"
+          }
+        },
+        {
+          "method": "item/completed",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "tool-1",
+          "params": {}
+        }
+      ],
+      "expected_coalesced_methods": [
+        {
+          "method": "item/commandExecution/outputDelta",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "tool-1",
+          "params": {
+            "delta": "line1line2"
+          }
+        },
+        {
+          "method": "item/completed",
+          "thread_id": "thread-1",
+          "turn_id": "turn-1",
+          "item_id": "tool-1",
+          "params": {}
+        }
+      ]
+    },
+    {
+      "id": "lifecycle-noop-suppression",
+      "description": "Duplicate equivalent lifecycle payload should be suppressed once.",
+      "input_lifecycle_payloads": [
+        {
+          "state": "turn_started",
+          "processingState": "running",
+          "activeTurnId": "turn-1",
+          "detail": null
+        },
+        {
+          "state": "turn_started",
+          "processingState": "running",
+          "activeTurnId": "turn-1",
+          "detail": null
+        }
+      ],
+      "expected_published_count": 1
+    }
+  ]
+}
+

@@ -1,0 +1,147 @@
+{
+  "version": "1.0.0",
+  "status": "frozen",
+  "policy_profile": "balanced",
+  "default_config": {
+    "window_ms": 50,
+    "window_ms_min": 40,
+    "window_ms_max": 60,
+    "max_batch_size": 64
+  },
+  "flush_boundaries": [
+    "item/completed",
+    "turn/completed",
+    "item/tool/requestUserInput",
+    "serverRequest/resolved",
+    "thread/status/changed"
+  ],
+  "merge_safe_methods": [
+    {
+      "method": "item/agentMessage/delta",
+      "merge_key": [
+        "thread_id",
+        "turn_id",
+        "item_id",
+        "method"
+      ],
+      "merge_ops": [
+        {
+          "field": "params.delta",
+          "op": "concat_ordered"
+        }
+      ]
+    },
+    {
+      "method": "item/plan/delta",
+      "merge_key": [
+        "thread_id",
+        "turn_id",
+        "item_id",
+        "method"
+      ],
+      "merge_ops": [
+        {
+          "field": "params.delta",
+          "op": "concat_ordered"
+        }
+      ]
+    },
+    {
+      "method": "item/reasoning/summaryDelta",
+      "merge_key": [
+        "thread_id",
+        "turn_id",
+        "item_id",
+        "method"
+      ],
+      "merge_ops": [
+        {
+          "field": "params.delta",
+          "op": "concat_ordered"
+        }
+      ]
+    },
+    {
+      "method": "item/reasoning/detailDelta",
+      "merge_key": [
+        "thread_id",
+        "turn_id",
+        "item_id",
+        "method"
+      ],
+      "merge_ops": [
+        {
+          "field": "params.delta",
+          "op": "concat_ordered"
+        }
+      ]
+    },
+    {
+      "method": "item/commandExecution/outputDelta",
+      "merge_key": [
+        "thread_id",
+        "turn_id",
+        "item_id",
+        "method"
+      ],
+      "merge_ops": [
+        {
+          "field": "params.delta",
+          "op": "concat_ordered"
+        }
+      ]
+    },
+    {
+      "method": "item/fileChange/outputDelta",
+      "merge_key": [
+        "thread_id",
+        "turn_id",
+        "item_id",
+        "method"
+      ],
+      "merge_ops": [
+        {
+          "field": "params.delta",
+          "op": "concat_ordered"
+        },
+        {
+          "field": "params.files",
+          "op": "append_stable"
+        }
+      ]
+    }
+  ],
+  "non_merge_methods": [
+    "item/started",
+    "item/completed",
+    "item/commandExecution/terminalInteraction",
+    "item/tool/requestUserInput",
+    "serverRequest/resolved",
+    "thread/status/changed",
+    "turn/completed"
+  ],
+  "no_op_suppression": {
+    "lifecycle_event_type": "thread.lifecycle.v3",
+    "compare_tuple": [
+      "state",
+      "processingState",
+      "activeTurnId",
+      "detail"
+    ],
+    "never_suppress_types": [
+      "thread.snapshot.v3",
+      "conversation.item.upsert.v3",
+      "conversation.item.patch.v3",
+      "conversation.ui.plan_ready.v3",
+      "conversation.ui.user_input.v3",
+      "thread.error.v3"
+    ]
+  },
+  "invariants": [
+    "publish order remains monotonic by event_id per thread",
+    "no cross-turn merge",
+    "no cross-item merge",
+    "replay semantics from C2 remain unchanged"
+  ]
+}
+

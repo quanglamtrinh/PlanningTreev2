@@ -1,0 +1,29 @@
+{
+  "phase": "13",
+  "generated_at": "2026-04-14T07:12:40Z",
+  "source": "queue_risk_policy_tests",
+  "evidence_mode": "candidate",
+  "gate_eligible": true,
+  "status": "pass",
+  "metric": "stale_intent_unconfirmed_send_events",
+  "value": 0.0,
+  "target": 0.0,
+  "operator": "lte",
+  "pass": true,
+  "context": {
+    "scenario": "phase13_queue_risk_policy_tests_v1",
+    "stale_intent_unconfirmed_send_events": 0.0,
+    "stale_age_confirmation_cases": 15,
+    "context_change_confirmation_cases": 12,
+    "requires_confirmation_auto_send_events": 0.0,
+    "candidate_path": "docs/render/phases/phase-13-queued-follow-up-flow/evidence/candidates/queue-risk-policy-tests-candidate.json",
+    "candidate_commit_sha": "ef1fe6e"
+  },
+  "baseline_metadata": {
+    "label": "phase13_pre_queue_followup_baseline_v1",
+    "captured_at": "2026-04-14T00:00:00Z",
+    "workload": "execution_lane_followup_queue_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-13-queued-follow-up-flow/evidence/baseline-manifest-v1.json"
+  }
+}

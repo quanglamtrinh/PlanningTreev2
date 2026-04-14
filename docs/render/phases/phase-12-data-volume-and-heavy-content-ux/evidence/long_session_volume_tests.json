@@ -1,0 +1,33 @@
+{
+  "phase": "12",
+  "generated_at": "2026-04-14T05:59:04Z",
+  "source": "long_session_volume_tests",
+  "evidence_mode": "candidate",
+  "gate_eligible": true,
+  "status": "pass",
+  "metric": "live_items_exceeds_scrollback_cap_events",
+  "value": 0.0,
+  "target": 0.0,
+  "operator": "lte",
+  "pass": true,
+  "context": {
+    "scenario": "phase12_long_session_volume_tests_v2",
+    "live_items_exceeds_scrollback_cap_events": 0.0,
+    "live_items_peak": 994,
+    "trim_events": 19,
+    "long_session_total_items": 5612,
+    "resolved_profile": "standard",
+    "effective_hard_cap_min": 1200,
+    "effective_hard_cap_max": 1200,
+    "overflow_events_under_adaptive_cap": 0.0,
+    "candidate_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/long-session-volume-tests-candidate.json",
+    "candidate_commit_sha": "bd4ba63"
+  },
+  "baseline_metadata": {
+    "label": "phase12_pre_volume_heavy_content_baseline_v1",
+    "captured_at": "2026-04-14T00:00:00Z",
+    "workload": "synthetic_v3_long_thread_heavy_payload_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/baseline-manifest-v1.json"
+  }
+}

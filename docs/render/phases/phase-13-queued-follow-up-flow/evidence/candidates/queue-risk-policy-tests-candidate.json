@@ -1,0 +1,11 @@
+{
+  "candidate_metrics": {
+    "stale_intent_unconfirmed_send_events": 0,
+    "stale_age_confirmation_cases": 15,
+    "context_change_confirmation_cases": 12,
+    "requires_confirmation_auto_send_events": 0
+  },
+  "context": {
+    "scenario": "phase13_queue_risk_policy_tests_candidate_v1"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "phase": "08",
+  "baseline": {
+    "label": "phase08_pre_refactor_baseline_v1",
+    "captured_at": "2026-04-13T00:00:00Z",
+    "workload": "synthetic_chat_lane_v1"
+  },
+  "baseline_metrics": {
+    "component_invalidation_count": 9500,
+    "forced_reload_rate_pct": 5.2,
+    "unclassified_reload_reason_events": 2
+  }
+}

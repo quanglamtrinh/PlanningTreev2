@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "phase": "10",
+  "baseline": {
+    "label": "phase10_pre_progressive_virtualization_baseline_v1",
+    "captured_at": "2026-04-13T00:00:00Z",
+    "workload": "synthetic_v3_long_thread_mixed_rows_v1"
+  },
+  "baseline_metrics": {
+    "long_thread_open_tti_p95_ms": 3410.0,
+    "scroll_jank_frames_pct": 8.4,
+    "anchor_break_incidents": 7
+  }
+}

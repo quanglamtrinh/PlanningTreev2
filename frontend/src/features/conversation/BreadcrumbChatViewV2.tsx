@@ -17,7 +17,19 @@ import {
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { MessagesV3 } from './components/v3/MessagesV3'
 import { MessagesV3ErrorBoundary } from './components/v3/MessagesV3ErrorBoundary'
-import { useThreadByIdStoreV3 } from './state/threadByIdStoreV3'
+import {
+  type ExecutionFollowupQueuePauseReason,
+  type ExecutionFollowupQueueStatus,
+  selectComposerState,
+  selectExecutionFollowupQueueActions,
+  selectExecutionFollowupQueueState,
+  selectFeedRenderState,
+  selectHistoryUiState,
+  selectThreadActions,
+  selectTransportBannerState,
+  selectWorkflowActionState,
+  useThreadByIdStoreV3,
+} from './state/threadByIdStoreV3'
 import { useWorkflowEventBridgeV3 } from './state/workflowEventBridgeV3'
 import { useWorkflowStateStoreV3 } from './state/workflowStateStoreV3'
 
@@ -38,6 +50,35 @@ function renderActionLabel(action: string | null, idleLabel: string, busyLabel: 
   return action ? busyLabel : idleLabel
 }
 
+function renderQueueStatusLabel(status: ExecutionFollowupQueueStatus): string {
+  if (status === 'queued') {
+    return 'Queued'
+  }
+  if (status === 'requires_confirmation') {
+    return 'Needs confirmation'
+  }
+  if (status === 'sending') {
+    return 'Sending'
+  }
+  return 'Failed'
+}
+
+function renderQueuePauseReasonLabel(reason: ExecutionFollowupQueuePauseReason): string {
+  if (reason === 'none') {
+    return 'Auto-send ready'
+  }
+  if (reason === 'runtime_waiting_input') {
+    return 'Paused: waiting for required input'
+  }
+  if (reason === 'plan_ready_gate') {
+    return 'Paused: plan-ready gate'
+  }
+  if (reason === 'operator_pause') {
+    return 'Paused by operator'
+  }
+  return 'Paused: workflow blocked'
+}
+
 export function BreadcrumbChatViewV2() {
   const navigate = useNavigate()
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
@@ -45,35 +86,31 @@ export function BreadcrumbChatViewV2() {
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
 
+  const feedRenderStateV3 = useThreadByIdStoreV3(useShallow(selectFeedRenderState))
+  const historyUiStateV3 = useThreadByIdStoreV3(useShallow(selectHistoryUiState))
+  const composerStateV3 = useThreadByIdStoreV3(useShallow(selectComposerState))
+  const transportBannerStateV3 = useThreadByIdStoreV3(useShallow(selectTransportBannerState))
+  const workflowActionStateV3 = useThreadByIdStoreV3(useShallow(selectWorkflowActionState))
   const {
-    snapshot: conversationSnapshotV3,
-    isLoading: isLoadingV3,
-    isSending: isSendingV3,
-    lastCompletedAt: lastCompletedAtV3,
-    lastDurationMs: lastDurationMsV3,
-    error: errorV3,
     loadThread: loadThreadV3,
+    loadMoreHistory: loadMoreHistoryV3,
     sendTurn: sendTurnV3,
     resolveUserInput: resolveUserInputV3,
     runPlanAction: runPlanActionV3,
     recordRenderError: recordV3RenderError,
     disconnectThread: disconnectThreadV3,
-  } = useThreadByIdStoreV3(
-    useShallow((state) => ({
-      snapshot: state.snapshot,
-      isLoading: state.isLoading,
-      isSending: state.isSending,
-      lastCompletedAt: state.lastCompletedAt,
-      lastDurationMs: state.lastDurationMs,
-      error: state.error,
-      loadThread: state.loadThread,
-      sendTurn: state.sendTurn,
-      resolveUserInput: state.resolveUserInput,
-      runPlanAction: state.runPlanAction,
-      recordRenderError: state.recordRenderError,
-      disconnectThread: state.disconnectThread,
-    })),
-  )
+  } = useThreadByIdStoreV3(useShallow(selectThreadActions))
+  const executionQueueState = useThreadByIdStoreV3(useShallow(selectExecutionFollowupQueueState))
+  const {
+    enqueueFollowup,
+    removeQueued,
+    reorderQueued,
+    sendQueuedNow,
+    confirmQueued,
+    retryQueued,
+    setOperatorPause,
+    syncExecutionQueueContext,
+  } = useThreadByIdStoreV3(useShallow(selectExecutionFollowupQueueActions))
 
   const {
     activeProjectId,
@@ -140,13 +177,16 @@ export function BreadcrumbChatViewV2() {
     isReviewNode,
   })
   const threadTab: ThreadTab = routeTarget.threadTab
-  const conversationSnapshot = conversationSnapshotV3
-  const isLoading = isLoadingV3
-  const isSending = isSendingV3
-  const lastCompletedAt = lastCompletedAtV3
-  const lastDurationMs = lastDurationMsV3
-  const error = errorV3
+  const isLoading = feedRenderStateV3.isLoading
+  const isSending = feedRenderStateV3.isSending
+  const hasOlderHistory = historyUiStateV3.hasOlderHistory
+  const isLoadingHistory = historyUiStateV3.isLoadingHistory
+  const historyError = historyUiStateV3.historyError
+  const lastCompletedAt = workflowActionStateV3.lastCompletedAt
+  const lastDurationMs = workflowActionStateV3.lastDurationMs
+  const error = transportBannerStateV3.error ?? feedRenderStateV3.error
   const loadThread = loadThreadV3
+  const loadMoreHistory = loadMoreHistoryV3
   const sendTurn = sendTurnV3
   const resolveUserInput = resolveUserInputV3
   const disconnectThread = disconnectThreadV3
@@ -326,26 +366,32 @@ export function BreadcrumbChatViewV2() {
   }, [activeProjectId, detailCardState, detailNode, nodeId, projectError, projectId, snapshot])
 
   const showAuditShell = threadTab === 'audit' && !workflowState?.reviewThreadId
-  const isActiveTurn = Boolean(conversationSnapshot?.activeTurnId)
+  const executionQueueEntries = executionQueueState.executionFollowupQueue
+  const executionQueueHasSending = executionQueueEntries.some((entry) => entry.status === 'sending')
+  const executionQueueControlsDisabled = executionQueueHasSending || executionQueueState.isSending
+  const executionQueuePauseLabel = renderQueuePauseReasonLabel(executionQueueState.executionQueuePauseReason)
+  const isActiveTurn = composerStateV3.isActiveTurn
   const composerDisabled = useMemo(() => {
-    if (!conversationSnapshot) {
+    if (!composerStateV3.snapshot) {
       return true
     }
     if (threadTab === 'ask') {
-      return isActiveTurn || isSending || isLoading
+      return isActiveTurn || composerStateV3.isSending || composerStateV3.isLoading
     }
     if (threadTab === 'execution') {
-      return (
-        workflowState?.canSendExecutionMessage !== true ||
-        isActiveTurn ||
-        isSending ||
-        isLoading
-      )
+      return composerStateV3.isLoading || executionQueueHasSending
     }
     return true
-  }, [conversationSnapshot, isActiveTurn, isLoading, isSending, threadTab, workflowState])
+  }, [
+    composerStateV3.isLoading,
+    composerStateV3.isSending,
+    composerStateV3.snapshot,
+    executionQueueHasSending,
+    isActiveTurn,
+    threadTab,
+  ])
 
-  const combinedError = error ?? workflowError ?? null
+  const combinedError = error ?? workflowError ?? historyError ?? null
   const currentExecutionDecision = workflowState?.currentExecutionDecision ?? null
   const currentAuditDecision = workflowState?.currentAuditDecision ?? null
 
@@ -354,11 +400,44 @@ export function BreadcrumbChatViewV2() {
       if (!projectId || !nodeId) {
         return
       }
+      if (threadTab === 'execution') {
+        await enqueueFollowup(content)
+        return
+      }
       await sendTurn(content)
       void loadWorkflowState(projectId, nodeId).catch(() => undefined)
     },
-    [loadWorkflowState, nodeId, projectId, sendTurn],
+    [enqueueFollowup, loadWorkflowState, nodeId, projectId, sendTurn, threadTab],
   )
+
+  useEffect(() => {
+    if (threadTab !== 'execution') {
+      void syncExecutionQueueContext({
+        workflowPhase: null,
+        canSendExecutionMessage: false,
+        latestExecutionRunId: null,
+      })
+      return
+    }
+    void syncExecutionQueueContext({
+      workflowPhase: workflowState?.workflowPhase ?? null,
+      canSendExecutionMessage: workflowState?.canSendExecutionMessage === true,
+      latestExecutionRunId: workflowState?.latestExecutionRunId ?? null,
+    })
+  }, [
+    threadTab,
+    workflowState?.canSendExecutionMessage,
+    workflowState?.latestExecutionRunId,
+    workflowState?.workflowPhase,
+    composerStateV3.snapshot?.activeTurnId,
+    composerStateV3.snapshot?.processingState,
+    composerStateV3.snapshot?.uiSignals.activeUserInputRequests,
+    composerStateV3.snapshot?.uiSignals.planReady.ready,
+    composerStateV3.snapshot?.uiSignals.planReady.failed,
+    composerStateV3.snapshot?.uiSignals.planReady.planItemId,
+    composerStateV3.snapshot?.uiSignals.planReady.revision,
+    syncExecutionQueueContext,
+  ])
 
   const handleV3RenderError = useCallback(
     (error: Error) => {
@@ -584,9 +663,12 @@ export function BreadcrumbChatViewV2() {
                   onRenderError={handleV3RenderError}
                 >
                   <MessagesV3
-                    snapshot={conversationSnapshotV3}
+                    snapshot={feedRenderStateV3.snapshot}
                     isLoading={isLoading || isWorkflowLoading}
                     isSending={isSending}
+                    hasOlderHistory={hasOlderHistory}
+                    isLoadingHistory={isLoadingHistory}
+                    onLoadMoreHistory={() => void loadMoreHistory()}
                     onResolveUserInput={resolveUserInput}
                     onPlanAction={runPlanActionV3}
                     lastCompletedAt={lastCompletedAt}
@@ -615,6 +697,121 @@ export function BreadcrumbChatViewV2() {
               }`}
               data-testid="breadcrumb-thread-composer"
             >
+              {threadTab === 'execution' ? (
+                <section
+                  className={styles.executionQueuePanel}
+                  aria-label="Queued execution follow-ups"
+                  data-testid="execution-followup-queue-panel"
+                >
+                  <div className={styles.executionQueueHeader}>
+                    <div className={styles.executionQueueTitle}>
+                      Queued Follow-ups ({executionQueueEntries.length})
+                    </div>
+                    <div className={styles.executionQueueHeaderControls}>
+                      <span className={styles.executionQueuePauseReason}>{executionQueuePauseLabel}</span>
+                      <button
+                        type="button"
+                        className={styles.executionQueuePauseToggle}
+                        onClick={() => setOperatorPause(!executionQueueState.executionQueueOperatorPaused)}
+                        data-testid="execution-followup-operator-pause-toggle"
+                      >
+                        {executionQueueState.executionQueueOperatorPaused ? 'Resume auto-send' : 'Pause auto-send'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {executionQueueEntries.length === 0 ? (
+                    <p className={styles.executionQueueEmpty}>No queued follow-ups.</p>
+                  ) : (
+                    <ol className={styles.executionQueueList}>
+                      {executionQueueEntries.map((entry, index) => (
+                        <li key={entry.entryId} className={styles.executionQueueItem}>
+                          <div className={styles.executionQueueItemMetaRow}>
+                            <span
+                              className={`${styles.executionQueueStatusBadge} ${
+                                entry.status === 'failed'
+                                  ? styles.executionQueueStatusFailed
+                                  : entry.status === 'requires_confirmation'
+                                    ? styles.executionQueueStatusConfirmation
+                                    : entry.status === 'sending'
+                                      ? styles.executionQueueStatusSending
+                                      : styles.executionQueueStatusQueued
+                              }`}
+                            >
+                              {renderQueueStatusLabel(entry.status)}
+                            </span>
+                            <span className={styles.executionQueueMetaText}>Attempt {entry.attemptCount + 1}</span>
+                          </div>
+                          <p className={styles.executionQueueText}>{entry.text}</p>
+                          {entry.lastError ? (
+                            <div className={styles.executionQueueError}>Last error: {entry.lastError}</div>
+                          ) : null}
+                          <div className={styles.executionQueueActions}>
+                            <button
+                              type="button"
+                              className={styles.executionQueueAction}
+                              disabled={executionQueueControlsDisabled || index === 0}
+                              onClick={() => reorderQueued(index, index - 1)}
+                            >
+                              Move up
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.executionQueueAction}
+                              disabled={
+                                executionQueueControlsDisabled || index === executionQueueEntries.length - 1
+                              }
+                              onClick={() => reorderQueued(index, index + 1)}
+                            >
+                              Move down
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.executionQueueAction}
+                              disabled={
+                                executionQueueControlsDisabled ||
+                                entry.status === 'sending' ||
+                                entry.status === 'requires_confirmation'
+                              }
+                              onClick={() => void sendQueuedNow(entry.entryId)}
+                            >
+                              Send now
+                            </button>
+                            {entry.status === 'requires_confirmation' ? (
+                              <button
+                                type="button"
+                                className={`${styles.executionQueueAction} ${styles.executionQueueActionPrimary}`}
+                                disabled={executionQueueControlsDisabled}
+                                onClick={() => void confirmQueued(entry.entryId)}
+                              >
+                                Confirm
+                              </button>
+                            ) : null}
+                            {entry.status === 'failed' ? (
+                              <button
+                                type="button"
+                                className={`${styles.executionQueueAction} ${styles.executionQueueActionPrimary}`}
+                                disabled={executionQueueControlsDisabled}
+                                onClick={() => void retryQueued(entry.entryId)}
+                              >
+                                Retry
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className={styles.executionQueueAction}
+                              disabled={executionQueueControlsDisabled || entry.status === 'sending'}
+                              onClick={() => removeQueued(entry.entryId)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </section>
+              ) : null}
               <ComposerBar
                 onSend={(content) => {
                   void handleSend(content)

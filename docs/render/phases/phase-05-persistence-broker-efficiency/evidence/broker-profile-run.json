@@ -1,0 +1,26 @@
+{
+  "run_meta": {
+    "phase": "05",
+    "scenario": "broker_profile_run",
+    "timestamp_utc": "2026-04-13T05:04:47Z",
+    "git_sha": "9badff90903d578332010be6e39935d297ec5ecb",
+    "inputs": {
+      "subscribers": 20,
+      "iterations": 1200
+    }
+  },
+  "baseline_metrics": {
+    "elapsed_ms": 1215.024999983143,
+    "peak_alloc_bytes": 2040.0,
+    "allocation_copy_ops": 24000.0
+  },
+  "candidate_metrics": {
+    "elapsed_ms": 70.14550000894815,
+    "peak_alloc_bytes": 1768.0,
+    "allocation_copy_ops": 1200.0
+  },
+  "delta_pct": {
+    "broker_publish_allocation_reduction_pct": 95.0,
+    "broker_publish_elapsed_reduction_pct": 94.22682660768945
+  }
+}

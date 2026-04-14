@@ -1,0 +1,8 @@
+{
+  "candidate_metrics": {
+    "sample_count": 28,
+    "total_frames": 5700,
+    "jank_frames": 103,
+    "scroll_jank_frames_pct": 1.807
+  }
+}

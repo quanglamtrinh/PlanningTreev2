@@ -1,11 +1,18 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../src/features/breadcrumb/ComposerBar', () => ({
-  ComposerBar: ({ disabled }: { disabled: boolean }) => (
+  ComposerBar: ({ disabled, onSend }: { disabled: boolean; onSend: (content: string) => void }) => (
     <div data-testid="composer" data-disabled={String(disabled)}>
-      Composer
+      <button
+        type="button"
+        data-testid="composer-send-mock"
+        disabled={disabled}
+        onClick={() => onSend('queued from composer mock')}
+      >
+        Send mock
+      </button>
     </div>
   ),
 }))
@@ -366,6 +373,160 @@ describe('BreadcrumbChatViewV2', () => {
     expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'ask-thread-1', 'ask_planning')
     expect(screen.getByTestId('frame-context-ask')).toBeInTheDocument()
     expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+  })
+
+  it('keeps execution composer enabled while execution is running so follow-ups can be queued', async () => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        workflowPhase: 'execution_running',
+        canSendExecutionMessage: false,
+      }),
+      threadSnapshot: makeConversationSnapshot({
+        activeTurnId: 'turn-running',
+        processingState: 'running',
+      }),
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+    })
+  })
+
+  it('routes execution composer sends to enqueueFollowup instead of direct sendTurn', async () => {
+    const enqueueFollowup = vi.fn().mockResolvedValue(undefined)
+    const sendTurn = vi.fn().mockResolvedValue(undefined)
+
+    seedStores({
+      workflowState: makeWorkflowState({
+        workflowPhase: 'execution_decision_pending',
+        canSendExecutionMessage: true,
+      }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      enqueueFollowup,
+      sendTurn,
+      activeThreadRole: 'execution',
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByTestId('composer-send-mock'))
+
+    await waitFor(() => {
+      expect(enqueueFollowup).toHaveBeenCalledWith('queued from composer mock')
+    })
+    expect(sendTurn).not.toHaveBeenCalled()
+  })
+
+  it('renders execution queue controls and dispatches queue actions', async () => {
+    const removeQueued = vi.fn()
+    const reorderQueued = vi.fn()
+    const sendQueuedNow = vi.fn().mockResolvedValue(undefined)
+    const confirmQueued = vi.fn().mockResolvedValue(undefined)
+    const setOperatorPause = vi.fn()
+
+    seedStores({
+      workflowState: makeWorkflowState({
+        workflowPhase: 'execution_decision_pending',
+        canSendExecutionMessage: true,
+        latestExecutionRunId: 'run-1',
+      }),
+      threadSnapshot: makeConversationSnapshot({
+        uiSignals: {
+          planReady: {
+            planItemId: 'plan-1',
+            revision: 7,
+            ready: true,
+            failed: false,
+          },
+          activeUserInputRequests: [],
+        },
+      }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      activeThreadRole: 'execution',
+      executionQueueOperatorPaused: false,
+      executionFollowupQueue: [
+        {
+          entryId: 'entry-1',
+          text: 'queued first',
+          idempotencyKey: 'idem-1',
+          createdAtMs: Date.now(),
+          enqueueContext: {
+            latestExecutionRunId: 'run-1',
+            planReadyRevision: null,
+          },
+          status: 'queued',
+          attemptCount: 0,
+          lastError: null,
+        },
+        {
+          entryId: 'entry-2',
+          text: 'queued second',
+          idempotencyKey: 'idem-2',
+          createdAtMs: Date.now(),
+          enqueueContext: {
+            latestExecutionRunId: 'run-1',
+            planReadyRevision: null,
+          },
+          status: 'requires_confirmation',
+          attemptCount: 0,
+          lastError: null,
+        },
+      ],
+      removeQueued,
+      reorderQueued,
+      sendQueuedNow,
+      confirmQueued,
+      setOperatorPause,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('execution-followup-queue-panel')).toBeInTheDocument()
+    expect(screen.getByText('Paused: plan-ready gate')).toBeInTheDocument()
+
+    const queueItems = screen.getAllByRole('listitem')
+    const firstItem = queueItems[0]
+    const secondItem = queueItems[1]
+
+    fireEvent.click(within(firstItem).getByRole('button', { name: 'Move down' }))
+    fireEvent.click(within(firstItem).getByRole('button', { name: 'Send now' }))
+    fireEvent.click(within(firstItem).getByRole('button', { name: 'Remove' }))
+    fireEvent.click(within(secondItem).getByRole('button', { name: 'Confirm' }))
+    fireEvent.click(screen.getByTestId('execution-followup-operator-pause-toggle'))
+
+    await waitFor(() => {
+      expect(reorderQueued).toHaveBeenCalledWith(0, 1)
+    })
+    await waitFor(() => {
+      expect(sendQueuedNow).toHaveBeenCalledWith('entry-1')
+    })
+    expect(removeQueued).toHaveBeenCalledWith('entry-1')
+    expect(confirmQueued).toHaveBeenCalledWith('entry-2')
+    expect(setOperatorPause).toHaveBeenCalledWith(true)
   })
 
   it('keeps ask metadata shell visible when ask transcript is empty', async () => {

@@ -1,0 +1,28 @@
+{
+  "phase": "09",
+  "generated_at": "2026-04-13T22:11:23Z",
+  "source": "parse_cache_trace",
+  "evidence_mode": "candidate",
+  "gate_eligible": true,
+  "status": "pass",
+  "metric": "parse_cache_hit_rate_pct",
+  "value": 65.0,
+  "target": 60.0,
+  "operator": "gte",
+  "pass": true,
+  "context": {
+    "scenario": "phase09_parse_cache_trace_v1",
+    "parse_cache_lookups": 1200,
+    "parse_cache_hits": 780,
+    "parse_cache_misses": 420,
+    "candidate_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/candidates/parse-cache-trace-candidate.json",
+    "candidate_commit_sha": "ced04e074e9e91214ea30e4cc8d2232c602d965d"
+  },
+  "baseline_metadata": {
+    "label": "phase09_pre_row_isolation_baseline_v1",
+    "captured_at": "2026-04-13T00:00:00Z",
+    "workload": "synthetic_v3_feed_streaming_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-09-row-isolation-cache/evidence/baseline-manifest-v1.json"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "phase": "12",
+  "baseline": {
+    "label": "phase12_pre_volume_heavy_content_baseline_v1",
+    "captured_at": "2026-04-14T00:00:00Z",
+    "workload": "synthetic_v3_long_thread_heavy_payload_v1"
+  },
+  "baseline_metrics": {
+    "live_items_exceeds_scrollback_cap_events": 7,
+    "heavy_row_default_collapse_accuracy_pct": 76.4,
+    "full_artifact_access_failures": 4
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "phase": "08",
+  "generated_at": "2026-04-13T18:24:42Z",
+  "source": "render_fanout_profile",
+  "evidence_mode": "candidate",
+  "gate_eligible": true,
+  "status": "pass",
+  "metric": "component_invalidation_reduction_pct",
+  "value": 34.737,
+  "target": 30.0,
+  "operator": "gte",
+  "pass": true,
+  "context": {
+    "scenario": "phase08_selector_narrowing_chat_lane_v1",
+    "synthetic_workload_event_count": 1250,
+    "synthetic_workload_component_count": 360,
+    "baseline_component_invalidation_count": 9500.0,
+    "candidate_component_invalidation_count": 6200.0,
+    "candidate_path": "docs/render/phases/phase-08-store-isolation-selectors/evidence/candidates/render-fanout-candidate.json",
+    "candidate_commit_sha": "deadbeef"
+  },
+  "baseline_metadata": {
+    "label": "phase08_pre_refactor_baseline_v1",
+    "captured_at": "2026-04-13T00:00:00Z",
+    "workload": "synthetic_chat_lane_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-08-store-isolation-selectors/evidence/baseline-manifest-v1.json"
+  }
+}

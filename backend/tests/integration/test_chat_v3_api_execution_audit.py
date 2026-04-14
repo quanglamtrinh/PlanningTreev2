@@ -10,13 +10,14 @@ from fastapi.testclient import TestClient
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
 from backend.routes import workflow_v3 as workflow_v3_route_module
-from backend.streaming.sse_broker import GlobalEventBroker
+from backend.streaming.sse_broker import ChatEventBroker, GlobalEventBroker
 
 
 class _StreamingTestRequest:
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: Any, *, headers: dict[str, str] | None = None) -> None:
         self.app = app
         self._is_disconnected = False
+        self.headers = headers or {}
 
     async def is_disconnected(self) -> bool:
         return self._is_disconnected
@@ -40,6 +41,11 @@ async def _read_sse_payload(response: Any, *, timeout_sec: float = 1.0) -> dict[
         if chunk.lstrip().startswith(":"):
             continue
         return _parse_sse_chunk(chunk)
+
+
+async def _assert_stream_closed(response: Any, *, timeout_sec: float = 1.0) -> None:
+    with pytest.raises(StopAsyncIteration):
+        await _read_stream_chunk(response, timeout_sec=timeout_sec)
 
 
 async def _close_stream(response: Any, request: _StreamingTestRequest) -> None:
@@ -104,6 +110,41 @@ def _seed_execution_thread(client: TestClient, project_id: str, node_id: str) ->
     storage.workflow_state_store.write_state(project_id, node_id, workflow_state)
 
     return thread_id
+
+
+def _set_execution_items_with_sequences(
+    client: TestClient,
+    project_id: str,
+    node_id: str,
+    *,
+    thread_id: str,
+    sequences: list[int],
+) -> None:
+    storage = client.app.state.storage
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "execution")
+    snapshot["threadId"] = thread_id
+    snapshot["processingState"] = "idle"
+    snapshot["snapshotVersion"] = max(sequences, default=0) + 1
+    snapshot["items"] = [
+        {
+            "id": f"msg-{sequence}",
+            "kind": "message",
+            "threadId": thread_id,
+            "turnId": f"turn-{sequence}",
+            "sequence": sequence,
+            "createdAt": f"2026-04-01T10:{sequence:02d}:00Z",
+            "updatedAt": f"2026-04-01T10:{sequence:02d}:00Z",
+            "status": "completed",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "role": "assistant",
+            "text": f"message-{sequence}",
+            "format": "markdown",
+        }
+        for sequence in sequences
+    ]
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, "execution", snapshot)
 
 
 def _seed_execution_user_input_pending(
@@ -375,6 +416,101 @@ def test_v3_execution_snapshot_by_id_returns_wrapped_snapshot(client: TestClient
         "ready": False,
         "failed": False,
     }
+
+
+def test_v3_execution_snapshot_by_id_live_limit_returns_tail_and_history_meta(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    _set_execution_items_with_sequences(
+        client,
+        project_id,
+        node_id,
+        thread_id=thread_id,
+        sequences=[1, 2, 3, 4, 5, 6, 7],
+    )
+
+    baseline_response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id},
+    )
+    assert baseline_response.status_code == 200
+    baseline_snapshot = baseline_response.json()["data"]["snapshot"]
+    assert [item["sequence"] for item in baseline_snapshot["items"]] == [1, 2, 3, 4, 5, 6, 7]
+    assert "historyMeta" not in baseline_snapshot
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id, "live_limit": 3},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    snapshot = payload["data"]["snapshot"]
+    assert [item["sequence"] for item in snapshot["items"]] == [5, 6, 7]
+    assert snapshot["historyMeta"] == {
+        "hasOlder": True,
+        "oldestVisibleSequence": 5,
+        "totalItemCount": 7,
+    }
+
+
+def test_v3_execution_history_by_id_paginates_by_before_sequence_cursor(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    _set_execution_items_with_sequences(
+        client,
+        project_id,
+        node_id,
+        thread_id=thread_id,
+        sequences=[1, 2, 3, 4, 5, 6, 7, 8],
+    )
+
+    first_page_response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/history",
+        params={"node_id": node_id, "limit": 3},
+    )
+    assert first_page_response.status_code == 200
+    first_page = first_page_response.json()["data"]
+    assert [item["sequence"] for item in first_page["items"]] == [6, 7, 8]
+    assert first_page["has_more"] is True
+    assert first_page["next_before_sequence"] == 6
+    assert first_page["total_item_count"] == 8
+
+    second_page_response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/history",
+        params={
+            "node_id": node_id,
+            "limit": 3,
+            "before_sequence": first_page["next_before_sequence"],
+        },
+    )
+    assert second_page_response.status_code == 200
+    second_page = second_page_response.json()["data"]
+    assert [item["sequence"] for item in second_page["items"]] == [3, 4, 5]
+    assert second_page["has_more"] is True
+    assert second_page["next_before_sequence"] == 3
+    assert second_page["total_item_count"] == 8
+
+    final_page_response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/history",
+        params={
+            "node_id": node_id,
+            "limit": 3,
+            "before_sequence": second_page["next_before_sequence"],
+        },
+    )
+    assert final_page_response.status_code == 200
+    final_page = final_page_response.json()["data"]
+    assert [item["sequence"] for item in final_page["items"]] == [1, 2]
+    assert final_page["has_more"] is False
+    assert final_page["next_before_sequence"] is None
+    assert final_page["total_item_count"] == 8
 
 
 def test_v3_ask_snapshot_by_id_returns_wrapped_snapshot(client: TestClient, workspace_root) -> None:
@@ -680,6 +816,34 @@ async def test_v3_workflow_events_endpoint_uses_canonical_broker_and_filters_pro
         assert payload["projectId"] == project_id
         assert payload["nodeId"] == node_id
         assert payload["type"] == "node.workflow.updated"
+    finally:
+        await _close_stream(response, request)
+
+
+@pytest.mark.anyio
+async def test_v3_workflow_events_endpoint_closes_lagged_subscriber_without_silent_continuation(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    lagged_broker = GlobalEventBroker(subscriber_queue_max=1)
+    client.app.state.workflow_event_broker = lagged_broker
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.workflow_events_v3(request, project_id)
+    try:
+        for idx in range(4):
+            lagged_broker.publish(
+                {
+                    "eventId": f"evt-lagged-{idx}",
+                    "projectId": project_id,
+                    "nodeId": node_id,
+                    "type": "node.workflow.updated",
+                    "payload": {"reason": "lagged"},
+                }
+            )
+        await asyncio.sleep(0)
+        await _assert_stream_closed(response, timeout_sec=1.0)
     finally:
         await _close_stream(response, request)
 
@@ -1052,8 +1216,19 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
     )
 
     try:
-        first_payload = await _read_sse_payload(response)
+        stream_open_chunk = await _read_stream_chunk(response)
+        assert not any(line.startswith("id: ") for line in stream_open_chunk.splitlines())
+        stream_open_payload = _parse_sse_chunk(stream_open_chunk)
+        assert stream_open_payload["type"] == event_types.STREAM_OPEN
+        assert int(stream_open_payload["snapshotVersion"]) >= 1
+
+        snapshot_chunk = await _read_stream_chunk(response)
+        assert snapshot_chunk.startswith("id: ")
+        first_payload = _parse_sse_chunk(snapshot_chunk)
         assert first_payload["type"] == event_types.THREAD_SNAPSHOT_V3
+        assert first_payload["event_id"] == first_payload["eventId"]
+        snapshot_id_line = next(line for line in snapshot_chunk.splitlines() if line.startswith("id: "))
+        assert snapshot_id_line == f"id: {first_payload['event_id']}"
         assert first_payload["payload"]["snapshot"]["threadId"] == thread_id
         first_snapshot_version = int(first_payload.get("snapshotVersion") or 0)
 
@@ -1063,6 +1238,8 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
             thread_role="execution",
             snapshot_version=max(1, first_snapshot_version + 1),
             event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="200",
+            thread_id=thread_id,
             payload={
                 "item": {
                     "id": "msg-2",
@@ -1091,7 +1268,270 @@ async def test_v3_execution_stream_emits_snapshot_and_incremental_events(client:
 
         incremental_payload = await _read_sse_payload(response)
         assert incremental_payload["type"] == event_types.CONVERSATION_ITEM_UPSERT_V3
+        assert incremental_payload["event_id"] == "200"
         assert incremental_payload["payload"]["item"]["id"] == "msg-2"
+    finally:
+        await _close_stream(response, request)
+
+
+@pytest.mark.anyio
+async def test_v3_thread_events_stream_closes_lagged_subscriber_without_silent_continuation(
+    client: TestClient, workspace_root
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    lagged_broker = ChatEventBroker(subscriber_queue_max=1)
+    client.app.state.conversation_event_broker_v3 = lagged_broker
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.thread_events_by_id_v3(
+        request,
+        project_id,
+        thread_id,
+        node_id=node_id,
+        after_snapshot_version=1,
+    )
+    try:
+        stream_open_payload = await _read_sse_payload(response)
+        assert stream_open_payload["type"] == event_types.STREAM_OPEN
+        snapshot_payload = await _read_sse_payload(response)
+        assert snapshot_payload["type"] == event_types.THREAD_SNAPSHOT_V3
+        first_snapshot_version = int(snapshot_payload.get("snapshotVersion") or 0)
+
+        for idx in range(4):
+            event_id = str(900 + idx)
+            lagged_broker.publish(
+                project_id,
+                node_id,
+                build_thread_envelope(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role="execution",
+                    snapshot_version=max(1, first_snapshot_version + idx + 1),
+                    event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+                    event_id=event_id,
+                    thread_id=thread_id,
+                    payload={
+                        "item": {
+                            "id": f"msg-{event_id}",
+                            "kind": "message",
+                            "threadId": thread_id,
+                            "turnId": f"turn-{event_id}",
+                            "sequence": first_snapshot_version + idx + 1,
+                            "createdAt": "2026-04-01T10:06:00Z",
+                            "updatedAt": "2026-04-01T10:06:00Z",
+                            "status": "completed",
+                            "source": "upstream",
+                            "tone": "neutral",
+                            "metadata": {},
+                            "role": "assistant",
+                            "text": f"Lagged event {event_id}",
+                            "format": "markdown",
+                        }
+                    },
+                ),
+                thread_role="execution",
+            )
+        await asyncio.sleep(0)
+        await _assert_stream_closed(response, timeout_sec=1.0)
+    finally:
+        await _close_stream(response, request)
+
+
+@pytest.mark.anyio
+async def test_v3_execution_stream_drops_mismatched_thread_id_events(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.thread_events_by_id_v3(
+        request,
+        project_id,
+        thread_id,
+        node_id=node_id,
+        after_snapshot_version=1,
+    )
+
+    try:
+        _ = await _read_stream_chunk(response)  # stream_open
+        snapshot_chunk = await _read_stream_chunk(response)
+        first_payload = _parse_sse_chunk(snapshot_chunk)
+        first_snapshot_version = int(first_payload.get("snapshotVersion") or 0)
+        next_snapshot_version = max(1, first_snapshot_version + 1)
+
+        mismatched_envelope = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            snapshot_version=next_snapshot_version,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="400",
+            thread_id="exec-thread-v3-2",
+            payload={
+                "item": {
+                    "id": "msg-mismatch",
+                    "kind": "message",
+                    "threadId": "exec-thread-v3-2",
+                    "turnId": "turn-2",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T10:01:00Z",
+                    "updatedAt": "2026-04-01T10:01:00Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Wrong thread",
+                    "format": "markdown",
+                }
+            },
+        )
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            mismatched_envelope,
+            thread_role="execution",
+        )
+
+        valid_envelope = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            snapshot_version=next_snapshot_version,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="401",
+            thread_id=thread_id,
+            payload={
+                "item": {
+                    "id": "msg-valid",
+                    "kind": "message",
+                    "threadId": thread_id,
+                    "turnId": "turn-2",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T10:01:01Z",
+                    "updatedAt": "2026-04-01T10:01:01Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Correct thread",
+                    "format": "markdown",
+                }
+            },
+        )
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            valid_envelope,
+            thread_role="execution",
+        )
+
+        payload = await _read_sse_payload(response)
+        assert payload["event_id"] == "401"
+        assert payload["payload"]["item"]["threadId"] == thread_id
+    finally:
+        await _close_stream(response, request)
+
+
+@pytest.mark.anyio
+async def test_v3_execution_stream_drops_missing_thread_id_events_and_stays_healthy(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.thread_events_by_id_v3(
+        request,
+        project_id,
+        thread_id,
+        node_id=node_id,
+        after_snapshot_version=1,
+    )
+
+    try:
+        _ = await _read_stream_chunk(response)  # stream_open
+        snapshot_chunk = await _read_stream_chunk(response)
+        first_payload = _parse_sse_chunk(snapshot_chunk)
+        first_snapshot_version = int(first_payload.get("snapshotVersion") or 0)
+        next_snapshot_version = max(1, first_snapshot_version + 1)
+
+        missing_thread_envelope = {
+            "schema_version": 1,
+            "event_id": "500",
+            "event_type": event_types.CONVERSATION_ITEM_UPSERT_V3,
+            "turn_id": None,
+            "snapshot_version": next_snapshot_version,
+            "occurred_at_ms": int(first_payload.get("occurred_at_ms") or 0) + 1,
+            "payload": {
+                "item": {
+                    "id": "msg-missing-thread",
+                    "kind": "message",
+                    "turnId": "turn-2",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T10:01:00Z",
+                    "updatedAt": "2026-04-01T10:01:00Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Missing thread id",
+                    "format": "markdown",
+                }
+            },
+            "eventId": "500",
+            "channel": "thread",
+            "projectId": project_id,
+            "nodeId": node_id,
+            "threadRole": "execution",
+            "occurredAt": "2026-04-01T10:01:00Z",
+            "snapshotVersion": next_snapshot_version,
+            "type": event_types.CONVERSATION_ITEM_UPSERT_V3,
+        }
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            missing_thread_envelope,
+            thread_role="execution",
+        )
+
+        valid_envelope = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            snapshot_version=next_snapshot_version,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="501",
+            thread_id=thread_id,
+            payload={
+                "item": {
+                    "id": "msg-valid-after-drop",
+                    "kind": "message",
+                    "threadId": thread_id,
+                    "turnId": "turn-2",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T10:01:01Z",
+                    "updatedAt": "2026-04-01T10:01:01Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Still healthy",
+                    "format": "markdown",
+                }
+            },
+        )
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            valid_envelope,
+            thread_role="execution",
+        )
+
+        payload = await _read_sse_payload(response)
+        assert payload["event_id"] == "501"
+        assert payload["payload"]["item"]["id"] == "msg-valid-after-drop"
     finally:
         await _close_stream(response, request)
 
@@ -1112,8 +1552,18 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
     )
 
     try:
-        first_payload = await _read_sse_payload(response)
+        stream_open_chunk = await _read_stream_chunk(response)
+        assert not any(line.startswith("id: ") for line in stream_open_chunk.splitlines())
+        stream_open_payload = _parse_sse_chunk(stream_open_chunk)
+        assert stream_open_payload["type"] == event_types.STREAM_OPEN
+        assert stream_open_payload["payload"]["threadRole"] == "ask_planning"
+
+        snapshot_chunk = await _read_stream_chunk(response)
+        assert snapshot_chunk.startswith("id: ")
+        first_payload = _parse_sse_chunk(snapshot_chunk)
         assert first_payload["type"] == event_types.THREAD_SNAPSHOT_V3
+        snapshot_id_line = next(line for line in snapshot_chunk.splitlines() if line.startswith("id: "))
+        assert snapshot_id_line == f"id: {first_payload['event_id']}"
         assert first_payload["payload"]["snapshot"]["threadId"] == thread_id
         assert first_payload["payload"]["snapshot"]["threadRole"] == "ask_planning"
         assert "lane" not in first_payload["payload"]["snapshot"]
@@ -1125,6 +1575,8 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
             thread_role="ask_planning",
             snapshot_version=max(1, first_snapshot_version + 1),
             event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="300",
+            thread_id=thread_id,
             payload={
                 "item": {
                     "id": "ask-msg-2",
@@ -1153,6 +1605,7 @@ async def test_v3_ask_stream_emits_snapshot_and_incremental_events(client: TestC
 
         incremental_payload = await _read_sse_payload(response)
         assert incremental_payload["type"] == event_types.CONVERSATION_ITEM_UPSERT_V3
+        assert incremental_payload["event_id"] == "300"
         assert incremental_payload["payload"]["item"]["id"] == "ask-msg-2"
     finally:
         await _close_stream(response, request)
@@ -1177,6 +1630,8 @@ async def test_v3_execution_stream_reconnect_by_version_and_guard(client: TestCl
     )
 
     try:
+        stream_open_payload = await _read_sse_payload(response)
+        assert stream_open_payload["type"] == event_types.STREAM_OPEN
         payload = await _read_sse_payload(response)
         assert payload["type"] == event_types.THREAD_SNAPSHOT_V3
         assert int(payload["snapshotVersion"]) >= 2
@@ -1191,3 +1646,263 @@ async def test_v3_execution_stream_reconnect_by_version_and_guard(client: TestCl
     mismatch_payload = mismatch_response.json()
     assert mismatch_payload["ok"] is False
     assert mismatch_payload["error"]["code"] == "conversation_stream_mismatch"
+
+
+@pytest.mark.anyio
+async def test_v3_execution_stream_replays_cursor_range_and_dedupes_live_boundary(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    client.app.state.thread_query_service_v3.get_thread_snapshot(
+        project_id,
+        node_id,
+        "execution",
+        publish_repairs=False,
+        ensure_binding=False,
+    )
+
+    replay_buffer = client.app.state.thread_replay_buffer_service_v3
+    replay_envelope = build_thread_envelope(
+        project_id=project_id,
+        node_id=node_id,
+        thread_role="execution",
+        snapshot_version=2,
+        event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+        event_id="201",
+        thread_id=thread_id,
+        payload={
+            "item": {
+                "id": "msg-replay-201",
+                "kind": "message",
+                "threadId": thread_id,
+                "turnId": "turn-2",
+                "sequence": 2,
+                "createdAt": "2026-04-01T10:02:00Z",
+                "updatedAt": "2026-04-01T10:02:00Z",
+                "status": "completed",
+                "source": "upstream",
+                "tone": "neutral",
+                "metadata": {},
+                "role": "assistant",
+                "text": "Replay event",
+                "format": "markdown",
+            }
+        },
+    )
+    replay_buffer.append_business_event(
+        project_id=project_id,
+        node_id=node_id,
+        thread_role="execution",
+        thread_id=thread_id,
+        envelope=replay_envelope,
+    )
+
+    request = _StreamingTestRequest(client.app)
+    response = await workflow_v3_route_module.thread_events_by_id_v3(
+        request,
+        project_id,
+        thread_id,
+        node_id=node_id,
+        last_event_id="200",
+    )
+
+    try:
+        stream_open_payload = await _read_sse_payload(response)
+        assert stream_open_payload["type"] == event_types.STREAM_OPEN
+
+        replay_payload = await _read_sse_payload(response)
+        assert replay_payload["event_id"] == "201"
+        assert replay_payload["type"] == event_types.CONVERSATION_ITEM_UPSERT_V3
+
+        duplicate_boundary = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            snapshot_version=2,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="201",
+            thread_id=thread_id,
+            payload={
+                "item": {
+                    "id": "msg-replay-201-dup",
+                    "kind": "message",
+                    "threadId": thread_id,
+                    "turnId": "turn-2",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T10:02:01Z",
+                    "updatedAt": "2026-04-01T10:02:01Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Duplicate boundary event",
+                    "format": "markdown",
+                }
+            },
+        )
+        live_next = build_thread_envelope(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            snapshot_version=3,
+            event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+            event_id="202",
+            thread_id=thread_id,
+            payload={
+                "item": {
+                    "id": "msg-live-202",
+                    "kind": "message",
+                    "threadId": thread_id,
+                    "turnId": "turn-3",
+                    "sequence": 3,
+                    "createdAt": "2026-04-01T10:03:00Z",
+                    "updatedAt": "2026-04-01T10:03:00Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "role": "assistant",
+                    "text": "Live event",
+                    "format": "markdown",
+                }
+            },
+        )
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            duplicate_boundary,
+            thread_role="execution",
+        )
+        client.app.state.conversation_event_broker_v3.publish(
+            project_id,
+            node_id,
+            live_next,
+            thread_role="execution",
+        )
+
+        next_payload = await _read_sse_payload(response)
+        assert next_payload["event_id"] == "202"
+        assert next_payload["payload"]["item"]["id"] == "msg-live-202"
+    finally:
+        await _close_stream(response, request)
+
+
+def test_v3_execution_stream_replay_miss_returns_409(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    client.app.state.thread_query_service_v3.get_thread_snapshot(
+        project_id,
+        node_id,
+        "execution",
+        publish_repairs=False,
+        ensure_binding=False,
+    )
+
+    replay_buffer = client.app.state.thread_replay_buffer_service_v3
+    replay_buffer._max_events = 1  # type: ignore[attr-defined]
+
+    for event_id, version in [("100", 2), ("101", 3)]:
+        replay_buffer.append_business_event(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            thread_id=thread_id,
+            envelope=build_thread_envelope(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="execution",
+                snapshot_version=version,
+                event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+                event_id=event_id,
+                thread_id=thread_id,
+                payload={
+                    "item": {
+                        "id": f"msg-{event_id}",
+                        "kind": "message",
+                        "threadId": thread_id,
+                        "turnId": f"turn-{event_id}",
+                        "sequence": version,
+                        "createdAt": "2026-04-01T10:04:00Z",
+                        "updatedAt": "2026-04-01T10:04:00Z",
+                        "status": "completed",
+                        "source": "upstream",
+                        "tone": "neutral",
+                        "metadata": {},
+                        "role": "assistant",
+                        "text": f"Event {event_id}",
+                        "format": "markdown",
+                    }
+                },
+            ),
+        )
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/events",
+        params={"node_id": node_id, "last_event_id": "99"},
+    )
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "conversation_stream_mismatch"
+    assert "replay_miss" in str(payload["error"]["message"])
+
+
+def test_v3_execution_stream_cursor_header_precedence_over_query(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    client.app.state.thread_query_service_v3.get_thread_snapshot(
+        project_id,
+        node_id,
+        "execution",
+        publish_repairs=False,
+        ensure_binding=False,
+    )
+
+    replay_buffer = client.app.state.thread_replay_buffer_service_v3
+    replay_buffer._max_events = 1  # type: ignore[attr-defined]
+
+    for event_id, version in [("100", 2), ("101", 3)]:
+        replay_buffer.append_business_event(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role="execution",
+            thread_id=thread_id,
+            envelope=build_thread_envelope(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role="execution",
+                snapshot_version=version,
+                event_type=event_types.CONVERSATION_ITEM_UPSERT_V3,
+                event_id=event_id,
+                thread_id=thread_id,
+                payload={
+                    "item": {
+                        "id": f"msg-{event_id}",
+                        "kind": "message",
+                        "threadId": thread_id,
+                        "turnId": f"turn-{event_id}",
+                        "sequence": version,
+                        "createdAt": "2026-04-01T10:05:00Z",
+                        "updatedAt": "2026-04-01T10:05:00Z",
+                        "status": "completed",
+                        "source": "upstream",
+                        "tone": "neutral",
+                        "metadata": {},
+                        "role": "assistant",
+                        "text": f"Event {event_id}",
+                        "format": "markdown",
+                    }
+                },
+            ),
+        )
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/events",
+        params={"node_id": node_id, "last_event_id": "101"},
+        headers={"Last-Event-ID": "99"},
+    )
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "conversation_stream_mismatch"
+    assert "replay_miss" in str(payload["error"]["message"])

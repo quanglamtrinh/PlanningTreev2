@@ -1,0 +1,7 @@
+{
+  "candidate_metrics": {
+    "unclassified_reload_reason_events": 0,
+    "forced_reload_event_count": 18,
+    "invalid_forced_reason_count": 0
+  }
+}

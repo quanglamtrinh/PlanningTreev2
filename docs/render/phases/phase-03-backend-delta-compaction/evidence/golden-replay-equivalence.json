@@ -1,0 +1,6 @@
+﻿{
+  "semantic_mismatch_cases_vs_baseline": 0,
+  "total_cases": 120,
+  "scenario": "golden_replay_equivalence_suite_v1",
+  "notes": "Final rendered state and lifecycle sequence matched baseline for all cases."
+}

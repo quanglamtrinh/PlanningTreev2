@@ -1068,4 +1068,146 @@ describe('MessagesV3', () => {
     expect(row).toHaveTextContent('Static review passed with only non-blocking notes.')
     expect(row.textContent ?? '').not.toContain('{"summary":')
   })
+
+  it('shows load-more history affordance and dispatches callback', () => {
+    const onLoadMoreHistory = vi.fn()
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot()}
+        isLoading={false}
+        hasOlderHistory
+        isLoadingHistory={false}
+        onLoadMoreHistory={onLoadMoreHistory}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const button = screen.getByTestId('messages-v3-load-more-history')
+    expect(button).toHaveTextContent('Load older messages')
+    fireEvent.click(button)
+    expect(onLoadMoreHistory).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps heavy completed command rows collapsed by default and supports preview-to-full navigation', () => {
+    const longOutput = Array.from({ length: 90 }, (_, index) => `line-${index + 1}`).join('\n')
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'tool-heavy-1',
+              kind: 'tool',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 10,
+              createdAt: '2026-04-01T00:00:10Z',
+              updatedAt: '2026-04-01T00:00:10Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              toolType: 'commandExecution',
+              title: 'Long command output',
+              toolName: 'powershell',
+              callId: 'call-heavy-1',
+              argumentsText: 'Get-Content very-large.log',
+              outputText: longOutput,
+              outputFiles: [],
+              exitCode: 0,
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.queryByTestId('conversation-v3-tool-output-tool-heavy-1')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Expand command details' }))
+    expect(screen.getByTestId('conversation-v3-tool-output-tool-heavy-1')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'View full output' }))
+    const dialog = screen.getByRole('dialog', { name: /Command output/ })
+    expect(dialog).toHaveTextContent('line-1')
+    expect(dialog).toHaveTextContent('line-90')
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog', { name: /Command output/ })).not.toBeInTheDocument()
+  })
+
+  it('keeps manual command collapse decision when heavy row transitions from in_progress to completed', () => {
+    const heavyOutput = 'line\n'.repeat(20)
+    const onResolveUserInput = vi.fn().mockResolvedValue(undefined)
+
+    const { rerender } = render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'tool-manual-priority-1',
+              kind: 'tool',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 20,
+              createdAt: '2026-04-01T00:00:20Z',
+              updatedAt: '2026-04-01T00:00:20Z',
+              status: 'in_progress',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              toolType: 'commandExecution',
+              title: 'Run build',
+              toolName: 'npm',
+              callId: 'call-priority-1',
+              argumentsText: 'npm run build',
+              outputText: heavyOutput,
+              outputFiles: [],
+              exitCode: null,
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={onResolveUserInput}
+      />,
+    )
+
+    expect(screen.getByTestId('conversation-v3-tool-output-tool-manual-priority-1')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse command details' }))
+    expect(screen.queryByTestId('conversation-v3-tool-output-tool-manual-priority-1')).not.toBeInTheDocument()
+
+    rerender(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'tool-manual-priority-1',
+              kind: 'tool',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 20,
+              createdAt: '2026-04-01T00:00:20Z',
+              updatedAt: '2026-04-01T00:00:21Z',
+              status: 'completed',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              toolType: 'commandExecution',
+              title: 'Run build',
+              toolName: 'npm',
+              callId: 'call-priority-1',
+              argumentsText: 'npm run build',
+              outputText: heavyOutput,
+              outputFiles: [],
+              exitCode: 0,
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={onResolveUserInput}
+      />,
+    )
+
+    expect(screen.queryByTestId('conversation-v3-tool-output-tool-manual-priority-1')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Expand command details' })).toBeInTheDocument()
+  })
 })

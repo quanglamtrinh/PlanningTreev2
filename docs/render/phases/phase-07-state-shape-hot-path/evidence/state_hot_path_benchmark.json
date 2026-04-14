@@ -1,0 +1,33 @@
+{
+  "phase": "07",
+  "generated_at": "2026-04-13T07:11:54Z",
+  "source": "state_hot_path_benchmark",
+  "status": "pass",
+  "metric": "apply_duration_p95_reduction_pct",
+  "value": 32.857,
+  "target": 30.0,
+  "operator": "gte",
+  "pass": true,
+  "context": {
+    "scenario": "phase07_patch_heavy_apply_model_v1",
+    "sample_count": 3200,
+    "event_mix": {
+      "patch_events": 2600,
+      "insert_events": 420,
+      "reorder_events": 180
+    },
+    "baseline_apply_duration_p95_ms": 28.0,
+    "candidate_apply_duration_p95_ms": 18.8,
+    "candidate_path": null
+  },
+  "baseline_metadata": {
+    "source_phase": "06",
+    "closing_commit_sha": "5863825a6d485de588d16fd31be69ef1b23f7952",
+    "closing_commit_subject": "render-phase-6.3",
+    "closing_commit_timestamp": "2026-04-12T23:25:25-07:00",
+    "closeout_doc": "docs/render/phases/phase-06-frame-batching-fast-append/close-phase-v1.md",
+    "gate_report": "docs/render/phases/phase-06-frame-batching-fast-append/evidence/phase06-gate-report.json",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-07-state-shape-hot-path/evidence/baseline-manifest-v1.json"
+  }
+}

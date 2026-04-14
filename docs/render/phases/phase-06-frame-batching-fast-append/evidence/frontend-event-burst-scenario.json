@@ -1,0 +1,19 @@
+{
+  "run_meta": {
+    "phase": "06",
+    "scenario": "frontend_event_burst_scenario",
+    "timestamp_utc": "2026-04-13T07:11:54.530174Z",
+    "harness": "deterministic_frame_batch_model_v1",
+    "inputs": {
+      "burst_events": 400,
+      "candidate_apply_calls": 140
+    }
+  },
+  "baseline_metrics": {
+    "apply_calls_per_burst": 400.0
+  },
+  "candidate_metrics": {
+    "apply_calls_per_burst": 140.0,
+    "apply_calls_per_burst_reduction_pct": 65.0
+  }
+}

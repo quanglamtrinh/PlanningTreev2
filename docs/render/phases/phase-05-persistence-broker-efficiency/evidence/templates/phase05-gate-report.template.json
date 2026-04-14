@@ -1,0 +1,35 @@
+{
+  "phase": "05",
+  "summary": {
+    "all_pass": true,
+    "write_amplification_reduction_pct": 96.0,
+    "broker_publish_allocation_reduction_pct": 95.0,
+    "unhandled_slow_consumer_incidents": 0.0
+  },
+  "gates": [
+    {
+      "id": "P05-G1",
+      "metric": "write_amplification_reduction_pct",
+      "value": 96.0,
+      "operator": "gte",
+      "target": 30.0,
+      "pass": true
+    },
+    {
+      "id": "P05-G2",
+      "metric": "broker_publish_allocation_reduction_pct",
+      "value": 95.0,
+      "operator": "gte",
+      "target": 25.0,
+      "pass": true
+    },
+    {
+      "id": "P05-G3",
+      "metric": "unhandled_slow_consumer_incidents",
+      "value": 0.0,
+      "operator": "lte",
+      "target": 0.0,
+      "pass": true
+    }
+  ]
+}
