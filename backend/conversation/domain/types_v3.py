@@ -244,6 +244,12 @@ class UiSignalsV3(TypedDict):
     activeUserInputRequests: list[PendingUserInputRequestV3]
 
 
+class ThreadHistoryMetaV3(TypedDict):
+    hasOlder: bool
+    oldestVisibleSequence: int | None
+    totalItemCount: int
+
+
 class ThreadSnapshotV3(TypedDict):
     projectId: str
     nodeId: str
@@ -256,6 +262,7 @@ class ThreadSnapshotV3(TypedDict):
     updatedAt: str
     items: list[ConversationItemV3]
     uiSignals: UiSignalsV3
+    historyMeta: NotRequired[ThreadHistoryMetaV3]
 
 
 class MessagePatchV3(TypedDict, total=False):

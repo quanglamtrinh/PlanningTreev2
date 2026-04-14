@@ -61,6 +61,7 @@ type ThreadSnapshotNormalizedV1 = {
   itemsById: Record<string, ConversationItemV3>
   orderedItemIds: string[]
   uiSignals: ThreadSnapshotV3['uiSignals']
+  historyMeta: ThreadSnapshotV3['historyMeta'] | undefined
 }
 
 function markFastAppendUsed(diagnostics?: ThreadEventApplyDiagnosticsV3): void {
@@ -194,6 +195,7 @@ function normalizeSnapshot(snapshot: ThreadSnapshotV3): ThreadSnapshotNormalized
     itemsById,
     orderedItemIds,
     uiSignals: snapshot.uiSignals,
+    historyMeta: snapshot.historyMeta,
   }
 }
 
@@ -262,6 +264,7 @@ function materializeSnapshot(
     updatedAt: normalized.updatedAt,
     items: materializeItems(previousSnapshot, normalized),
     uiSignals: normalized.uiSignals,
+    historyMeta: normalized.historyMeta,
   }
 }
 

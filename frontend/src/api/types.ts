@@ -1010,6 +1010,12 @@ export interface UiSignalsV3 {
   activeUserInputRequests: PendingUserInputRequestV3[]
 }
 
+export interface ThreadHistoryMetaV3 {
+  hasOlder: boolean
+  oldestVisibleSequence: number | null
+  totalItemCount: number
+}
+
 export interface ThreadSnapshotV3 {
   projectId: string
   nodeId: string
@@ -1022,6 +1028,7 @@ export interface ThreadSnapshotV3 {
   updatedAt: string
   items: ConversationItemV3[]
   uiSignals: UiSignalsV3
+  historyMeta?: ThreadHistoryMetaV3
 }
 
 export interface MessagePatchV3 {

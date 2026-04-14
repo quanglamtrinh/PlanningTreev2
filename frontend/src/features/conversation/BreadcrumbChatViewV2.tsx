@@ -20,6 +20,7 @@ import { MessagesV3ErrorBoundary } from './components/v3/MessagesV3ErrorBoundary
 import {
   selectComposerState,
   selectFeedRenderState,
+  selectHistoryUiState,
   selectThreadActions,
   selectTransportBannerState,
   selectWorkflowActionState,
@@ -53,11 +54,13 @@ export function BreadcrumbChatViewV2() {
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
 
   const feedRenderStateV3 = useThreadByIdStoreV3(useShallow(selectFeedRenderState))
+  const historyUiStateV3 = useThreadByIdStoreV3(useShallow(selectHistoryUiState))
   const composerStateV3 = useThreadByIdStoreV3(useShallow(selectComposerState))
   const transportBannerStateV3 = useThreadByIdStoreV3(useShallow(selectTransportBannerState))
   const workflowActionStateV3 = useThreadByIdStoreV3(useShallow(selectWorkflowActionState))
   const {
     loadThread: loadThreadV3,
+    loadMoreHistory: loadMoreHistoryV3,
     sendTurn: sendTurnV3,
     resolveUserInput: resolveUserInputV3,
     runPlanAction: runPlanActionV3,
@@ -132,10 +135,14 @@ export function BreadcrumbChatViewV2() {
   const threadTab: ThreadTab = routeTarget.threadTab
   const isLoading = feedRenderStateV3.isLoading
   const isSending = feedRenderStateV3.isSending
+  const hasOlderHistory = historyUiStateV3.hasOlderHistory
+  const isLoadingHistory = historyUiStateV3.isLoadingHistory
+  const historyError = historyUiStateV3.historyError
   const lastCompletedAt = workflowActionStateV3.lastCompletedAt
   const lastDurationMs = workflowActionStateV3.lastDurationMs
   const error = transportBannerStateV3.error ?? feedRenderStateV3.error
   const loadThread = loadThreadV3
+  const loadMoreHistory = loadMoreHistoryV3
   const sendTurn = sendTurnV3
   const resolveUserInput = resolveUserInputV3
   const disconnectThread = disconnectThreadV3
@@ -334,7 +341,7 @@ export function BreadcrumbChatViewV2() {
     return true
   }, [composerStateV3.isLoading, composerStateV3.isSending, composerStateV3.snapshot, isActiveTurn, threadTab, workflowState])
 
-  const combinedError = error ?? workflowError ?? null
+  const combinedError = error ?? workflowError ?? historyError ?? null
   const currentExecutionDecision = workflowState?.currentExecutionDecision ?? null
   const currentAuditDecision = workflowState?.currentAuditDecision ?? null
 
@@ -576,6 +583,9 @@ export function BreadcrumbChatViewV2() {
                     snapshot={feedRenderStateV3.snapshot}
                     isLoading={isLoading || isWorkflowLoading}
                     isSending={isSending}
+                    hasOlderHistory={hasOlderHistory}
+                    isLoadingHistory={isLoadingHistory}
+                    onLoadMoreHistory={() => void loadMoreHistory()}
                     onResolveUserInput={resolveUserInput}
                     onPlanAction={runPlanActionV3}
                     lastCompletedAt={lastCompletedAt}

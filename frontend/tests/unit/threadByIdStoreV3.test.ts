@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getThreadSnapshotByIdV3: vi.fn(),
+    getThreadHistoryPageByIdV3: vi.fn(),
     startThreadTurnByIdV3: vi.fn(),
     resolveThreadUserInputByIdV3: vi.fn(),
     planActionByIdV3: vi.fn(),
@@ -227,6 +228,145 @@ describe('threadByIdStoreV3', () => {
     expect(eventSource?.url).toContain(
       '/v3/projects/project-1/threads/by-id/thread-1/events?node_id=node-1&after_snapshot_version=1',
     )
+  })
+
+  it('requests capped snapshot window with live_limit=1000 on initial load', async () => {
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeSnapshot())
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledWith(
+      'project-1',
+      'node-1',
+      'thread-1',
+      1000,
+    )
+  })
+
+  it('enforces scrollback trim hysteresis on oversized snapshots', async () => {
+    const oversizedItems = Array.from({ length: 1300 }, (_, index) => {
+      const sequence = index + 1
+      return {
+        id: `msg-${sequence}`,
+        kind: 'message' as const,
+        threadId: 'thread-1',
+        turnId: `turn-${sequence}`,
+        sequence,
+        createdAt: `2026-04-01T00:${String(sequence % 60).padStart(2, '0')}:00Z`,
+        updatedAt: `2026-04-01T00:${String(sequence % 60).padStart(2, '0')}:00Z`,
+        status: 'completed' as const,
+        source: 'upstream' as const,
+        tone: 'neutral' as const,
+        metadata: {},
+        role: 'assistant' as const,
+        text: `message-${sequence}`,
+        format: 'markdown' as const,
+      }
+    })
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(
+      makeSnapshot({
+        snapshotVersion: 10,
+        items: oversizedItems,
+      }),
+    )
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    const state = useThreadByIdStoreV3.getState()
+    const sequences = state.snapshot?.items.map((item) => item.sequence) ?? []
+    expect(sequences).toHaveLength(900)
+    expect(sequences[0]).toBe(401)
+    expect(sequences[sequences.length - 1]).toBe(1300)
+    expect(state.hasOlderHistory).toBe(true)
+    expect(state.oldestVisibleSequence).toBe(401)
+    expect(state.totalItemCount).toBe(1300)
+  })
+
+  it('prepends history pages in order and updates pagination metadata', async () => {
+    const liveItems = Array.from({ length: 10 }, (_, index) => {
+      const sequence = 101 + index
+      return {
+        id: `msg-${sequence}`,
+        kind: 'message' as const,
+        threadId: 'thread-1',
+        turnId: `turn-${sequence}`,
+        sequence,
+        createdAt: `2026-04-01T00:${String(index).padStart(2, '0')}:00Z`,
+        updatedAt: `2026-04-01T00:${String(index).padStart(2, '0')}:00Z`,
+        status: 'completed' as const,
+        source: 'upstream' as const,
+        tone: 'neutral' as const,
+        metadata: {},
+        role: 'assistant' as const,
+        text: `live-${sequence}`,
+        format: 'markdown' as const,
+      }
+    })
+    const olderItems = Array.from({ length: 10 }, (_, index) => {
+      const sequence = 91 + index
+      return {
+        id: `msg-${sequence}`,
+        kind: 'message' as const,
+        threadId: 'thread-1',
+        turnId: `turn-${sequence}`,
+        sequence,
+        createdAt: `2026-04-01T00:${String(index + 10).padStart(2, '0')}:00Z`,
+        updatedAt: `2026-04-01T00:${String(index + 10).padStart(2, '0')}:00Z`,
+        status: 'completed' as const,
+        source: 'upstream' as const,
+        tone: 'neutral' as const,
+        metadata: {},
+        role: 'assistant' as const,
+        text: `older-${sequence}`,
+        format: 'markdown' as const,
+      }
+    })
+
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(
+      makeSnapshot({
+        snapshotVersion: 5,
+        items: liveItems,
+        historyMeta: {
+          hasOlder: true,
+          oldestVisibleSequence: 101,
+          totalItemCount: 20,
+        },
+      }),
+    )
+    apiMock.getThreadHistoryPageByIdV3.mockResolvedValue({
+      items: olderItems,
+      has_more: false,
+      next_before_sequence: null,
+      total_item_count: 20,
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().loadMoreHistory()
+    })
+
+    expect(apiMock.getThreadHistoryPageByIdV3).toHaveBeenCalledWith(
+      'project-1',
+      'node-1',
+      'thread-1',
+      { beforeSequence: 101, limit: 200 },
+    )
+    const state = useThreadByIdStoreV3.getState()
+    const sequences = state.snapshot?.items.map((item) => item.sequence) ?? []
+    expect(sequences).toEqual([
+      91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+    ])
+    expect(state.hasOlderHistory).toBe(false)
+    expect(state.oldestVisibleSequence).toBe(91)
+    expect(state.totalItemCount).toBe(20)
+    expect(state.isLoadingHistory).toBe(false)
+    expect(state.historyError).toBeNull()
   })
 
   it('exposes guardrail selectors for core/transport/ui-control domains', async () => {

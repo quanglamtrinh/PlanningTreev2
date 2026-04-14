@@ -68,8 +68,13 @@ import {
 
 const SCROLL_THRESHOLD_PX = 120
 const MAX_COMMAND_OUTPUT_LINES = 200
-const LARGE_COMMAND_OUTPUT_CHAR_THRESHOLD = 600
-const LARGE_COMMAND_OUTPUT_LINE_THRESHOLD = 12
+const HEAVY_COMMAND_OUTPUT_CHAR_THRESHOLD = 600
+const HEAVY_COMMAND_OUTPUT_LINE_THRESHOLD = 12
+const HEAVY_DIFF_FILE_COUNT_THRESHOLD = 5
+const HEAVY_DIFF_PAYLOAD_CHAR_THRESHOLD = 3000
+const HEAVY_GENERIC_OUTPUT_CHAR_THRESHOLD = 2000
+const PAYLOAD_PREVIEW_MAX_CHARS = 1200
+const PAYLOAD_PREVIEW_MAX_LINES = 60
 const VIEW_STATE_PERSIST_DEBOUNCE_MS = 150
 const EMPTY_USER_INPUT_ANSWERS: UserInputAnswerV3[] = []
 const PHASE10_MODE_ENV_FLAG = 'VITE_PTM_PHASE10_PROGRESSIVE_VIRTUALIZATION_MODE'
@@ -192,7 +197,7 @@ function collectPlanReadyKeys(snapshot: ThreadSnapshotV3 | null): Set<string> {
   return keys
 }
 
-function isLargeCommandOutput(item: ToolItemV3): boolean {
+function isHeavyCommandOutput(item: ToolItemV3): boolean {
   if (item.toolType !== 'commandExecution') {
     return false
   }
@@ -202,9 +207,86 @@ function isLargeCommandOutput(item: ToolItemV3): boolean {
   }
   const lineCount = output.split('\n').length
   return (
-    output.length >= LARGE_COMMAND_OUTPUT_CHAR_THRESHOLD ||
-    lineCount >= LARGE_COMMAND_OUTPUT_LINE_THRESHOLD
+    output.length >= HEAVY_COMMAND_OUTPUT_CHAR_THRESHOLD ||
+    lineCount >= HEAVY_COMMAND_OUTPUT_LINE_THRESHOLD
   )
+}
+
+function computeFilePayloadChars(files: ToolItemV3['outputFiles']): number {
+  let total = 0
+  for (const file of files) {
+    total += normalizeText(file.summary).length
+    total += normalizeText(file.diff ?? null).length
+  }
+  return total
+}
+
+function isHeavyToolItem(item: ToolItemV3): boolean {
+  if (item.toolType === 'commandExecution') {
+    return isHeavyCommandOutput(item)
+  }
+  if (item.toolType === 'fileChange') {
+    const fileCount = item.outputFiles.length
+    const payloadChars =
+      normalizeText(item.argumentsText).length +
+      normalizeText(item.outputText).length +
+      computeFilePayloadChars(item.outputFiles)
+    return (
+      fileCount >= HEAVY_DIFF_FILE_COUNT_THRESHOLD ||
+      payloadChars >= HEAVY_DIFF_PAYLOAD_CHAR_THRESHOLD
+    )
+  }
+  const outputChars = normalizeText(item.outputText).length
+  return outputChars >= HEAVY_GENERIC_OUTPUT_CHAR_THRESHOLD
+}
+
+function computeDiffPayloadChars(item: Extract<ConversationItemV3, { kind: 'diff' }>): number {
+  let total = normalizeText(item.summaryText).length
+  for (const change of item.changes) {
+    total += normalizeText(change.summary).length
+    total += normalizeText(change.diff).length
+  }
+  for (const file of item.files) {
+    total += normalizeText(file.summary).length
+    total += normalizeText(file.patchText).length
+  }
+  return total
+}
+
+function isHeavyDiffItem(item: Extract<ConversationItemV3, { kind: 'diff' }>): boolean {
+  const fileCount = Math.max(item.changes.length, item.files.length)
+  const payloadChars = computeDiffPayloadChars(item)
+  return (
+    fileCount >= HEAVY_DIFF_FILE_COUNT_THRESHOLD ||
+    payloadChars >= HEAVY_DIFF_PAYLOAD_CHAR_THRESHOLD
+  )
+}
+
+type PayloadPreview = {
+  previewText: string
+  truncated: boolean
+  originalCharCount: number
+  originalLineCount: number
+}
+
+function buildPayloadPreview(
+  value: string | null | undefined,
+  maxChars: number = PAYLOAD_PREVIEW_MAX_CHARS,
+  maxLines: number = PAYLOAD_PREVIEW_MAX_LINES,
+): PayloadPreview {
+  const normalized = String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lineParts = normalized.split('\n')
+  const originalLineCount = lineParts.length
+  const originalCharCount = normalized.length
+  const byLines = lineParts.slice(0, Math.max(1, maxLines)).join('\n')
+  const byChars = byLines.slice(0, Math.max(1, maxChars))
+  const truncated = byChars.length < originalCharCount || originalLineCount > maxLines
+  return {
+    previewText: truncated ? `${byChars}\n\n[Preview truncated]` : byChars,
+    truncated,
+    originalCharCount,
+    originalLineCount,
+  }
 }
 
 /** Keeps persisted expand state from being cleared by auto-expand/collapse sync on thread load. */
@@ -225,18 +307,15 @@ function primeManualExpandedIdsFromSavedView(
       continue
     }
     if (item.kind === 'tool') {
-      if (item.toolType === 'commandExecution') {
-        const shouldAutoExpand = item.status === 'in_progress' || isLargeCommandOutput(item)
-        if (!shouldAutoExpand) {
-          target.add(id)
-        }
-      } else {
-        const hasArguments = Boolean(normalizeText(item.argumentsText))
-        const hasOutput = Boolean(normalizeText(item.outputText))
-        const hasFiles = item.outputFiles.length > 0
-        if (hasArguments || hasOutput || hasFiles) {
-          target.add(id)
-        }
+      const hasArguments = Boolean(normalizeText(item.argumentsText))
+      const hasOutput = Boolean(normalizeText(item.outputText))
+      const hasFiles = item.outputFiles.length > 0
+      const hasBody = hasArguments || hasOutput || hasFiles
+      const shouldAutoExpand =
+        item.status === 'in_progress' ||
+        (item.toolType !== 'commandExecution' && hasBody && !isHeavyToolItem(item))
+      if (!shouldAutoExpand) {
+        target.add(id)
       }
       continue
     }
@@ -814,11 +893,13 @@ function CommandToolRowV3({
   isExpanded,
   onToggle,
   onRequestAutoScroll,
+  onOpenFullArtifact,
 }: {
   item: Extract<ConversationItemV3, { kind: 'tool' }>
   isExpanded: boolean
   onToggle: (itemId: string) => void
   onRequestAutoScroll?: () => void
+  onOpenFullArtifact: (title: string, content: string) => void
 }) {
   const headline =
     normalizeText(item.argumentsText) ||
@@ -830,6 +911,7 @@ function CommandToolRowV3({
   const hasBody = Boolean(normalizeText(item.argumentsText) || hasOutput || hasFiles)
   const showBody = !hasBody || isExpanded
   const ranLabel = commandRanLabel(item.status)
+  const outputPreview = useMemo(() => buildPayloadPreview(item.outputText), [item.outputText])
 
   const commandBar =
     hasBody && !showBody ? (
@@ -906,12 +988,30 @@ function CommandToolRowV3({
                 </div>
 
                 {hasOutput ? (
-                  <CommandOutputViewportV3
-                    itemId={item.id}
-                    itemUpdatedAt={item.updatedAt}
-                    outputText={item.outputText}
-                    onRequestAutoScroll={onRequestAutoScroll}
-                  />
+                  <>
+                    <CommandOutputViewportV3
+                      itemId={item.id}
+                      itemUpdatedAt={item.updatedAt}
+                      outputText={outputPreview.truncated ? outputPreview.previewText : item.outputText}
+                      onRequestAutoScroll={onRequestAutoScroll}
+                    />
+                    {outputPreview.truncated ? (
+                      <div className={styles.actionRow}>
+                        <button
+                          type="button"
+                          className={styles.secondaryButton}
+                          onClick={() =>
+                            onOpenFullArtifact(
+                              `Command output (${outputPreview.originalLineCount} lines)`,
+                              item.outputText,
+                            )
+                          }
+                        >
+                          View full output
+                        </button>
+                      </div>
+                    ) : null}
+                  </>
                 ) : null}
               </>
             ) : null}
@@ -952,11 +1052,13 @@ function ToolRowV3({
   isExpanded,
   onToggle,
   onRequestAutoScroll,
+  onOpenFullArtifact,
 }: {
   item: Extract<ConversationItemV3, { kind: 'tool' }>
   isExpanded: boolean
   onToggle: (itemId: string) => void
   onRequestAutoScroll?: () => void
+  onOpenFullArtifact: (title: string, content: string) => void
 }) {
   emitRowRenderProfileForItem(item)
 
@@ -998,6 +1100,7 @@ function ToolRowV3({
         isExpanded={isExpanded}
         onToggle={onToggle}
         onRequestAutoScroll={onRequestAutoScroll}
+        onOpenFullArtifact={onOpenFullArtifact}
       />
     )
   }
@@ -1008,6 +1111,7 @@ function ToolRowV3({
   const hasFiles = item.outputFiles.length > 0
   const hasBody = hasArguments || hasOutput || hasFiles
   const showBody = !hasBody || isExpanded
+  const outputPreview = useMemo(() => buildPayloadPreview(item.outputText), [item.outputText])
 
   const toolBar = (
     <div
@@ -1083,7 +1187,25 @@ function ToolRowV3({
           {showBody && hasOutput ? (
             <div className={styles.section}>
               <div className={styles.sectionTitle}>Output</div>
-              <pre className={styles.plainPre}>{item.outputText}</pre>
+              <pre className={styles.plainPre}>
+                {outputPreview.truncated ? outputPreview.previewText : item.outputText}
+              </pre>
+              {outputPreview.truncated ? (
+                <div className={styles.actionRow}>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() =>
+                      onOpenFullArtifact(
+                        `Tool output (${outputPreview.originalLineCount} lines)`,
+                        item.outputText,
+                      )
+                    }
+                  >
+                    View full output
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -1282,10 +1404,12 @@ function DiffRowV3({
   item,
   isExpanded,
   onToggle,
+  onOpenFullArtifact,
 }: {
   item: Extract<ConversationItemV3, { kind: 'diff' }>
   isExpanded: boolean
   onToggle: (itemId: string) => void
+  onOpenFullArtifact: (title: string, content: string) => void
 }) {
   emitRowRenderProfileForItem(item)
 
@@ -1307,6 +1431,11 @@ function DiffRowV3({
     )
   }
 
+  const hasBody = Boolean(item.summaryText) || item.files.length > 0
+  const heavy = isHeavyDiffItem(item)
+  const showBody = !hasBody || !heavy || item.status === 'in_progress' || isExpanded
+  const summaryPreview = useMemo(() => buildPayloadPreview(item.summaryText), [item.summaryText])
+
   return (
     <article className={`${styles.row} ${styles.rowCard}`} data-testid="conversation-v3-item-diff">
       <div className={styles.rowRail}>
@@ -1318,9 +1447,59 @@ function DiffRowV3({
             </div>
             <span className={`${styles.statusPill} ${toStatusClassName(item.status)}`}>{item.status}</span>
           </div>
-          {item.summaryText ? <div className={styles.subtleText}>{item.summaryText}</div> : null}
 
-          {item.files.length ? (
+          {hasBody && heavy ? (
+            <button
+              type="button"
+              className={styles.commandLineBarButton}
+              onClick={() => onToggle(item.id)}
+              aria-expanded={showBody}
+              aria-label={showBody ? 'Collapse diff details' : 'Expand diff details'}
+            >
+              <div
+                className={`${styles.commandLineBar} ${
+                  showBody ? styles.commandLineBarExpanded : styles.commandLineBarCollapsed
+                }`}
+              >
+                <div className={styles.commandLineBarTop}>
+                  <span className={styles.commandCardEyebrow}>Diff</span>
+                  <span className={styles.commandLineTextCollapsed}>
+                    {item.files.length > 0 ? `${item.files.length} files` : 'Large diff payload'}
+                  </span>
+                  <span className={styles.commandChevronSlot}>
+                    <IconCommandLineChevron expanded={showBody} />
+                  </span>
+                </div>
+              </div>
+            </button>
+          ) : null}
+
+          {showBody && item.summaryText ? (
+            <div className={styles.section}>
+              <div className={styles.sectionTitle}>Summary</div>
+              <div className={styles.subtleText}>
+                {summaryPreview.truncated ? summaryPreview.previewText : item.summaryText}
+              </div>
+              {summaryPreview.truncated ? (
+                <div className={styles.actionRow}>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() =>
+                      onOpenFullArtifact(
+                        `Diff summary (${summaryPreview.originalLineCount} lines)`,
+                        item.summaryText ?? '',
+                      )
+                    }
+                  >
+                    View full summary
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {showBody && item.files.length ? (
             <div className={styles.fileList}>
               {item.files.map((file) => (
                 <div key={`${file.path}-${file.changeType}`} className={styles.fileItem}>
@@ -1428,6 +1607,7 @@ type ToolRowProps = {
   isExpanded: boolean
   onToggle: (itemId: string) => void
   onRequestAutoScroll?: () => void
+  onOpenFullArtifact: (title: string, content: string) => void
 }
 type ReviewRowProps = { item: Extract<ConversationItemV3, { kind: 'review' }> }
 type ExploreRowProps = { item: Extract<ConversationItemV3, { kind: 'explore' }> }
@@ -1435,6 +1615,7 @@ type DiffRowProps = {
   item: Extract<ConversationItemV3, { kind: 'diff' }>
   isExpanded: boolean
   onToggle: (itemId: string) => void
+  onOpenFullArtifact: (title: string, content: string) => void
 }
 type StatusRowProps = { item: Extract<ConversationItemV3, { kind: 'status' }> }
 type ErrorRowProps = { item: Extract<ConversationItemV3, { kind: 'error' }> }
@@ -1471,6 +1652,7 @@ function areToolRowPropsEqual(prev: ToolRowProps, next: ToolRowProps): boolean {
     prev.isExpanded === next.isExpanded &&
     prev.onToggle === next.onToggle &&
     prev.onRequestAutoScroll === next.onRequestAutoScroll &&
+    prev.onOpenFullArtifact === next.onOpenFullArtifact &&
     prev.item.toolType === next.item.toolType
   )
 }
@@ -1496,7 +1678,8 @@ function areDiffRowPropsEqual(prev: DiffRowProps, next: DiffRowProps): boolean {
   return (
     sameRenderableItemVersion(prev.item, next.item) &&
     prev.isExpanded === next.isExpanded &&
-    prev.onToggle === next.onToggle
+    prev.onToggle === next.onToggle &&
+    prev.onOpenFullArtifact === next.onOpenFullArtifact
   )
 }
 
@@ -1755,6 +1938,7 @@ function renderItemRowV3({
   expandedItemIds,
   onToggleExpanded,
   onRequestAutoScroll,
+  onOpenFullArtifact,
 }: {
   item: ConversationItemV3
   requestMapByRequestId: Map<string, PendingUserInputRequestV3>
@@ -1762,6 +1946,7 @@ function renderItemRowV3({
   expandedItemIds: Set<string>
   onToggleExpanded: (itemId: string) => void
   onRequestAutoScroll: () => void
+  onOpenFullArtifact: (title: string, content: string) => void
 }) {
   const isExpanded = expandedItemIds.has(item.id)
 
@@ -1785,6 +1970,7 @@ function renderItemRowV3({
         isExpanded={isExpanded}
         onToggle={onToggleExpanded}
         onRequestAutoScroll={onRequestAutoScroll}
+        onOpenFullArtifact={onOpenFullArtifact}
       />
     )
   }
@@ -1797,6 +1983,7 @@ function renderItemRowV3({
         item={item}
         isExpanded={isExpanded}
         onToggle={onToggleExpanded}
+        onOpenFullArtifact={onOpenFullArtifact}
       />
     )
   }
@@ -1822,6 +2009,9 @@ export function MessagesV3({
   snapshot,
   isLoading,
   isSending = false,
+  hasOlderHistory = false,
+  isLoadingHistory = false,
+  onLoadMoreHistory,
   prefix,
   suffix,
   onResolveUserInput,
@@ -1834,6 +2024,9 @@ export function MessagesV3({
   snapshot: ThreadSnapshotV3 | null
   isLoading: boolean
   isSending?: boolean
+  hasOlderHistory?: boolean
+  isLoadingHistory?: boolean
+  onLoadMoreHistory?: () => void
   prefix?: ReactNode
   suffix?: ReactNode
   /** Breadcrumb thread: one #fcf9f7 canvas (no gray “cards” in the scroll area). */
@@ -1862,6 +2055,7 @@ export function MessagesV3({
   const [budgetDegradeLevel, setBudgetDegradeLevel] = useState<RenderBudgetDegradeLevel>(0)
   const [phase10FallbackVersion, setPhase10FallbackVersion] = useState(0)
   const [deferNonCriticalDecorations, setDeferNonCriticalDecorations] = useState(false)
+  const [fullArtifactView, setFullArtifactView] = useState<{ title: string; content: string } | null>(null)
   const fallbackReasonsByThreadRef = useRef<Map<string, string>>(new Map())
   const anchorSnapshotRef = useRef<StreamAnchorSnapshot | null>(null)
   const previousThreadForProgressiveRef = useRef<string | null>(null)
@@ -1899,6 +2093,7 @@ export function MessagesV3({
     stableFrameCountRef.current = 0
     setBudgetDegradeLevel(0)
     setDeferNonCriticalDecorations(false)
+    setFullArtifactView(null)
     previousThreadIdRef.current = threadId
   }, [threadId])
 
@@ -2242,7 +2437,13 @@ export function MessagesV3({
           continue
         }
         if (item.kind === 'tool') {
-          const shouldExpand = item.status === 'in_progress' || isLargeCommandOutput(item)
+          const hasArguments = Boolean(normalizeText(item.argumentsText))
+          const hasOutput = Boolean(normalizeText(item.outputText))
+          const hasFiles = item.outputFiles.length > 0
+          const hasBody = hasArguments || hasOutput || hasFiles
+          const shouldExpand =
+            item.status === 'in_progress' ||
+            (item.toolType !== 'commandExecution' && hasBody && !isHeavyToolItem(item))
           if (shouldExpand && !next.has(item.id)) {
             next.add(item.id)
             changed = true
@@ -2293,6 +2494,17 @@ export function MessagesV3({
       }
       return next
     })
+  }, [])
+
+  const openFullArtifact = useCallback((title: string, content: string) => {
+    setFullArtifactView({
+      title,
+      content,
+    })
+  }, [])
+
+  const closeFullArtifact = useCallback(() => {
+    setFullArtifactView(null)
   }, [])
 
   const scrollKey = useMemo(() => {
@@ -2524,6 +2736,7 @@ export function MessagesV3({
               expandedItemIds,
               onToggleExpanded: toggleExpanded,
               onRequestAutoScroll: requestAutoScroll,
+              onOpenFullArtifact: openFullArtifact,
             })}
           </div>
         )
@@ -2551,6 +2764,7 @@ export function MessagesV3({
                         expandedItemIds,
                         onToggleExpanded: toggleExpanded,
                         onRequestAutoScroll: requestAutoScroll,
+                        onOpenFullArtifact: openFullArtifact,
                       })}
                     </div>
                   )
@@ -2566,6 +2780,7 @@ export function MessagesV3({
       requestMapByRequestId,
       requestAutoScroll,
       toggleExpanded,
+      openFullArtifact,
       visibleState.reasoningMetaById,
     ],
   )
@@ -2590,6 +2805,20 @@ export function MessagesV3({
 
       {streamEntries.length === 0 && pendingRequestCards.length === 0 && !isLoading ? (
         <div className={styles.empty}>No conversation items yet.</div>
+      ) : null}
+
+      {hasOlderHistory && onLoadMoreHistory ? (
+        <div className={styles.loadMoreRow}>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={onLoadMoreHistory}
+            disabled={isLoadingHistory}
+            data-testid="messages-v3-load-more-history"
+          >
+            {isLoadingHistory ? 'Loading older messages...' : 'Load older messages'}
+          </button>
+        </div>
       ) : null}
 
       <div
@@ -2709,6 +2938,27 @@ export function MessagesV3({
       ) : null}
 
       {suffix && showNonCriticalSuffix ? <div className={styles.feedSuffix}>{suffix}</div> : null}
+
+      {fullArtifactView ? (
+        <div
+          className={styles.fullArtifactOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-label={fullArtifactView.title}
+          onClick={closeFullArtifact}
+        >
+          <div className={styles.fullArtifactModal} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.fullArtifactHeader}>
+              <h3 className={styles.fullArtifactTitle}>{fullArtifactView.title}</h3>
+              <button type="button" className={styles.secondaryButton} onClick={closeFullArtifact}>
+                Close
+              </button>
+            </div>
+            <pre className={styles.fullArtifactPre}>{fullArtifactView.content}</pre>
+          </div>
+        </div>
+      ) : null}
+
       <div ref={bottomRef} />
     </div>
   )

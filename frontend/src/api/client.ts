@@ -26,6 +26,7 @@ import type {
   SplitAcceptedResponse,
   SplitMode,
   SplitStatusResponse,
+  ConversationItemV3,
   ResolveUserInputV3Response,
   ThreadSnapshotV3,
   WorkflowActionAcceptedResponse,
@@ -47,6 +48,13 @@ interface V2SuccessEnvelope<T> {
 interface V2FailureEnvelope {
   ok: false
   error?: ErrorPayload
+}
+
+interface ThreadHistoryPageByIdV3Response {
+  items: ConversationItemV3[]
+  has_more: boolean
+  next_before_sequence: number | null
+  total_item_count: number
 }
 
 const DEFAULT_TIMEOUT_MS = 300_000
@@ -72,8 +80,34 @@ function buildThreadByIdBasePathV3(projectId: string, threadId: string): string 
   return `/v3/projects/${projectId}/threads/by-id/${threadId}`
 }
 
-function buildThreadByIdPathV3(projectId: string, threadId: string, nodeId: string): string {
-  return `${buildThreadByIdBasePathV3(projectId, threadId)}?node_id=${encodeURIComponent(nodeId)}`
+function buildThreadByIdPathV3(
+  projectId: string,
+  threadId: string,
+  nodeId: string,
+  options?: { liveLimit?: number | null },
+): string {
+  const queryParts = [`node_id=${encodeURIComponent(nodeId)}`]
+  const liveLimit = options?.liveLimit
+  if (liveLimit != null && Number.isFinite(liveLimit) && liveLimit > 0) {
+    queryParts.push(`live_limit=${encodeURIComponent(String(Math.floor(liveLimit)))}`)
+  }
+  return `${buildThreadByIdBasePathV3(projectId, threadId)}?${queryParts.join('&')}`
+}
+
+function buildThreadByIdHistoryPathV3(
+  projectId: string,
+  threadId: string,
+  nodeId: string,
+  options?: { beforeSequence?: number | null; limit?: number | null },
+): string {
+  const queryParts = [`node_id=${encodeURIComponent(nodeId)}`]
+  if (options?.beforeSequence != null && Number.isFinite(options.beforeSequence)) {
+    queryParts.push(`before_sequence=${encodeURIComponent(String(Math.floor(options.beforeSequence)))}`)
+  }
+  if (options?.limit != null && Number.isFinite(options.limit) && options.limit > 0) {
+    queryParts.push(`limit=${encodeURIComponent(String(Math.floor(options.limit)))}`)
+  }
+  return `${buildThreadByIdBasePathV3(projectId, threadId)}/history?${queryParts.join('&')}`
 }
 
 function buildThreadByIdTurnPathV3(projectId: string, threadId: string, nodeId: string): string {
@@ -459,11 +493,22 @@ export const api = {
     projectId: string,
     nodeId: string,
     threadId: string,
+    liveLimit?: number | null,
   ): Promise<ThreadSnapshotV3> {
     const response = await jsonFetchV2<{ snapshot: ThreadSnapshotV3 }>(
-      buildThreadByIdPathV3(projectId, threadId, nodeId),
+      buildThreadByIdPathV3(projectId, threadId, nodeId, { liveLimit }),
     )
     return response.snapshot
+  },
+  getThreadHistoryPageByIdV3(
+    projectId: string,
+    nodeId: string,
+    threadId: string,
+    options?: { beforeSequence?: number | null; limit?: number | null },
+  ): Promise<ThreadHistoryPageByIdV3Response> {
+    return jsonFetchV2<ThreadHistoryPageByIdV3Response>(
+      buildThreadByIdHistoryPathV3(projectId, threadId, nodeId, options),
+    )
   },
   async probeThreadByIdEventsCursorV3(
     projectId: string,

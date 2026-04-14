@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 SSE_HEARTBEAT_INTERVAL_SEC = 15
 _THREAD_MISMATCH_ERROR = "Thread id does not match any active route for this node."
+_THREAD_SNAPSHOT_LIVE_LIMIT_MAX = 5000
+_THREAD_HISTORY_PAGE_LIMIT_DEFAULT = 200
+_THREAD_HISTORY_PAGE_LIMIT_MAX = 1000
 
 
 def _ok(data: dict[str, Any]) -> dict[str, Any]:
@@ -177,6 +180,85 @@ def _snapshot_with_contract_fields(snapshot: dict[str, Any], *, thread_role: str
     prepared["threadRole"] = resolved_thread_role
     prepared.pop("lane", None)
     return prepared
+
+
+def _item_sequence_value(item: dict[str, Any]) -> int | None:
+    raw = item.get("sequence")
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str):
+        normalized = raw.strip()
+        if normalized.isdigit():
+            return int(normalized)
+    return None
+
+
+def _sorted_snapshot_items(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_items = snapshot.get("items")
+    if not isinstance(raw_items, list):
+        return []
+    items = [item for item in raw_items if isinstance(item, dict)]
+    items.sort(key=lambda item: (_item_sequence_value(item) or 0, str(item.get("id") or "")))
+    return items
+
+
+def _build_history_meta(*, items: list[dict[str, Any]], total_item_count: int, has_older: bool) -> dict[str, Any]:
+    oldest_visible_sequence = _item_sequence_value(items[0]) if items else None
+    return {
+        "hasOlder": bool(has_older),
+        "oldestVisibleSequence": oldest_visible_sequence,
+        "totalItemCount": max(0, int(total_item_count)),
+    }
+
+
+def _apply_live_item_limit(snapshot: dict[str, Any], *, live_limit: int | None) -> dict[str, Any]:
+    prepared = copy.deepcopy(snapshot if isinstance(snapshot, dict) else {})
+    items = _sorted_snapshot_items(prepared)
+    total_item_count = len(items)
+    if live_limit is None:
+        prepared["items"] = items
+        return prepared
+    window = max(1, int(live_limit))
+    has_older = total_item_count > window
+    if has_older:
+        items = items[-window:]
+    prepared["items"] = items
+    prepared["historyMeta"] = _build_history_meta(
+        items=items,
+        total_item_count=total_item_count,
+        has_older=has_older,
+    )
+    return prepared
+
+
+def _build_history_page(
+    snapshot: dict[str, Any],
+    *,
+    before_sequence: int | None,
+    limit: int,
+) -> dict[str, Any]:
+    items = _sorted_snapshot_items(snapshot)
+    total_item_count = len(items)
+    if before_sequence is not None:
+        eligible = [
+            item
+            for item in items
+            if (sequence := _item_sequence_value(item)) is not None and sequence < int(before_sequence)
+        ]
+    else:
+        eligible = items
+    window = max(1, int(limit))
+    page_items = eligible[-window:]
+    has_more = len(eligible) > len(page_items)
+    next_before_sequence = _item_sequence_value(page_items[0]) if has_more and page_items else None
+    return {
+        "items": page_items,
+        "has_more": has_more,
+        "next_before_sequence": next_before_sequence,
+        "total_item_count": total_item_count,
+    }
 
 
 def _envelope_with_contract_fields(envelope: dict[str, Any], *, thread_role: str) -> dict[str, Any]:
@@ -441,6 +523,7 @@ async def get_thread_snapshot_by_id_v3(
     project_id: str,
     thread_id: str,
     node_id: str = Query(...),
+    live_limit: int | None = Query(None, ge=1, le=_THREAD_SNAPSHOT_LIVE_LIMIT_MAX),
 ):
     try:
         thread_role = _resolve_thread_role_by_id_v3(
@@ -457,7 +540,48 @@ async def get_thread_snapshot_by_id_v3(
             ensure_binding=False,
         )
         snapshot_v3 = _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)
+        snapshot_v3 = _apply_live_item_limit(snapshot_v3, live_limit=live_limit)
         return _ok({"snapshot": snapshot_v3})
+    except AppError as exc:
+        return _error_response(exc)
+    except Exception:
+        return _unexpected_error_response()
+
+
+@router.get("/projects/{project_id}/threads/by-id/{thread_id}/history")
+async def get_thread_history_page_by_id_v3(
+    request: Request,
+    project_id: str,
+    thread_id: str,
+    node_id: str = Query(...),
+    before_sequence: int | None = Query(None, ge=0),
+    limit: int = Query(
+        _THREAD_HISTORY_PAGE_LIMIT_DEFAULT,
+        ge=1,
+        le=_THREAD_HISTORY_PAGE_LIMIT_MAX,
+    ),
+):
+    try:
+        thread_role = _resolve_thread_role_by_id_v3(
+            request,
+            project_id,
+            node_id,
+            thread_id,
+        )
+        snapshot_v3 = request.app.state.thread_query_service_v3.get_thread_snapshot(
+            project_id,
+            node_id,
+            thread_role,
+            publish_repairs=True,
+            ensure_binding=False,
+        )
+        snapshot_v3 = _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)
+        history_page = _build_history_page(
+            snapshot_v3,
+            before_sequence=before_sequence,
+            limit=limit,
+        )
+        return _ok(history_page)
     except AppError as exc:
         return _error_response(exc)
     except Exception:

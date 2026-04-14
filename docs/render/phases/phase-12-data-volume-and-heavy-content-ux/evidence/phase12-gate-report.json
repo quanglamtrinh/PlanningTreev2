@@ -1,0 +1,83 @@
+{
+  "phase": "12",
+  "generated_at": "2026-04-14T05:21:00Z",
+  "source": "phase12_gate_report",
+  "status": "pass",
+  "metric": "phase12_gate_pass_count",
+  "value": 3.0,
+  "target": 3.0,
+  "operator": "eq",
+  "pass": true,
+  "context": {
+    "evidence_dir": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence",
+    "candidate_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates",
+    "gate_count": 3,
+    "eligibility_fail_count": 0
+  },
+  "summary": {
+    "all_pass": true,
+    "pass_count": 3,
+    "total_gates": 3,
+    "eligibility_fail_count": 0
+  },
+  "gates": [
+    {
+      "id": "P12-G1",
+      "source": "long_session_volume_tests",
+      "metric": "live_items_exceeds_scrollback_cap_events",
+      "value": 0.0,
+      "operator": "lte",
+      "target": 0.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/long-session-volume-tests-candidate.json",
+      "candidate_commit_sha": "5f253826e533",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/long_session_volume_tests.json"
+    },
+    {
+      "id": "P12-G2",
+      "source": "heavy_row_classification_suite",
+      "metric": "heavy_row_default_collapse_accuracy_pct",
+      "value": 97.6,
+      "operator": "gte",
+      "target": 95.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/heavy-row-classification-suite-candidate.json",
+      "candidate_commit_sha": "5f253826e533",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/heavy_row_classification_suite.json"
+    },
+    {
+      "id": "P12-G3",
+      "source": "preview_to_full_navigation_tests",
+      "metric": "full_artifact_access_failures",
+      "value": 0.0,
+      "operator": "lte",
+      "target": 0.0,
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/preview-to-full-navigation-tests-candidate.json",
+      "candidate_commit_sha": "5f253826e533",
+      "eligibility_issues": [],
+      "artifact": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/preview_to_full_navigation_tests.json"
+    }
+  ],
+  "baseline_metadata": {
+    "label": "phase12_pre_volume_heavy_content_baseline_v1",
+    "captured_at": "2026-04-14T00:00:00Z",
+    "workload": "synthetic_v3_long_thread_heavy_payload_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/baseline-manifest-v1.json"
+  }
+}

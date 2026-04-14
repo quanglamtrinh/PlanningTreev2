@@ -8,6 +8,7 @@ import pytest
 import backend.conversation.services.thread_runtime_service_v3 as thread_runtime_service_v3_module
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.types_v3 import default_thread_snapshot_v3
+from backend.conversation.projector.thread_event_projector_runtime_v3 import apply_raw_event_v3
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
 from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
@@ -708,3 +709,114 @@ def test_thread_runtime_service_v3_stream_compacts_message_deltas(storage, works
     updated = query.get_thread_snapshot(project_id, node_id, "execution", publish_repairs=False)
     message_item = next(item for item in updated["items"] if str(item.get("id") or "") == "msg-compact-1")
     assert message_item["text"] == "hello world!"
+
+
+def test_raw_event_compactor_v3_compacted_and_non_compacted_projection_match() -> None:
+    raw_events: list[dict[str, Any]] = [
+        {
+            "method": "item/started",
+            "received_at": "2026-04-10T00:00:01Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "msg-1",
+            "params": {"item": {"type": "agentMessage", "id": "msg-1"}},
+        },
+        {
+            "method": "item/agentMessage/delta",
+            "received_at": "2026-04-10T00:00:02Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "msg-1",
+            "params": {"delta": "Hel"},
+        },
+        {
+            "method": "item/agentMessage/delta",
+            "received_at": "2026-04-10T00:00:02Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "msg-1",
+            "params": {"delta": "lo"},
+        },
+        {
+            "method": "item/completed",
+            "received_at": "2026-04-10T00:00:03Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "msg-1",
+            "params": {"item": {"type": "agentMessage", "id": "msg-1"}},
+        },
+        {
+            "method": "item/tool/requestUserInput",
+            "received_at": "2026-04-10T00:00:04Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "input-1",
+            "request_id": "req-1",
+            "params": {
+                "questions": [
+                    {
+                        "id": "q1",
+                        "header": "Confirm",
+                        "prompt": "Proceed?",
+                        "inputType": "single_select",
+                        "options": [{"label": "Yes", "description": None}],
+                    }
+                ]
+            },
+        },
+        {
+            "method": "serverRequest/resolved",
+            "received_at": "2026-04-10T00:00:05Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "item_id": "input-1",
+            "request_id": "req-1",
+            "params": {
+                "answers": [{"questionId": "q1", "value": "yes", "label": "Yes"}],
+                "resolved_at": "2026-04-10T00:00:05Z",
+            },
+        },
+        {
+            "method": "thread/status/changed",
+            "received_at": "2026-04-10T00:00:06Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "params": {"status": {"type": "running"}},
+        },
+        {
+            "method": "turn/completed",
+            "received_at": "2026-04-10T00:00:07Z",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "params": {"turn": {"status": "completed", "id": "turn-1"}},
+        },
+    ]
+
+    compactor = _RawEventCompactorV3(
+        default_thread_id="thread-1",
+        default_turn_id="turn-1",
+        window_ms=50,
+        max_batch_size=64,
+    )
+    compacted_events: list[dict[str, Any]] = []
+    for raw_event in raw_events:
+        compacted_events.extend(compactor.push(raw_event))
+    compacted_events.extend(compactor.flush())
+
+    direct_snapshot = default_thread_snapshot_v3("project-1", "node-1", "execution")
+    direct_snapshot["threadId"] = "thread-1"
+    direct_snapshot["activeTurnId"] = "turn-1"
+    direct_snapshot["processingState"] = "running"
+    for raw_event in raw_events:
+        direct_snapshot, _ = apply_raw_event_v3(direct_snapshot, raw_event)
+
+    compacted_snapshot = default_thread_snapshot_v3("project-1", "node-1", "execution")
+    compacted_snapshot["threadId"] = "thread-1"
+    compacted_snapshot["activeTurnId"] = "turn-1"
+    compacted_snapshot["processingState"] = "running"
+    for raw_event in compacted_events:
+        compacted_snapshot, _ = apply_raw_event_v3(compacted_snapshot, raw_event)
+
+    compacted_snapshot["createdAt"] = direct_snapshot["createdAt"]
+    compacted_snapshot["updatedAt"] = direct_snapshot["updatedAt"]
+    assert direct_snapshot == compacted_snapshot

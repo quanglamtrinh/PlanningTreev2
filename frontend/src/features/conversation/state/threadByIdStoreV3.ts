@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { api, appendAuthToken, buildThreadByIdEventsUrlV3 } from '../../../api/client'
 import type {
+  ConversationItemV3,
   PlanActionV3,
   ThreadRole,
   ThreadSnapshotV3,
@@ -19,6 +20,11 @@ const SSE_RECONNECT_RETRY_MS = 1000
 const USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS = 1500
 const FRAME_BATCH_FALLBACK_FLUSH_MS = 16
 const FRAME_BATCH_MAX_QUEUE_AGE_MS = 50
+const SCROLLBACK_SOFT_CAP = 1000
+const SCROLLBACK_HARD_CAP = 1200
+const SCROLLBACK_TRIM_TARGET = 900
+const HISTORY_PAGE_LIMIT = 200
+const SNAPSHOT_LIVE_LIMIT = SCROLLBACK_SOFT_CAP
 
 export type ThreadByIdStreamStatusV3 = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'error'
 export type ReloadReasonCode =
@@ -65,6 +71,11 @@ export type ThreadByIdStoreV3State = {
   lastDurationMs: number | null
   telemetry: ThreadByIdTelemetryV3
   error: string | null
+  hasOlderHistory: boolean
+  oldestVisibleSequence: number | null
+  totalItemCount: number
+  isLoadingHistory: boolean
+  historyError: string | null
 
   loadThread: (
     projectId: string,
@@ -72,6 +83,7 @@ export type ThreadByIdStoreV3State = {
     threadId: string,
     threadRole: ThreadRole,
   ) => Promise<void>
+  loadMoreHistory: () => Promise<void>
   sendTurn: (text: string, metadata?: Record<string, unknown>) => Promise<void>
   resolveUserInput: (requestId: string, answers: UserInputAnswer[]) => Promise<void>
   runPlanAction: (
@@ -86,7 +98,15 @@ export type ThreadByIdStoreV3State = {
 
 export type ThreadCoreState = Pick<
   ThreadByIdStoreV3State,
-  'snapshot' | 'lastEventId' | 'lastSnapshotVersion' | 'processingStartedAt' | 'lastCompletedAt' | 'lastDurationMs'
+  | 'snapshot'
+  | 'lastEventId'
+  | 'lastSnapshotVersion'
+  | 'processingStartedAt'
+  | 'lastCompletedAt'
+  | 'lastDurationMs'
+  | 'hasOlderHistory'
+  | 'oldestVisibleSequence'
+  | 'totalItemCount'
 >
 export type ThreadTransportState = Pick<
   ThreadByIdStoreV3State,
@@ -94,11 +114,12 @@ export type ThreadTransportState = Pick<
 >
 export type ThreadUiControlState = Pick<
   ThreadByIdStoreV3State,
-  'isLoading' | 'isSending' | 'error' | 'telemetry'
+  'isLoading' | 'isSending' | 'error' | 'telemetry' | 'isLoadingHistory' | 'historyError'
 >
 export type ThreadActionHandlers = Pick<
   ThreadByIdStoreV3State,
   | 'loadThread'
+  | 'loadMoreHistory'
   | 'sendTurn'
   | 'resolveUserInput'
   | 'runPlanAction'
@@ -112,6 +133,11 @@ export type ThreadFeedRenderState = {
   error: string | null
   lastCompletedAt: number | null
   lastDurationMs: number | null
+}
+export type ThreadHistoryUiState = {
+  hasOlderHistory: boolean
+  isLoadingHistory: boolean
+  historyError: string | null
 }
 export type ThreadComposerState = {
   snapshot: ThreadSnapshotV3 | null
@@ -141,6 +167,9 @@ export function selectCore(state: ThreadByIdStoreV3State): ThreadCoreState {
     processingStartedAt: state.processingStartedAt,
     lastCompletedAt: state.lastCompletedAt,
     lastDurationMs: state.lastDurationMs,
+    hasOlderHistory: state.hasOlderHistory,
+    oldestVisibleSequence: state.oldestVisibleSequence,
+    totalItemCount: state.totalItemCount,
   }
 }
 
@@ -160,12 +189,15 @@ export function selectUiControl(state: ThreadByIdStoreV3State): ThreadUiControlS
     isSending: state.isSending,
     error: state.error,
     telemetry: state.telemetry,
+    isLoadingHistory: state.isLoadingHistory,
+    historyError: state.historyError,
   }
 }
 
 export function selectThreadActions(state: ThreadByIdStoreV3State): ThreadActionHandlers {
   return {
     loadThread: state.loadThread,
+    loadMoreHistory: state.loadMoreHistory,
     sendTurn: state.sendTurn,
     resolveUserInput: state.resolveUserInput,
     runPlanAction: state.runPlanAction,
@@ -184,6 +216,14 @@ export function selectFeedRenderState(state: ThreadByIdStoreV3State): ThreadFeed
     error: uiControl.error,
     lastCompletedAt: core.lastCompletedAt,
     lastDurationMs: core.lastDurationMs,
+  }
+}
+
+export function selectHistoryUiState(state: ThreadByIdStoreV3State): ThreadHistoryUiState {
+  return {
+    hasOlderHistory: state.hasOlderHistory,
+    isLoadingHistory: state.isLoadingHistory,
+    historyError: state.historyError,
   }
 }
 
@@ -292,6 +332,110 @@ function resetProcessingTelemetry(): ProcessingTelemetryState {
   }
 }
 
+type ThreadHistoryState = Pick<
+  ThreadByIdStoreV3State,
+  'hasOlderHistory' | 'oldestVisibleSequence' | 'totalItemCount'
+>
+
+function compareConversationItemsByOrder(left: ConversationItemV3, right: ConversationItemV3): number {
+  if (left.sequence !== right.sequence) {
+    return left.sequence - right.sequence
+  }
+  const createdAtCompare = left.createdAt.localeCompare(right.createdAt)
+  if (createdAtCompare !== 0) {
+    return createdAtCompare
+  }
+  return left.id.localeCompare(right.id)
+}
+
+function normalizeThreadHistoryMeta(snapshot: ThreadSnapshotV3 | null): ThreadHistoryState {
+  if (!snapshot) {
+    return {
+      hasOlderHistory: false,
+      oldestVisibleSequence: null,
+      totalItemCount: 0,
+    }
+  }
+  const itemCount = snapshot.items.length
+  const oldestVisibleSequence = itemCount > 0 ? snapshot.items[0].sequence : null
+  const snapshotMeta = snapshot.historyMeta
+  const metaTotal =
+    snapshotMeta && Number.isFinite(snapshotMeta.totalItemCount)
+      ? Math.max(0, Math.floor(snapshotMeta.totalItemCount))
+      : itemCount
+  const totalItemCount = Math.max(itemCount, metaTotal)
+  const hasOlderHistory = Boolean(snapshotMeta?.hasOlder) || totalItemCount > itemCount
+  return {
+    hasOlderHistory,
+    oldestVisibleSequence:
+      snapshotMeta?.oldestVisibleSequence != null
+        ? snapshotMeta.oldestVisibleSequence
+        : oldestVisibleSequence,
+    totalItemCount,
+  }
+}
+
+function applyHistoryMeta(snapshot: ThreadSnapshotV3, history: ThreadHistoryState): ThreadSnapshotV3 {
+  return {
+    ...snapshot,
+    historyMeta: {
+      hasOlder: history.hasOlderHistory,
+      oldestVisibleSequence: history.oldestVisibleSequence,
+      totalItemCount: history.totalItemCount,
+    },
+  }
+}
+
+function enforceScrollbackCap(
+  snapshot: ThreadSnapshotV3 | null,
+  previousHistory: ThreadHistoryState | null = null,
+): { snapshot: ThreadSnapshotV3 | null; history: ThreadHistoryState } {
+  if (!snapshot) {
+    return {
+      snapshot: null,
+      history: {
+        hasOlderHistory: false,
+        oldestVisibleSequence: null,
+        totalItemCount: 0,
+      },
+    }
+  }
+  const sortedItems = [...snapshot.items].sort(compareConversationItemsByOrder)
+  const baselineHistory = normalizeThreadHistoryMeta({
+    ...snapshot,
+    items: sortedItems,
+  })
+  let totalItemCount = Math.max(
+    baselineHistory.totalItemCount,
+    previousHistory?.totalItemCount ?? 0,
+    sortedItems.length,
+  )
+  let hasOlderHistory =
+    baselineHistory.hasOlderHistory || Boolean(previousHistory?.hasOlderHistory) || totalItemCount > sortedItems.length
+  let nextItems = sortedItems
+  if (sortedItems.length > SCROLLBACK_HARD_CAP) {
+    nextItems = sortedItems.slice(Math.max(0, sortedItems.length - SCROLLBACK_TRIM_TARGET))
+    hasOlderHistory = true
+  }
+  totalItemCount = Math.max(totalItemCount, nextItems.length)
+  const oldestVisibleSequence = nextItems.length > 0 ? nextItems[0].sequence : null
+  const history: ThreadHistoryState = {
+    hasOlderHistory,
+    oldestVisibleSequence,
+    totalItemCount,
+  }
+  return {
+    snapshot: applyHistoryMeta(
+      {
+        ...snapshot,
+        items: nextItems,
+      },
+      history,
+    ),
+    history,
+  }
+}
+
 function seedRunningTelemetry(
   state: ProcessingTelemetryState,
   snapshot: ThreadSnapshotV3 | null,
@@ -338,6 +482,11 @@ function buildDisconnectedStatePatch(): ThreadRuntimeStateV3 {
     ...resetProcessingTelemetry(),
     telemetry: resetTelemetryV3(),
     error: null,
+    hasOlderHistory: false,
+    oldestVisibleSequence: null,
+    totalItemCount: 0,
+    isLoadingHistory: false,
+    historyError: null,
   }
 }
 
@@ -354,6 +503,9 @@ function buildThreadLoadStartPatch(
         lastEventId: null,
         lastSnapshotVersion: null,
         ...resetProcessingTelemetry(),
+        hasOlderHistory: false,
+        oldestVisibleSequence: null,
+        totalItemCount: 0,
       },
     },
     {
@@ -369,8 +521,10 @@ function buildThreadLoadStartPatch(
       uiControl: {
         isLoading: true,
         isSending: false,
+        isLoadingHistory: false,
         telemetry: resetTelemetryV3(),
         error: null,
+        historyError: null,
       },
     },
   )
@@ -381,13 +535,22 @@ function buildSnapshotHydratedPatch(
   snapshot: ThreadSnapshotV3,
   options: { telemetry?: ThreadByIdTelemetryV3 } = {},
 ): Partial<ThreadByIdStoreV3State> {
+  const previousHistory: ThreadHistoryState = {
+    hasOlderHistory: state.hasOlderHistory,
+    oldestVisibleSequence: state.oldestVisibleSequence,
+    totalItemCount: state.totalItemCount,
+  }
+  const capped = enforceScrollbackCap(snapshot, previousHistory)
   return composeDomainPatch(
     {
       core: {
-        snapshot,
+        snapshot: capped.snapshot,
         lastEventId: null,
         lastSnapshotVersion: snapshot.snapshotVersion,
-        ...seedRunningTelemetry(state, snapshot),
+        ...seedRunningTelemetry(state, capped.snapshot),
+        hasOlderHistory: capped.history.hasOlderHistory,
+        oldestVisibleSequence: capped.history.oldestVisibleSequence,
+        totalItemCount: capped.history.totalItemCount,
       },
     },
     {
@@ -398,7 +561,9 @@ function buildSnapshotHydratedPatch(
     {
       uiControl: {
         isLoading: false,
+        isLoadingHistory: false,
         error: null,
+        historyError: null,
         ...(options.telemetry ? { telemetry: options.telemetry } : {}),
       },
     },
@@ -643,7 +808,7 @@ async function reloadThreadSnapshot(
   }
 
   try {
-    const snapshot = await api.getThreadSnapshotByIdV3(projectId, nodeId, threadId)
+    const snapshot = await api.getThreadSnapshotByIdV3(projectId, nodeId, threadId, SNAPSHOT_LIVE_LIMIT)
     const latestState = get()
     if (
       !isCurrentGeneration(generation) ||
@@ -652,7 +817,7 @@ async function reloadThreadSnapshot(
       return
     }
     set(buildSnapshotHydratedPatch(latestState, snapshot))
-    reconcileResolveFallbackTimers(snapshot)
+    reconcileResolveFallbackTimers(get().snapshot)
     void openThreadEventStream(
       get,
       set,
@@ -1078,6 +1243,11 @@ async function openThreadEventStream(
     let workingLastSnapshotVersion = currentState.lastSnapshotVersion
     let workingError = currentState.error
     let workingIsLoading = currentState.isLoading
+    let workingHistory: ThreadHistoryState = {
+      hasOlderHistory: currentState.hasOlderHistory,
+      oldestVisibleSequence: currentState.oldestVisibleSequence,
+      totalItemCount: currentState.totalItemCount,
+    }
     let processingTelemetry = selectProcessingTelemetry(currentState)
     let shouldReconcileResolveFallback = false
     let legacyFallbackUsedCount = 0
@@ -1219,6 +1389,10 @@ async function openThreadEventStream(
       return
     }
 
+    const cappedResult = enforceScrollbackCap(workingSnapshot, workingHistory)
+    workingSnapshot = cappedResult.snapshot
+    workingHistory = cappedResult.history
+
     if (shouldReconcileResolveFallback && workingSnapshot) {
       reconcileResolveFallbackTimers(workingSnapshot)
     }
@@ -1238,6 +1412,9 @@ async function openThreadEventStream(
             lastEventId: workingLastEventId,
             lastSnapshotVersion: workingLastSnapshotVersion,
             ...processingTelemetry,
+            hasOlderHistory: workingHistory.hasOlderHistory,
+            oldestVisibleSequence: workingHistory.oldestVisibleSequence,
+            totalItemCount: workingHistory.totalItemCount,
           },
         },
         {
@@ -1249,6 +1426,7 @@ async function openThreadEventStream(
           uiControl: {
             isLoading: workingIsLoading,
             error: workingError,
+            historyError: null,
             telemetry: {
               ...state.telemetry,
               legacy_fallback_used_count:
@@ -1379,7 +1557,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     set(buildThreadLoadStartPatch(projectId, nodeId, threadId, threadRole))
 
     try {
-      const snapshot = await api.getThreadSnapshotByIdV3(projectId, nodeId, threadId)
+      const snapshot = await api.getThreadSnapshotByIdV3(projectId, nodeId, threadId, SNAPSHOT_LIVE_LIMIT)
       const latestState = get()
       if (
         !isCurrentGeneration(generation) ||
@@ -1395,7 +1573,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           },
         }),
       )
-      reconcileResolveFallbackTimers(snapshot)
+      reconcileResolveFallbackTimers(get().snapshot)
       void openThreadEventStream(
         get,
         set,
@@ -1429,6 +1607,109 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
             },
           },
         ),
+      )
+    }
+  },
+
+  async loadMoreHistory() {
+    const state = get()
+    const { activeProjectId, activeNodeId, activeThreadId, activeThreadRole, snapshot } = state
+    if (!activeProjectId || !activeNodeId || !activeThreadId || !activeThreadRole || !snapshot) {
+      return
+    }
+    if (state.isLoadingHistory || !state.hasOlderHistory) {
+      return
+    }
+    const beforeSequence = state.oldestVisibleSequence ?? (snapshot.items.length > 0 ? snapshot.items[0].sequence : null)
+    if (beforeSequence == null) {
+      return
+    }
+
+    const generation = threadGeneration
+    set(
+      composeDomainPatch({
+        uiControl: {
+          isLoadingHistory: true,
+          historyError: null,
+        },
+      }),
+    )
+
+    try {
+      const page = await api.getThreadHistoryPageByIdV3(activeProjectId, activeNodeId, activeThreadId, {
+        beforeSequence,
+        limit: HISTORY_PAGE_LIMIT,
+      })
+      const latestState = get()
+      if (
+        !isCurrentGeneration(generation) ||
+        !isActiveTarget(latestState, activeProjectId, activeNodeId, activeThreadId, activeThreadRole)
+      ) {
+        return
+      }
+
+      set((current) => {
+        if (
+          !isCurrentGeneration(generation) ||
+          !isActiveTarget(current, activeProjectId, activeNodeId, activeThreadId, activeThreadRole) ||
+          !current.snapshot
+        ) {
+          return {}
+        }
+        const existingIds = new Set(current.snapshot.items.map((item) => item.id))
+        const prependItems = page.items.filter((item) => !existingIds.has(item.id))
+        const mergedItems = [...prependItems, ...current.snapshot.items].sort(compareConversationItemsByOrder)
+        const totalItemCount = Math.max(
+          current.totalItemCount,
+          Number.isFinite(page.total_item_count) ? Math.max(0, Math.floor(page.total_item_count)) : 0,
+          mergedItems.length,
+        )
+        const hasOlderHistory = Boolean(page.has_more)
+        const oldestVisibleSequence = mergedItems.length > 0 ? mergedItems[0].sequence : null
+        const history: ThreadHistoryState = {
+          hasOlderHistory,
+          oldestVisibleSequence,
+          totalItemCount,
+        }
+        const nextSnapshot = applyHistoryMeta(
+          {
+            ...current.snapshot,
+            items: mergedItems,
+          },
+          history,
+        )
+        return composeDomainPatch(
+          {
+            core: {
+              snapshot: nextSnapshot,
+              hasOlderHistory: history.hasOlderHistory,
+              oldestVisibleSequence: history.oldestVisibleSequence,
+              totalItemCount: history.totalItemCount,
+            },
+          },
+          {
+            uiControl: {
+              isLoadingHistory: false,
+              historyError: null,
+            },
+          },
+        )
+      })
+    } catch (error) {
+      const latestState = get()
+      if (
+        !isCurrentGeneration(generation) ||
+        !isActiveTarget(latestState, activeProjectId, activeNodeId, activeThreadId, activeThreadRole)
+      ) {
+        return
+      }
+      set(
+        composeDomainPatch({
+          uiControl: {
+            isLoadingHistory: false,
+            historyError: error instanceof Error ? error.message : String(error),
+          },
+        }),
       )
     }
   },

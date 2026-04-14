@@ -1,0 +1,11 @@
+{
+  "candidate_metrics": {
+    "full_artifact_access_failures": 0,
+    "preview_click_count": 63,
+    "full_view_open_count": 63,
+    "modal_close_success_count": 63
+  },
+  "context": {
+    "scenario": "phase12_preview_to_full_navigation_tests_candidate_v1"
+  }
+}

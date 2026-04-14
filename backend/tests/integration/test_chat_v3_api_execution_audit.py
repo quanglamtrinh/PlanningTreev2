@@ -112,6 +112,41 @@ def _seed_execution_thread(client: TestClient, project_id: str, node_id: str) ->
     return thread_id
 
 
+def _set_execution_items_with_sequences(
+    client: TestClient,
+    project_id: str,
+    node_id: str,
+    *,
+    thread_id: str,
+    sequences: list[int],
+) -> None:
+    storage = client.app.state.storage
+    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "execution")
+    snapshot["threadId"] = thread_id
+    snapshot["processingState"] = "idle"
+    snapshot["snapshotVersion"] = max(sequences, default=0) + 1
+    snapshot["items"] = [
+        {
+            "id": f"msg-{sequence}",
+            "kind": "message",
+            "threadId": thread_id,
+            "turnId": f"turn-{sequence}",
+            "sequence": sequence,
+            "createdAt": f"2026-04-01T10:{sequence:02d}:00Z",
+            "updatedAt": f"2026-04-01T10:{sequence:02d}:00Z",
+            "status": "completed",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "role": "assistant",
+            "text": f"message-{sequence}",
+            "format": "markdown",
+        }
+        for sequence in sequences
+    ]
+    storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, "execution", snapshot)
+
+
 def _seed_execution_user_input_pending(
     client: TestClient,
     project_id: str,
@@ -381,6 +416,101 @@ def test_v3_execution_snapshot_by_id_returns_wrapped_snapshot(client: TestClient
         "ready": False,
         "failed": False,
     }
+
+
+def test_v3_execution_snapshot_by_id_live_limit_returns_tail_and_history_meta(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    _set_execution_items_with_sequences(
+        client,
+        project_id,
+        node_id,
+        thread_id=thread_id,
+        sequences=[1, 2, 3, 4, 5, 6, 7],
+    )
+
+    baseline_response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id},
+    )
+    assert baseline_response.status_code == 200
+    baseline_snapshot = baseline_response.json()["data"]["snapshot"]
+    assert [item["sequence"] for item in baseline_snapshot["items"]] == [1, 2, 3, 4, 5, 6, 7]
+    assert "historyMeta" not in baseline_snapshot
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id, "live_limit": 3},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    snapshot = payload["data"]["snapshot"]
+    assert [item["sequence"] for item in snapshot["items"]] == [5, 6, 7]
+    assert snapshot["historyMeta"] == {
+        "hasOlder": True,
+        "oldestVisibleSequence": 5,
+        "totalItemCount": 7,
+    }
+
+
+def test_v3_execution_history_by_id_paginates_by_before_sequence_cursor(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+    _set_execution_items_with_sequences(
+        client,
+        project_id,
+        node_id,
+        thread_id=thread_id,
+        sequences=[1, 2, 3, 4, 5, 6, 7, 8],
+    )
+
+    first_page_response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/history",
+        params={"node_id": node_id, "limit": 3},
+    )
+    assert first_page_response.status_code == 200
+    first_page = first_page_response.json()["data"]
+    assert [item["sequence"] for item in first_page["items"]] == [6, 7, 8]
+    assert first_page["has_more"] is True
+    assert first_page["next_before_sequence"] == 6
+    assert first_page["total_item_count"] == 8
+
+    second_page_response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/history",
+        params={
+            "node_id": node_id,
+            "limit": 3,
+            "before_sequence": first_page["next_before_sequence"],
+        },
+    )
+    assert second_page_response.status_code == 200
+    second_page = second_page_response.json()["data"]
+    assert [item["sequence"] for item in second_page["items"]] == [3, 4, 5]
+    assert second_page["has_more"] is True
+    assert second_page["next_before_sequence"] == 3
+    assert second_page["total_item_count"] == 8
+
+    final_page_response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/history",
+        params={
+            "node_id": node_id,
+            "limit": 3,
+            "before_sequence": second_page["next_before_sequence"],
+        },
+    )
+    assert final_page_response.status_code == 200
+    final_page = final_page_response.json()["data"]
+    assert [item["sequence"] for item in final_page["items"]] == [1, 2]
+    assert final_page["has_more"] is False
+    assert final_page["next_before_sequence"] is None
+    assert final_page["total_item_count"] == 8
 
 
 def test_v3_ask_snapshot_by_id_returns_wrapped_snapshot(client: TestClient, workspace_root) -> None:
