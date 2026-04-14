@@ -1,6 +1,6 @@
 # Phase 12 Closeout v1
 
-Status: Completed (contract-safe optimization wave landed and gates passed with candidate-backed evidence).
+Status: Completed (v2 adaptive-cap policy landed and gates passed with candidate-backed evidence).
 
 Date: 2026-04-14.
 
@@ -11,7 +11,7 @@ Phase: `phase-12-data-volume-and-heavy-content-ux` (D08, E01, E02, E03).
 Implemented scope:
 
 1. D08: heavy rows default-collapse with manual-toggle precedence and in-progress auto-expand.
-2. E01: bounded live snapshot window + scrollback hysteresis + history pagination.
+2. E01: bounded live snapshot window + adaptive scrollback cap + history pagination.
 3. E02: preview-only truncation with full artifact access modal.
 4. E03: backend semantic coalescing ownership preserved; compactor compatibility verified.
 
@@ -20,6 +20,11 @@ Contract intent preserved:
 1. replay/resync contract unchanged.
 2. canonical backend payload text is not truncated/mutated by frontend view policy.
 3. backend pipeline remains canonical source of truth for semantic coalescing.
+
+Phase movement:
+
+1. Phase 12 was reopened to remove fixed hard-cap freeze assumptions.
+2. Phase 12 was re-closed after adaptive-cap validation and gate refresh.
 
 ## 2. Implemented Code Areas
 
@@ -46,7 +51,7 @@ Phase docs and scripts:
 
 1. `docs/render/phases/phase-12-data-volume-and-heavy-content-ux/README.md`
 2. `docs/render/phases/phase-12-data-volume-and-heavy-content-ux/preflight-v1.md`
-3. `docs/render/phases/phase-12-data-volume-and-heavy-content-ux/heavy-content-visibility-policy-v1.md`
+3. `docs/render/phases/phase-12-data-volume-and-heavy-content-ux/heavy-content-visibility-policy-v2.md`
 4. `docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/*`
 5. `scripts/phase12_long_session_volume_tests.py`
 6. `scripts/phase12_heavy_row_classification_suite.py`
@@ -62,12 +67,17 @@ Executed checks:
 3. `python -m pytest backend/tests/integration/test_chat_v3_api_execution_audit.py -k "live_limit_returns_tail_and_history_meta or history_by_id_paginates_by_before_sequence_cursor"` -> `PASS`.
 4. `python -m pytest backend/tests/unit/test_thread_runtime_service_v3.py -k "compacted_and_non_compacted_projection_match"` -> `PASS`.
 5. `npm run check:render_freeze` -> `PASS`.
+6. adaptive cap frontend coverage:
+   - `resolvePhase12CapProfile` precedence tests -> `PASS`.
+   - `resolvePhase12CapPolicy` profile mapping tests -> `PASS`.
+   - `loadMoreHistory` overflow bounded-window test -> `PASS`.
+   - replay-miss resync snapshot still requests `live_limit=1000` -> `PASS`.
 
 Evidence contract checks:
 
-1. `python scripts/phase12_long_session_volume_tests.py --self-test --candidate docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/long-session-volume-tests-candidate.json --candidate-commit-sha 5f253826e533` -> `PASS`.
-2. `python scripts/phase12_heavy_row_classification_suite.py --self-test --candidate docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/heavy-row-classification-suite-candidate.json --candidate-commit-sha 5f253826e533` -> `PASS`.
-3. `python scripts/phase12_preview_to_full_navigation_tests.py --self-test --candidate docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/preview-to-full-navigation-tests-candidate.json --candidate-commit-sha 5f253826e533` -> `PASS`.
+1. `python scripts/phase12_long_session_volume_tests.py --self-test --candidate docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/long-session-volume-tests-candidate.json --candidate-commit-sha bd4ba63` -> `PASS`.
+2. `python scripts/phase12_heavy_row_classification_suite.py --self-test --candidate docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/heavy-row-classification-suite-candidate.json --candidate-commit-sha bd4ba63` -> `PASS`.
+3. `python scripts/phase12_preview_to_full_navigation_tests.py --self-test --candidate docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/preview-to-full-navigation-tests-candidate.json --candidate-commit-sha bd4ba63` -> `PASS`.
 4. `python scripts/phase12_gate_report.py --self-test --candidate docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates` -> `PASS`.
 
 ## 4. Exit Gates (P12) Status

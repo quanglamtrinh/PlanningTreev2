@@ -8,7 +8,7 @@ To phase: `phase-13-queued-follow-up-flow`.
 
 ## What Phase 12 Guarantees
 
-1. Active live feed is bounded by scrollback hysteresis policy.
+1. Active live feed is bounded by adaptive-cap policy (`soft=1000`, profile-based hard cap).
 2. Older history is recoverable through deterministic sequence-cursor pagination.
 3. Heavy payload rows default to collapsed without hiding full payload access.
 4. Preview/truncation remains presentation-only.
@@ -35,3 +35,4 @@ To phase: `phase-13-queued-follow-up-flow`.
 1. Queue re-send/reorder UX must not break history anchor behavior under prepend.
 2. Queue automation should not assume heavy rows are expanded by default.
 3. Queue policy updates must preserve replay/resync cursor contract.
+4. Queue tests should run across `low|standard|high` adaptive-cap profiles.

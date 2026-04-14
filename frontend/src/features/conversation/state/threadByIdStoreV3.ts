@@ -21,10 +21,90 @@ const USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS = 1500
 const FRAME_BATCH_FALLBACK_FLUSH_MS = 16
 const FRAME_BATCH_MAX_QUEUE_AGE_MS = 50
 const SCROLLBACK_SOFT_CAP = 1000
-const SCROLLBACK_HARD_CAP = 1200
-const SCROLLBACK_TRIM_TARGET = 900
+const PHASE12_CAP_PROFILE_ENV_FLAG = 'VITE_PTM_PHASE12_CAP_PROFILE'
+const DEFAULT_PHASE12_CAP_PROFILE: Phase12CapProfile = 'standard'
+const PHASE12_CAP_HEADROOM_BY_PROFILE: Record<Phase12CapProfile, number> = {
+  low: 100,
+  standard: 200,
+  high: 400,
+}
 const HISTORY_PAGE_LIMIT = 200
-const SNAPSHOT_LIVE_LIMIT = SCROLLBACK_SOFT_CAP
+
+export type Phase12CapProfile = 'low' | 'standard' | 'high'
+export type Phase12CapPolicy = {
+  profile: Phase12CapProfile
+  softCap: number
+  headroom: number
+  effectiveHardCap: number
+  effectiveTrimTarget: number
+}
+
+function normalizePhase12CapProfile(value: string | null | undefined): Phase12CapProfile | null {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'low' || normalized === 'standard' || normalized === 'high') {
+    return normalized
+  }
+  return null
+}
+
+function resolveDeviceMemoryHint(): number | null {
+  const nav = (globalThis as { navigator?: { deviceMemory?: unknown } }).navigator
+  const memory = nav?.deviceMemory
+  if (typeof memory === 'number' && Number.isFinite(memory) && memory > 0) {
+    return memory
+  }
+  return null
+}
+
+export function resolvePhase12CapProfile(options: {
+  envValue?: string | null
+  deviceMemory?: number | null
+} = {}): Phase12CapProfile {
+  const envProfile = normalizePhase12CapProfile(options.envValue)
+  if (envProfile) {
+    return envProfile
+  }
+  const deviceMemory =
+    options.deviceMemory != null && Number.isFinite(options.deviceMemory)
+      ? Number(options.deviceMemory)
+      : resolveDeviceMemoryHint()
+  if (deviceMemory != null) {
+    if (deviceMemory < 4) {
+      return 'low'
+    }
+    if (deviceMemory >= 8) {
+      return 'high'
+    }
+  }
+  return DEFAULT_PHASE12_CAP_PROFILE
+}
+
+export function resolvePhase12CapPolicy(options: {
+  envValue?: string | null
+  deviceMemory?: number | null
+} = {}): Phase12CapPolicy {
+  const envValue =
+    options.envValue ??
+    String((import.meta.env as Record<string, unknown>)[PHASE12_CAP_PROFILE_ENV_FLAG] ?? '')
+  const profile = resolvePhase12CapProfile({
+    envValue,
+    deviceMemory: options.deviceMemory,
+  })
+  const softCap = SCROLLBACK_SOFT_CAP
+  const headroom = PHASE12_CAP_HEADROOM_BY_PROFILE[profile]
+  return {
+    profile,
+    softCap,
+    headroom,
+    effectiveHardCap: softCap + headroom,
+    effectiveTrimTarget: softCap,
+  }
+}
+
+const SCROLLBACK_CAP_POLICY = resolvePhase12CapPolicy()
+const SNAPSHOT_LIVE_LIMIT = SCROLLBACK_CAP_POLICY.softCap
 
 export type ThreadByIdStreamStatusV3 = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'error'
 export type ReloadReasonCode =
@@ -413,8 +493,10 @@ function enforceScrollbackCap(
   let hasOlderHistory =
     baselineHistory.hasOlderHistory || Boolean(previousHistory?.hasOlderHistory) || totalItemCount > sortedItems.length
   let nextItems = sortedItems
-  if (sortedItems.length > SCROLLBACK_HARD_CAP) {
-    nextItems = sortedItems.slice(Math.max(0, sortedItems.length - SCROLLBACK_TRIM_TARGET))
+  if (sortedItems.length > SCROLLBACK_CAP_POLICY.effectiveHardCap) {
+    nextItems = sortedItems.slice(
+      Math.max(0, sortedItems.length - SCROLLBACK_CAP_POLICY.effectiveTrimTarget),
+    )
     hasOlderHistory = true
   }
   totalItemCount = Math.max(totalItemCount, nextItems.length)
@@ -1664,27 +1746,30 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           Number.isFinite(page.total_item_count) ? Math.max(0, Math.floor(page.total_item_count)) : 0,
           mergedItems.length,
         )
-        const hasOlderHistory = Boolean(page.has_more)
-        const oldestVisibleSequence = mergedItems.length > 0 ? mergedItems[0].sequence : null
-        const history: ThreadHistoryState = {
-          hasOlderHistory,
-          oldestVisibleSequence,
+        const mergedHistory: ThreadHistoryState = {
+          hasOlderHistory: Boolean(page.has_more),
+          oldestVisibleSequence: mergedItems.length > 0 ? mergedItems[0].sequence : null,
           totalItemCount,
         }
-        const nextSnapshot = applyHistoryMeta(
+        const mergedSnapshot = applyHistoryMeta(
           {
             ...current.snapshot,
             items: mergedItems,
           },
-          history,
+          mergedHistory,
         )
+        const capped = enforceScrollbackCap(
+          mergedSnapshot,
+          mergedHistory,
+        )
+        const nextSnapshot = capped.snapshot ?? current.snapshot
         return composeDomainPatch(
           {
             core: {
               snapshot: nextSnapshot,
-              hasOlderHistory: history.hasOlderHistory,
-              oldestVisibleSequence: history.oldestVisibleSequence,
-              totalItemCount: history.totalItemCount,
+              hasOlderHistory: capped.history.hasOlderHistory,
+              oldestVisibleSequence: capped.history.oldestVisibleSequence,
+              totalItemCount: capped.history.totalItemCount,
             },
           },
           {

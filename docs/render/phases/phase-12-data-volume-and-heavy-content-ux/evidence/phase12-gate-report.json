@@ -1,6 +1,6 @@
 {
   "phase": "12",
-  "generated_at": "2026-04-14T05:21:00Z",
+  "generated_at": "2026-04-14T05:59:07Z",
   "source": "phase12_gate_report",
   "status": "pass",
   "metric": "phase12_gate_pass_count",
@@ -34,7 +34,7 @@
       "evidence_mode": "candidate",
       "gate_eligible": true,
       "candidate_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/long-session-volume-tests-candidate.json",
-      "candidate_commit_sha": "5f253826e533",
+      "candidate_commit_sha": "bd4ba63",
       "eligibility_issues": [],
       "artifact": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/long_session_volume_tests.json"
     },
@@ -51,7 +51,7 @@
       "evidence_mode": "candidate",
       "gate_eligible": true,
       "candidate_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/heavy-row-classification-suite-candidate.json",
-      "candidate_commit_sha": "5f253826e533",
+      "candidate_commit_sha": "bd4ba63",
       "eligibility_issues": [],
       "artifact": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/heavy_row_classification_suite.json"
     },
@@ -68,7 +68,7 @@
       "evidence_mode": "candidate",
       "gate_eligible": true,
       "candidate_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/preview-to-full-navigation-tests-candidate.json",
-      "candidate_commit_sha": "5f253826e533",
+      "candidate_commit_sha": "bd4ba63",
       "eligibility_issues": [],
       "artifact": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/preview_to_full_navigation_tests.json"
     }

@@ -1,16 +1,16 @@
-# Heavy Content Visibility Policy v1 (Phase 12)
+# Heavy Content Visibility Policy v2 (Phase 12)
 
-Superseded by: `heavy-content-visibility-policy-v2.md` (adaptive cap model).
-
-Status: Frozen (heavy_content_visibility_policy_frozen).
+Status: Frozen (heavy_content_visibility_policy_frozen_v2).
 
 Phase: `phase-12-data-volume-and-heavy-content-ux`.
 
 Date frozen: 2026-04-14.
 
+Supersedes: `heavy-content-visibility-policy-v1.md` for E01 cap behavior only.
+
 ## 1. Purpose
 
-Freeze the Phase 12 visibility defaults so implementation and review focus on correctness, not re-deciding heuristics in code review.
+Freeze the adaptive cap model for Phase 12 completion so we remove fixed hard-cap assumptions while keeping bounded memory and contract safety.
 
 ## 2. Scope
 
@@ -49,17 +49,33 @@ Does not change:
 4. Never auto-collapse:
    - `userInput`, `status`, `error`.
 
-## 5. Scrollback Cap Defaults
+## 5. Adaptive Scrollback Cap Defaults
 
-1. `soft_cap=1000`
-2. `hard_cap=1200`
-3. `trim_target=900`
+1. Baseline:
+   - `soft_cap=1000`
+   - `snapshot live_limit=1000`
+2. Runtime profile selection:
+   - env override: `VITE_PTM_PHASE12_CAP_PROFILE=low|standard|high`
+   - fallback runtime hint: `navigator.deviceMemory`
+   - fallback default: `standard`
+3. Headroom mapping:
+   - `low`: `+100`
+   - `standard`: `+200`
+   - `high`: `+400`
+4. Computed policy:
+   - `effective_hard_cap = soft_cap + headroom`
+   - `effective_trim_target = soft_cap` (always 1000)
 
-Rule:
+Rules:
 
-1. When active live items exceed `hard_cap`, trim oldest live rows to `trim_target`.
-2. Preserve item ordering and anchor invariants.
-3. Initial snapshot load uses `live_limit=1000`.
+1. Enforce cap on all mutation paths:
+   - snapshot hydrate/reload
+   - batched stream event flush
+   - history prepend (`loadMoreHistory`)
+   - reconnect/resync snapshot path
+2. When live items exceed `effective_hard_cap`, trim oldest rows to keep newest `effective_trim_target`.
+3. Preserve item ordering and Phase 10 anchor invariants.
+4. Preserve known canonical `totalItemCount` across trim.
 
 ## 6. Preview Policy (View Only)
 
@@ -81,11 +97,12 @@ Rule:
    - `totalItemCount`
 3. History pagination endpoint:
    - `/history?node_id=...&before_sequence=...&limit=...`
+4. No replay/resync contract changes.
 
 ## 8. Change Control
 
-Any change to thresholds/precedence requires:
+Any change to profile mapping/precedence requires:
 
-1. explicit policy revision proposal (`v2` doc),
+1. explicit policy revision proposal (`v3` doc),
 2. gate impact note (`P12-G1/P12-G2/P12-G3`),
 3. approval before implementation divergence.

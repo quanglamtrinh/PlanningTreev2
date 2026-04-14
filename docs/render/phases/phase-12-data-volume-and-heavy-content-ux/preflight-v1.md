@@ -9,14 +9,16 @@ Phase: `phase-12-data-volume-and-heavy-content-ux`.
 From `docs/render/system-freeze/phase-manifest-v1.json`:
 
 1. `phase_11_passed`
-2. `heavy_content_visibility_policy_frozen`
+2. `heavy_content_visibility_policy_frozen_v2`
 
 ## Required Frozen Inputs
 
-1. `heavy-content-visibility-policy-v1.md`
+1. `heavy-content-visibility-policy-v2.md`
 2. `docs/render/decision-pack-v1.md`
 3. `docs/render/system-freeze/phase-gates-v1.json` (P12-G1, P12-G2, P12-G3)
 4. baseline manifest in `./evidence/baseline-manifest-v1.json`
+
+Reference only (superseded for E01 cap behavior): `heavy-content-visibility-policy-v1.md`.
 
 ## Contract Safety Checklist
 
@@ -25,6 +27,7 @@ From `docs/render/system-freeze/phase-manifest-v1.json`:
 3. Frontend truncation path is presentation-only.
 4. Backend semantic coalescing remains canonical and deterministic.
 5. Anchor invariants remain intact during history prepend/load-more.
+6. Adaptive cap profile resolution is deterministic (`env override > runtime hint > standard`).
 
 ## Validation Checklist
 

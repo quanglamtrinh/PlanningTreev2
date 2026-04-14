@@ -12,6 +12,13 @@ Gate aggregation output:
 
 1. `phase12-gate-report.json`
 
+Adaptive-cap source context requirement for `long_session_volume_tests.json`:
+
+1. `context.resolved_profile`
+2. `context.effective_hard_cap_min`
+3. `context.effective_hard_cap_max`
+4. `context.overflow_events_under_adaptive_cap`
+
 Baseline reference:
 
 1. `baseline-manifest-v1.json`

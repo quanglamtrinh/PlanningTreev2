@@ -31,6 +31,8 @@ vi.mock('../../src/api/client', () => ({
 import type { ThreadSnapshotV3 } from '../../src/api/types'
 import {
   decideReloadPolicy,
+  resolvePhase12CapPolicy,
+  resolvePhase12CapProfile,
   selectComposerState,
   selectCore,
   selectFeedRenderState,
@@ -245,6 +247,38 @@ describe('threadByIdStoreV3', () => {
     )
   })
 
+  it('resolves adaptive profile precedence as env override > runtime hint > standard', () => {
+    expect(resolvePhase12CapProfile({ envValue: 'LOW', deviceMemory: 16 })).toBe('low')
+    expect(resolvePhase12CapProfile({ deviceMemory: 2 })).toBe('low')
+    expect(resolvePhase12CapProfile({ deviceMemory: 6 })).toBe('standard')
+    expect(resolvePhase12CapProfile({ deviceMemory: 12 })).toBe('high')
+    expect(resolvePhase12CapProfile({ deviceMemory: null })).toBe('standard')
+  })
+
+  it('computes adaptive cap policy by profile with soft trim target locked at 1000', () => {
+    expect(resolvePhase12CapPolicy({ envValue: 'low' })).toEqual({
+      profile: 'low',
+      softCap: 1000,
+      headroom: 100,
+      effectiveHardCap: 1100,
+      effectiveTrimTarget: 1000,
+    })
+    expect(resolvePhase12CapPolicy({ envValue: 'standard' })).toEqual({
+      profile: 'standard',
+      softCap: 1000,
+      headroom: 200,
+      effectiveHardCap: 1200,
+      effectiveTrimTarget: 1000,
+    })
+    expect(resolvePhase12CapPolicy({ envValue: 'high' })).toEqual({
+      profile: 'high',
+      softCap: 1000,
+      headroom: 400,
+      effectiveHardCap: 1400,
+      effectiveTrimTarget: 1000,
+    })
+  })
+
   it('enforces scrollback trim hysteresis on oversized snapshots', async () => {
     const oversizedItems = Array.from({ length: 1300 }, (_, index) => {
       const sequence = index + 1
@@ -278,11 +312,11 @@ describe('threadByIdStoreV3', () => {
 
     const state = useThreadByIdStoreV3.getState()
     const sequences = state.snapshot?.items.map((item) => item.sequence) ?? []
-    expect(sequences).toHaveLength(900)
-    expect(sequences[0]).toBe(401)
+    expect(sequences).toHaveLength(1000)
+    expect(sequences[0]).toBe(301)
     expect(sequences[sequences.length - 1]).toBe(1300)
     expect(state.hasOlderHistory).toBe(true)
-    expect(state.oldestVisibleSequence).toBe(401)
+    expect(state.oldestVisibleSequence).toBe(301)
     expect(state.totalItemCount).toBe(1300)
   })
 
@@ -367,6 +401,81 @@ describe('threadByIdStoreV3', () => {
     expect(state.totalItemCount).toBe(20)
     expect(state.isLoadingHistory).toBe(false)
     expect(state.historyError).toBeNull()
+  })
+
+  it('keeps loadMoreHistory bounded by adaptive cap when prepend would overflow live window', async () => {
+    const liveItems = Array.from({ length: 1000 }, (_, index) => {
+      const sequence = 301 + index
+      return {
+        id: `msg-${sequence}`,
+        kind: 'message' as const,
+        threadId: 'thread-1',
+        turnId: `turn-${sequence}`,
+        sequence,
+        createdAt: `2026-04-01T01:${String(index % 60).padStart(2, '0')}:00Z`,
+        updatedAt: `2026-04-01T01:${String(index % 60).padStart(2, '0')}:00Z`,
+        status: 'completed' as const,
+        source: 'upstream' as const,
+        tone: 'neutral' as const,
+        metadata: {},
+        role: 'assistant' as const,
+        text: `live-${sequence}`,
+        format: 'markdown' as const,
+      }
+    })
+    const olderItems = Array.from({ length: 300 }, (_, index) => {
+      const sequence = 1 + index
+      return {
+        id: `msg-${sequence}`,
+        kind: 'message' as const,
+        threadId: 'thread-1',
+        turnId: `turn-${sequence}`,
+        sequence,
+        createdAt: `2026-04-01T00:${String(index % 60).padStart(2, '0')}:00Z`,
+        updatedAt: `2026-04-01T00:${String(index % 60).padStart(2, '0')}:00Z`,
+        status: 'completed' as const,
+        source: 'upstream' as const,
+        tone: 'neutral' as const,
+        metadata: {},
+        role: 'assistant' as const,
+        text: `older-${sequence}`,
+        format: 'markdown' as const,
+      }
+    })
+
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(
+      makeSnapshot({
+        snapshotVersion: 5,
+        items: liveItems,
+        historyMeta: {
+          hasOlder: true,
+          oldestVisibleSequence: 301,
+          totalItemCount: 1300,
+        },
+      }),
+    )
+    apiMock.getThreadHistoryPageByIdV3.mockResolvedValue({
+      items: olderItems,
+      has_more: false,
+      next_before_sequence: null,
+      total_item_count: 1300,
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().loadMoreHistory()
+    })
+
+    const state = useThreadByIdStoreV3.getState()
+    const sequences = state.snapshot?.items.map((item) => item.sequence) ?? []
+    expect(sequences).toHaveLength(1000)
+    expect(sequences[0]).toBe(301)
+    expect(sequences[sequences.length - 1]).toBe(1300)
+    expect(state.hasOlderHistory).toBe(true)
+    expect(state.oldestVisibleSequence).toBe(301)
+    expect(state.totalItemCount).toBe(1300)
   })
 
   it('exposes guardrail selectors for core/transport/ui-control domains', async () => {
@@ -1296,6 +1405,13 @@ describe('threadByIdStoreV3', () => {
       })
 
       expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenCalledTimes(2)
+      expect(apiMock.getThreadSnapshotByIdV3).toHaveBeenNthCalledWith(
+        2,
+        'project-1',
+        'node-1',
+        'thread-1',
+        1000,
+      )
       const state = useThreadByIdStoreV3.getState()
       expect(state.lastEventId).toBeNull()
       expect(state.telemetry.forcedSnapshotReloadCount).toBe(1)

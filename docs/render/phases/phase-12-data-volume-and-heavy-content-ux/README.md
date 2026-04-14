@@ -1,6 +1,6 @@
 # Phase 12 - Data Volume and Heavy Content UX
 
-Status: Completed (all P12 gates passed with candidate-backed evidence).
+Status: Completed (v2 adaptive-cap policy, all P12 gates passed with candidate-backed evidence).
 
 Date: 2026-04-14.
 
@@ -11,7 +11,7 @@ Subphase workspace: `./subphases/`.
 Frozen preflight artifacts:
 
 1. `preflight-v1.md`
-2. `heavy-content-visibility-policy-v1.md`
+2. `heavy-content-visibility-policy-v2.md`
 3. `evidence/baseline-manifest-v1.json`
 
 ## Decision Pack Alignment
@@ -40,14 +40,18 @@ Must-hold decisions:
 
 Stabilize long-thread rendering by bounding active live data, collapsing heavy rows by default, and exposing full payloads on demand without mutating canonical backend content.
 
-## Frozen Defaults (v1)
+## Frozen Defaults (v2)
 
 1. Snapshot bootstrap:
    - `GET /v3/projects/{project_id}/threads/by-id/{thread_id}?node_id=...&live_limit=1000`
-2. Scrollback cap hysteresis:
+2. Adaptive scrollback cap policy:
    - `soft_cap=1000`
-   - `hard_cap=1200`
-   - `trim_target=900`
+   - profile from `VITE_PTM_PHASE12_CAP_PROFILE` (`low|standard|high`) or runtime `navigator.deviceMemory`
+   - profile mapping:
+     - `low`: `effective_hard_cap=1100`
+     - `standard`: `effective_hard_cap=1200`
+     - `high`: `effective_hard_cap=1400`
+   - `effective_trim_target=1000` for every profile
 3. Heavy-row classification:
    - command output heavy when `chars >= 600` or `lines >= 12`
    - diff heavy when `file_count >= 5` or `(summary + patch chars) >= 3000`
@@ -62,7 +66,7 @@ Stabilize long-thread rendering by bounding active live data, collapsing heavy r
    - `in_progress` tool/diff rows auto-expand
    - on completion, heavy rows default collapsed if no manual override exists
 
-See: `heavy-content-visibility-policy-v1.md`.
+See: `heavy-content-visibility-policy-v2.md`.
 
 ## In Scope
 
@@ -88,7 +92,7 @@ Backend/contract:
 Frontend state/UX:
 
 1. Added history pagination state and `loadMoreHistory()`.
-2. Applied scrollback hysteresis trim policy on snapshot/event-apply path.
+2. Applied adaptive cap enforcement on snapshot/event-apply/history-prepend path.
 3. Added heavy-row default collapse policy with manual-toggle precedence.
 4. Added preview-to-full modal flow (view-only truncation policy).
 
@@ -126,7 +130,7 @@ Evidence root: `./evidence/`.
 ## Required Phase 12 Docs
 
 1. `preflight-v1.md`
-2. `heavy-content-visibility-policy-v1.md`
+2. `heavy-content-visibility-policy-v2.md`
 3. `close-phase-v1.md`
 4. `handoff-to-phase-13.md`
 

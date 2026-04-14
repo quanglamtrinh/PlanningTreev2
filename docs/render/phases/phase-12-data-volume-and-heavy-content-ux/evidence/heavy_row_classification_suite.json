@@ -1,6 +1,6 @@
 {
   "phase": "12",
-  "generated_at": "2026-04-14T05:20:59Z",
+  "generated_at": "2026-04-14T05:59:04Z",
   "source": "heavy_row_classification_suite",
   "evidence_mode": "candidate",
   "gate_eligible": true,
@@ -17,7 +17,7 @@
     "false_positive_count": 7,
     "false_negative_count": 3,
     "candidate_path": "docs/render/phases/phase-12-data-volume-and-heavy-content-ux/evidence/candidates/heavy-row-classification-suite-candidate.json",
-    "candidate_commit_sha": "5f253826e533"
+    "candidate_commit_sha": "bd4ba63"
   },
   "baseline_metadata": {
     "label": "phase12_pre_volume_heavy_content_baseline_v1",

@@ -2,11 +2,14 @@
   "candidate_metrics": {
     "live_items_exceeds_scrollback_cap_events": 0,
     "live_items_peak": 994,
-    "hard_cap": 1200,
     "trim_events": 19,
-    "long_session_total_items": 5612
+    "long_session_total_items": 5612,
+    "resolved_profile": "standard",
+    "effective_hard_cap_min": 1200,
+    "effective_hard_cap_max": 1200,
+    "overflow_events_under_adaptive_cap": 0
   },
   "context": {
-    "scenario": "phase12_long_session_volume_tests_candidate_v1"
+    "scenario": "phase12_long_session_volume_tests_candidate_v2"
   }
 }

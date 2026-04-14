@@ -21,6 +21,7 @@ DEFAULT_BASELINE = Path(
 )
 DEFAULT_GATES_FILE = Path("docs/render/system-freeze/phase-gates-v1.json")
 ALLOWED_OPERATORS = {"gte", "lte", "eq"}
+ALLOWED_PROFILES = {"low", "standard", "high"}
 
 
 def _now_iso() -> str:
@@ -146,9 +147,12 @@ def _build_payload(
 
     live_items_exceeds_events = 0.0
     live_items_peak = 998.0
-    hard_cap = 1200.0
     trim_events = 17.0
     long_session_total_items = 5400.0
+    resolved_profile = "standard"
+    effective_hard_cap_min = 1200.0
+    effective_hard_cap_max = 1200.0
+    overflow_events_under_adaptive_cap = 0.0
 
     if resolved_candidate_path is not None:
         candidate_payload = _load_json(resolved_candidate_path)
@@ -171,15 +175,6 @@ def _build_payload(
         )
         if extracted_peak is not None and extracted_peak >= 0:
             live_items_peak = extracted_peak
-        extracted_hard_cap = _first_number(
-            candidate_payload,
-            [
-                "candidate_metrics.hard_cap",
-                "context.hard_cap",
-            ],
-        )
-        if extracted_hard_cap is not None and extracted_hard_cap >= 1:
-            hard_cap = extracted_hard_cap
         extracted_trim_events = _first_number(
             candidate_payload,
             [
@@ -198,6 +193,40 @@ def _build_payload(
         )
         if extracted_total_items is not None and extracted_total_items >= 0:
             long_session_total_items = extracted_total_items
+        extracted_hard_cap_min = _first_number(
+            candidate_payload,
+            [
+                "candidate_metrics.effective_hard_cap_min",
+                "context.effective_hard_cap_min",
+            ],
+        )
+        if extracted_hard_cap_min is not None and extracted_hard_cap_min >= 1:
+            effective_hard_cap_min = extracted_hard_cap_min
+        extracted_hard_cap_max = _first_number(
+            candidate_payload,
+            [
+                "candidate_metrics.effective_hard_cap_max",
+                "context.effective_hard_cap_max",
+            ],
+        )
+        if extracted_hard_cap_max is not None and extracted_hard_cap_max >= effective_hard_cap_min:
+            effective_hard_cap_max = extracted_hard_cap_max
+        extracted_overflow_events = _first_number(
+            candidate_payload,
+            [
+                "candidate_metrics.overflow_events_under_adaptive_cap",
+                "context.overflow_events_under_adaptive_cap",
+            ],
+        )
+        if extracted_overflow_events is not None and extracted_overflow_events >= 0:
+            overflow_events_under_adaptive_cap = extracted_overflow_events
+        candidate_profile = str(
+            _dig(candidate_payload, "candidate_metrics.resolved_profile")
+            or _dig(candidate_payload, "context.resolved_profile")
+            or ""
+        ).strip().lower()
+        if candidate_profile in ALLOWED_PROFILES:
+            resolved_profile = candidate_profile
 
     metric_value = round(float(live_items_exceeds_events), 3)
     target = float(gate["target"])
@@ -217,12 +246,17 @@ def _build_payload(
         "operator": operator,
         "pass": passed,
         "context": {
-            "scenario": "phase12_long_session_volume_tests_v1",
+            "scenario": "phase12_long_session_volume_tests_v2",
             "live_items_exceeds_scrollback_cap_events": metric_value,
             "live_items_peak": int(live_items_peak),
-            "hard_cap": int(hard_cap),
             "trim_events": int(trim_events),
             "long_session_total_items": int(long_session_total_items),
+            "resolved_profile": resolved_profile,
+            "effective_hard_cap_min": int(effective_hard_cap_min),
+            "effective_hard_cap_max": int(effective_hard_cap_max),
+            "overflow_events_under_adaptive_cap": float(
+                round(overflow_events_under_adaptive_cap, 3)
+            ),
             "candidate_path": resolved_candidate_path.as_posix() if resolved_candidate_path is not None else None,
             "candidate_commit_sha": resolved_candidate_commit_sha,
         },
