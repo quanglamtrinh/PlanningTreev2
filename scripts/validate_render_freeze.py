@@ -31,6 +31,9 @@ ENTRY_CRITERIA_FILE_RULES = {
     "worker_result_versioning_policy_frozen": Path(
         "docs/render/phases/phase-11-heavy-compute-off-main-thread/worker-result-versioning-policy-v1.md"
     ),
+    "queue_confirmation_risk_policy_frozen": Path(
+        "docs/render/phases/phase-13-queued-follow-up-flow/queue-confirmation-risk-policy-v1.md"
+    ),
 }
 
 

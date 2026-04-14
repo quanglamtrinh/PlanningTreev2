@@ -1,4 +1,4 @@
-# Phase 12 Closeout v1
+# Phase 12 Closeoff v1
 
 Status: Completed (v2 adaptive-cap policy landed and gates passed with candidate-backed evidence).
 
@@ -104,3 +104,19 @@ Required evidence files:
 - [x] Heavy-row collapse and preview/full navigation landed without canonical mutation.
 - [x] Backend compactor compatibility test confirms no compacted/non-compacted divergence.
 - [x] Candidate-backed evidence contract and gate aggregation scripts landed.
+
+## 6. Closeoff Decision
+
+Decision: `APPROVED_TO_CLOSE`.
+
+Closeoff rationale:
+
+1. Scope D08/E01/E02/E03 implemented with adaptive-cap policy v2 and no wire-contract drift.
+2. All required validation checks passed on frontend/backend/freeze guards.
+3. P12 gates are candidate-backed, gate-eligible, and pass in `phase12-gate-report.json`.
+4. No unresolved blockers remain inside Phase 12 scope.
+
+Phase 13 handoff input:
+
+1. Use `handoff-to-phase-13.md` as the operational starting point.
+2. Keep adaptive profile behavior (`low|standard|high`) in queue-flow test matrix.

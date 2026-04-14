@@ -132,7 +132,8 @@ Evidence root: `./evidence/`.
 1. `preflight-v1.md`
 2. `heavy-content-visibility-policy-v2.md`
 3. `close-phase-v1.md`
-4. `handoff-to-phase-13.md`
+4. `closeoff-phase-12.md`
+5. `handoff-to-phase-13.md`
 
 ## Exit Conditions
 

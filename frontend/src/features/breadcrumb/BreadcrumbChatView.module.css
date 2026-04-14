@@ -189,6 +189,181 @@
   --thread-chat-canvas: #ffffff;
 }
 
+.executionQueuePanel {
+  max-width: 860px;
+  width: calc(100% - 40px);
+  margin: 12px auto 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 84%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-surface) 96%, var(--thread-chat-canvas));
+  box-sizing: border-box;
+}
+
+.executionQueueHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.executionQueueTitle {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.executionQueueHeaderControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.executionQueuePauseReason {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.executionQueuePauseToggle {
+  border: 1px solid color-mix(in srgb, var(--border-default) 86%, transparent);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.executionQueuePauseToggle:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.executionQueueEmpty {
+  margin: 10px 0 2px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.executionQueueList {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.executionQueueItem {
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 86%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--thread-chat-canvas) 88%, var(--bg-surface));
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.executionQueueItemMetaRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.executionQueueStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+}
+
+.executionQueueStatusQueued {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  color: color-mix(in srgb, var(--accent-primary) 80%, black);
+}
+
+.executionQueueStatusConfirmation {
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  color: color-mix(in srgb, #92400e 86%, black);
+}
+
+.executionQueueStatusSending {
+  background: color-mix(in srgb, #0891b2 16%, transparent);
+  color: color-mix(in srgb, #0e7490 80%, black);
+}
+
+.executionQueueStatusFailed {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: color-mix(in srgb, var(--danger) 80%, black);
+}
+
+.executionQueueMetaText {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.executionQueueText {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.executionQueueError {
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 20%, transparent);
+  padding: 6px 8px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--danger) 84%, black);
+}
+
+.executionQueueActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.executionQueueAction {
+  border: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.executionQueueAction:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.executionQueueActionPrimary {
+  background: var(--accent-primary);
+  color: #fff;
+  border-color: var(--accent-primary);
+}
+
+.executionQueueActionPrimary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-primary) 90%, black);
+  border-color: color-mix(in srgb, var(--accent-primary) 88%, black);
+  color: #fff;
+}
+
+.executionQueueAction:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .acceptReviewBar {
   display: flex;
   flex-direction: column;
@@ -765,5 +940,20 @@
   .detailPane {
     padding: 16px;
     min-height: 320px;
+  }
+
+  .executionQueuePanel {
+    width: calc(100% - 24px);
+    margin-top: 10px;
+  }
+
+  .executionQueueHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .executionQueueHeaderControls {
+    width: 100%;
+    justify-content: space-between;
   }
 }

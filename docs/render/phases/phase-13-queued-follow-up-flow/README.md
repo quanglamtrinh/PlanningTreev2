@@ -1,6 +1,6 @@
 ﻿# Phase 13 - Queued Follow-up Flow
 
-Status: Planned.
+Status: Completed.
 
 Scope IDs: E04, E05, E06.
 
@@ -24,6 +24,14 @@ Must-hold decisions:
 - Queue state machine is deterministic and lifecycle-driven.
 - Confirmation policy is risk-based (not always-confirm, not always-auto-send).
 - Queue controls must preserve message order guarantees.
+
+Frozen artifacts:
+
+1. `preflight-v1.md`
+2. `queue-confirmation-risk-policy-v1.md`
+3. `close-phase-v1.md`
+4. `closeoff-phase-13.md`
+5. `evidence/README.md`
 
 
 ## Objective
@@ -79,6 +87,12 @@ Add user controls:
    - queue ordering and pause/resume behavior match policy.
 3. UX:
    - users can inspect and control queued intents clearly.
+
+Gate source mapping (`docs/render/system-freeze/phase-gates-v1.json`):
+
+1. `P13-G1` -> `queue_state_machine_suite`
+2. `P13-G2` -> `queue_reorder_integration`
+3. `P13-G3` -> `queue_risk_policy_tests`
 
 ## Test Plan
 
