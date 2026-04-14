@@ -55,7 +55,12 @@ Temporarily excluded from this execution wave:
 Before implementing any phase, run:
 
 ```powershell
-npm run check:render_freeze
+npm run check:freeze_all
 ```
 
 The phase can proceed only when this check is PASS.
+
+Reference (individually runnable checks):
+
+- `npm run check:render_freeze`
+- `npm run check:ask_migration_freeze`

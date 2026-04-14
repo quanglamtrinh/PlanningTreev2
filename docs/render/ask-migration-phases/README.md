@@ -55,6 +55,8 @@ System-freeze artifacts for this migration wave:
 
 Before implementing each phase:
 
+1. Run governance checks:
+   - `npm run check:freeze_all`
 1. Confirm entry criteria in `phase-manifest-v1.json`.
 2. Confirm gate targets in `phase-gates-v1.json`.
 3. Confirm frozen contracts in `contracts/`.

@@ -1,6 +1,6 @@
 # Phase A0 - Contract Freeze for Ask Queue Parity
 
-Status: Planned.
+Status: Completed.
 
 Phase ID: `AQ0`.
 
@@ -77,9 +77,12 @@ Queue logic currently carries execution-specific assumptions. If ask migration s
 1. Contract artifacts merged and approved.
 2. Next phases can implement without reopening core policy questions.
 
+## Closure Artifact
+
+1. `docs/render/ask-migration-phases/phase-a0-contract-freeze-ask-queue/close-phase-v1.md`
+
 ## Effort Estimate
 
 - Size: Small
 - Estimated duration: 1-2 engineering days
 - Suggested staffing: 1 backend + 1 frontend + 1 tech lead reviewer
-
