@@ -1,0 +1,214 @@
+﻿{
+    "version":  "1.0.0",
+    "policy":  "balanced",
+    "phases":  {
+                   "A0":  [
+                              {
+                                  "id":  "AQ0-G1",
+                                  "metric":  "contract_review_open_blockers",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_contract_review_checklist"
+                              },
+                              {
+                                  "id":  "AQ0-G2",
+                                  "metric":  "unresolved_scope_items",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_scope_freeze_audit"
+                              },
+                              {
+                                  "id":  "AQ0-G3",
+                                  "metric":  "architecture_signoff_count",
+                                  "operator":  "gte",
+                                  "target":  3,
+                                  "unit":  "count",
+                                  "source":  "ask_arch_signoff_log"
+                              }
+                          ],
+                   "A1":  [
+                              {
+                                  "id":  "AQ1-G1",
+                                  "metric":  "ask_duplicate_turn_events",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_idempotency_integration"
+                              },
+                              {
+                                  "id":  "AQ1-G2",
+                                  "metric":  "ask_idempotent_replay_success_rate_pct",
+                                  "operator":  "gte",
+                                  "target":  99,
+                                  "unit":  "pct",
+                                  "source":  "ask_retry_replay_suite"
+                              },
+                              {
+                                  "id":  "AQ1-G3",
+                                  "metric":  "ask_start_turn_latency_regression_pct",
+                                  "operator":  "lte",
+                                  "target":  10,
+                                  "unit":  "pct",
+                                  "source":  "ask_start_turn_latency_probe"
+                              }
+                          ],
+                   "A2":  [
+                              {
+                                  "id":  "AQ2-G1",
+                                  "metric":  "execution_queue_parity_failures",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "execution_queue_regression_suite"
+                              },
+                              {
+                                  "id":  "AQ2-G2",
+                                  "metric":  "lane_adapter_contract_pass_rate_pct",
+                                  "operator":  "gte",
+                                  "target":  100,
+                                  "unit":  "pct",
+                                  "source":  "lane_adapter_contract_tests"
+                              },
+                              {
+                                  "id":  "AQ2-G3",
+                                  "metric":  "queue_state_transition_nondeterministic_cases",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "queue_state_machine_determinism"
+                              }
+                          ],
+                   "A3":  [
+                              {
+                                  "id":  "AQ3-G1",
+                                  "metric":  "ask_queued_message_loss_events",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_queue_state_machine_suite"
+                              },
+                              {
+                                  "id":  "AQ3-G2",
+                                  "metric":  "ask_queue_order_violation_events",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_queue_order_integration"
+                              },
+                              {
+                                  "id":  "AQ3-G3",
+                                  "metric":  "ask_auto_flush_success_rate_pct",
+                                  "operator":  "gte",
+                                  "target":  98,
+                                  "unit":  "pct",
+                                  "source":  "ask_auto_flush_scenarios"
+                              }
+                          ],
+                   "A4":  [
+                              {
+                                  "id":  "AQ4-G1",
+                                  "metric":  "ask_stale_intent_unconfirmed_send_events",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_risk_policy_tests"
+                              },
+                              {
+                                  "id":  "AQ4-G2",
+                                  "metric":  "ask_requires_confirmation_transition_failures",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_confirmation_transition_suite"
+                              },
+                              {
+                                  "id":  "AQ4-G3",
+                                  "metric":  "ask_false_positive_confirmation_rate_pct",
+                                  "operator":  "lte",
+                                  "target":  15,
+                                  "unit":  "pct",
+                                  "source":  "ask_confirmation_noise_audit"
+                              }
+                          ],
+                   "A5":  [
+                              {
+                                  "id":  "AQ5-G1",
+                                  "metric":  "ask_queue_ui_action_failures",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_queue_ui_actions_suite"
+                              },
+                              {
+                                  "id":  "AQ5-G2",
+                                  "metric":  "ask_shell_visibility_regressions",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_shell_visibility_regression_suite"
+                              },
+                              {
+                                  "id":  "AQ5-G3",
+                                  "metric":  "ask_queue_panel_interaction_success_rate_pct",
+                                  "operator":  "gte",
+                                  "target":  99,
+                                  "unit":  "pct",
+                                  "source":  "ask_queue_interaction_smoke"
+                              }
+                          ],
+                   "A6":  [
+                              {
+                                  "id":  "AQ6-G1",
+                                  "metric":  "ask_reload_recovery_loss_events",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_reload_recovery_suite"
+                              },
+                              {
+                                  "id":  "AQ6-G2",
+                                  "metric":  "ask_reconnect_duplicate_send_events",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_reconnect_duplicate_guard_suite"
+                              },
+                              {
+                                  "id":  "AQ6-G3",
+                                  "metric":  "ask_reset_policy_violation_events",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_reset_policy_suite"
+                              }
+                          ],
+                   "A7":  [
+                              {
+                                  "id":  "AQ7-G1",
+                                  "metric":  "ask_queue_acceptance_suite_pass_rate_pct",
+                                  "operator":  "gte",
+                                  "target":  100,
+                                  "unit":  "pct",
+                                  "source":  "ask_queue_acceptance_matrix"
+                              },
+                              {
+                                  "id":  "AQ7-G2",
+                                  "metric":  "ask_canary_blocker_incidents",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_canary_stability_report"
+                              },
+                              {
+                                  "id":  "AQ7-G3",
+                                  "metric":  "ask_rollback_drill_failures",
+                                  "operator":  "lte",
+                                  "target":  0,
+                                  "unit":  "count",
+                                  "source":  "ask_rollback_drill_report"
+                              }
+                          ]
+               }
+}

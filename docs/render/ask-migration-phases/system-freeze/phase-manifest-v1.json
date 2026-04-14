@@ -1,0 +1,227 @@
+﻿{
+    "freeze_version":  "1.0.0",
+    "decision_pack":  "docs/render/ask-migration-phases/README.md",
+    "model":  "execution-to-ask-queue-parity",
+    "contracts":  [
+                      "AQC0",
+                      "AQC1",
+                      "AQC2",
+                      "AQC3",
+                      "AQC4",
+                      "AQC5",
+                      "AQC6",
+                      "AQC7"
+                  ],
+    "phases":  [
+                   {
+                       "id":  "A0",
+                       "slug":  "phase-a0-contract-freeze-ask-queue",
+                       "readme":  "docs/render/ask-migration-phases/phase-a0-contract-freeze-ask-queue/README.md",
+                       "scope_ids":  [
+                                         "AQ0"
+                                     ],
+                       "contracts_primary":  [
+                                                 "AQC0"
+                                             ],
+                       "contracts_secondary":  [
+                                                   "AQC1",
+                                                   "AQC5"
+                                               ],
+                       "depends_on":  [
+
+                                      ],
+                       "entry_criteria":  [
+                                              "decision_pack_approved",
+                                              "ask_queue_contract_scope_frozen"
+                                          ],
+                       "exit_gates":  [
+                                          "AQ0-G1",
+                                          "AQ0-G2",
+                                          "AQ0-G3"
+                                      ]
+                   },
+                   {
+                       "id":  "A1",
+                       "slug":  "phase-a1-backend-ask-idempotency-foundation",
+                       "readme":  "docs/render/ask-migration-phases/phase-a1-backend-ask-idempotency-foundation/README.md",
+                       "scope_ids":  [
+                                         "AQ1"
+                                     ],
+                       "contracts_primary":  [
+                                                 "AQC2"
+                                             ],
+                       "contracts_secondary":  [
+                                                   "AQC1"
+                                               ],
+                       "depends_on":  [
+                                          "A0"
+                                      ],
+                       "entry_criteria":  [
+                                              "phase_a0_passed",
+                                              "ask_idempotency_contract_frozen"
+                                          ],
+                       "exit_gates":  [
+                                          "AQ1-G1",
+                                          "AQ1-G2",
+                                          "AQ1-G3"
+                                      ]
+                   },
+                   {
+                       "id":  "A2",
+                       "slug":  "phase-a2-lane-aware-queue-core-refactor",
+                       "readme":  "docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/README.md",
+                       "scope_ids":  [
+                                         "AQ2"
+                                     ],
+                       "contracts_primary":  [
+                                                 "AQC1"
+                                             ],
+                       "contracts_secondary":  [
+                                                   "AQC3"
+                                               ],
+                       "depends_on":  [
+                                          "A1"
+                                      ],
+                       "entry_criteria":  [
+                                              "phase_a1_passed",
+                                              "lane_aware_queue_core_contract_frozen"
+                                          ],
+                       "exit_gates":  [
+                                          "AQ2-G1",
+                                          "AQ2-G2",
+                                          "AQ2-G3"
+                                      ]
+                   },
+                   {
+                       "id":  "A3",
+                       "slug":  "phase-a3-ask-queue-mvp-auto-flush",
+                       "readme":  "docs/render/ask-migration-phases/phase-a3-ask-queue-mvp-auto-flush/README.md",
+                       "scope_ids":  [
+                                         "AQ3"
+                                     ],
+                       "contracts_primary":  [
+                                                 "AQC3"
+                                             ],
+                       "contracts_secondary":  [
+                                                   "AQC2"
+                                               ],
+                       "depends_on":  [
+                                          "A2"
+                                      ],
+                       "entry_criteria":  [
+                                              "phase_a2_passed",
+                                              "ask_send_window_contract_frozen"
+                                          ],
+                       "exit_gates":  [
+                                          "AQ3-G1",
+                                          "AQ3-G2",
+                                          "AQ3-G3"
+                                      ]
+                   },
+                   {
+                       "id":  "A4",
+                       "slug":  "phase-a4-ask-risk-confirmation-policy",
+                       "readme":  "docs/render/ask-migration-phases/phase-a4-ask-risk-confirmation-policy/README.md",
+                       "scope_ids":  [
+                                         "AQ4"
+                                     ],
+                       "contracts_primary":  [
+                                                 "AQC4"
+                                             ],
+                       "contracts_secondary":  [
+                                                   "AQC3"
+                                               ],
+                       "depends_on":  [
+                                          "A3"
+                                      ],
+                       "entry_criteria":  [
+                                              "phase_a3_passed",
+                                              "ask_confirmation_risk_policy_frozen"
+                                          ],
+                       "exit_gates":  [
+                                          "AQ4-G1",
+                                          "AQ4-G2",
+                                          "AQ4-G3"
+                                      ]
+                   },
+                   {
+                       "id":  "A5",
+                       "slug":  "phase-a5-ask-queue-ui-shell-integrity",
+                       "readme":  "docs/render/ask-migration-phases/phase-a5-ask-queue-ui-shell-integrity/README.md",
+                       "scope_ids":  [
+                                         "AQ5"
+                                     ],
+                       "contracts_primary":  [
+                                                 "AQC5"
+                                             ],
+                       "contracts_secondary":  [
+                                                   "AQC1"
+                                               ],
+                       "depends_on":  [
+                                          "A4"
+                                      ],
+                       "entry_criteria":  [
+                                              "phase_a4_passed",
+                                              "ask_shell_queue_ui_contract_frozen"
+                                          ],
+                       "exit_gates":  [
+                                          "AQ5-G1",
+                                          "AQ5-G2",
+                                          "AQ5-G3"
+                                      ]
+                   },
+                   {
+                       "id":  "A6",
+                       "slug":  "phase-a6-recovery-edge-hardening",
+                       "readme":  "docs/render/ask-migration-phases/phase-a6-recovery-edge-hardening/README.md",
+                       "scope_ids":  [
+                                         "AQ6"
+                                     ],
+                       "contracts_primary":  [
+                                                 "AQC6"
+                                             ],
+                       "contracts_secondary":  [
+                                                   "AQC2"
+                                               ],
+                       "depends_on":  [
+                                          "A5"
+                                      ],
+                       "entry_criteria":  [
+                                              "phase_a5_passed",
+                                              "ask_recovery_reset_contract_frozen"
+                                          ],
+                       "exit_gates":  [
+                                          "AQ6-G1",
+                                          "AQ6-G2",
+                                          "AQ6-G3"
+                                      ]
+                   },
+                   {
+                       "id":  "A7",
+                       "slug":  "phase-a7-test-matrix-controlled-enablement",
+                       "readme":  "docs/render/ask-migration-phases/phase-a7-test-matrix-controlled-enablement/README.md",
+                       "scope_ids":  [
+                                         "AQ7"
+                                     ],
+                       "contracts_primary":  [
+                                                 "AQC7"
+                                             ],
+                       "contracts_secondary":  [
+                                                   "AQC4",
+                                                   "AQC6"
+                                               ],
+                       "depends_on":  [
+                                          "A6"
+                                      ],
+                       "entry_criteria":  [
+                                              "phase_a6_passed",
+                                              "ask_rollout_gate_contract_frozen"
+                                          ],
+                       "exit_gates":  [
+                                          "AQ7-G1",
+                                          "AQ7-G2",
+                                          "AQ7-G3"
+                                      ]
+                   }
+               ]
+}

@@ -1,0 +1,14 @@
+﻿{
+    "version":  "1.0.0",
+    "phase":  "A0",
+    "baseline":  {
+                     "label":  "aq0_pre_contract_freeze_baseline_v1",
+                     "captured_at":  "2026-04-14T00:00:00Z",
+                     "workload":  "ask_queue_contract_review_v1"
+                 },
+    "baseline_metrics":  {
+                             "contract_review_open_blockers":  null,
+                             "unresolved_scope_items":  null,
+                             "architecture_signoff_count":  null
+                         }
+}

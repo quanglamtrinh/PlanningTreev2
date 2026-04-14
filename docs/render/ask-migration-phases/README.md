@@ -44,6 +44,22 @@ Out of scope:
 - moving CTA ownership from node-detail panel into transcript feed
 - changing execution/audit workflow phase machine semantics
 
+## Governance Pack
+
+System-freeze artifacts for this migration wave:
+
+- `docs/render/ask-migration-phases/system-freeze/README.md`
+- `docs/render/ask-migration-phases/system-freeze/phase-manifest-v1.json`
+- `docs/render/ask-migration-phases/system-freeze/phase-gates-v1.json`
+- `docs/render/ask-migration-phases/system-freeze/contracts/README.md`
+
+Before implementing each phase:
+
+1. Confirm entry criteria in `phase-manifest-v1.json`.
+2. Confirm gate targets in `phase-gates-v1.json`.
+3. Confirm frozen contracts in `contracts/`.
+4. Prepare candidate-backed evidence files in the phase `evidence/` folder.
+
 ## Global Quality Bar (all phases)
 
 A phase is complete only when all conditions are true:
@@ -89,4 +105,3 @@ A phase is complete only when all conditions are true:
 2. Do not start A3 before A1 and A2 are merged.
 3. Maintain an execution-regression suite run in every ask phase.
 4. Track carry-over debt explicitly in each phase closeout.
-

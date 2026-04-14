@@ -1,0 +1,14 @@
+﻿{
+    "version":  "1.0.0",
+    "phase":  "A4",
+    "baseline":  {
+                     "label":  "aq4_pre_ask_confirmation_policy_baseline_v1",
+                     "captured_at":  "2026-04-14T00:00:00Z",
+                     "workload":  "ask_context_drift_confirmation_v1"
+                 },
+    "baseline_metrics":  {
+                             "ask_stale_intent_unconfirmed_send_events":  null,
+                             "ask_requires_confirmation_transition_failures":  null,
+                             "ask_false_positive_confirmation_rate_pct":  null
+                         }
+}

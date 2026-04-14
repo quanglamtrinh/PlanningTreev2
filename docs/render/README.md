@@ -19,6 +19,7 @@ The content is intentionally broad and detailed so we can:
 - `docs/render/render-optimization-comprehensive.md`
 - `docs/render/phases/README.md`
 - `docs/render/ask-migration-phases/README.md`
+- `docs/render/ask-migration-phases/system-freeze/README.md`
 - `docs/render/decision-pack-v1.md`
 - `docs/render/system-freeze/README.md`
 
