@@ -1,0 +1,12 @@
+{
+  "candidate_metrics": {
+    "ask_duplicate_turn_events": 0
+  },
+  "context": {
+    "scenario": "phase_a1_ask_idempotency_integration_candidate_v1",
+    "derived_from": [
+      "backend/tests/unit/test_thread_runtime_service_v3.py::test_thread_runtime_service_v3_ask_start_turn_replays_same_key",
+      "backend/tests/integration/test_chat_v3_api_execution_audit.py::test_v3_ask_turns_by_id_idempotent_replay_avoids_duplicate_turn_creation"
+    ]
+  }
+}

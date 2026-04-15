@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import threading
@@ -28,7 +29,12 @@ from backend.conversation.projector.thread_event_projector_runtime_v3 import (
 )
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
 from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
-from backend.errors.app_errors import ChatBackendUnavailable, ChatTurnAlreadyActive, InvalidRequest
+from backend.errors.app_errors import (
+    AskIdempotencyPayloadConflict,
+    ChatBackendUnavailable,
+    ChatTurnAlreadyActive,
+    InvalidRequest,
+)
 from backend.storage.file_utils import iso_now, new_id
 
 logger = logging.getLogger(__name__)
@@ -61,10 +67,22 @@ _COMPACTION_BOUNDARY_METHODS = {
 
 _FILE_CHANGE_OUTPUT_DELTA_METHOD = "item/fileChange/outputDelta"
 
+_ASK_START_IDEMPOTENCY_CACHE_PREFIX = "ask_start_turn_v1:"
+_ASK_START_IDEMPOTENCY_TTL_MS = 20 * 60 * 1000
+_ASK_START_IDEMPOTENCY_MAX_ENTRIES = 256
+
 
 def _normalize_optional_id(value: Any) -> str | None:
     normalized = str(value or "").strip()
     return normalized or None
+
+
+def _coerce_nonnegative_ms(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed >= 0 else 0
 
 
 class _RawEventCompactorV3:
@@ -263,6 +281,220 @@ class ThreadRuntimeServiceV3:
             events,
         )
 
+    @staticmethod
+    def _extract_ask_idempotency_key(metadata: dict[str, Any] | None) -> str | None:
+        if not isinstance(metadata, dict):
+            return None
+        key = str(metadata.get("idempotencyKey") or "").strip()
+        return key or None
+
+    @staticmethod
+    def _ask_start_idempotency_cache_key(thread_id: str, idempotency_key: str) -> str:
+        return f"{_ASK_START_IDEMPOTENCY_CACHE_PREFIX}{thread_id}:{idempotency_key}"
+
+    @staticmethod
+    def _ask_start_text_hash(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _now_epoch_ms() -> int:
+        return int(time.time() * 1000)
+
+    @staticmethod
+    def _build_ask_idempotency_entry(
+        *,
+        thread_id: str,
+        turn_id: str,
+        text_hash: str,
+        response_payload: dict[str, Any],
+        now_ms: int,
+    ) -> dict[str, Any]:
+        return {
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "textHash": text_hash,
+            "response": copy.deepcopy(response_payload),
+            "createdAtMs": int(now_ms),
+            "lastSeenAtMs": int(now_ms),
+        }
+
+    def _prune_ask_start_idempotency_cache(
+        self,
+        mutation_cache: dict[str, Any],
+        *,
+        now_ms: int,
+    ) -> bool:
+        changed = False
+        retained: list[tuple[str, int]] = []
+        for cache_key in list(mutation_cache.keys()):
+            if not str(cache_key).startswith(_ASK_START_IDEMPOTENCY_CACHE_PREFIX):
+                continue
+            entry = mutation_cache.get(cache_key)
+            if not isinstance(entry, dict):
+                mutation_cache.pop(cache_key, None)
+                changed = True
+                continue
+            created_at_ms = _coerce_nonnegative_ms(entry.get("createdAtMs"))
+            last_seen_at_ms = _coerce_nonnegative_ms(entry.get("lastSeenAtMs"))
+            anchor_ms = max(created_at_ms, last_seen_at_ms)
+            if anchor_ms <= 0:
+                mutation_cache.pop(cache_key, None)
+                changed = True
+                continue
+            if now_ms - anchor_ms > _ASK_START_IDEMPOTENCY_TTL_MS:
+                mutation_cache.pop(cache_key, None)
+                changed = True
+                continue
+            retained.append((str(cache_key), anchor_ms))
+
+        overflow = len(retained) - _ASK_START_IDEMPOTENCY_MAX_ENTRIES
+        if overflow > 0:
+            retained.sort(key=lambda item: (item[1], item[0]))
+            for cache_key, _ in retained[:overflow]:
+                mutation_cache.pop(cache_key, None)
+                changed = True
+        return changed
+
+    def _load_workflow_state_locked(self, project_id: str, node_id: str) -> dict[str, Any]:
+        state = self._storage.workflow_state_store.read_state(project_id, node_id)
+        if isinstance(state, dict):
+            return state
+        return self._storage.workflow_state_store.default_state(node_id)
+
+    def _replay_ask_start_if_idempotent_locked(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_id: str,
+        idempotency_key: str,
+        text_hash: str,
+        now_ms: int,
+    ) -> dict[str, Any] | None:
+        state = self._load_workflow_state_locked(project_id, node_id)
+        mutation_cache = state.get("mutationCache")
+        if not isinstance(mutation_cache, dict):
+            mutation_cache = {}
+        changed = self._prune_ask_start_idempotency_cache(mutation_cache, now_ms=now_ms)
+        cache_key = self._ask_start_idempotency_cache_key(thread_id, idempotency_key)
+        cached = mutation_cache.get(cache_key)
+        if not isinstance(cached, dict):
+            if changed:
+                state["mutationCache"] = mutation_cache
+                self._storage.workflow_state_store.write_state(project_id, node_id, state)
+            return None
+
+        cached_text_hash = str(cached.get("textHash") or "").strip()
+        if not cached_text_hash:
+            mutation_cache.pop(cache_key, None)
+            state["mutationCache"] = mutation_cache
+            self._storage.workflow_state_store.write_state(project_id, node_id, state)
+            return None
+        if cached_text_hash != text_hash:
+            raise AskIdempotencyPayloadConflict()
+
+        response_payload = cached.get("response")
+        if not isinstance(response_payload, dict):
+            mutation_cache.pop(cache_key, None)
+            state["mutationCache"] = mutation_cache
+            self._storage.workflow_state_store.write_state(project_id, node_id, state)
+            return None
+
+        cached["lastSeenAtMs"] = now_ms
+        mutation_cache[cache_key] = cached
+        state["mutationCache"] = mutation_cache
+        self._storage.workflow_state_store.write_state(project_id, node_id, state)
+        return copy.deepcopy(response_payload)
+
+    def _store_ask_start_idempotency_locked(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_id: str,
+        idempotency_key: str,
+        text_hash: str,
+        response_payload: dict[str, Any],
+        now_ms: int,
+    ) -> None:
+        state = self._load_workflow_state_locked(project_id, node_id)
+        mutation_cache = state.get("mutationCache")
+        if not isinstance(mutation_cache, dict):
+            mutation_cache = {}
+        self._prune_ask_start_idempotency_cache(mutation_cache, now_ms=now_ms)
+        cache_key = self._ask_start_idempotency_cache_key(thread_id, idempotency_key)
+        mutation_cache[cache_key] = self._build_ask_idempotency_entry(
+            thread_id=thread_id,
+            turn_id=str(response_payload.get("turnId") or ""),
+            text_hash=text_hash,
+            response_payload=response_payload,
+            now_ms=now_ms,
+        )
+        self._prune_ask_start_idempotency_cache(mutation_cache, now_ms=now_ms)
+        state["mutationCache"] = mutation_cache
+        self._storage.workflow_state_store.write_state(project_id, node_id, state)
+
+    def _create_start_turn_payload(
+        self,
+        *,
+        snapshot: ThreadSnapshotV3,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        cleaned_text: str,
+    ) -> tuple[dict[str, Any], str, str]:
+        if snapshot.get("activeTurnId"):
+            raise ChatTurnAlreadyActive()
+        thread_id = str(snapshot.get("threadId") or "").strip()
+        if not thread_id:
+            raise ChatBackendUnavailable("V3 thread bootstrap did not return a thread id.")
+        turn_id = new_id("turn")
+        user_item = self._build_local_user_item(
+            snapshot=snapshot,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            text=cleaned_text,
+        )
+        updated = self.begin_turn(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            origin="interactive",
+            created_items=[user_item],
+            turn_id=turn_id,
+        )
+        payload = {
+            "accepted": True,
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "snapshotVersion": updated["snapshotVersion"],
+            "createdItems": [user_item],
+        }
+        return payload, thread_id, turn_id
+
+    def _start_background_turn(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_role: ThreadRoleV3,
+        thread_id: str,
+        turn_id: str,
+        input_text: str,
+    ) -> None:
+        threading.Thread(
+            target=self._run_background_turn,
+            kwargs={
+                "project_id": project_id,
+                "node_id": node_id,
+                "thread_role": thread_role,
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+                "input_text": input_text,
+            },
+            daemon=True,
+        ).start()
+
     def start_turn(
         self,
         project_id: str,
@@ -272,7 +504,6 @@ class ThreadRuntimeServiceV3:
         *,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del metadata
         self._chat_service._validate_thread_access(project_id, node_id, thread_role)
         self._chat_service._check_thread_writable(project_id, node_id, thread_role)
         cleaned = str(text or "").strip()
@@ -285,49 +516,72 @@ class ThreadRuntimeServiceV3:
         if thread_role == "audit":
             self._chat_service._maybe_start_local_review_for_audit_write(project_id, node_id)
 
-        snapshot = self._query_service.get_thread_snapshot(project_id, node_id, thread_role)
-        if snapshot.get("activeTurnId"):
-            raise ChatTurnAlreadyActive()
-        thread_id = str(snapshot.get("threadId") or "").strip()
-        if not thread_id:
-            raise ChatBackendUnavailable("V3 thread bootstrap did not return a thread id.")
-
-        turn_id = new_id("turn")
-        user_item = self._build_local_user_item(
-            snapshot=snapshot,
-            thread_id=thread_id,
-            turn_id=turn_id,
-            text=cleaned,
+        ask_idempotency_key = (
+            self._extract_ask_idempotency_key(metadata)
+            if thread_role == "ask_planning"
+            else None
         )
-        updated = self.begin_turn(
+        if ask_idempotency_key:
+            now_ms = self._now_epoch_ms()
+            text_hash = self._ask_start_text_hash(cleaned)
+            with self._storage.project_lock(project_id):
+                snapshot = self._query_service.get_thread_snapshot(project_id, node_id, thread_role)
+                thread_id = str(snapshot.get("threadId") or "").strip()
+                if not thread_id:
+                    raise ChatBackendUnavailable("V3 thread bootstrap did not return a thread id.")
+                replay = self._replay_ask_start_if_idempotent_locked(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_id=thread_id,
+                    idempotency_key=ask_idempotency_key,
+                    text_hash=text_hash,
+                    now_ms=now_ms,
+                )
+                if replay is not None:
+                    return replay
+                payload, thread_id, turn_id = self._create_start_turn_payload(
+                    snapshot=snapshot,
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_role=thread_role,
+                    cleaned_text=cleaned,
+                )
+                self._store_ask_start_idempotency_locked(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_id=thread_id,
+                    idempotency_key=ask_idempotency_key,
+                    text_hash=text_hash,
+                    response_payload=payload,
+                    now_ms=now_ms,
+                )
+            self._start_background_turn(
+                project_id=project_id,
+                node_id=node_id,
+                thread_role=thread_role,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                input_text=cleaned,
+            )
+            return payload
+
+        snapshot = self._query_service.get_thread_snapshot(project_id, node_id, thread_role)
+        payload, thread_id, turn_id = self._create_start_turn_payload(
+            snapshot=snapshot,
             project_id=project_id,
             node_id=node_id,
             thread_role=thread_role,
-            origin="interactive",
-            created_items=[user_item],
-            turn_id=turn_id,
+            cleaned_text=cleaned,
         )
-
-        threading.Thread(
-            target=self._run_background_turn,
-            kwargs={
-                "project_id": project_id,
-                "node_id": node_id,
-                "thread_role": thread_role,
-                "thread_id": thread_id,
-                "turn_id": turn_id,
-                "input_text": cleaned,
-            },
-            daemon=True,
-        ).start()
-
-        return {
-            "accepted": True,
-            "threadId": thread_id,
-            "turnId": turn_id,
-            "snapshotVersion": updated["snapshotVersion"],
-            "createdItems": [user_item],
-        }
+        self._start_background_turn(
+            project_id=project_id,
+            node_id=node_id,
+            thread_role=thread_role,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            input_text=cleaned,
+        )
+        return payload
 
     def begin_turn(
         self,

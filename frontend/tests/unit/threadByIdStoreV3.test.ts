@@ -1648,6 +1648,32 @@ describe('threadByIdStoreV3', () => {
     }
   })
 
+  it('injects ask idempotency key for direct send when metadata is missing', async () => {
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(
+      makeSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning' }),
+    )
+    apiMock.startThreadTurnByIdV3.mockResolvedValue({
+      threadId: 'ask-thread-1',
+      turnId: 'ask-turn-2',
+      snapshotVersion: 2,
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'ask-thread-1', 'ask_planning')
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendTurn('ask hello')
+    })
+
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(1)
+    const metadata = apiMock.startThreadTurnByIdV3.mock.calls[0]?.[4] as Record<string, unknown> | undefined
+    expect(metadata?.idempotencyKey).toEqual(expect.any(String))
+    expect(String(metadata?.idempotencyKey ?? '')).toMatch(/^ask_turn:/)
+  })
+
   it('enqueues execution follow-up and propagates idempotency key when send window is open', async () => {
     apiMock.startThreadTurnByIdV3.mockResolvedValue({
       threadId: 'thread-1',

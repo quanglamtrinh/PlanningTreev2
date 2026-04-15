@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import backend.conversation.services.thread_runtime_service_v3 as thread_runtime_service_v3_module
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
 from backend.routes import workflow_v3 as workflow_v3_route_module
@@ -977,6 +978,131 @@ def test_v3_ask_turns_by_id_dispatches_to_runtime(client: TestClient, workspace_
         "text": "Ask follow-up",
         "metadata": {"idempotencyKey": "ask-1"},
     }
+
+
+def test_v3_ask_turns_by_id_idempotent_replay_avoids_duplicate_turn_creation(
+    client: TestClient,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+
+    class _NoopThread:
+        def __init__(self, *, target, kwargs, daemon):
+            del target, kwargs, daemon
+
+        def start(self) -> None:
+            return
+
+    monkeypatch.setattr(thread_runtime_service_v3_module.threading, "Thread", _NoopThread)
+    endpoint = f"/v3/projects/{project_id}/threads/by-id/{thread_id}/turns"
+    payload = {"text": "Ask follow-up", "metadata": {"idempotencyKey": "ask-idem-1"}}
+
+    first = client.post(endpoint, params={"node_id": node_id}, json=payload)
+    second = client.post(endpoint, params={"node_id": node_id}, json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_data = first.json()["data"]
+    second_data = second.json()["data"]
+    assert second_data["turnId"] == first_data["turnId"]
+    assert second_data["threadId"] == first_data["threadId"]
+
+    snapshot = client.app.state.thread_query_service_v3.get_thread_snapshot(
+        project_id,
+        node_id,
+        "ask_planning",
+        publish_repairs=False,
+    )
+    user_messages = [
+        item
+        for item in snapshot.get("items", [])
+        if str(item.get("kind") or "") == "message" and str(item.get("role") or "") == "user"
+    ]
+    assert len(user_messages) == 1
+
+
+def test_v3_ask_turns_by_id_idempotency_conflict_returns_typed_409(
+    client: TestClient,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+
+    class _NoopThread:
+        def __init__(self, *, target, kwargs, daemon):
+            del target, kwargs, daemon
+
+        def start(self) -> None:
+            return
+
+    monkeypatch.setattr(thread_runtime_service_v3_module.threading, "Thread", _NoopThread)
+    endpoint = f"/v3/projects/{project_id}/threads/by-id/{thread_id}/turns"
+    first = client.post(
+        endpoint,
+        params={"node_id": node_id},
+        json={"text": "Ask follow-up", "metadata": {"idempotencyKey": "ask-idem-1"}},
+    )
+    assert first.status_code == 200
+
+    conflict = client.post(
+        endpoint,
+        params={"node_id": node_id},
+        json={"text": "Different ask payload", "metadata": {"idempotencyKey": "ask-idem-1"}},
+    )
+    assert conflict.status_code == 409
+    conflict_payload = conflict.json()
+    assert conflict_payload["ok"] is False
+    assert conflict_payload["error"]["code"] == "ask_idempotency_payload_conflict"
+
+
+def test_v3_ask_idempotency_scope_does_not_cross_reset_to_new_thread(
+    client: TestClient,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    old_thread_id = _seed_ask_thread(client, project_id, node_id, thread_id="ask-thread-v3-old")
+
+    class _NoopThread:
+        def __init__(self, *, target, kwargs, daemon):
+            del target, kwargs, daemon
+
+        def start(self) -> None:
+            return
+
+    monkeypatch.setattr(thread_runtime_service_v3_module.threading, "Thread", _NoopThread)
+    old_endpoint = f"/v3/projects/{project_id}/threads/by-id/{old_thread_id}/turns"
+    first = client.post(
+        old_endpoint,
+        params={"node_id": node_id},
+        json={"text": "Ask follow-up", "metadata": {"idempotencyKey": "ask-reset-1"}},
+    )
+    assert first.status_code == 200
+    first_data = first.json()["data"]
+
+    reset = client.post(
+        f"/v3/projects/{project_id}/threads/by-id/{old_thread_id}/reset",
+        params={"node_id": node_id},
+    )
+    assert reset.status_code == 200
+
+    new_thread_id = _seed_ask_thread(client, project_id, node_id, thread_id="ask-thread-v3-new")
+    new_endpoint = f"/v3/projects/{project_id}/threads/by-id/{new_thread_id}/turns"
+    second = client.post(
+        new_endpoint,
+        params={"node_id": node_id},
+        json={"text": "Ask follow-up", "metadata": {"idempotencyKey": "ask-reset-1"}},
+    )
+    assert second.status_code == 200
+    second_data = second.json()["data"]
+    assert second_data["threadId"] == new_thread_id
+    assert second_data["turnId"] != first_data["turnId"]
 
 
 def test_v3_ask_resolve_user_input_by_id_updates_snapshot_and_signal(client: TestClient, workspace_root) -> None:

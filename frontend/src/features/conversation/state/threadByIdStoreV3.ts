@@ -2019,6 +2019,13 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     }
     const generation = threadGeneration
     const sendingRole = activeThreadRole
+    const sendMetadata: Record<string, unknown> = { ...metadata }
+    if (sendingRole === 'ask_planning') {
+      const existingIdempotencyKey = String(sendMetadata.idempotencyKey ?? '').trim()
+      if (!existingIdempotencyKey) {
+        sendMetadata.idempotencyKey = newExecutionQueueId('ask_turn')
+      }
+    }
     set(
       composeDomainPatch({
         uiControl: {
@@ -2034,7 +2041,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         activeNodeId,
         activeThreadId,
         text,
-        metadata,
+        sendMetadata,
       )
       set((state) => {
         if (

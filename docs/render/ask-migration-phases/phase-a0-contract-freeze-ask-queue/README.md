@@ -80,6 +80,7 @@ Queue logic currently carries execution-specific assumptions. If ask migration s
 ## Closure Artifact
 
 1. `docs/render/ask-migration-phases/phase-a0-contract-freeze-ask-queue/close-phase-v1.md`
+2. `docs/render/ask-migration-phases/phase-a0-contract-freeze-ask-queue/handoff-to-phase-a1.md`
 
 ## Effort Estimate
 
