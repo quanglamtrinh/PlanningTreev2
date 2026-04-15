@@ -1,8 +1,15 @@
 # Phase A2 - Lane-aware Queue Core Refactor
 
-Status: Planned.
+Status: Completed.
+
+Completed on: 2026-04-15.
 
 Phase ID: `AQ2`.
+
+Closeout artifacts:
+
+1. `close-phase-v1.md`
+2. `handoff-to-phase-a3.md`
 
 ## Objective
 
