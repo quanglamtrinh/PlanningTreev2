@@ -834,7 +834,7 @@ export function BreadcrumbChatViewV2() {
                                 type="button"
                                 className={`${styles.executionQueueAction} ${styles.executionQueueActionPrimary}`}
                                 disabled={executionQueueControlsDisabled}
-                              onClick={() => void confirmExecutionQueued(entry.entryId)}
+                                onClick={() => void confirmExecutionQueued(entry.entryId)}
                               >
                                 Confirm
                               </button>

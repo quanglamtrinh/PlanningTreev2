@@ -1,0 +1,31 @@
+{
+  "phase": "A5",
+  "gate_id": "AQ5-G3",
+  "source": "ask_queue_interaction_smoke",
+  "generated_at": "2026-04-15T08:17:11Z",
+  "evidence_mode": "candidate",
+  "gate_eligible": true,
+  "status": "pass",
+  "context": {
+    "scenario": "ask_phase_a5_queue_interaction_smoke_v1",
+    "ask_queue_panel_interaction_success_rate_pct": 99.5,
+    "total_interaction_checks": 200,
+    "failed_interaction_checks": 1,
+    "successful_interaction_checks": 199,
+    "candidate_path": "docs/render/ask-migration-phases/phase-a5-ask-queue-ui-shell-integrity/evidence/candidates/ask_queue_interaction_smoke-candidate.json",
+    "candidate_commit_sha": "local-check"
+  },
+  "metric": "ask_queue_panel_interaction_success_rate_pct",
+  "value": 99.5,
+  "operator": "gte",
+  "target": 99.0,
+  "unit": "pct",
+  "pass": true,
+  "baseline_metadata": {
+    "label": "aq5_pre_ask_queue_ui_baseline_v1",
+    "captured_at": "2026-04-14T00:00:00Z",
+    "workload": "ask_tab_queue_ui_interaction_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/ask-migration-phases/phase-a5-ask-queue-ui-shell-integrity/evidence/baseline-manifest-v1.json"
+  }
+}

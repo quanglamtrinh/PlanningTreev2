@@ -1,8 +1,31 @@
 # Phase A5 - Ask Queue UI Parity and Shell Integrity
 
-Status: Planned.
+Status: Completed.
 
 Phase ID: `AQ5`.
+
+Date completed: 2026-04-15.
+
+## Completion Snapshot
+
+1. Ask tab now renders a unified queue panel with full controls:
+   - move up/down
+   - send now
+   - confirm
+   - retry
+   - remove
+2. Ask queue actions are lane-specific and explicit:
+   - `reorderAskQueued`
+   - `sendAskQueuedNow`
+   - `retryAskQueued`
+   - `confirmQueued`
+   - `removeQueued`
+3. Ask `send now` enforces head-only FIFO UX in panel controls.
+4. Ask pause reason labels are visible in queue panel header.
+5. Ask composer stays queue-first:
+   - disabled only when snapshot unavailable/loading
+6. Legacy A4 standalone ask confirmation strip is removed.
+7. AQ5 evidence automation and gate report are delivered and pass.
 
 ## Objective
 
@@ -76,4 +99,3 @@ Expose ask queue controls in UI with execution-level usability, while preserving
 - Size: Medium
 - Estimated duration: 3-5 engineering days
 - Suggested staffing: 1 frontend primary + 1 design reviewer
-
