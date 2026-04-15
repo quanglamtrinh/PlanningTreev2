@@ -19,6 +19,11 @@ From docs/render/ask-migration-phases/system-freeze/phase-manifest-v1.json:
 1. docs/render/ask-migration-phases/system-freeze/contracts/README.md
 1. docs/render/ask-migration-phases/system-freeze/contracts/aqc4-ask-confirmation-risk-contract-v1.md
 
+Marker check:
+
+1. `ask_confirmation_risk_policy_frozen` must exist in:
+   - docs/render/ask-migration-phases/system-freeze/contracts/aqc4-ask-confirmation-risk-contract-v1.md
+
 ## 3. Gate and Evidence Lock
 
 Phase gate sources (from phase-gates-v1.json):

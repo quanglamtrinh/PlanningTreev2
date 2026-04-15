@@ -4,6 +4,7 @@ import type { ThreadSnapshotV3 } from '../../src/api/types'
 import {
   askQueuePolicyAdapter,
   executionQueuePolicyAdapter,
+  resolveAskQueueConfirmationReason,
   type AskQueueContext,
   type AskQueuePolicyState,
   type AskSendWindowOptions,
@@ -489,6 +490,90 @@ describe('threadQueuePolicyAdaptersV3', () => {
         nowMs,
       ),
     ).toBe(false)
+  })
+
+  it('maps ask confirmation reason by deterministic trigger priority', () => {
+    const nowMs = 100_000
+    const baseContext: AskQueueContext = {
+      threadId: 'thread-1',
+      snapshotVersion: 2,
+      staleMarker: false,
+    }
+
+    expect(
+      resolveAskQueueConfirmationReason(
+        makeAskEntry({
+          createdAtMs: nowMs - 90_500,
+          enqueueContext: {
+            threadId: 'thread-other',
+            snapshotVersion: 9,
+            staleMarker: false,
+          },
+        }),
+        baseContext,
+        nowMs,
+      ),
+    ).toBe('stale_age')
+
+    expect(
+      resolveAskQueueConfirmationReason(
+        makeAskEntry({
+          createdAtMs: nowMs - 1_000,
+          enqueueContext: {
+            threadId: 'thread-other',
+            snapshotVersion: 9,
+            staleMarker: false,
+          },
+        }),
+        baseContext,
+        nowMs,
+      ),
+    ).toBe('thread_drift')
+
+    expect(
+      resolveAskQueueConfirmationReason(
+        makeAskEntry({
+          createdAtMs: nowMs - 1_000,
+          enqueueContext: {
+            threadId: 'thread-1',
+            snapshotVersion: 9,
+            staleMarker: false,
+          },
+        }),
+        baseContext,
+        nowMs,
+      ),
+    ).toBe('snapshot_drift')
+
+    expect(
+      resolveAskQueueConfirmationReason(
+        makeAskEntry({
+          createdAtMs: nowMs - 1_000,
+          enqueueContext: {
+            threadId: 'thread-1',
+            snapshotVersion: 2,
+            staleMarker: false,
+          },
+        }),
+        { ...baseContext, staleMarker: true },
+        nowMs,
+      ),
+    ).toBe('stale_marker')
+
+    expect(
+      resolveAskQueueConfirmationReason(
+        makeAskEntry({
+          createdAtMs: nowMs - 1_000,
+          enqueueContext: {
+            threadId: 'thread-1',
+            snapshotVersion: 2,
+            staleMarker: false,
+          },
+        }),
+        baseContext,
+        nowMs,
+      ),
+    ).toBeNull()
   })
 
   it('remains deterministic across repeated execution and ask policy evaluation', () => {

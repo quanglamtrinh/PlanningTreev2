@@ -31,6 +31,8 @@ import {
 import type { QueueCoreEntry, QueueEntryStatus, QueueLane } from './threadQueueCoreV3'
 import {
   laneQueuePolicyAdapters,
+  resolveAskQueueConfirmationReason,
+  type AskQueueConfirmationReason,
   type AskQueueContext,
   type AskQueuePauseReason,
   type AskQueuePolicyState,
@@ -144,7 +146,9 @@ export type ExecutionFollowupQueueEntry = QueueCoreEntry<ExecutionFollowupEnqueu
 export type AskFollowupQueueStatus = QueueEntryStatus
 export type AskFollowupQueuePauseReason = AskQueuePauseReason
 export type AskFollowupEnqueueContext = AskQueueContext
-export type AskFollowupQueueEntry = QueueCoreEntry<AskFollowupEnqueueContext>
+export type AskFollowupQueueEntry = QueueCoreEntry<AskFollowupEnqueueContext> & {
+  confirmationReason?: AskQueueConfirmationReason | null
+}
 export type ReloadReasonCode =
   | 'REPLAY_MISS'
   | 'CONTRACT_ENVELOPE_INVALID'
@@ -562,6 +566,19 @@ function normalizeAskQueueStatus(value: unknown): AskFollowupQueueStatus {
   return normalizeQueueEntryStatus(value)
 }
 
+function normalizeAskQueueConfirmationReason(value: unknown): AskQueueConfirmationReason | null {
+  const normalized = String(value ?? '').trim()
+  if (
+    normalized === 'stale_age' ||
+    normalized === 'thread_drift' ||
+    normalized === 'snapshot_drift' ||
+    normalized === 'stale_marker'
+  ) {
+    return normalized
+  }
+  return null
+}
+
 function normalizeExecutionQueueEntry(raw: unknown): ExecutionFollowupQueueEntry | null {
   if (!raw || typeof raw !== 'object') {
     return null
@@ -627,6 +644,7 @@ function normalizeAskQueueEntry(raw: unknown): AskFollowupQueueEntry | null {
   const attemptCount =
     Number.isFinite(attemptCountRaw) && attemptCountRaw >= 0 ? Math.floor(attemptCountRaw) : 0
   const lastError = String(source.lastError ?? '').trim() || null
+  const confirmationReason = normalizeAskQueueConfirmationReason(source.confirmationReason)
   if (!entryId || !text || !idempotencyKey || !Number.isFinite(createdAtRaw) || createdAtRaw <= 0) {
     return null
   }
@@ -643,6 +661,7 @@ function normalizeAskQueueEntry(raw: unknown): AskFollowupQueueEntry | null {
     status: normalizeAskQueueStatus(source.status),
     attemptCount,
     lastError,
+    confirmationReason,
   }
 }
 
@@ -667,7 +686,7 @@ function loadExecutionQueueFromStorage(
       .map((entry) => normalizeExecutionQueueEntry(entry))
       .filter((entry): entry is ExecutionFollowupQueueEntry => entry !== null)
       .slice(0, EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS)
-    // Recovery safety: a previously persisted `sending` entry should return to `queued`.
+    // Recovery safety: previously persisted transient statuses should return to `queued`.
     return normalized.map((entry) =>
       entry.status === 'sending' || entry.status === 'requires_confirmation'
         ? {
@@ -699,11 +718,13 @@ function loadAskQueueFromStorage(projectId: string, nodeId: string, threadId: st
       .filter((entry): entry is AskFollowupQueueEntry => entry !== null)
       .slice(0, ASK_FOLLOWUP_QUEUE_MAX_ITEMS)
     // Recovery safety: a previously persisted `sending` entry should return to `queued`.
+    // A4 preserves `requires_confirmation` across reloads.
     return normalized.map((entry) =>
-      entry.status === 'sending' || entry.status === 'requires_confirmation'
+      entry.status === 'sending'
         ? {
             ...entry,
             status: 'queued',
+            confirmationReason: null,
           }
         : entry,
     )
@@ -773,6 +794,43 @@ function currentAskQueueContext(
     snapshotVersion: state.snapshot?.snapshotVersion ?? null,
     staleMarker: state.streamStatus !== 'open',
   }
+}
+
+function setAskQueueEntryConfirmationReason(
+  entries: AskFollowupQueueEntry[],
+  entryId: string,
+  confirmationReason: AskQueueConfirmationReason,
+): AskFollowupQueueEntry[] {
+  const normalizedId = String(entryId ?? '').trim()
+  if (!normalizedId) {
+    return entries
+  }
+  return entries.map((entry) =>
+    entry.entryId === normalizedId
+      ? {
+          ...entry,
+          confirmationReason,
+        }
+      : entry,
+  )
+}
+
+function clearAskQueueEntryConfirmationReason(
+  entries: AskFollowupQueueEntry[],
+  entryId: string,
+): AskFollowupQueueEntry[] {
+  const normalizedId = String(entryId ?? '').trim()
+  if (!normalizedId) {
+    return entries
+  }
+  return entries.map((entry) =>
+    entry.entryId === normalizedId
+      ? {
+          ...entry,
+          confirmationReason: null,
+        }
+      : entry,
+  )
 }
 
 function compareConversationItemsByOrder(left: ConversationItemV3, right: ConversationItemV3): number {
@@ -2102,10 +2160,17 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
   })
 
   const evaluateAskQueuePauseReason = (
-    state: Pick<ThreadByIdStoreV3State, 'snapshot' | 'activeThreadRole' | 'streamStatus'>,
+    state: Pick<
+      ThreadByIdStoreV3State,
+      'snapshot' | 'activeThreadRole' | 'streamStatus' | 'askFollowupQueue'
+    >,
   ): AskFollowupQueuePauseReason => {
     if (state.activeThreadRole !== 'ask_planning') {
       return 'stream_or_state_mismatch'
+    }
+    const askHead = state.askFollowupQueue[0] ?? null
+    if (askHead?.status === 'requires_confirmation') {
+      return 'requires_confirmation'
     }
     const options: AskSendWindowOptions = {
       streamOrStateMismatch: streamOrStateMismatch(state),
@@ -2359,18 +2424,53 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       return
     }
 
-    // Strict FIFO in A3: only the head `queued` entry can auto-flush.
     const head = state.askFollowupQueue[0] ?? null
-    if (!head || head.status !== 'queued') {
+    if (!head) {
+      return
+    }
+    if (head.status === 'requires_confirmation') {
+      set((current) => ({
+        askQueuePauseReason: evaluateAskQueuePauseReason(current),
+      }))
+      return
+    }
+    if (head.status !== 'queued') {
+      return
+    }
+
+    const nowMs = Date.now()
+    const context = currentAskQueueContext(state)
+    const confirmationReason = resolveAskQueueConfirmationReason(head, context, nowMs)
+    if (confirmationReason != null) {
+      set((current) => {
+        let nextQueue = markQueueEntryRequiresConfirmation(
+          'ask_planning',
+          current.askFollowupQueue,
+          head.entryId,
+        )
+        nextQueue = setAskQueueEntryConfirmationReason(nextQueue, head.entryId, confirmationReason)
+        persistAskQueueForCurrentThread(current, nextQueue)
+        return {
+          askFollowupQueue: nextQueue,
+          askQueuePauseReason: evaluateAskQueuePauseReason({
+            ...current,
+            askFollowupQueue: nextQueue,
+          }),
+        }
+      })
       return
     }
 
     set((current) => {
-      const nextQueue = markQueueEntrySending('ask_planning', current.askFollowupQueue, head.entryId)
+      let nextQueue = markQueueEntrySending('ask_planning', current.askFollowupQueue, head.entryId)
+      nextQueue = clearAskQueueEntryConfirmationReason(nextQueue, head.entryId)
       persistAskQueueForCurrentThread(current, nextQueue)
       return {
         askFollowupQueue: nextQueue,
-        askQueuePauseReason: evaluateAskQueuePauseReason(current),
+        askQueuePauseReason: evaluateAskQueuePauseReason({
+          ...current,
+          askFollowupQueue: nextQueue,
+        }),
       }
     })
 
@@ -2388,11 +2488,15 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         nextQueue = removeQueueEntry('ask_planning', current.askFollowupQueue, head.entryId)
       } else {
         nextQueue = markQueueEntryFailed('ask_planning', current.askFollowupQueue, head.entryId, result.error)
+        nextQueue = clearAskQueueEntryConfirmationReason(nextQueue, head.entryId)
       }
       persistAskQueueForCurrentThread(current, nextQueue)
       return {
         askFollowupQueue: nextQueue,
-        askQueuePauseReason: evaluateAskQueuePauseReason(current),
+        askQueuePauseReason: evaluateAskQueuePauseReason({
+          ...current,
+          askFollowupQueue: nextQueue,
+        }),
       }
     })
 
@@ -2463,7 +2567,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           persistAskQueueForCurrentThread(state, hydratedQueue)
           return {
             askFollowupQueue: hydratedQueue,
-            askQueuePauseReason: evaluateAskQueuePauseReason(state),
+            askQueuePauseReason: evaluateAskQueuePauseReason({
+              ...state,
+              askFollowupQueue: hydratedQueue,
+            }),
             executionFollowupQueue: [],
             executionQueuePauseReason: 'none',
             executionQueueOperatorPaused: false,
@@ -2658,7 +2765,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       persistAskQueueForCurrentThread(current, nextQueue)
       return {
         askFollowupQueue: nextQueue,
-        askQueuePauseReason: evaluateAskQueuePauseReason(current),
+        askQueuePauseReason: evaluateAskQueuePauseReason({
+          ...current,
+          askFollowupQueue: nextQueue,
+        }),
       }
     })
     await attemptAskQueueFlush()
@@ -2918,6 +3028,36 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       return
     }
     const state = get()
+    if (state.activeThreadRole === 'ask_planning') {
+      if (queueHasSending(state.askFollowupQueue)) {
+        return
+      }
+      const askHead = state.askFollowupQueue[0] ?? null
+      const removedHeadRequiresConfirmation =
+        askHead?.entryId === id && askHead.status === 'requires_confirmation'
+      const nextQueue = removeQueueEntry('ask_planning', state.askFollowupQueue, id)
+      if (nextQueue.length === state.askFollowupQueue.length) {
+        return
+      }
+      set((current) => {
+        const persistedQueue = removeQueueEntry('ask_planning', current.askFollowupQueue, id)
+        if (persistedQueue.length === current.askFollowupQueue.length) {
+          return {}
+        }
+        persistAskQueueForCurrentThread(current, persistedQueue)
+        return {
+          askFollowupQueue: persistedQueue,
+          askQueuePauseReason: evaluateAskQueuePauseReason({
+            ...current,
+            askFollowupQueue: persistedQueue,
+          }),
+        }
+      })
+      if (removedHeadRequiresConfirmation) {
+        void attemptAskQueueFlush()
+      }
+      return
+    }
     if (queueHasSending(state.executionFollowupQueue)) {
       return
     }
@@ -2963,6 +3103,43 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       return
     }
     const state = get()
+    if (state.activeThreadRole === 'ask_planning') {
+      if (queueHasSending(state.askFollowupQueue)) {
+        return
+      }
+      let nextQueue = markQueueEntryConfirmed('ask_planning', state.askFollowupQueue, id, {
+        nowMs: Date.now(),
+        enqueueContext: currentAskQueueContext(state),
+      })
+      nextQueue = clearAskQueueEntryConfirmationReason(nextQueue, id)
+      if (nextQueue === state.askFollowupQueue) {
+        return
+      }
+      const hasEntry = nextQueue.some((entry) => entry.entryId === id)
+      if (!hasEntry) {
+        return
+      }
+      set((current) => {
+        let persistedQueue = markQueueEntryConfirmed('ask_planning', current.askFollowupQueue, id, {
+          nowMs: Date.now(),
+          enqueueContext: currentAskQueueContext(current),
+        })
+        persistedQueue = clearAskQueueEntryConfirmationReason(persistedQueue, id)
+        if (persistedQueue === current.askFollowupQueue) {
+          return {}
+        }
+        persistAskQueueForCurrentThread(current, persistedQueue)
+        return {
+          askFollowupQueue: persistedQueue,
+          askQueuePauseReason: evaluateAskQueuePauseReason({
+            ...current,
+            askFollowupQueue: persistedQueue,
+          }),
+        }
+      })
+      await attemptAskQueueFlush()
+      return
+    }
     if (queueHasSending(state.executionFollowupQueue)) {
       return
     }

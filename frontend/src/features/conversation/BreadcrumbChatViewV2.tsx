@@ -20,6 +20,7 @@ import { MessagesV3ErrorBoundary } from './components/v3/MessagesV3ErrorBoundary
 import {
   type ExecutionFollowupQueuePauseReason,
   type ExecutionFollowupQueueStatus,
+  selectAskFollowupQueueState,
   selectComposerState,
   selectExecutionFollowupQueueActions,
   selectExecutionFollowupQueueState,
@@ -79,6 +80,22 @@ function renderQueuePauseReasonLabel(reason: ExecutionFollowupQueuePauseReason):
   return 'Paused: workflow blocked'
 }
 
+function renderAskConfirmationReasonLabel(reason: string | null | undefined): string {
+  if (reason === 'stale_age') {
+    return 'Queued ask is stale. Confirm before sending.'
+  }
+  if (reason === 'thread_drift') {
+    return 'Thread context changed. Confirm before sending.'
+  }
+  if (reason === 'snapshot_drift') {
+    return 'Snapshot context changed. Confirm before sending.'
+  }
+  if (reason === 'stale_marker') {
+    return 'Stream context changed. Confirm before sending.'
+  }
+  return 'Queued ask requires confirmation before sending.'
+}
+
 export function BreadcrumbChatViewV2() {
   const navigate = useNavigate()
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
@@ -101,6 +118,7 @@ export function BreadcrumbChatViewV2() {
     disconnectThread: disconnectThreadV3,
   } = useThreadByIdStoreV3(useShallow(selectThreadActions))
   const executionQueueState = useThreadByIdStoreV3(useShallow(selectExecutionFollowupQueueState))
+  const askQueueState = useThreadByIdStoreV3(useShallow(selectAskFollowupQueueState))
   const {
     enqueueFollowup,
     removeQueued,
@@ -370,6 +388,10 @@ export function BreadcrumbChatViewV2() {
   const executionQueueHasSending = executionQueueEntries.some((entry) => entry.status === 'sending')
   const executionQueueControlsDisabled = executionQueueHasSending || executionQueueState.isSending
   const executionQueuePauseLabel = renderQueuePauseReasonLabel(executionQueueState.executionQueuePauseReason)
+  const askQueueHead = askQueueState.askFollowupQueue[0] ?? null
+  const askHeadRequiresConfirmation = askQueueHead?.status === 'requires_confirmation'
+  const askConfirmationControlsDisabled =
+    askQueueState.isSending || askQueueState.askFollowupQueue.some((entry) => entry.status === 'sending')
   const composerDisabled = useMemo(() => {
     if (!composerStateV3.snapshot) {
       return true
@@ -808,6 +830,38 @@ export function BreadcrumbChatViewV2() {
                       ))}
                     </ol>
                   )}
+                </section>
+              ) : null}
+              {threadTab === 'ask' && askHeadRequiresConfirmation && askQueueHead ? (
+                <section
+                  className={styles.askConfirmationStrip}
+                  aria-label="Queued ask confirmation required"
+                  data-testid="ask-queued-confirmation-strip"
+                >
+                  <div className={styles.askConfirmationStripBody}>
+                    <p className={styles.askConfirmationStripTitle}>Queued ask requires confirmation</p>
+                    <p className={styles.askConfirmationStripReason}>
+                      {renderAskConfirmationReasonLabel(askQueueHead.confirmationReason)}
+                    </p>
+                  </div>
+                  <div className={styles.askConfirmationStripActions}>
+                    <button
+                      type="button"
+                      className={`${styles.askConfirmationAction} ${styles.askConfirmationActionPrimary}`}
+                      disabled={askConfirmationControlsDisabled}
+                      onClick={() => void confirmQueued(askQueueHead.entryId)}
+                    >
+                      Confirm & send
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.askConfirmationAction}
+                      disabled={askConfirmationControlsDisabled}
+                      onClick={() => removeQueued(askQueueHead.entryId)}
+                    >
+                      Discard
+                    </button>
+                  </div>
                 </section>
               ) : null}
               <ComposerBar

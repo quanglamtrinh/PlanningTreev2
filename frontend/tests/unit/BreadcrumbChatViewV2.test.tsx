@@ -495,6 +495,134 @@ describe('BreadcrumbChatViewV2', () => {
     expect(enqueueFollowup).not.toHaveBeenCalled()
   })
 
+  it('shows ask confirmation strip only when ask head requires confirmation and dispatches actions', async () => {
+    const confirmQueued = vi.fn().mockResolvedValue(undefined)
+    const removeQueued = vi.fn()
+    seedStores({
+      workflowState: makeWorkflowState({
+        askThreadId: 'ask-thread-1',
+      }),
+      threadSnapshot: makeConversationSnapshot({
+        threadId: 'ask-thread-1',
+        threadRole: 'ask_planning',
+      }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      activeThreadRole: 'ask_planning',
+      askFollowupQueue: [
+        {
+          entryId: 'ask-blocked-1',
+          text: 'blocked ask',
+          idempotencyKey: 'ask-idem-blocked-1',
+          createdAtMs: Date.now(),
+          enqueueContext: {
+            threadId: 'ask-thread-1',
+            snapshotVersion: 1,
+            staleMarker: false,
+          },
+          status: 'requires_confirmation',
+          attemptCount: 0,
+          lastError: null,
+          confirmationReason: 'thread_drift',
+        },
+        {
+          entryId: 'ask-next-1',
+          text: 'next ask',
+          idempotencyKey: 'ask-idem-next-1',
+          createdAtMs: Date.now(),
+          enqueueContext: {
+            threadId: 'ask-thread-1',
+            snapshotVersion: 1,
+            staleMarker: false,
+          },
+          status: 'queued',
+          attemptCount: 0,
+          lastError: null,
+          confirmationReason: null,
+        },
+      ],
+      askQueuePauseReason: 'requires_confirmation',
+      confirmQueued,
+      removeQueued,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const strip = screen.getByTestId('ask-queued-confirmation-strip')
+    expect(strip).toBeInTheDocument()
+    expect(strip).toHaveTextContent('Thread context changed. Confirm before sending.')
+    fireEvent.click(within(strip).getByRole('button', { name: 'Confirm & send' }))
+    fireEvent.click(within(strip).getByRole('button', { name: 'Discard' }))
+    expect(confirmQueued).toHaveBeenCalledWith('ask-blocked-1')
+    expect(removeQueued).toHaveBeenCalledWith('ask-blocked-1')
+  })
+
+  it('does not show ask confirmation strip when ask head is not requires_confirmation', async () => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        askThreadId: 'ask-thread-1',
+      }),
+      threadSnapshot: makeConversationSnapshot({
+        threadId: 'ask-thread-1',
+        threadRole: 'ask_planning',
+      }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      activeThreadRole: 'ask_planning',
+      askFollowupQueue: [
+        {
+          entryId: 'ask-queued-1',
+          text: 'queued ask',
+          idempotencyKey: 'ask-idem-queued-1',
+          createdAtMs: Date.now(),
+          enqueueContext: {
+            threadId: 'ask-thread-1',
+            snapshotVersion: 1,
+            staleMarker: false,
+          },
+          status: 'queued',
+          attemptCount: 0,
+          lastError: null,
+          confirmationReason: null,
+        },
+        {
+          entryId: 'ask-later-blocked-1',
+          text: 'later blocked ask',
+          idempotencyKey: 'ask-idem-later-1',
+          createdAtMs: Date.now(),
+          enqueueContext: {
+            threadId: 'ask-thread-1',
+            snapshotVersion: 1,
+            staleMarker: false,
+          },
+          status: 'requires_confirmation',
+          attemptCount: 0,
+          lastError: null,
+          confirmationReason: 'stale_age',
+        },
+      ],
+      askQueuePauseReason: 'none',
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.queryByTestId('ask-queued-confirmation-strip')).not.toBeInTheDocument()
+  })
+
   it('renders execution queue controls and dispatches queue actions', async () => {
     const removeQueued = vi.fn()
     const reorderQueued = vi.fn()

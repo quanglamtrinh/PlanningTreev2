@@ -364,6 +364,82 @@
   cursor: not-allowed;
 }
 
+.askConfirmationStrip {
+  max-width: 860px;
+  width: calc(100% - 40px);
+  margin: 12px auto 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #f59e0b 36%, var(--border-default));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, #f59e0b 8%, var(--thread-chat-canvas));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  box-sizing: border-box;
+}
+
+.askConfirmationStripBody {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.askConfirmationStripTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.askConfirmationStripReason {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.askConfirmationStripActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.askConfirmationAction {
+  border: 1px solid color-mix(in srgb, var(--border-default) 88%, transparent);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.askConfirmationAction:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.askConfirmationActionPrimary {
+  background: #b45309;
+  color: #fff;
+  border-color: #b45309;
+}
+
+.askConfirmationActionPrimary:hover:not(:disabled) {
+  background: color-mix(in srgb, #b45309 88%, black);
+  border-color: color-mix(in srgb, #b45309 82%, black);
+  color: #fff;
+}
+
+.askConfirmationAction:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .acceptReviewBar {
   display: flex;
   flex-direction: column;
@@ -945,6 +1021,18 @@
   .executionQueuePanel {
     width: calc(100% - 24px);
     margin-top: 10px;
+  }
+
+  .askConfirmationStrip {
+    width: calc(100% - 24px);
+    margin-top: 10px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .askConfirmationStripActions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .executionQueueHeader {

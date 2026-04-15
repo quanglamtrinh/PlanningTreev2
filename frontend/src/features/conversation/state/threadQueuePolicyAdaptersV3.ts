@@ -17,6 +17,7 @@ export type AskQueuePauseReason =
   | 'stream_or_state_mismatch'
   | 'active_turn_running'
   | 'waiting_user_input'
+  | 'requires_confirmation'
   | 'operator_pause'
 
 export type ExecutionQueueContext = {
@@ -29,6 +30,12 @@ export type AskQueueContext = {
   snapshotVersion: number | null
   staleMarker: boolean
 }
+
+export type AskQueueConfirmationReason =
+  | 'stale_age'
+  | 'thread_drift'
+  | 'snapshot_drift'
+  | 'stale_marker'
 
 export type ExecutionQueueEntry = QueueCoreEntry<ExecutionQueueContext>
 export type AskQueueEntry = QueueCoreEntry<AskQueueContext>
@@ -66,6 +73,33 @@ export type LaneQueuePolicyAdapter<
   evaluatePauseReason: (lane: TLane, state: TState, options: TSendWindowOptions) => TPauseReason
   sendWindowIsOpen: (lane: TLane, state: TState, options: TSendWindowOptions) => boolean
   requiresConfirmation: (lane: TLane, entry: TEntry, currentContext: TContext, nowMs: number) => boolean
+}
+
+export function resolveAskQueueConfirmationReason(
+  entry: AskQueueEntry,
+  currentContext: AskQueueContext,
+  nowMs: number,
+): AskQueueConfirmationReason | null {
+  if (nowMs - entry.createdAtMs > ASK_QUEUE_AUTO_SEND_MAX_AGE_MS) {
+    return 'stale_age'
+  }
+  if (
+    entry.enqueueContext.threadId &&
+    currentContext.threadId &&
+    entry.enqueueContext.threadId !== currentContext.threadId
+  ) {
+    return 'thread_drift'
+  }
+  if (
+    entry.enqueueContext.snapshotVersion !== currentContext.snapshotVersion &&
+    (entry.enqueueContext.snapshotVersion != null || currentContext.snapshotVersion != null)
+  ) {
+    return 'snapshot_drift'
+  }
+  if (currentContext.staleMarker) {
+    return 'stale_marker'
+  }
+  return null
 }
 
 function hasPendingInputBlocking(snapshot: ThreadSnapshotV3 | null): boolean {
@@ -200,26 +234,7 @@ export const askQueuePolicyAdapter: LaneQueuePolicyAdapter<
     if (lane !== 'ask_planning') {
       return false
     }
-    if (nowMs - entry.createdAtMs > ASK_QUEUE_AUTO_SEND_MAX_AGE_MS) {
-      return true
-    }
-    if (
-      entry.enqueueContext.threadId &&
-      currentContext.threadId &&
-      entry.enqueueContext.threadId !== currentContext.threadId
-    ) {
-      return true
-    }
-    if (
-      entry.enqueueContext.snapshotVersion !== currentContext.snapshotVersion &&
-      (entry.enqueueContext.snapshotVersion != null || currentContext.snapshotVersion != null)
-    ) {
-      return true
-    }
-    if (currentContext.staleMarker) {
-      return true
-    }
-    return false
+    return resolveAskQueueConfirmationReason(entry, currentContext, nowMs) != null
   },
 }
 
@@ -227,4 +242,3 @@ export const laneQueuePolicyAdapters = {
   execution: executionQueuePolicyAdapter,
   ask_planning: askQueuePolicyAdapter,
 } as const
-
