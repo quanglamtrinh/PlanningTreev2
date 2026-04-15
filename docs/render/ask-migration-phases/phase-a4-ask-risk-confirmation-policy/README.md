@@ -1,8 +1,26 @@
 # Phase A4 - Ask Risk Confirmation Policy
 
-Status: Planned.
+Status: Completed.
 
 Phase ID: `AQ4`.
+
+Date completed: 2026-04-15.
+
+## Completion Snapshot
+
+1. Ask stale-intent risk policy is active in runtime:
+   - `queued -> requires_confirmation` when AQC4 triggers match (`stale_age`, `thread_drift`, `snapshot_drift`, `stale_marker`)
+   - head `requires_confirmation` blocks downstream auto-flush (strict FIFO)
+2. Lane-aware ask controls are active:
+   - `confirmQueued(entryId)` restamps ask context/timestamp and retries flush immediately
+   - `removeQueued(entryId)` removes blocked head and retries flush immediately
+3. Ask persistence behavior is updated for A4:
+   - hydrate preserves ask `requires_confirmation`
+   - hydrate still normalizes ask `sending -> queued`
+4. A4-minimal UI is active in ask tab:
+   - blocked-head inline strip above composer
+   - reason label + actions `Confirm & send` and `Discard`
+5. AQ4 gate evidence is generated in canonical phase folder and passes.
 
 ## Objective
 
@@ -77,4 +95,3 @@ A3 proves baseline queue operation. A4 adds policy complexity (confirmation gati
 - Size: Medium
 - Estimated duration: 2-4 engineering days
 - Suggested staffing: 1 frontend primary
-
