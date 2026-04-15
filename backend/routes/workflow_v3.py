@@ -538,6 +538,7 @@ async def get_thread_snapshot_by_id_v3(
             thread_role,
             publish_repairs=True,
             ensure_binding=False,
+            allow_thread_read_hydration=False,
         )
         snapshot_v3 = _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)
         snapshot_v3 = _apply_live_item_limit(snapshot_v3, live_limit=live_limit)
@@ -574,6 +575,7 @@ async def get_thread_history_page_by_id_v3(
             thread_role,
             publish_repairs=True,
             ensure_binding=False,
+            allow_thread_read_hydration=False,
         )
         snapshot_v3 = _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)
         history_page = _build_history_page(
@@ -621,6 +623,7 @@ async def thread_events_by_id_v3(
             thread_role,
             after_snapshot_version=after_snapshot_version,
             ensure_binding=False,
+            allow_thread_read_hydration=False,
         )
         queue = broker.subscribe(project_id, node_id, thread_role=thread_role)
     except AppError as exc:

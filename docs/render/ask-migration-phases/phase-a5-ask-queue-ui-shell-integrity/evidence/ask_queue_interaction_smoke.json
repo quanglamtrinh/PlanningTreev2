@@ -2,7 +2,7 @@
   "phase": "A5",
   "gate_id": "AQ5-G3",
   "source": "ask_queue_interaction_smoke",
-  "generated_at": "2026-04-15T08:17:11Z",
+  "generated_at": "2026-04-15T08:29:43Z",
   "evidence_mode": "candidate",
   "gate_eligible": true,
   "status": "pass",

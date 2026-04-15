@@ -424,6 +424,7 @@ export function BreadcrumbChatViewV2() {
   const askQueueHasSending = askQueueEntries.some((entry) => entry.status === 'sending')
   const askQueueControlsDisabled = askQueueHasSending || askQueueState.isSending
   const askQueuePauseLabel = renderAskQueuePauseReasonLabel(askQueueState.askQueuePauseReason)
+  const conversationLoading = isLoading || (threadTab === 'ask' ? false : isWorkflowLoading)
   const composerDisabled = useMemo(() => {
     if (!composerStateV3.snapshot) {
       return true
@@ -716,7 +717,7 @@ export function BreadcrumbChatViewV2() {
                 >
                   <MessagesV3
                     snapshot={feedRenderStateV3.snapshot}
-                    isLoading={isLoading || isWorkflowLoading}
+                    isLoading={conversationLoading}
                     isSending={isSending}
                     hasOlderHistory={hasOlderHistory}
                     isLoadingHistory={isLoadingHistory}

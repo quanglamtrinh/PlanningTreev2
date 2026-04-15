@@ -18,8 +18,16 @@ vi.mock('../../src/features/breadcrumb/ComposerBar', () => ({
 }))
 
 vi.mock('../../src/features/conversation/components/v3/MessagesV3', () => ({
-  MessagesV3: ({ prefix, suffix }: { prefix?: React.ReactNode; suffix?: React.ReactNode }) => (
-    <div data-testid="messages-v3">
+  MessagesV3: ({
+    prefix,
+    suffix,
+    isLoading,
+  }: {
+    prefix?: React.ReactNode
+    suffix?: React.ReactNode
+    isLoading?: boolean
+  }) => (
+    <div data-testid="messages-v3" data-loading={String(Boolean(isLoading))}>
       {prefix ? <div data-testid="conversation-prefix">{prefix}</div> : null}
       feed
       {suffix ? <div data-testid="conversation-suffix">{suffix}</div> : null}
@@ -493,6 +501,39 @@ describe('BreadcrumbChatViewV2', () => {
       expect(sendTurn).toHaveBeenCalledWith('queued from composer mock')
     })
     expect(enqueueFollowup).not.toHaveBeenCalled()
+  })
+
+  it('keeps ask feed render unblocked while workflow state is refreshing after ask thread resolves', async () => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        askThreadId: 'ask-thread-1',
+      }),
+      threadSnapshot: makeConversationSnapshot({
+        threadId: 'ask-thread-1',
+        threadRole: 'ask_planning',
+      }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      activeThreadRole: 'ask_planning',
+      isLoading: false,
+    })
+    useWorkflowStateStoreV3.setState({
+      ...useWorkflowStateStoreV3.getState(),
+      loading: {
+        'project-1::root': true,
+      },
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('messages-v3')).toHaveAttribute('data-loading', 'false')
   })
 
   it('renders ask queue panel controls and dispatches ask queue actions', async () => {

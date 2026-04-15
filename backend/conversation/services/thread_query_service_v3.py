@@ -687,11 +687,21 @@ class ThreadQueryServiceV3:
         *,
         publish_repairs: bool = True,
         ensure_binding: bool = True,
+        allow_thread_read_hydration: bool = True,
     ) -> ThreadSnapshotV3:
         self._chat_service._validate_thread_access(project_id, node_id, thread_role)
         session = None
         if thread_role == "ask_planning":
-            session = self._chat_service.get_session(project_id, node_id, thread_role=thread_role)
+            if allow_thread_read_hydration:
+                session = self._chat_service.get_session(project_id, node_id, thread_role=thread_role)
+            else:
+                # Fast read path for UI snapshot loads: avoid lineage/bootstrap resume calls
+                # and only read persisted ask session state from storage.
+                session = self._storage.chat_state_store.read_session(
+                    project_id,
+                    node_id,
+                    thread_role=thread_role,
+                )
         elif ensure_binding and self._thread_lineage_service is not None:
             workspace_root = self._chat_service._workspace_root_for_project(project_id)
             self._thread_lineage_service.ensure_thread_binding_v2(
@@ -1133,6 +1143,7 @@ class ThreadQueryServiceV3:
         *,
         after_snapshot_version: int | None,
         ensure_binding: bool = True,
+        allow_thread_read_hydration: bool = True,
     ) -> ThreadSnapshotV3:
         snapshot = self.get_thread_snapshot(
             project_id,
@@ -1140,6 +1151,7 @@ class ThreadQueryServiceV3:
             thread_role,
             publish_repairs=True,
             ensure_binding=ensure_binding,
+            allow_thread_read_hydration=allow_thread_read_hydration,
         )
         if after_snapshot_version is not None and int(after_snapshot_version) > int(snapshot.get("snapshotVersion") or 0):
             raise ConversationStreamMismatch()

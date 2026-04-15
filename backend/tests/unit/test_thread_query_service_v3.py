@@ -253,6 +253,50 @@ def test_build_stream_snapshot_v3_guard_raises_mismatch(storage, workspace_root,
         )
 
 
+def test_get_thread_snapshot_v3_ask_fast_read_skips_session_hydration(
+    storage,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE", "enabled")
+    service, project_id, node_id = _build_service(storage, workspace_root)
+    registry = ThreadRegistryService(storage.thread_registry_store)
+    registry.update_entry(
+        project_id,
+        node_id,
+        "ask_planning",
+        thread_id="ask-thread-fast-read",
+    )
+
+    snapshot = default_thread_snapshot_v3(project_id, node_id, "ask_planning")
+    snapshot["threadId"] = "ask-thread-fast-read"
+    snapshot["snapshotVersion"] = 5
+    snapshot["processingState"] = "idle"
+    snapshot["activeTurnId"] = None
+    storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, "ask_planning", snapshot)
+
+    ask_session = storage.chat_state_store.read_session(project_id, node_id, thread_role="ask_planning")
+    ask_session["thread_id"] = "ask-thread-fast-read"
+    ask_session["active_turn_id"] = "ask-turn-1"
+    storage.chat_state_store.write_session(project_id, node_id, ask_session, thread_role="ask_planning")
+
+    def _forbidden_get_session(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("ask fast-read path should not call chat_service.get_session")
+
+    service._chat_service.get_session = _forbidden_get_session  # type: ignore[method-assign]
+
+    loaded = service.get_thread_snapshot(
+        project_id,
+        node_id,
+        "ask_planning",
+        allow_thread_read_hydration=False,
+    )
+
+    assert loaded["threadId"] == "ask-thread-fast-read"
+    assert loaded["activeTurnId"] == "ask-turn-1"
+    assert loaded["processingState"] == "running"
+
+
 def test_issue_stream_event_id_v3_is_monotonic_and_durable(storage, workspace_root) -> None:
     service, project_id, node_id = _build_service(storage, workspace_root)
 

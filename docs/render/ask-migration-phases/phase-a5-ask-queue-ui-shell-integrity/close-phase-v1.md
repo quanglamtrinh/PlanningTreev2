@@ -51,13 +51,14 @@ Phase: `phase-a5-ask-queue-ui-shell-integrity` (`AQ5`).
 
 ## Validation Snapshot
 
-1. `npm run check:ask_migration_freeze` -> pass
-2. `npm run test:unit --prefix frontend -- threadByIdStoreV3.test.ts BreadcrumbChatViewV2.test.tsx` -> pass (`44 files, 308 tests passed`)
-3. `npm run typecheck --prefix frontend` -> pass
-4. `python scripts/ask_phase_a5_queue_ui_actions_suite.py --self-test --candidate docs/render/ask-migration-phases/phase-a5-ask-queue-ui-shell-integrity/evidence/candidates/ask_queue_ui_actions_suite-candidate.json --candidate-commit-sha local-check` -> pass
-5. `python scripts/ask_phase_a5_shell_visibility_regression_suite.py --self-test --candidate docs/render/ask-migration-phases/phase-a5-ask-queue-ui-shell-integrity/evidence/candidates/ask_shell_visibility_regression_suite-candidate.json --candidate-commit-sha local-check` -> pass
-6. `python scripts/ask_phase_a5_queue_interaction_smoke.py --self-test --candidate docs/render/ask-migration-phases/phase-a5-ask-queue-ui-shell-integrity/evidence/candidates/ask_queue_interaction_smoke-candidate.json --candidate-commit-sha local-check` -> pass
-7. `python scripts/ask_phase_a5_gate_report.py --self-test --candidate docs/render/ask-migration-phases/phase-a5-ask-queue-ui-shell-integrity/evidence/candidates` -> pass
+1. `npm run check:freeze_all` -> pass
+2. `npm run check:ask_migration_freeze` -> pass
+3. `npm run test:unit --prefix frontend -- threadByIdStoreV3.test.ts BreadcrumbChatViewV2.test.tsx` -> pass (`44 files, 308 tests passed`)
+4. `npm run typecheck --prefix frontend` -> pass
+5. `python scripts/ask_phase_a5_queue_ui_actions_suite.py --self-test --candidate docs/render/ask-migration-phases/phase-a5-ask-queue-ui-shell-integrity/evidence/candidates/ask_queue_ui_actions_suite-candidate.json --candidate-commit-sha local-check` -> pass
+6. `python scripts/ask_phase_a5_shell_visibility_regression_suite.py --self-test --candidate docs/render/ask-migration-phases/phase-a5-ask-queue-ui-shell-integrity/evidence/candidates/ask_shell_visibility_regression_suite-candidate.json --candidate-commit-sha local-check` -> pass
+7. `python scripts/ask_phase_a5_queue_interaction_smoke.py --self-test --candidate docs/render/ask-migration-phases/phase-a5-ask-queue-ui-shell-integrity/evidence/candidates/ask_queue_interaction_smoke-candidate.json --candidate-commit-sha local-check` -> pass
+8. `python scripts/ask_phase_a5_gate_report.py --self-test --candidate docs/render/ask-migration-phases/phase-a5-ask-queue-ui-shell-integrity/evidence/candidates` -> pass
 
 ## Closeoff Decision
 

@@ -534,6 +534,30 @@ def test_v3_ask_snapshot_by_id_returns_wrapped_snapshot(client: TestClient, work
     assert snapshot["items"][0]["kind"] == "message"
 
 
+def test_v3_ask_snapshot_by_id_fast_read_skips_chat_session_hydration(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+
+    def _forbidden_get_session(*_args, **_kwargs):  # pragma: no cover - assertion guard
+        raise AssertionError("by-id ask snapshot should not hydrate through chat_service.get_session")
+
+    client.app.state.chat_service.get_session = _forbidden_get_session
+
+    response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
+        params={"node_id": node_id},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["data"]["snapshot"]["threadRole"] == "ask_planning"
+    assert payload["data"]["snapshot"]["threadId"] == thread_id
+
+
 def test_v3_ask_snapshot_by_id_seeds_registry_from_legacy_session(client: TestClient, workspace_root) -> None:
     project_id, node_id = _setup_project(client, workspace_root)
     _stub_ask_session_reads(client)
@@ -612,6 +636,37 @@ def test_v3_by_id_snapshot_rejects_thread_id_mismatch(client: TestClient, worksp
     payload = response.json()
     assert payload["ok"] is False
     assert payload["error"]["code"] == "invalid_request"
+
+
+def test_v3_workflow_state_reconciles_stale_ask_thread_id_from_registry(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    active_ask_thread_id = _seed_ask_thread(client, project_id, node_id, thread_id="ask-thread-v3-current")
+    storage = client.app.state.storage
+
+    stale_state = storage.workflow_state_store.read_state(project_id, node_id)
+    if not isinstance(stale_state, dict):
+        stale_state = storage.workflow_state_store.default_state(node_id)
+    stale_state["askThreadId"] = "ask-thread-v3-stale"
+    storage.workflow_state_store.write_state(project_id, node_id, stale_state)
+
+    workflow_state_response = client.get(f"/v3/projects/{project_id}/nodes/{node_id}/workflow-state")
+    assert workflow_state_response.status_code == 200
+    workflow_payload = workflow_state_response.json()
+    assert workflow_payload["ok"] is True
+    assert workflow_payload["data"]["askThreadId"] == active_ask_thread_id
+
+    snapshot_response = client.get(
+        f"/v3/projects/{project_id}/threads/by-id/{active_ask_thread_id}",
+        params={"node_id": node_id},
+    )
+    assert snapshot_response.status_code == 200
+    snapshot_payload = snapshot_response.json()
+    assert snapshot_payload["ok"] is True
+    assert snapshot_payload["data"]["snapshot"]["threadId"] == active_ask_thread_id
 
 
 def test_v3_workflow_state_endpoint_calls_canonical_service(client: TestClient, workspace_root) -> None:
