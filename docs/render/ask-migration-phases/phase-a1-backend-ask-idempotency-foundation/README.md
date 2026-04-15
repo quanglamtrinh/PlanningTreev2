@@ -1,6 +1,6 @@
 # Phase A1 - Backend Ask Idempotency Foundation
 
-Status: Planned.
+Status: Completed.
 
 Phase ID: `AQ1`.
 
@@ -12,7 +12,7 @@ Add deterministic idempotency handling for ask-lane turn starts so retries and r
 
 Queueing ask sends without idempotency makes duplicate turn creation likely during network instability or client retries.
 
-## Baseline Observation
+## Baseline Observation (Pre-Implementation)
 
 `thread_runtime_service_v3.start_turn(...)` currently drops metadata (`del metadata`), so ask turn start does not yet use a request key for dedupe.
 
@@ -75,9 +75,13 @@ Queueing ask sends without idempotency makes duplicate turn creation likely duri
 1. Ask start-turn dedupe is deterministic and test-covered.
 2. A2-A3 can rely on backend duplicate protection.
 
+## Closure Artifact
+
+1. `docs/render/ask-migration-phases/phase-a1-backend-ask-idempotency-foundation/close-phase-v1.md`
+2. `docs/render/ask-migration-phases/phase-a1-backend-ask-idempotency-foundation/handoff-to-phase-a2.md`
+
 ## Effort Estimate
 
 - Size: Medium
 - Estimated duration: 2-4 engineering days
 - Suggested staffing: 1 backend primary
-
