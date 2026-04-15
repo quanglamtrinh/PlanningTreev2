@@ -1,8 +1,15 @@
 # Phase A3 - Ask Queue MVP and Auto-flush Baseline
 
-Status: Planned.
+Status: Completed.
+
+Completed on: 2026-04-15.
 
 Phase ID: `AQ3`.
+
+Closeout artifacts:
+
+1. `close-phase-v1.md`
+2. `handoff-to-phase-a4.md`
 
 ## Objective
 
@@ -78,4 +85,3 @@ When user sends message in ask tab:
 - Size: Medium
 - Estimated duration: 3-4 engineering days
 - Suggested staffing: 1 frontend primary + 1 backend support
-
