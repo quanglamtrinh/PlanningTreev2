@@ -39,6 +39,8 @@ def main() -> int:
     contracts_root = freeze_root / "contracts"
     phase_a0_root = migration_root / "phase-a0-contract-freeze-ask-queue"
     phase_a0_evidence_root = phase_a0_root / "evidence"
+    phase_a1_root = migration_root / "phase-a1-backend-ask-idempotency-foundation"
+    phase_a2_root = migration_root / "phase-a2-lane-aware-queue-core-refactor"
 
     errors: list[str] = []
 
@@ -68,6 +70,13 @@ def main() -> int:
         phase_a0_evidence_root / "ask_scope_freeze_audit.json",
         phase_a0_evidence_root / "ask_arch_signoff_log.json",
         phase_a0_evidence_root / "phase-a0-gate-report.json",
+        phase_a1_root / "README.md",
+        phase_a1_root / "close-phase-v1.md",
+        phase_a1_root / "handoff-to-phase-a2.md",
+        phase_a2_root / "README.md",
+        phase_a2_root / "preflight-v1.md",
+        phase_a2_root / "lane-aware-queue-core-contract-freeze-v1.md",
+        phase_a2_root / "evidence" / "README.md",
     ]
     for path in required_files:
         if not path.exists():
@@ -245,6 +254,23 @@ def main() -> int:
     close_phase_text = (phase_a0_root / "close-phase-v1.md").read_text(encoding="utf-8")
     if "phase_a0_passed" not in close_phase_text:
         errors.append("close-phase-v1.md must include the handoff marker 'phase_a0_passed'.")
+
+    phase_a1_close_text = (phase_a1_root / "close-phase-v1.md").read_text(encoding="utf-8")
+    if "phase_a1_passed" not in phase_a1_close_text:
+        errors.append("A1 close-phase-v1.md must include the handoff marker 'phase_a1_passed'.")
+
+    phase_a2_freeze_text = (phase_a2_root / "lane-aware-queue-core-contract-freeze-v1.md").read_text(
+        encoding="utf-8"
+    )
+    if "lane_aware_queue_core_contract_frozen" not in phase_a2_freeze_text:
+        errors.append(
+            "A2 lane-aware-queue-core-contract-freeze-v1.md must include marker "
+            "'lane_aware_queue_core_contract_frozen'."
+        )
+
+    phase_a2_preflight_text = (phase_a2_root / "preflight-v1.md").read_text(encoding="utf-8")
+    if "lane-aware-queue-core-contract-freeze-v1.md" not in phase_a2_preflight_text:
+        errors.append("A2 preflight must list lane-aware-queue-core-contract-freeze-v1.md in required frozen inputs.")
 
     if errors:
         print("Ask migration freeze validation: FAIL")

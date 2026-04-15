@@ -49,3 +49,7 @@ Rationale:
 1. A1 backend idempotency scope is implemented and test-covered.
 2. Required AQ1 gates are candidate-backed, gate-eligible, and passing.
 3. Frozen contract constraints for A1 were preserved.
+
+## Handoff Marker
+
+`phase_a1_passed`

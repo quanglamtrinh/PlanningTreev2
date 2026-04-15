@@ -46,6 +46,14 @@ Current queue code is tightly coupled to execution workflow fields and role chec
 4. Regression harness:
    - run existing execution queue tests against refactored core.
 
+## Frozen Inputs (A2 kickoff)
+
+1. `preflight-v1.md`
+2. `lane-aware-queue-core-contract-freeze-v1.md`
+3. `../system-freeze/contracts/aqc1-ask-queue-core-contract-v1.md`
+4. `../system-freeze/contracts/aqc3-ask-send-window-contract-v1.md`
+5. `kickoff-checklist-v1.md`
+
 ## Quality Gates
 
 1. Execution parity:
@@ -81,4 +89,3 @@ Current queue code is tightly coupled to execution workflow fields and role chec
 - Size: Medium
 - Estimated duration: 3-5 engineering days
 - Suggested staffing: 1 frontend primary + 1 reviewer
-

@@ -29,3 +29,12 @@ Eligibility policy:
 
 1. evidence_mode=candidate and gate_eligible=true is valid for phase closure.
 2. evidence_mode=synthetic and gate_eligible=false is local dry-run only.
+
+## Suggested Generation Commands
+
+1. Generate source evidence (repeat per source):
+   - `python scripts/ask_phase_a2_source_evidence.py --source execution_queue_regression_suite --self-test --candidate docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/candidates/execution_queue_regression_suite-candidate.json --candidate-commit-sha <commit-sha>`
+   - `python scripts/ask_phase_a2_source_evidence.py --source lane_adapter_contract_tests --self-test --candidate docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/candidates/lane_adapter_contract_tests-candidate.json --candidate-commit-sha <commit-sha>`
+   - `python scripts/ask_phase_a2_source_evidence.py --source queue_state_machine_determinism --self-test --candidate docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/candidates/queue_state_machine_determinism-candidate.json --candidate-commit-sha <commit-sha>`
+2. Build gate report:
+   - `python scripts/ask_phase_a2_gate_report.py --self-test --candidate docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/candidates`

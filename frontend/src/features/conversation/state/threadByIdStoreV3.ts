@@ -15,6 +15,27 @@ import {
 } from './applyThreadEventV3'
 import type { ThreadBusinessEventV3, ThreadStreamOpenEnvelopeV3 } from './threadEventRouter'
 import { parseThreadEventEnvelopeV3 } from './threadEventRouter'
+import {
+  enqueueQueueEntry,
+  markQueueEntryConfirmed,
+  markQueueEntryFailed,
+  markQueueEntryRequiresConfirmation,
+  markQueueEntrySending,
+  nextEligibleQueueEntry,
+  normalizeQueueEntryStatus,
+  queueHasSending,
+  removeQueueEntry,
+  reorderQueueEntries,
+  retryQueueEntry,
+} from './threadQueueCoreV3'
+import type { QueueCoreEntry, QueueEntryStatus, QueueLane } from './threadQueueCoreV3'
+import {
+  laneQueuePolicyAdapters,
+  type ExecutionQueueContext,
+  type ExecutionQueuePolicyState,
+  type ExecutionSendWindowOptions,
+  type ExecutionQueuePauseReason,
+} from './threadQueuePolicyAdaptersV3'
 
 const SSE_RECONNECT_RETRY_MS = 1000
 const USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS = 1500
@@ -30,7 +51,6 @@ const PHASE12_CAP_HEADROOM_BY_PROFILE: Record<Phase12CapProfile, number> = {
 }
 const HISTORY_PAGE_LIMIT = 200
 const EXECUTION_FOLLOWUP_QUEUE_STORAGE_PREFIX = 'ptm:v3:execution-followup-queue:'
-const EXECUTION_FOLLOWUP_AUTO_SEND_MAX_AGE_MS = 90_000
 const EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS = 20
 
 export type Phase12CapProfile = 'low' | 'standard' | 'high'
@@ -110,27 +130,11 @@ const SCROLLBACK_CAP_POLICY = resolvePhase12CapPolicy()
 const SNAPSHOT_LIVE_LIMIT = SCROLLBACK_CAP_POLICY.softCap
 
 export type ThreadByIdStreamStatusV3 = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'error'
-export type ExecutionFollowupQueueStatus = 'queued' | 'requires_confirmation' | 'sending' | 'failed'
-export type ExecutionFollowupQueuePauseReason =
-  | 'none'
-  | 'runtime_waiting_input'
-  | 'plan_ready_gate'
-  | 'operator_pause'
-  | 'workflow_blocked'
-export type ExecutionFollowupEnqueueContext = {
-  latestExecutionRunId: string | null
-  planReadyRevision: number | null
-}
-export type ExecutionFollowupQueueEntry = {
-  entryId: string
-  text: string
-  idempotencyKey: string
-  createdAtMs: number
-  enqueueContext: ExecutionFollowupEnqueueContext
-  status: ExecutionFollowupQueueStatus
-  attemptCount: number
-  lastError: string | null
-}
+export type { QueueLane }
+export type ExecutionFollowupQueueStatus = QueueEntryStatus
+export type ExecutionFollowupQueuePauseReason = ExecutionQueuePauseReason
+export type ExecutionFollowupEnqueueContext = ExecutionQueueContext
+export type ExecutionFollowupQueueEntry = QueueCoreEntry<ExecutionFollowupEnqueueContext>
 export type ReloadReasonCode =
   | 'REPLAY_MISS'
   | 'CONTRACT_ENVELOPE_INVALID'
@@ -521,16 +525,7 @@ function executionQueueStorageKey(projectId: string, nodeId: string, threadId: s
 }
 
 function normalizeExecutionQueueStatus(value: unknown): ExecutionFollowupQueueStatus {
-  const normalized = String(value ?? '').trim()
-  if (
-    normalized === 'queued' ||
-    normalized === 'requires_confirmation' ||
-    normalized === 'sending' ||
-    normalized === 'failed'
-  ) {
-    return normalized
-  }
-  return 'queued'
+  return normalizeQueueEntryStatus(value)
 }
 
 function normalizeExecutionQueueEntry(raw: unknown): ExecutionFollowupQueueEntry | null {
@@ -639,30 +634,6 @@ function currentExecutionQueueContext(
     planReadyRevision:
       typeof revision === 'number' && Number.isFinite(revision) ? Math.floor(revision) : null,
   }
-}
-
-function hasPendingInputBlocking(snapshot: ThreadSnapshotV3 | null): boolean {
-  if (!snapshot) {
-    return false
-  }
-  return snapshot.uiSignals.activeUserInputRequests.some(
-    (request) => request.status === 'requested' || request.status === 'answer_submitted',
-  )
-}
-
-function hasPlanReadyGate(snapshot: ThreadSnapshotV3 | null): boolean {
-  const planReady = snapshot?.uiSignals.planReady
-  return Boolean(
-    planReady &&
-      planReady.ready &&
-      !planReady.failed &&
-      planReady.planItemId &&
-      planReady.revision != null,
-  )
-}
-
-function queueHasSending(entries: ExecutionFollowupQueueEntry[]): boolean {
-  return entries.some((entry) => entry.status === 'sending')
 }
 
 function compareConversationItemsByOrder(left: ConversationItemV3, right: ConversationItemV3): number {
@@ -1892,24 +1863,21 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     )
   }
 
-  const normalizeQueueIndexes = (
-    entries: ExecutionFollowupQueueEntry[],
-    fromIndex: number,
-    toIndex: number,
-  ): ExecutionFollowupQueueEntry[] => {
-    if (entries.length <= 1) {
-      return entries
-    }
-    const from = Math.max(0, Math.min(entries.length - 1, Math.floor(fromIndex)))
-    const to = Math.max(0, Math.min(entries.length - 1, Math.floor(toIndex)))
-    if (from === to) {
-      return entries
-    }
-    const next = [...entries]
-    const [moved] = next.splice(from, 1)
-    next.splice(to, 0, moved)
-    return next
-  }
+  const toExecutionPolicyState = (
+    state: Pick<
+      ThreadByIdStoreV3State,
+      | 'snapshot'
+      | 'activeThreadRole'
+      | 'executionQueueOperatorPaused'
+      | 'executionQueueWorkflowPhase'
+      | 'executionQueueCanSendExecutionMessage'
+    >,
+  ): ExecutionQueuePolicyState => ({
+    snapshot: state.snapshot,
+    operatorPaused: state.executionQueueOperatorPaused,
+    workflowPhase: state.executionQueueWorkflowPhase,
+    canSendExecutionMessage: state.executionQueueCanSendExecutionMessage,
+  })
 
   const evaluateQueuePauseReason = (
     state: Pick<
@@ -1924,25 +1892,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     if (state.activeThreadRole !== 'execution') {
       return 'workflow_blocked'
     }
-    if (state.executionQueueOperatorPaused) {
-      return 'operator_pause'
-    }
-    if (state.snapshot?.processingState === 'waiting_user_input' || hasPendingInputBlocking(state.snapshot)) {
-      return 'runtime_waiting_input'
-    }
-    if (hasPlanReadyGate(state.snapshot)) {
-      return 'plan_ready_gate'
-    }
-    if (
-      state.executionQueueWorkflowPhase !== 'execution_decision_pending' ||
-      !state.executionQueueCanSendExecutionMessage
-    ) {
-      return 'workflow_blocked'
-    }
-    if (!state.snapshot || state.snapshot.activeTurnId || state.snapshot.processingState !== 'idle') {
-      return 'workflow_blocked'
-    }
-    return 'none'
+    return laneQueuePolicyAdapters.execution.evaluatePauseReason('execution', toExecutionPolicyState(state), {
+      manual: false,
+      allowPlanReadyGate: false,
+    })
   }
 
   const sendWindowIsOpen = (
@@ -1954,57 +1907,25 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       | 'executionQueueCanSendExecutionMessage'
       | 'snapshot'
     >,
-    options: { manual: boolean; allowPlanReadyGate: boolean },
+    options: ExecutionSendWindowOptions,
   ): boolean => {
     if (state.activeThreadRole !== 'execution') {
       return false
     }
-    if (!state.snapshot) {
-      return false
-    }
-    if (!options.manual && state.executionQueueOperatorPaused) {
-      return false
-    }
-    if (
-      state.executionQueueWorkflowPhase !== 'execution_decision_pending' ||
-      !state.executionQueueCanSendExecutionMessage
-    ) {
-      return false
-    }
-    if (state.snapshot.activeTurnId || state.snapshot.processingState !== 'idle') {
-      return false
-    }
-    if (hasPendingInputBlocking(state.snapshot)) {
-      return false
-    }
-    if (!options.allowPlanReadyGate && hasPlanReadyGate(state.snapshot)) {
-      return false
-    }
-    return true
+    return laneQueuePolicyAdapters.execution.sendWindowIsOpen('execution', toExecutionPolicyState(state), options)
   }
 
   const queueEntryRequiresConfirmation = (
     entry: ExecutionFollowupQueueEntry,
     nowMs: number,
     currentContext: ExecutionFollowupEnqueueContext,
-  ): boolean => {
-    if (nowMs - entry.createdAtMs > EXECUTION_FOLLOWUP_AUTO_SEND_MAX_AGE_MS) {
-      return true
-    }
-    if (
-      entry.enqueueContext.latestExecutionRunId &&
-      currentContext.latestExecutionRunId &&
-      entry.enqueueContext.latestExecutionRunId !== currentContext.latestExecutionRunId
-    ) {
-      return true
-    }
-    const previousRevision = entry.enqueueContext.planReadyRevision
-    const currentRevision = currentContext.planReadyRevision
-    if (previousRevision !== currentRevision && (previousRevision != null || currentRevision != null)) {
-      return true
-    }
-    return false
-  }
+  ): boolean =>
+    laneQueuePolicyAdapters.execution.requiresConfirmation(
+      'execution',
+      entry,
+      currentContext,
+      nowMs,
+    )
 
   const startThreadTurnRequest = async (
     text: string,
@@ -2139,11 +2060,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       return
     }
 
-    const entry =
-      options.manualEntryId != null
-        ? state.executionFollowupQueue.find((candidate) => candidate.entryId === options.manualEntryId) ?? null
-        : state.executionFollowupQueue.find((candidate) => candidate.status === 'queued') ?? null
-    if (!entry || entry.status === 'sending') {
+    const entry = nextEligibleQueueEntry('execution', state.executionFollowupQueue, {
+      manualEntryId: options.manualEntryId ?? null,
+    })
+    if (!entry) {
       return
     }
 
@@ -2153,14 +2073,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     const confirmedByAction = options.confirmedEntryId != null && options.confirmedEntryId === entry.entryId
     if (requiresConfirmation && !confirmedByAction) {
       set((current) => {
-        const nextQueue = current.executionFollowupQueue.map((candidate) =>
-          candidate.entryId === entry.entryId
-            ? {
-                ...candidate,
-                status: 'requires_confirmation' as const,
-                lastError: null,
-              }
-            : candidate,
+        const nextQueue = markQueueEntryRequiresConfirmation(
+          'execution',
+          current.executionFollowupQueue,
+          entry.entryId,
         )
         persistQueueForCurrentThread(current, nextQueue)
         return {
@@ -2172,15 +2088,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     }
 
     set((current) => {
-      const nextQueue = current.executionFollowupQueue.map((candidate) =>
-        candidate.entryId === entry.entryId
-          ? {
-              ...candidate,
-              status: 'sending' as const,
-              lastError: null,
-            }
-          : candidate,
-      )
+      const nextQueue = markQueueEntrySending('execution', current.executionFollowupQueue, entry.entryId)
       persistQueueForCurrentThread(current, nextQueue)
       return {
         executionFollowupQueue: nextQueue,
@@ -2199,17 +2107,13 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       }
       let nextQueue: ExecutionFollowupQueueEntry[]
       if (result.ok) {
-        nextQueue = current.executionFollowupQueue.filter((candidate) => candidate.entryId !== entry.entryId)
+        nextQueue = removeQueueEntry('execution', current.executionFollowupQueue, entry.entryId)
       } else {
-        nextQueue = current.executionFollowupQueue.map((candidate) =>
-          candidate.entryId === entry.entryId
-            ? {
-                ...candidate,
-                status: 'failed' as const,
-                attemptCount: candidate.attemptCount + 1,
-                lastError: result.error,
-              }
-            : candidate,
+        nextQueue = markQueueEntryFailed(
+          'execution',
+          current.executionFollowupQueue,
+          entry.entryId,
+          result.error,
         )
       }
       persistQueueForCurrentThread(current, nextQueue)
@@ -2653,9 +2557,9 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       return
     }
 
-    const cappedQueue = state.executionFollowupQueue.slice(0, EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS)
-    const nextQueue = [
-      ...cappedQueue,
+    const nextQueue = enqueueQueueEntry(
+      'execution',
+      state.executionFollowupQueue,
       {
         entryId: newExecutionQueueId('q'),
         text: cleaned,
@@ -2666,7 +2570,8 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         attemptCount: 0,
         lastError: null,
       },
-    ].slice(-EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS)
+      EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS,
+    )
 
     set((current) => {
       persistQueueForCurrentThread(current, nextQueue)
@@ -2687,7 +2592,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     if (queueHasSending(state.executionFollowupQueue)) {
       return
     }
-    const nextQueue = state.executionFollowupQueue.filter((entry) => entry.entryId !== id)
+    const nextQueue = removeQueueEntry('execution', state.executionFollowupQueue, id)
     set((current) => {
       persistQueueForCurrentThread(current, nextQueue)
       return {
@@ -2702,7 +2607,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     if (queueHasSending(state.executionFollowupQueue)) {
       return
     }
-    const nextQueue = normalizeQueueIndexes(state.executionFollowupQueue, fromIndex, toIndex)
+    const nextQueue = reorderQueueEntries('execution', state.executionFollowupQueue, fromIndex, toIndex)
     set((current) => {
       persistQueueForCurrentThread(current, nextQueue)
       return {
@@ -2733,21 +2638,28 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       return
     }
     const context = currentExecutionQueueContext(state)
-    const nextQueue = state.executionFollowupQueue.map((entry) =>
-      entry.entryId === id
-        ? {
-            ...entry,
-            status: 'queued' as const,
-            createdAtMs: Date.now(),
-            enqueueContext: context,
-            lastError: null,
-          }
-        : entry,
-    )
+    const nextQueue = markQueueEntryConfirmed('execution', state.executionFollowupQueue, id, {
+      nowMs: Date.now(),
+      enqueueContext: context,
+    })
+    if (nextQueue === state.executionFollowupQueue) {
+      return
+    }
+    const hasEntry = nextQueue.some((entry) => entry.entryId === id)
+    if (!hasEntry) {
+      return
+    }
     set((current) => {
-      persistQueueForCurrentThread(current, nextQueue)
+      const persistedQueue = markQueueEntryConfirmed('execution', current.executionFollowupQueue, id, {
+        nowMs: Date.now(),
+        enqueueContext: currentExecutionQueueContext(current),
+      })
+      if (persistedQueue === current.executionFollowupQueue) {
+        return {}
+      }
+      persistQueueForCurrentThread(current, persistedQueue)
       return {
-        executionFollowupQueue: nextQueue,
+        executionFollowupQueue: persistedQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
       }
     })
@@ -2767,19 +2679,22 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     if (queueHasSending(state.executionFollowupQueue)) {
       return
     }
-    const nextQueue = state.executionFollowupQueue.map((entry) =>
-      entry.entryId === id && entry.status === 'failed'
-        ? {
-            ...entry,
-            status: 'queued' as const,
-            lastError: null,
-          }
-        : entry,
-    )
+    const nextQueue = retryQueueEntry('execution', state.executionFollowupQueue, id)
+    if (nextQueue === state.executionFollowupQueue) {
+      return
+    }
+    const hasEntry = nextQueue.some((entry) => entry.entryId === id)
+    if (!hasEntry) {
+      return
+    }
     set((current) => {
-      persistQueueForCurrentThread(current, nextQueue)
+      const persistedQueue = retryQueueEntry('execution', current.executionFollowupQueue, id)
+      if (persistedQueue === current.executionFollowupQueue) {
+        return {}
+      }
+      persistQueueForCurrentThread(current, persistedQueue)
       return {
-        executionFollowupQueue: nextQueue,
+        executionFollowupQueue: persistedQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
       }
     })

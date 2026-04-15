@@ -19,6 +19,7 @@ From docs/render/ask-migration-phases/system-freeze/phase-manifest-v1.json:
 1. docs/render/ask-migration-phases/system-freeze/contracts/README.md
 1. docs/render/ask-migration-phases/system-freeze/contracts/aqc1-ask-queue-core-contract-v1.md
 1. docs/render/ask-migration-phases/system-freeze/contracts/aqc3-ask-send-window-contract-v1.md
+1. docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/lane-aware-queue-core-contract-freeze-v1.md
 
 ## 3. Gate and Evidence Lock
 

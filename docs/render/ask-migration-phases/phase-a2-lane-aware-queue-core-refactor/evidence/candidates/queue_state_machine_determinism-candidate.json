@@ -1,0 +1,17 @@
+{
+  "candidate_id": "aq2-queue-determinism-2026-04-14",
+  "phase": "A2",
+  "source": "queue_state_machine_determinism",
+  "generated_at": "2026-04-14T19:43:00Z",
+  "command": "npx vitest run tests/unit/threadQueueCoreV3.test.ts tests/unit/threadQueuePolicyAdaptersV3.test.ts",
+  "candidate_metrics": {
+    "queue_state_transition_nondeterministic_cases": 0,
+    "determinism_replay_iterations": 50,
+    "determinism_failures": 0
+  },
+  "context": {
+    "queue_state_transition_nondeterministic_cases": 0,
+    "queue_core_deterministic": true,
+    "adapter_evaluation_deterministic": true
+  }
+}

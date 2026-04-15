@@ -1,0 +1,86 @@
+{
+  "phase": "A2",
+  "generated_at": "2026-04-15T02:46:19Z",
+  "source": "ask_phase_gate_report",
+  "status": "pass",
+  "metric": "phase_a2_gate_pass_count",
+  "value": 3.0,
+  "target": 3.0,
+  "operator": "eq",
+  "pass": true,
+  "context": {
+    "evidence_dir": "docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence",
+    "candidate_path": "docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/candidates",
+    "gate_count": 3,
+    "eligibility_fail_count": 0
+  },
+  "summary": {
+    "all_pass": true,
+    "pass_count": 3,
+    "total_gates": 3,
+    "eligibility_fail_count": 0
+  },
+  "gates": [
+    {
+      "id": "AQ2-G1",
+      "source": "execution_queue_regression_suite",
+      "metric": "execution_queue_parity_failures",
+      "value": 0.0,
+      "operator": "lte",
+      "target": 0.0,
+      "unit": "count",
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/candidates/execution_queue_regression_suite-candidate.json",
+      "candidate_commit_sha": "3aad4f2ee513ee90508975ecd9ab1b17d46b11f3",
+      "eligibility_issues": [],
+      "artifact": "docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/execution_queue_regression_suite.json"
+    },
+    {
+      "id": "AQ2-G2",
+      "source": "lane_adapter_contract_tests",
+      "metric": "lane_adapter_contract_pass_rate_pct",
+      "value": 100.0,
+      "operator": "gte",
+      "target": 100.0,
+      "unit": "pct",
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/candidates/lane_adapter_contract_tests-candidate.json",
+      "candidate_commit_sha": "3aad4f2ee513ee90508975ecd9ab1b17d46b11f3",
+      "eligibility_issues": [],
+      "artifact": "docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/lane_adapter_contract_tests.json"
+    },
+    {
+      "id": "AQ2-G3",
+      "source": "queue_state_machine_determinism",
+      "metric": "queue_state_transition_nondeterministic_cases",
+      "value": 0.0,
+      "operator": "lte",
+      "target": 0.0,
+      "unit": "count",
+      "pass": true,
+      "metric_pass": true,
+      "artifact_status": "pass",
+      "evidence_mode": "candidate",
+      "gate_eligible": true,
+      "candidate_path": "docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/candidates/queue_state_machine_determinism-candidate.json",
+      "candidate_commit_sha": "3aad4f2ee513ee90508975ecd9ab1b17d46b11f3",
+      "eligibility_issues": [],
+      "artifact": "docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/queue_state_machine_determinism.json"
+    }
+  ],
+  "baseline_metadata": {
+    "label": "aq2_pre_lane_aware_queue_core_baseline_v1",
+    "captured_at": "2026-04-14T00:00:00Z",
+    "workload": "execution_queue_regression_replay_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/baseline-manifest-v1.json"
+  }
+}
