@@ -495,76 +495,12 @@ describe('BreadcrumbChatViewV2', () => {
     expect(enqueueFollowup).not.toHaveBeenCalled()
   })
 
-  it('shows ask confirmation strip only when ask head requires confirmation and dispatches actions', async () => {
+  it('renders ask queue panel controls and dispatches ask queue actions', async () => {
     const confirmQueued = vi.fn().mockResolvedValue(undefined)
     const removeQueued = vi.fn()
-    seedStores({
-      workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
-      }),
-      threadSnapshot: makeConversationSnapshot({
-        threadId: 'ask-thread-1',
-        threadRole: 'ask_planning',
-      }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      activeThreadRole: 'ask_planning',
-      askFollowupQueue: [
-        {
-          entryId: 'ask-blocked-1',
-          text: 'blocked ask',
-          idempotencyKey: 'ask-idem-blocked-1',
-          createdAtMs: Date.now(),
-          enqueueContext: {
-            threadId: 'ask-thread-1',
-            snapshotVersion: 1,
-            staleMarker: false,
-          },
-          status: 'requires_confirmation',
-          attemptCount: 0,
-          lastError: null,
-          confirmationReason: 'thread_drift',
-        },
-        {
-          entryId: 'ask-next-1',
-          text: 'next ask',
-          idempotencyKey: 'ask-idem-next-1',
-          createdAtMs: Date.now(),
-          enqueueContext: {
-            threadId: 'ask-thread-1',
-            snapshotVersion: 1,
-            staleMarker: false,
-          },
-          status: 'queued',
-          attemptCount: 0,
-          lastError: null,
-          confirmationReason: null,
-        },
-      ],
-      askQueuePauseReason: 'requires_confirmation',
-      confirmQueued,
-      removeQueued,
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    const strip = screen.getByTestId('ask-queued-confirmation-strip')
-    expect(strip).toBeInTheDocument()
-    expect(strip).toHaveTextContent('Thread context changed. Confirm before sending.')
-    fireEvent.click(within(strip).getByRole('button', { name: 'Confirm & send' }))
-    fireEvent.click(within(strip).getByRole('button', { name: 'Discard' }))
-    expect(confirmQueued).toHaveBeenCalledWith('ask-blocked-1')
-    expect(removeQueued).toHaveBeenCalledWith('ask-blocked-1')
-  })
-
-  it('does not show ask confirmation strip when ask head is not requires_confirmation', async () => {
+    const reorderAskQueued = vi.fn()
+    const sendAskQueuedNow = vi.fn().mockResolvedValue(undefined)
+    const retryAskQueued = vi.fn().mockResolvedValue(undefined)
     seedStores({
       workflowState: makeWorkflowState({
         askThreadId: 'ask-thread-1',
@@ -594,9 +530,95 @@ describe('BreadcrumbChatViewV2', () => {
           confirmationReason: null,
         },
         {
-          entryId: 'ask-later-blocked-1',
-          text: 'later blocked ask',
-          idempotencyKey: 'ask-idem-later-1',
+          entryId: 'ask-blocked-1',
+          text: 'blocked ask',
+          idempotencyKey: 'ask-idem-blocked-1',
+          createdAtMs: Date.now(),
+          enqueueContext: {
+            threadId: 'ask-thread-1',
+            snapshotVersion: 1,
+            staleMarker: false,
+          },
+          status: 'requires_confirmation',
+          attemptCount: 0,
+          lastError: null,
+          confirmationReason: 'thread_drift',
+        },
+        {
+          entryId: 'ask-failed-1',
+          text: 'failed ask',
+          idempotencyKey: 'ask-idem-failed-1',
+          createdAtMs: Date.now(),
+          enqueueContext: {
+            threadId: 'ask-thread-1',
+            snapshotVersion: 1,
+            staleMarker: false,
+          },
+          status: 'failed',
+          attemptCount: 0,
+          lastError: 'send failed',
+          confirmationReason: null,
+        },
+      ],
+      askQueuePauseReason: 'requires_confirmation',
+      confirmQueued,
+      removeQueued,
+      reorderAskQueued,
+      sendAskQueuedNow,
+      retryAskQueued,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('ask-followup-queue-panel')).toBeInTheDocument()
+    expect(screen.getByText('Paused: confirmation required')).toBeInTheDocument()
+
+    const queueItems = screen.getAllByRole('listitem')
+    const firstItem = queueItems[0]
+    const secondItem = queueItems[1]
+    const thirdItem = queueItems[2]
+
+    fireEvent.click(within(firstItem).getByRole('button', { name: 'Move down' }))
+    fireEvent.click(within(firstItem).getByRole('button', { name: 'Send now' }))
+    fireEvent.click(within(firstItem).getByRole('button', { name: 'Remove' }))
+    fireEvent.click(within(secondItem).getByRole('button', { name: 'Confirm' }))
+    fireEvent.click(within(thirdItem).getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() => {
+      expect(reorderAskQueued).toHaveBeenCalledWith(0, 1)
+    })
+    await waitFor(() => {
+      expect(sendAskQueuedNow).toHaveBeenCalledWith('ask-queued-1')
+    })
+    expect(removeQueued).toHaveBeenCalledWith('ask-queued-1')
+    expect(confirmQueued).toHaveBeenCalledWith('ask-blocked-1')
+    expect(retryAskQueued).toHaveBeenCalledWith('ask-failed-1')
+  })
+
+  it('disables ask send-now for non-head and non-queued entries', async () => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        askThreadId: 'ask-thread-1',
+      }),
+      threadSnapshot: makeConversationSnapshot({
+        threadId: 'ask-thread-1',
+        threadRole: 'ask_planning',
+      }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      activeThreadRole: 'ask_planning',
+      askFollowupQueue: [
+        {
+          entryId: 'ask-blocked-1',
+          text: 'blocked ask',
+          idempotencyKey: 'ask-idem-blocked-1',
           createdAtMs: Date.now(),
           enqueueContext: {
             threadId: 'ask-thread-1',
@@ -608,8 +630,23 @@ describe('BreadcrumbChatViewV2', () => {
           lastError: null,
           confirmationReason: 'stale_age',
         },
+        {
+          entryId: 'ask-queued-2',
+          text: 'queued ask',
+          idempotencyKey: 'ask-idem-queued-2',
+          createdAtMs: Date.now(),
+          enqueueContext: {
+            threadId: 'ask-thread-1',
+            snapshotVersion: 1,
+            staleMarker: false,
+          },
+          status: 'queued',
+          attemptCount: 0,
+          lastError: null,
+          confirmationReason: null,
+        },
       ],
-      askQueuePauseReason: 'none',
+      askQueuePauseReason: 'requires_confirmation',
     })
 
     render(
@@ -620,7 +657,11 @@ describe('BreadcrumbChatViewV2', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.queryByTestId('ask-queued-confirmation-strip')).not.toBeInTheDocument()
+    const queueItems = screen.getAllByRole('listitem')
+    const blockedHead = queueItems[0]
+    const queuedTail = queueItems[1]
+    expect(within(blockedHead).getByRole('button', { name: 'Send now' })).toBeDisabled()
+    expect(within(queuedTail).getByRole('button', { name: 'Send now' })).toBeDisabled()
   })
 
   it('renders execution queue controls and dispatches queue actions', async () => {

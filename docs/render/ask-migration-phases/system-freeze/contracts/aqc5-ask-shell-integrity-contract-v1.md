@@ -2,7 +2,9 @@
 
 Status: Frozen contract.
 
-Last updated: 2026-04-14.
+Last updated: 2026-04-15.
+
+Freeze marker: `ask_shell_queue_ui_contract_frozen`.
 
 - Ask metadata shell rendering must remain independent from transcript queue rendering.
 - Queue UI changes must not remove or hide frame/clarify/spec context surface.

@@ -228,6 +228,9 @@ export type ThreadByIdStoreV3State = {
   sendQueuedNow: (entryId: string) => Promise<void>
   confirmQueued: (entryId: string) => Promise<void>
   retryQueued: (entryId: string) => Promise<void>
+  reorderAskQueued: (fromIndex: number, toIndex: number) => void
+  sendAskQueuedNow: (entryId: string) => Promise<void>
+  retryAskQueued: (entryId: string) => Promise<void>
   setOperatorPause: (paused: boolean) => void
   syncExecutionQueueContext: (context: {
     workflowPhase: string | null
@@ -290,6 +293,10 @@ export type ThreadExecutionFollowupQueueActions = Pick<
 export type ThreadAskFollowupQueueState = Pick<
   ThreadByIdStoreV3State,
   'activeThreadRole' | 'askFollowupQueue' | 'askQueuePauseReason' | 'isSending'
+>
+export type ThreadAskFollowupQueueActions = Pick<
+  ThreadByIdStoreV3State,
+  'removeQueued' | 'confirmQueued' | 'reorderAskQueued' | 'sendAskQueuedNow' | 'retryAskQueued'
 >
 export type ThreadFeedRenderState = {
   snapshot: ThreadSnapshotV3 | null
@@ -407,6 +414,18 @@ export function selectAskFollowupQueueState(state: ThreadByIdStoreV3State): Thre
   }
 }
 
+export function selectAskFollowupQueueActions(
+  state: ThreadByIdStoreV3State,
+): ThreadAskFollowupQueueActions {
+  return {
+    removeQueued: state.removeQueued,
+    confirmQueued: state.confirmQueued,
+    reorderAskQueued: state.reorderAskQueued,
+    sendAskQueuedNow: state.sendAskQueuedNow,
+    retryAskQueued: state.retryAskQueued,
+  }
+}
+
 export function selectFeedRenderState(state: ThreadByIdStoreV3State): ThreadFeedRenderState {
   const core = selectCore(state)
   const uiControl = selectUiControl(state)
@@ -463,7 +482,7 @@ type ThreadTransportPatch = Partial<ThreadTransportState>
 type ThreadUiControlPatch = Partial<ThreadUiControlState>
 type ThreadRuntimeStateV3 = Omit<
   ThreadByIdStoreV3State,
-  keyof ThreadActionHandlers | keyof ThreadExecutionFollowupQueueActions
+  keyof ThreadActionHandlers | keyof ThreadExecutionFollowupQueueActions | keyof ThreadAskFollowupQueueActions
 >
 type ThreadDomainPatch = {
   core?: ThreadCorePatch
@@ -3208,6 +3227,90 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       manualEntryId: id,
       allowPlanReadyGate: true,
     })
+  },
+
+  reorderAskQueued(fromIndex: number, toIndex: number) {
+    const state = get()
+    if (state.activeThreadRole !== 'ask_planning') {
+      return
+    }
+    if (queueHasSending(state.askFollowupQueue)) {
+      return
+    }
+    const nextQueue = reorderQueueEntries('ask_planning', state.askFollowupQueue, fromIndex, toIndex)
+    if (nextQueue === state.askFollowupQueue) {
+      return
+    }
+    set((current) => {
+      const persistedQueue = reorderQueueEntries('ask_planning', current.askFollowupQueue, fromIndex, toIndex)
+      if (persistedQueue === current.askFollowupQueue) {
+        return {}
+      }
+      persistAskQueueForCurrentThread(current, persistedQueue)
+      return {
+        askFollowupQueue: persistedQueue,
+        askQueuePauseReason: evaluateAskQueuePauseReason({
+          ...current,
+          askFollowupQueue: persistedQueue,
+        }),
+      }
+    })
+  },
+
+  async sendAskQueuedNow(entryId: string) {
+    const id = String(entryId ?? '').trim()
+    if (!id) {
+      return
+    }
+    const state = get()
+    if (state.activeThreadRole !== 'ask_planning') {
+      return
+    }
+    if (queueHasSending(state.askFollowupQueue)) {
+      return
+    }
+    const head = state.askFollowupQueue[0] ?? null
+    if (!head || head.entryId !== id || head.status !== 'queued') {
+      return
+    }
+    await attemptAskQueueFlush()
+  },
+
+  async retryAskQueued(entryId: string) {
+    const id = String(entryId ?? '').trim()
+    if (!id) {
+      return
+    }
+    const state = get()
+    if (state.activeThreadRole !== 'ask_planning') {
+      return
+    }
+    if (queueHasSending(state.askFollowupQueue)) {
+      return
+    }
+    const nextQueue = retryQueueEntry('ask_planning', state.askFollowupQueue, id)
+    if (nextQueue === state.askFollowupQueue) {
+      return
+    }
+    const hasEntry = nextQueue.some((entry) => entry.entryId === id)
+    if (!hasEntry) {
+      return
+    }
+    set((current) => {
+      const persistedQueue = retryQueueEntry('ask_planning', current.askFollowupQueue, id)
+      if (persistedQueue === current.askFollowupQueue) {
+        return {}
+      }
+      persistAskQueueForCurrentThread(current, persistedQueue)
+      return {
+        askFollowupQueue: persistedQueue,
+        askQueuePauseReason: evaluateAskQueuePauseReason({
+          ...current,
+          askFollowupQueue: persistedQueue,
+        }),
+      }
+    })
+    await attemptAskQueueFlush()
   },
 
   setOperatorPause(paused: boolean) {

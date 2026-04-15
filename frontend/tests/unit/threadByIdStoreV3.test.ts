@@ -30,6 +30,7 @@ vi.mock('../../src/api/client', () => ({
 
 import type { ThreadSnapshotV3 } from '../../src/api/types'
 import {
+  selectAskFollowupQueueActions,
   decideReloadPolicy,
   resolvePhase12CapPolicy,
   resolvePhase12CapProfile,
@@ -632,6 +633,7 @@ describe('threadByIdStoreV3', () => {
     const transportBanner = selectTransportBannerState(state)
     const workflowAction = selectWorkflowActionState(state)
     const askQueue = selectAskFollowupQueueState(state)
+    const askActions = selectAskFollowupQueueActions(state)
     const actions = selectThreadActions(state)
 
     expect(Object.keys(feed).sort()).toEqual(
@@ -648,6 +650,9 @@ describe('threadByIdStoreV3', () => {
     )
     expect(Object.keys(askQueue).sort()).toEqual(
       ['activeThreadRole', 'askFollowupQueue', 'askQueuePauseReason', 'isSending'].sort(),
+    )
+    expect(Object.keys(askActions).sort()).toEqual(
+      ['confirmQueued', 'removeQueued', 'reorderAskQueued', 'retryAskQueued', 'sendAskQueuedNow'].sort(),
     )
     expect(composer.isActiveTurn).toBe(true)
     expect(transportBanner.streamStatus).toBe('connecting')
@@ -2112,6 +2117,158 @@ describe('threadByIdStoreV3', () => {
     await act(async () => {
       await pendingSend
     })
+  })
+
+  it('reorders ask queue entries, persists order, and recomputes pause reason', () => {
+    setAskQueueRuntimeState({
+      snapshot: makeAskSnapshot({
+        activeTurnId: 'ask-turn-running',
+        processingState: 'running',
+      }),
+      askFollowupQueue: [
+        makeAskQueueEntry({ entryId: 'ask-1', text: 'first ask' }),
+        makeAskQueueEntry({ entryId: 'ask-2', text: 'second ask' }),
+        makeAskQueueEntry({ entryId: 'ask-3', text: 'third ask' }),
+      ],
+    })
+
+    useThreadByIdStoreV3.getState().reorderAskQueued(2, 0)
+
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.askFollowupQueue.map((entry) => entry.entryId)).toEqual(['ask-3', 'ask-1', 'ask-2'])
+    expect(state.askQueuePauseReason).toBe('active_turn_running')
+    const persistedPayload = globalThis.localStorage.getItem(askQueueStorageKey())
+    expect(persistedPayload).toBeTruthy()
+    const persisted = JSON.parse(String(persistedPayload)) as Array<{ entryId: string }>
+    expect(persisted.map((entry) => entry.entryId)).toEqual(['ask-3', 'ask-1', 'ask-2'])
+  })
+
+  it('keeps reorderAskQueued as no-op when ask queue is sending', () => {
+    setAskQueueRuntimeState({
+      askFollowupQueue: [
+        makeAskQueueEntry({ entryId: 'ask-sending', status: 'sending' }),
+        makeAskQueueEntry({ entryId: 'ask-queued' }),
+      ],
+    })
+
+    useThreadByIdStoreV3.getState().reorderAskQueued(1, 0)
+
+    expect(useThreadByIdStoreV3.getState().askFollowupQueue.map((entry) => entry.entryId)).toEqual([
+      'ask-sending',
+      'ask-queued',
+    ])
+  })
+
+  it('keeps reorderAskQueued as no-op when active lane is not ask', () => {
+    setExecutionQueueRuntimeState({
+      askFollowupQueue: [
+        makeAskQueueEntry({ entryId: 'ask-a' }),
+        makeAskQueueEntry({ entryId: 'ask-b' }),
+      ],
+    })
+
+    useThreadByIdStoreV3.getState().reorderAskQueued(1, 0)
+
+    expect(useThreadByIdStoreV3.getState().askFollowupQueue.map((entry) => entry.entryId)).toEqual([
+      'ask-a',
+      'ask-b',
+    ])
+  })
+
+  it('sendAskQueuedNow sends only a queued head entry', async () => {
+    apiMock.startThreadTurnByIdV3.mockResolvedValue({
+      threadId: 'ask-thread-1',
+      turnId: 'ask-turn-send-now',
+      snapshotVersion: 3,
+    })
+    setAskQueueRuntimeState({
+      askFollowupQueue: [
+        makeAskQueueEntry({
+          entryId: 'ask-head',
+          text: 'head queued ask',
+          idempotencyKey: 'ask-idem-head',
+          status: 'queued',
+        }),
+      ],
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendAskQueuedNow('ask-head')
+    })
+
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(1)
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledWith(
+      'project-1',
+      'node-1',
+      'ask-thread-1',
+      'head queued ask',
+      { idempotencyKey: 'ask-idem-head' },
+    )
+    expect(useThreadByIdStoreV3.getState().askFollowupQueue).toHaveLength(0)
+  })
+
+  it('keeps sendAskQueuedNow as no-op for non-head and requires_confirmation entries', async () => {
+    setAskQueueRuntimeState({
+      askFollowupQueue: [
+        makeAskQueueEntry({ entryId: 'ask-head-queued', text: 'head queued ask' }),
+        makeAskQueueEntry({ entryId: 'ask-tail-queued', text: 'tail queued ask' }),
+      ],
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendAskQueuedNow('ask-tail-queued')
+    })
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(0)
+
+    setAskQueueRuntimeState({
+      askFollowupQueue: [
+        makeAskQueueEntry({
+          entryId: 'ask-blocked-head',
+          status: 'requires_confirmation',
+          confirmationReason: 'thread_drift',
+        }),
+      ],
+      askQueuePauseReason: 'requires_confirmation',
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendAskQueuedNow('ask-blocked-head')
+    })
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(0)
+  })
+
+  it('retryAskQueued transitions failed ask head to queued and flushes when eligible', async () => {
+    apiMock.startThreadTurnByIdV3.mockResolvedValue({
+      threadId: 'ask-thread-1',
+      turnId: 'ask-turn-retry',
+      snapshotVersion: 3,
+    })
+    setAskQueueRuntimeState({
+      askFollowupQueue: [
+        makeAskQueueEntry({
+          entryId: 'ask-failed-head',
+          text: 'failed ask head',
+          idempotencyKey: 'ask-idem-failed-head',
+          status: 'failed',
+          lastError: 'send failed',
+          attemptCount: 1,
+        }),
+      ],
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().retryAskQueued('ask-failed-head')
+    })
+
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(1)
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledWith(
+      'project-1',
+      'node-1',
+      'ask-thread-1',
+      'failed ask head',
+      { idempotencyKey: 'ask-idem-failed-head' },
+    )
+    expect(useThreadByIdStoreV3.getState().askFollowupQueue).toHaveLength(0)
   })
 
   it('enqueues execution follow-up and propagates idempotency key when send window is open', async () => {

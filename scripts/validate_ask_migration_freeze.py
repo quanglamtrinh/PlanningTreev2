@@ -42,6 +42,7 @@ def main() -> int:
     phase_a1_root = migration_root / "phase-a1-backend-ask-idempotency-foundation"
     phase_a2_root = migration_root / "phase-a2-lane-aware-queue-core-refactor"
     phase_a3_root = migration_root / "phase-a3-ask-queue-mvp-auto-flush"
+    phase_a5_root = migration_root / "phase-a5-ask-queue-ui-shell-integrity"
 
     errors: list[str] = []
 
@@ -80,6 +81,7 @@ def main() -> int:
         phase_a2_root / "evidence" / "README.md",
         phase_a3_root / "README.md",
         phase_a3_root / "preflight-v1.md",
+        phase_a5_root / "preflight-v1.md",
     ]
     for path in required_files:
         if not path.exists():
@@ -292,6 +294,21 @@ def main() -> int:
         errors.append("A3 preflight must include entry marker 'phase_a2_passed'.")
     if "ask_send_window_contract_frozen" not in phase_a3_preflight_text:
         errors.append("A3 preflight must include contract marker 'ask_send_window_contract_frozen'.")
+
+    aqc5_shell_integrity_text = (contracts_root / "aqc5-ask-shell-integrity-contract-v1.md").read_text(
+        encoding="utf-8"
+    )
+    if "ask_shell_queue_ui_contract_frozen" not in aqc5_shell_integrity_text:
+        errors.append(
+            "AQC5 ask-shell-integrity contract must include marker "
+            "'ask_shell_queue_ui_contract_frozen'."
+        )
+
+    phase_a5_preflight_text = (phase_a5_root / "preflight-v1.md").read_text(encoding="utf-8")
+    if "phase_a4_passed" not in phase_a5_preflight_text:
+        errors.append("A5 preflight must include entry marker 'phase_a4_passed'.")
+    if "ask_shell_queue_ui_contract_frozen" not in phase_a5_preflight_text:
+        errors.append("A5 preflight must include contract marker 'ask_shell_queue_ui_contract_frozen'.")
 
     if errors:
         print("Ask migration freeze validation: FAIL")

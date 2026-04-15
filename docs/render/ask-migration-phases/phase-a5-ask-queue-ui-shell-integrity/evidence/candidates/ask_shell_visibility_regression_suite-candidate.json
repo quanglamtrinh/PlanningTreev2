@@ -1,0 +1,10 @@
+{
+  "candidate_metrics": {
+    "ask_shell_visibility_regressions": 0,
+    "frame_context_visibility_regressions": 0,
+    "clarify_chip_visibility_regressions": 0,
+    "spec_chip_visibility_regressions": 0,
+    "shell_layout_regressions": 0,
+    "shell_scenarios_checked": 28
+  }
+}
