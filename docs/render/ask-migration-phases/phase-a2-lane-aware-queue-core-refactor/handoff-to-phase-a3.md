@@ -51,7 +51,7 @@ Completed checks:
 
 1. `npm run test:unit --prefix frontend -- threadByIdStoreV3.test.ts` -> pass.
 2. `npm run test:unit --prefix frontend -- BreadcrumbChatViewV2.test.tsx` -> pass.
-3. `npx vitest run tests/unit/threadQueueCoreV3.test.ts tests/unit/threadQueuePolicyAdaptersV3.test.ts` -> pass.
+3. `npm run test:unit --prefix frontend -- threadQueueCoreV3.test.ts threadQueuePolicyAdaptersV3.test.ts` -> pass.
 4. `npm run check:ask_migration_freeze` -> pass.
 5. `python scripts/ask_phase_a2_gate_report.py --self-test --candidate docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/candidates` -> pass.
 

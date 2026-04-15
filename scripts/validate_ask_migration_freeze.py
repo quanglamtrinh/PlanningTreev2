@@ -41,6 +41,7 @@ def main() -> int:
     phase_a0_evidence_root = phase_a0_root / "evidence"
     phase_a1_root = migration_root / "phase-a1-backend-ask-idempotency-foundation"
     phase_a2_root = migration_root / "phase-a2-lane-aware-queue-core-refactor"
+    phase_a3_root = migration_root / "phase-a3-ask-queue-mvp-auto-flush"
 
     errors: list[str] = []
 
@@ -77,6 +78,8 @@ def main() -> int:
         phase_a2_root / "preflight-v1.md",
         phase_a2_root / "lane-aware-queue-core-contract-freeze-v1.md",
         phase_a2_root / "evidence" / "README.md",
+        phase_a3_root / "README.md",
+        phase_a3_root / "preflight-v1.md",
     ]
     for path in required_files:
         if not path.exists():
@@ -271,6 +274,24 @@ def main() -> int:
     phase_a2_preflight_text = (phase_a2_root / "preflight-v1.md").read_text(encoding="utf-8")
     if "lane-aware-queue-core-contract-freeze-v1.md" not in phase_a2_preflight_text:
         errors.append("A2 preflight must list lane-aware-queue-core-contract-freeze-v1.md in required frozen inputs.")
+
+    phase_a2_close_text = (phase_a2_root / "close-phase-v1.md").read_text(encoding="utf-8")
+    if "phase_a2_passed" not in phase_a2_close_text:
+        errors.append("A2 close-phase-v1.md must include the handoff marker 'phase_a2_passed'.")
+
+    aqc3_send_window_text = (contracts_root / "aqc3-ask-send-window-contract-v1.md").read_text(
+        encoding="utf-8"
+    )
+    if "ask_send_window_contract_frozen" not in aqc3_send_window_text:
+        errors.append(
+            "AQC3 ask-send-window contract must include marker 'ask_send_window_contract_frozen'."
+        )
+
+    phase_a3_preflight_text = (phase_a3_root / "preflight-v1.md").read_text(encoding="utf-8")
+    if "phase_a2_passed" not in phase_a3_preflight_text:
+        errors.append("A3 preflight must include entry marker 'phase_a2_passed'.")
+    if "ask_send_window_contract_frozen" not in phase_a3_preflight_text:
+        errors.append("A3 preflight must include contract marker 'ask_send_window_contract_frozen'.")
 
     if errors:
         print("Ask migration freeze validation: FAIL")
