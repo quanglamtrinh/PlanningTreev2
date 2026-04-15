@@ -31,10 +31,14 @@ import {
 import type { QueueCoreEntry, QueueEntryStatus, QueueLane } from './threadQueueCoreV3'
 import {
   laneQueuePolicyAdapters,
+  type AskQueueContext,
+  type AskQueuePauseReason,
+  type AskQueuePolicyState,
+  type AskSendWindowOptions,
   type ExecutionQueueContext,
+  type ExecutionQueuePauseReason,
   type ExecutionQueuePolicyState,
   type ExecutionSendWindowOptions,
-  type ExecutionQueuePauseReason,
 } from './threadQueuePolicyAdaptersV3'
 
 const SSE_RECONNECT_RETRY_MS = 1000
@@ -52,6 +56,8 @@ const PHASE12_CAP_HEADROOM_BY_PROFILE: Record<Phase12CapProfile, number> = {
 const HISTORY_PAGE_LIMIT = 200
 const EXECUTION_FOLLOWUP_QUEUE_STORAGE_PREFIX = 'ptm:v3:execution-followup-queue:'
 const EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS = 20
+const ASK_FOLLOWUP_QUEUE_STORAGE_PREFIX = 'ptm:v3:ask-followup-queue:'
+const ASK_FOLLOWUP_QUEUE_MAX_ITEMS = 20
 
 export type Phase12CapProfile = 'low' | 'standard' | 'high'
 export type Phase12CapPolicy = {
@@ -135,6 +141,10 @@ export type ExecutionFollowupQueueStatus = QueueEntryStatus
 export type ExecutionFollowupQueuePauseReason = ExecutionQueuePauseReason
 export type ExecutionFollowupEnqueueContext = ExecutionQueueContext
 export type ExecutionFollowupQueueEntry = QueueCoreEntry<ExecutionFollowupEnqueueContext>
+export type AskFollowupQueueStatus = QueueEntryStatus
+export type AskFollowupQueuePauseReason = AskQueuePauseReason
+export type AskFollowupEnqueueContext = AskQueueContext
+export type AskFollowupQueueEntry = QueueCoreEntry<AskFollowupEnqueueContext>
 export type ReloadReasonCode =
   | 'REPLAY_MISS'
   | 'CONTRACT_ENVELOPE_INVALID'
@@ -186,6 +196,8 @@ export type ThreadByIdStoreV3State = {
   historyError: string | null
   executionFollowupQueue: ExecutionFollowupQueueEntry[]
   executionQueuePauseReason: ExecutionFollowupQueuePauseReason
+  askFollowupQueue: AskFollowupQueueEntry[]
+  askQueuePauseReason: AskFollowupQueuePauseReason
   executionQueueOperatorPaused: boolean
   executionQueueWorkflowPhase: string | null
   executionQueueCanSendExecutionMessage: boolean
@@ -270,6 +282,10 @@ export type ThreadExecutionFollowupQueueActions = Pick<
   | 'retryQueued'
   | 'setOperatorPause'
   | 'syncExecutionQueueContext'
+>
+export type ThreadAskFollowupQueueState = Pick<
+  ThreadByIdStoreV3State,
+  'activeThreadRole' | 'askFollowupQueue' | 'askQueuePauseReason' | 'isSending'
 >
 export type ThreadFeedRenderState = {
   snapshot: ThreadSnapshotV3 | null
@@ -378,6 +394,15 @@ export function selectExecutionFollowupQueueActions(
   }
 }
 
+export function selectAskFollowupQueueState(state: ThreadByIdStoreV3State): ThreadAskFollowupQueueState {
+  return {
+    activeThreadRole: state.activeThreadRole,
+    askFollowupQueue: state.askFollowupQueue,
+    askQueuePauseReason: state.askQueuePauseReason,
+    isSending: state.isSending,
+  }
+}
+
 export function selectFeedRenderState(state: ThreadByIdStoreV3State): ThreadFeedRenderState {
   const core = selectCore(state)
   const uiControl = selectUiControl(state)
@@ -463,6 +488,7 @@ let clearThreadEventStreamBuffers: (() => void) | null = null
 let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 const resolveFallbackTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
 let threadGeneration = 0
+let requestAskQueueFlush: (() => void) | null = null
 
 type ProcessingTelemetryState = Pick<
   ThreadByIdStoreV3State,
@@ -524,7 +550,15 @@ function executionQueueStorageKey(projectId: string, nodeId: string, threadId: s
   return `${EXECUTION_FOLLOWUP_QUEUE_STORAGE_PREFIX}${projectId}::${nodeId}::${threadId}`
 }
 
+function askQueueStorageKey(projectId: string, nodeId: string, threadId: string): string {
+  return `${ASK_FOLLOWUP_QUEUE_STORAGE_PREFIX}${projectId}::${nodeId}::${threadId}`
+}
+
 function normalizeExecutionQueueStatus(value: unknown): ExecutionFollowupQueueStatus {
+  return normalizeQueueEntryStatus(value)
+}
+
+function normalizeAskQueueStatus(value: unknown): AskFollowupQueueStatus {
   return normalizeQueueEntryStatus(value)
 }
 
@@ -569,6 +603,49 @@ function normalizeExecutionQueueEntry(raw: unknown): ExecutionFollowupQueueEntry
   }
 }
 
+function normalizeAskQueueEntry(raw: unknown): AskFollowupQueueEntry | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+  const source = raw as Record<string, unknown>
+  const entryId = String(source.entryId ?? '').trim()
+  const text = String(source.text ?? '').trim()
+  const idempotencyKey = String(source.idempotencyKey ?? '').trim()
+  const createdAtRaw = Number(source.createdAtMs)
+  const enqueueContextRaw =
+    source.enqueueContext && typeof source.enqueueContext === 'object'
+      ? (source.enqueueContext as Record<string, unknown>)
+      : {}
+  const threadId = String(enqueueContextRaw.threadId ?? '').trim() || null
+  const snapshotVersionRaw = enqueueContextRaw.snapshotVersion
+  const snapshotVersion =
+    typeof snapshotVersionRaw === 'number' && Number.isFinite(snapshotVersionRaw)
+      ? Math.max(0, Math.floor(snapshotVersionRaw))
+      : null
+  const staleMarker = Boolean(enqueueContextRaw.staleMarker)
+  const attemptCountRaw = Number(source.attemptCount)
+  const attemptCount =
+    Number.isFinite(attemptCountRaw) && attemptCountRaw >= 0 ? Math.floor(attemptCountRaw) : 0
+  const lastError = String(source.lastError ?? '').trim() || null
+  if (!entryId || !text || !idempotencyKey || !Number.isFinite(createdAtRaw) || createdAtRaw <= 0) {
+    return null
+  }
+  return {
+    entryId,
+    text,
+    idempotencyKey,
+    createdAtMs: Math.floor(createdAtRaw),
+    enqueueContext: {
+      threadId,
+      snapshotVersion,
+      staleMarker,
+    },
+    status: normalizeAskQueueStatus(source.status),
+    attemptCount,
+    lastError,
+  }
+}
+
 function loadExecutionQueueFromStorage(
   projectId: string,
   nodeId: string,
@@ -592,7 +669,38 @@ function loadExecutionQueueFromStorage(
       .slice(0, EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS)
     // Recovery safety: a previously persisted `sending` entry should return to `queued`.
     return normalized.map((entry) =>
-      entry.status === 'sending'
+      entry.status === 'sending' || entry.status === 'requires_confirmation'
+        ? {
+            ...entry,
+            status: 'queued',
+          }
+        : entry,
+    )
+  } catch {
+    return []
+  }
+}
+
+function loadAskQueueFromStorage(projectId: string, nodeId: string, threadId: string): AskFollowupQueueEntry[] {
+  if (typeof globalThis.localStorage === 'undefined') {
+    return []
+  }
+  try {
+    const raw = globalThis.localStorage.getItem(askQueueStorageKey(projectId, nodeId, threadId))
+    if (!raw) {
+      return []
+    }
+    const payload = JSON.parse(raw)
+    if (!Array.isArray(payload)) {
+      return []
+    }
+    const normalized = payload
+      .map((entry) => normalizeAskQueueEntry(entry))
+      .filter((entry): entry is AskFollowupQueueEntry => entry !== null)
+      .slice(0, ASK_FOLLOWUP_QUEUE_MAX_ITEMS)
+    // Recovery safety: a previously persisted `sending` entry should return to `queued`.
+    return normalized.map((entry) =>
+      entry.status === 'sending' || entry.status === 'requires_confirmation'
         ? {
             ...entry,
             status: 'queued',
@@ -625,6 +733,27 @@ function persistExecutionQueueToStorage(
   }
 }
 
+function persistAskQueueToStorage(
+  projectId: string,
+  nodeId: string,
+  threadId: string,
+  queue: AskFollowupQueueEntry[],
+): void {
+  if (typeof globalThis.localStorage === 'undefined') {
+    return
+  }
+  const key = askQueueStorageKey(projectId, nodeId, threadId)
+  try {
+    if (queue.length === 0) {
+      globalThis.localStorage.removeItem(key)
+      return
+    }
+    globalThis.localStorage.setItem(key, JSON.stringify(queue))
+  } catch {
+    // Best-effort persistence only.
+  }
+}
+
 function currentExecutionQueueContext(
   state: Pick<ThreadByIdStoreV3State, 'snapshot' | 'executionQueueLatestExecutionRunId'>,
 ): ExecutionFollowupEnqueueContext {
@@ -633,6 +762,16 @@ function currentExecutionQueueContext(
     latestExecutionRunId: state.executionQueueLatestExecutionRunId,
     planReadyRevision:
       typeof revision === 'number' && Number.isFinite(revision) ? Math.floor(revision) : null,
+  }
+}
+
+function currentAskQueueContext(
+  state: Pick<ThreadByIdStoreV3State, 'activeThreadId' | 'snapshot' | 'streamStatus'>,
+): AskFollowupEnqueueContext {
+  return {
+    threadId: state.snapshot?.threadId ?? state.activeThreadId ?? null,
+    snapshotVersion: state.snapshot?.snapshotVersion ?? null,
+    staleMarker: state.streamStatus !== 'open',
   }
 }
 
@@ -790,6 +929,8 @@ function buildDisconnectedStatePatch(): ThreadRuntimeStateV3 {
     historyError: null,
     executionFollowupQueue: [],
     executionQueuePauseReason: 'none',
+    askFollowupQueue: [],
+    askQueuePauseReason: 'none',
     executionQueueOperatorPaused: false,
     executionQueueWorkflowPhase: null,
     executionQueueCanSendExecutionMessage: false,
@@ -838,6 +979,8 @@ function buildThreadLoadStartPatch(
     ),
     executionFollowupQueue: [],
     executionQueuePauseReason: 'none',
+    askFollowupQueue: [],
+    askQueuePauseReason: 'none',
     executionQueueOperatorPaused: false,
     executionQueueWorkflowPhase: null,
     executionQueueCanSendExecutionMessage: false,
@@ -1517,6 +1660,9 @@ async function openThreadEventStream(
         },
       )
     })
+    if (threadRole === 'ask_planning') {
+      requestAskQueueFlush?.()
+    }
   }
 
   const shouldForceFlush = (event: ThreadBusinessEventV3): boolean => {
@@ -1756,6 +1902,9 @@ async function openThreadEventStream(
         },
       )
     })
+    if (threadRole === 'ask_planning') {
+      requestAskQueueFlush?.()
+    }
   }
 
   const scheduleQueuedBusinessFlush = () => {
@@ -1808,6 +1957,9 @@ async function openThreadEventStream(
         },
       }),
     )
+    if (threadRole === 'ask_planning') {
+      requestAskQueueFlush?.()
+    }
   }
 
   eventSource.onmessage = (message) => {
@@ -1848,7 +2000,7 @@ async function openThreadEventStream(
 }
 
 export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) => {
-  const persistQueueForCurrentThread = (
+  const persistExecutionQueueForCurrentThread = (
     state: Pick<ThreadByIdStoreV3State, 'activeProjectId' | 'activeNodeId' | 'activeThreadId'>,
     queue: ExecutionFollowupQueueEntry[],
   ) => {
@@ -1861,6 +2013,16 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       state.activeThreadId,
       queue,
     )
+  }
+
+  const persistAskQueueForCurrentThread = (
+    state: Pick<ThreadByIdStoreV3State, 'activeProjectId' | 'activeNodeId' | 'activeThreadId'>,
+    queue: AskFollowupQueueEntry[],
+  ) => {
+    if (!state.activeProjectId || !state.activeNodeId || !state.activeThreadId) {
+      return
+    }
+    persistAskQueueToStorage(state.activeProjectId, state.activeNodeId, state.activeThreadId, queue)
   }
 
   const toExecutionPolicyState = (
@@ -1926,6 +2088,48 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       currentContext,
       nowMs,
     )
+
+  const streamOrStateMismatch = (
+    state: Pick<ThreadByIdStoreV3State, 'streamStatus'>,
+  ): boolean => state.streamStatus !== 'open'
+
+  const toAskPolicyState = (
+    state: Pick<ThreadByIdStoreV3State, 'snapshot' | 'streamStatus'>,
+  ): AskQueuePolicyState => ({
+    snapshot: state.snapshot,
+    operatorPaused: false,
+    streamOrStateMismatch: streamOrStateMismatch(state),
+  })
+
+  const evaluateAskQueuePauseReason = (
+    state: Pick<ThreadByIdStoreV3State, 'snapshot' | 'activeThreadRole' | 'streamStatus'>,
+  ): AskFollowupQueuePauseReason => {
+    if (state.activeThreadRole !== 'ask_planning') {
+      return 'stream_or_state_mismatch'
+    }
+    const options: AskSendWindowOptions = {
+      streamOrStateMismatch: streamOrStateMismatch(state),
+    }
+    return laneQueuePolicyAdapters.ask_planning.evaluatePauseReason(
+      'ask_planning',
+      toAskPolicyState(state),
+      options,
+    )
+  }
+
+  const askSendWindowIsOpen = (
+    state: Pick<ThreadByIdStoreV3State, 'snapshot' | 'activeThreadRole' | 'streamStatus'>,
+    options: AskSendWindowOptions,
+  ): boolean => {
+    if (state.activeThreadRole !== 'ask_planning') {
+      return false
+    }
+    return laneQueuePolicyAdapters.ask_planning.sendWindowIsOpen(
+      'ask_planning',
+      toAskPolicyState(state),
+      options,
+    )
+  }
 
   const startThreadTurnRequest = async (
     text: string,
@@ -2078,7 +2282,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           current.executionFollowupQueue,
           entry.entryId,
         )
-        persistQueueForCurrentThread(current, nextQueue)
+        persistExecutionQueueForCurrentThread(current, nextQueue)
         return {
           executionFollowupQueue: nextQueue,
           executionQueuePauseReason: evaluateQueuePauseReason(current),
@@ -2089,7 +2293,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
 
     set((current) => {
       const nextQueue = markQueueEntrySending('execution', current.executionFollowupQueue, entry.entryId)
-      persistQueueForCurrentThread(current, nextQueue)
+      persistExecutionQueueForCurrentThread(current, nextQueue)
       return {
         executionFollowupQueue: nextQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
@@ -2116,7 +2320,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           result.error,
         )
       }
-      persistQueueForCurrentThread(current, nextQueue)
+      persistExecutionQueueForCurrentThread(current, nextQueue)
       return {
         executionFollowupQueue: nextQueue,
         executionQueuePauseReason: evaluateQueuePauseReason({
@@ -2128,6 +2332,77 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     if (result.ok) {
       await attemptExecutionQueueFlush()
     }
+  }
+
+  const attemptAskQueueFlush = async (): Promise<void> => {
+    const state = get()
+    if (state.activeThreadRole !== 'ask_planning') {
+      return
+    }
+    if (!state.snapshot) {
+      set({ askQueuePauseReason: evaluateAskQueuePauseReason(state) })
+      return
+    }
+    if (!state.askFollowupQueue.length) {
+      set({ askQueuePauseReason: evaluateAskQueuePauseReason(state) })
+      return
+    }
+    if (queueHasSending(state.askFollowupQueue)) {
+      return
+    }
+
+    const options: AskSendWindowOptions = {
+      streamOrStateMismatch: streamOrStateMismatch(state),
+    }
+    if (!askSendWindowIsOpen(state, options)) {
+      set({ askQueuePauseReason: evaluateAskQueuePauseReason(get()) })
+      return
+    }
+
+    // Strict FIFO in A3: only the head `queued` entry can auto-flush.
+    const head = state.askFollowupQueue[0] ?? null
+    if (!head || head.status !== 'queued') {
+      return
+    }
+
+    set((current) => {
+      const nextQueue = markQueueEntrySending('ask_planning', current.askFollowupQueue, head.entryId)
+      persistAskQueueForCurrentThread(current, nextQueue)
+      return {
+        askFollowupQueue: nextQueue,
+        askQueuePauseReason: evaluateAskQueuePauseReason(current),
+      }
+    })
+
+    const result = await startThreadTurnRequest(head.text, {
+      idempotencyKey: head.idempotencyKey,
+    })
+
+    set((current) => {
+      const existing = current.askFollowupQueue.find((candidate) => candidate.entryId === head.entryId)
+      if (!existing) {
+        return {}
+      }
+      let nextQueue: AskFollowupQueueEntry[]
+      if (result.ok) {
+        nextQueue = removeQueueEntry('ask_planning', current.askFollowupQueue, head.entryId)
+      } else {
+        nextQueue = markQueueEntryFailed('ask_planning', current.askFollowupQueue, head.entryId, result.error)
+      }
+      persistAskQueueForCurrentThread(current, nextQueue)
+      return {
+        askFollowupQueue: nextQueue,
+        askQueuePauseReason: evaluateAskQueuePauseReason(current),
+      }
+    })
+
+    if (result.ok) {
+      await attemptAskQueueFlush()
+    }
+  }
+
+  requestAskQueueFlush = () => {
+    void attemptAskQueueFlush()
   }
 
   return {
@@ -2174,17 +2449,34 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       if (threadRole === 'execution') {
         const hydratedQueue = loadExecutionQueueFromStorage(projectId, nodeId, threadId)
         set((state) => {
-          persistQueueForCurrentThread(state, hydratedQueue)
+          persistExecutionQueueForCurrentThread(state, hydratedQueue)
           return {
             executionFollowupQueue: hydratedQueue,
             executionQueuePauseReason: evaluateQueuePauseReason(state),
+            askFollowupQueue: [],
+            askQueuePauseReason: 'none',
           }
         })
+      } else if (threadRole === 'ask_planning') {
+        const hydratedQueue = loadAskQueueFromStorage(projectId, nodeId, threadId)
+        set((state) => {
+          persistAskQueueForCurrentThread(state, hydratedQueue)
+          return {
+            askFollowupQueue: hydratedQueue,
+            askQueuePauseReason: evaluateAskQueuePauseReason(state),
+            executionFollowupQueue: [],
+            executionQueuePauseReason: 'none',
+            executionQueueOperatorPaused: false,
+          }
+        })
+        void attemptAskQueueFlush()
       } else {
         set({
           executionFollowupQueue: [],
           executionQueuePauseReason: 'none',
           executionQueueOperatorPaused: false,
+          askFollowupQueue: [],
+          askQueuePauseReason: 'none',
         })
       }
       reconcileResolveFallbackTimers(get().snapshot)
@@ -2332,7 +2624,44 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
   },
 
   async sendTurn(text: string, metadata: Record<string, unknown> = {}) {
-    await startThreadTurnRequest(text, metadata)
+    const cleaned = String(text ?? '').trim()
+    if (!cleaned) {
+      return
+    }
+    const state = get()
+    if (state.activeThreadRole !== 'ask_planning') {
+      await startThreadTurnRequest(text, metadata)
+      return
+    }
+    if (!state.activeProjectId || !state.activeNodeId || !state.activeThreadId) {
+      await startThreadTurnRequest(cleaned, metadata)
+      return
+    }
+    const existingIdempotencyKey = String(metadata.idempotencyKey ?? '').trim()
+    const idempotencyKey = existingIdempotencyKey || newExecutionQueueId('ask_turn')
+    const nextQueue = enqueueQueueEntry(
+      'ask_planning',
+      state.askFollowupQueue,
+      {
+        entryId: newExecutionQueueId('q'),
+        text: cleaned,
+        idempotencyKey,
+        createdAtMs: Date.now(),
+        enqueueContext: currentAskQueueContext(state),
+        status: 'queued' as const,
+        attemptCount: 0,
+        lastError: null,
+      },
+      ASK_FOLLOWUP_QUEUE_MAX_ITEMS,
+    )
+    set((current) => {
+      persistAskQueueForCurrentThread(current, nextQueue)
+      return {
+        askFollowupQueue: nextQueue,
+        askQueuePauseReason: evaluateAskQueuePauseReason(current),
+      }
+    })
+    await attemptAskQueueFlush()
   },
 
   async resolveUserInput(requestId: string, answers: UserInputAnswer[]) {
@@ -2574,7 +2903,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     )
 
     set((current) => {
-      persistQueueForCurrentThread(current, nextQueue)
+      persistExecutionQueueForCurrentThread(current, nextQueue)
       return {
         executionFollowupQueue: nextQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
@@ -2594,7 +2923,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     }
     const nextQueue = removeQueueEntry('execution', state.executionFollowupQueue, id)
     set((current) => {
-      persistQueueForCurrentThread(current, nextQueue)
+      persistExecutionQueueForCurrentThread(current, nextQueue)
       return {
         executionFollowupQueue: nextQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
@@ -2609,7 +2938,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     }
     const nextQueue = reorderQueueEntries('execution', state.executionFollowupQueue, fromIndex, toIndex)
     set((current) => {
-      persistQueueForCurrentThread(current, nextQueue)
+      persistExecutionQueueForCurrentThread(current, nextQueue)
       return {
         executionFollowupQueue: nextQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
@@ -2657,7 +2986,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       if (persistedQueue === current.executionFollowupQueue) {
         return {}
       }
-      persistQueueForCurrentThread(current, persistedQueue)
+      persistExecutionQueueForCurrentThread(current, persistedQueue)
       return {
         executionFollowupQueue: persistedQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
@@ -2692,7 +3021,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       if (persistedQueue === current.executionFollowupQueue) {
         return {}
       }
-      persistQueueForCurrentThread(current, persistedQueue)
+      persistExecutionQueueForCurrentThread(current, persistedQueue)
       return {
         executionFollowupQueue: persistedQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),

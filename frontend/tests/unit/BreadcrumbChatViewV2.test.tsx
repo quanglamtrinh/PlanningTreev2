@@ -400,6 +400,32 @@ describe('BreadcrumbChatViewV2', () => {
     })
   })
 
+  it('keeps ask composer enabled while ask turn is running so asks can be queued', async () => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        askThreadId: 'ask-thread-1',
+      }),
+      threadSnapshot: makeConversationSnapshot({
+        threadId: 'ask-thread-1',
+        threadRole: 'ask_planning',
+        activeTurnId: 'ask-running-turn',
+        processingState: 'running',
+      }),
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
+    })
+  })
+
   it('routes execution composer sends to enqueueFollowup instead of direct sendTurn', async () => {
     const enqueueFollowup = vi.fn().mockResolvedValue(undefined)
     const sendTurn = vi.fn().mockResolvedValue(undefined)
@@ -431,6 +457,42 @@ describe('BreadcrumbChatViewV2', () => {
       expect(enqueueFollowup).toHaveBeenCalledWith('queued from composer mock')
     })
     expect(sendTurn).not.toHaveBeenCalled()
+  })
+
+  it('routes ask composer sends through sendTurn', async () => {
+    const enqueueFollowup = vi.fn().mockResolvedValue(undefined)
+    const sendTurn = vi.fn().mockResolvedValue(undefined)
+
+    seedStores({
+      workflowState: makeWorkflowState({
+        askThreadId: 'ask-thread-1',
+      }),
+      threadSnapshot: makeConversationSnapshot({
+        threadId: 'ask-thread-1',
+        threadRole: 'ask_planning',
+      }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      enqueueFollowup,
+      sendTurn,
+      activeThreadRole: 'ask_planning',
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByTestId('composer-send-mock'))
+
+    await waitFor(() => {
+      expect(sendTurn).toHaveBeenCalledWith('queued from composer mock')
+    })
+    expect(enqueueFollowup).not.toHaveBeenCalled()
   })
 
   it('renders execution queue controls and dispatches queue actions', async () => {

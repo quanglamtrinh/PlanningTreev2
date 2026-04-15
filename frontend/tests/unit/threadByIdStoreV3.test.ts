@@ -33,6 +33,7 @@ import {
   decideReloadPolicy,
   resolvePhase12CapPolicy,
   resolvePhase12CapProfile,
+  selectAskFollowupQueueState,
   selectComposerState,
   selectCore,
   selectFeedRenderState,
@@ -201,6 +202,14 @@ function makePendingUserInputSnapshot(overrides: Partial<ThreadSnapshotV3> = {})
   })
 }
 
+function makeAskSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshotV3 {
+  return makeSnapshot({
+    threadId: 'ask-thread-1',
+    threadRole: 'ask_planning',
+    ...overrides,
+  })
+}
+
 function setExecutionQueueRuntimeState(
   overrides: Partial<ReturnType<typeof useThreadByIdStoreV3.getState>> = {},
 ) {
@@ -218,6 +227,24 @@ function setExecutionQueueRuntimeState(
     executionQueueWorkflowPhase: 'execution_decision_pending',
     executionQueueCanSendExecutionMessage: true,
     executionQueueLatestExecutionRunId: 'run-1',
+    ...overrides,
+  })
+}
+
+function setAskQueueRuntimeState(
+  overrides: Partial<ReturnType<typeof useThreadByIdStoreV3.getState>> = {},
+) {
+  useThreadByIdStoreV3.setState({
+    activeProjectId: 'project-1',
+    activeNodeId: 'node-1',
+    activeThreadId: 'ask-thread-1',
+    activeThreadRole: 'ask_planning',
+    snapshot: makeAskSnapshot(),
+    isLoading: false,
+    isSending: false,
+    streamStatus: 'open',
+    askFollowupQueue: [],
+    askQueuePauseReason: 'none',
     ...overrides,
   })
 }
@@ -248,8 +275,40 @@ function makeExecutionQueueEntry(overrides: {
   }
 }
 
+function makeAskQueueEntry(overrides: {
+  entryId?: string
+  text?: string
+  idempotencyKey?: string
+  createdAtMs?: number
+  threadId?: string | null
+  snapshotVersion?: number | null
+  staleMarker?: boolean
+  status?: 'queued' | 'requires_confirmation' | 'sending' | 'failed'
+  attemptCount?: number
+  lastError?: string | null
+} = {}) {
+  return {
+    entryId: overrides.entryId ?? 'ask-entry-1',
+    text: overrides.text ?? 'queued ask message',
+    idempotencyKey: overrides.idempotencyKey ?? 'ask-idem-1',
+    createdAtMs: overrides.createdAtMs ?? Date.now(),
+    enqueueContext: {
+      threadId: overrides.threadId ?? 'ask-thread-1',
+      snapshotVersion: overrides.snapshotVersion ?? 1,
+      staleMarker: overrides.staleMarker ?? false,
+    },
+    status: overrides.status ?? ('queued' as const),
+    attemptCount: overrides.attemptCount ?? 0,
+    lastError: overrides.lastError ?? null,
+  }
+}
+
 function executionQueueStorageKey(): string {
   return 'ptm:v3:execution-followup-queue:project-1::node-1::thread-1'
+}
+
+function askQueueStorageKey(): string {
+  return 'ptm:v3:ask-followup-queue:project-1::node-1::ask-thread-1'
 }
 
 describe('threadByIdStoreV3', () => {
@@ -570,6 +629,7 @@ describe('threadByIdStoreV3', () => {
     const composer = selectComposerState(state)
     const transportBanner = selectTransportBannerState(state)
     const workflowAction = selectWorkflowActionState(state)
+    const askQueue = selectAskFollowupQueueState(state)
     const actions = selectThreadActions(state)
 
     expect(Object.keys(feed).sort()).toEqual(
@@ -583,6 +643,9 @@ describe('threadByIdStoreV3', () => {
     )
     expect(Object.keys(workflowAction).sort()).toEqual(
       ['isLoading', 'isSending', 'lastCompletedAt', 'lastDurationMs', 'snapshot'].sort(),
+    )
+    expect(Object.keys(askQueue).sort()).toEqual(
+      ['activeThreadRole', 'askFollowupQueue', 'askQueuePauseReason', 'isSending'].sort(),
     )
     expect(composer.isActiveTurn).toBe(true)
     expect(transportBanner.streamStatus).toBe('connecting')
@@ -1648,20 +1711,18 @@ describe('threadByIdStoreV3', () => {
     }
   })
 
-  it('injects ask idempotency key for direct send when metadata is missing', async () => {
-    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(
-      makeSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning' }),
-    )
+  it('enqueues ask turn and auto-flushes immediately when send window is open', async () => {
     apiMock.startThreadTurnByIdV3.mockResolvedValue({
       threadId: 'ask-thread-1',
       turnId: 'ask-turn-2',
       snapshotVersion: 2,
     })
-
-    await act(async () => {
-      await useThreadByIdStoreV3
-        .getState()
-        .loadThread('project-1', 'node-1', 'ask-thread-1', 'ask_planning')
+    setAskQueueRuntimeState({
+      snapshot: makeAskSnapshot({
+        activeTurnId: null,
+        processingState: 'idle',
+      }),
+      streamStatus: 'open',
     })
 
     await act(async () => {
@@ -1672,6 +1733,283 @@ describe('threadByIdStoreV3', () => {
     const metadata = apiMock.startThreadTurnByIdV3.mock.calls[0]?.[4] as Record<string, unknown> | undefined
     expect(metadata?.idempotencyKey).toEqual(expect.any(String))
     expect(String(metadata?.idempotencyKey ?? '')).toMatch(/^ask_turn:/)
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.askFollowupQueue).toHaveLength(0)
+    expect(state.snapshot?.activeTurnId).toBe('ask-turn-2')
+    expect(state.snapshot?.processingState).toBe('running')
+  })
+
+  it('blocks ask auto-flush for stream mismatch and waiting user input', async () => {
+    setAskQueueRuntimeState({
+      streamStatus: 'reconnecting',
+    })
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendTurn('blocked by stream')
+    })
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(0)
+    expect(useThreadByIdStoreV3.getState().askFollowupQueue).toHaveLength(1)
+    expect(useThreadByIdStoreV3.getState().askQueuePauseReason).toBe('stream_or_state_mismatch')
+
+    useThreadByIdStoreV3.setState({
+      streamStatus: 'open',
+      askFollowupQueue: [],
+      askQueuePauseReason: 'none',
+      snapshot: makeAskSnapshot({
+        activeTurnId: null,
+        processingState: 'idle',
+        uiSignals: {
+          planReady: {
+            planItemId: null,
+            revision: null,
+            ready: false,
+            failed: false,
+          },
+          activeUserInputRequests: [
+            {
+              requestId: 'ask-input-1',
+              itemId: 'input-1',
+              threadId: 'ask-thread-1',
+              turnId: 'turn-1',
+              status: 'requested',
+              createdAt: '2026-04-01T00:00:10Z',
+              submittedAt: null,
+              resolvedAt: null,
+              answers: [],
+            },
+          ],
+        },
+      }),
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendTurn('blocked by input')
+    })
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(0)
+    expect(useThreadByIdStoreV3.getState().askFollowupQueue).toHaveLength(1)
+    expect(useThreadByIdStoreV3.getState().askQueuePauseReason).toBe('waiting_user_input')
+  })
+
+  it('marks failed ask head and stops auto-flush at failed FIFO head', async () => {
+    apiMock.startThreadTurnByIdV3.mockRejectedValueOnce(new Error('ask send failed'))
+    setAskQueueRuntimeState()
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendTurn('first ask')
+    })
+
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(1)
+    const afterFailure = useThreadByIdStoreV3.getState().askFollowupQueue
+    expect(afterFailure).toHaveLength(1)
+    expect(afterFailure[0].status).toBe('failed')
+    expect(afterFailure[0].lastError).toContain('ask send failed')
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendTurn('second ask')
+    })
+
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(1)
+    expect(useThreadByIdStoreV3.getState().askFollowupQueue.map((entry) => entry.status)).toEqual([
+      'failed',
+      'queued',
+    ])
+  })
+
+  it('hydrates ask queue from storage and resumes flush only when stream opens', async () => {
+    globalThis.localStorage.setItem(
+      askQueueStorageKey(),
+      JSON.stringify([
+        makeAskQueueEntry({
+          entryId: 'ask-persisted-1',
+          text: 'persisted ask',
+          status: 'sending',
+        }),
+        makeAskQueueEntry({
+          entryId: 'ask-persisted-2',
+          text: 'persisted ask 2',
+          status: 'requires_confirmation',
+        }),
+      ]),
+    )
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeAskSnapshot())
+    apiMock.startThreadTurnByIdV3.mockResolvedValue({
+      threadId: 'ask-thread-1',
+      turnId: 'ask-turn-hydrated',
+      snapshotVersion: 3,
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().loadThread('project-1', 'node-1', 'ask-thread-1', 'ask_planning')
+    })
+
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(0)
+    const hydratedQueue = useThreadByIdStoreV3.getState().askFollowupQueue
+    expect(hydratedQueue).toHaveLength(2)
+    expect(hydratedQueue.map((entry) => entry.status)).toEqual(['queued', 'queued'])
+
+    const eventSource = getEventSourceMock().instances[0]
+    await act(async () => {
+      eventSource.emitOpen()
+    })
+
+    await waitFor(() => {
+      expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(1)
+    })
+    expect(useThreadByIdStoreV3.getState().askFollowupQueue.map((entry) => entry.text)).toEqual([
+      'persisted ask 2',
+    ])
+
+    await act(async () => {
+      eventSource.emitMessage(
+        JSON.stringify({
+          schema_version: 1,
+          event_id: '2',
+          event_type: 'thread.snapshot.v3',
+          thread_id: 'ask-thread-1',
+          turn_id: null,
+          snapshot_version: 2,
+          occurred_at_ms: Date.parse('2026-04-01T00:02:00Z'),
+          eventId: '2',
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'ask_planning',
+          occurredAt: '2026-04-01T00:02:00Z',
+          snapshotVersion: 2,
+          type: 'thread.snapshot.v3',
+          payload: {
+            snapshot: makeAskSnapshot({
+              snapshotVersion: 2,
+              activeTurnId: null,
+              processingState: 'idle',
+            }),
+          },
+        }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(2)
+    })
+    expect(useThreadByIdStoreV3.getState().askFollowupQueue).toHaveLength(0)
+  })
+
+  it('preserves ask queue order across rapid sends during active turn', async () => {
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(
+      makeAskSnapshot({
+        activeTurnId: 'ask-turn-running',
+        processingState: 'running',
+      }),
+    )
+    apiMock.startThreadTurnByIdV3
+      .mockResolvedValueOnce({ threadId: 'ask-thread-1', turnId: 'ask-turn-1', snapshotVersion: 3 })
+      .mockResolvedValueOnce({ threadId: 'ask-thread-1', turnId: 'ask-turn-2', snapshotVersion: 4 })
+      .mockResolvedValueOnce({ threadId: 'ask-thread-1', turnId: 'ask-turn-3', snapshotVersion: 5 })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().loadThread('project-1', 'node-1', 'ask-thread-1', 'ask_planning')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      await Promise.all([
+        useThreadByIdStoreV3.getState().sendTurn('ask first'),
+        useThreadByIdStoreV3.getState().sendTurn('ask second'),
+        useThreadByIdStoreV3.getState().sendTurn('ask third'),
+      ])
+    })
+
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(0)
+    expect(useThreadByIdStoreV3.getState().askFollowupQueue.map((entry) => entry.text)).toEqual([
+      'ask first',
+      'ask second',
+      'ask third',
+    ])
+
+    for (let index = 0; index < 3; index += 1) {
+      const eventId = String(index + 2)
+      await act(async () => {
+        eventSource.emitMessage(
+          JSON.stringify({
+            schema_version: 1,
+            event_id: eventId,
+            event_type: 'thread.snapshot.v3',
+            thread_id: 'ask-thread-1',
+            turn_id: null,
+            snapshot_version: index + 2,
+            occurred_at_ms: Date.parse(`2026-04-01T00:0${index + 1}:00Z`),
+            eventId,
+            channel: 'thread',
+            projectId: 'project-1',
+            nodeId: 'node-1',
+            threadRole: 'ask_planning',
+            occurredAt: `2026-04-01T00:0${index + 1}:00Z`,
+            snapshotVersion: index + 2,
+            type: 'thread.snapshot.v3',
+            payload: {
+              snapshot: makeAskSnapshot({
+                snapshotVersion: index + 2,
+                activeTurnId: null,
+                processingState: 'idle',
+              }),
+            },
+          }),
+        )
+      })
+      await waitFor(() => {
+        expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(index + 1)
+      })
+    }
+
+    expect(apiMock.startThreadTurnByIdV3.mock.calls.map((call) => call[3])).toEqual([
+      'ask first',
+      'ask second',
+      'ask third',
+    ])
+  })
+
+  it('keeps ask queue single-flight under repeated dispatch triggers for the same head entry', async () => {
+    let resolveSend: (() => void) | null = null
+    const pendingSend = new Promise<void>((resolve) => {
+      resolveSend = resolve
+    })
+    apiMock.startThreadTurnByIdV3.mockImplementation(async () => {
+      await pendingSend
+      return {
+        threadId: 'ask-thread-1',
+        turnId: 'ask-turn-single-flight',
+        snapshotVersion: 3,
+      }
+    })
+    globalThis.localStorage.setItem(
+      askQueueStorageKey(),
+      JSON.stringify([
+        makeAskQueueEntry({
+          entryId: 'ask-single-flight',
+          text: 'ask once only',
+          status: 'queued',
+        }),
+      ]),
+    )
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeAskSnapshot())
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().loadThread('project-1', 'node-1', 'ask-thread-1', 'ask_planning')
+    })
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+    eventSource.emitOpen()
+
+    await waitFor(() => {
+      expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(1)
+    })
+
+    resolveSend?.()
+    await act(async () => {
+      await pendingSend
+    })
   })
 
   it('enqueues execution follow-up and propagates idempotency key when send window is open', async () => {

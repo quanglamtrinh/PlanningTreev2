@@ -370,13 +370,12 @@ export function BreadcrumbChatViewV2() {
   const executionQueueHasSending = executionQueueEntries.some((entry) => entry.status === 'sending')
   const executionQueueControlsDisabled = executionQueueHasSending || executionQueueState.isSending
   const executionQueuePauseLabel = renderQueuePauseReasonLabel(executionQueueState.executionQueuePauseReason)
-  const isActiveTurn = composerStateV3.isActiveTurn
   const composerDisabled = useMemo(() => {
     if (!composerStateV3.snapshot) {
       return true
     }
     if (threadTab === 'ask') {
-      return isActiveTurn || composerStateV3.isSending || composerStateV3.isLoading
+      return composerStateV3.isLoading
     }
     if (threadTab === 'execution') {
       return composerStateV3.isLoading || executionQueueHasSending
@@ -387,7 +386,6 @@ export function BreadcrumbChatViewV2() {
     composerStateV3.isSending,
     composerStateV3.snapshot,
     executionQueueHasSending,
-    isActiveTurn,
     threadTab,
   ])
 
