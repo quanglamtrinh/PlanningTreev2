@@ -1,8 +1,10 @@
-﻿# AQC6 - Ask Recovery and Reset Contract v1
+# AQC6 - Ask Recovery and Reset Contract v1
 
 Status: Frozen contract.
 
 Last updated: 2026-04-14.
+
+Freeze marker: `ask_recovery_reset_contract_frozen`.
 
 - Queue persistence/hydration must avoid message loss and duplicate send after reload/reconnect.
 - Ask reset behavior for queued entries must be explicit and deterministic.

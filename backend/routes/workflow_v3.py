@@ -109,6 +109,11 @@ def _normalize_thread_id(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _normalize_optional_string(value: Any) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
 def _resolve_event_thread_id(envelope: dict[str, Any]) -> str:
     canonical_thread_id = _normalize_thread_id(envelope.get("thread_id"))
     if canonical_thread_id:
@@ -922,6 +927,18 @@ async def reset_thread_by_id_v3(
             node_id,
             thread_role,
         )
+        workflow_state = _workflow_service(request).get_workflow_state(project_id, node_id)
+        workflow_publisher = getattr(request.app.state, "workflow_event_publisher", None)
+        if workflow_publisher is not None:
+            workflow_publisher.publish_workflow_updated(
+                project_id=project_id,
+                node_id=node_id,
+                execution_state=_normalize_optional_string(workflow_state.get("executionState")),
+                review_state=_normalize_optional_string(workflow_state.get("reviewState")),
+                workflow_phase=_normalize_optional_string(workflow_state.get("workflowPhase")),
+                active_execution_run_id=_normalize_optional_string(workflow_state.get("activeExecutionRunId")),
+                active_review_cycle_id=_normalize_optional_string(workflow_state.get("activeReviewCycleId")),
+            )
         return _ok(
             {
                 "threadId": snapshot.get("threadId"),

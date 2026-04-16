@@ -43,6 +43,7 @@ def main() -> int:
     phase_a2_root = migration_root / "phase-a2-lane-aware-queue-core-refactor"
     phase_a3_root = migration_root / "phase-a3-ask-queue-mvp-auto-flush"
     phase_a5_root = migration_root / "phase-a5-ask-queue-ui-shell-integrity"
+    phase_a6_root = migration_root / "phase-a6-recovery-edge-hardening"
 
     errors: list[str] = []
 
@@ -82,6 +83,8 @@ def main() -> int:
         phase_a3_root / "README.md",
         phase_a3_root / "preflight-v1.md",
         phase_a5_root / "preflight-v1.md",
+        phase_a6_root / "README.md",
+        phase_a6_root / "preflight-v1.md",
     ]
     for path in required_files:
         if not path.exists():
@@ -309,6 +312,21 @@ def main() -> int:
         errors.append("A5 preflight must include entry marker 'phase_a4_passed'.")
     if "ask_shell_queue_ui_contract_frozen" not in phase_a5_preflight_text:
         errors.append("A5 preflight must include contract marker 'ask_shell_queue_ui_contract_frozen'.")
+
+    aqc6_recovery_reset_text = (contracts_root / "aqc6-ask-recovery-reset-contract-v1.md").read_text(
+        encoding="utf-8"
+    )
+    if "ask_recovery_reset_contract_frozen" not in aqc6_recovery_reset_text:
+        errors.append(
+            "AQC6 ask-recovery-reset contract must include marker "
+            "'ask_recovery_reset_contract_frozen'."
+        )
+
+    phase_a6_preflight_text = (phase_a6_root / "preflight-v1.md").read_text(encoding="utf-8")
+    if "phase_a5_passed" not in phase_a6_preflight_text:
+        errors.append("A6 preflight must include entry marker 'phase_a5_passed'.")
+    if "ask_recovery_reset_contract_frozen" not in phase_a6_preflight_text:
+        errors.append("A6 preflight must include contract marker 'ask_recovery_reset_contract_frozen'.")
 
     if errors:
         print("Ask migration freeze validation: FAIL")

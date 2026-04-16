@@ -1821,6 +1821,29 @@ describe('threadByIdStoreV3', () => {
     ])
   })
 
+  it('clears ask queue on thread-route mismatch failure to honor reset policy', async () => {
+    const mismatchError = Object.assign(
+      new Error('Thread id does not match any active route for this node.'),
+      {
+        code: 'invalid_request',
+        status: 400,
+      },
+    )
+    apiMock.startThreadTurnByIdV3.mockRejectedValueOnce(mismatchError)
+    setAskQueueRuntimeState()
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendTurn('ask after reset mismatch')
+    })
+
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.askFollowupQueue).toHaveLength(0)
+    expect(state.streamStatus).toBe('error')
+    expect(state.askQueuePauseReason).toBe('stream_or_state_mismatch')
+    expect(state.error).toContain('Thread id does not match any active route for this node.')
+    expect(globalThis.localStorage.getItem(askQueueStorageKey())).toBeNull()
+  })
+
   it('hydrates ask requires_confirmation entries and never auto-sends them after reload', async () => {
     globalThis.localStorage.setItem(
       askQueueStorageKey(),

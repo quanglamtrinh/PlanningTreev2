@@ -1358,6 +1358,36 @@ def test_v3_ask_reset_by_id_clears_thread_snapshot(client: TestClient, workspace
     assert snapshot["uiSignals"]["activeUserInputRequests"] == []
 
 
+def test_v3_ask_reset_by_id_publishes_workflow_update(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    _stub_ask_session_reads(client)
+    thread_id = _seed_ask_thread(client, project_id, node_id)
+    _seed_ask_user_input_pending(client, project_id, node_id, thread_id=thread_id)
+
+    published_updates: list[dict[str, Any]] = []
+    original_publish = client.app.state.workflow_event_publisher.publish_workflow_updated
+
+    def _capture_publish_workflow_updated(**kwargs):
+        published_updates.append(dict(kwargs))
+        return original_publish(**kwargs)
+
+    client.app.state.workflow_event_publisher.publish_workflow_updated = _capture_publish_workflow_updated
+    try:
+        response = client.post(
+            f"/v3/projects/{project_id}/threads/by-id/{thread_id}/reset",
+            params={"node_id": node_id},
+        )
+    finally:
+        client.app.state.workflow_event_publisher.publish_workflow_updated = original_publish
+
+    assert response.status_code == 200
+    assert len(published_updates) == 1
+    update = published_updates[0]
+    assert update["project_id"] == project_id
+    assert update["node_id"] == node_id
+    assert "workflow_phase" in update
+
+
 def test_v3_reset_policy_rejects_execution_and_audit_threads(client: TestClient, workspace_root) -> None:
     project_id, node_id = _setup_project(client, workspace_root)
     execution_thread_id = _seed_execution_thread(client, project_id, node_id)

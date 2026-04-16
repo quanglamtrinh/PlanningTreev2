@@ -60,6 +60,7 @@ const EXECUTION_FOLLOWUP_QUEUE_STORAGE_PREFIX = 'ptm:v3:execution-followup-queue
 const EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS = 20
 const ASK_FOLLOWUP_QUEUE_STORAGE_PREFIX = 'ptm:v3:ask-followup-queue:'
 const ASK_FOLLOWUP_QUEUE_MAX_ITEMS = 20
+const ASK_THREAD_ROUTE_MISMATCH_ERROR_SUBSTRING = 'thread id does not match any active route for this node'
 
 export type Phase12CapProfile = 'low' | 'standard' | 'high'
 export type Phase12CapPolicy = {
@@ -596,6 +597,34 @@ function normalizeAskQueueConfirmationReason(value: unknown): AskQueueConfirmati
     return normalized
   }
   return null
+}
+
+type StartThreadTurnRequestFailure = {
+  ok: false
+  error: string
+  status: number | null
+  code: string | null
+}
+
+type StartThreadTurnRequestResult = { ok: true } | StartThreadTurnRequestFailure
+
+function getAskThreadRouteMismatchReason(result: StartThreadTurnRequestResult): string | null {
+  if (result.ok) {
+    return null
+  }
+  const code = String(result.code ?? '')
+    .trim()
+    .toLowerCase()
+  const message = String(result.error ?? '')
+    .trim()
+    .toLowerCase()
+  if (code !== 'invalid_request') {
+    return null
+  }
+  if (!message.includes(ASK_THREAD_ROUTE_MISMATCH_ERROR_SUBSTRING)) {
+    return null
+  }
+  return result.error
 }
 
 function normalizeExecutionQueueEntry(raw: unknown): ExecutionFollowupQueueEntry | null {
@@ -2218,13 +2247,18 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
   const startThreadTurnRequest = async (
     text: string,
     metadata: Record<string, unknown> = {},
-  ): Promise<{ ok: true } | { ok: false; error: string }> => {
+  ): Promise<StartThreadTurnRequestResult> => {
     const { activeProjectId, activeNodeId, activeThreadId, activeThreadRole, snapshot } = get()
     if (!activeProjectId || !activeNodeId || !activeThreadId || !activeThreadRole || !snapshot) {
-      return { ok: false, error: 'Thread is not ready.' }
+      return { ok: false, error: 'Thread is not ready.', status: null, code: null }
     }
     if (activeThreadRole !== 'execution' && activeThreadRole !== 'ask_planning') {
-      return { ok: false, error: 'Audit review is read-only in the V3 execution/audit flow.' }
+      return {
+        ok: false,
+        error: 'Audit review is read-only in the V3 execution/audit flow.',
+        status: null,
+        code: null,
+      }
     }
     const generation = threadGeneration
     const sendingRole = activeThreadRole
@@ -2308,9 +2342,23 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           sendingRole,
         )
       ) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+        const reason = error instanceof Error ? error.message : String(error)
+        const statusRaw = Number((error as { status?: unknown })?.status)
+        const status = Number.isFinite(statusRaw) ? Math.trunc(statusRaw) : null
+        const codeRaw = (error as { code?: unknown })?.code
+        const code = typeof codeRaw === 'string' ? codeRaw : null
+        return {
+          ok: false,
+          error: reason,
+          status,
+          code,
+        }
       }
       const reason = error instanceof Error ? error.message : String(error)
+      const statusRaw = Number((error as { status?: unknown })?.status)
+      const status = Number.isFinite(statusRaw) ? Math.trunc(statusRaw) : null
+      const codeRaw = (error as { code?: unknown })?.code
+      const code = typeof codeRaw === 'string' ? codeRaw : null
       set(
         composeDomainPatch({
           uiControl: {
@@ -2319,7 +2367,12 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           },
         }),
       )
-      return { ok: false, error: reason }
+      return {
+        ok: false,
+        error: reason,
+        status,
+        code,
+      }
     }
   }
 
@@ -2501,6 +2554,21 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       const existing = current.askFollowupQueue.find((candidate) => candidate.entryId === head.entryId)
       if (!existing) {
         return {}
+      }
+      const mismatchReason = getAskThreadRouteMismatchReason(result)
+      if (mismatchReason !== null) {
+        const clearedQueue: AskFollowupQueueEntry[] = []
+        persistAskQueueForCurrentThread(current, clearedQueue)
+        return {
+          askFollowupQueue: clearedQueue,
+          askQueuePauseReason: evaluateAskQueuePauseReason({
+            ...current,
+            askFollowupQueue: clearedQueue,
+            streamStatus: 'error',
+          }),
+          streamStatus: 'error',
+          error: mismatchReason,
+        }
       }
       let nextQueue: AskFollowupQueueEntry[]
       if (result.ok) {
