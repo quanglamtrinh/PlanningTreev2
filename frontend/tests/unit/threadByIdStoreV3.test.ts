@@ -244,6 +244,7 @@ function setAskQueueRuntimeState(
     isLoading: false,
     isSending: false,
     streamStatus: 'open',
+    askFollowupQueueEnabled: true,
     askFollowupQueue: [],
     askQueuePauseReason: 'none',
     ...overrides,
@@ -318,6 +319,7 @@ describe('threadByIdStoreV3', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useThreadByIdStoreV3.getState().disconnectThread()
+    useThreadByIdStoreV3.setState({ askFollowupQueueEnabled: true })
     globalThis.localStorage.clear()
   })
 
@@ -649,7 +651,7 @@ describe('threadByIdStoreV3', () => {
       ['isLoading', 'isSending', 'lastCompletedAt', 'lastDurationMs', 'snapshot'].sort(),
     )
     expect(Object.keys(askQueue).sort()).toEqual(
-      ['activeThreadRole', 'askFollowupQueue', 'askQueuePauseReason', 'isSending'].sort(),
+      ['activeThreadRole', 'askFollowupQueueEnabled', 'askFollowupQueue', 'askQueuePauseReason', 'isSending'].sort(),
     )
     expect(Object.keys(askActions).sort()).toEqual(
       ['confirmQueued', 'removeQueued', 'reorderAskQueued', 'retryAskQueued', 'sendAskQueuedNow'].sort(),
@@ -1744,6 +1746,63 @@ describe('threadByIdStoreV3', () => {
     expect(state.askFollowupQueue).toHaveLength(0)
     expect(state.snapshot?.activeTurnId).toBe('ask-turn-2')
     expect(state.snapshot?.processingState).toBe('running')
+  })
+
+  it('uses direct-send path for ask lane when ask follow-up queue gate is disabled', async () => {
+    apiMock.startThreadTurnByIdV3.mockResolvedValue({
+      threadId: 'ask-thread-1',
+      turnId: 'ask-turn-direct',
+      snapshotVersion: 2,
+    })
+    setAskQueueRuntimeState({
+      askFollowupQueueEnabled: false,
+      snapshot: makeAskSnapshot({
+        activeTurnId: null,
+        processingState: 'idle',
+      }),
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendTurn('ask direct send')
+    })
+
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(1)
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledWith(
+      'project-1',
+      'node-1',
+      'ask-thread-1',
+      'ask direct send',
+      expect.objectContaining({
+        idempotencyKey: expect.stringMatching(/^ask_turn:/),
+      }),
+    )
+    expect(useThreadByIdStoreV3.getState().askFollowupQueue).toHaveLength(0)
+    expect(globalThis.localStorage.getItem(askQueueStorageKey())).toBeNull()
+  })
+
+  it('skips ask queue hydration and clears persisted ask queue when gate is disabled', async () => {
+    globalThis.localStorage.setItem(
+      askQueueStorageKey(),
+      JSON.stringify([
+        makeAskQueueEntry({
+          entryId: 'ask-persisted-queued',
+          text: 'persisted queued ask',
+          status: 'queued',
+        }),
+      ]),
+    )
+    useThreadByIdStoreV3.setState({ askFollowupQueueEnabled: false })
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeAskSnapshot())
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().loadThread('project-1', 'node-1', 'ask-thread-1', 'ask_planning')
+    })
+
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.askFollowupQueueEnabled).toBe(false)
+    expect(state.askFollowupQueue).toHaveLength(0)
+    expect(globalThis.localStorage.getItem(askQueueStorageKey())).toBeNull()
+    expect(apiMock.startThreadTurnByIdV3).toHaveBeenCalledTimes(0)
   })
 
   it('blocks ask auto-flush for stream mismatch and waiting user input', async () => {

@@ -108,6 +108,10 @@ def is_ask_v3_frontend_enabled() -> bool:
     return _bool_env("PLANNINGTREE_ASK_V3_FRONTEND_ENABLED", default=True)
 
 
+def is_ask_followup_queue_enabled() -> bool:
+    return _bool_env("PLANNINGTREE_ASK_FOLLOWUP_QUEUE_ENABLED", default=False)
+
+
 def get_rehearsal_workspace_root() -> Optional[Path]:
     raw = str(os.environ.get("PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT", "") or "").strip()
     if not raw:

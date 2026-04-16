@@ -172,6 +172,7 @@ function seedStores(options: {
       workspace_configured: true,
       codex_available: true,
       codex_path: 'codex',
+      ask_followup_queue_enabled: true,
     },
     snapshot: makeProjectSnapshot(nodeKind),
     selectedNodeId: 'root',
@@ -216,6 +217,7 @@ function seedStores(options: {
   } as Partial<ReturnType<typeof useWorkflowStateStoreV3.getState>>)
   useThreadByIdStoreV3.setState({
     snapshot: threadSnapshot,
+    askFollowupQueueEnabled: true,
     loadThread: vi.fn().mockResolvedValue(undefined),
     sendTurn: vi.fn().mockResolvedValue(undefined),
     resolveUserInput: vi.fn().mockResolvedValue(undefined),
@@ -640,6 +642,65 @@ describe('BreadcrumbChatViewV2', () => {
     expect(removeQueued).toHaveBeenCalledWith('ask-queued-1')
     expect(confirmQueued).toHaveBeenCalledWith('ask-blocked-1')
     expect(retryAskQueued).toHaveBeenCalledWith('ask-failed-1')
+  })
+
+  it('hides ask queue panel when ask follow-up queue rollout gate is disabled', async () => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        askThreadId: 'ask-thread-1',
+      }),
+      threadSnapshot: makeConversationSnapshot({
+        threadId: 'ask-thread-1',
+        threadRole: 'ask_planning',
+      }),
+    })
+    useProjectStore.setState((state) => ({
+      ...state,
+      bootstrap: {
+        ...(state.bootstrap ?? {
+          ready: true,
+          workspace_configured: true,
+          codex_available: true,
+          codex_path: 'codex',
+        }),
+        ask_followup_queue_enabled: false,
+      },
+    }))
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      activeThreadRole: 'ask_planning',
+      askFollowupQueue: [
+        {
+          entryId: 'ask-hidden-1',
+          text: 'hidden ask entry',
+          idempotencyKey: 'ask-hidden-idem',
+          createdAtMs: Date.now(),
+          enqueueContext: {
+            threadId: 'ask-thread-1',
+            snapshotVersion: 1,
+            staleMarker: false,
+          },
+          status: 'queued',
+          attemptCount: 0,
+          lastError: null,
+          confirmationReason: null,
+        },
+      ],
+      askQueuePauseReason: 'none',
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('ask-followup-queue-panel')).not.toBeInTheDocument()
   })
 
   it('disables ask send-now for non-head and non-queued entries', async () => {

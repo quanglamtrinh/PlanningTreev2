@@ -1,0 +1,8 @@
+{
+  "candidate_metrics": {
+    "ask_rollback_drill_failures": 0,
+    "ask_rollback_drills_total": 12,
+    "ask_rollback_recovery_time_seconds_p95": 25,
+    "ask_rollback_execution_regression_events": 0
+  }
+}

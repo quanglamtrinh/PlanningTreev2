@@ -49,7 +49,7 @@ Phase: `phase-a6-recovery-edge-hardening` (`AQ6`).
 1. `npm run check:freeze_all` -> pass
 2. `npm run check:ask_migration_freeze` -> pass
 3. `npm run typecheck --prefix frontend` -> pass
-4. `npx vitest run tests/unit/threadByIdStoreV3.test.ts tests/unit/BreadcrumbChatViewV2.test.tsx` -> pass (`2 files, 66 tests passed`)
+4. `npm run test:unit --prefix frontend -- threadByIdStoreV3.test.ts BreadcrumbChatViewV2.test.tsx` -> pass (`2 files, 66 tests passed`)
 5. `python -m pytest backend/tests/integration/test_chat_v3_api_execution_audit.py -k "ask_reset_by_id_clears_thread_snapshot or ask_reset_by_id_publishes_workflow_update or ask_idempotency_scope_does_not_cross_reset_to_new_thread"` -> pass (`3 passed`)
 6. `python scripts/ask_phase_a6_reload_recovery_suite.py --self-test --candidate docs/render/ask-migration-phases/phase-a6-recovery-edge-hardening/evidence/candidates/ask_reload_recovery_suite-candidate.json --candidate-commit-sha local-check` -> pass
 7. `python scripts/ask_phase_a6_reconnect_duplicate_guard_suite.py --self-test --candidate docs/render/ask-migration-phases/phase-a6-recovery-edge-hardening/evidence/candidates/ask_reconnect_duplicate_guard_suite-candidate.json --candidate-commit-sha local-check` -> pass

@@ -154,6 +154,7 @@ export function BreadcrumbChatViewV2() {
     setOperatorPause,
     syncExecutionQueueContext,
   } = useThreadByIdStoreV3(useShallow(selectExecutionFollowupQueueActions))
+  const setAskFollowupQueueEnabled = useThreadByIdStoreV3((state) => state.setAskFollowupQueueEnabled)
   const {
     removeQueued: removeAskQueued,
     confirmQueued: confirmAskQueued,
@@ -164,6 +165,7 @@ export function BreadcrumbChatViewV2() {
 
   const {
     activeProjectId,
+    bootstrap,
     snapshot,
     selectedNodeId,
     isLoadingSnapshot,
@@ -173,6 +175,7 @@ export function BreadcrumbChatViewV2() {
   } = useProjectStore(
     useShallow((state) => ({
       activeProjectId: state.activeProjectId,
+      bootstrap: state.bootstrap,
       snapshot: state.snapshot,
       selectedNodeId: state.selectedNodeId,
       isLoadingSnapshot: state.isLoadingSnapshot,
@@ -420,6 +423,7 @@ export function BreadcrumbChatViewV2() {
   const executionQueueHasSending = executionQueueEntries.some((entry) => entry.status === 'sending')
   const executionQueueControlsDisabled = executionQueueHasSending || executionQueueState.isSending
   const executionQueuePauseLabel = renderQueuePauseReasonLabel(executionQueueState.executionQueuePauseReason)
+  const askQueueEnabled = bootstrap?.ask_followup_queue_enabled === true
   const askQueueEntries = askQueueState.askFollowupQueue
   const askQueueHasSending = askQueueEntries.some((entry) => entry.status === 'sending')
   const askQueueControlsDisabled = askQueueHasSending || askQueueState.isSending
@@ -462,6 +466,13 @@ export function BreadcrumbChatViewV2() {
     },
     [enqueueFollowup, loadWorkflowState, nodeId, projectId, sendTurn, threadTab],
   )
+
+  useEffect(() => {
+    if (askQueueState.askFollowupQueueEnabled === askQueueEnabled) {
+      return
+    }
+    setAskFollowupQueueEnabled(askQueueEnabled)
+  }, [askQueueEnabled, askQueueState.askFollowupQueueEnabled, setAskFollowupQueueEnabled])
 
   useEffect(() => {
     if (threadTab !== 'execution') {
@@ -865,7 +876,7 @@ export function BreadcrumbChatViewV2() {
                   )}
                 </section>
               ) : null}
-              {threadTab === 'ask' ? (
+              {threadTab === 'ask' && askQueueState.askFollowupQueueEnabled ? (
                 <section
                   className={styles.askQueuePanel}
                   aria-label="Queued ask follow-ups"
