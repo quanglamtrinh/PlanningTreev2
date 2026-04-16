@@ -1,8 +1,27 @@
 # Phase A6 - Recovery and Edge-case Hardening
 
-Status: Planned.
+Status: Completed.
 
 Phase ID: `AQ6`.
+
+Date completed: 2026-04-15.
+
+## Completion Snapshot
+
+1. Ask queue recovery logic is hardened for reload/reconnect/reset/failure paths.
+2. Ask queue hydration keeps strict thread-key scoping and deterministic status normalization:
+   - `sending -> queued`
+   - `requires_confirmation` preserved across reload
+3. Ask reconnect behavior keeps single-flight safety and prevents duplicate head dispatch across reconnect loops.
+4. Ask thread route mismatch (`invalid_request`) after reset is classified and handled by policy:
+   - clear ask queue (no rebind)
+   - persist cleared queue
+   - mark stream/state mismatch-safe pause state
+5. Ask by-id reset behavior is explicit and deterministic:
+   - supported only for `ask_planning`
+   - clears ask snapshot state
+   - publishes workflow update event to refresh workflow/detail bridges
+6. AQ6 evidence automation and gate report are delivered and pass.
 
 ## Objective
 
@@ -16,7 +35,7 @@ Harden ask queue behavior across reconnect, reload, reset, and failure scenarios
 2. Reconnect safety:
    - queue behavior under stream reconnect and replay mismatch
 3. Reset behavior:
-   - explicit policy when ask thread reset occurs
+   - explicit reset policy under ask thread mismatch paths
 4. Failure handling:
    - retry and error-state transitions remain deterministic
 
@@ -24,17 +43,14 @@ Harden ask queue behavior across reconnect, reload, reset, and failure scenarios
 
 1. New UX features beyond hardening.
 2. Production rollout policy (A7).
+3. Observability/rollout-safety layer expansion beyond frozen AQ6 contracts.
 
 ## Implementation Plan
 
-1. Define ask queue storage keys and cleanup policy by thread identity.
-2. Add reset hook behavior:
-   - clear or rebind queue according to frozen A0 contract.
-3. Add reconnect guards:
-   - avoid duplicate send attempts during reconnect loops.
-4. Strengthen error transitions:
-   - `sending -> failed`
-   - `failed -> queued` via retry/confirm action.
+1. Harden ask queue recovery transitions in `threadByIdStoreV3`.
+2. Enforce reset-by-id policy consistency in backend `workflow_v3`.
+3. Add AQ6 candidate-backed source evidence generators and gate report automation.
+4. Keep execution queue behavior and audit-lane read-only boundaries unchanged.
 
 ## Quality Gates
 
@@ -47,29 +63,22 @@ Harden ask queue behavior across reconnect, reload, reset, and failure scenarios
 
 ## Test Plan
 
-1. Unit tests:
-   - queue hydration/recovery transitions.
-2. Integration tests:
-   - reconnect during sending, then recovery and flush.
-   - ask reset while queue has pending entries.
-3. Manual checks:
-   - browser refresh with queued ask entries and continued sending.
+1. Frontend unit tests:
+   - hydration/recovery transitions and mismatch reset handling.
+2. Backend integration tests:
+   - reset-by-id contract, idempotency scope after reset, workflow update publish.
+3. Evidence self-tests:
+   - AQ6 source suites and gate report contract checks.
 
 ## Risks and Mitigations
 
 1. Risk: stale storage causes wrong queue reattach.
-   - Mitigation: strict key scoping and metadata validation before hydrate.
-2. Risk: reset semantics surprise users.
-   - Mitigation: explicit UI message and documented policy.
+   - Mitigation: strict storage key scoping by project/node/thread and normalized hydrate transitions.
+2. Risk: reset mismatch causes stale UI state.
+   - Mitigation: backend workflow update publish plus frontend mismatch classification and queue clear policy.
 
 ## Exit Criteria
 
-1. Recovery behavior is deterministic and tested for critical edges.
-2. Ask queue no longer has known high-risk failure gaps.
-
-## Effort Estimate
-
-- Size: Medium
-- Estimated duration: 3-4 engineering days
-- Suggested staffing: 1 frontend + 1 backend support
-
+1. Recovery behavior is deterministic and test-covered for AQ6 paths.
+2. AQ6 gate sources are candidate-backed, gate-eligible, and passing.
+3. No known A6 blocker remains before A7 handoff.
