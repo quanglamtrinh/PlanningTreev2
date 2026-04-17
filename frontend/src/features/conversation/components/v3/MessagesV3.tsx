@@ -46,7 +46,7 @@ import {
   resetMessagesV3ProfilingState,
   type MessagesV3Phase10Mode,
 } from './messagesV3ProfilingHooks'
-import { useThreadByIdStoreV3 } from '../../state/threadByIdStoreV3'
+import { selectStreamingTextLaneByItem, useThreadByIdStoreV3 } from '../../state/threadByIdStoreV3'
 import {
   buildParseCacheKey,
   PARSE_CACHE_RENDERER_VERSION,
@@ -797,14 +797,19 @@ function CommandOutputViewportV3({
   )
 }
 
-function MessageRowV3({
-  item,
-  streamingTextOverride,
-}: {
-  item: Extract<ConversationItemV3, { kind: 'message' }>
-  streamingTextOverride?: string | null
-}) {
+function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'message' }> }) {
   emitRowRenderProfileForItem(item)
+  const streamingTextOverride = useThreadByIdStoreV3(
+    useCallback(
+      (state) => {
+        if (item.role !== 'assistant' || item.status !== 'in_progress') {
+          return null
+        }
+        return selectStreamingTextLaneByItem(state, item.threadId, item.id)?.text ?? null
+      },
+      [item.id, item.role, item.status, item.threadId],
+    ),
+  )
   const phase11Mode = resolveMessagesV3Phase11Mode(null)
 
   const roleClass =
@@ -1954,7 +1959,6 @@ function renderItemRowV3({
   onToggleExpanded,
   onRequestAutoScroll,
   onOpenFullArtifact,
-  streamingTextLaneByItemId,
 }: {
   item: ConversationItemV3
   requestMapByRequestId: Map<string, PendingUserInputRequestV3>
@@ -1963,16 +1967,12 @@ function renderItemRowV3({
   onToggleExpanded: (itemId: string) => void
   onRequestAutoScroll: () => void
   onOpenFullArtifact: (title: string, content: string) => void
-  streamingTextLaneByItemId: Map<string, string>
 }) {
   const isExpanded = expandedItemIds.has(item.id)
 
   if (item.kind === 'message') {
     return (
-      <MemoMessageRowV3
-        item={item}
-        streamingTextOverride={streamingTextLaneByItemId.get(item.id) ?? null}
-      />
+      <MemoMessageRowV3 item={item} />
     )
   }
   if (item.kind === 'reasoning') {
@@ -2097,23 +2097,6 @@ export function MessagesV3({
   const threadFallbackActive = threadFallbackReason != null
   const pendingRequests = snapshot?.uiSignals.activeUserInputRequests ?? []
   const requestMapByRequestId = useMemo(() => requestByRequestId(pendingRequests), [pendingRequests])
-  const streamingTextLane = useThreadByIdStoreV3((state) => state.streamingTextLane)
-  const streamingTextLaneByItemId = useMemo(() => {
-    const map = new Map<string, string>()
-    if (!threadId) {
-      return map
-    }
-    for (const item of snapshot?.items ?? []) {
-      if (item.kind !== 'message' || item.role !== 'assistant' || item.status !== 'in_progress') {
-        continue
-      }
-      const lane = streamingTextLane[`${threadId}::${item.id}`]
-      if (lane?.text) {
-        map.set(item.id, lane.text)
-      }
-    }
-    return map
-  }, [snapshot?.items, streamingTextLane, threadId])
 
   useEffect(() => {
     resetMessagesV3ProfilingState()
@@ -2776,7 +2759,6 @@ export function MessagesV3({
               onToggleExpanded: toggleExpanded,
               onRequestAutoScroll: requestAutoScroll,
               onOpenFullArtifact: openFullArtifact,
-              streamingTextLaneByItemId,
             })}
           </div>
         )
@@ -2805,7 +2787,6 @@ export function MessagesV3({
                         onToggleExpanded: toggleExpanded,
                         onRequestAutoScroll: requestAutoScroll,
                         onOpenFullArtifact: openFullArtifact,
-                        streamingTextLaneByItemId,
                       })}
                     </div>
                   )
@@ -2822,7 +2803,6 @@ export function MessagesV3({
       requestAutoScroll,
       toggleExpanded,
       openFullArtifact,
-      streamingTextLaneByItemId,
       visibleState.reasoningMetaById,
     ],
   )
@@ -3005,6 +2985,12 @@ export function MessagesV3({
     </div>
   )
 }
+
+
+
+
+
+
 
 
 

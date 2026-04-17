@@ -219,6 +219,12 @@ Prevent “whole list rerender” during streaming.
 ### Exit criteria
 - row render profile confirms only active streaming row updates for text deltas.
 
+### Phase 14.4 completion note
+- Moved streaming lane subscription from list-level `MessagesV3` into row-level `MessageRowV3` selector keyed by `(threadId, itemId)`.
+- Removed list-level `streamingTextLaneByItemId` map wiring from grouped render path.
+- Added profiling unit test asserting lane updates rerender targeted active row without rerendering stable neighbor rows.
+- Verified via frontend typecheck + unit suite.
+
 ---
 
 ## Phase 14.5 — Markdown-safe Stream Rendering (4 days)

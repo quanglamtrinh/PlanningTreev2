@@ -1,8 +1,9 @@
-import { render } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConversationItemV3, ThreadSnapshotV3 } from '../../src/api/types'
 import { MessagesV3 } from '../../src/features/conversation/components/v3/MessagesV3'
+import { useThreadByIdStoreV3 } from '../../src/features/conversation/state/threadByIdStoreV3'
 import {
   buildParseCacheKey,
   PARSE_CACHE_RENDERER_VERSION,
@@ -375,5 +376,69 @@ describe('MessagesV3 profiling hooks', () => {
     rerender(<MessagesV3 snapshot={snapshotB} isLoading={false} onResolveUserInput={onResolveUserInput} />)
 
     expect(emitParseCacheTrace(threadATrace).hit).toBe(false)
+  })
+
+  it('rerenders only targeted active message row when streaming lane updates', async () => {
+    setMessagesV3ProfilingRuntimeOverrideForTests({ mode: 'development', envFlagValue: '' })
+    const rowEvents: RowRenderProfileEvent[] = []
+    setMessagesV3ProfilingHooks({
+      onRowRender: (event) => rowEvents.push(event),
+    })
+
+    const onResolveUserInput = vi.fn().mockResolvedValue(undefined)
+    const snapshot = makeSnapshot({
+      items: [
+        {
+          ...makeMessageItem({
+            itemId: 'msg-target',
+            updatedAt: '2026-04-13T03:00:00Z',
+            text: 'Target base',
+            sequence: 1,
+          }),
+          status: 'in_progress',
+        },
+        makeMessageItem({
+          itemId: 'msg-stable',
+          updatedAt: '2026-04-13T03:00:01Z',
+          text: 'Stable neighbor',
+          sequence: 2,
+        }),
+      ],
+    })
+
+    render(<MessagesV3 snapshot={snapshot} isLoading={false} onResolveUserInput={onResolveUserInput} />)
+
+    const baselineTarget = rowEvents.filter((event) => event.itemId === 'msg-target').length
+    const baselineStable = rowEvents.filter((event) => event.itemId === 'msg-stable').length
+
+    act(() => {
+      useThreadByIdStoreV3.setState((state) => ({
+        ...state,
+        streamingTextLane: {
+          ...state.streamingTextLane,
+          'thread-1::msg-target': {
+            threadId: 'thread-1',
+            itemId: 'msg-target',
+            text: 'Target lane text',
+            updatedAtMs: Date.now(),
+          },
+        },
+      }))
+    })
+
+    await waitFor(() => {
+      const nextTarget = rowEvents.filter((event) => event.itemId === 'msg-target').length
+      expect(nextTarget).toBeGreaterThan(baselineTarget)
+    })
+
+    const nextStable = rowEvents.filter((event) => event.itemId === 'msg-stable').length
+    expect(nextStable).toBe(baselineStable)
+
+    act(() => {
+      useThreadByIdStoreV3.setState((state) => ({
+        ...state,
+        streamingTextLane: {},
+      }))
+    })
   })
 })
