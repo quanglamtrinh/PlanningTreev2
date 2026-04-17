@@ -673,7 +673,7 @@ describe('threadByIdStoreV3', () => {
       ['error', 'isLoading', 'isSending', 'lastCompletedAt', 'lastDurationMs', 'snapshot'].sort(),
     )
     expect(Object.keys(composer).sort()).toEqual(
-      ['isActiveTurn', 'isLoading', 'isSending', 'snapshot'].sort(),
+      ['earlyResponse', 'isActiveTurn', 'isLoading', 'isSending', 'snapshot'].sort(),
     )
     expect(Object.keys(transportBanner).sort()).toEqual(
       ['error', 'forcedReloadCount', 'lastForcedReloadReason', 'streamStatus'].sort(),
@@ -824,6 +824,74 @@ describe('threadByIdStoreV3', () => {
     expect(state.lastEventId).toBeNull()
     expect(state.telemetry.heartbeat_cursor_pollution_count).toBe(0)
     expect(state.telemetry.firstMeaningfulFrameLatencyMs).not.toBeNull()
+  })
+
+  it('transitions early-response phase from pending_send to stream_open to first_delta', async () => {
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeSnapshot())
+    apiMock.startThreadTurnByIdV3.mockResolvedValue({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      snapshotVersion: 2,
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendTurn('hello phase 14.6')
+    })
+
+    expect(selectComposerState(useThreadByIdStoreV3.getState()).earlyResponse.phase).toBe('pending_send')
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      eventSource.emitMessage(
+        JSON.stringify({
+          schema_version: 1,
+          event_type: 'stream_open',
+          thread_id: 'thread-1',
+          turn_id: null,
+          snapshot_version: 2,
+          occurred_at_ms: Date.parse('2026-04-01T00:00:01Z'),
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'execution',
+          occurredAt: '2026-04-01T00:00:01Z',
+          snapshotVersion: 2,
+          type: 'stream_open',
+          payload: {
+            streamStatus: 'open',
+            threadId: 'thread-1',
+            threadRole: 'execution',
+            snapshotVersion: 2,
+            processingState: 'running',
+            activeTurnId: 'turn-1',
+          },
+        }),
+      )
+    })
+
+    expect(selectComposerState(useThreadByIdStoreV3.getState()).earlyResponse.phase).toBe('stream_open')
+
+    await act(async () => {
+      eventSource.emitMessage(JSON.stringify(makeMessageUpsertEnvelope('3', 3, 'delta ready')))
+    })
+
+    await waitFor(() => {
+      expect(selectComposerState(useThreadByIdStoreV3.getState()).earlyResponse.phase).toBe('first_delta')
+    })
+
+    act(() => {
+      useThreadByIdStoreV3.getState().disconnectThread()
+    })
+
+    expect(selectComposerState(useThreadByIdStoreV3.getState()).earlyResponse.phase).toBe('idle')
   })
 
   it('uses legacy fallback parser path and tracks fallback counter', async () => {

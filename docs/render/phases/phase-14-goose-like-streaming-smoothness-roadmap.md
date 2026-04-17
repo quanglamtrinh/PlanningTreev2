@@ -284,6 +284,13 @@ Perceived instant response right after user submits.
 ### Exit criteria
 - UX audit confirms immediate feedback after send in ask and execution.
 
+### Phase 14.6 completion note
+- Added deterministic early-response state machine in `threadByIdStoreV3`: `idle -> pending_send -> stream_open -> first_delta -> idle`.
+- Wired transitions to send/start-action paths, stream-open envelopes, first business delta flush, terminal lifecycle/snapshot states, stream errors, and disconnect resets.
+- Exposed early-response state via `selectComposerState` and surfaced non-shifting composer status text in `ComposerBar` (`Sending...`, `Agent connected...`, `Responding...`).
+- Added unit coverage for store transitions and composer status rendering.
+- Verified with frontend typecheck + unit suite.
+
 ---
 
 ## Phase 14.7 — Resilience & Long-session Hardening (3 days)

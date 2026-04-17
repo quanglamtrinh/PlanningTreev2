@@ -987,6 +987,7 @@ export function BreadcrumbChatViewV2() {
                   void handleSend(content)
                 }}
                 disabled={composerDisabled}
+                earlyResponsePhase={composerStateV3.earlyResponse.phase}
               />
             </div>
           </div>
@@ -1008,3 +1009,5 @@ export function BreadcrumbChatViewV2() {
     </div>
   )
 }
+
+

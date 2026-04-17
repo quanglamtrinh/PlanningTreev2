@@ -342,6 +342,7 @@ export type ThreadByIdStoreV3State = {
   executionQueueWorkflowPhase: string | null
   executionQueueCanSendExecutionMessage: boolean
   executionQueueLatestExecutionRunId: string | null
+  earlyResponse: ThreadEarlyResponseState
 
   loadThread: (
     projectId: string,
@@ -453,11 +454,19 @@ export type ThreadHistoryUiState = {
   isLoadingHistory: boolean
   historyError: string | null
 }
+export type EarlyResponsePhase = 'idle' | 'pending_send' | 'stream_open' | 'first_delta'
+
+export type ThreadEarlyResponseState = {
+  phase: EarlyResponsePhase
+  pendingSinceMs: number | null
+}
+
 export type ThreadComposerState = {
   snapshot: ThreadSnapshotV3 | null
   isLoading: boolean
   isSending: boolean
   isActiveTurn: boolean
+  earlyResponse: ThreadEarlyResponseState
 }
 export type ThreadTransportBannerState = {
   streamStatus: ThreadByIdStreamStatusV3
@@ -612,6 +621,7 @@ export function selectComposerState(state: ThreadByIdStoreV3State): ThreadCompos
     isLoading: state.isLoading,
     isSending: state.isSending,
     isActiveTurn: Boolean(state.snapshot?.activeTurnId),
+    earlyResponse: state.earlyResponse,
   }
 }
 
@@ -650,6 +660,7 @@ type ThreadDomainPatch = {
   core?: ThreadCorePatch
   transport?: ThreadTransportPatch
   uiControl?: ThreadUiControlPatch
+  earlyResponse?: ThreadEarlyResponseState
 }
 
 function composeDomainPatch(...patches: ThreadDomainPatch[]): Partial<ThreadByIdStoreV3State> {
@@ -663,6 +674,9 @@ function composeDomainPatch(...patches: ThreadDomainPatch[]): Partial<ThreadById
     }
     if (patch.uiControl) {
       Object.assign(merged, patch.uiControl)
+    }
+    if (patch.earlyResponse) {
+      merged.earlyResponse = patch.earlyResponse
     }
   }
   return merged
@@ -1338,6 +1352,32 @@ function completeProcessingTelemetry(state: ProcessingTelemetryState): Processin
   }
 }
 
+const EARLY_RESPONSE_DELAY_WARNING_MS = 1200
+
+function resetEarlyResponseState(): ThreadEarlyResponseState {
+  return {
+    phase: 'idle',
+    pendingSinceMs: null,
+  }
+}
+
+function buildPendingSendEarlyResponse(previous: ThreadEarlyResponseState): ThreadEarlyResponseState {
+  return {
+    phase: 'pending_send',
+    pendingSinceMs: previous.pendingSinceMs ?? Date.now(),
+  }
+}
+
+function buildEarlyResponsePhase(
+  phase: Exclude<EarlyResponsePhase, 'pending_send'>,
+  previous: ThreadEarlyResponseState,
+): ThreadEarlyResponseState {
+  return {
+    phase,
+    pendingSinceMs: previous.pendingSinceMs,
+  }
+}
+
 function buildDisconnectedStatePatch(): ThreadRuntimeStateV3 {
   return {
     snapshot: null,
@@ -1368,6 +1408,7 @@ function buildDisconnectedStatePatch(): ThreadRuntimeStateV3 {
     executionQueueWorkflowPhase: null,
     executionQueueCanSendExecutionMessage: false,
     executionQueueLatestExecutionRunId: null,
+    earlyResponse: resetEarlyResponseState(),
   }
 }
 
@@ -1419,6 +1460,7 @@ function buildThreadLoadStartPatch(
     executionQueueWorkflowPhase: null,
     executionQueueCanSendExecutionMessage: false,
     executionQueueLatestExecutionRunId: null,
+    earlyResponse: resetEarlyResponseState(),
   }
 }
 
@@ -2094,6 +2136,7 @@ async function openThreadEventStream(
                 Math.max(0, Date.now() - streamSubscribedAt),
             },
           },
+          earlyResponse: buildEarlyResponsePhase('stream_open', state.earlyResponse),
         },
       )
     })
@@ -2161,6 +2204,7 @@ async function openThreadEventStream(
     }
     let processingTelemetry = selectProcessingTelemetry(currentState)
     let shouldReconcileResolveFallback = false
+    let shouldResetEarlyResponse = false
     let legacyFallbackUsedCount = 0
     let appliedEventCount = 0
     let fastAppendHitCount = 0
@@ -2281,6 +2325,7 @@ async function openThreadEventStream(
           (nextSnapshot.processingState === 'idle' || nextSnapshot.processingState === 'failed')
         ) {
           processingTelemetry = completeProcessingTelemetry(processingTelemetry)
+          shouldResetEarlyResponse = true
         } else {
           processingTelemetry = seedRunningTelemetry(processingTelemetry, nextSnapshot)
         }
@@ -2302,6 +2347,7 @@ async function openThreadEventStream(
           event.payload.state === 'turn_failed'
         ) {
           processingTelemetry = completeProcessingTelemetry(processingTelemetry)
+          shouldResetEarlyResponse = true
         }
       }
     }
@@ -2370,6 +2416,9 @@ async function openThreadEventStream(
               fastAppendFallbackCount: state.telemetry.fastAppendFallbackCount + fastAppendFallbackCount,
             },
           },
+          earlyResponse: shouldResetEarlyResponse
+            ? resetEarlyResponseState()
+            : buildEarlyResponsePhase('first_delta', state.earlyResponse),
         },
       )
     })
@@ -2473,6 +2522,19 @@ async function openThreadEventStream(
     }
     clearQueuedBusinessFrames()
     closeThreadEventSource()
+    set((current) =>
+      composeDomainPatch({
+        earlyResponse: resetEarlyResponseState(),
+        uiControl: {
+          error:
+            current.earlyResponse.phase === 'pending_send' &&
+            current.earlyResponse.pendingSinceMs != null &&
+            Date.now() - current.earlyResponse.pendingSinceMs > EARLY_RESPONSE_DELAY_WARNING_MS
+              ? 'Waiting for stream response... reconnecting.'
+              : current.error,
+        },
+      }),
+    )
     scheduleStreamReopen(get, set, projectId, nodeId, threadId, threadRole, generation)
   }
 }
@@ -2659,12 +2721,13 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         sendMetadata.idempotencyKey = newExecutionQueueId('ask_turn')
       }
     }
-    set(
+    set((state) =>
       composeDomainPatch({
         uiControl: {
           isSending: true,
           error: null,
         },
+        earlyResponse: buildPendingSendEarlyResponse(state.earlyResponse),
       }),
     )
 
@@ -2755,6 +2818,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
             isSending: false,
             error: reason,
           },
+          earlyResponse: resetEarlyResponseState(),
         }),
       )
       return {
@@ -3415,12 +3479,13 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     }
 
     const generation = threadGeneration
-    set(
+    set((state) =>
       composeDomainPatch({
         uiControl: {
           isSending: true,
           error: null,
         },
+        earlyResponse: buildPendingSendEarlyResponse(state.earlyResponse),
       }),
     )
     try {
@@ -3481,6 +3546,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
             isSending: false,
             error: error instanceof Error ? error.message : String(error),
           },
+          earlyResponse: resetEarlyResponseState(),
         }),
       )
     }
@@ -3937,3 +4003,6 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
   },
   }
 })
+
+
+
