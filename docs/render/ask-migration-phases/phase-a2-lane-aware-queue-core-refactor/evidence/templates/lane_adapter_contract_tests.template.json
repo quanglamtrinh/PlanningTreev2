@@ -1,0 +1,19 @@
+﻿{
+    "phase":  "A2",
+    "gate_id":  "AQ2-G2",
+    "source":  "lane_adapter_contract_tests",
+    "generated_at":  "2026-04-14T00:00:00Z",
+    "evidence_mode":  "candidate",
+    "gate_eligible":  true,
+    "context":  {
+                    "candidate_path":  "docs/render/ask-migration-phases/phase-a2-lane-aware-queue-core-refactor/evidence/candidates/lane_adapter_contract_tests-candidate.json",
+                    "candidate_commit_sha":  "\u003ccommit-sha\u003e"
+                },
+    "metric":  "lane_adapter_contract_pass_rate_pct",
+    "value":  100,
+    "operator":  "gte",
+    "target":  100,
+    "unit":  "pct",
+    "pass":  true,
+    "notes":  "Template file: replace with measured values."
+}

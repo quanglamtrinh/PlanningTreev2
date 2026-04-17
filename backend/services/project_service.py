@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from backend.config.app_config import (
     get_codex_cmd,
+    is_ask_followup_queue_enabled,
     is_ask_v3_backend_enabled,
     is_ask_v3_frontend_enabled,
 )
@@ -39,6 +40,7 @@ class ProjectService:
             "codex_path": codex_path,
             "ask_v3_backend_enabled": is_ask_v3_backend_enabled(),
             "ask_v3_frontend_enabled": is_ask_v3_frontend_enabled(),
+            "ask_followup_queue_enabled": is_ask_followup_queue_enabled(),
         }
 
     def list_projects(self) -> list[dict[str, Any]]:

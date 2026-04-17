@@ -1,0 +1,8 @@
+{
+  "candidate_metrics": {
+    "ask_reconnect_duplicate_send_events": 0,
+    "ask_reconnect_cycles_checked": 32,
+    "ask_reconnect_replay_overlap_duplicate_events": 0,
+    "ask_reconnect_idempotency_collision_events": 0
+  }
+}

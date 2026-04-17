@@ -15,11 +15,41 @@ import {
 } from './applyThreadEventV3'
 import type { ThreadBusinessEventV3, ThreadStreamOpenEnvelopeV3 } from './threadEventRouter'
 import { parseThreadEventEnvelopeV3 } from './threadEventRouter'
+import {
+  enqueueQueueEntry,
+  markQueueEntryConfirmed,
+  markQueueEntryFailed,
+  markQueueEntryRequiresConfirmation,
+  markQueueEntrySending,
+  nextEligibleQueueEntry,
+  normalizeQueueEntryStatus,
+  queueHasSending,
+  removeQueueEntry,
+  reorderQueueEntries,
+  retryQueueEntry,
+} from './threadQueueCoreV3'
+import type { QueueCoreEntry, QueueEntryStatus, QueueLane } from './threadQueueCoreV3'
+import {
+  laneQueuePolicyAdapters,
+  resolveAskQueueConfirmationReason,
+  type AskQueueConfirmationReason,
+  type AskQueueContext,
+  type AskQueuePauseReason,
+  type AskQueuePolicyState,
+  type AskSendWindowOptions,
+  type ExecutionQueueContext,
+  type ExecutionQueuePauseReason,
+  type ExecutionQueuePolicyState,
+  type ExecutionSendWindowOptions,
+} from './threadQueuePolicyAdaptersV3'
 
 const SSE_RECONNECT_RETRY_MS = 1000
 const USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS = 1500
-const FRAME_BATCH_FALLBACK_FLUSH_MS = 16
-const FRAME_BATCH_MAX_QUEUE_AGE_MS = 50
+const THREAD_STREAM_LOW_LATENCY_ENV_FLAG = 'VITE_THREAD_STREAM_LOW_LATENCY'
+const FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT = 16
+const FRAME_BATCH_PRIORITY_FLUSH_MS_LOW_LATENCY = 8
+const FRAME_BATCH_MAX_QUEUE_AGE_MS_DEFAULT = 50
+const FRAME_BATCH_MAX_QUEUE_AGE_MS_LOW_LATENCY = 25
 const SCROLLBACK_SOFT_CAP = 1000
 const PHASE12_CAP_PROFILE_ENV_FLAG = 'VITE_PTM_PHASE12_CAP_PROFILE'
 const DEFAULT_PHASE12_CAP_PROFILE: Phase12CapProfile = 'standard'
@@ -30,8 +60,10 @@ const PHASE12_CAP_HEADROOM_BY_PROFILE: Record<Phase12CapProfile, number> = {
 }
 const HISTORY_PAGE_LIMIT = 200
 const EXECUTION_FOLLOWUP_QUEUE_STORAGE_PREFIX = 'ptm:v3:execution-followup-queue:'
-const EXECUTION_FOLLOWUP_AUTO_SEND_MAX_AGE_MS = 90_000
 const EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS = 20
+const ASK_FOLLOWUP_QUEUE_STORAGE_PREFIX = 'ptm:v3:ask-followup-queue:'
+const ASK_FOLLOWUP_QUEUE_MAX_ITEMS = 20
+const ASK_THREAD_ROUTE_MISMATCH_ERROR_SUBSTRING = 'thread id does not match any active route for this node'
 
 export type Phase12CapProfile = 'low' | 'standard' | 'high'
 export type Phase12CapPolicy = {
@@ -50,6 +82,22 @@ function normalizePhase12CapProfile(value: string | null | undefined): Phase12Ca
     return normalized
   }
   return null
+}
+
+function resolveBooleanEnvFlag(value: unknown, fallback: boolean): boolean {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+  if (!normalized) {
+    return fallback
+  }
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false
+  }
+  return fallback
 }
 
 function resolveDeviceMemoryHint(): number | null {
@@ -106,30 +154,32 @@ export function resolvePhase12CapPolicy(options: {
   }
 }
 
+const THREAD_STREAM_LOW_LATENCY_ENABLED = resolveBooleanEnvFlag(
+  (import.meta.env as Record<string, unknown>)[THREAD_STREAM_LOW_LATENCY_ENV_FLAG],
+  true,
+)
+const FRAME_BATCH_FALLBACK_FLUSH_MS = FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT
+const FRAME_BATCH_PRIORITY_FLUSH_MS = THREAD_STREAM_LOW_LATENCY_ENABLED
+  ? FRAME_BATCH_PRIORITY_FLUSH_MS_LOW_LATENCY
+  : FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT
+const FRAME_BATCH_MAX_QUEUE_AGE_MS = THREAD_STREAM_LOW_LATENCY_ENABLED
+  ? FRAME_BATCH_MAX_QUEUE_AGE_MS_LOW_LATENCY
+  : FRAME_BATCH_MAX_QUEUE_AGE_MS_DEFAULT
+
 const SCROLLBACK_CAP_POLICY = resolvePhase12CapPolicy()
 const SNAPSHOT_LIVE_LIMIT = SCROLLBACK_CAP_POLICY.softCap
 
 export type ThreadByIdStreamStatusV3 = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'error'
-export type ExecutionFollowupQueueStatus = 'queued' | 'requires_confirmation' | 'sending' | 'failed'
-export type ExecutionFollowupQueuePauseReason =
-  | 'none'
-  | 'runtime_waiting_input'
-  | 'plan_ready_gate'
-  | 'operator_pause'
-  | 'workflow_blocked'
-export type ExecutionFollowupEnqueueContext = {
-  latestExecutionRunId: string | null
-  planReadyRevision: number | null
-}
-export type ExecutionFollowupQueueEntry = {
-  entryId: string
-  text: string
-  idempotencyKey: string
-  createdAtMs: number
-  enqueueContext: ExecutionFollowupEnqueueContext
-  status: ExecutionFollowupQueueStatus
-  attemptCount: number
-  lastError: string | null
+export type { QueueLane }
+export type ExecutionFollowupQueueStatus = QueueEntryStatus
+export type ExecutionFollowupQueuePauseReason = ExecutionQueuePauseReason
+export type ExecutionFollowupEnqueueContext = ExecutionQueueContext
+export type ExecutionFollowupQueueEntry = QueueCoreEntry<ExecutionFollowupEnqueueContext>
+export type AskFollowupQueueStatus = QueueEntryStatus
+export type AskFollowupQueuePauseReason = AskQueuePauseReason
+export type AskFollowupEnqueueContext = AskQueueContext
+export type AskFollowupQueueEntry = QueueCoreEntry<AskFollowupEnqueueContext> & {
+  confirmationReason?: AskQueueConfirmationReason | null
 }
 export type ReloadReasonCode =
   | 'REPLAY_MISS'
@@ -182,6 +232,9 @@ export type ThreadByIdStoreV3State = {
   historyError: string | null
   executionFollowupQueue: ExecutionFollowupQueueEntry[]
   executionQueuePauseReason: ExecutionFollowupQueuePauseReason
+  askFollowupQueueEnabled: boolean
+  askFollowupQueue: AskFollowupQueueEntry[]
+  askQueuePauseReason: AskFollowupQueuePauseReason
   executionQueueOperatorPaused: boolean
   executionQueueWorkflowPhase: string | null
   executionQueueCanSendExecutionMessage: boolean
@@ -208,6 +261,10 @@ export type ThreadByIdStoreV3State = {
   sendQueuedNow: (entryId: string) => Promise<void>
   confirmQueued: (entryId: string) => Promise<void>
   retryQueued: (entryId: string) => Promise<void>
+  reorderAskQueued: (fromIndex: number, toIndex: number) => void
+  sendAskQueuedNow: (entryId: string) => Promise<void>
+  retryAskQueued: (entryId: string) => Promise<void>
+  setAskFollowupQueueEnabled: (enabled: boolean) => void
   setOperatorPause: (paused: boolean) => void
   syncExecutionQueueContext: (context: {
     workflowPhase: string | null
@@ -266,6 +323,14 @@ export type ThreadExecutionFollowupQueueActions = Pick<
   | 'retryQueued'
   | 'setOperatorPause'
   | 'syncExecutionQueueContext'
+>
+export type ThreadAskFollowupQueueState = Pick<
+  ThreadByIdStoreV3State,
+  'activeThreadRole' | 'askFollowupQueueEnabled' | 'askFollowupQueue' | 'askQueuePauseReason' | 'isSending'
+>
+export type ThreadAskFollowupQueueActions = Pick<
+  ThreadByIdStoreV3State,
+  'removeQueued' | 'confirmQueued' | 'reorderAskQueued' | 'sendAskQueuedNow' | 'retryAskQueued'
 >
 export type ThreadFeedRenderState = {
   snapshot: ThreadSnapshotV3 | null
@@ -374,6 +439,28 @@ export function selectExecutionFollowupQueueActions(
   }
 }
 
+export function selectAskFollowupQueueState(state: ThreadByIdStoreV3State): ThreadAskFollowupQueueState {
+  return {
+    activeThreadRole: state.activeThreadRole,
+    askFollowupQueueEnabled: state.askFollowupQueueEnabled,
+    askFollowupQueue: state.askFollowupQueue,
+    askQueuePauseReason: state.askQueuePauseReason,
+    isSending: state.isSending,
+  }
+}
+
+export function selectAskFollowupQueueActions(
+  state: ThreadByIdStoreV3State,
+): ThreadAskFollowupQueueActions {
+  return {
+    removeQueued: state.removeQueued,
+    confirmQueued: state.confirmQueued,
+    reorderAskQueued: state.reorderAskQueued,
+    sendAskQueuedNow: state.sendAskQueuedNow,
+    retryAskQueued: state.retryAskQueued,
+  }
+}
+
 export function selectFeedRenderState(state: ThreadByIdStoreV3State): ThreadFeedRenderState {
   const core = selectCore(state)
   const uiControl = selectUiControl(state)
@@ -430,7 +517,10 @@ type ThreadTransportPatch = Partial<ThreadTransportState>
 type ThreadUiControlPatch = Partial<ThreadUiControlState>
 type ThreadRuntimeStateV3 = Omit<
   ThreadByIdStoreV3State,
-  keyof ThreadActionHandlers | keyof ThreadExecutionFollowupQueueActions
+  | keyof ThreadActionHandlers
+  | keyof ThreadExecutionFollowupQueueActions
+  | keyof ThreadAskFollowupQueueActions
+  | 'setAskFollowupQueueEnabled'
 >
 type ThreadDomainPatch = {
   core?: ThreadCorePatch
@@ -459,6 +549,7 @@ let clearThreadEventStreamBuffers: (() => void) | null = null
 let reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 const resolveFallbackTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
 let threadGeneration = 0
+let requestAskQueueFlush: (() => void) | null = null
 
 type ProcessingTelemetryState = Pick<
   ThreadByIdStoreV3State,
@@ -520,17 +611,57 @@ function executionQueueStorageKey(projectId: string, nodeId: string, threadId: s
   return `${EXECUTION_FOLLOWUP_QUEUE_STORAGE_PREFIX}${projectId}::${nodeId}::${threadId}`
 }
 
+function askQueueStorageKey(projectId: string, nodeId: string, threadId: string): string {
+  return `${ASK_FOLLOWUP_QUEUE_STORAGE_PREFIX}${projectId}::${nodeId}::${threadId}`
+}
+
 function normalizeExecutionQueueStatus(value: unknown): ExecutionFollowupQueueStatus {
+  return normalizeQueueEntryStatus(value)
+}
+
+function normalizeAskQueueStatus(value: unknown): AskFollowupQueueStatus {
+  return normalizeQueueEntryStatus(value)
+}
+
+function normalizeAskQueueConfirmationReason(value: unknown): AskQueueConfirmationReason | null {
   const normalized = String(value ?? '').trim()
   if (
-    normalized === 'queued' ||
-    normalized === 'requires_confirmation' ||
-    normalized === 'sending' ||
-    normalized === 'failed'
+    normalized === 'stale_age' ||
+    normalized === 'thread_drift' ||
+    normalized === 'snapshot_drift' ||
+    normalized === 'stale_marker'
   ) {
     return normalized
   }
-  return 'queued'
+  return null
+}
+
+type StartThreadTurnRequestFailure = {
+  ok: false
+  error: string
+  status: number | null
+  code: string | null
+}
+
+type StartThreadTurnRequestResult = { ok: true } | StartThreadTurnRequestFailure
+
+function getAskThreadRouteMismatchReason(result: StartThreadTurnRequestResult): string | null {
+  if (result.ok) {
+    return null
+  }
+  const code = String(result.code ?? '')
+    .trim()
+    .toLowerCase()
+  const message = String(result.error ?? '')
+    .trim()
+    .toLowerCase()
+  if (code !== 'invalid_request') {
+    return null
+  }
+  if (!message.includes(ASK_THREAD_ROUTE_MISMATCH_ERROR_SUBSTRING)) {
+    return null
+  }
+  return result.error
 }
 
 function normalizeExecutionQueueEntry(raw: unknown): ExecutionFollowupQueueEntry | null {
@@ -574,6 +705,51 @@ function normalizeExecutionQueueEntry(raw: unknown): ExecutionFollowupQueueEntry
   }
 }
 
+function normalizeAskQueueEntry(raw: unknown): AskFollowupQueueEntry | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+  const source = raw as Record<string, unknown>
+  const entryId = String(source.entryId ?? '').trim()
+  const text = String(source.text ?? '').trim()
+  const idempotencyKey = String(source.idempotencyKey ?? '').trim()
+  const createdAtRaw = Number(source.createdAtMs)
+  const enqueueContextRaw =
+    source.enqueueContext && typeof source.enqueueContext === 'object'
+      ? (source.enqueueContext as Record<string, unknown>)
+      : {}
+  const threadId = String(enqueueContextRaw.threadId ?? '').trim() || null
+  const snapshotVersionRaw = enqueueContextRaw.snapshotVersion
+  const snapshotVersion =
+    typeof snapshotVersionRaw === 'number' && Number.isFinite(snapshotVersionRaw)
+      ? Math.max(0, Math.floor(snapshotVersionRaw))
+      : null
+  const staleMarker = Boolean(enqueueContextRaw.staleMarker)
+  const attemptCountRaw = Number(source.attemptCount)
+  const attemptCount =
+    Number.isFinite(attemptCountRaw) && attemptCountRaw >= 0 ? Math.floor(attemptCountRaw) : 0
+  const lastError = String(source.lastError ?? '').trim() || null
+  const confirmationReason = normalizeAskQueueConfirmationReason(source.confirmationReason)
+  if (!entryId || !text || !idempotencyKey || !Number.isFinite(createdAtRaw) || createdAtRaw <= 0) {
+    return null
+  }
+  return {
+    entryId,
+    text,
+    idempotencyKey,
+    createdAtMs: Math.floor(createdAtRaw),
+    enqueueContext: {
+      threadId,
+      snapshotVersion,
+      staleMarker,
+    },
+    status: normalizeAskQueueStatus(source.status),
+    attemptCount,
+    lastError,
+    confirmationReason,
+  }
+}
+
 function loadExecutionQueueFromStorage(
   projectId: string,
   nodeId: string,
@@ -595,12 +771,45 @@ function loadExecutionQueueFromStorage(
       .map((entry) => normalizeExecutionQueueEntry(entry))
       .filter((entry): entry is ExecutionFollowupQueueEntry => entry !== null)
       .slice(0, EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS)
+    // Recovery safety: previously persisted transient statuses should return to `queued`.
+    return normalized.map((entry) =>
+      entry.status === 'sending' || entry.status === 'requires_confirmation'
+        ? {
+            ...entry,
+            status: 'queued',
+          }
+        : entry,
+    )
+  } catch {
+    return []
+  }
+}
+
+function loadAskQueueFromStorage(projectId: string, nodeId: string, threadId: string): AskFollowupQueueEntry[] {
+  if (typeof globalThis.localStorage === 'undefined') {
+    return []
+  }
+  try {
+    const raw = globalThis.localStorage.getItem(askQueueStorageKey(projectId, nodeId, threadId))
+    if (!raw) {
+      return []
+    }
+    const payload = JSON.parse(raw)
+    if (!Array.isArray(payload)) {
+      return []
+    }
+    const normalized = payload
+      .map((entry) => normalizeAskQueueEntry(entry))
+      .filter((entry): entry is AskFollowupQueueEntry => entry !== null)
+      .slice(0, ASK_FOLLOWUP_QUEUE_MAX_ITEMS)
     // Recovery safety: a previously persisted `sending` entry should return to `queued`.
+    // A4 preserves `requires_confirmation` across reloads.
     return normalized.map((entry) =>
       entry.status === 'sending'
         ? {
             ...entry,
             status: 'queued',
+            confirmationReason: null,
           }
         : entry,
     )
@@ -630,6 +839,31 @@ function persistExecutionQueueToStorage(
   }
 }
 
+function persistAskQueueToStorage(
+  projectId: string,
+  nodeId: string,
+  threadId: string,
+  queue: AskFollowupQueueEntry[],
+): void {
+  if (typeof globalThis.localStorage === 'undefined') {
+    return
+  }
+  const key = askQueueStorageKey(projectId, nodeId, threadId)
+  try {
+    if (queue.length === 0) {
+      globalThis.localStorage.removeItem(key)
+      return
+    }
+    globalThis.localStorage.setItem(key, JSON.stringify(queue))
+  } catch {
+    // Best-effort persistence only.
+  }
+}
+
+function clearAskQueueStorage(projectId: string, nodeId: string, threadId: string): void {
+  persistAskQueueToStorage(projectId, nodeId, threadId, [])
+}
+
 function currentExecutionQueueContext(
   state: Pick<ThreadByIdStoreV3State, 'snapshot' | 'executionQueueLatestExecutionRunId'>,
 ): ExecutionFollowupEnqueueContext {
@@ -641,28 +875,51 @@ function currentExecutionQueueContext(
   }
 }
 
-function hasPendingInputBlocking(snapshot: ThreadSnapshotV3 | null): boolean {
-  if (!snapshot) {
-    return false
+function currentAskQueueContext(
+  state: Pick<ThreadByIdStoreV3State, 'activeThreadId' | 'snapshot' | 'streamStatus'>,
+): AskFollowupEnqueueContext {
+  return {
+    threadId: state.snapshot?.threadId ?? state.activeThreadId ?? null,
+    snapshotVersion: state.snapshot?.snapshotVersion ?? null,
+    staleMarker: state.streamStatus !== 'open',
   }
-  return snapshot.uiSignals.activeUserInputRequests.some(
-    (request) => request.status === 'requested' || request.status === 'answer_submitted',
+}
+
+function setAskQueueEntryConfirmationReason(
+  entries: AskFollowupQueueEntry[],
+  entryId: string,
+  confirmationReason: AskQueueConfirmationReason,
+): AskFollowupQueueEntry[] {
+  const normalizedId = String(entryId ?? '').trim()
+  if (!normalizedId) {
+    return entries
+  }
+  return entries.map((entry) =>
+    entry.entryId === normalizedId
+      ? {
+          ...entry,
+          confirmationReason,
+        }
+      : entry,
   )
 }
 
-function hasPlanReadyGate(snapshot: ThreadSnapshotV3 | null): boolean {
-  const planReady = snapshot?.uiSignals.planReady
-  return Boolean(
-    planReady &&
-      planReady.ready &&
-      !planReady.failed &&
-      planReady.planItemId &&
-      planReady.revision != null,
+function clearAskQueueEntryConfirmationReason(
+  entries: AskFollowupQueueEntry[],
+  entryId: string,
+): AskFollowupQueueEntry[] {
+  const normalizedId = String(entryId ?? '').trim()
+  if (!normalizedId) {
+    return entries
+  }
+  return entries.map((entry) =>
+    entry.entryId === normalizedId
+      ? {
+          ...entry,
+          confirmationReason: null,
+        }
+      : entry,
   )
-}
-
-function queueHasSending(entries: ExecutionFollowupQueueEntry[]): boolean {
-  return entries.some((entry) => entry.status === 'sending')
 }
 
 function compareConversationItemsByOrder(left: ConversationItemV3, right: ConversationItemV3): number {
@@ -819,6 +1076,9 @@ function buildDisconnectedStatePatch(): ThreadRuntimeStateV3 {
     historyError: null,
     executionFollowupQueue: [],
     executionQueuePauseReason: 'none',
+    askFollowupQueueEnabled: false,
+    askFollowupQueue: [],
+    askQueuePauseReason: 'none',
     executionQueueOperatorPaused: false,
     executionQueueWorkflowPhase: null,
     executionQueueCanSendExecutionMessage: false,
@@ -867,6 +1127,8 @@ function buildThreadLoadStartPatch(
     ),
     executionFollowupQueue: [],
     executionQueuePauseReason: 'none',
+    askFollowupQueue: [],
+    askQueuePauseReason: 'none',
     executionQueueOperatorPaused: false,
     executionQueueWorkflowPhase: null,
     executionQueueCanSendExecutionMessage: false,
@@ -1546,6 +1808,21 @@ async function openThreadEventStream(
         },
       )
     })
+    if (threadRole === 'ask_planning') {
+      requestAskQueueFlush?.()
+    }
+  }
+
+  const isMessageTextPatchEvent = (event: ThreadBusinessEventV3): boolean => {
+    if (event.type !== 'conversation.item.patch.v3') {
+      return false
+    }
+    const patch = event.payload.patch
+    return (
+      patch.kind === 'message' &&
+      typeof patch.textAppend === 'string' &&
+      patch.textAppend.length > 0
+    )
   }
 
   const shouldForceFlush = (event: ThreadBusinessEventV3): boolean => {
@@ -1785,24 +2062,33 @@ async function openThreadEventStream(
         },
       )
     })
+    if (threadRole === 'ask_planning') {
+      requestAskQueueFlush?.()
+    }
   }
 
-  const scheduleQueuedBusinessFlush = () => {
+  const scheduleQueuedBusinessFlush = (priority = false) => {
     if (rafFlushHandle === null && typeof globalThis.requestAnimationFrame === 'function') {
       rafFlushHandle = globalThis.requestAnimationFrame(() => {
         rafFlushHandle = null
         flushQueuedBusinessFrames('raf')
       })
     }
+    const fallbackDelayMs = priority
+      ? Math.min(FRAME_BATCH_FALLBACK_FLUSH_MS, FRAME_BATCH_PRIORITY_FLUSH_MS)
+      : FRAME_BATCH_FALLBACK_FLUSH_MS
     if (fallbackFlushTimer === null) {
       fallbackFlushTimer = globalThis.setTimeout(() => {
         fallbackFlushTimer = null
         flushQueuedBusinessFrames('fallback')
-      }, FRAME_BATCH_FALLBACK_FLUSH_MS)
+      }, fallbackDelayMs)
     }
     if (maxAgeFlushTimer === null && queuedSinceMs !== null) {
       const ageMs = Math.max(0, Date.now() - queuedSinceMs)
-      const waitMs = Math.max(0, FRAME_BATCH_MAX_QUEUE_AGE_MS - ageMs)
+      const maxAgeTargetMs = priority
+        ? Math.min(FRAME_BATCH_MAX_QUEUE_AGE_MS, FRAME_BATCH_PRIORITY_FLUSH_MS)
+        : FRAME_BATCH_MAX_QUEUE_AGE_MS
+      const waitMs = Math.max(0, maxAgeTargetMs - ageMs)
       maxAgeFlushTimer = globalThis.setTimeout(() => {
         maxAgeFlushTimer = null
         flushQueuedBusinessFrames('max_age')
@@ -1819,7 +2105,8 @@ async function openThreadEventStream(
       flushQueuedBusinessFrames('forced')
       return
     }
-    scheduleQueuedBusinessFlush()
+    const priorityFlush = THREAD_STREAM_LOW_LATENCY_ENABLED && isMessageTextPatchEvent(event)
+    scheduleQueuedBusinessFlush(priorityFlush)
   }
 
   eventSource.onopen = () => {
@@ -1837,6 +2124,9 @@ async function openThreadEventStream(
         },
       }),
     )
+    if (threadRole === 'ask_planning') {
+      requestAskQueueFlush?.()
+    }
   }
 
   eventSource.onmessage = (message) => {
@@ -1877,7 +2167,7 @@ async function openThreadEventStream(
 }
 
 export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) => {
-  const persistQueueForCurrentThread = (
+  const persistExecutionQueueForCurrentThread = (
     state: Pick<ThreadByIdStoreV3State, 'activeProjectId' | 'activeNodeId' | 'activeThreadId'>,
     queue: ExecutionFollowupQueueEntry[],
   ) => {
@@ -1892,24 +2182,40 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     )
   }
 
-  const normalizeQueueIndexes = (
-    entries: ExecutionFollowupQueueEntry[],
-    fromIndex: number,
-    toIndex: number,
-  ): ExecutionFollowupQueueEntry[] => {
-    if (entries.length <= 1) {
-      return entries
+  const persistAskQueueForCurrentThread = (
+    state: Pick<ThreadByIdStoreV3State, 'activeProjectId' | 'activeNodeId' | 'activeThreadId'>,
+    queue: AskFollowupQueueEntry[],
+  ) => {
+    if (!state.activeProjectId || !state.activeNodeId || !state.activeThreadId) {
+      return
     }
-    const from = Math.max(0, Math.min(entries.length - 1, Math.floor(fromIndex)))
-    const to = Math.max(0, Math.min(entries.length - 1, Math.floor(toIndex)))
-    if (from === to) {
-      return entries
-    }
-    const next = [...entries]
-    const [moved] = next.splice(from, 1)
-    next.splice(to, 0, moved)
-    return next
+    persistAskQueueToStorage(state.activeProjectId, state.activeNodeId, state.activeThreadId, queue)
   }
+
+  const clearAskQueueForCurrentThread = (
+    state: Pick<ThreadByIdStoreV3State, 'activeProjectId' | 'activeNodeId' | 'activeThreadId'>,
+  ) => {
+    if (!state.activeProjectId || !state.activeNodeId || !state.activeThreadId) {
+      return
+    }
+    clearAskQueueStorage(state.activeProjectId, state.activeNodeId, state.activeThreadId)
+  }
+
+  const toExecutionPolicyState = (
+    state: Pick<
+      ThreadByIdStoreV3State,
+      | 'snapshot'
+      | 'activeThreadRole'
+      | 'executionQueueOperatorPaused'
+      | 'executionQueueWorkflowPhase'
+      | 'executionQueueCanSendExecutionMessage'
+    >,
+  ): ExecutionQueuePolicyState => ({
+    snapshot: state.snapshot,
+    operatorPaused: state.executionQueueOperatorPaused,
+    workflowPhase: state.executionQueueWorkflowPhase,
+    canSendExecutionMessage: state.executionQueueCanSendExecutionMessage,
+  })
 
   const evaluateQueuePauseReason = (
     state: Pick<
@@ -1924,25 +2230,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     if (state.activeThreadRole !== 'execution') {
       return 'workflow_blocked'
     }
-    if (state.executionQueueOperatorPaused) {
-      return 'operator_pause'
-    }
-    if (state.snapshot?.processingState === 'waiting_user_input' || hasPendingInputBlocking(state.snapshot)) {
-      return 'runtime_waiting_input'
-    }
-    if (hasPlanReadyGate(state.snapshot)) {
-      return 'plan_ready_gate'
-    }
-    if (
-      state.executionQueueWorkflowPhase !== 'execution_decision_pending' ||
-      !state.executionQueueCanSendExecutionMessage
-    ) {
-      return 'workflow_blocked'
-    }
-    if (!state.snapshot || state.snapshot.activeTurnId || state.snapshot.processingState !== 'idle') {
-      return 'workflow_blocked'
-    }
-    return 'none'
+    return laneQueuePolicyAdapters.execution.evaluatePauseReason('execution', toExecutionPolicyState(state), {
+      manual: false,
+      allowPlanReadyGate: false,
+    })
   }
 
   const sendWindowIsOpen = (
@@ -1954,71 +2245,109 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       | 'executionQueueCanSendExecutionMessage'
       | 'snapshot'
     >,
-    options: { manual: boolean; allowPlanReadyGate: boolean },
+    options: ExecutionSendWindowOptions,
   ): boolean => {
     if (state.activeThreadRole !== 'execution') {
       return false
     }
-    if (!state.snapshot) {
-      return false
-    }
-    if (!options.manual && state.executionQueueOperatorPaused) {
-      return false
-    }
-    if (
-      state.executionQueueWorkflowPhase !== 'execution_decision_pending' ||
-      !state.executionQueueCanSendExecutionMessage
-    ) {
-      return false
-    }
-    if (state.snapshot.activeTurnId || state.snapshot.processingState !== 'idle') {
-      return false
-    }
-    if (hasPendingInputBlocking(state.snapshot)) {
-      return false
-    }
-    if (!options.allowPlanReadyGate && hasPlanReadyGate(state.snapshot)) {
-      return false
-    }
-    return true
+    return laneQueuePolicyAdapters.execution.sendWindowIsOpen('execution', toExecutionPolicyState(state), options)
   }
 
   const queueEntryRequiresConfirmation = (
     entry: ExecutionFollowupQueueEntry,
     nowMs: number,
     currentContext: ExecutionFollowupEnqueueContext,
+  ): boolean =>
+    laneQueuePolicyAdapters.execution.requiresConfirmation(
+      'execution',
+      entry,
+      currentContext,
+      nowMs,
+    )
+
+  const streamOrStateMismatch = (
+    state: Pick<ThreadByIdStoreV3State, 'streamStatus'>,
+  ): boolean => state.streamStatus !== 'open'
+
+  const toAskPolicyState = (
+    state: Pick<ThreadByIdStoreV3State, 'snapshot' | 'streamStatus'>,
+  ): AskQueuePolicyState => ({
+    snapshot: state.snapshot,
+    operatorPaused: false,
+    streamOrStateMismatch: streamOrStateMismatch(state),
+  })
+
+  const evaluateAskQueuePauseReason = (
+    state: Pick<
+      ThreadByIdStoreV3State,
+      'snapshot' | 'activeThreadRole' | 'streamStatus' | 'askFollowupQueueEnabled' | 'askFollowupQueue'
+    >,
+  ): AskFollowupQueuePauseReason => {
+    if (!state.askFollowupQueueEnabled) {
+      return 'none'
+    }
+    if (state.activeThreadRole !== 'ask_planning') {
+      return 'stream_or_state_mismatch'
+    }
+    const askHead = state.askFollowupQueue[0] ?? null
+    if (askHead?.status === 'requires_confirmation') {
+      return 'requires_confirmation'
+    }
+    const options: AskSendWindowOptions = {
+      streamOrStateMismatch: streamOrStateMismatch(state),
+    }
+    return laneQueuePolicyAdapters.ask_planning.evaluatePauseReason(
+      'ask_planning',
+      toAskPolicyState(state),
+      options,
+    )
+  }
+
+  const askSendWindowIsOpen = (
+    state: Pick<
+      ThreadByIdStoreV3State,
+      'snapshot' | 'activeThreadRole' | 'streamStatus' | 'askFollowupQueueEnabled'
+    >,
+    options: AskSendWindowOptions,
   ): boolean => {
-    if (nowMs - entry.createdAtMs > EXECUTION_FOLLOWUP_AUTO_SEND_MAX_AGE_MS) {
-      return true
+    if (!state.askFollowupQueueEnabled) {
+      return false
     }
-    if (
-      entry.enqueueContext.latestExecutionRunId &&
-      currentContext.latestExecutionRunId &&
-      entry.enqueueContext.latestExecutionRunId !== currentContext.latestExecutionRunId
-    ) {
-      return true
+    if (state.activeThreadRole !== 'ask_planning') {
+      return false
     }
-    const previousRevision = entry.enqueueContext.planReadyRevision
-    const currentRevision = currentContext.planReadyRevision
-    if (previousRevision !== currentRevision && (previousRevision != null || currentRevision != null)) {
-      return true
-    }
-    return false
+    return laneQueuePolicyAdapters.ask_planning.sendWindowIsOpen(
+      'ask_planning',
+      toAskPolicyState(state),
+      options,
+    )
   }
 
   const startThreadTurnRequest = async (
     text: string,
     metadata: Record<string, unknown> = {},
-  ): Promise<{ ok: true } | { ok: false; error: string }> => {
+  ): Promise<StartThreadTurnRequestResult> => {
     const { activeProjectId, activeNodeId, activeThreadId, activeThreadRole, snapshot } = get()
     if (!activeProjectId || !activeNodeId || !activeThreadId || !activeThreadRole || !snapshot) {
-      return { ok: false, error: 'Thread is not ready.' }
+      return { ok: false, error: 'Thread is not ready.', status: null, code: null }
     }
     if (activeThreadRole !== 'execution' && activeThreadRole !== 'ask_planning') {
-      return { ok: false, error: 'Audit review is read-only in the V3 execution/audit flow.' }
+      return {
+        ok: false,
+        error: 'Audit review is read-only in the V3 execution/audit flow.',
+        status: null,
+        code: null,
+      }
     }
     const generation = threadGeneration
     const sendingRole = activeThreadRole
+    const sendMetadata: Record<string, unknown> = { ...metadata }
+    if (sendingRole === 'ask_planning') {
+      const existingIdempotencyKey = String(sendMetadata.idempotencyKey ?? '').trim()
+      if (!existingIdempotencyKey) {
+        sendMetadata.idempotencyKey = newExecutionQueueId('ask_turn')
+      }
+    }
     set(
       composeDomainPatch({
         uiControl: {
@@ -2034,7 +2363,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         activeNodeId,
         activeThreadId,
         text,
-        metadata,
+        sendMetadata,
       )
       set((state) => {
         if (
@@ -2092,9 +2421,23 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           sendingRole,
         )
       ) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+        const reason = error instanceof Error ? error.message : String(error)
+        const statusRaw = Number((error as { status?: unknown })?.status)
+        const status = Number.isFinite(statusRaw) ? Math.trunc(statusRaw) : null
+        const codeRaw = (error as { code?: unknown })?.code
+        const code = typeof codeRaw === 'string' ? codeRaw : null
+        return {
+          ok: false,
+          error: reason,
+          status,
+          code,
+        }
       }
       const reason = error instanceof Error ? error.message : String(error)
+      const statusRaw = Number((error as { status?: unknown })?.status)
+      const status = Number.isFinite(statusRaw) ? Math.trunc(statusRaw) : null
+      const codeRaw = (error as { code?: unknown })?.code
+      const code = typeof codeRaw === 'string' ? codeRaw : null
       set(
         composeDomainPatch({
           uiControl: {
@@ -2103,7 +2446,12 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           },
         }),
       )
-      return { ok: false, error: reason }
+      return {
+        ok: false,
+        error: reason,
+        status,
+        code,
+      }
     }
   }
 
@@ -2132,11 +2480,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       return
     }
 
-    const entry =
-      options.manualEntryId != null
-        ? state.executionFollowupQueue.find((candidate) => candidate.entryId === options.manualEntryId) ?? null
-        : state.executionFollowupQueue.find((candidate) => candidate.status === 'queued') ?? null
-    if (!entry || entry.status === 'sending') {
+    const entry = nextEligibleQueueEntry('execution', state.executionFollowupQueue, {
+      manualEntryId: options.manualEntryId ?? null,
+    })
+    if (!entry) {
       return
     }
 
@@ -2146,16 +2493,12 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     const confirmedByAction = options.confirmedEntryId != null && options.confirmedEntryId === entry.entryId
     if (requiresConfirmation && !confirmedByAction) {
       set((current) => {
-        const nextQueue = current.executionFollowupQueue.map((candidate) =>
-          candidate.entryId === entry.entryId
-            ? {
-                ...candidate,
-                status: 'requires_confirmation' as const,
-                lastError: null,
-              }
-            : candidate,
+        const nextQueue = markQueueEntryRequiresConfirmation(
+          'execution',
+          current.executionFollowupQueue,
+          entry.entryId,
         )
-        persistQueueForCurrentThread(current, nextQueue)
+        persistExecutionQueueForCurrentThread(current, nextQueue)
         return {
           executionFollowupQueue: nextQueue,
           executionQueuePauseReason: evaluateQueuePauseReason(current),
@@ -2165,16 +2508,8 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     }
 
     set((current) => {
-      const nextQueue = current.executionFollowupQueue.map((candidate) =>
-        candidate.entryId === entry.entryId
-          ? {
-              ...candidate,
-              status: 'sending' as const,
-              lastError: null,
-            }
-          : candidate,
-      )
-      persistQueueForCurrentThread(current, nextQueue)
+      const nextQueue = markQueueEntrySending('execution', current.executionFollowupQueue, entry.entryId)
+      persistExecutionQueueForCurrentThread(current, nextQueue)
       return {
         executionFollowupQueue: nextQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
@@ -2192,20 +2527,16 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       }
       let nextQueue: ExecutionFollowupQueueEntry[]
       if (result.ok) {
-        nextQueue = current.executionFollowupQueue.filter((candidate) => candidate.entryId !== entry.entryId)
+        nextQueue = removeQueueEntry('execution', current.executionFollowupQueue, entry.entryId)
       } else {
-        nextQueue = current.executionFollowupQueue.map((candidate) =>
-          candidate.entryId === entry.entryId
-            ? {
-                ...candidate,
-                status: 'failed' as const,
-                attemptCount: candidate.attemptCount + 1,
-                lastError: result.error,
-              }
-            : candidate,
+        nextQueue = markQueueEntryFailed(
+          'execution',
+          current.executionFollowupQueue,
+          entry.entryId,
+          result.error,
         )
       }
-      persistQueueForCurrentThread(current, nextQueue)
+      persistExecutionQueueForCurrentThread(current, nextQueue)
       return {
         executionFollowupQueue: nextQueue,
         executionQueuePauseReason: evaluateQueuePauseReason({
@@ -2217,6 +2548,148 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     if (result.ok) {
       await attemptExecutionQueueFlush()
     }
+  }
+
+  const attemptAskQueueFlush = async (): Promise<void> => {
+    const state = get()
+    if (!state.askFollowupQueueEnabled) {
+      if (state.askFollowupQueue.length > 0) {
+        set((current) => {
+          clearAskQueueForCurrentThread(current)
+          return {
+            askFollowupQueue: [],
+            askQueuePauseReason: evaluateAskQueuePauseReason({
+              ...current,
+              askFollowupQueue: [],
+            }),
+          }
+        })
+      } else {
+        set({ askQueuePauseReason: evaluateAskQueuePauseReason(state) })
+      }
+      return
+    }
+    if (state.activeThreadRole !== 'ask_planning') {
+      return
+    }
+    if (!state.snapshot) {
+      set({ askQueuePauseReason: evaluateAskQueuePauseReason(state) })
+      return
+    }
+    if (!state.askFollowupQueue.length) {
+      set({ askQueuePauseReason: evaluateAskQueuePauseReason(state) })
+      return
+    }
+    if (queueHasSending(state.askFollowupQueue)) {
+      return
+    }
+
+    const options: AskSendWindowOptions = {
+      streamOrStateMismatch: streamOrStateMismatch(state),
+    }
+    if (!askSendWindowIsOpen(state, options)) {
+      set({ askQueuePauseReason: evaluateAskQueuePauseReason(get()) })
+      return
+    }
+
+    const head = state.askFollowupQueue[0] ?? null
+    if (!head) {
+      return
+    }
+    if (head.status === 'requires_confirmation') {
+      set((current) => ({
+        askQueuePauseReason: evaluateAskQueuePauseReason(current),
+      }))
+      return
+    }
+    if (head.status !== 'queued') {
+      return
+    }
+
+    const nowMs = Date.now()
+    const context = currentAskQueueContext(state)
+    const confirmationReason = resolveAskQueueConfirmationReason(head, context, nowMs)
+    if (confirmationReason != null) {
+      set((current) => {
+        let nextQueue = markQueueEntryRequiresConfirmation(
+          'ask_planning',
+          current.askFollowupQueue,
+          head.entryId,
+        )
+        nextQueue = setAskQueueEntryConfirmationReason(nextQueue, head.entryId, confirmationReason)
+        persistAskQueueForCurrentThread(current, nextQueue)
+        return {
+          askFollowupQueue: nextQueue,
+          askQueuePauseReason: evaluateAskQueuePauseReason({
+            ...current,
+            askFollowupQueue: nextQueue,
+          }),
+        }
+      })
+      return
+    }
+
+    set((current) => {
+      let nextQueue = markQueueEntrySending('ask_planning', current.askFollowupQueue, head.entryId)
+      nextQueue = clearAskQueueEntryConfirmationReason(nextQueue, head.entryId)
+      persistAskQueueForCurrentThread(current, nextQueue)
+      return {
+        askFollowupQueue: nextQueue,
+        askQueuePauseReason: evaluateAskQueuePauseReason({
+          ...current,
+          askFollowupQueue: nextQueue,
+        }),
+      }
+    })
+
+    const result = await startThreadTurnRequest(head.text, {
+      idempotencyKey: head.idempotencyKey,
+    })
+
+    set((current) => {
+      const existing = current.askFollowupQueue.find((candidate) => candidate.entryId === head.entryId)
+      if (!existing) {
+        return {}
+      }
+      const mismatchReason = getAskThreadRouteMismatchReason(result)
+      if (mismatchReason !== null) {
+        const clearedQueue: AskFollowupQueueEntry[] = []
+        persistAskQueueForCurrentThread(current, clearedQueue)
+        return {
+          askFollowupQueue: clearedQueue,
+          askQueuePauseReason: evaluateAskQueuePauseReason({
+            ...current,
+            askFollowupQueue: clearedQueue,
+            streamStatus: 'error',
+          }),
+          streamStatus: 'error',
+          error: mismatchReason,
+        }
+      }
+      let nextQueue: AskFollowupQueueEntry[]
+      if (result.ok) {
+        nextQueue = removeQueueEntry('ask_planning', current.askFollowupQueue, head.entryId)
+      } else {
+        nextQueue = markQueueEntryFailed('ask_planning', current.askFollowupQueue, head.entryId, result.error)
+        nextQueue = clearAskQueueEntryConfirmationReason(nextQueue, head.entryId)
+      }
+      persistAskQueueForCurrentThread(current, nextQueue)
+      return {
+        askFollowupQueue: nextQueue,
+        askQueuePauseReason: evaluateAskQueuePauseReason({
+          ...current,
+          askFollowupQueue: nextQueue,
+        }),
+      }
+    })
+
+    if (result.ok) {
+      await attemptAskQueueFlush()
+    }
+  }
+
+  requestAskQueueFlush = () => {
+    void attemptAskQueueFlush()
   }
 
   return {
@@ -2263,17 +2736,45 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       if (threadRole === 'execution') {
         const hydratedQueue = loadExecutionQueueFromStorage(projectId, nodeId, threadId)
         set((state) => {
-          persistQueueForCurrentThread(state, hydratedQueue)
+          persistExecutionQueueForCurrentThread(state, hydratedQueue)
           return {
             executionFollowupQueue: hydratedQueue,
             executionQueuePauseReason: evaluateQueuePauseReason(state),
+            askFollowupQueue: [],
+            askQueuePauseReason: 'none',
           }
         })
+      } else if (threadRole === 'ask_planning') {
+        const hydratedQueue = latestState.askFollowupQueueEnabled
+          ? loadAskQueueFromStorage(projectId, nodeId, threadId)
+          : []
+        set((state) => {
+          if (state.askFollowupQueueEnabled) {
+            persistAskQueueForCurrentThread(state, hydratedQueue)
+          } else {
+            clearAskQueueForCurrentThread(state)
+          }
+          return {
+            askFollowupQueue: hydratedQueue,
+            askQueuePauseReason: evaluateAskQueuePauseReason({
+              ...state,
+              askFollowupQueue: hydratedQueue,
+            }),
+            executionFollowupQueue: [],
+            executionQueuePauseReason: 'none',
+            executionQueueOperatorPaused: false,
+          }
+        })
+        if (latestState.askFollowupQueueEnabled) {
+          void attemptAskQueueFlush()
+        }
       } else {
         set({
           executionFollowupQueue: [],
           executionQueuePauseReason: 'none',
           executionQueueOperatorPaused: false,
+          askFollowupQueue: [],
+          askQueuePauseReason: 'none',
         })
       }
       reconcileResolveFallbackTimers(get().snapshot)
@@ -2421,7 +2922,51 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
   },
 
   async sendTurn(text: string, metadata: Record<string, unknown> = {}) {
-    await startThreadTurnRequest(text, metadata)
+    const cleaned = String(text ?? '').trim()
+    if (!cleaned) {
+      return
+    }
+    const state = get()
+    if (state.activeThreadRole !== 'ask_planning') {
+      await startThreadTurnRequest(text, metadata)
+      return
+    }
+    if (!state.askFollowupQueueEnabled) {
+      await startThreadTurnRequest(cleaned, metadata)
+      return
+    }
+    if (!state.activeProjectId || !state.activeNodeId || !state.activeThreadId) {
+      await startThreadTurnRequest(cleaned, metadata)
+      return
+    }
+    const existingIdempotencyKey = String(metadata.idempotencyKey ?? '').trim()
+    const idempotencyKey = existingIdempotencyKey || newExecutionQueueId('ask_turn')
+    const nextQueue = enqueueQueueEntry(
+      'ask_planning',
+      state.askFollowupQueue,
+      {
+        entryId: newExecutionQueueId('q'),
+        text: cleaned,
+        idempotencyKey,
+        createdAtMs: Date.now(),
+        enqueueContext: currentAskQueueContext(state),
+        status: 'queued' as const,
+        attemptCount: 0,
+        lastError: null,
+      },
+      ASK_FOLLOWUP_QUEUE_MAX_ITEMS,
+    )
+    set((current) => {
+      persistAskQueueForCurrentThread(current, nextQueue)
+      return {
+        askFollowupQueue: nextQueue,
+        askQueuePauseReason: evaluateAskQueuePauseReason({
+          ...current,
+          askFollowupQueue: nextQueue,
+        }),
+      }
+    })
+    await attemptAskQueueFlush()
   },
 
   async resolveUserInput(requestId: string, answers: UserInputAnswer[]) {
@@ -2646,9 +3191,9 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       return
     }
 
-    const cappedQueue = state.executionFollowupQueue.slice(0, EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS)
-    const nextQueue = [
-      ...cappedQueue,
+    const nextQueue = enqueueQueueEntry(
+      'execution',
+      state.executionFollowupQueue,
       {
         entryId: newExecutionQueueId('q'),
         text: cleaned,
@@ -2659,10 +3204,11 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         attemptCount: 0,
         lastError: null,
       },
-    ].slice(-EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS)
+      EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS,
+    )
 
     set((current) => {
-      persistQueueForCurrentThread(current, nextQueue)
+      persistExecutionQueueForCurrentThread(current, nextQueue)
       return {
         executionFollowupQueue: nextQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
@@ -2677,12 +3223,45 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       return
     }
     const state = get()
+    if (state.activeThreadRole === 'ask_planning') {
+      if (!state.askFollowupQueueEnabled) {
+        return
+      }
+      if (queueHasSending(state.askFollowupQueue)) {
+        return
+      }
+      const askHead = state.askFollowupQueue[0] ?? null
+      const removedHeadRequiresConfirmation =
+        askHead?.entryId === id && askHead.status === 'requires_confirmation'
+      const nextQueue = removeQueueEntry('ask_planning', state.askFollowupQueue, id)
+      if (nextQueue.length === state.askFollowupQueue.length) {
+        return
+      }
+      set((current) => {
+        const persistedQueue = removeQueueEntry('ask_planning', current.askFollowupQueue, id)
+        if (persistedQueue.length === current.askFollowupQueue.length) {
+          return {}
+        }
+        persistAskQueueForCurrentThread(current, persistedQueue)
+        return {
+          askFollowupQueue: persistedQueue,
+          askQueuePauseReason: evaluateAskQueuePauseReason({
+            ...current,
+            askFollowupQueue: persistedQueue,
+          }),
+        }
+      })
+      if (removedHeadRequiresConfirmation) {
+        void attemptAskQueueFlush()
+      }
+      return
+    }
     if (queueHasSending(state.executionFollowupQueue)) {
       return
     }
-    const nextQueue = state.executionFollowupQueue.filter((entry) => entry.entryId !== id)
+    const nextQueue = removeQueueEntry('execution', state.executionFollowupQueue, id)
     set((current) => {
-      persistQueueForCurrentThread(current, nextQueue)
+      persistExecutionQueueForCurrentThread(current, nextQueue)
       return {
         executionFollowupQueue: nextQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
@@ -2695,9 +3274,9 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     if (queueHasSending(state.executionFollowupQueue)) {
       return
     }
-    const nextQueue = normalizeQueueIndexes(state.executionFollowupQueue, fromIndex, toIndex)
+    const nextQueue = reorderQueueEntries('execution', state.executionFollowupQueue, fromIndex, toIndex)
     set((current) => {
-      persistQueueForCurrentThread(current, nextQueue)
+      persistExecutionQueueForCurrentThread(current, nextQueue)
       return {
         executionFollowupQueue: nextQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
@@ -2722,25 +3301,72 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       return
     }
     const state = get()
+    if (state.activeThreadRole === 'ask_planning') {
+      if (!state.askFollowupQueueEnabled) {
+        return
+      }
+      if (queueHasSending(state.askFollowupQueue)) {
+        return
+      }
+      let nextQueue = markQueueEntryConfirmed('ask_planning', state.askFollowupQueue, id, {
+        nowMs: Date.now(),
+        enqueueContext: currentAskQueueContext(state),
+      })
+      nextQueue = clearAskQueueEntryConfirmationReason(nextQueue, id)
+      if (nextQueue === state.askFollowupQueue) {
+        return
+      }
+      const hasEntry = nextQueue.some((entry) => entry.entryId === id)
+      if (!hasEntry) {
+        return
+      }
+      set((current) => {
+        let persistedQueue = markQueueEntryConfirmed('ask_planning', current.askFollowupQueue, id, {
+          nowMs: Date.now(),
+          enqueueContext: currentAskQueueContext(current),
+        })
+        persistedQueue = clearAskQueueEntryConfirmationReason(persistedQueue, id)
+        if (persistedQueue === current.askFollowupQueue) {
+          return {}
+        }
+        persistAskQueueForCurrentThread(current, persistedQueue)
+        return {
+          askFollowupQueue: persistedQueue,
+          askQueuePauseReason: evaluateAskQueuePauseReason({
+            ...current,
+            askFollowupQueue: persistedQueue,
+          }),
+        }
+      })
+      await attemptAskQueueFlush()
+      return
+    }
     if (queueHasSending(state.executionFollowupQueue)) {
       return
     }
     const context = currentExecutionQueueContext(state)
-    const nextQueue = state.executionFollowupQueue.map((entry) =>
-      entry.entryId === id
-        ? {
-            ...entry,
-            status: 'queued' as const,
-            createdAtMs: Date.now(),
-            enqueueContext: context,
-            lastError: null,
-          }
-        : entry,
-    )
+    const nextQueue = markQueueEntryConfirmed('execution', state.executionFollowupQueue, id, {
+      nowMs: Date.now(),
+      enqueueContext: context,
+    })
+    if (nextQueue === state.executionFollowupQueue) {
+      return
+    }
+    const hasEntry = nextQueue.some((entry) => entry.entryId === id)
+    if (!hasEntry) {
+      return
+    }
     set((current) => {
-      persistQueueForCurrentThread(current, nextQueue)
+      const persistedQueue = markQueueEntryConfirmed('execution', current.executionFollowupQueue, id, {
+        nowMs: Date.now(),
+        enqueueContext: currentExecutionQueueContext(current),
+      })
+      if (persistedQueue === current.executionFollowupQueue) {
+        return {}
+      }
+      persistExecutionQueueForCurrentThread(current, persistedQueue)
       return {
-        executionFollowupQueue: nextQueue,
+        executionFollowupQueue: persistedQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
       }
     })
@@ -2760,19 +3386,22 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     if (queueHasSending(state.executionFollowupQueue)) {
       return
     }
-    const nextQueue = state.executionFollowupQueue.map((entry) =>
-      entry.entryId === id && entry.status === 'failed'
-        ? {
-            ...entry,
-            status: 'queued' as const,
-            lastError: null,
-          }
-        : entry,
-    )
+    const nextQueue = retryQueueEntry('execution', state.executionFollowupQueue, id)
+    if (nextQueue === state.executionFollowupQueue) {
+      return
+    }
+    const hasEntry = nextQueue.some((entry) => entry.entryId === id)
+    if (!hasEntry) {
+      return
+    }
     set((current) => {
-      persistQueueForCurrentThread(current, nextQueue)
+      const persistedQueue = retryQueueEntry('execution', current.executionFollowupQueue, id)
+      if (persistedQueue === current.executionFollowupQueue) {
+        return {}
+      }
+      persistExecutionQueueForCurrentThread(current, persistedQueue)
       return {
-        executionFollowupQueue: nextQueue,
+        executionFollowupQueue: persistedQueue,
         executionQueuePauseReason: evaluateQueuePauseReason(current),
       }
     })
@@ -2780,6 +3409,132 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
       manualEntryId: id,
       allowPlanReadyGate: true,
     })
+  },
+
+  reorderAskQueued(fromIndex: number, toIndex: number) {
+    const state = get()
+    if (state.activeThreadRole !== 'ask_planning') {
+      return
+    }
+    if (!state.askFollowupQueueEnabled) {
+      return
+    }
+    if (queueHasSending(state.askFollowupQueue)) {
+      return
+    }
+    const nextQueue = reorderQueueEntries('ask_planning', state.askFollowupQueue, fromIndex, toIndex)
+    if (nextQueue === state.askFollowupQueue) {
+      return
+    }
+    set((current) => {
+      const persistedQueue = reorderQueueEntries('ask_planning', current.askFollowupQueue, fromIndex, toIndex)
+      if (persistedQueue === current.askFollowupQueue) {
+        return {}
+      }
+      persistAskQueueForCurrentThread(current, persistedQueue)
+      return {
+        askFollowupQueue: persistedQueue,
+        askQueuePauseReason: evaluateAskQueuePauseReason({
+          ...current,
+          askFollowupQueue: persistedQueue,
+        }),
+      }
+    })
+  },
+
+  async sendAskQueuedNow(entryId: string) {
+    const id = String(entryId ?? '').trim()
+    if (!id) {
+      return
+    }
+    const state = get()
+    if (state.activeThreadRole !== 'ask_planning') {
+      return
+    }
+    if (!state.askFollowupQueueEnabled) {
+      return
+    }
+    if (queueHasSending(state.askFollowupQueue)) {
+      return
+    }
+    const head = state.askFollowupQueue[0] ?? null
+    if (!head || head.entryId !== id || head.status !== 'queued') {
+      return
+    }
+    await attemptAskQueueFlush()
+  },
+
+  async retryAskQueued(entryId: string) {
+    const id = String(entryId ?? '').trim()
+    if (!id) {
+      return
+    }
+    const state = get()
+    if (state.activeThreadRole !== 'ask_planning') {
+      return
+    }
+    if (!state.askFollowupQueueEnabled) {
+      return
+    }
+    if (queueHasSending(state.askFollowupQueue)) {
+      return
+    }
+    const nextQueue = retryQueueEntry('ask_planning', state.askFollowupQueue, id)
+    if (nextQueue === state.askFollowupQueue) {
+      return
+    }
+    const hasEntry = nextQueue.some((entry) => entry.entryId === id)
+    if (!hasEntry) {
+      return
+    }
+    set((current) => {
+      const persistedQueue = retryQueueEntry('ask_planning', current.askFollowupQueue, id)
+      if (persistedQueue === current.askFollowupQueue) {
+        return {}
+      }
+      persistAskQueueForCurrentThread(current, persistedQueue)
+      return {
+        askFollowupQueue: persistedQueue,
+        askQueuePauseReason: evaluateAskQueuePauseReason({
+          ...current,
+          askFollowupQueue: persistedQueue,
+        }),
+      }
+    })
+    await attemptAskQueueFlush()
+  },
+
+  setAskFollowupQueueEnabled(enabled: boolean) {
+    const nextEnabled = Boolean(enabled)
+    let changed = false
+    set((state) => {
+      if (state.askFollowupQueueEnabled === nextEnabled) {
+        return {}
+      }
+      changed = true
+      if (!nextEnabled) {
+        clearAskQueueForCurrentThread(state)
+        return {
+          askFollowupQueueEnabled: false,
+          askFollowupQueue: [],
+          askQueuePauseReason: evaluateAskQueuePauseReason({
+            ...state,
+            askFollowupQueueEnabled: false,
+            askFollowupQueue: [],
+          }),
+        }
+      }
+      return {
+        askFollowupQueueEnabled: true,
+        askQueuePauseReason: evaluateAskQueuePauseReason({
+          ...state,
+          askFollowupQueueEnabled: true,
+        }),
+      }
+    })
+    if (changed && nextEnabled) {
+      void attemptAskQueueFlush()
+    }
   },
 
   setOperatorPause(paused: boolean) {

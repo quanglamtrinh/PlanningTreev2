@@ -344,6 +344,201 @@ def test_ensure_forked_thread_resumes_existing_fork_without_overwriting_metadata
     assert [item["thread_id"] for item in codex_client.resumed_threads][-1] == "ask-thread"
 
 
+def test_ensure_forked_thread_guarded_skip_when_active_turn_live(
+    storage,
+    workspace_root: Path,
+    thread_lineage_service: ThreadLineageService,
+    codex_client: FakeThreadLineageCodexClient,
+) -> None:
+    snapshot = ProjectService(storage).attach_project_folder(str(workspace_root))
+    project_id = str(snapshot["project"]["id"])
+    root_id = str(snapshot["tree_state"]["root_node_id"])
+    storage.chat_state_store.write_session(
+        project_id,
+        root_id,
+        {
+            "thread_id": "ask-thread-active-live",
+            "thread_role": "ask_planning",
+            "forked_from_thread_id": "root-thread",
+            "forked_from_node_id": root_id,
+            "forked_from_role": "audit",
+            "fork_reason": "ask_bootstrap",
+            "lineage_root_thread_id": "root-thread",
+            "messages": [],
+        },
+        thread_role="ask_planning",
+    )
+
+    session = thread_lineage_service.ensure_forked_thread(
+        project_id,
+        root_id,
+        "ask_planning",
+        source_node_id=root_id,
+        source_role="audit",
+        fork_reason="ask_bootstrap",
+        workspace_root=str(workspace_root),
+        resume_guarded=True,
+        force_resume=False,
+        active_turn_live=True,
+    )
+
+    assert session["thread_id"] == "ask-thread-active-live"
+    assert codex_client.resumed_threads == []
+    assert codex_client.forked_threads == []
+
+
+def test_ensure_forked_thread_guarded_skip_when_resume_inflight(
+    storage,
+    workspace_root: Path,
+    thread_lineage_service: ThreadLineageService,
+    codex_client: FakeThreadLineageCodexClient,
+) -> None:
+    snapshot = ProjectService(storage).attach_project_folder(str(workspace_root))
+    project_id = str(snapshot["project"]["id"])
+    root_id = str(snapshot["tree_state"]["root_node_id"])
+    storage.chat_state_store.write_session(
+        project_id,
+        root_id,
+        {
+            "thread_id": "ask-thread-inflight",
+            "thread_role": "ask_planning",
+            "forked_from_thread_id": "root-thread",
+            "forked_from_node_id": root_id,
+            "forked_from_role": "audit",
+            "fork_reason": "ask_bootstrap",
+            "lineage_root_thread_id": "root-thread",
+            "messages": [],
+        },
+        thread_role="ask_planning",
+    )
+    thread_lineage_service._resume_inflight_keys.add(
+        (project_id, root_id, "ask_planning", "ask-thread-inflight")
+    )
+
+    session = thread_lineage_service.ensure_forked_thread(
+        project_id,
+        root_id,
+        "ask_planning",
+        source_node_id=root_id,
+        source_role="audit",
+        fork_reason="ask_bootstrap",
+        workspace_root=str(workspace_root),
+        resume_guarded=True,
+    )
+
+    assert session["thread_id"] == "ask-thread-inflight"
+    assert codex_client.resumed_threads == []
+    assert codex_client.forked_threads == []
+
+
+def test_ensure_forked_thread_guarded_resume_debounce_and_force_override(
+    storage,
+    workspace_root: Path,
+    thread_lineage_service: ThreadLineageService,
+    codex_client: FakeThreadLineageCodexClient,
+) -> None:
+    snapshot = ProjectService(storage).attach_project_folder(str(workspace_root))
+    project_id = str(snapshot["project"]["id"])
+    root_id = str(snapshot["tree_state"]["root_node_id"])
+    storage.chat_state_store.write_session(
+        project_id,
+        root_id,
+        {
+            "thread_id": "ask-thread-guarded",
+            "thread_role": "ask_planning",
+            "forked_from_thread_id": "root-thread",
+            "forked_from_node_id": root_id,
+            "forked_from_role": "audit",
+            "fork_reason": "ask_bootstrap",
+            "lineage_root_thread_id": "root-thread",
+            "messages": [],
+        },
+        thread_role="ask_planning",
+    )
+
+    first = thread_lineage_service.ensure_forked_thread(
+        project_id,
+        root_id,
+        "ask_planning",
+        source_node_id=root_id,
+        source_role="audit",
+        fork_reason="ask_bootstrap",
+        workspace_root=str(workspace_root),
+        resume_guarded=True,
+    )
+    second = thread_lineage_service.ensure_forked_thread(
+        project_id,
+        root_id,
+        "ask_planning",
+        source_node_id=root_id,
+        source_role="audit",
+        fork_reason="ask_bootstrap",
+        workspace_root=str(workspace_root),
+        resume_guarded=True,
+    )
+    forced = thread_lineage_service.ensure_forked_thread(
+        project_id,
+        root_id,
+        "ask_planning",
+        source_node_id=root_id,
+        source_role="audit",
+        fork_reason="ask_bootstrap",
+        workspace_root=str(workspace_root),
+        resume_guarded=True,
+        force_resume=True,
+    )
+
+    assert first["thread_id"] == "ask-thread-guarded"
+    assert second["thread_id"] == "ask-thread-guarded"
+    assert forced["thread_id"] == "ask-thread-guarded"
+    assert [item["thread_id"] for item in codex_client.resumed_threads if item["thread_id"] == "ask-thread-guarded"] == [
+        "ask-thread-guarded",
+        "ask-thread-guarded",
+    ]
+
+
+def test_ensure_forked_thread_guarded_missing_thread_still_rebuilds(
+    storage,
+    workspace_root: Path,
+    thread_lineage_service: ThreadLineageService,
+    codex_client: FakeThreadLineageCodexClient,
+) -> None:
+    snapshot = ProjectService(storage).attach_project_folder(str(workspace_root))
+    project_id = str(snapshot["project"]["id"])
+    root_id = str(snapshot["tree_state"]["root_node_id"])
+    root_session = thread_lineage_service.ensure_root_audit_thread(project_id, root_id, str(workspace_root))
+    storage.chat_state_store.write_session(
+        project_id,
+        root_id,
+        {
+            "thread_id": "missing-ask-thread-guarded",
+            "thread_role": "ask_planning",
+            "forked_from_thread_id": root_session["thread_id"],
+            "forked_from_node_id": root_id,
+            "forked_from_role": "audit",
+            "fork_reason": "ask_bootstrap",
+            "lineage_root_thread_id": root_session["lineage_root_thread_id"],
+            "messages": [],
+        },
+        thread_role="ask_planning",
+    )
+    codex_client.missing_thread_ids.add("missing-ask-thread-guarded")
+
+    rebuilt = thread_lineage_service.ensure_forked_thread(
+        project_id,
+        root_id,
+        "ask_planning",
+        source_node_id=root_id,
+        source_role="audit",
+        fork_reason="ask_bootstrap",
+        workspace_root=str(workspace_root),
+        resume_guarded=True,
+    )
+
+    assert rebuilt["thread_id"] != "missing-ask-thread-guarded"
+    assert codex_client.forked_threads[-1]["source_thread_id"] == root_session["thread_id"]
+
+
 def test_ensure_forked_thread_legacy_resume_backfills_metadata_without_inventing_ancestry(
     storage,
     workspace_root: Path,

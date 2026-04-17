@@ -328,6 +328,15 @@ class AskV3Disabled(AppError):
         )
 
 
+class AskIdempotencyPayloadConflict(AppError):
+    def __init__(self) -> None:
+        super().__init__(
+            "ask_idempotency_payload_conflict",
+            "idempotencyKey was already used with a different ask payload.",
+            409,
+        )
+
+
 class ShapingFrozen(AppError):
     def __init__(self, action: str = "shaping action") -> None:
         super().__init__(

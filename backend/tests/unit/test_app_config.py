@@ -3,6 +3,7 @@ from __future__ import annotations
 from backend.config.app_config import (
     get_conversation_v3_bridge_allowlist,
     get_conversation_v3_bridge_mode,
+    is_ask_followup_queue_enabled,
     is_ask_v3_backend_enabled,
     is_ask_v3_frontend_enabled,
     is_conversation_v3_bridge_allowed_for_project,
@@ -21,6 +22,16 @@ def test_ask_v3_gates_accept_false_values(monkeypatch) -> None:
     monkeypatch.setenv("PLANNINGTREE_ASK_V3_FRONTEND_ENABLED", "0")
     assert is_ask_v3_backend_enabled() is False
     assert is_ask_v3_frontend_enabled() is False
+
+
+def test_ask_followup_queue_gate_defaults_to_false(monkeypatch) -> None:
+    monkeypatch.delenv("PLANNINGTREE_ASK_FOLLOWUP_QUEUE_ENABLED", raising=False)
+    assert is_ask_followup_queue_enabled() is False
+
+
+def test_ask_followup_queue_gate_accepts_true_values(monkeypatch) -> None:
+    monkeypatch.setenv("PLANNINGTREE_ASK_FOLLOWUP_QUEUE_ENABLED", "true")
+    assert is_ask_followup_queue_enabled() is True
 
 
 def test_conversation_v3_bridge_mode_defaults_to_enabled(monkeypatch) -> None:

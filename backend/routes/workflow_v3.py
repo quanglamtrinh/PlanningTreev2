@@ -109,6 +109,11 @@ def _normalize_thread_id(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _normalize_optional_string(value: Any) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
 def _resolve_event_thread_id(envelope: dict[str, Any]) -> str:
     canonical_thread_id = _normalize_thread_id(envelope.get("thread_id"))
     if canonical_thread_id:
@@ -538,6 +543,7 @@ async def get_thread_snapshot_by_id_v3(
             thread_role,
             publish_repairs=True,
             ensure_binding=False,
+            allow_thread_read_hydration=False,
         )
         snapshot_v3 = _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)
         snapshot_v3 = _apply_live_item_limit(snapshot_v3, live_limit=live_limit)
@@ -574,6 +580,7 @@ async def get_thread_history_page_by_id_v3(
             thread_role,
             publish_repairs=True,
             ensure_binding=False,
+            allow_thread_read_hydration=False,
         )
         snapshot_v3 = _snapshot_with_contract_fields(snapshot_v3, thread_role=thread_role)
         history_page = _build_history_page(
@@ -621,6 +628,7 @@ async def thread_events_by_id_v3(
             thread_role,
             after_snapshot_version=after_snapshot_version,
             ensure_binding=False,
+            allow_thread_read_hydration=False,
         )
         queue = broker.subscribe(project_id, node_id, thread_role=thread_role)
     except AppError as exc:
@@ -919,6 +927,18 @@ async def reset_thread_by_id_v3(
             node_id,
             thread_role,
         )
+        workflow_state = _workflow_service(request).get_workflow_state(project_id, node_id)
+        workflow_publisher = getattr(request.app.state, "workflow_event_publisher", None)
+        if workflow_publisher is not None:
+            workflow_publisher.publish_workflow_updated(
+                project_id=project_id,
+                node_id=node_id,
+                execution_state=_normalize_optional_string(workflow_state.get("executionState")),
+                review_state=_normalize_optional_string(workflow_state.get("reviewState")),
+                workflow_phase=_normalize_optional_string(workflow_state.get("workflowPhase")),
+                active_execution_run_id=_normalize_optional_string(workflow_state.get("activeExecutionRunId")),
+                active_review_cycle_id=_normalize_optional_string(workflow_state.get("activeReviewCycleId")),
+            )
         return _ok(
             {
                 "threadId": snapshot.get("threadId"),

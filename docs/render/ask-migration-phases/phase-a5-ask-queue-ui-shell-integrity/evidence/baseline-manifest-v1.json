@@ -1,0 +1,14 @@
+﻿{
+    "version":  "1.0.0",
+    "phase":  "A5",
+    "baseline":  {
+                     "label":  "aq5_pre_ask_queue_ui_baseline_v1",
+                     "captured_at":  "2026-04-14T00:00:00Z",
+                     "workload":  "ask_tab_queue_ui_interaction_v1"
+                 },
+    "baseline_metrics":  {
+                             "ask_queue_ui_action_failures":  null,
+                             "ask_shell_visibility_regressions":  null,
+                             "ask_queue_panel_interaction_success_rate_pct":  null
+                         }
+}

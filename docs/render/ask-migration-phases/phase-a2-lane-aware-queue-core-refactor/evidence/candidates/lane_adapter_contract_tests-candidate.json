@@ -1,0 +1,17 @@
+{
+  "candidate_id": "aq2-lane-adapter-contract-2026-04-14",
+  "phase": "A2",
+  "source": "lane_adapter_contract_tests",
+  "generated_at": "2026-04-14T19:43:00Z",
+  "command": "npx vitest run tests/unit/threadQueuePolicyAdaptersV3.test.ts",
+  "candidate_metrics": {
+    "lane_adapter_contract_pass_rate_pct": 100,
+    "contract_cases_total": 7,
+    "contract_cases_failed": 0
+  },
+  "context": {
+    "lane_adapter_contract_pass_rate_pct": 100,
+    "execution_adapter_cases_covered": true,
+    "ask_adapter_cases_covered": true
+  }
+}

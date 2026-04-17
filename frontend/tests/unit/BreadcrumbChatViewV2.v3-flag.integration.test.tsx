@@ -134,6 +134,7 @@ function seedBaseStores(workflowState: NodeWorkflowView, snapshot: Snapshot) {
       workspace_configured: true,
       codex_available: true,
       codex_path: 'codex',
+      ask_followup_queue_enabled: true,
     },
     snapshot,
     selectedNodeId: 'root',
@@ -195,6 +196,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
 
     useThreadByIdStoreV3.setState({
       snapshot: makeConversationSnapshotV3(),
+      askFollowupQueueEnabled: true,
       loadThread: loadThreadV3,
       sendTurn: vi.fn().mockResolvedValue(undefined),
       resolveUserInput: vi.fn().mockResolvedValue(undefined),
@@ -230,6 +232,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
 
     useThreadByIdStoreV3.setState({
       snapshot: makeConversationSnapshotV3({ threadId: 'audit-thread-1', threadRole: 'audit' }),
+      askFollowupQueueEnabled: true,
       loadThread: loadThreadV3,
       sendTurn: vi.fn().mockResolvedValue(undefined),
       resolveUserInput: vi.fn().mockResolvedValue(undefined),
@@ -255,6 +258,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
     useThreadByIdStoreV3.setState({
       snapshot: makeConversationSnapshotV3({ threadId: 'ask-thread-1', threadRole: 'ask_planning' }),
+      askFollowupQueueEnabled: true,
       loadThread: loadThreadV3,
       sendTurn: vi.fn().mockResolvedValue(undefined),
       resolveUserInput: vi.fn().mockResolvedValue(undefined),

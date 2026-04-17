@@ -1,0 +1,17 @@
+{
+  "candidate_id": "aq3-ask-queue-state-machine-2026-04-15",
+  "phase": "A3",
+  "source": "ask_queue_state_machine_suite",
+  "generated_at": "2026-04-15T05:00:00Z",
+  "command": "npm run test:unit --prefix frontend -- threadByIdStoreV3.test.ts",
+  "candidate_metrics": {
+    "ask_queued_message_loss_events": 0,
+    "state_machine_cases_total": 8,
+    "state_machine_cases_failed": 0
+  },
+  "context": {
+    "ask_queue_state_machine_tests_passed": true,
+    "ask_hydration_recovery_verified": true,
+    "ask_failed_head_stops_auto_flush_verified": true
+  }
+}

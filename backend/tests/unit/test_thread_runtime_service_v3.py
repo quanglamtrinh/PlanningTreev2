@@ -13,6 +13,7 @@ from backend.conversation.services.request_ledger_service_v3 import RequestLedge
 from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
 from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3, _RawEventCompactorV3
+from backend.errors.app_errors import AskIdempotencyPayloadConflict
 from backend.services.project_service import ProjectService
 from backend.services.tree_service import TreeService
 
@@ -37,8 +38,22 @@ class _FakeThreadLineageService:
         base_instructions: str | None = None,
         dynamic_tools: list[dict[str, Any]] | None = None,
         writable_roots: list[str] | None = None,
+        resume_guarded: bool = False,
+        force_resume: bool = False,
+        active_turn_live: bool = False,
     ) -> dict[str, Any]:
-        del project_id, node_id, thread_role, workspace_root, base_instructions, dynamic_tools, writable_roots
+        del (
+            project_id,
+            node_id,
+            thread_role,
+            workspace_root,
+            base_instructions,
+            dynamic_tools,
+            writable_roots,
+            resume_guarded,
+            force_resume,
+            active_turn_live,
+        )
         return {}
 
 
@@ -96,6 +111,20 @@ class _FakeChatService:
 
     def clear_external_live_turn(self, project_id: str, node_id: str, thread_role: str, turn_id: str) -> None:
         self.live_turns.discard((project_id, node_id, thread_role, turn_id))
+
+    def has_live_turn(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        turn_id: str | None = None,
+    ) -> bool:
+        if turn_id is not None:
+            return (project_id, node_id, thread_role, str(turn_id)) in self.live_turns
+        return any(
+            turn[0] == project_id and turn[1] == node_id and turn[2] == thread_role
+            for turn in self.live_turns
+        )
 
     def reset_session(self, project_id: str, node_id: str, thread_role: str = "ask_planning") -> dict[str, Any]:
         return self._storage.chat_state_store.clear_session(project_id, node_id, thread_role=thread_role)
@@ -408,6 +437,226 @@ def test_thread_runtime_service_v3_start_turn_runs_to_completion(storage, worksp
     assert snapshot["processingState"] == "idle"
     assert snapshot["activeTurnId"] is None
     assert any(item.get("id") == "msg-start-1" for item in snapshot["items"])
+
+
+def test_thread_runtime_service_v3_raw_event_callbacks_do_not_reenter_ask_hydration(
+    storage,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    runtime, query, _, project_id, node_id, _, codex = _build_runtime(storage, workspace_root, thread_role="ask_planning")
+    codex.raw_events = [
+        {
+            "method": "item/started",
+            "received_at": "2026-04-10T00:10:01Z",
+            "item_id": "msg-ask-1",
+            "turn_id": "turn-ask-callback-1",
+            "params": {"item": {"type": "agentMessage", "id": "msg-ask-1"}},
+        },
+        {
+            "method": "turn/completed",
+            "received_at": "2026-04-10T00:10:02Z",
+            "turn_id": "turn-ask-callback-1",
+            "params": {"turn": {"status": "completed", "id": "turn-ask-callback-1"}},
+        },
+    ]
+
+    callback_depth = 0
+    original_run_turn_streaming = codex.run_turn_streaming
+
+    def wrapped_run_turn_streaming(prompt: str, **kwargs: Any) -> dict[str, Any]:
+        on_raw_event = kwargs.get("on_raw_event")
+        if callable(on_raw_event):
+            def wrapped_on_raw_event(raw_event: dict[str, Any]) -> None:
+                nonlocal callback_depth
+                callback_depth += 1
+                try:
+                    on_raw_event(raw_event)
+                finally:
+                    callback_depth -= 1
+
+            kwargs = dict(kwargs)
+            kwargs["on_raw_event"] = wrapped_on_raw_event
+        return original_run_turn_streaming(prompt, **kwargs)
+
+    codex.run_turn_streaming = wrapped_run_turn_streaming  # type: ignore[method-assign]
+    original_get_thread_snapshot = query.get_thread_snapshot
+    callback_snapshot_calls: list[dict[str, Any]] = []
+
+    def wrapped_get_thread_snapshot(
+        project_id_arg: str,
+        node_id_arg: str,
+        thread_role_arg: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        if callback_depth:
+            callback_snapshot_calls.append(
+                {
+                    "project_id": project_id_arg,
+                    "node_id": node_id_arg,
+                    "thread_role": thread_role_arg,
+                    **kwargs,
+                }
+            )
+            assert kwargs.get("ensure_binding") is False
+            assert kwargs.get("allow_thread_read_hydration") is False
+        return original_get_thread_snapshot(project_id_arg, node_id_arg, thread_role_arg, **kwargs)
+
+    query.get_thread_snapshot = wrapped_get_thread_snapshot  # type: ignore[method-assign]
+
+    class _ImmediateThread:
+        def __init__(self, *, target, kwargs, daemon):
+            del daemon
+            self._target = target
+            self._kwargs = kwargs
+
+        def start(self) -> None:
+            self._target(**self._kwargs)
+
+    monkeypatch.setattr(thread_runtime_service_v3_module.threading, "Thread", _ImmediateThread)
+    payload = runtime.start_turn(
+        project_id,
+        node_id,
+        "ask_planning",
+        "Need help",
+    )
+    assert payload["accepted"] is True
+    assert callback_snapshot_calls
+    assert all(call["thread_role"] == "ask_planning" for call in callback_snapshot_calls)
+
+
+def test_thread_runtime_service_v3_ask_start_turn_replays_same_key(storage, workspace_root, monkeypatch) -> None:
+    runtime, query, _, project_id, node_id, _, _ = _build_runtime(storage, workspace_root, thread_role="ask_planning")
+
+    class _NoopThread:
+        def __init__(self, *, target, kwargs, daemon):
+            del target, kwargs, daemon
+
+        def start(self) -> None:
+            return
+
+    monkeypatch.setattr(thread_runtime_service_v3_module.threading, "Thread", _NoopThread)
+    first = runtime.start_turn(
+        project_id,
+        node_id,
+        "ask_planning",
+        "Need help",
+        metadata={"idempotencyKey": "ask-idem-1"},
+    )
+    second = runtime.start_turn(
+        project_id,
+        node_id,
+        "ask_planning",
+        "Need help",
+        metadata={"idempotencyKey": "ask-idem-1"},
+    )
+
+    assert second == first
+    snapshot = query.get_thread_snapshot(project_id, node_id, "ask_planning", publish_repairs=False)
+    user_messages = [
+        item
+        for item in snapshot["items"]
+        if str(item.get("kind") or "") == "message" and str(item.get("role") or "") == "user"
+    ]
+    assert len(user_messages) == 1
+
+
+def test_thread_runtime_service_v3_ask_start_turn_rejects_payload_conflict(
+    storage, workspace_root, monkeypatch
+) -> None:
+    runtime, _, _, project_id, node_id, _, _ = _build_runtime(storage, workspace_root, thread_role="ask_planning")
+
+    class _NoopThread:
+        def __init__(self, *, target, kwargs, daemon):
+            del target, kwargs, daemon
+
+        def start(self) -> None:
+            return
+
+    monkeypatch.setattr(thread_runtime_service_v3_module.threading, "Thread", _NoopThread)
+    runtime.start_turn(
+        project_id,
+        node_id,
+        "ask_planning",
+        "Need help",
+        metadata={"idempotencyKey": "ask-idem-1"},
+    )
+
+    with pytest.raises(AskIdempotencyPayloadConflict):
+        runtime.start_turn(
+            project_id,
+            node_id,
+            "ask_planning",
+            "Need different help",
+            metadata={"idempotencyKey": "ask-idem-1"},
+        )
+
+
+def test_thread_runtime_service_v3_start_turn_without_key_keeps_legacy_non_idempotent_behavior(
+    storage, workspace_root, monkeypatch
+) -> None:
+    runtime, query, _, project_id, node_id, _, _ = _build_runtime(storage, workspace_root, thread_role="ask_planning")
+
+    class _NoopThread:
+        def __init__(self, *, target, kwargs, daemon):
+            del target, kwargs, daemon
+
+        def start(self) -> None:
+            return
+
+    monkeypatch.setattr(thread_runtime_service_v3_module.threading, "Thread", _NoopThread)
+    first = runtime.start_turn(
+        project_id,
+        node_id,
+        "ask_planning",
+        "Need help",
+    )
+    second = runtime.start_turn(
+        project_id,
+        node_id,
+        "ask_planning",
+        "Need help again",
+    )
+    assert second["turnId"] != first["turnId"]
+    snapshot = query.get_thread_snapshot(project_id, node_id, "ask_planning", publish_repairs=False)
+    user_messages = [
+        item
+        for item in snapshot["items"]
+        if str(item.get("kind") or "") == "message" and str(item.get("role") or "") == "user"
+    ]
+    assert len(user_messages) == 2
+
+
+def test_thread_runtime_service_v3_prune_ask_idempotency_cache_ttl_and_cap_deterministic(
+    storage, workspace_root
+) -> None:
+    runtime, _, _, _, _, _, _ = _build_runtime(storage, workspace_root, thread_role="ask_planning")
+    now_ms = 5_000_000
+    prefix = thread_runtime_service_v3_module._ASK_START_IDEMPOTENCY_CACHE_PREFIX
+    mutation_cache: dict[str, Any] = {
+        "workflow:keep": {"value": 1},
+        f"{prefix}thread-1:stale": {
+            "createdAtMs": now_ms - thread_runtime_service_v3_module._ASK_START_IDEMPOTENCY_TTL_MS - 10,
+            "lastSeenAtMs": now_ms - thread_runtime_service_v3_module._ASK_START_IDEMPOTENCY_TTL_MS - 10,
+        },
+    }
+    for index in range(260):
+        mutation_cache[f"{prefix}thread-1:key-{index}"] = {
+            "createdAtMs": now_ms - (index * 10),
+            "lastSeenAtMs": now_ms - (index * 10),
+        }
+
+    changed = runtime._prune_ask_start_idempotency_cache(mutation_cache, now_ms=now_ms)
+    assert changed is True
+    assert "workflow:keep" in mutation_cache
+    assert f"{prefix}thread-1:stale" not in mutation_cache
+
+    ask_keys = sorted(key for key in mutation_cache.keys() if key.startswith(prefix))
+    assert len(ask_keys) == thread_runtime_service_v3_module._ASK_START_IDEMPOTENCY_MAX_ENTRIES
+    assert f"{prefix}thread-1:key-0" in mutation_cache
+    assert f"{prefix}thread-1:key-255" in mutation_cache
+    assert f"{prefix}thread-1:key-256" not in mutation_cache
+    assert f"{prefix}thread-1:key-259" not in mutation_cache
 
 
 def test_thread_runtime_service_v3_resolve_user_input_transitions(storage, workspace_root) -> None:

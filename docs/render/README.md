@@ -2,7 +2,7 @@
 
 Status: Draft baseline for full-system optimization, with phase execution docs.
 
-Last updated: 2026-04-12.
+Last updated: 2026-04-14.
 
 ## Purpose
 
@@ -18,6 +18,8 @@ The content is intentionally broad and detailed so we can:
 
 - `docs/render/render-optimization-comprehensive.md`
 - `docs/render/phases/README.md`
+- `docs/render/ask-migration-phases/README.md`
+- `docs/render/ask-migration-phases/system-freeze/README.md`
 - `docs/render/decision-pack-v1.md`
 - `docs/render/system-freeze/README.md`
 
@@ -31,6 +33,7 @@ The content is intentionally broad and detailed so we can:
 - rollout and safety strategy
 - prioritization template for later filtering
 - phase-by-phase execution docs (one file per phase)
+- ask queue migration phase docs (execution -> ask parity)
 
 ## Current execution planning scope
 
@@ -52,7 +55,12 @@ Temporarily excluded from this execution wave:
 Before implementing any phase, run:
 
 ```powershell
-npm run check:render_freeze
+npm run check:freeze_all
 ```
 
 The phase can proceed only when this check is PASS.
+
+Reference (individually runnable checks):
+
+- `npm run check:render_freeze`
+- `npm run check:ask_migration_freeze`

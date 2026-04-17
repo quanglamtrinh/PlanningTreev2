@@ -1859,10 +1859,12 @@ class ExecutionAuditWorkflowService:
             state["workflowPhase"] = "done" if str(node.get("status") or "") == "done" else "idle"
             state["auditLineageThreadId"] = audit_lineage_thread_id
         execution_entry = self._storage.thread_registry_store.read_entry(project_id, node_id, "execution")
-        if not state.get("askThreadId"):
-            ask_thread_id = self._resolve_ask_thread_id(project_id, node_id)
-            if ask_thread_id:
-                state["askThreadId"] = ask_thread_id
+        # Keep workflow-state askThreadId aligned with the ask registry entry so
+        # /v3 by-id asks loaded from workflow state do not drift to stale ids.
+        ask_thread_id = self._resolve_ask_thread_id(project_id, node_id)
+        current_ask_thread_id = str(state.get("askThreadId") or "").strip() or None
+        if current_ask_thread_id != ask_thread_id:
+            state["askThreadId"] = ask_thread_id
         if not state.get("executionThreadId"):
             execution_thread_id = str(execution_entry.get("threadId") or "").strip()
             if execution_thread_id:

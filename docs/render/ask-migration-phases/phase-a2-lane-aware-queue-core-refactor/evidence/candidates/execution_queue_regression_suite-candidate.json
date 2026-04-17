@@ -1,0 +1,17 @@
+{
+  "candidate_id": "aq2-execution-regression-2026-04-14",
+  "phase": "A2",
+  "source": "execution_queue_regression_suite",
+  "generated_at": "2026-04-14T19:43:00Z",
+  "command": "npm run test:unit --prefix frontend -- threadByIdStoreV3.test.ts && npm run test:unit --prefix frontend -- BreadcrumbChatViewV2.test.tsx",
+  "candidate_metrics": {
+    "execution_queue_parity_failures": 0,
+    "unit_test_failures": 0,
+    "unit_test_pass_count": 290
+  },
+  "context": {
+    "execution_queue_parity_failures": 0,
+    "threadByIdStore_suite_passed": true,
+    "breadcrumb_suite_passed": true
+  }
+}

@@ -14,6 +14,10 @@ This directory is reserved for:
 - phase-level execution skeletons
 - implementation gate and risk checklists for ask migration
 
+Related queue-parity migration docs:
+
+- `docs/render/ask-migration-phases/README.md`
+
 Locked scope baseline (already decided):
 
 - Ask is a dedicated lane in V3.

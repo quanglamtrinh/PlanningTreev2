@@ -1,0 +1,14 @@
+﻿{
+    "version":  "1.0.0",
+    "phase":  "A3",
+    "baseline":  {
+                     "label":  "aq3_pre_ask_queue_mvp_baseline_v1",
+                     "captured_at":  "2026-04-14T00:00:00Z",
+                     "workload":  "ask_multi_send_active_turn_v1"
+                 },
+    "baseline_metrics":  {
+                             "ask_queued_message_loss_events":  null,
+                             "ask_queue_order_violation_events":  null,
+                             "ask_auto_flush_success_rate_pct":  null
+                         }
+}

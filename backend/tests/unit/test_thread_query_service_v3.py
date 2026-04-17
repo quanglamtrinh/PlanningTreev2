@@ -21,6 +21,7 @@ class _FakeChatService:
     def __init__(self, storage, workspace_root: Path) -> None:
         self._storage = storage
         self._workspace_root = workspace_root
+        self.live_turns: set[tuple[str, str, str, str]] = set()
 
     def _validate_thread_access(self, project_id: str, node_id: str, thread_role: str) -> None:
         del project_id, node_id, thread_role
@@ -32,13 +33,27 @@ class _FakeChatService:
         del project_id
         return str(self._workspace_root)
 
+    def has_live_turn(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        turn_id: str | None = None,
+    ) -> bool:
+        if turn_id is not None:
+            return (project_id, node_id, thread_role, str(turn_id)) in self.live_turns
+        return any(
+            turn[0] == project_id and turn[1] == node_id and turn[2] == thread_role
+            for turn in self.live_turns
+        )
+
     def reset_session(self, project_id: str, node_id: str, thread_role: str = "ask_planning") -> dict[str, Any]:
         return self._storage.chat_state_store.clear_session(project_id, node_id, thread_role=thread_role)
 
 
 class _FakeThreadLineageService:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, str]] = []
+        self.calls: list[dict[str, Any]] = []
 
     def ensure_thread_binding_v2(
         self,
@@ -50,9 +65,24 @@ class _FakeThreadLineageService:
         base_instructions: str | None = None,
         dynamic_tools: list[dict[str, Any]] | None = None,
         writable_roots: list[str] | None = None,
+        resume_guarded: bool = False,
+        force_resume: bool = False,
+        active_turn_live: bool = False,
     ) -> dict[str, Any]:
-        del workspace_root, base_instructions, dynamic_tools, writable_roots
-        self.calls.append((project_id, node_id, thread_role))
+        self.calls.append(
+            {
+                "project_id": project_id,
+                "node_id": node_id,
+                "thread_role": thread_role,
+                "workspace_root": workspace_root,
+                "base_instructions": base_instructions,
+                "dynamic_tools": dynamic_tools,
+                "writable_roots": writable_roots,
+                "resume_guarded": resume_guarded,
+                "force_resume": force_resume,
+                "active_turn_live": active_turn_live,
+            }
+        )
         return {}
 
 
@@ -251,6 +281,90 @@ def test_build_stream_snapshot_v3_guard_raises_mismatch(storage, workspace_root,
             "execution",
             after_snapshot_version=99,
         )
+
+
+def test_get_thread_snapshot_v3_execution_binding_uses_guarded_resume_flags(
+    storage,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE", "enabled")
+    service, project_id, node_id = _build_service(storage, workspace_root)
+    snapshot = default_thread_snapshot_v3(project_id, node_id, "execution")
+    snapshot["threadId"] = "execution-thread-1"
+    storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, "execution", snapshot)
+
+    service.get_thread_snapshot(project_id, node_id, "execution")
+
+    calls = service._thread_lineage_service.calls  # type: ignore[attr-defined]
+    assert calls
+    assert calls[-1]["thread_role"] == "execution"
+    assert calls[-1]["resume_guarded"] is True
+    assert calls[-1]["force_resume"] is False
+    assert calls[-1]["active_turn_live"] is False
+
+
+def test_get_thread_snapshot_v3_execution_binding_passes_live_turn_state(
+    storage,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE", "enabled")
+    service, project_id, node_id = _build_service(storage, workspace_root)
+    snapshot = default_thread_snapshot_v3(project_id, node_id, "execution")
+    snapshot["threadId"] = "execution-thread-1"
+    storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, "execution", snapshot)
+    service._chat_service.live_turns.add((project_id, node_id, "execution", "turn-ext-1"))  # type: ignore[attr-defined]
+
+    service.get_thread_snapshot(project_id, node_id, "execution")
+
+    calls = service._thread_lineage_service.calls  # type: ignore[attr-defined]
+    assert calls
+    assert calls[-1]["active_turn_live"] is True
+
+
+def test_get_thread_snapshot_v3_ask_fast_read_skips_session_hydration(
+    storage,
+    workspace_root,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE", "enabled")
+    service, project_id, node_id = _build_service(storage, workspace_root)
+    registry = ThreadRegistryService(storage.thread_registry_store)
+    registry.update_entry(
+        project_id,
+        node_id,
+        "ask_planning",
+        thread_id="ask-thread-fast-read",
+    )
+
+    snapshot = default_thread_snapshot_v3(project_id, node_id, "ask_planning")
+    snapshot["threadId"] = "ask-thread-fast-read"
+    snapshot["snapshotVersion"] = 5
+    snapshot["processingState"] = "idle"
+    snapshot["activeTurnId"] = None
+    storage.thread_snapshot_store_v3.write_snapshot(project_id, node_id, "ask_planning", snapshot)
+
+    ask_session = storage.chat_state_store.read_session(project_id, node_id, thread_role="ask_planning")
+    ask_session["thread_id"] = "ask-thread-fast-read"
+    ask_session["active_turn_id"] = "ask-turn-1"
+    storage.chat_state_store.write_session(project_id, node_id, ask_session, thread_role="ask_planning")
+
+    def _forbidden_get_session(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("ask fast-read path should not call chat_service.get_session")
+
+    service._chat_service.get_session = _forbidden_get_session  # type: ignore[method-assign]
+
+    loaded = service.get_thread_snapshot(
+        project_id,
+        node_id,
+        "ask_planning",
+        allow_thread_read_hydration=False,
+    )
+
+    assert loaded["threadId"] == "ask-thread-fast-read"
+    assert loaded["activeTurnId"] == "ask-turn-1"
+    assert loaded["processingState"] == "running"
 
 
 def test_issue_stream_event_id_v3_is_monotonic_and_durable(storage, workspace_root) -> None:

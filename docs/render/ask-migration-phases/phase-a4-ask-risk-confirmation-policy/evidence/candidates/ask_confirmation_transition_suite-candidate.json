@@ -1,0 +1,9 @@
+{
+  "candidate_metrics": {
+    "ask_requires_confirmation_transition_failures": 0,
+    "queued_to_requires_confirmation_cases": 12,
+    "confirmed_to_send_cases": 12,
+    "confirm_without_send_attempt_cases": 0,
+    "confirm_action_double_send_events": 0
+  }
+}

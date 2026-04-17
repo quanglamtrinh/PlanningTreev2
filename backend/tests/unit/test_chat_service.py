@@ -257,6 +257,57 @@ def test_get_session_returns_empty_for_new_node(storage, workspace_root):
     assert session["messages"] == []
 
 
+def test_get_session_skips_ask_bootstrap_when_external_live_turn_exists(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient()
+    service = _make_service(storage, client)
+
+    session = storage.chat_state_store.read_session(project_id, root_id)
+    session["thread_id"] = "ask-thread-ext-live"
+    session["thread_role"] = "ask_planning"
+    session["forked_from_thread_id"] = "audit-thread-root"
+    session["forked_from_node_id"] = root_id
+    session["forked_from_role"] = "audit"
+    session["fork_reason"] = "ask_bootstrap"
+    session["lineage_root_thread_id"] = "audit-thread-root"
+    session["active_turn_id"] = None
+    storage.chat_state_store.write_session(project_id, root_id, session, thread_role="ask_planning")
+
+    service.register_external_live_turn(project_id, root_id, "ask_planning", "turn-ext-1")
+    loaded = service.get_session(project_id, root_id, thread_role="ask_planning")
+
+    assert loaded["thread_id"] == "ask-thread-ext-live"
+    assert service.has_live_turn(project_id, root_id, "ask_planning") is True
+    assert client.resumed_threads == []
+    assert client.forked_threads == []
+
+
+def test_get_session_guarded_ask_resume_is_debounced_when_idle(storage, workspace_root):
+    project_id, root_id = _create_project(storage, workspace_root)
+    client = FakeChatCodexClient()
+    service = _make_service(storage, client)
+
+    session = storage.chat_state_store.read_session(project_id, root_id)
+    session["thread_id"] = "ask-thread-debounced"
+    session["thread_role"] = "ask_planning"
+    session["forked_from_thread_id"] = "audit-thread-root"
+    session["forked_from_node_id"] = root_id
+    session["forked_from_role"] = "audit"
+    session["fork_reason"] = "ask_bootstrap"
+    session["lineage_root_thread_id"] = "audit-thread-root"
+    session["active_turn_id"] = None
+    storage.chat_state_store.write_session(project_id, root_id, session, thread_role="ask_planning")
+
+    first = service.get_session(project_id, root_id, thread_role="ask_planning")
+    second = service.get_session(project_id, root_id, thread_role="ask_planning")
+
+    assert first["thread_id"] == "ask-thread-debounced"
+    assert second["thread_id"] == "ask-thread-debounced"
+    assert [thread_id for thread_id in client.resumed_threads if thread_id == "ask-thread-debounced"] == [
+        "ask-thread-debounced"
+    ]
+
+
 def test_get_session_does_not_inject_or_normalize_legacy_audit_messages(storage, workspace_root):
     project_id, root_id = _create_project(storage, workspace_root)
     service = _make_service(storage)

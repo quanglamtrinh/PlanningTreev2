@@ -1,0 +1,14 @@
+﻿{
+    "version":  "1.0.0",
+    "phase":  "A2",
+    "baseline":  {
+                     "label":  "aq2_pre_lane_aware_queue_core_baseline_v1",
+                     "captured_at":  "2026-04-14T00:00:00Z",
+                     "workload":  "execution_queue_regression_replay_v1"
+                 },
+    "baseline_metrics":  {
+                             "execution_queue_parity_failures":  null,
+                             "lane_adapter_contract_pass_rate_pct":  null,
+                             "queue_state_transition_nondeterministic_cases":  null
+                         }
+}

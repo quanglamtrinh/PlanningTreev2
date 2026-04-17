@@ -108,6 +108,10 @@ def is_ask_v3_frontend_enabled() -> bool:
     return _bool_env("PLANNINGTREE_ASK_V3_FRONTEND_ENABLED", default=True)
 
 
+def is_ask_followup_queue_enabled() -> bool:
+    return _bool_env("PLANNINGTREE_ASK_FOLLOWUP_QUEUE_ENABLED", default=False)
+
+
 def get_rehearsal_workspace_root() -> Optional[Path]:
     raw = str(os.environ.get("PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT", "") or "").strip()
     if not raw:
@@ -161,6 +165,15 @@ def get_phase5_log_compact_min_events() -> int:
     except (TypeError, ValueError):
         value = 200
     return max(1, value)
+
+
+def get_thread_raw_event_coalesce_ms() -> int:
+    raw = os.environ.get("PLANNINGTREE_THREAD_RAW_EVENT_COALESCE_MS", "50")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 50
+    return max(10, min(80, value))
 
 
 def is_conversation_v3_bridge_allowed_for_project(project_id: str) -> bool:

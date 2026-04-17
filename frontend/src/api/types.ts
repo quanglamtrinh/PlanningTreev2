@@ -27,6 +27,7 @@ export interface BootstrapStatus {
   codex_path: string | null
   ask_v3_backend_enabled?: boolean
   ask_v3_frontend_enabled?: boolean
+  ask_followup_queue_enabled?: boolean
 }
 
 export interface AskRolloutMetricsSnapshot {

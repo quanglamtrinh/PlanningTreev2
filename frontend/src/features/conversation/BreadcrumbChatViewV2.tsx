@@ -18,8 +18,12 @@ import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { MessagesV3 } from './components/v3/MessagesV3'
 import { MessagesV3ErrorBoundary } from './components/v3/MessagesV3ErrorBoundary'
 import {
+  type AskFollowupQueuePauseReason,
+  type AskFollowupQueueStatus,
   type ExecutionFollowupQueuePauseReason,
   type ExecutionFollowupQueueStatus,
+  selectAskFollowupQueueActions,
+  selectAskFollowupQueueState,
   selectComposerState,
   selectExecutionFollowupQueueActions,
   selectExecutionFollowupQueueState,
@@ -50,7 +54,7 @@ function renderActionLabel(action: string | null, idleLabel: string, busyLabel: 
   return action ? busyLabel : idleLabel
 }
 
-function renderQueueStatusLabel(status: ExecutionFollowupQueueStatus): string {
+function renderQueueStatusLabel(status: ExecutionFollowupQueueStatus | AskFollowupQueueStatus): string {
   if (status === 'queued') {
     return 'Queued'
   }
@@ -79,6 +83,44 @@ function renderQueuePauseReasonLabel(reason: ExecutionFollowupQueuePauseReason):
   return 'Paused: workflow blocked'
 }
 
+function renderAskQueuePauseReasonLabel(reason: AskFollowupQueuePauseReason): string {
+  if (reason === 'none') {
+    return 'Auto-send ready'
+  }
+  if (reason === 'snapshot_unavailable') {
+    return 'Paused: snapshot unavailable'
+  }
+  if (reason === 'stream_or_state_mismatch') {
+    return 'Paused: stream/state mismatch'
+  }
+  if (reason === 'active_turn_running') {
+    return 'Paused: active turn running'
+  }
+  if (reason === 'waiting_user_input') {
+    return 'Paused: waiting for required input'
+  }
+  if (reason === 'operator_pause') {
+    return 'Paused by operator'
+  }
+  return 'Paused: confirmation required'
+}
+
+function renderAskConfirmationReasonLabel(reason: string | null | undefined): string {
+  if (reason === 'stale_age') {
+    return 'Queued ask is stale. Confirm before sending.'
+  }
+  if (reason === 'thread_drift') {
+    return 'Thread context changed. Confirm before sending.'
+  }
+  if (reason === 'snapshot_drift') {
+    return 'Snapshot context changed. Confirm before sending.'
+  }
+  if (reason === 'stale_marker') {
+    return 'Stream context changed. Confirm before sending.'
+  }
+  return 'Queued ask requires confirmation before sending.'
+}
+
 export function BreadcrumbChatViewV2() {
   const navigate = useNavigate()
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
@@ -101,19 +143,29 @@ export function BreadcrumbChatViewV2() {
     disconnectThread: disconnectThreadV3,
   } = useThreadByIdStoreV3(useShallow(selectThreadActions))
   const executionQueueState = useThreadByIdStoreV3(useShallow(selectExecutionFollowupQueueState))
+  const askQueueState = useThreadByIdStoreV3(useShallow(selectAskFollowupQueueState))
   const {
     enqueueFollowup,
-    removeQueued,
+    removeQueued: removeExecutionQueued,
     reorderQueued,
     sendQueuedNow,
-    confirmQueued,
+    confirmQueued: confirmExecutionQueued,
     retryQueued,
     setOperatorPause,
     syncExecutionQueueContext,
   } = useThreadByIdStoreV3(useShallow(selectExecutionFollowupQueueActions))
+  const setAskFollowupQueueEnabled = useThreadByIdStoreV3((state) => state.setAskFollowupQueueEnabled)
+  const {
+    removeQueued: removeAskQueued,
+    confirmQueued: confirmAskQueued,
+    reorderAskQueued,
+    sendAskQueuedNow,
+    retryAskQueued,
+  } = useThreadByIdStoreV3(useShallow(selectAskFollowupQueueActions))
 
   const {
     activeProjectId,
+    bootstrap,
     snapshot,
     selectedNodeId,
     isLoadingSnapshot,
@@ -123,6 +175,7 @@ export function BreadcrumbChatViewV2() {
   } = useProjectStore(
     useShallow((state) => ({
       activeProjectId: state.activeProjectId,
+      bootstrap: state.bootstrap,
       snapshot: state.snapshot,
       selectedNodeId: state.selectedNodeId,
       isLoadingSnapshot: state.isLoadingSnapshot,
@@ -370,13 +423,18 @@ export function BreadcrumbChatViewV2() {
   const executionQueueHasSending = executionQueueEntries.some((entry) => entry.status === 'sending')
   const executionQueueControlsDisabled = executionQueueHasSending || executionQueueState.isSending
   const executionQueuePauseLabel = renderQueuePauseReasonLabel(executionQueueState.executionQueuePauseReason)
-  const isActiveTurn = composerStateV3.isActiveTurn
+  const askQueueEnabled = bootstrap?.ask_followup_queue_enabled === true
+  const askQueueEntries = askQueueState.askFollowupQueue
+  const askQueueHasSending = askQueueEntries.some((entry) => entry.status === 'sending')
+  const askQueueControlsDisabled = askQueueHasSending || askQueueState.isSending
+  const askQueuePauseLabel = renderAskQueuePauseReasonLabel(askQueueState.askQueuePauseReason)
+  const conversationLoading = isLoading || (threadTab === 'ask' ? false : isWorkflowLoading)
   const composerDisabled = useMemo(() => {
     if (!composerStateV3.snapshot) {
       return true
     }
     if (threadTab === 'ask') {
-      return isActiveTurn || composerStateV3.isSending || composerStateV3.isLoading
+      return composerStateV3.isLoading
     }
     if (threadTab === 'execution') {
       return composerStateV3.isLoading || executionQueueHasSending
@@ -387,7 +445,6 @@ export function BreadcrumbChatViewV2() {
     composerStateV3.isSending,
     composerStateV3.snapshot,
     executionQueueHasSending,
-    isActiveTurn,
     threadTab,
   ])
 
@@ -409,6 +466,13 @@ export function BreadcrumbChatViewV2() {
     },
     [enqueueFollowup, loadWorkflowState, nodeId, projectId, sendTurn, threadTab],
   )
+
+  useEffect(() => {
+    if (askQueueState.askFollowupQueueEnabled === askQueueEnabled) {
+      return
+    }
+    setAskFollowupQueueEnabled(askQueueEnabled)
+  }, [askQueueEnabled, askQueueState.askFollowupQueueEnabled, setAskFollowupQueueEnabled])
 
   useEffect(() => {
     if (threadTab !== 'execution') {
@@ -664,7 +728,7 @@ export function BreadcrumbChatViewV2() {
                 >
                   <MessagesV3
                     snapshot={feedRenderStateV3.snapshot}
-                    isLoading={isLoading || isWorkflowLoading}
+                    isLoading={conversationLoading}
                     isSending={isSending}
                     hasOlderHistory={hasOlderHistory}
                     isLoadingHistory={isLoadingHistory}
@@ -782,7 +846,7 @@ export function BreadcrumbChatViewV2() {
                                 type="button"
                                 className={`${styles.executionQueueAction} ${styles.executionQueueActionPrimary}`}
                                 disabled={executionQueueControlsDisabled}
-                                onClick={() => void confirmQueued(entry.entryId)}
+                                onClick={() => void confirmExecutionQueued(entry.entryId)}
                               >
                                 Confirm
                               </button>
@@ -801,7 +865,113 @@ export function BreadcrumbChatViewV2() {
                               type="button"
                               className={styles.executionQueueAction}
                               disabled={executionQueueControlsDisabled || entry.status === 'sending'}
-                              onClick={() => removeQueued(entry.entryId)}
+                              onClick={() => removeExecutionQueued(entry.entryId)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </section>
+              ) : null}
+              {threadTab === 'ask' && askQueueState.askFollowupQueueEnabled ? (
+                <section
+                  className={styles.askQueuePanel}
+                  aria-label="Queued ask follow-ups"
+                  data-testid="ask-followup-queue-panel"
+                >
+                  <div className={styles.askQueueHeader}>
+                    <div className={styles.askQueueTitle}>Queued Ask Follow-ups ({askQueueEntries.length})</div>
+                    <div className={styles.askQueueHeaderControls}>
+                      <span className={styles.askQueuePauseReason}>{askQueuePauseLabel}</span>
+                    </div>
+                  </div>
+
+                  {askQueueEntries.length === 0 ? (
+                    <p className={styles.askQueueEmpty}>No queued ask follow-ups.</p>
+                  ) : (
+                    <ol className={styles.askQueueList}>
+                      {askQueueEntries.map((entry, index) => (
+                        <li key={entry.entryId} className={styles.askQueueItem}>
+                          <div className={styles.askQueueItemMetaRow}>
+                            <span
+                              className={`${styles.askQueueStatusBadge} ${
+                                entry.status === 'failed'
+                                  ? styles.askQueueStatusFailed
+                                  : entry.status === 'requires_confirmation'
+                                    ? styles.askQueueStatusConfirmation
+                                    : entry.status === 'sending'
+                                      ? styles.askQueueStatusSending
+                                      : styles.askQueueStatusQueued
+                              }`}
+                            >
+                              {renderQueueStatusLabel(entry.status)}
+                            </span>
+                            <span className={styles.askQueueMetaText}>Attempt {entry.attemptCount + 1}</span>
+                          </div>
+                          <p className={styles.askQueueText}>{entry.text}</p>
+                          {entry.status === 'requires_confirmation' ? (
+                            <div className={styles.askQueueReason}>
+                              {renderAskConfirmationReasonLabel(entry.confirmationReason)}
+                            </div>
+                          ) : null}
+                          {entry.lastError ? (
+                            <div className={styles.askQueueError}>Last error: {entry.lastError}</div>
+                          ) : null}
+                          <div className={styles.askQueueActions}>
+                            <button
+                              type="button"
+                              className={styles.askQueueAction}
+                              disabled={askQueueControlsDisabled || index === 0}
+                              onClick={() => reorderAskQueued(index, index - 1)}
+                            >
+                              Move up
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.askQueueAction}
+                              disabled={askQueueControlsDisabled || index === askQueueEntries.length - 1}
+                              onClick={() => reorderAskQueued(index, index + 1)}
+                            >
+                              Move down
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.askQueueAction}
+                              disabled={
+                                askQueueControlsDisabled || index !== 0 || entry.status !== 'queued'
+                              }
+                              onClick={() => void sendAskQueuedNow(entry.entryId)}
+                            >
+                              Send now
+                            </button>
+                            {entry.status === 'requires_confirmation' ? (
+                              <button
+                                type="button"
+                                className={`${styles.askQueueAction} ${styles.askQueueActionPrimary}`}
+                                disabled={askQueueControlsDisabled}
+                                onClick={() => void confirmAskQueued(entry.entryId)}
+                              >
+                                Confirm
+                              </button>
+                            ) : null}
+                            {entry.status === 'failed' ? (
+                              <button
+                                type="button"
+                                className={`${styles.askQueueAction} ${styles.askQueueActionPrimary}`}
+                                disabled={askQueueControlsDisabled}
+                                onClick={() => void retryAskQueued(entry.entryId)}
+                              >
+                                Retry
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className={styles.askQueueAction}
+                              disabled={askQueueControlsDisabled || entry.status === 'sending'}
+                              onClick={() => removeAskQueued(entry.entryId)}
                             >
                               Remove
                             </button>
