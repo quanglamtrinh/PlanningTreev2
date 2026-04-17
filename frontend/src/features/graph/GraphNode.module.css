@@ -7,11 +7,6 @@
   overflow: visible;
 }
 
-/* Init-node ⚡ menu sits `bottom: -14px` absolute — reserve space so the next row doesn't sit under it */
-.wrapperFloatingMenu {
-  padding-bottom: 24px;
-}
-
 /* ─── Handles (invisible anchors — edges meet card like an org chart) ─── */
 .handle {
   width: 1px;

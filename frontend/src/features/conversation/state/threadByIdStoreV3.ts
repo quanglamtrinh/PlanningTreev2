@@ -45,8 +45,11 @@ import {
 
 const SSE_RECONNECT_RETRY_MS = 1000
 const USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS = 1500
-const FRAME_BATCH_FALLBACK_FLUSH_MS = 16
-const FRAME_BATCH_MAX_QUEUE_AGE_MS = 50
+const THREAD_STREAM_LOW_LATENCY_ENV_FLAG = 'VITE_THREAD_STREAM_LOW_LATENCY'
+const FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT = 16
+const FRAME_BATCH_PRIORITY_FLUSH_MS_LOW_LATENCY = 8
+const FRAME_BATCH_MAX_QUEUE_AGE_MS_DEFAULT = 50
+const FRAME_BATCH_MAX_QUEUE_AGE_MS_LOW_LATENCY = 25
 const SCROLLBACK_SOFT_CAP = 1000
 const PHASE12_CAP_PROFILE_ENV_FLAG = 'VITE_PTM_PHASE12_CAP_PROFILE'
 const DEFAULT_PHASE12_CAP_PROFILE: Phase12CapProfile = 'standard'
@@ -79,6 +82,22 @@ function normalizePhase12CapProfile(value: string | null | undefined): Phase12Ca
     return normalized
   }
   return null
+}
+
+function resolveBooleanEnvFlag(value: unknown, fallback: boolean): boolean {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+  if (!normalized) {
+    return fallback
+  }
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false
+  }
+  return fallback
 }
 
 function resolveDeviceMemoryHint(): number | null {
@@ -134,6 +153,18 @@ export function resolvePhase12CapPolicy(options: {
     effectiveTrimTarget: softCap,
   }
 }
+
+const THREAD_STREAM_LOW_LATENCY_ENABLED = resolveBooleanEnvFlag(
+  (import.meta.env as Record<string, unknown>)[THREAD_STREAM_LOW_LATENCY_ENV_FLAG],
+  true,
+)
+const FRAME_BATCH_FALLBACK_FLUSH_MS = FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT
+const FRAME_BATCH_PRIORITY_FLUSH_MS = THREAD_STREAM_LOW_LATENCY_ENABLED
+  ? FRAME_BATCH_PRIORITY_FLUSH_MS_LOW_LATENCY
+  : FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT
+const FRAME_BATCH_MAX_QUEUE_AGE_MS = THREAD_STREAM_LOW_LATENCY_ENABLED
+  ? FRAME_BATCH_MAX_QUEUE_AGE_MS_LOW_LATENCY
+  : FRAME_BATCH_MAX_QUEUE_AGE_MS_DEFAULT
 
 const SCROLLBACK_CAP_POLICY = resolvePhase12CapPolicy()
 const SNAPSHOT_LIVE_LIMIT = SCROLLBACK_CAP_POLICY.softCap
@@ -1782,6 +1813,18 @@ async function openThreadEventStream(
     }
   }
 
+  const isMessageTextPatchEvent = (event: ThreadBusinessEventV3): boolean => {
+    if (event.type !== 'conversation.item.patch.v3') {
+      return false
+    }
+    const patch = event.payload.patch
+    return (
+      patch.kind === 'message' &&
+      typeof patch.textAppend === 'string' &&
+      patch.textAppend.length > 0
+    )
+  }
+
   const shouldForceFlush = (event: ThreadBusinessEventV3): boolean => {
     if (
       event.type === 'thread.snapshot.v3' ||
@@ -2024,22 +2067,28 @@ async function openThreadEventStream(
     }
   }
 
-  const scheduleQueuedBusinessFlush = () => {
+  const scheduleQueuedBusinessFlush = (priority = false) => {
     if (rafFlushHandle === null && typeof globalThis.requestAnimationFrame === 'function') {
       rafFlushHandle = globalThis.requestAnimationFrame(() => {
         rafFlushHandle = null
         flushQueuedBusinessFrames('raf')
       })
     }
+    const fallbackDelayMs = priority
+      ? Math.min(FRAME_BATCH_FALLBACK_FLUSH_MS, FRAME_BATCH_PRIORITY_FLUSH_MS)
+      : FRAME_BATCH_FALLBACK_FLUSH_MS
     if (fallbackFlushTimer === null) {
       fallbackFlushTimer = globalThis.setTimeout(() => {
         fallbackFlushTimer = null
         flushQueuedBusinessFrames('fallback')
-      }, FRAME_BATCH_FALLBACK_FLUSH_MS)
+      }, fallbackDelayMs)
     }
     if (maxAgeFlushTimer === null && queuedSinceMs !== null) {
       const ageMs = Math.max(0, Date.now() - queuedSinceMs)
-      const waitMs = Math.max(0, FRAME_BATCH_MAX_QUEUE_AGE_MS - ageMs)
+      const maxAgeTargetMs = priority
+        ? Math.min(FRAME_BATCH_MAX_QUEUE_AGE_MS, FRAME_BATCH_PRIORITY_FLUSH_MS)
+        : FRAME_BATCH_MAX_QUEUE_AGE_MS
+      const waitMs = Math.max(0, maxAgeTargetMs - ageMs)
       maxAgeFlushTimer = globalThis.setTimeout(() => {
         maxAgeFlushTimer = null
         flushQueuedBusinessFrames('max_age')
@@ -2056,7 +2105,8 @@ async function openThreadEventStream(
       flushQueuedBusinessFrames('forced')
       return
     }
-    scheduleQueuedBusinessFlush()
+    const priorityFlush = THREAD_STREAM_LOW_LATENCY_ENABLED && isMessageTextPatchEvent(event)
+    scheduleQueuedBusinessFlush(priorityFlush)
   }
 
   eventSource.onopen = () => {

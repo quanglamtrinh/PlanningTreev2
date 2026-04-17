@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
@@ -27,6 +28,9 @@ class ThreadLineageService:
         self._codex_client = codex_client
         self._tree_service = tree_service
         self._thread_registry_service_v2 = thread_registry_service_v2
+        self._resume_guard_lock = threading.Lock()
+        self._resume_hydrated_keys: set[tuple[str, str, str, str]] = set()
+        self._resume_inflight_keys: set[tuple[str, str, str, str]] = set()
 
     def set_thread_registry_service(
         self,
@@ -44,6 +48,9 @@ class ThreadLineageService:
         base_instructions: str | None = None,
         dynamic_tools: list[dict[str, Any]] | None = None,
         writable_roots: list[str] | None = None,
+        resume_guarded: bool = False,
+        force_resume: bool = False,
+        active_turn_live: bool = False,
     ) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             return self._ensure_thread_binding_v2_locked(
@@ -54,6 +61,9 @@ class ThreadLineageService:
                 base_instructions=base_instructions,
                 dynamic_tools=dynamic_tools,
                 writable_roots=writable_roots,
+                resume_guarded=resume_guarded,
+                force_resume=force_resume,
+                active_turn_live=active_turn_live,
             )
 
     def ensure_root_audit_thread(
@@ -123,6 +133,9 @@ class ThreadLineageService:
         base_instructions: str | None = None,
         dynamic_tools: list[dict[str, Any]] | None = None,
         writable_roots: list[str] | None = None,
+        resume_guarded: bool = False,
+        force_resume: bool = False,
+        active_turn_live: bool = False,
     ) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             self._load_snapshot_and_node_locked(project_id, node_id)
@@ -137,6 +150,10 @@ class ThreadLineageService:
                     existing_thread_id,
                     cwd=workspace_root,
                     writable_roots=writable_roots,
+                    resume_guarded=resume_guarded and thread_role in {"ask_planning", "execution"},
+                    force_resume=force_resume,
+                    active_turn_live=active_turn_live,
+                    guard_context=(project_id, node_id, thread_role),
                 )
                 if resumed:
                     if self._needs_legacy_backfill(target_session):
@@ -505,6 +522,9 @@ class ThreadLineageService:
         base_instructions: str | None,
         dynamic_tools: list[dict[str, Any]] | None,
         writable_roots: list[str] | None,
+        resume_guarded: bool = False,
+        force_resume: bool = False,
+        active_turn_live: bool = False,
     ) -> dict[str, Any]:
         snapshot, node, node_by_id = self._load_snapshot_and_node_locked(project_id, node_id)
         if thread_role == "audit" and self._is_root_node(snapshot, node):
@@ -521,6 +541,10 @@ class ThreadLineageService:
                 thread_id,
                 cwd=workspace_root,
                 writable_roots=writable_roots,
+                resume_guarded=resume_guarded and thread_role in {"ask_planning", "execution"},
+                force_resume=force_resume,
+                active_turn_live=active_turn_live,
+                guard_context=(project_id, node_id, thread_role),
             )
             if resumed:
                 return entry
@@ -987,7 +1011,23 @@ class ThreadLineageService:
         *,
         cwd: str | None,
         writable_roots: list[str] | None,
+        resume_guarded: bool = False,
+        force_resume: bool = False,
+        active_turn_live: bool = False,
+        guard_context: tuple[str, str, str] | None = None,
     ) -> bool:
+        tracked_guard_key = self._build_resume_guard_key(guard_context, thread_id)
+        inflight_guard_key: tuple[str, str, str, str] | None = None
+        if resume_guarded and tracked_guard_key is not None and not force_resume:
+            with self._resume_guard_lock:
+                if active_turn_live:
+                    return True
+                if tracked_guard_key in self._resume_inflight_keys:
+                    return True
+                if tracked_guard_key in self._resume_hydrated_keys:
+                    return True
+                self._resume_inflight_keys.add(tracked_guard_key)
+                inflight_guard_key = tracked_guard_key
         try:
             self._codex_client.resume_thread(
                 thread_id,
@@ -995,6 +1035,9 @@ class ThreadLineageService:
                 timeout_sec=_RESUME_TIMEOUT_SEC,
                 writable_roots=writable_roots,
             )
+            if tracked_guard_key is not None:
+                with self._resume_guard_lock:
+                    self._resume_hydrated_keys.add(tracked_guard_key)
             return True
         except CodexTransportError as exc:
             if self._is_no_rollout_error(exc):
@@ -1004,14 +1047,45 @@ class ThreadLineageService:
                         cwd=cwd,
                         writable_roots=writable_roots,
                     )
+                    if tracked_guard_key is not None:
+                        with self._resume_guard_lock:
+                            self._resume_hydrated_keys.add(tracked_guard_key)
                     return True
                 except CodexTransportError as materialize_exc:
                     if self._is_missing_thread_error(materialize_exc):
+                        if tracked_guard_key is not None:
+                            with self._resume_guard_lock:
+                                self._resume_hydrated_keys.discard(tracked_guard_key)
                         return False
                     raise
             if self._is_thread_not_found_error(exc):
+                if tracked_guard_key is not None:
+                    with self._resume_guard_lock:
+                        self._resume_hydrated_keys.discard(tracked_guard_key)
                 return False
             raise
+        finally:
+            if inflight_guard_key is not None:
+                with self._resume_guard_lock:
+                    self._resume_inflight_keys.discard(inflight_guard_key)
+
+    def _build_resume_guard_key(
+        self,
+        guard_context: tuple[str, str, str] | None,
+        thread_id: str,
+    ) -> tuple[str, str, str, str] | None:
+        if guard_context is None:
+            return None
+        project_id, node_id, thread_role = guard_context
+        normalized_thread_id = self._normalize_optional_string(thread_id)
+        if normalized_thread_id is None:
+            return None
+        return (
+            self._normalize_optional_string(project_id) or "",
+            self._normalize_optional_string(node_id) or "",
+            self._normalize_optional_string(thread_role) or "",
+            normalized_thread_id,
+        )
 
     def _materialize_thread_rollout(
         self,

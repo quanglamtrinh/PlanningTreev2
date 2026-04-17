@@ -1,0 +1,31 @@
+{
+  "phase": "A7",
+  "gate_id": "AQ7-G1",
+  "source": "ask_queue_acceptance_matrix",
+  "generated_at": "2026-04-16T21:17:30Z",
+  "evidence_mode": "candidate",
+  "gate_eligible": true,
+  "status": "pass",
+  "context": {
+    "scenario": "ask_phase_a7_acceptance_matrix_v1",
+    "ask_queue_acceptance_suite_pass_rate_pct": 100.0,
+    "ask_queue_acceptance_cases_total": 36,
+    "ask_queue_acceptance_cases_passed": 36,
+    "ask_queue_acceptance_cases_failed": 0,
+    "candidate_path": "docs/render/ask-migration-phases/phase-a7-test-matrix-controlled-enablement/evidence/candidates/ask_queue_acceptance_matrix-candidate.json",
+    "candidate_commit_sha": "local-check"
+  },
+  "metric": "ask_queue_acceptance_suite_pass_rate_pct",
+  "value": 100.0,
+  "operator": "gte",
+  "target": 100.0,
+  "unit": "pct",
+  "pass": true,
+  "baseline_metadata": {
+    "label": "aq7_pre_ask_rollout_baseline_v1",
+    "captured_at": "2026-04-14T00:00:00Z",
+    "workload": "ask_queue_rollout_readiness_v1",
+    "manifest_version": "1.0.0",
+    "manifest_path": "docs/render/ask-migration-phases/phase-a7-test-matrix-controlled-enablement/evidence/baseline-manifest-v1.json"
+  }
+}

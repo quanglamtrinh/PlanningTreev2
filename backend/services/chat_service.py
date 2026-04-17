@@ -75,6 +75,8 @@ class ChatService:
             )
         if session.get("active_turn_id"):
             return session
+        if self.has_live_turn(project_id, node_id, thread_role):
+            return session
         self._bootstrap_task_session_on_read(project_id, node_id, node, thread_role)
         with self._storage.project_lock(project_id):
             session = self._load_session_locked(
@@ -218,6 +220,26 @@ class ChatService:
     def has_live_turns_for_project(self, project_id: str) -> bool:
         with self._live_turns_lock:
             return any(turn[0] == project_id for turn in self._live_turns)
+
+    def has_live_turn(
+        self,
+        project_id: str,
+        node_id: str,
+        thread_role: str,
+        turn_id: str | None = None,
+    ) -> bool:
+        with self._live_turns_lock:
+            if turn_id is not None:
+                return (
+                    project_id,
+                    node_id,
+                    thread_role,
+                    str(turn_id),
+                ) in self._live_turns
+            return any(
+                turn[0] == project_id and turn[1] == node_id and turn[2] == thread_role
+                for turn in self._live_turns
+            )
 
     def register_external_live_turn(
         self, project_id: str, node_id: str, thread_role: str, turn_id: str
@@ -513,7 +535,14 @@ class ChatService:
 
         workspace_root = self._workspace_root_for_project(project_id)
         if thread_role == "ask_planning":
-            self._ensure_ask_planning_thread(project_id, node_id, workspace_root)
+            self._ensure_ask_planning_thread(
+                project_id,
+                node_id,
+                workspace_root,
+                resume_guarded=True,
+                force_resume=False,
+                active_turn_live=self.has_live_turn(project_id, node_id, thread_role),
+            )
             return
         self._ensure_audit_thread(project_id, node_id, workspace_root)
 
@@ -522,6 +551,10 @@ class ChatService:
         project_id: str,
         node_id: str,
         workspace_root: str | None,
+        *,
+        resume_guarded: bool = False,
+        force_resume: bool = False,
+        active_turn_live: bool = False,
     ) -> str:
         base_instructions, dynamic_tools = build_ask_planning_thread_config()
         try:
@@ -535,6 +568,9 @@ class ChatService:
                 workspace_root=workspace_root,
                 base_instructions=base_instructions,
                 dynamic_tools=dynamic_tools,
+                resume_guarded=resume_guarded,
+                force_resume=force_resume,
+                active_turn_live=active_turn_live,
             )
         except CodexTransportError as exc:
             raise ChatBackendUnavailable(str(exc)) from exc

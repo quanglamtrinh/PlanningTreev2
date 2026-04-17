@@ -704,12 +704,25 @@ class ThreadQueryServiceV3:
                 )
         elif ensure_binding and self._thread_lineage_service is not None:
             workspace_root = self._chat_service._workspace_root_for_project(project_id)
-            self._thread_lineage_service.ensure_thread_binding_v2(
-                project_id,
-                node_id,
-                thread_role,
-                workspace_root,
-            )
+            if thread_role == "execution":
+                self._thread_lineage_service.ensure_thread_binding_v2(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    workspace_root,
+                    resume_guarded=True,
+                    force_resume=False,
+                    active_turn_live=bool(
+                        self._chat_service.has_live_turn(project_id, node_id, thread_role)
+                    ),
+                )
+            else:
+                self._thread_lineage_service.ensure_thread_binding_v2(
+                    project_id,
+                    node_id,
+                    thread_role,
+                    workspace_root,
+                )
 
         with self._storage.project_lock(project_id):
             updated, changed = self._load_or_bridge_snapshot_locked(

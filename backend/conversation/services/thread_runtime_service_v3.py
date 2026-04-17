@@ -44,8 +44,8 @@ _ASK_READ_ONLY_POLICY_ERROR = (
 )
 
 _COMPACTION_WINDOW_MS_DEFAULT = 50
-_COMPACTION_WINDOW_MS_MIN = 40
-_COMPACTION_WINDOW_MS_MAX = 60
+_COMPACTION_WINDOW_MS_MIN = 10
+_COMPACTION_WINDOW_MS_MAX = 80
 _COMPACTION_MAX_BATCH_SIZE_DEFAULT = 64
 
 _COMPACTION_MERGE_SAFE_METHODS = {
@@ -968,6 +968,8 @@ class ThreadRuntimeServiceV3:
             thread_role,
             publish_repairs=False,
             ensure_binding=False,
+            # Raw-event callbacks must not re-enter ask-thread bootstrap/resume.
+            allow_thread_read_hydration=False,
         )
         updated = current
         events: list[dict[str, Any]] = []
@@ -1199,6 +1201,7 @@ class ThreadRuntimeServiceV3:
                     thread_role,
                     publish_repairs=False,
                     ensure_binding=False,
+                    allow_thread_read_hydration=False,
                 )
                 if self._ask_turn_contains_file_change_items(policy_snapshot, turn_id):
                     policy_violation_message = _ASK_READ_ONLY_POLICY_ERROR
@@ -1212,6 +1215,8 @@ class ThreadRuntimeServiceV3:
                     node_id,
                     thread_role,
                     publish_repairs=False,
+                    ensure_binding=False,
+                    allow_thread_read_hydration=False,
                 )
                 error_item = self._build_error_item(
                     turn_id=turn_id,
@@ -1260,6 +1265,8 @@ class ThreadRuntimeServiceV3:
                     node_id,
                     thread_role,
                     publish_repairs=False,
+                    ensure_binding=False,
+                    allow_thread_read_hydration=False,
                 )
                 error_item = self._build_error_item(
                     turn_id=turn_id,
