@@ -34,6 +34,8 @@ import {
   decideReloadPolicy,
   resolvePhase12CapPolicy,
   resolvePhase12CapProfile,
+  resolveThreadStreamCadencePolicy,
+  resolveThreadStreamCadenceProfile,
   selectAskFollowupQueueState,
   selectComposerState,
   selectCore,
@@ -392,6 +394,35 @@ describe('threadByIdStoreV3', () => {
       headroom: 400,
       effectiveHardCap: 1400,
       effectiveTrimTarget: 1000,
+    })
+  })
+
+  it('resolves thread stream cadence profile by env > legacy low-latency > device memory', () => {
+    expect(resolveThreadStreamCadenceProfile({ envValue: 'HIGH', deviceMemory: 2 })).toBe('high')
+    expect(resolveThreadStreamCadenceProfile({ legacyLowLatencyEnabled: false, deviceMemory: 16 })).toBe('low')
+    expect(resolveThreadStreamCadenceProfile({ deviceMemory: 2 })).toBe('low')
+    expect(resolveThreadStreamCadenceProfile({ deviceMemory: 6 })).toBe('standard')
+    expect(resolveThreadStreamCadenceProfile({ deviceMemory: 12 })).toBe('high')
+  })
+
+  it('resolves thread stream cadence policy presets by profile', () => {
+    expect(resolveThreadStreamCadencePolicy({ envValue: 'low' })).toEqual({
+      profile: 'low',
+      fallbackFlushMs: 20,
+      priorityFlushMs: 12,
+      maxQueueAgeMs: 60,
+    })
+    expect(resolveThreadStreamCadencePolicy({ envValue: 'standard' })).toEqual({
+      profile: 'standard',
+      fallbackFlushMs: 16,
+      priorityFlushMs: 8,
+      maxQueueAgeMs: 25,
+    })
+    expect(resolveThreadStreamCadencePolicy({ envValue: 'high' })).toEqual({
+      profile: 'high',
+      fallbackFlushMs: 12,
+      priorityFlushMs: 6,
+      maxQueueAgeMs: 20,
     })
   })
 

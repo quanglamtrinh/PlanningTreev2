@@ -34,6 +34,7 @@ from backend.config.app_config import (
     get_phase5_log_compact_min_events,
     get_rehearsal_workspace_root,
     get_thread_raw_event_coalesce_ms,
+    get_thread_stream_cadence_profile,
     get_sse_subscriber_queue_max,
     get_spec_gen_timeout,
     get_split_timeout,
@@ -80,6 +81,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     rehearsal_workspace_root = get_rehearsal_workspace_root()
     sse_subscriber_queue_max = get_sse_subscriber_queue_max()
     phase5_log_compact_min_events = get_phase5_log_compact_min_events()
+    thread_stream_cadence_profile = get_thread_stream_cadence_profile()
     thread_raw_event_coalesce_ms = get_thread_raw_event_coalesce_ms()
     ask_rollout_metrics_service = AskRolloutMetricsService()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
@@ -189,6 +191,13 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         ask_rollout_metrics_service=ask_rollout_metrics_service,
         coalescing_window_ms=thread_raw_event_coalesce_ms,
         thread_actor_mode=thread_actor_mode,
+    )
+    logger.info(
+        "Thread stream cadence configured",
+        extra={
+            "thread_stream_cadence_profile": thread_stream_cadence_profile,
+            "thread_raw_event_coalesce_ms": thread_raw_event_coalesce_ms,
+        },
     )
     system_message_writer_v2.set_runtime_service(thread_runtime_service_v3)
     review_service = ReviewService(

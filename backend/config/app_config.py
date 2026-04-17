@@ -167,13 +167,29 @@ def get_phase5_log_compact_min_events() -> int:
     return max(1, value)
 
 
+def get_thread_stream_cadence_profile() -> str:
+    raw = str(os.environ.get("PLANNINGTREE_THREAD_STREAM_CADENCE_PROFILE", "") or "").strip().lower()
+    if raw in {"low", "standard", "high"}:
+        return raw
+    return "standard"
+
+
 def get_thread_raw_event_coalesce_ms() -> int:
-    raw = os.environ.get("PLANNINGTREE_THREAD_RAW_EVENT_COALESCE_MS", "50")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        value = 50
-    return max(10, min(80, value))
+    raw = str(os.environ.get("PLANNINGTREE_THREAD_RAW_EVENT_COALESCE_MS", "") or "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 50
+        return max(10, min(80, value))
+
+    profile = get_thread_stream_cadence_profile()
+    profile_defaults = {
+        "low": 60,
+        "standard": 25,
+        "high": 20,
+    }
+    return profile_defaults.get(profile, 25)
 
 
 def is_conversation_v3_bridge_allowed_for_project(project_id: str) -> bool:

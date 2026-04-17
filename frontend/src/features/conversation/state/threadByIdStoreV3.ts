@@ -46,10 +46,30 @@ import {
 const SSE_RECONNECT_RETRY_MS = 1000
 const USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS = 1500
 const THREAD_STREAM_LOW_LATENCY_ENV_FLAG = 'VITE_THREAD_STREAM_LOW_LATENCY'
+const THREAD_STREAM_CADENCE_PROFILE_ENV_FLAG = 'VITE_THREAD_STREAM_CADENCE_PROFILE'
 const FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT = 16
 const FRAME_BATCH_PRIORITY_FLUSH_MS_LOW_LATENCY = 8
-const FRAME_BATCH_MAX_QUEUE_AGE_MS_DEFAULT = 50
 const FRAME_BATCH_MAX_QUEUE_AGE_MS_LOW_LATENCY = 25
+const THREAD_STREAM_CADENCE_BY_PROFILE: Record<ThreadStreamCadenceProfile, ThreadStreamCadencePolicy> = {
+  low: {
+    profile: 'low',
+    fallbackFlushMs: 20,
+    priorityFlushMs: 12,
+    maxQueueAgeMs: 60,
+  },
+  standard: {
+    profile: 'standard',
+    fallbackFlushMs: FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT,
+    priorityFlushMs: FRAME_BATCH_PRIORITY_FLUSH_MS_LOW_LATENCY,
+    maxQueueAgeMs: FRAME_BATCH_MAX_QUEUE_AGE_MS_LOW_LATENCY,
+  },
+  high: {
+    profile: 'high',
+    fallbackFlushMs: 12,
+    priorityFlushMs: 6,
+    maxQueueAgeMs: 20,
+  },
+}
 const SCROLLBACK_SOFT_CAP = 1000
 const PHASE12_CAP_PROFILE_ENV_FLAG = 'VITE_PTM_PHASE12_CAP_PROFILE'
 const DEFAULT_PHASE12_CAP_PROFILE: Phase12CapProfile = 'standard'
@@ -74,7 +94,27 @@ export type Phase12CapPolicy = {
   effectiveTrimTarget: number
 }
 
+export type ThreadStreamCadenceProfile = 'low' | 'standard' | 'high'
+export type ThreadStreamCadencePolicy = {
+  profile: ThreadStreamCadenceProfile
+  fallbackFlushMs: number
+  priorityFlushMs: number
+  maxQueueAgeMs: number
+}
+
 function normalizePhase12CapProfile(value: string | null | undefined): Phase12CapProfile | null {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'low' || normalized === 'standard' || normalized === 'high') {
+    return normalized
+  }
+  return null
+}
+
+function normalizeThreadStreamCadenceProfile(
+  value: string | null | undefined,
+): ThreadStreamCadenceProfile | null {
   const normalized = String(value ?? '')
     .trim()
     .toLowerCase()
@@ -158,13 +198,59 @@ const THREAD_STREAM_LOW_LATENCY_ENABLED = resolveBooleanEnvFlag(
   (import.meta.env as Record<string, unknown>)[THREAD_STREAM_LOW_LATENCY_ENV_FLAG],
   true,
 )
-const FRAME_BATCH_FALLBACK_FLUSH_MS = FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT
-const FRAME_BATCH_PRIORITY_FLUSH_MS = THREAD_STREAM_LOW_LATENCY_ENABLED
-  ? FRAME_BATCH_PRIORITY_FLUSH_MS_LOW_LATENCY
-  : FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT
-const FRAME_BATCH_MAX_QUEUE_AGE_MS = THREAD_STREAM_LOW_LATENCY_ENABLED
-  ? FRAME_BATCH_MAX_QUEUE_AGE_MS_LOW_LATENCY
-  : FRAME_BATCH_MAX_QUEUE_AGE_MS_DEFAULT
+
+export function resolveThreadStreamCadenceProfile(options: {
+  envValue?: string | null
+  deviceMemory?: number | null
+  legacyLowLatencyEnabled?: boolean | null
+} = {}): ThreadStreamCadenceProfile {
+  const envProfile = normalizeThreadStreamCadenceProfile(options.envValue)
+  if (envProfile) {
+    return envProfile
+  }
+  if (options.legacyLowLatencyEnabled === false) {
+    return 'low'
+  }
+  const deviceMemory =
+    options.deviceMemory != null && Number.isFinite(options.deviceMemory)
+      ? Number(options.deviceMemory)
+      : resolveDeviceMemoryHint()
+  if (deviceMemory != null) {
+    if (deviceMemory < 4) {
+      return 'low'
+    }
+    if (deviceMemory >= 8) {
+      return 'high'
+    }
+  }
+  return 'standard'
+}
+
+export function resolveThreadStreamCadencePolicy(options: {
+  envValue?: string | null
+  deviceMemory?: number | null
+  legacyLowLatencyEnabled?: boolean | null
+} = {}): ThreadStreamCadencePolicy {
+  const envValue =
+    options.envValue ??
+    String((import.meta.env as Record<string, unknown>)[THREAD_STREAM_CADENCE_PROFILE_ENV_FLAG] ?? '')
+  const profile = resolveThreadStreamCadenceProfile({
+    envValue,
+    deviceMemory: options.deviceMemory,
+    legacyLowLatencyEnabled:
+      options.legacyLowLatencyEnabled == null
+        ? THREAD_STREAM_LOW_LATENCY_ENABLED
+        : options.legacyLowLatencyEnabled,
+  })
+  return THREAD_STREAM_CADENCE_BY_PROFILE[profile]
+}
+
+const THREAD_STREAM_CADENCE_POLICY = resolveThreadStreamCadencePolicy({
+  legacyLowLatencyEnabled: THREAD_STREAM_LOW_LATENCY_ENABLED,
+})
+const FRAME_BATCH_FALLBACK_FLUSH_MS = THREAD_STREAM_CADENCE_POLICY.fallbackFlushMs
+const FRAME_BATCH_PRIORITY_FLUSH_MS = THREAD_STREAM_CADENCE_POLICY.priorityFlushMs
+const FRAME_BATCH_MAX_QUEUE_AGE_MS = THREAD_STREAM_CADENCE_POLICY.maxQueueAgeMs
 
 const SCROLLBACK_CAP_POLICY = resolvePhase12CapPolicy()
 const SNAPSHOT_LIVE_LIMIT = SCROLLBACK_CAP_POLICY.softCap
