@@ -539,7 +539,8 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 .describeWorkspaceSection,
 .describeDocsSection,
 .describeSystemPromptsSection,
-.describeSkillsSection {
+.describeSkillsSection,
+.describeExtensionsSection {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -567,6 +568,10 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 
 .describeSystemPromptsSection {
   border-left: 3px solid color-mix(in srgb, var(--color-accent) 22%, var(--color-text-tertiary) 78%);
+}
+
+.describeExtensionsSection {
+  border-left: 3px solid color-mix(in srgb, var(--color-text-secondary) 55%, var(--color-border-subtle));
 }
 
 .describeTaskMissingBanner {

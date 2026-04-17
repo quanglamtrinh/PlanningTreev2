@@ -25,6 +25,47 @@ function formatRelTime(isoString: string | null | undefined): string {
   return `${Math.floor(diffDay / 7)}w`
 }
 
+function SidebarCollapsibleTab({
+  label,
+  expanded,
+  onToggle,
+  expandLabel,
+  collapseLabel,
+}: {
+  label: string
+  expanded: boolean
+  onToggle: () => void
+  expandLabel: string
+  collapseLabel: string
+}) {
+  return (
+    <button
+      type="button"
+      className={`${styles.sidebarSectionTab} ${expanded ? styles.sidebarSectionTabExpanded : ''}`}
+      onClick={onToggle}
+      aria-expanded={expanded}
+      aria-label={expanded ? collapseLabel : expandLabel}
+      title={expanded ? collapseLabel : expandLabel}
+    >
+      <span className={styles.sidebarSectionTabLabel}>{label}</span>
+      <svg
+        className={styles.sidebarSectionTabChevron}
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </button>
+  )
+}
+
 function StatusDot({ status }: { status: string }) {
   const cls = status.replace(/[^a-z]/g, '')
   return <span className={`${styles.dot} ${styles[`dot_${cls}` as keyof typeof styles]}`} />
@@ -38,6 +79,8 @@ export function Sidebar() {
   const usageSnapshotTitle = 'Open Usage Snapshot'
   const isUsageSnapshotRoute = location.pathname === usageSnapshotRoute
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const [isProjectsPanelExpanded, setIsProjectsPanelExpanded] = useState(true)
+  const [isExtensionsPanelExpanded, setIsExtensionsPanelExpanded] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [isPickerLoading, setIsPickerLoading] = useState(false)
@@ -203,7 +246,7 @@ export function Sidebar() {
             <path d="m15 18-6-6 6-6" />
           </svg>
         </button>
-        <span className={styles.headerTitle}>Projects</span>
+        <div className={styles.headerActionsSpacer} aria-hidden />
         <div className={styles.headerActions}>
           <button
             type="button"
@@ -259,38 +302,66 @@ export function Sidebar() {
       {pickerError && <p className={styles.pickerError}>{pickerError}</p>}
 
       <div className={styles.body}>
-        {projects.length === 0 && !isLoadingProjects ? (
-          <div className={styles.emptyState}>
-            <p>No projects yet.</p>
-            <button
-              type="button"
-              className={styles.emptyNewBtn}
-              disabled={isPickerLoading}
-              onClick={() => void handleNewProjectClick()}
-            >
-              + Add project folder
-            </button>
-          </div>
-        ) : (
-          projects.map((project) => {
-            const isActive = project.id === activeProjectId
-            return (
-              <ProjectGroup
-                key={project.id}
-                project={project}
-                isActive={isActive}
-                snapshot={isActive ? snapshot : null}
-                selectedNodeId={selectedNodeId}
-                onClickProject={handleProjectClick}
-                onClickNode={handleNodeClick}
-                onDoubleClickNode={handleOpenBreadcrumb}
-                onRemoveProject={handleRemoveProject}
-                showGitInit={isActive && showGitInitCta(project)}
-                onInitGit={() => void initGit(project.id).then(() => refreshProjects())}
-              />
-            )
-          })
-        )}
+        <div className={styles.projectsSection}>
+          <SidebarCollapsibleTab
+            label="Projects"
+            expanded={isProjectsPanelExpanded}
+            onToggle={() => setIsProjectsPanelExpanded((v) => !v)}
+            expandLabel="Expand projects list"
+            collapseLabel="Collapse projects list"
+          />
+          {isProjectsPanelExpanded ? (
+            <div className={styles.sidebarSectionScroll}>
+              {projects.length === 0 && !isLoadingProjects ? (
+                <div className={styles.emptyState}>
+                  <p>No projects yet.</p>
+                  <button
+                    type="button"
+                    className={styles.emptyNewBtn}
+                    disabled={isPickerLoading}
+                    onClick={() => void handleNewProjectClick()}
+                  >
+                    + Add project folder
+                  </button>
+                </div>
+              ) : (
+                projects.map((project) => {
+                  const isActive = project.id === activeProjectId
+                  return (
+                    <ProjectGroup
+                      key={project.id}
+                      project={project}
+                      isActive={isActive}
+                      snapshot={isActive ? snapshot : null}
+                      selectedNodeId={selectedNodeId}
+                      onClickProject={handleProjectClick}
+                      onClickNode={handleNodeClick}
+                      onDoubleClickNode={handleOpenBreadcrumb}
+                      onRemoveProject={handleRemoveProject}
+                      showGitInit={isActive && showGitInitCta(project)}
+                      onInitGit={() => void initGit(project.id).then(() => refreshProjects())}
+                    />
+                  )
+                })
+              )}
+            </div>
+          ) : null}
+        </div>
+
+        <div className={styles.extensionsSection}>
+          <SidebarCollapsibleTab
+            label="Extensions"
+            expanded={isExtensionsPanelExpanded}
+            onToggle={() => setIsExtensionsPanelExpanded((v) => !v)}
+            expandLabel="Expand extensions panel"
+            collapseLabel="Collapse extensions panel"
+          />
+          {isExtensionsPanelExpanded ? (
+            <div className={styles.extensionsSectionBody}>
+              <p>No extensions configured yet.</p>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className={styles.footer}>

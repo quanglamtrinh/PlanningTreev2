@@ -57,15 +57,55 @@
   flex-shrink: 0;
 }
 
-.headerTitle {
-  font-family: var(--font-display);
-  font-size: var(--type-title-lg-size);
-  font-weight: var(--type-title-lg-weight);
-  line-height: var(--type-title-lg-line);
-  letter-spacing: -0.02em;
-  color: var(--on-surface);
+.headerActionsSpacer {
   flex: 1;
+  min-width: 0;
+}
+
+/* Shared collapsible section tab (Projects, Extensions, …) */
+.sidebarSectionTab {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  align-self: stretch;
+  margin: 0 -10px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: var(--type-title-sm-size);
+  font-weight: var(--type-title-sm-weight);
+  letter-spacing: -0.01em;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
   user-select: none;
+  flex-shrink: 0;
+}
+
+.sidebarSectionTab:hover {
+  background: var(--color-explorer-item-hover);
+  color: var(--on-surface);
+}
+
+.sidebarSectionTabLabel {
+  flex: 1;
+}
+
+.sidebarSectionTabChevron {
+  flex-shrink: 0;
+  color: var(--color-explorer-icon);
+  transition: transform 0.16s ease, color 0.12s ease;
+}
+
+.sidebarSectionTab:hover .sidebarSectionTabChevron {
+  color: var(--color-explorer-icon-hover);
+}
+
+.sidebarSectionTabExpanded .sidebarSectionTabChevron {
+  transform: rotate(180deg);
 }
 
 .headerActions {
@@ -112,28 +152,61 @@
   animation: spin 0.8s linear infinite;
 }
 
-/* ─── Scrollable body ────────────────────────────────────────────────────────── */
+/* ─── Body (section tabs + scrollable project list) ─────────────────────────── */
 .body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 4px 10px 0;
+}
+
+.projectsSection {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sidebarSectionScroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 10px 16px;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--on-surface) 12%, transparent) transparent;
 }
 
-.body::-webkit-scrollbar {
+.sidebarSectionScroll::-webkit-scrollbar {
   width: 4px;
 }
 
-.body::-webkit-scrollbar-track {
+.sidebarSectionScroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.body::-webkit-scrollbar-thumb {
+.sidebarSectionScroll::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--on-surface) 12%, transparent);
   border-radius: 2px;
+}
+
+.extensionsSection {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-top: 1px solid color-mix(in srgb, var(--on-surface) 8%, transparent);
+  padding-bottom: 8px;
+}
+
+.extensionsSectionBody {
+  padding: 4px 16px 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  line-height: 1.45;
+}
+
+.extensionsSectionBody p {
+  margin: 0;
 }
 
 /* ─── Project group ──────────────────────────────────────────────────────────── */

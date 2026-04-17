@@ -12,6 +12,7 @@ import {
 } from './v3/parseCacheContract'
 import { emitParseCacheTrace } from './v3/messagesV3ProfilingHooks'
 import type { MessagesV3Phase11Mode } from './v3/phase11Config'
+import { shouldStreamRenderPlainText } from './v3/streamMarkdownBoundary'
 import { useThreadByIdStoreV3 } from '../state/threadByIdStoreV3'
 
 export type ConversationMarkdownParseTrace = {
@@ -77,11 +78,13 @@ export function ConversationMarkdown({
   parseTrace,
   phase11Mode = 'off',
   phase11DeferredTimeoutMs = 800,
+  streamingPlainTextMode = false,
 }: {
   content: string
   parseTrace?: ConversationMarkdownParseTrace
   phase11Mode?: MessagesV3Phase11Mode
   phase11DeferredTimeoutMs?: number
+  streamingPlainTextMode?: boolean
 }) {
   if (!content.trim()) {
     return null
@@ -106,10 +109,14 @@ export function ConversationMarkdown({
         })
 
   const shouldDeferMarkdown = phase11Mode === 'on'
+  const shouldPreferPlainText = shouldStreamRenderPlainText(content, {
+    isStreaming: streamingPlainTextMode,
+  })
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [isVisibleInViewport, setIsVisibleInViewport] = useState(() => !shouldDeferMarkdown)
   const [isIdleReady, setIsIdleReady] = useState(() => !shouldDeferMarkdown)
-  const shouldRenderMarkdown = !shouldDeferMarkdown || isVisibleInViewport || isIdleReady
+  const shouldRenderMarkdown =
+    !shouldPreferPlainText && (!shouldDeferMarkdown || isVisibleInViewport || isIdleReady)
   const normalizedDeferredTimeoutMs = useMemo(() => {
     const value = Math.floor(phase11DeferredTimeoutMs)
     if (!Number.isFinite(value) || value <= 0) {

@@ -825,6 +825,7 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
       : item.role === 'system'
         ? styles.messageBubbleSystem
         : styles.messageBubbleAssistant
+  const isStreamingMessage = item.role === 'assistant' && item.status === 'in_progress'
   const messageSourceText = streamingTextOverride ?? item.text
   const streamOverlayToken =
     streamingTextOverride == null
@@ -858,6 +859,7 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
               content={renderedText}
               phase11Mode={phase11Mode}
               phase11DeferredTimeoutMs={PHASE11_MARKDOWN_DEFERRED_TIMEOUT_MS}
+              streamingPlainTextMode={isStreamingMessage}
               parseTrace={{
                 threadId: item.threadId,
                 itemId: item.id,
@@ -2985,6 +2987,7 @@ export function MessagesV3({
     </div>
   )
 }
+
 
 
 

@@ -255,6 +255,13 @@ Reduce markdown parse churn + avoid malformed partial rendering during stream.
 ### Exit criteria
 - markdown-heavy execution turns no longer drop FPS sharply on each delta.
 
+### Phase 14.5 completion note
+- Added `streamMarkdownBoundary` utility to classify whether streaming content should stay plain text (unclosed fences/inline code/dangling links/no stable boundary).
+- Added staged markdown rendering path in `ConversationMarkdown` via `streamingPlainTextMode` with safe-boundary promotion back to markdown rendering.
+- Wired `MessageRowV3` to enable staged mode for assistant `in_progress` stream rows.
+- Added unit tests for boundary detector and `ConversationMarkdown` streaming fallback/promotion behavior.
+- Verified with frontend typecheck + unit suite.
+
 ---
 
 ## Phase 14.6 — Early Response UX (post-send responsiveness) (2–3 days)
