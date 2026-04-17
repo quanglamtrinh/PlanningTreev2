@@ -728,8 +728,12 @@ function pickMessageTextLaneUpdate(event: ThreadBusinessEventV3):
   if (!textAppend) {
     return null
   }
+  const itemId = String(event.payload.itemId ?? '').trim()
+  if (!itemId) {
+    return null
+  }
   return {
-    itemId: event.payload.itemId,
+    itemId,
     textAppend,
   }
 }
@@ -748,14 +752,19 @@ function applyStreamingLanePatch(
     updatedAtMs: number
   },
 ): Record<string, StreamingTextLaneEntry> {
-  const key = buildStreamingLaneKey(threadId, itemId)
+  const normalizedThreadId = String(threadId ?? '').trim()
+  const normalizedItemId = String(itemId ?? '').trim()
+  if (!normalizedThreadId || !normalizedItemId || !textAppend) {
+    return lane
+  }
+  const key = buildStreamingLaneKey(normalizedThreadId, normalizedItemId)
   const previous = lane[key]
   const previousText = previous?.text ?? ''
   return {
     ...lane,
     [key]: {
-      threadId,
-      itemId,
+      threadId: normalizedThreadId,
+      itemId: normalizedItemId,
       text: `${previousText}${textAppend}`,
       updatedAtMs,
     },

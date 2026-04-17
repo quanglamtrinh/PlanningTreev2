@@ -192,6 +192,11 @@ Stop re-applying heavy snapshot path on every text delta.
 - active streaming row render cost reduced significantly (>30% fewer heavy renders)
 - no correctness test regressions
 
+### Phase 14.3C completion note
+- Added UI parity test asserting streaming text lane override wins over snapshot text for assistant `in_progress` rows.
+- Added lane guard normalization for thread/item keys before lane patch apply to reduce drift from malformed payloads.
+- Verified with frontend typecheck + unit suites (including `MessagesV3`, `threadByIdStoreV3`, profiling hooks).
+
 ---
 
 ## Phase 14.4 — Row-level Render Isolation (3–4 days)
