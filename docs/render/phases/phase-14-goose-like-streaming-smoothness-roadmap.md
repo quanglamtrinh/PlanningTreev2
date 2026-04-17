@@ -314,6 +314,12 @@ Ensure smoothness improvements do not hurt reconnect/replay resilience.
 ### Exit criteria
 - resilience metrics within gate thresholds.
 
+### Phase 14.7 completion note
+- Added throttled defensive logging for streaming-lane reconcile anomalies in `threadByIdStoreV3` (`snapshot_thread_id_missing`, `entry_thread_mismatch`, `entry_not_in_progress_or_missing`, `entry_text_suffix_mismatch`).
+- Added `scripts/phase14_7_resilience_hardening_report.py` to aggregate lagged-subscriber, replay-edge, and long-session resilience metrics into a gate-style JSON artifact.
+- Added runbook `phase-14.7-resilience-long-session-hardening.md` with thresholds, execution commands, and rollback/safety notes.
+- Verified via script self-test + synthetic dry-run artifact generation.
+
 ---
 
 ## Phase 14.8 — Canary Rollout & Rollback Drills (2–3 days)

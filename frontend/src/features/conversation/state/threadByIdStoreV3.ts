@@ -84,6 +84,7 @@ const EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS = 20
 const ASK_FOLLOWUP_QUEUE_STORAGE_PREFIX = 'ptm:v3:ask-followup-queue:'
 const ASK_FOLLOWUP_QUEUE_MAX_ITEMS = 20
 const ASK_THREAD_ROUTE_MISMATCH_ERROR_SUBSTRING = 'thread id does not match any active route for this node'
+const STREAMING_LANE_RECONCILE_WARN_THROTTLE_MS = 5000
 
 export type Phase12CapProfile = 'low' | 'standard' | 'high'
 export type Phase12CapPolicy = {
@@ -801,6 +802,33 @@ function clearStreamingLaneForThread(
   return changed ? next : lane
 }
 
+let lastStreamingLaneReconcileWarnAtMs = 0
+
+function emitStreamingLaneReconcileWarning(
+  code:
+    | 'snapshot_thread_id_missing'
+    | 'entry_thread_mismatch'
+    | 'entry_not_in_progress_or_missing'
+    | 'entry_text_suffix_mismatch',
+  detail: {
+    threadId?: string | null
+    itemId?: string | null
+    laneTextLength?: number
+    snapshotTextLength?: number
+  },
+): void {
+  const now = Date.now()
+  if (now - lastStreamingLaneReconcileWarnAtMs < STREAMING_LANE_RECONCILE_WARN_THROTTLE_MS) {
+    return
+  }
+  lastStreamingLaneReconcileWarnAtMs = now
+  console.warn('[threadByIdStoreV3] streaming lane reconcile anomaly', {
+    code,
+    ...detail,
+    atMs: now,
+  })
+}
+
 function reconcileStreamingLaneWithSnapshot(
   lane: Record<string, StreamingTextLaneEntry>,
   snapshot: ThreadSnapshotV3 | null,
@@ -810,6 +838,10 @@ function reconcileStreamingLaneWithSnapshot(
   }
   const threadId = snapshot.threadId
   if (!threadId) {
+    emitStreamingLaneReconcileWarning('snapshot_thread_id_missing', {
+      threadId: snapshot.threadId ?? null,
+      itemId: null,
+    })
     return lane
   }
 
@@ -823,11 +855,22 @@ function reconcileStreamingLaneWithSnapshot(
   }
 
   for (const [key, entry] of Object.entries(lane)) {
-    if (entry.threadId !== threadId) {
+    if (!entry.threadId || entry.threadId !== threadId) {
+      emitStreamingLaneReconcileWarning('entry_thread_mismatch', {
+        threadId,
+        itemId: entry.itemId,
+        laneTextLength: entry.text.length,
+      })
       continue
     }
     const snapshotMessage = snapshotMessageById.get(entry.itemId)
     if (!snapshotMessage || snapshotMessage.status !== 'in_progress') {
+      emitStreamingLaneReconcileWarning('entry_not_in_progress_or_missing', {
+        threadId,
+        itemId: entry.itemId,
+        laneTextLength: entry.text.length,
+        snapshotTextLength: snapshotMessage?.text.length,
+      })
       if (!changed) {
         nextLane = { ...nextLane }
         changed = true
@@ -836,6 +879,12 @@ function reconcileStreamingLaneWithSnapshot(
       continue
     }
     if (!snapshotMessage.text.endsWith(entry.text)) {
+      emitStreamingLaneReconcileWarning('entry_text_suffix_mismatch', {
+        threadId,
+        itemId: entry.itemId,
+        laneTextLength: entry.text.length,
+        snapshotTextLength: snapshotMessage.text.length,
+      })
       if (!changed) {
         nextLane = { ...nextLane }
         changed = true
