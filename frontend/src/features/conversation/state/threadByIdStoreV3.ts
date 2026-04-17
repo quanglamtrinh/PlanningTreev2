@@ -277,6 +277,14 @@ export type ReloadReasonCode =
   | 'USER_INPUT_RESOLVE_REQUEST_FAILED'
   | 'STREAM_HEALTHCHECK_FAILED'
   | 'MANUAL_RETRY'
+
+export type StreamingTextLaneEntry = {
+  threadId: string
+  itemId: string
+  text: string
+  updatedAtMs: number
+}
+
 export type ThreadByIdTelemetryV3 = {
   streamReconnectCount: number
   applyErrorCount: number
@@ -305,6 +313,7 @@ export type ThreadByIdTelemetryV3 = {
 
 export type ThreadByIdStoreV3State = {
   snapshot: ThreadSnapshotV3 | null
+  streamingTextLane: Record<string, StreamingTextLaneEntry>
   activeProjectId: string | null
   activeNodeId: string | null
   activeThreadId: string | null
@@ -374,6 +383,7 @@ export type ThreadByIdStoreV3State = {
 export type ThreadCoreState = Pick<
   ThreadByIdStoreV3State,
   | 'snapshot'
+  | 'streamingTextLane'
   | 'lastEventId'
   | 'lastSnapshotVersion'
   | 'processingStartedAt'
@@ -466,6 +476,7 @@ export type ThreadWorkflowActionState = {
 export function selectCore(state: ThreadByIdStoreV3State): ThreadCoreState {
   return {
     snapshot: state.snapshot,
+    streamingTextLane: state.streamingTextLane,
     lastEventId: state.lastEventId,
     lastSnapshotVersion: state.lastSnapshotVersion,
     processingStartedAt: state.processingStartedAt,
@@ -510,6 +521,19 @@ export function selectThreadActions(state: ThreadByIdStoreV3State): ThreadAction
     recordMarkdownParseDuration: state.recordMarkdownParseDuration,
     disconnectThread: state.disconnectThread,
   }
+}
+
+export function selectStreamingTextLaneByItem(
+  state: ThreadByIdStoreV3State,
+  threadId: string | null | undefined,
+  itemId: string | null | undefined,
+): StreamingTextLaneEntry | null {
+  const normalizedThreadId = String(threadId ?? '').trim()
+  const normalizedItemId = String(itemId ?? '').trim()
+  if (!normalizedThreadId || !normalizedItemId) {
+    return null
+  }
+  return state.streamingTextLane[buildStreamingLaneKey(normalizedThreadId, normalizedItemId)] ?? null
 }
 
 export function selectExecutionFollowupQueueState(
@@ -684,6 +708,124 @@ const DEFAULT_TELEMETRY_V3: ThreadByIdTelemetryV3 = {
 
 function resetTelemetryV3(): ThreadByIdTelemetryV3 {
   return { ...DEFAULT_TELEMETRY_V3 }
+}
+
+function buildStreamingLaneKey(threadId: string, itemId: string): string {
+  return `${threadId}::${itemId}`
+}
+
+function pickMessageTextLaneUpdate(event: ThreadBusinessEventV3):
+  | { itemId: string; textAppend: string }
+  | null {
+  if (event.type !== 'conversation.item.patch.v3') {
+    return null
+  }
+  const patch = event.payload.patch
+  if (patch.kind !== 'message') {
+    return null
+  }
+  const textAppend = typeof patch.textAppend === 'string' ? patch.textAppend : ''
+  if (!textAppend) {
+    return null
+  }
+  return {
+    itemId: event.payload.itemId,
+    textAppend,
+  }
+}
+
+function applyStreamingLanePatch(
+  lane: Record<string, StreamingTextLaneEntry>,
+  {
+    threadId,
+    itemId,
+    textAppend,
+    updatedAtMs,
+  }: {
+    threadId: string
+    itemId: string
+    textAppend: string
+    updatedAtMs: number
+  },
+): Record<string, StreamingTextLaneEntry> {
+  const key = buildStreamingLaneKey(threadId, itemId)
+  const previous = lane[key]
+  const previousText = previous?.text ?? ''
+  return {
+    ...lane,
+    [key]: {
+      threadId,
+      itemId,
+      text: `${previousText}${textAppend}`,
+      updatedAtMs,
+    },
+  }
+}
+
+function clearStreamingLaneForThread(
+  lane: Record<string, StreamingTextLaneEntry>,
+  threadId: string,
+): Record<string, StreamingTextLaneEntry> {
+  let changed = false
+  const next: Record<string, StreamingTextLaneEntry> = {}
+  for (const [key, entry] of Object.entries(lane)) {
+    if (entry.threadId === threadId) {
+      changed = true
+      continue
+    }
+    next[key] = entry
+  }
+  return changed ? next : lane
+}
+
+function reconcileStreamingLaneWithSnapshot(
+  lane: Record<string, StreamingTextLaneEntry>,
+  snapshot: ThreadSnapshotV3 | null,
+): Record<string, StreamingTextLaneEntry> {
+  if (!snapshot) {
+    return lane
+  }
+  const threadId = snapshot.threadId
+  if (!threadId) {
+    return lane
+  }
+
+  let changed = false
+  let nextLane = lane
+  const snapshotMessageById = new Map<string, Extract<ConversationItemV3, { kind: 'message' }>>()
+  for (const item of snapshot.items) {
+    if (item.kind === 'message') {
+      snapshotMessageById.set(item.id, item)
+    }
+  }
+
+  for (const [key, entry] of Object.entries(lane)) {
+    if (entry.threadId !== threadId) {
+      continue
+    }
+    const snapshotMessage = snapshotMessageById.get(entry.itemId)
+    if (!snapshotMessage || snapshotMessage.status !== 'in_progress') {
+      if (!changed) {
+        nextLane = { ...nextLane }
+        changed = true
+      }
+      delete nextLane[key]
+      continue
+    }
+    if (!snapshotMessage.text.endsWith(entry.text)) {
+      if (!changed) {
+        nextLane = { ...nextLane }
+        changed = true
+      }
+      nextLane[key] = {
+        ...entry,
+        text: snapshotMessage.text,
+        updatedAtMs: entry.updatedAtMs,
+      }
+    }
+  }
+
+  return changed ? nextLane : lane
 }
 
 function updateInterUpdateGapTelemetry(
@@ -1201,6 +1343,7 @@ function buildDisconnectedStatePatch(): ThreadRuntimeStateV3 {
     lastSnapshotVersion: null,
     ...resetProcessingTelemetry(),
     telemetry: resetTelemetryV3(),
+    streamingTextLane: {},
     error: null,
     hasOlderHistory: false,
     oldestVisibleSequence: null,
@@ -1230,6 +1373,7 @@ function buildThreadLoadStartPatch(
       {
         core: {
           snapshot: null,
+          streamingTextLane: {},
           lastEventId: null,
           lastSnapshotVersion: null,
           ...resetProcessingTelemetry(),
@@ -1284,6 +1428,9 @@ function buildSnapshotHydratedPatch(
     {
       core: {
         snapshot: capped.snapshot,
+        streamingTextLane: snapshot.threadId
+          ? clearStreamingLaneForThread(state.streamingTextLane, snapshot.threadId)
+          : state.streamingTextLane,
         lastEventId: null,
         lastSnapshotVersion: snapshot.snapshotVersion,
         ...seedRunningTelemetry(state, capped.snapshot),
@@ -1993,6 +2140,7 @@ async function openThreadEventStream(
     }
 
     let workingSnapshot = currentState.snapshot
+    let workingStreamingTextLane = currentState.streamingTextLane
     let workingLastEventId = currentState.lastEventId
     let workingLastSnapshotVersion = currentState.lastSnapshotVersion
     let workingError = currentState.error
@@ -2044,6 +2192,16 @@ async function openThreadEventStream(
           message: `Invalid event_id cursor state. last_event_id=${workingLastEventId}`,
         })
         return
+      }
+
+      const lanePatch = pickMessageTextLaneUpdate(event)
+      if (lanePatch) {
+        workingStreamingTextLane = applyStreamingLanePatch(workingStreamingTextLane, {
+          threadId,
+          itemId: lanePatch.itemId,
+          textAppend: lanePatch.textAppend,
+          updatedAtMs: Date.now(),
+        })
       }
 
       const beforeSnapshot = workingSnapshot
@@ -2146,6 +2304,10 @@ async function openThreadEventStream(
     const cappedResult = enforceScrollbackCap(workingSnapshot, workingHistory)
     workingSnapshot = cappedResult.snapshot
     workingHistory = cappedResult.history
+    workingStreamingTextLane = reconcileStreamingLaneWithSnapshot(
+      workingStreamingTextLane,
+      workingSnapshot,
+    )
 
     if (shouldReconcileResolveFallback && workingSnapshot) {
       reconcileResolveFallbackTimers(workingSnapshot)
@@ -2168,6 +2330,7 @@ async function openThreadEventStream(
         {
           core: {
             snapshot: workingSnapshot,
+            streamingTextLane: workingStreamingTextLane,
             lastEventId: workingLastEventId,
             lastSnapshotVersion: workingLastSnapshotVersion,
             ...processingTelemetry,
@@ -3028,6 +3191,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           {
             core: {
               snapshot: nextSnapshot,
+              streamingTextLane: reconcileStreamingLaneWithSnapshot(
+                current.streamingTextLane,
+                nextSnapshot,
+              ),
               hasOlderHistory: capped.history.hasOlderHistory,
               oldestVisibleSequence: capped.history.oldestVisibleSequence,
               totalItemCount: capped.history.totalItemCount,
