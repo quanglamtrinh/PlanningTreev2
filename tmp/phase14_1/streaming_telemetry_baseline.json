@@ -1,0 +1,28 @@
+{
+  "phase": "14.1",
+  "generated_at": "2026-04-17T06:29:22Z",
+  "source": "streaming_telemetry_baseline",
+  "evidence_mode": "synthetic",
+  "gate_eligible": false,
+  "status": "pass",
+  "metric": "phase14_1_streaming_telemetry_baseline_ready",
+  "value": 1,
+  "target": 1,
+  "operator": "eq",
+  "pass": true,
+  "context": {
+    "scenario": "phase14_1_streaming_telemetry_baseline_v1",
+    "candidate_path": null,
+    "candidate_commit_sha": "synthetic-local",
+    "ask": {
+      "inter_update_gap_p95_ms": 72.0,
+      "streaming_row_render_count": 640,
+      "markdown_parse_duration_avg_ms": 5.0
+    },
+    "execution": {
+      "inter_update_gap_p95_ms": 108.0,
+      "streaming_row_render_count": 910,
+      "markdown_parse_duration_avg_ms": 8.0
+    }
+  }
+}

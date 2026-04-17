@@ -1584,6 +1584,10 @@ describe('threadByIdStoreV3', () => {
       expect(state.telemetry.forcedFlushCount).toBe(0)
       expect(state.telemetry.fastAppendHitCount).toBe(2)
       expect(state.telemetry.fastAppendFallbackCount).toBe(0)
+      expect(state.telemetry.lastStreamUpdateAtMs).not.toBeNull()
+      expect(state.telemetry.interUpdateGapSamples).toBeGreaterThanOrEqual(0)
+      expect(state.telemetry.interUpdateGapTotalMs).toBeGreaterThanOrEqual(0)
+      expect(state.telemetry.interUpdateGapMaxMs).toBeGreaterThanOrEqual(0)
     } finally {
       vi.useRealTimers()
     }
@@ -2595,5 +2599,24 @@ describe('threadByIdStoreV3', () => {
     const state = useThreadByIdStoreV3.getState()
     expect(state.error).toBe('render failed')
     expect(state.telemetry.renderErrorCount).toBe(1)
+  })
+
+  it('tracks streaming row renders and markdown parse duration telemetry', () => {
+    const initial = useThreadByIdStoreV3.getState()
+    expect(initial.telemetry.streamingRowRenderCount).toBe(0)
+    expect(initial.telemetry.markdownParseDurationSamples).toBe(0)
+
+    useThreadByIdStoreV3.getState().recordStreamingRowRender(false)
+    useThreadByIdStoreV3.getState().recordStreamingRowRender(true)
+    useThreadByIdStoreV3.getState().recordStreamingRowRender(true)
+    useThreadByIdStoreV3.getState().recordMarkdownParseDuration(12)
+    useThreadByIdStoreV3.getState().recordMarkdownParseDuration(0)
+    useThreadByIdStoreV3.getState().recordMarkdownParseDuration(-5)
+
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.telemetry.streamingRowRenderCount).toBe(2)
+    expect(state.telemetry.markdownParseDurationSamples).toBe(3)
+    expect(state.telemetry.markdownParseDurationTotalMs).toBe(12)
+    expect(state.telemetry.markdownParseDurationMaxMs).toBe(12)
   })
 })

@@ -46,6 +46,7 @@ import {
   resetMessagesV3ProfilingState,
   type MessagesV3Phase10Mode,
 } from './messagesV3ProfilingHooks'
+import { useThreadByIdStoreV3 } from '../../state/threadByIdStoreV3'
 import {
   buildParseCacheKey,
   PARSE_CACHE_RENDERER_VERSION,
@@ -640,6 +641,7 @@ function emitRowRenderProfileForItem(item: ConversationItemV3): void {
     updatedAt: item.updatedAt,
     sequence: item.sequence,
   })
+  useThreadByIdStoreV3.getState().recordStreamingRowRender(item.kind === 'message' && item.status === 'in_progress')
 }
 
 function sameRenderableItemVersion(

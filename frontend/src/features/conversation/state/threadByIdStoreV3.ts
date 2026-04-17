@@ -203,6 +203,14 @@ export type ThreadByIdTelemetryV3 = {
   fastAppendFallbackCount: number
   firstFrameLatencyMs: number | null
   firstMeaningfulFrameLatencyMs: number | null
+  lastStreamUpdateAtMs: number | null
+  interUpdateGapMaxMs: number
+  interUpdateGapTotalMs: number
+  interUpdateGapSamples: number
+  streamingRowRenderCount: number
+  markdownParseDurationTotalMs: number
+  markdownParseDurationMaxMs: number
+  markdownParseDurationSamples: number
   renderErrorCount: number
   legacy_fallback_used_count: number
   envelope_validation_failure_count: number
@@ -272,6 +280,8 @@ export type ThreadByIdStoreV3State = {
     latestExecutionRunId: string | null
   }) => Promise<void>
   recordRenderError: (reason: string) => void
+  recordStreamingRowRender: (isStreamingCandidate: boolean) => void
+  recordMarkdownParseDuration: (durationMs: number) => void
   disconnectThread: () => void
 }
 
@@ -303,6 +313,8 @@ export type ThreadActionHandlers = Pick<
   | 'resolveUserInput'
   | 'runPlanAction'
   | 'recordRenderError'
+  | 'recordStreamingRowRender'
+  | 'recordMarkdownParseDuration'
   | 'disconnectThread'
 >
 export type ThreadExecutionFollowupQueueState = Pick<
@@ -408,6 +420,8 @@ export function selectThreadActions(state: ThreadByIdStoreV3State): ThreadAction
     resolveUserInput: state.resolveUserInput,
     runPlanAction: state.runPlanAction,
     recordRenderError: state.recordRenderError,
+    recordStreamingRowRender: state.recordStreamingRowRender,
+    recordMarkdownParseDuration: state.recordMarkdownParseDuration,
     disconnectThread: state.disconnectThread,
   }
 }
@@ -568,6 +582,14 @@ const DEFAULT_TELEMETRY_V3: ThreadByIdTelemetryV3 = {
   fastAppendFallbackCount: 0,
   firstFrameLatencyMs: null,
   firstMeaningfulFrameLatencyMs: null,
+  lastStreamUpdateAtMs: null,
+  interUpdateGapMaxMs: 0,
+  interUpdateGapTotalMs: 0,
+  interUpdateGapSamples: 0,
+  streamingRowRenderCount: 0,
+  markdownParseDurationTotalMs: 0,
+  markdownParseDurationMaxMs: 0,
+  markdownParseDurationSamples: 0,
   renderErrorCount: 0,
   legacy_fallback_used_count: 0,
   envelope_validation_failure_count: 0,
@@ -576,6 +598,31 @@ const DEFAULT_TELEMETRY_V3: ThreadByIdTelemetryV3 = {
 
 function resetTelemetryV3(): ThreadByIdTelemetryV3 {
   return { ...DEFAULT_TELEMETRY_V3 }
+}
+
+function updateInterUpdateGapTelemetry(
+  telemetry: ThreadByIdTelemetryV3,
+  nowMs: number,
+): Pick<
+  ThreadByIdTelemetryV3,
+  'lastStreamUpdateAtMs' | 'interUpdateGapMaxMs' | 'interUpdateGapTotalMs' | 'interUpdateGapSamples'
+> {
+  const previousUpdateAtMs = telemetry.lastStreamUpdateAtMs
+  if (previousUpdateAtMs == null) {
+    return {
+      lastStreamUpdateAtMs: nowMs,
+      interUpdateGapMaxMs: telemetry.interUpdateGapMaxMs,
+      interUpdateGapTotalMs: telemetry.interUpdateGapTotalMs,
+      interUpdateGapSamples: telemetry.interUpdateGapSamples,
+    }
+  }
+  const gapMs = Math.max(0, nowMs - previousUpdateAtMs)
+  return {
+    lastStreamUpdateAtMs: nowMs,
+    interUpdateGapMaxMs: Math.max(telemetry.interUpdateGapMaxMs, gapMs),
+    interUpdateGapTotalMs: telemetry.interUpdateGapTotalMs + gapMs,
+    interUpdateGapSamples: telemetry.interUpdateGapSamples + 1,
+  }
 }
 
 function selectProcessingTelemetry(state: ProcessingTelemetryState): ProcessingTelemetryState {
@@ -2019,6 +2066,7 @@ async function openThreadEventStream(
     }
 
     const forcedFlushDelta = reason === 'forced' || reason === 'max_age' ? 1 : 0
+    const streamUpdatedAtMs = Date.now()
     set((state) => {
       if (
         !isCurrentGeneration(generation) ||
@@ -2026,6 +2074,10 @@ async function openThreadEventStream(
       ) {
         return {}
       }
+      const interUpdateGapTelemetry = updateInterUpdateGapTelemetry(
+        state.telemetry,
+        streamUpdatedAtMs,
+      )
       return composeDomainPatch(
         {
           core: {
@@ -2050,6 +2102,7 @@ async function openThreadEventStream(
             historyError: null,
             telemetry: {
               ...state.telemetry,
+              ...interUpdateGapTelemetry,
               legacy_fallback_used_count:
                 state.telemetry.legacy_fallback_used_count + legacyFallbackUsedCount,
               batchedFlushCount: state.telemetry.batchedFlushCount + 1,
@@ -3581,6 +3634,36 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         },
       }),
     )
+  },
+
+  recordStreamingRowRender(isStreamingCandidate: boolean) {
+    if (!isStreamingCandidate) {
+      return
+    }
+    set((state) => ({
+      telemetry: {
+        ...state.telemetry,
+        streamingRowRenderCount: state.telemetry.streamingRowRenderCount + 1,
+      },
+    }))
+  },
+
+  recordMarkdownParseDuration(durationMs: number) {
+    const normalizedDurationMs = Number.isFinite(durationMs)
+      ? Math.max(0, Math.floor(durationMs))
+      : 0
+    set((state) => ({
+      telemetry: {
+        ...state.telemetry,
+        markdownParseDurationTotalMs:
+          state.telemetry.markdownParseDurationTotalMs + normalizedDurationMs,
+        markdownParseDurationMaxMs: Math.max(
+          state.telemetry.markdownParseDurationMaxMs,
+          normalizedDurationMs,
+        ),
+        markdownParseDurationSamples: state.telemetry.markdownParseDurationSamples + 1,
+      },
+    }))
   },
 
   disconnectThread() {

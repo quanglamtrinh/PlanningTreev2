@@ -12,6 +12,7 @@ import {
 } from './v3/parseCacheContract'
 import { emitParseCacheTrace } from './v3/messagesV3ProfilingHooks'
 import type { MessagesV3Phase11Mode } from './v3/phase11Config'
+import { useThreadByIdStoreV3 } from '../state/threadByIdStoreV3'
 
 export type ConversationMarkdownParseTrace = {
   threadId: string | null | undefined
@@ -87,6 +88,10 @@ export function ConversationMarkdown({
   }
 
   const desktopHooks = getConversationMarkdownDesktopHooks()
+  const recordMarkdownParseDuration = useThreadByIdStoreV3((state) => state.recordMarkdownParseDuration)
+  const renderStartAtMsRef = useRef<number>(Date.now())
+  renderStartAtMsRef.current = Date.now()
+
   const traceSource = parseTrace?.source ?? 'conversation_markdown'
   const traceRendererVersion = parseTrace?.rendererVersion ?? PARSE_CACHE_RENDERER_VERSION
   const traceKey =
@@ -187,6 +192,17 @@ export function ConversationMarkdown({
     parseTrace?.updatedAt,
     traceRendererVersion,
     traceSource,
+  ])
+
+  useEffect(() => {
+    const durationMs = Math.max(0, Date.now() - renderStartAtMsRef.current)
+    recordMarkdownParseDuration(durationMs)
+  }, [
+    content,
+    shouldRenderMarkdown,
+    parseTrace?.itemId,
+    parseTrace?.updatedAt,
+    recordMarkdownParseDuration,
   ])
 
   return (
