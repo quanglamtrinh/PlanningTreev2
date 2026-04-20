@@ -111,7 +111,11 @@
             "activeFlags": {
               "type": "array",
               "items": {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "waitingOnApproval",
+                  "waitingOnUserInput"
+                ]
               }
             }
           }

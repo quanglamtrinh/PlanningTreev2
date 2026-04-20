@@ -50,9 +50,12 @@
         "thread/archived",
         "thread/unarchived",
         "thread/name/updated",
+        "thread/compacted",
         "thread/tokenUsage/updated",
         "turn/started",
         "turn/completed",
+        "turn/diff/updated",
+        "turn/plan/updated",
         "item/started",
         "item/completed",
         "item/agentMessage/delta",
@@ -101,4 +104,3 @@
     }
   }
 }
-

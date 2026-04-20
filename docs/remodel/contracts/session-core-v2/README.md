@@ -1,6 +1,6 @@
 # Session Core V2 Contracts (Codex-Parity)
 
-Status: Draft v1 (implementation contracts)  
+Status: Frozen v1 (Phase 0 complete)  
 Last updated: 2026-04-20  
 Scope: Parallel rewrite lane for `Session Core V2`
 
@@ -20,6 +20,7 @@ It is intentionally aligned to Codex app-server semantics and names.
 - `S6`: `s6-idempotency-contract-v1.md`
 - `S7`: `s7-turn-state-machine-contract-v1.md`
 - `S8`: `s8-session-binding-contract-v1.md`
+- `Gate`: `phase-0-gate-report-v1.md`
 - `fixtures/`: canonical valid/invalid payload samples
 
 ## Source of truth rule
@@ -35,4 +36,3 @@ Frontend stores are projection/render caches only.
    - fixtures
    - parity harness expectations
 3. Deterministic errors and state transitions are normative and cannot drift per caller.
-

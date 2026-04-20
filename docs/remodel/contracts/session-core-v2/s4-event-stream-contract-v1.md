@@ -30,6 +30,8 @@ Tier 0 (lossless via journal + replay):
 - `item/started`
 - `item/agentMessage/delta`
 - `item/plan/delta`
+- `item/reasoning/summaryTextDelta`
+- `item/reasoning/textDelta`
 - `item/completed`
 - `turn/completed`
 - `thread/status/changed`
@@ -39,9 +41,7 @@ Tier 0 (lossless via journal + replay):
 
 Tier 1 (merge-safe):
 
-- `item/reasoning/summaryTextDelta`
 - `item/reasoning/summaryPartAdded`
-- `item/reasoning/textDelta`
 - `item/commandExecution/outputDelta`
 - `item/fileChange/outputDelta`
 
@@ -76,4 +76,3 @@ data: <json envelope>
 2. Emitting replayable envelope without `eventId` and `eventSeq`.
 3. Rewriting Codex method names into app-local aliases.
 4. Advancing cursor by non-replayable control frames.
-

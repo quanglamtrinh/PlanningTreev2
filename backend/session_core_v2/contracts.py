@@ -49,9 +49,12 @@ SessionNotificationMethod = Literal[
     "thread/archived",
     "thread/unarchived",
     "thread/name/updated",
+    "thread/compacted",
     "thread/tokenUsage/updated",
     "turn/started",
     "turn/completed",
+    "turn/diff/updated",
+    "turn/plan/updated",
     "item/started",
     "item/completed",
     "item/agentMessage/delta",
@@ -74,9 +77,8 @@ ServerRequestMethod = Literal[
 
 THREAD_ACTIVE_FLAGS: Final[frozenset[str]] = frozenset(
     {
-        "turnRunning",
-        "waitingUserInput",
-        "compacting",
+        "waitingOnApproval",
+        "waitingOnUserInput",
     }
 )
 

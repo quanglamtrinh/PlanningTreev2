@@ -148,6 +148,11 @@ paths:
               - type: array
                 items:
                   type: string
+        - name: sortKey
+          in: query
+          schema:
+            type: string
+            enum: [created_at, updated_at]
         - name: searchTerm
           in: query
           schema:
@@ -756,6 +761,8 @@ components:
               type: [string, "null"]
             sha:
               type: [string, "null"]
+            originUrl:
+              type: [string, "null"]
     ThreadRollbackRequest:
       type: object
       additionalProperties: false
@@ -999,14 +1006,15 @@ components:
     TurnSteerRequest:
       type: object
       additionalProperties: false
-      required: [clientActionId, input]
+      required: [clientActionId, expectedTurnId, input]
       properties:
         clientActionId:
           type: string
           minLength: 1
         expectedTurnId:
-          type: [string, "null"]
-          description: Optional precondition; if omitted, path turnId is used.
+          type: string
+          minLength: 1
+          description: Required precondition. Must match the currently active turn id.
         input:
           type: array
           items:

@@ -632,6 +632,7 @@ Frontend:
 - freeze idempotency contract (`clientActionId`, `resolutionKey`, duplicate and stale semantics).
 - freeze turn state machine transitions and deterministic illegal-transition errors.
 - freeze parity suite definitions.
+- phase closeout artifact: `docs/remodel/contracts/session-core-v2/phase-0-gate-report-v1.md`.
 
 Exit gate:
 
