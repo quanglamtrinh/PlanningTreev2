@@ -68,6 +68,10 @@ def _events_enabled(request: Request) -> bool:
     return bool(getattr(request.app.state, "session_core_v2_enable_events", False))
 
 
+def _requests_enabled(request: Request) -> bool:
+    return bool(getattr(request.app.state, "session_core_v2_enable_requests", False))
+
+
 def _parse_csv_or_repeated_query(request: Request, key: str) -> list[str] | None:
     raw_values = list(request.query_params.getlist(key))
     if not raw_values:
@@ -151,6 +155,18 @@ class TurnSteerRequest(BaseModel):
 class TurnInterruptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     clientActionId: str = Field(min_length=1)
+
+
+class ResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    resolutionKey: str = Field(min_length=1)
+    result: dict[str, Any]
+
+
+class RejectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    resolutionKey: str = Field(min_length=1)
+    reason: str | None = None
 
 
 @router.post("/v4/session/initialize")
@@ -387,20 +403,45 @@ def session_inject_items_not_enabled(threadId: str) -> JSONResponse:
 
 
 @router.get("/v4/session/requests/pending")
-def session_requests_pending_not_enabled() -> JSONResponse:
-    return _phase_not_enabled("requests/pending", phase="Phase 2")
+def session_requests_pending_v4(request: Request) -> JSONResponse:
+    if not _requests_enabled(request):
+        return _phase_not_enabled("requests/pending", phase="Phase 3")
+    try:
+        response = _manager(request).requests_pending()
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_requests_pending_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.post("/v4/session/requests/{requestId}/resolve")
-def session_requests_resolve_not_enabled(requestId: str) -> JSONResponse:
-    del requestId
-    return _phase_not_enabled("requests/resolve", phase="Phase 2")
+def session_requests_resolve_v4(requestId: str, payload: ResolveRequest, request: Request) -> JSONResponse:
+    if not _requests_enabled(request):
+        return _phase_not_enabled("requests/resolve", phase="Phase 3")
+    try:
+        _manager(request).request_resolve(request_id=requestId, payload=payload.model_dump(exclude_none=True))
+        return JSONResponse(status_code=200, content=_ok({}))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_requests_resolve_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.post("/v4/session/requests/{requestId}/reject")
-def session_requests_reject_not_enabled(requestId: str) -> JSONResponse:
-    del requestId
-    return _phase_not_enabled("requests/reject", phase="Phase 2")
+def session_requests_reject_v4(requestId: str, payload: RejectRequest, request: Request) -> JSONResponse:
+    if not _requests_enabled(request):
+        return _phase_not_enabled("requests/reject", phase="Phase 3")
+    try:
+        _manager(request).request_reject(request_id=requestId, payload=payload.model_dump(exclude_none=True))
+        return JSONResponse(status_code=200, content=_ok({}))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_requests_reject_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.get("/v4/session/threads/{threadId}/events")

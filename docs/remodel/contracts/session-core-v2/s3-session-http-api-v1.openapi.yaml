@@ -1109,7 +1109,7 @@ components:
         threadId:
           type: string
         turnId:
-          type: string
+          type: [string, "null"]
         itemId:
           type: [string, "null"]
         status:

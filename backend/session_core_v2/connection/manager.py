@@ -15,6 +15,15 @@ from backend.session_core_v2.turns.service import TurnServiceV2
 logger = logging.getLogger(__name__)
 
 _TERMINAL_TURN_STATUSES: frozenset[str] = frozenset({"completed", "failed", "interrupted"})
+_SERVER_REQUEST_METHODS: frozenset[str] = frozenset(
+    {
+        "item/tool/requestUserInput",
+        "item/commandExecution/requestApproval",
+        "item/fileChange/requestApproval",
+        "item/permissions/requestApproval",
+        "mcpServer/elicitation/request",
+    }
+)
 
 
 class SessionManagerV2:
@@ -31,6 +40,7 @@ class SessionManagerV2:
         self._thread_service = ThreadServiceV2(protocol_client, logger=logger)
         self._turn_service = TurnServiceV2(protocol_client, logger=logger)
         self._protocol_client.set_notification_handler(self._on_notification)
+        self._protocol_client.set_server_request_handler(self._on_server_request)
 
     # ------------------------------------------------------------------
     # Connection and threads
@@ -52,8 +62,12 @@ class SessionManagerV2:
                 client_name=str(client_name or ""),
                 server_version=str(server_version or ""),
             )
+            expired_count = self._runtime_store.expire_pending_server_requests_for_new_session()
             elapsed_ms = (time.perf_counter() - started) * 1000
-            logger.info("session_core_v2 initialize ok", extra={"latency_ms": elapsed_ms})
+            logger.info(
+                "session_core_v2 initialize ok",
+                extra={"latency_ms": elapsed_ms, "expiredPendingRequests": expired_count},
+            )
             return self.status()
         except SessionCoreError as exc:
             self._connection_state_machine.set_error(
@@ -366,6 +380,138 @@ class SessionManagerV2:
         return response
 
     # ------------------------------------------------------------------
+    # Server requests
+    # ------------------------------------------------------------------
+    def requests_pending(self) -> dict[str, Any]:
+        self._ensure_initialized()
+        return {"data": self._runtime_store.list_pending_server_requests()}
+
+    def request_resolve(self, *, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_initialized()
+        normalized_request_id = self._require_non_empty(request_id, "requestId")
+        resolution_key = self._require_non_empty(payload.get("resolutionKey"), "resolutionKey")
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message="resolve requires result object.",
+                status_code=400,
+                details={"field": "result"},
+            )
+        idempotent_payload = {"requestId": normalized_request_id, "result": result}
+        idempotent = self._runtime_store.resolve_idempotent_result(
+            action_type="requests/resolve",
+            key=resolution_key,
+            payload=idempotent_payload,
+        )
+        if idempotent is not None:
+            return idempotent
+
+        pending = self._runtime_store.get_pending_server_request(request_id=normalized_request_id)
+        if pending is None:
+            raise SessionCoreError(
+                code="ERR_REQUEST_STALE",
+                message=f"Request {normalized_request_id} is not pending.",
+                status_code=409,
+                details={"requestId": normalized_request_id},
+            )
+        status = str(pending.get("status") or "")
+        if status not in {"pending", "submitted"}:
+            raise SessionCoreError(
+                code="ERR_REQUEST_STALE",
+                message=f"Request {normalized_request_id} is no longer active.",
+                status_code=409,
+                details={"requestId": normalized_request_id, "status": status},
+            )
+        if status == "submitted":
+            raise SessionCoreError(
+                code="ERR_REQUEST_STALE",
+                message=f"Request {normalized_request_id} is already submitted.",
+                status_code=409,
+                details={"requestId": normalized_request_id, "status": status},
+            )
+
+        raw_request_id = self._runtime_store.pending_server_request_raw_id(request_id=normalized_request_id)
+        self._protocol_client.respond_to_server_request(raw_request_id, result)
+        self._runtime_store.mark_pending_server_request_submitted(
+            request_id=normalized_request_id,
+            submission_kind="resolve",
+        )
+        response = {"status": "accepted"}
+        self._runtime_store.record_idempotent_result(
+            action_type="requests/resolve",
+            key=resolution_key,
+            payload=idempotent_payload,
+            response=response,
+            thread_id=str(pending.get("threadId") or ""),
+            turn_id=self._optional_non_empty_str(pending.get("turnId")),
+            request_id=normalized_request_id,
+        )
+        return response
+
+    def request_reject(self, *, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_initialized()
+        normalized_request_id = self._require_non_empty(request_id, "requestId")
+        resolution_key = self._require_non_empty(payload.get("resolutionKey"), "resolutionKey")
+        reason = str(payload.get("reason") or "").strip()
+        idempotent_payload = {"requestId": normalized_request_id, "reason": reason}
+        idempotent = self._runtime_store.resolve_idempotent_result(
+            action_type="requests/reject",
+            key=resolution_key,
+            payload=idempotent_payload,
+        )
+        if idempotent is not None:
+            return idempotent
+
+        pending = self._runtime_store.get_pending_server_request(request_id=normalized_request_id)
+        if pending is None:
+            raise SessionCoreError(
+                code="ERR_REQUEST_STALE",
+                message=f"Request {normalized_request_id} is not pending.",
+                status_code=409,
+                details={"requestId": normalized_request_id},
+            )
+        status = str(pending.get("status") or "")
+        if status not in {"pending", "submitted"}:
+            raise SessionCoreError(
+                code="ERR_REQUEST_STALE",
+                message=f"Request {normalized_request_id} is no longer active.",
+                status_code=409,
+                details={"requestId": normalized_request_id, "status": status},
+            )
+        if status == "submitted":
+            raise SessionCoreError(
+                code="ERR_REQUEST_STALE",
+                message=f"Request {normalized_request_id} is already submitted.",
+                status_code=409,
+                details={"requestId": normalized_request_id, "status": status},
+            )
+
+        raw_request_id = self._runtime_store.pending_server_request_raw_id(request_id=normalized_request_id)
+        self._protocol_client.fail_server_request(
+            raw_request_id,
+            {
+                "code": -32000,
+                "message": reason or "Server request rejected by client.",
+            },
+        )
+        self._runtime_store.mark_pending_server_request_submitted(
+            request_id=normalized_request_id,
+            submission_kind="reject",
+        )
+        response = {"status": "accepted"}
+        self._runtime_store.record_idempotent_result(
+            action_type="requests/reject",
+            key=resolution_key,
+            payload=idempotent_payload,
+            response=response,
+            thread_id=str(pending.get("threadId") or ""),
+            turn_id=self._optional_non_empty_str(pending.get("turnId")),
+            request_id=normalized_request_id,
+        )
+        return response
+
+    # ------------------------------------------------------------------
     # Event stream
     # ------------------------------------------------------------------
     def open_event_stream(self, *, thread_id: str, cursor: str | None) -> dict[str, Any]:
@@ -402,6 +548,62 @@ class SessionManagerV2:
             self._runtime_store.append_notification(method=method, params=params)
         except Exception:
             logger.debug("session_core_v2 notification ingest failed", exc_info=True)
+
+    def _on_server_request(self, raw_request_id: Any, method: str, params: dict[str, Any]) -> None:
+        try:
+            if self._connection_state_machine.phase != "initialized":
+                self._protocol_client.fail_server_request(
+                    raw_request_id,
+                    {"code": -32002, "message": "Session Core V2 is not initialized."},
+                )
+                return
+            if method not in _SERVER_REQUEST_METHODS:
+                self._protocol_client.fail_server_request(
+                    raw_request_id,
+                    {"code": -32601, "message": f"Unsupported server request method: {method}"},
+                )
+                return
+            thread_id = str(params.get("threadId") or "").strip()
+            if not thread_id:
+                self._protocol_client.fail_server_request(
+                    raw_request_id,
+                    {"code": -32602, "message": "Server request is missing threadId."},
+                )
+                return
+            incoming_turn_id = self._optional_non_empty_str(params.get("turnId"))
+            turn_id: str | None = incoming_turn_id
+            if method == "mcpServer/elicitation/request":
+                turn_id = incoming_turn_id
+            elif not turn_id:
+                active_turn = self._runtime_store.get_active_turn(thread_id=thread_id)
+                if active_turn is not None:
+                    turn_id = self._optional_non_empty_str(active_turn.get("id"))
+                if not turn_id:
+                    self._protocol_client.fail_server_request(
+                        raw_request_id,
+                        {"code": -32602, "message": "Server request is missing turnId and active turn."},
+                    )
+                    return
+            item_id = str(params.get("itemId") or "").strip() or None
+            self._runtime_store.register_pending_server_request(
+                raw_request_id=raw_request_id,
+                method=method,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                item_id=item_id,
+                payload=params,
+            )
+        except SessionCoreError as exc:
+            self._protocol_client.fail_server_request(
+                raw_request_id,
+                {"code": -32001, "message": exc.message, "data": exc.details},
+            )
+        except Exception:
+            logger.exception("session_core_v2 failed to handle server request")
+            self._protocol_client.fail_server_request(
+                raw_request_id,
+                {"code": -32001, "message": "Session Core V2 rejected server request."},
+            )
 
     @staticmethod
     def _extract_turn_id_from_response(response: dict[str, Any]) -> str:
@@ -448,3 +650,12 @@ class SessionManagerV2:
             status_code=400,
             details={"field": field_name},
         )
+
+    @staticmethod
+    def _optional_non_empty_str(value: Any) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
+        return None

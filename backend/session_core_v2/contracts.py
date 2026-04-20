@@ -172,7 +172,7 @@ class PendingServerRequest(TypedDict):
     requestId: str
     method: ServerRequestMethod
     threadId: str
-    turnId: str
+    turnId: str | None
     itemId: str | None
     status: PendingRequestStatus
     createdAtMs: int
@@ -201,7 +201,7 @@ class ServerRequestEnvelope(TypedDict):
     requestId: str
     method: ServerRequestMethod
     threadId: str
-    turnId: str
+    turnId: str | None
     itemId: str | None
     status: Literal["pending", "resolved", "rejected", "expired"]
     occurredAtMs: int

@@ -166,8 +166,21 @@ def is_session_core_v2_events_enabled() -> bool:
     return _bool_env("SESSION_CORE_V2_ENABLE_EVENTS", default=True)
 
 
+def is_session_core_v2_requests_enabled() -> bool:
+    return _bool_env("SESSION_CORE_V2_ENABLE_REQUESTS", default=True)
+
+
 def get_session_core_v2_event_queue_capacity() -> int:
     raw = os.environ.get("SESSION_CORE_V2_EVENT_QUEUE_CAPACITY", "128")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 128
+    return max(1, min(4096, value))
+
+
+def get_session_core_v2_server_request_queue_capacity() -> int:
+    raw = os.environ.get("SESSION_CORE_V2_SERVER_REQUEST_QUEUE_CAPACITY", "128")
     try:
         value = int(raw)
     except (TypeError, ValueError):

@@ -9,10 +9,16 @@ class _FakeTransport:
     def __init__(self) -> None:
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.notifications: list[tuple[str, dict[str, Any]]] = []
+        self.server_responses: list[tuple[Any, dict[str, Any]]] = []
+        self.server_failures: list[tuple[Any, dict[str, Any]]] = []
         self.notification_handler = None
+        self.server_request_handler = None
 
     def set_notification_handler(self, handler) -> None:  # noqa: ANN001
         self.notification_handler = handler
+
+    def set_server_request_handler(self, handler) -> None:  # noqa: ANN001
+        self.server_request_handler = handler
 
     def request(
         self,
@@ -28,6 +34,12 @@ class _FakeTransport:
 
     def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         self.notifications.append((method, params or {}))
+
+    def respond_to_server_request(self, request_id: Any, result: dict[str, Any] | None = None) -> None:
+        self.server_responses.append((request_id, result or {}))
+
+    def fail_server_request(self, request_id: Any, error: dict[str, Any] | None = None) -> None:
+        self.server_failures.append((request_id, error or {}))
 
 
 def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
@@ -61,6 +73,8 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
         },
     )
     client.turn_interrupt("thread-1", "turn-1")
+    client.respond_to_server_request(123, {"decision": "accept"})
+    client.fail_server_request(124, {"code": -32000, "message": "rejected"})
 
     assert transport.requests[0][0] == "initialize"
     assert transport.requests[0][1]["clientInfo"]["name"] == "PlanningTree"
@@ -84,3 +98,20 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     assert transport.requests[6][0] == "turn/steer"
     assert transport.requests[6][1]["expectedTurnId"] == "turn-1"
     assert transport.requests[7] == ("turn/interrupt", {"threadId": "thread-1", "turnId": "turn-1"})
+    assert transport.server_responses == [(123, {"decision": "accept"})]
+    assert transport.server_failures == [(124, {"code": -32000, "message": "rejected"})]
+
+
+def test_protocol_client_wires_server_request_handler() -> None:
+    transport = _FakeTransport()
+    client = SessionProtocolClientV2(transport)  # type: ignore[arg-type]
+    seen: list[tuple[Any, str, dict[str, Any]]] = []
+
+    def _handler(raw_request_id: Any, method: str, params: dict[str, Any]) -> None:
+        seen.append((raw_request_id, method, params))
+
+    client.set_server_request_handler(_handler)
+    assert transport.server_request_handler is _handler
+
+    transport.server_request_handler(99, "item/tool/requestUserInput", {"threadId": "thread-1"})
+    assert seen == [(99, "item/tool/requestUserInput", {"threadId": "thread-1"})]

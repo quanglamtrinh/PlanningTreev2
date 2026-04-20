@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 from fastapi.testclient import TestClient
 
@@ -10,6 +13,16 @@ from backend.session_core_v2.connection import ConnectionStateMachine, SessionMa
 from backend.session_core_v2.errors import SessionCoreError
 from backend.session_core_v2.protocol import SessionProtocolClientV2
 from backend.session_core_v2.storage import RuntimeStoreV2
+
+
+@pytest.fixture
+def data_root() -> Path:
+    root = Path("pytest_tmp_dir") / "session_v4_api" / uuid.uuid4().hex
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 class _FakeTransport:
@@ -24,9 +37,15 @@ class _FakeTransport:
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.notifications: list[tuple[str, dict[str, Any]]] = []
         self.notification_handler = None
+        self.server_request_handler = None
+        self.server_request_responses: list[tuple[Any, dict[str, Any]]] = []
+        self.server_request_failures: list[tuple[Any, dict[str, Any]]] = []
 
     def set_notification_handler(self, handler) -> None:  # noqa: ANN001
         self.notification_handler = handler
+
+    def set_server_request_handler(self, handler) -> None:  # noqa: ANN001
+        self.server_request_handler = handler
 
     def request(
         self,
@@ -45,9 +64,19 @@ class _FakeTransport:
     def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         self.notifications.append((method, params or {}))
 
+    def respond_to_server_request(self, request_id: Any, result: dict[str, Any] | None = None) -> None:
+        self.server_request_responses.append((request_id, result or {}))
+
+    def fail_server_request(self, request_id: Any, error: dict[str, Any] | None = None) -> None:
+        self.server_request_failures.append((request_id, error or {}))
+
     def emit_notification(self, method: str, params: dict[str, Any]) -> None:
         if self.notification_handler is not None:
             self.notification_handler(method, params)
+
+    def emit_server_request(self, raw_request_id: Any, method: str, params: dict[str, Any]) -> None:
+        if self.server_request_handler is not None:
+            self.server_request_handler(raw_request_id, method, params)
 
 
 def _fake_thread(thread_id: str) -> dict[str, Any]:
@@ -290,6 +319,236 @@ def test_session_v4_turn_runtime_and_idempotency(client: TestClient) -> None:
     assert interrupt_response.status_code == 200
 
 
+def test_session_v4_pending_requests_lists_all_phase3_methods(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+            "turn/start": {"turnId": "turn-start-1"},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post("/v4/session/initialize", json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}}).status_code == 200
+    assert client.post(
+        "/v4/session/threads/thread-1/turns/start",
+        json={"clientActionId": "start-1", "input": [{"type": "text", "text": "hello"}]},
+    ).status_code == 200
+
+    methods = [
+        "item/tool/requestUserInput",
+        "item/commandExecution/requestApproval",
+        "item/fileChange/requestApproval",
+        "item/permissions/requestApproval",
+        "mcpServer/elicitation/request",
+    ]
+    for index, method in enumerate(methods):
+        fake_transport.emit_server_request(
+            index + 1,
+            method,
+            {"threadId": "thread-1", "turnId": "turn-start-1", "itemId": f"item-{index}"},
+        )
+
+    pending_response = client.get("/v4/session/requests/pending")
+    assert pending_response.status_code == 200
+    pending_rows = pending_response.json()["data"]["data"]
+    assert len(pending_rows) == 5
+    assert {row["method"] for row in pending_rows} == set(methods)
+
+
+def test_session_v4_mcp_pending_request_allows_null_turn_id(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post("/v4/session/initialize", json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}}).status_code == 200
+
+    fake_transport.emit_server_request(
+        707,
+        "mcpServer/elicitation/request",
+        {"threadId": "thread-1", "itemId": "mcp-1", "turnId": None},
+    )
+
+    pending_response = client.get("/v4/session/requests/pending")
+    assert pending_response.status_code == 200
+    rows = pending_response.json()["data"]["data"]
+    assert len(rows) == 1
+    assert rows[0]["method"] == "mcpServer/elicitation/request"
+    assert rows[0]["turnId"] is None
+    assert fake_transport.server_request_failures == []
+
+
+def test_session_v4_missing_turn_id_fallback_and_validation(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+            "turn/start": {"turnId": "turn-start-1"},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post("/v4/session/initialize", json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}}).status_code == 200
+    assert client.post(
+        "/v4/session/threads/thread-1/turns/start",
+        json={"clientActionId": "start-1", "input": [{"type": "text", "text": "hello"}]},
+    ).status_code == 200
+
+    fake_transport.emit_server_request(
+        808,
+        "item/commandExecution/requestApproval",
+        {"threadId": "thread-1", "itemId": "cmd-1"},
+    )
+    pending_rows = client.get("/v4/session/requests/pending").json()["data"]["data"]
+    assert len(pending_rows) == 1
+    assert pending_rows[0]["turnId"] == "turn-start-1"
+
+    fake_transport.emit_server_request(
+        809,
+        "item/fileChange/requestApproval",
+        {"threadId": "thread-2", "itemId": "file-1"},
+    )
+    pending_after = client.get("/v4/session/requests/pending").json()["data"]["data"]
+    assert len(pending_after) == 1
+    assert pending_after[0]["threadId"] == "thread-1"
+    assert fake_transport.server_request_failures[-1][0] == 809
+    assert fake_transport.server_request_failures[-1][1]["code"] == -32602
+
+
+def test_session_v4_request_lifecycle_resolve_reject_cleanup_and_ordering(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+            "turn/start": {"turnId": "turn-start-1"},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post("/v4/session/initialize", json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}}).status_code == 200
+    assert client.post(
+        "/v4/session/threads/thread-1/turns/start",
+        json={"clientActionId": "start-1", "input": [{"type": "text", "text": "hello"}]},
+    ).status_code == 200
+
+    fake_transport.emit_server_request(
+        101,
+        "item/tool/requestUserInput",
+        {"threadId": "thread-1", "turnId": "turn-start-1", "itemId": "item-1"},
+    )
+    pending_payload = client.get("/v4/session/requests/pending").json()
+    resolve_request_id = pending_payload["data"]["data"][0]["requestId"]
+
+    resolve_response = client.post(
+        f"/v4/session/requests/{resolve_request_id}/resolve",
+        json={"resolutionKey": "resolve-1", "result": {"decision": "accept"}},
+    )
+    assert resolve_response.status_code == 200
+    assert fake_transport.server_request_responses[-1] == (101, {"decision": "accept"})
+
+    fake_transport.emit_notification("serverRequest/resolved", {"threadId": "thread-1", "requestId": 101})
+    fake_transport.emit_notification(
+        "turn/completed",
+        {"threadId": "thread-1", "turn": {"id": "turn-start-1", "status": "completed", "items": []}},
+    )
+    after_resolve = client.get("/v4/session/requests/pending").json()
+    assert after_resolve["data"]["data"] == []
+
+    journal = client.app.state.session_manager_v2._runtime_store.read_thread_journal("thread-1")  # noqa: SLF001
+    methods = [event["method"] for event in journal]
+    assert methods.index("serverRequest/resolved") < methods.index("turn/completed")
+
+    fake_transport.emit_server_request(
+        202,
+        "item/commandExecution/requestApproval",
+        {"threadId": "thread-1", "turnId": "turn-start-1", "itemId": "item-2"},
+    )
+    reject_pending = client.get("/v4/session/requests/pending").json()["data"]["data"]
+    reject_request_id = reject_pending[0]["requestId"]
+    reject_response = client.post(
+        f"/v4/session/requests/{reject_request_id}/reject",
+        json={"resolutionKey": "reject-1", "reason": "policy"},
+    )
+    assert reject_response.status_code == 200
+    assert fake_transport.server_request_failures[-1][0] == 202
+    assert fake_transport.server_request_failures[-1][1]["message"] == "policy"
+    fake_transport.emit_notification("serverRequest/resolved", {"threadId": "thread-1", "requestId": 202})
+    assert client.get("/v4/session/requests/pending").json()["data"]["data"] == []
+
+    fake_transport.emit_server_request(
+        303,
+        "item/fileChange/requestApproval",
+        {"threadId": "thread-1", "turnId": "turn-start-1", "itemId": "item-3"},
+    )
+    cleanup_pending = client.get("/v4/session/requests/pending").json()["data"]["data"]
+    cleanup_request_id = cleanup_pending[0]["requestId"]
+    fake_transport.emit_notification("serverRequest/resolved", {"threadId": "thread-1", "requestId": 303})
+    stale_response = client.post(
+        f"/v4/session/requests/{cleanup_request_id}/resolve",
+        json={"resolutionKey": "resolve-stale", "result": {"decision": "accept"}},
+    )
+    assert stale_response.status_code == 409
+    assert stale_response.json()["error"]["code"] == "ERR_REQUEST_STALE"
+
+
+def test_session_v4_request_resolution_idempotency(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+            "turn/start": {"turnId": "turn-start-1"},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post("/v4/session/initialize", json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}}).status_code == 200
+    assert client.post(
+        "/v4/session/threads/thread-1/turns/start",
+        json={"clientActionId": "start-1", "input": [{"type": "text", "text": "hello"}]},
+    ).status_code == 200
+
+    fake_transport.emit_server_request(
+        500,
+        "item/permissions/requestApproval",
+        {"threadId": "thread-1", "turnId": "turn-start-1", "itemId": "item-5"},
+    )
+    request_id = client.get("/v4/session/requests/pending").json()["data"]["data"][0]["requestId"]
+
+    payload = {"resolutionKey": "resolve-idem-1", "result": {"decision": "accept"}}
+    first = client.post(f"/v4/session/requests/{request_id}/resolve", json=payload)
+    second = client.post(f"/v4/session/requests/{request_id}/resolve", json=payload)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(fake_transport.server_request_responses) == 1
+
+    mismatch = client.post(
+        f"/v4/session/requests/{request_id}/resolve",
+        json={"resolutionKey": "resolve-idem-1", "result": {"decision": "decline"}},
+    )
+    assert mismatch.status_code == 409
+    assert mismatch.json()["error"]["code"] == "ERR_IDEMPOTENCY_PAYLOAD_MISMATCH"
+
+    fake_transport.emit_notification("serverRequest/resolved", {"threadId": "thread-1", "requestId": 500})
+    fake_transport.emit_server_request(
+        501,
+        "item/commandExecution/requestApproval",
+        {"threadId": "thread-1", "turnId": "turn-start-1", "itemId": "item-6"},
+    )
+    reject_request_id = client.get("/v4/session/requests/pending").json()["data"]["data"][0]["requestId"]
+    reject_payload = {"resolutionKey": "reject-idem-1", "reason": "policy"}
+    reject_first = client.post(f"/v4/session/requests/{reject_request_id}/reject", json=reject_payload)
+    reject_second = client.post(f"/v4/session/requests/{reject_request_id}/reject", json=reject_payload)
+    assert reject_first.status_code == 200
+    assert reject_second.status_code == 200
+    assert len(fake_transport.server_request_failures) == 1
+
+    reject_mismatch = client.post(
+        f"/v4/session/requests/{reject_request_id}/reject",
+        json={"resolutionKey": "reject-idem-1", "reason": "different"},
+    )
+    assert reject_mismatch.status_code == 409
+    assert reject_mismatch.json()["error"]["code"] == "ERR_IDEMPOTENCY_PAYLOAD_MISMATCH"
+
+
 def test_session_v4_events_stream_replay_format(client: TestClient) -> None:
     fake_transport = _FakeTransport(
         responses={
@@ -328,6 +587,7 @@ def test_session_v4_events_stream_replay_format(client: TestClient) -> None:
 def test_session_v4_feature_flags_gate_turns_and_events(client: TestClient) -> None:
     client.app.state.session_core_v2_enable_turns = False
     client.app.state.session_core_v2_enable_events = False
+    client.app.state.session_core_v2_enable_requests = False
     try:
         turn_response = client.post(
             "/v4/session/threads/thread-1/turns/start",
@@ -339,9 +599,14 @@ def test_session_v4_feature_flags_gate_turns_and_events(client: TestClient) -> N
         events_response = client.get("/v4/session/threads/thread-1/events")
         assert events_response.status_code == 501
         assert events_response.json()["error"]["code"] == "ERR_PHASE_NOT_ENABLED"
+
+        requests_response = client.get("/v4/session/requests/pending")
+        assert requests_response.status_code == 501
+        assert requests_response.json()["error"]["code"] == "ERR_PHASE_NOT_ENABLED"
     finally:
         client.app.state.session_core_v2_enable_turns = True
         client.app.state.session_core_v2_enable_events = True
+        client.app.state.session_core_v2_enable_requests = True
 
 
 def test_session_v4_initialize_failure_sets_error_state(client: TestClient) -> None:
@@ -370,7 +635,7 @@ def test_session_v4_initialize_failure_sets_error_state(client: TestClient) -> N
     assert status_response.json()["data"]["connection"]["error"]["code"] == "ERR_PROVIDER_UNAVAILABLE"
 
 
-def test_session_v4_contract_conformance_for_phase1_endpoints(client: TestClient) -> None:
+def test_session_v4_contract_conformance_for_phase3_endpoints(client: TestClient) -> None:
     schema_doc = _openapi_schema()
     fake_transport = _FakeTransport(
         responses={
@@ -411,6 +676,28 @@ def test_session_v4_contract_conformance_for_phase1_endpoints(client: TestClient
         "/v4/session/threads/thread-1/turns/turn-start-1/interrupt",
         json={"clientActionId": "interrupt-1"},
     ).json()
+    fake_transport.emit_server_request(
+        900,
+        "item/tool/requestUserInput",
+        {"threadId": "thread-1", "turnId": "turn-start-1", "itemId": "item-1"},
+    )
+    pending_payload = client.get("/v4/session/requests/pending").json()
+    request_id = pending_payload["data"]["data"][0]["requestId"]
+    resolve_payload = client.post(
+        f"/v4/session/requests/{request_id}/resolve",
+        json={"resolutionKey": "resolve-contract-1", "result": {"decision": "accept"}},
+    ).json()
+    fake_transport.emit_notification("serverRequest/resolved", {"threadId": "thread-1", "requestId": 900})
+    fake_transport.emit_server_request(
+        901,
+        "item/commandExecution/requestApproval",
+        {"threadId": "thread-1", "turnId": "turn-start-1", "itemId": "item-2"},
+    )
+    reject_request_id = client.get("/v4/session/requests/pending").json()["data"]["data"][0]["requestId"]
+    reject_payload = client.post(
+        f"/v4/session/requests/{reject_request_id}/reject",
+        json={"resolutionKey": "reject-contract-1", "reason": "policy"},
+    ).json()
 
     _assert_component(init_payload, "InitializeResponseEnvelope", schema_doc)
     _assert_component(status_payload, "ConnectionStatusEnvelope", schema_doc)
@@ -421,6 +708,9 @@ def test_session_v4_contract_conformance_for_phase1_endpoints(client: TestClient
     _assert_component(turn_start_payload, "TurnEnvelope", schema_doc)
     _assert_component(turn_steer_payload, "TurnEnvelope", schema_doc)
     _assert_component(turn_interrupt_payload, "BasicOkEnvelope", schema_doc)
+    _assert_component(pending_payload, "PendingRequestsEnvelope", schema_doc)
+    _assert_component(resolve_payload, "BasicOkEnvelope", schema_doc)
+    _assert_component(reject_payload, "BasicOkEnvelope", schema_doc)
 
 
 def test_session_v4_phase_gated_route_returns_deterministic_501(client: TestClient) -> None:
