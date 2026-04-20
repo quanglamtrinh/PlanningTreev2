@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / "docs" / "remodel" / "contracts" / "session-core-v2"
+FRONTEND_CONTRACTS = ROOT / "frontend" / "src" / "features" / "session_v2" / "contracts.ts"
 CODEX_SCHEMA = (
     Path.home()
     / "codex"
@@ -20,6 +21,17 @@ CODEX_SCHEMA = (
 
 def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def extract_interface_block(source_text: str, interface_name: str) -> str:
+    marker = f"export interface {interface_name}"
+    start = source_text.find(marker)
+    if start < 0:
+        return ""
+    next_export = source_text.find("\nexport ", start + len(marker))
+    if next_export < 0:
+        return source_text[start:]
+    return source_text[start:next_export]
 
 
 def main() -> int:
@@ -124,6 +136,34 @@ def main() -> int:
         errors.append("turn steer precondition contract not frozen")
     if "originUrl" not in openapi_text:
         errors.append("thread metadata gitInfo.originUrl is missing")
+
+    if not FRONTEND_CONTRACTS.exists():
+        errors.append(f"missing frontend session_v2 contracts: {FRONTEND_CONTRACTS}")
+    else:
+        frontend_contracts_text = FRONTEND_CONTRACTS.read_text(encoding="utf-8")
+        pending_request_block = extract_interface_block(frontend_contracts_text, "PendingServerRequest")
+        server_request_envelope_block = extract_interface_block(frontend_contracts_text, "ServerRequestEnvelope")
+        turn_steer_request_block = extract_interface_block(frontend_contracts_text, "TurnSteerRequestV4")
+
+        if not pending_request_block:
+            errors.append("frontend contract missing PendingServerRequest interface")
+        elif "turnId: string | null" not in pending_request_block:
+            errors.append("frontend PendingServerRequest.turnId must be nullable (string | null)")
+
+        if not server_request_envelope_block:
+            errors.append("frontend contract missing ServerRequestEnvelope interface")
+        elif "turnId: string | null" not in server_request_envelope_block:
+            errors.append("frontend ServerRequestEnvelope.turnId must be nullable (string | null)")
+
+        if not turn_steer_request_block:
+            errors.append("frontend contract missing TurnSteerRequestV4 interface")
+        else:
+            if "expectedTurnId: string" not in turn_steer_request_block:
+                errors.append("frontend TurnSteerRequestV4.expectedTurnId must be required string")
+            if "expectedTurnId?:" in turn_steer_request_block:
+                errors.append("frontend TurnSteerRequestV4.expectedTurnId cannot be optional")
+            if "expectedTurnId: string | null" in turn_steer_request_block:
+                errors.append("frontend TurnSteerRequestV4.expectedTurnId cannot be nullable")
 
     if errors:
         print("PHASE0_CONTRACT_CHECK=FAIL")

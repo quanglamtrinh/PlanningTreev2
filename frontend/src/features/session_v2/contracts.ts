@@ -109,7 +109,7 @@ export interface PendingServerRequest {
   requestId: string
   method: ServerRequestMethod
   threadId: string
-  turnId: string
+  turnId: string | null
   itemId: string | null
   status: PendingRequestStatus
   createdAtMs: number
@@ -160,7 +160,7 @@ export interface ServerRequestEnvelope {
   requestId: string
   method: ServerRequestMethod
   threadId: string
-  turnId: string
+  turnId: string | null
   itemId: string | null
   status: 'pending' | 'resolved' | 'rejected' | 'expired'
   occurredAtMs: number
@@ -184,7 +184,7 @@ export interface TurnStartRequestV4 {
 
 export interface TurnSteerRequestV4 {
   clientActionId: string
-  expectedTurnId?: string | null
+  expectedTurnId: string
   input: Array<Record<string, unknown>>
 }
 
