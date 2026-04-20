@@ -1,0 +1,1128 @@
+openapi: 3.1.0
+info:
+  title: PlanningTree Session Core V2 API
+  version: "1.0.0"
+  summary: Thin HTTP facade over Codex-native session semantics.
+servers:
+  - url: /
+tags:
+  - name: connection
+  - name: threads
+  - name: turns
+  - name: requests
+  - name: events
+paths:
+  /v4/session/initialize:
+    post:
+      tags: [connection]
+      summary: Initialize session connection (initialize + internal initialized transition).
+      operationId: sessionInitializeV4
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitializeRequest"
+      responses:
+        "200":
+          description: Session initialized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitializeResponseEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/status:
+    get:
+      tags: [connection]
+      summary: Read connection state.
+      operationId: sessionStatusV4
+      responses:
+        "200":
+          description: Current session connection state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionStatusEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/start:
+    post:
+      tags: [threads]
+      summary: Start a new thread.
+      operationId: sessionThreadStartV4
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThreadStartRequest"
+      responses:
+        "200":
+          description: Thread started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThreadConfigEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/resume:
+    post:
+      tags: [threads]
+      summary: Resume an existing thread.
+      operationId: sessionThreadResumeV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThreadResumeRequest"
+      responses:
+        "200":
+          description: Thread resumed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThreadConfigEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/fork:
+    post:
+      tags: [threads]
+      summary: Fork a thread.
+      operationId: sessionThreadForkV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThreadForkRequest"
+      responses:
+        "200":
+          description: Thread forked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThreadConfigEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/list:
+    get:
+      tags: [threads]
+      summary: List persisted threads.
+      operationId: sessionThreadListV4
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: archived
+          in: query
+          schema:
+            type: boolean
+        - name: cwd
+          in: query
+          schema:
+            type: string
+        - name: modelProviders
+          in: query
+          description: CSV or repeated query values.
+          schema:
+            oneOf:
+              - type: string
+              - type: array
+                items:
+                  type: string
+        - name: sourceKinds
+          in: query
+          schema:
+            oneOf:
+              - type: string
+              - type: array
+                items:
+                  type: string
+        - name: searchTerm
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Thread list page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThreadListEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/read:
+    get:
+      tags: [threads]
+      summary: Read a thread without subscribing.
+      operationId: sessionThreadReadV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+        - name: includeTurns
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Thread payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThreadEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/turns:
+    get:
+      tags: [threads]
+      summary: List turns of a thread.
+      operationId: sessionThreadTurnsListV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Thread turn page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TurnListEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/loaded/list:
+    get:
+      tags: [threads]
+      summary: List loaded in-memory thread ids.
+      operationId: sessionThreadLoadedListV4
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Loaded threads.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadedThreadIdsEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/unsubscribe:
+    post:
+      tags: [threads]
+      summary: Unsubscribe current connection from thread events.
+      operationId: sessionThreadUnsubscribeV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      responses:
+        "200":
+          description: Unsubscribe status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnsubscribeEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/archive:
+    post:
+      tags: [threads]
+      summary: Archive a thread (phase-gated).
+      operationId: sessionThreadArchiveV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      responses:
+        "200":
+          description: Archive accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOkEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/unarchive:
+    post:
+      tags: [threads]
+      summary: Unarchive a thread (phase-gated).
+      operationId: sessionThreadUnarchiveV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      responses:
+        "200":
+          description: Thread unarchived.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThreadEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/name/set:
+    post:
+      tags: [threads]
+      summary: Set thread name (phase-gated).
+      operationId: sessionThreadSetNameV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThreadNameSetRequest"
+      responses:
+        "200":
+          description: Name update accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOkEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/metadata/update:
+    post:
+      tags: [threads]
+      summary: Patch thread metadata (phase-gated).
+      operationId: sessionThreadMetadataUpdateV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThreadMetadataUpdateRequest"
+      responses:
+        "200":
+          description: Metadata updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThreadEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/rollback:
+    post:
+      tags: [threads]
+      summary: Roll back last turns from thread history (phase-gated).
+      operationId: sessionThreadRollbackV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThreadRollbackRequest"
+      responses:
+        "200":
+          description: Thread rolled back.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThreadEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/compact/start:
+    post:
+      tags: [threads]
+      summary: Start thread compaction (phase-gated).
+      operationId: sessionThreadCompactStartV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      responses:
+        "200":
+          description: Compact start accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOkEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/turns/start:
+    post:
+      tags: [turns]
+      summary: Start a turn (idempotent by clientActionId).
+      operationId: sessionTurnStartV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TurnStartRequest"
+      responses:
+        "200":
+          description: Turn started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TurnEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/turns/{turnId}/steer:
+    post:
+      tags: [turns]
+      summary: Steer active turn (idempotent by clientActionId).
+      operationId: sessionTurnSteerV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/TurnId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TurnSteerRequest"
+      responses:
+        "200":
+          description: Steer accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TurnEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/turns/{turnId}/interrupt:
+    post:
+      tags: [turns]
+      summary: Interrupt a running turn (idempotent by clientActionId).
+      operationId: sessionTurnInterruptV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/TurnId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TurnInterruptRequest"
+      responses:
+        "200":
+          description: Interrupt accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOkEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/inject-items:
+    post:
+      tags: [turns]
+      summary: Inject raw items without opening a new user turn.
+      operationId: sessionInjectItemsV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InjectItemsRequest"
+      responses:
+        "200":
+          description: Inject accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOkEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/requests/pending:
+    get:
+      tags: [requests]
+      summary: List pending server requests.
+      operationId: sessionPendingRequestsV4
+      responses:
+        "200":
+          description: Pending request list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingRequestsEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/requests/{requestId}/resolve:
+    post:
+      tags: [requests]
+      summary: Resolve a server request (idempotent by resolutionKey).
+      operationId: sessionResolveRequestV4
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveRequest"
+      responses:
+        "200":
+          description: Resolve accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOkEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/requests/{requestId}/reject:
+    post:
+      tags: [requests]
+      summary: Reject a server request (idempotent by resolutionKey).
+      operationId: sessionRejectRequestV4
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectRequest"
+      responses:
+        "200":
+          description: Reject accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOkEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v4/session/threads/{threadId}/events:
+    get:
+      tags: [events]
+      summary: Stream canonical session events as SSE.
+      operationId: sessionEventsV4
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Replay cursor, interpreted as last applied eventSeq.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Query replay cursor fallback when Last-Event-ID is absent.
+      responses:
+        "200":
+          description: SSE stream response.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: "SSE frames where data is JSON envelope per S4 contract."
+        "409":
+          description: Replay cursor mismatch or expired cursor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+
+components:
+  parameters:
+    ThreadId:
+      name: threadId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    TurnId:
+      name: turnId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+  responses:
+    ErrorResponse:
+      description: Typed error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    BasicOkEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        data:
+          type: object
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          const: false
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+    InitializeRequest:
+      type: object
+      additionalProperties: false
+      required: [clientInfo]
+      properties:
+        clientInfo:
+          type: object
+          additionalProperties: false
+          required: [name, version]
+          properties:
+            name:
+              type: string
+            title:
+              type: [string, "null"]
+            version:
+              type: string
+        capabilities:
+          type: object
+          additionalProperties: false
+          properties:
+            experimentalApi:
+              type: boolean
+              default: false
+            optOutNotificationMethods:
+              type: array
+              items:
+                type: string
+    InitializeResponseEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        data:
+          type: object
+          additionalProperties: false
+          required: [connection]
+          properties:
+            connection:
+              $ref: "#/components/schemas/ConnectionState"
+    ConnectionStatusEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        data:
+          type: object
+          additionalProperties: false
+          required: [connection]
+          properties:
+            connection:
+              $ref: "#/components/schemas/ConnectionState"
+    ConnectionState:
+      type: object
+      additionalProperties: false
+      required: [phase]
+      properties:
+        phase:
+          type: string
+          enum: [disconnected, connecting, initialized, error]
+        clientName:
+          type: [string, "null"]
+        serverVersion:
+          type: [string, "null"]
+        error:
+          type: object
+    ThreadConfigOverrides:
+      type: object
+      additionalProperties: false
+      properties:
+        model:
+          type: [string, "null"]
+        modelProvider:
+          type: [string, "null"]
+        cwd:
+          type: [string, "null"]
+        approvalPolicy:
+          description: Codex AskForApproval value or granular object.
+          oneOf:
+            - type: string
+            - type: object
+        approvalsReviewer:
+          type: [string, "null"]
+        personality:
+          type: [string, "null"]
+        sandbox:
+          oneOf:
+            - type: string
+            - type: object
+        serviceTier:
+          type: [string, "null"]
+        baseInstructions:
+          type: [string, "null"]
+        developerInstructions:
+          type: [string, "null"]
+        config:
+          type: object
+        ephemeral:
+          type: boolean
+    ThreadStartRequest:
+      allOf:
+        - $ref: "#/components/schemas/ThreadConfigOverrides"
+    ThreadResumeRequest:
+      allOf:
+        - $ref: "#/components/schemas/ThreadConfigOverrides"
+    ThreadForkRequest:
+      allOf:
+        - $ref: "#/components/schemas/ThreadConfigOverrides"
+    ThreadNameSetRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+    ThreadMetadataUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        gitInfo:
+          type: object
+          additionalProperties: false
+          properties:
+            branch:
+              type: [string, "null"]
+            sha:
+              type: [string, "null"]
+    ThreadRollbackRequest:
+      type: object
+      additionalProperties: false
+      required: [numTurns]
+      properties:
+        numTurns:
+          type: integer
+          minimum: 1
+    ThreadConfigEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        data:
+          type: object
+          additionalProperties: false
+          required: [thread]
+          properties:
+            thread:
+              $ref: "#/components/schemas/Thread"
+            model:
+              type: [string, "null"]
+            modelProvider:
+              type: [string, "null"]
+            cwd:
+              type: [string, "null"]
+            approvalPolicy:
+              oneOf:
+                - type: string
+                - type: object
+            sandbox:
+              oneOf:
+                - type: string
+                - type: object
+            reasoningEffort:
+              type: [string, "null"]
+            serviceTier:
+              type: [string, "null"]
+    Thread:
+      type: object
+      additionalProperties: true
+      required: [id, cwd, modelProvider, status, turns, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: [string, "null"]
+        preview:
+          type: [string, "null"]
+        path:
+          type: [string, "null"]
+        cwd:
+          type: string
+        modelProvider:
+          type: string
+        status:
+          oneOf:
+            - type: object
+              required: [type]
+              properties:
+                type:
+                  enum: [notLoaded, idle, systemError]
+            - type: object
+              required: [type, activeFlags]
+              properties:
+                type:
+                  const: active
+                activeFlags:
+                  type: array
+                  items:
+                    type: string
+        turns:
+          type: array
+          items:
+            $ref: "#/components/schemas/Turn"
+        createdAt:
+          type: integer
+        updatedAt:
+          type: integer
+    ThreadEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        data:
+          type: object
+          additionalProperties: false
+          required: [thread]
+          properties:
+            thread:
+              $ref: "#/components/schemas/Thread"
+    ThreadListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        data:
+          type: object
+          additionalProperties: false
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Thread"
+            nextCursor:
+              type: [string, "null"]
+    TurnListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        data:
+          type: object
+          additionalProperties: false
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Turn"
+            nextCursor:
+              type: [string, "null"]
+    LoadedThreadIdsEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        data:
+          type: object
+          additionalProperties: false
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                type: string
+            nextCursor:
+              type: [string, "null"]
+    UnsubscribeEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        data:
+          type: object
+          additionalProperties: false
+          required: [status]
+          properties:
+            status:
+              type: string
+              enum: [notLoaded, notSubscribed, unsubscribed]
+    UserInput:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [type, text]
+          properties:
+            type:
+              const: text
+            text:
+              type: string
+            textElements:
+              type: array
+              items:
+                type: object
+        - type: object
+          additionalProperties: false
+          required: [type, url]
+          properties:
+            type:
+              const: image
+            url:
+              type: string
+        - type: object
+          additionalProperties: false
+          required: [type, path]
+          properties:
+            type:
+              const: localImage
+            path:
+              type: string
+    TurnStartRequest:
+      type: object
+      additionalProperties: false
+      required: [clientActionId, input]
+      properties:
+        clientActionId:
+          type: string
+          minLength: 1
+        input:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserInput"
+        model:
+          type: [string, "null"]
+        cwd:
+          type: [string, "null"]
+        approvalPolicy:
+          oneOf:
+            - type: string
+            - type: object
+        approvalsReviewer:
+          type: [string, "null"]
+        sandboxPolicy:
+          oneOf:
+            - type: string
+            - type: object
+        personality:
+          type: [string, "null"]
+        effort:
+          type: [string, "null"]
+        summary:
+          oneOf:
+            - type: string
+            - type: object
+        serviceTier:
+          type: [string, "null"]
+        outputSchema:
+          oneOf:
+            - type: object
+            - type: "null"
+    TurnSteerRequest:
+      type: object
+      additionalProperties: false
+      required: [clientActionId, input]
+      properties:
+        clientActionId:
+          type: string
+          minLength: 1
+        expectedTurnId:
+          type: [string, "null"]
+          description: Optional precondition; if omitted, path turnId is used.
+        input:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserInput"
+    TurnInterruptRequest:
+      type: object
+      additionalProperties: false
+      required: [clientActionId]
+      properties:
+        clientActionId:
+          type: string
+          minLength: 1
+    InjectItemsRequest:
+      type: object
+      additionalProperties: false
+      required: [clientActionId, items]
+      properties:
+        clientActionId:
+          type: string
+          minLength: 1
+        items:
+          type: array
+          items:
+            type: object
+    Turn:
+      type: object
+      additionalProperties: true
+      required: [id, status, items]
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [inProgress, completed, failed, interrupted]
+        items:
+          type: array
+          items:
+            type: object
+        error:
+          type: object
+    TurnEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        data:
+          type: object
+          additionalProperties: false
+          required: [turn]
+          properties:
+            turn:
+              $ref: "#/components/schemas/Turn"
+    ResolveRequest:
+      type: object
+      additionalProperties: false
+      required: [resolutionKey, result]
+      properties:
+        resolutionKey:
+          type: string
+          minLength: 1
+        result:
+          type: object
+          description: Direct JSON-RPC result payload for the pending server request.
+    RejectRequest:
+      type: object
+      additionalProperties: false
+      required: [resolutionKey]
+      properties:
+        resolutionKey:
+          type: string
+          minLength: 1
+        reason:
+          type: [string, "null"]
+    PendingServerRequest:
+      type: object
+      additionalProperties: true
+      required: [requestId, method, threadId, turnId, status, payload]
+      properties:
+        requestId:
+          type: string
+        method:
+          type: string
+          enum:
+            - item/tool/requestUserInput
+            - item/commandExecution/requestApproval
+            - item/fileChange/requestApproval
+            - item/permissions/requestApproval
+            - mcpServer/elicitation/request
+        threadId:
+          type: string
+        turnId:
+          type: string
+        itemId:
+          type: [string, "null"]
+        status:
+          type: string
+          enum: [pending, submitted, resolved, rejected, expired]
+        payload:
+          type: object
+    PendingRequestsEnvelope:
+      type: object
+      additionalProperties: false
+      required: [ok, data]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        data:
+          type: object
+          additionalProperties: false
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/PendingServerRequest"

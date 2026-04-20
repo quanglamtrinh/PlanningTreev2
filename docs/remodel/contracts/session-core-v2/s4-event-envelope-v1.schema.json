@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://planningtree.local/contracts/session-core-v2/s4-event-envelope-v1.schema.json",
+  "title": "S4 Event Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "eventSeq",
+    "tier",
+    "method",
+    "threadId",
+    "turnId",
+    "occurredAtMs",
+    "replayable",
+    "snapshotVersion",
+    "source",
+    "params"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]+:[0-9]+$",
+      "description": "Composite identifier `<threadId>:<eventSeq>`."
+    },
+    "eventSeq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "tier": {
+      "type": "string",
+      "enum": [
+        "tier0",
+        "tier1",
+        "tier2"
+      ]
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "error",
+        "thread/started",
+        "thread/status/changed",
+        "thread/closed",
+        "thread/archived",
+        "thread/unarchived",
+        "thread/name/updated",
+        "thread/tokenUsage/updated",
+        "turn/started",
+        "turn/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "item/plan/delta",
+        "item/reasoning/summaryTextDelta",
+        "item/reasoning/summaryPartAdded",
+        "item/reasoning/textDelta",
+        "item/commandExecution/outputDelta",
+        "item/fileChange/outputDelta",
+        "serverRequest/resolved"
+      ]
+    },
+    "threadId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "turnId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "occurredAtMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "replayable": {
+      "type": "boolean"
+    },
+    "snapshotVersion": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "journal",
+        "replay"
+      ]
+    },
+    "params": {
+      "type": "object"
+    }
+  }
+}
+
