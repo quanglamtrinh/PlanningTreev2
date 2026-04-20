@@ -45,7 +45,11 @@ from backend.config.app_config import (
 from backend.config.api_version import API_PREFIX
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
-from backend.routes import bootstrap, chat, codex, nodes, projects, split, workflow_v3
+from backend.routes import bootstrap, chat, codex, nodes, projects, session_v4, split, workflow_v3
+from backend.session_core_v2.connection import ConnectionStateMachine, SessionManagerV2
+from backend.session_core_v2.protocol import SessionProtocolClientV2
+from backend.session_core_v2.storage import RuntimeStoreV2
+from backend.session_core_v2.transport import StdioJsonRpcTransportV2
 from backend.services.chat_service import ChatService
 from backend.services.ask_rollout_metrics_service import AskRolloutMetricsService
 from backend.services.codex_account_service import CodexAccountService
@@ -241,6 +245,15 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         git_checkpoint_service=git_checkpoint_service,
         codex_client=codex_client,
     )
+    session_transport_v2 = StdioJsonRpcTransportV2(codex_cmd=get_codex_cmd())
+    session_protocol_v2 = SessionProtocolClientV2(session_transport_v2)
+    session_runtime_store_v2 = RuntimeStoreV2()
+    session_connection_state_v2 = ConnectionStateMachine()
+    session_manager_v2 = SessionManagerV2(
+        protocol_client=session_protocol_v2,
+        runtime_store=session_runtime_store_v2,
+        connection_state_machine=session_connection_state_v2,
+    )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service
     thread_lineage_service.set_thread_registry_service(thread_registry_service_v2)
@@ -250,6 +263,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         try:
             yield
         finally:
+            session_transport_v2.stop()
             codex_client.stop()
 
     app = FastAPI(
@@ -313,6 +327,9 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.ask_v3_backend_enabled = ask_v3_backend_enabled
     app.state.ask_v3_frontend_enabled = ask_v3_frontend_enabled
     app.state.ask_rollout_metrics_service = ask_rollout_metrics_service
+    app.state.session_manager_v2 = session_manager_v2
+    app.state.session_runtime_store_v2 = session_runtime_store_v2
+    app.state.session_connection_state_v2 = session_connection_state_v2
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
@@ -343,6 +360,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.include_router(split.router, prefix=API_PREFIX)
     app.include_router(chat.router, prefix=API_PREFIX)
     app.include_router(workflow_v3.router, prefix=API_PREFIX)
+    app.include_router(session_v4.router)
 
     if getattr(sys, "frozen", False):
         dist = Path(sys._MEIPASS) / "frontend" / "dist"  # type: ignore[attr-defined]
