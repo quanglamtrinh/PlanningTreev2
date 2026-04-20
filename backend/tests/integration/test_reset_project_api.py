@@ -11,7 +11,7 @@ def test_reset_project_api_rewrites_tree_to_root_only(client, tmp_path: Path) ->
     workspace_root.mkdir()
     project_dir = workspace_root / ".planningtree"
 
-    created = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    created = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert created.status_code == 200
     project_id = created.json()["project"]["id"]
     root_id = created.json()["tree_state"]["root_node_id"]
@@ -21,12 +21,12 @@ def test_reset_project_api_rewrites_tree_to_root_only(client, tmp_path: Path) ->
     assert (root_dir / planningtree_workspace.FRAME_FILE_NAME).read_text(encoding="utf-8") == ""
     assert (root_dir / planningtree_workspace.SPEC_FILE_NAME).read_text(encoding="utf-8") == ""
 
-    first = client.post(f"/v1/projects/{project_id}/nodes", json={"parent_id": root_id})
+    first = client.post(f"/v3/projects/{project_id}/nodes", json={"parent_id": root_id})
     assert first.status_code == 200
     child_dir = root_dir / "1.1 New Node"
     assert child_dir.is_dir()
 
-    reset = client.post(f"/v1/projects/{project_id}/reset-to-root")
+    reset = client.post(f"/v3/projects/{project_id}/reset-to-root")
     assert reset.status_code == 200
     payload = reset.json()
 
@@ -65,7 +65,7 @@ def test_snapshot_route_rejects_legacy_project(client, tmp_path: Path) -> None:
     )
     (project_dir / "nodes").mkdir()
 
-    response = client.get(f"/v1/projects/{project_id}/snapshot")
+    response = client.get(f"/v3/projects/{project_id}/snapshot")
 
     assert response.status_code == 409
     assert response.json()["code"] == "legacy_project_unsupported"

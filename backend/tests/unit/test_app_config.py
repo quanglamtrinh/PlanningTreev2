@@ -61,9 +61,9 @@ def test_conversation_v3_bridge_project_gate(monkeypatch) -> None:
     assert is_conversation_v3_bridge_allowed_for_project("project-z") is False
 
 
-def test_thread_stream_cadence_profile_defaults_to_standard(monkeypatch) -> None:
+def test_thread_stream_cadence_profile_defaults_to_high(monkeypatch) -> None:
     monkeypatch.delenv("PLANNINGTREE_THREAD_STREAM_CADENCE_PROFILE", raising=False)
-    assert get_thread_stream_cadence_profile() == "standard"
+    assert get_thread_stream_cadence_profile() == "high"
 
 
 def test_thread_stream_cadence_profile_accepts_valid_values(monkeypatch) -> None:

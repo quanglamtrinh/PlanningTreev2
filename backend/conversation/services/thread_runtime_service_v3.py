@@ -455,12 +455,17 @@ class ThreadRuntimeServiceV3:
             turn_id=turn_id,
             text=cleaned_text,
         )
+        assistant_placeholder_item = self._build_local_assistant_placeholder_item(
+            snapshot=snapshot,
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
         updated = self.begin_turn(
             project_id=project_id,
             node_id=node_id,
             thread_role=thread_role,
             origin="interactive",
-            created_items=[user_item],
+            created_items=[user_item, assistant_placeholder_item],
             turn_id=turn_id,
         )
         payload = {
@@ -468,7 +473,7 @@ class ThreadRuntimeServiceV3:
             "threadId": thread_id,
             "turnId": turn_id,
             "snapshotVersion": updated["snapshotVersion"],
-            "createdItems": [user_item],
+            "createdItems": [user_item, assistant_placeholder_item],
         }
         return payload, thread_id, turn_id
 
@@ -1333,6 +1338,31 @@ class ThreadRuntimeServiceV3:
             "metadata": {},
             "role": "user",
             "text": text,
+            "format": "markdown",
+        }
+
+    def _build_local_assistant_placeholder_item(
+        self,
+        *,
+        snapshot: ThreadSnapshotV3,
+        thread_id: str,
+        turn_id: str,
+    ) -> ConversationItemV3:
+        now = iso_now()
+        return {
+            "id": f"turn:{turn_id}:assistant",
+            "kind": "message",
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "sequence": self._next_sequence(snapshot) + 1,
+            "createdAt": now,
+            "updatedAt": now,
+            "status": "in_progress",
+            "source": "backend",
+            "tone": "neutral",
+            "metadata": {},
+            "role": "assistant",
+            "text": "",
             "format": "markdown",
         }
 

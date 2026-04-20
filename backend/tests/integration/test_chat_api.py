@@ -105,7 +105,7 @@ class IntegrationRollupCodexClient:
 
 
 def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
-    resp = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    resp = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert resp.status_code == 200
     snap = resp.json()
     project_id = snap["project"]["id"]
@@ -221,7 +221,7 @@ def _wait_for_integration_completion(
 def test_get_session_empty(client: TestClient, workspace_root):
     _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
-    resp = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/chat/session")
+    resp = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/chat/session")
     assert resp.status_code == 200
     session = resp.json()
     assert session["thread_id"] is not None
@@ -232,14 +232,14 @@ def test_get_session_empty(client: TestClient, workspace_root):
 
 def test_get_session_nonexistent_node(client: TestClient, workspace_root):
     project_id, _ = _setup_project(client, workspace_root)
-    resp = client.get(f"/v1/projects/{project_id}/nodes/nonexistent/chat/session")
+    resp = client.get(f"/v3/projects/{project_id}/nodes/nonexistent/chat/session")
     assert resp.status_code == 404
 
 
 def test_send_message_empty_content(client: TestClient, workspace_root):
     project_id, root_id = _setup_project(client, workspace_root)
     resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{root_id}/chat/message",
+        f"/v3/projects/{project_id}/nodes/{root_id}/chat/message",
         json={"content": "   "},
     )
     assert resp.status_code == 400
@@ -247,16 +247,17 @@ def test_send_message_empty_content(client: TestClient, workspace_root):
 
 def test_reset_session(client: TestClient, workspace_root):
     project_id, root_id = _setup_project(client, workspace_root)
-    resp = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/chat/reset")
+    resp = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/chat/reset")
     assert resp.status_code == 200
     session = resp.json()
     assert session["messages"] == []
 
 
 def test_chat_session_honors_thread_role_query(client: TestClient, workspace_root):
+    _set_chat_codex_client(client, SlowCheckpointCodexClient())
     project_id, root_id = _setup_project(client, workspace_root)
     resp = client.get(
-        f"/v1/projects/{project_id}/nodes/{root_id}/chat/session",
+        f"/v3/projects/{project_id}/nodes/{root_id}/chat/session",
         params={"thread_role": "audit"},
     )
     assert resp.status_code == 200
@@ -306,7 +307,7 @@ def test_audit_session_bootstraps_lineage_without_seed_replay(client: TestClient
     )
 
     response = client.get(
-        f"/v1/projects/{project_id}/nodes/child-seed/chat/session",
+        f"/v3/projects/{project_id}/nodes/child-seed/chat/session",
         params={"thread_role": "audit"},
     )
 
@@ -321,7 +322,7 @@ def test_audit_session_bootstraps_lineage_without_seed_replay(client: TestClient
 def test_task_node_rejects_invalid_thread_role_pair(client: TestClient, workspace_root):
     project_id, root_id = _setup_project(client, workspace_root)
     resp = client.get(
-        f"/v1/projects/{project_id}/nodes/{root_id}/chat/session",
+        f"/v3/projects/{project_id}/nodes/{root_id}/chat/session",
         params={"thread_role": "integration"},
     )
     assert resp.status_code == 400
@@ -333,7 +334,7 @@ def test_review_node_accepts_audit_thread_role(client: TestClient, workspace_roo
     project_id, root_id = _setup_project(client, workspace_root)
     review_id = _add_review_node(client, project_id, root_id)
     resp = client.get(
-        f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
+        f"/v3/projects/{project_id}/nodes/{review_id}/chat/session",
         params={"thread_role": "audit"},
     )
     assert resp.status_code == 200
@@ -344,7 +345,7 @@ def test_review_node_rejects_integration_thread_role(client: TestClient, workspa
     project_id, root_id = _setup_project(client, workspace_root)
     review_id = _add_review_node(client, project_id, root_id)
     resp = client.get(
-        f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
+        f"/v3/projects/{project_id}/nodes/{review_id}/chat/session",
         params={"thread_role": "integration"},
     )
     assert resp.status_code == 400
@@ -415,7 +416,7 @@ def test_review_audit_session_stays_empty_when_rollup_ready(
     _write_confirmed_frame(client, project_id, root_id, "# Parent Frame\nShip auth package\n")
 
     response = client.get(
-        f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
+        f"/v3/projects/{project_id}/nodes/{review_id}/chat/session",
         params={"thread_role": "audit"},
     )
 
@@ -481,7 +482,7 @@ def test_review_audit_session_includes_assistant_output_after_auto_start(
     _wait_for_integration_completion(client, project_id, review_id)
 
     response = client.get(
-        f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
+        f"/v3/projects/{project_id}/nodes/{review_id}/chat/session",
         params={"thread_role": "audit"},
     )
 
@@ -547,7 +548,7 @@ def test_ask_planning_session_starts_empty_for_child_node(
     )
 
     response = client.get(
-        f"/v1/projects/{project_id}/nodes/child-planning/chat/session",
+        f"/v3/projects/{project_id}/nodes/child-planning/chat/session",
         params={"thread_role": "ask_planning"},
     )
 
@@ -561,7 +562,7 @@ def test_review_node_rejects_task_thread_role_pair(client: TestClient, workspace
     project_id, root_id = _setup_project(client, workspace_root)
     review_id = _add_review_node(client, project_id, root_id)
     resp = client.get(
-        f"/v1/projects/{project_id}/nodes/{review_id}/chat/session",
+        f"/v3/projects/{project_id}/nodes/{review_id}/chat/session",
         params={"thread_role": "ask_planning"},
     )
     assert resp.status_code == 400
@@ -572,7 +573,7 @@ def test_invalid_thread_role_pair_returns_400_for_message_reset_and_events(clien
     project_id, root_id = _setup_project(client, workspace_root)
 
     message_resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{root_id}/chat/message",
+        f"/v3/projects/{project_id}/nodes/{root_id}/chat/message",
         params={"thread_role": "integration"},
         json={"content": "hello"},
     )
@@ -580,14 +581,14 @@ def test_invalid_thread_role_pair_returns_400_for_message_reset_and_events(clien
     assert message_resp.json()["code"] == "invalid_request"
 
     reset_resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{root_id}/chat/reset",
+        f"/v3/projects/{project_id}/nodes/{root_id}/chat/reset",
         params={"thread_role": "integration"},
     )
     assert reset_resp.status_code == 400
     assert reset_resp.json()["code"] == "invalid_request"
 
     events_resp = client.get(
-        f"/v1/projects/{project_id}/nodes/{root_id}/chat/events",
+        f"/v3/projects/{project_id}/nodes/{root_id}/chat/events",
         params={"thread_role": "integration"},
     )
     assert events_resp.status_code == 400
@@ -596,13 +597,13 @@ def test_invalid_thread_role_pair_returns_400_for_message_reset_and_events(clien
 
 def test_reset_nonexistent_node(client: TestClient, workspace_root):
     project_id, _ = _setup_project(client, workspace_root)
-    resp = client.post(f"/v1/projects/{project_id}/nodes/nonexistent/chat/reset")
+    resp = client.post(f"/v3/projects/{project_id}/nodes/nonexistent/chat/reset")
     assert resp.status_code == 404
 
 
 def test_chat_events_nonexistent_node_returns_404(client: TestClient, workspace_root):
     project_id, _ = _setup_project(client, workspace_root)
-    response = client.get(f"/v1/projects/{project_id}/nodes/nonexistent/chat/events")
+    response = client.get(f"/v3/projects/{project_id}/nodes/nonexistent/chat/events")
     assert response.status_code == 404
 
 
@@ -612,7 +613,7 @@ def test_get_session_returns_partial_content_mid_stream(client: TestClient, work
 
     project_id, root_id = _setup_project(client, workspace_root)
     response = client.post(
-        f"/v1/projects/{project_id}/nodes/{root_id}/chat/message",
+        f"/v3/projects/{project_id}/nodes/{root_id}/chat/message",
         json={"content": "Hello"},
     )
     assert response.status_code == 200
@@ -620,7 +621,7 @@ def test_get_session_returns_partial_content_mid_stream(client: TestClient, work
     deadline = time.time() + 2.0
     streaming_session = None
     while time.time() < deadline:
-        session_response = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/chat/session")
+        session_response = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/chat/session")
         assert session_response.status_code == 200
         candidate = session_response.json()
         if candidate["messages"] and candidate["messages"][1]["status"] == "streaming":
@@ -633,7 +634,7 @@ def test_get_session_returns_partial_content_mid_stream(client: TestClient, work
 
     completed_session = None
     while time.time() < deadline:
-        session_response = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/chat/session")
+        session_response = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/chat/session")
         candidate = session_response.json()
         if candidate["messages"] and candidate["messages"][1]["status"] == "completed":
             completed_session = candidate
@@ -657,50 +658,46 @@ def test_finish_task_route_returns_detail_state_and_creates_execution_session(
     project_id, root_id = _setup_project(client, workspace_root)
 
     frame_resp = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame",
         json={"content": "# Task Title\nTask\n\n# Objective\nDo it\n"},
     )
     assert frame_resp.status_code == 200
-    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame").status_code == 200
+    assert client.post(f"/v3/projects/{project_id}/nodes/{root_id}/confirm-frame").status_code == 200
 
     spec_resp = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/spec",
         json={"content": "# Spec\nImplement it\n"},
     )
     assert spec_resp.status_code == 200
-    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-spec").status_code == 200
+    assert client.post(f"/v3/projects/{project_id}/nodes/{root_id}/confirm-spec").status_code == 200
 
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][root_id]["status"] = "ready"
     client.app.state.storage.project_store.save_snapshot(project_id, snapshot)
 
-    detail_before = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/detail-state").json()
+    detail_before = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/detail-state").json()
     assert detail_before["can_finish_task"] is True
 
-    finish_resp = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
+    finish_resp = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/finish-task")
     assert finish_resp.status_code == 200
     payload = finish_resp.json()
     assert payload["execution_started"] is True
     assert payload["shaping_frozen"] is True
 
     deadline = time.time() + 2.0
-    execution_session = None
+    workflow_state = None
     while time.time() < deadline:
-        session_resp = client.get(
-            f"/v1/projects/{project_id}/nodes/{root_id}/chat/session",
-            params={"thread_role": "execution"},
-        )
-        assert session_resp.status_code == 200
-        session = session_resp.json()
-        if session["messages"]:
-            execution_session = session
-            if session["messages"][0]["status"] in {"completed", "error"}:
-                break
+        workflow_resp = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/workflow-state")
+        assert workflow_resp.status_code == 200
+        envelope = workflow_resp.json()
+        assert envelope["ok"] is True
+        candidate = envelope["data"]
+        if candidate.get("executionThreadId"):
+            workflow_state = candidate
+            break
         time.sleep(0.02)
 
-    assert execution_session is not None
-    assert execution_session["thread_role"] == "execution"
-    assert execution_session["fork_reason"] == "execution_bootstrap"
-    assert execution_session["forked_from_role"] == "audit"
-    assert execution_session["messages"][0]["role"] == "assistant"
+    assert workflow_state is not None
+    assert workflow_state["executionThreadId"] is not None
+    assert workflow_state["auditLineageThreadId"] is not None
     assert codex.forked_threads

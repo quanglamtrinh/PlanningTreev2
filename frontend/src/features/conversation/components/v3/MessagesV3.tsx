@@ -826,7 +826,10 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
         ? styles.messageBubbleSystem
         : styles.messageBubbleAssistant
   const isStreamingMessage = item.role === 'assistant' && item.status === 'in_progress'
-  const messageSourceText = streamingTextOverride ?? item.text
+  const hasStreamText = Boolean((streamingTextOverride ?? item.text ?? '').trim())
+  const messageSourceText =
+    streamingTextOverride ??
+    (isStreamingMessage && !hasStreamText ? 'Responding...' : (item.text ?? ''))
   const streamOverlayToken =
     streamingTextOverride == null
       ? null
@@ -2053,7 +2056,7 @@ export function MessagesV3({
   onLoadMoreHistory?: () => void
   prefix?: ReactNode
   suffix?: ReactNode
-  /** Breadcrumb thread: one #fcf9f7 canvas (no gray “cards” in the scroll area). */
+  /** Breadcrumb thread: one #fcf9f7 canvas (no gray Ã¢â‚¬Å“cardsÃ¢â‚¬Â in the scroll area). */
   threadChatFlatCanvas?: boolean
   onResolveUserInput: (requestId: string, answers: UserInputAnswerV3[]) => Promise<void> | void
   onPlanAction?: (

@@ -117,7 +117,7 @@ describe('codex-store', () => {
     expect(useCodexStore.getState().snapshot).toEqual(snapshot)
     expect(useCodexStore.getState().hasInitialized).toBe(true)
     expect(MockEventSource.instances).toHaveLength(1)
-    expect(MockEventSource.instances[0]?.url).toBe('/v1/codex/events')
+    expect(MockEventSource.instances[0]?.url).toBe('/v3/codex/events')
   })
 
   it('applies live snapshot updates from the SSE stream', async () => {

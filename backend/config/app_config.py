@@ -171,7 +171,7 @@ def get_thread_stream_cadence_profile() -> str:
     raw = str(os.environ.get("PLANNINGTREE_THREAD_STREAM_CADENCE_PROFILE", "") or "").strip().lower()
     if raw in {"low", "standard", "high"}:
         return raw
-    return "standard"
+    return "high"
 
 
 def get_thread_raw_event_coalesce_ms() -> int:

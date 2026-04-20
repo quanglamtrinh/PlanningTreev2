@@ -342,6 +342,20 @@ Safe production adoption.
 - all KPI gates green for 1 full cycle
 - rollback drill validated
 
+### Phase 14.8 completion note
+- Added canary rollout + rollback drill runbook: `phase-14.8-canary-rollout-rollback-drill.md`.
+- Added gate report script: `scripts/phase14_8_canary_rollout_report.py` (candidate/synthetic mode, self-test contract validation).
+- Defined rollout steps ask/execution (10% -> 50% -> 100%, 48h monitoring per step) and rollback controls (FE/BE + feature-path isolation).
+- Defined KPI progression gates + rollback drill acceptance checks.
+- Added full-rollout cutover pack:
+  - `phase-14.8-full-rollout-cutover.md`
+  - `deploy/env/streaming-rollout-full.env.example`
+  - `deploy/env/streaming-rollout-rollback.env.example`
+  - `scripts/phase14_full_rollout_preflight.py`
+- Switched rollout defaults to full profile in codebase:
+  - FE cadence fallback default -> `high`
+  - BE cadence profile default -> `high`
+
 ---
 
 ## 6) Test Strategy

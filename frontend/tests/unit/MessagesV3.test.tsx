@@ -1264,4 +1264,35 @@ describe('MessagesV3', () => {
       streamingTextLane: {},
     }))
   })
+
+  it('shows responding placeholder for assistant in-progress message when text is empty', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'msg-stream-empty-1',
+              kind: 'message',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 10,
+              createdAt: '2026-04-01T00:00:10Z',
+              updatedAt: '2026-04-01T00:00:10Z',
+              status: 'in_progress',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              role: 'assistant',
+              text: '',
+              format: 'markdown',
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByText('Responding...')).toBeInTheDocument()
+  })
 })

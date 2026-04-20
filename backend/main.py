@@ -42,6 +42,7 @@ from backend.config.app_config import (
     is_ask_v3_backend_enabled,
     is_ask_v3_frontend_enabled,
 )
+from backend.config.api_version import API_PREFIX
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import bootstrap, chat, codex, nodes, projects, split, workflow_v3
@@ -335,13 +336,13 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     async def health() -> dict:
         return {"status": "ok", "version": "0.1.0"}
 
-    app.include_router(bootstrap.router, prefix="/v1")
-    app.include_router(codex.router, prefix="/v1")
-    app.include_router(projects.router, prefix="/v1")
-    app.include_router(nodes.router, prefix="/v1")
-    app.include_router(split.router, prefix="/v1")
-    app.include_router(chat.router, prefix="/v1")
-    app.include_router(workflow_v3.router, prefix="/v3")
+    app.include_router(bootstrap.router, prefix=API_PREFIX)
+    app.include_router(codex.router, prefix=API_PREFIX)
+    app.include_router(projects.router, prefix=API_PREFIX)
+    app.include_router(nodes.router, prefix=API_PREFIX)
+    app.include_router(split.router, prefix=API_PREFIX)
+    app.include_router(chat.router, prefix=API_PREFIX)
+    app.include_router(workflow_v3.router, prefix=API_PREFIX)
 
     if getattr(sys, "frozen", False):
         dist = Path(sys._MEIPASS) / "frontend" / "dist"  # type: ignore[attr-defined]

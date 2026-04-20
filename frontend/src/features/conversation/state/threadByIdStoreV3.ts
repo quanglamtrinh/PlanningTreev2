@@ -224,7 +224,7 @@ export function resolveThreadStreamCadenceProfile(options: {
       return 'high'
     }
   }
-  return 'standard'
+  return 'high'
 }
 
 export function resolveThreadStreamCadencePolicy(options: {

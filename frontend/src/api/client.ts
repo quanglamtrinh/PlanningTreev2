@@ -276,71 +276,71 @@ async function jsonFetchV2<T>(path: string, init?: RequestInit, body?: JsonBody)
 
 export const api = {
   getBootstrapStatus(): Promise<BootstrapStatus> {
-    return jsonFetch('/v1/bootstrap/status')
+    return jsonFetch('/v3/bootstrap/status')
   },
   getCodexSnapshot(): Promise<CodexSnapshot> {
-    return jsonFetch('/v1/codex/account')
+    return jsonFetch('/v3/codex/account')
   },
   getLocalUsageSnapshot(days?: number): Promise<LocalUsageSnapshot> {
     const query = days == null ? '' : `?days=${encodeURIComponent(String(days))}`
-    return jsonFetch<LocalUsageSnapshot>(`/v1/codex/usage/local${query}`)
+    return jsonFetch<LocalUsageSnapshot>(`/v3/codex/usage/local${query}`)
   },
   listProjects(): Promise<ProjectSummary[]> {
-    return jsonFetch('/v1/projects')
+    return jsonFetch('/v3/projects')
   },
   attachProjectFolder(folderPath: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>('/v1/projects/attach', { method: 'POST' }, {
+    return jsonFetch<Snapshot>('/v3/projects/attach', { method: 'POST' }, {
       folder_path: folderPath,
     })
   },
   deleteProject(projectId: string): Promise<void> {
-    return jsonFetch<void>(`/v1/projects/${projectId}`, { method: 'DELETE' })
+    return jsonFetch<void>(`/v3/projects/${projectId}`, { method: 'DELETE' })
   },
   getSnapshot(projectId: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/snapshot`)
+    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/snapshot`)
   },
   resetProjectToRoot(projectId: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/reset-to-root`, { method: 'POST' })
+    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/reset-to-root`, { method: 'POST' })
   },
   setActiveNode(projectId: string, activeNodeId: string | null): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/active-node`, { method: 'PATCH' }, {
+    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/active-node`, { method: 'PATCH' }, {
       active_node_id: activeNodeId,
     })
   },
   createChild(projectId: string, parentId: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes`, { method: 'POST' }, {
+    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/nodes`, { method: 'POST' }, {
       parent_id: parentId,
     })
   },
   createTask(projectId: string, parentId: string, description: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes/create-task`, { method: 'POST' }, {
+    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/nodes/create-task`, { method: 'POST' }, {
       parent_id: parentId,
       description,
     })
   },
   splitNode(projectId: string, nodeId: string, mode: SplitMode): Promise<SplitAcceptedResponse> {
     return jsonFetch<SplitAcceptedResponse>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/split`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/split`,
       { method: 'POST' },
       { mode },
     )
   },
   getSplitStatus(projectId: string): Promise<SplitStatusResponse> {
-    return jsonFetch<SplitStatusResponse>(`/v1/projects/${projectId}/split-status`)
+    return jsonFetch<SplitStatusResponse>(`/v3/projects/${projectId}/split-status`)
   },
   updateNode(
     projectId: string,
     nodeId: string,
     payload: { title?: string; description?: string },
   ): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v1/projects/${projectId}/nodes/${nodeId}`, { method: 'PATCH' }, payload)
+    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/nodes/${nodeId}`, { method: 'PATCH' }, payload)
   },
   getNodeDocument(
     projectId: string,
     nodeId: string,
     kind: NodeDocumentKind,
   ): Promise<NodeDocument> {
-    return jsonFetch<NodeDocument>(`/v1/projects/${projectId}/nodes/${nodeId}/documents/${kind}`)
+    return jsonFetch<NodeDocument>(`/v3/projects/${projectId}/nodes/${nodeId}/documents/${kind}`)
   },
   putNodeDocument(
     projectId: string,
@@ -349,14 +349,14 @@ export const api = {
     content: string,
   ): Promise<NodeDocument> {
     return jsonFetch<NodeDocument>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/documents/${kind}`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/documents/${kind}`,
       { method: 'PUT' },
       { content },
     )
   },
   getWorkspaceTextFile(projectId: string, relativePath: string): Promise<WorkspaceTextFile> {
     const q = new URLSearchParams({ relative_path: relativePath })
-    return jsonFetch<WorkspaceTextFile>(`/v1/projects/${projectId}/workspace-text-file?${q}`)
+    return jsonFetch<WorkspaceTextFile>(`/v3/projects/${projectId}/workspace-text-file?${q}`)
   },
   putWorkspaceTextFile(
     projectId: string,
@@ -365,28 +365,28 @@ export const api = {
   ): Promise<WorkspaceTextFile> {
     const q = new URLSearchParams({ relative_path: relativePath })
     return jsonFetch<WorkspaceTextFile>(
-      `/v1/projects/${projectId}/workspace-text-file?${q}`,
+      `/v3/projects/${projectId}/workspace-text-file?${q}`,
       { method: 'PUT' },
       { content },
     )
   },
   getDetailState(projectId: string, nodeId: string): Promise<DetailState> {
-    return jsonFetch<DetailState>(`/v1/projects/${projectId}/nodes/${nodeId}/detail-state`)
+    return jsonFetch<DetailState>(`/v3/projects/${projectId}/nodes/${nodeId}/detail-state`)
   },
   getWorkflowStateV3(projectId: string, nodeId: string): Promise<NodeWorkflowView> {
     return jsonFetchV2<NodeWorkflowView>(buildWorkflowStatePathV3(projectId, nodeId))
   },
   getReviewState(projectId: string, nodeId: string): Promise<ReviewState> {
-    return jsonFetch<ReviewState>(`/v1/projects/${projectId}/nodes/${nodeId}/review-state`)
+    return jsonFetch<ReviewState>(`/v3/projects/${projectId}/nodes/${nodeId}/review-state`)
   },
   confirmFrame(projectId: string, nodeId: string): Promise<DetailState> {
     return jsonFetch<DetailState>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/confirm-frame`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/confirm-frame`,
       { method: 'POST' },
     )
   },
   getClarify(projectId: string, nodeId: string): Promise<ClarifyState> {
-    return jsonFetch<ClarifyState>(`/v1/projects/${projectId}/nodes/${nodeId}/clarify`)
+    return jsonFetch<ClarifyState>(`/v3/projects/${projectId}/nodes/${nodeId}/clarify`)
   },
   updateClarify(
     projectId: string,
@@ -394,68 +394,68 @@ export const api = {
     answers: { field_name: string; selected_option_id?: string | null; custom_answer?: string }[],
   ): Promise<ClarifyState> {
     return jsonFetch<ClarifyState>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/clarify`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/clarify`,
       { method: 'PUT' },
       { answers },
     )
   },
   confirmClarify(projectId: string, nodeId: string): Promise<DetailState> {
     return jsonFetch<DetailState>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/confirm-clarify`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/confirm-clarify`,
       { method: 'POST' },
     )
   },
   confirmSpec(projectId: string, nodeId: string): Promise<DetailState> {
     return jsonFetch<DetailState>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/confirm-spec`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/confirm-spec`,
       { method: 'POST' },
     )
   },
   generateFrame(projectId: string, nodeId: string): Promise<FrameGenAcceptedResponse> {
     return jsonFetch<FrameGenAcceptedResponse>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/generate-frame`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/generate-frame`,
       { method: 'POST' },
     )
   },
   getFrameGenStatus(projectId: string, nodeId: string): Promise<FrameGenStatusResponse> {
     return jsonFetch<FrameGenStatusResponse>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/frame-generation-status`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/frame-generation-status`,
     )
   },
   generateClarify(projectId: string, nodeId: string): Promise<ClarifyGenAcceptedResponse> {
     return jsonFetch<ClarifyGenAcceptedResponse>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/generate-clarify`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/generate-clarify`,
       { method: 'POST' },
     )
   },
   getClarifyGenStatus(projectId: string, nodeId: string): Promise<ClarifyGenStatusResponse> {
     return jsonFetch<ClarifyGenStatusResponse>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/clarify-generation-status`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/clarify-generation-status`,
     )
   },
   generateSpec(projectId: string, nodeId: string): Promise<SpecGenAcceptedResponse> {
     return jsonFetch<SpecGenAcceptedResponse>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/generate-spec`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/generate-spec`,
       { method: 'POST' },
     )
   },
   getSpecGenStatus(projectId: string, nodeId: string): Promise<SpecGenStatusResponse> {
     return jsonFetch<SpecGenStatusResponse>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/spec-generation-status`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/spec-generation-status`,
     )
   },
   getAskRolloutMetrics(): Promise<AskRolloutMetricsSnapshot> {
-    return jsonFetch<AskRolloutMetricsSnapshot>(`/v1/ask-rollout/metrics`)
+    return jsonFetch<AskRolloutMetricsSnapshot>(`/v3/ask-rollout/metrics`)
   },
   reportAskRolloutMetricEvent(event: 'stream_reconnect' | 'stream_error'): Promise<{ ok: boolean }> {
     return jsonFetch<{ ok: boolean }>(
-      `/v1/ask-rollout/metrics/events`,
+      `/v3/ask-rollout/metrics/events`,
       { method: 'POST' },
       { event },
     )
   },
   finishTask(projectId: string, nodeId: string): Promise<DetailState> {
-    return jsonFetch<DetailState>(`/v1/projects/${projectId}/nodes/${nodeId}/finish-task`, {
+    return jsonFetch<DetailState>(`/v3/projects/${projectId}/nodes/${nodeId}/finish-task`, {
       method: 'POST',
     })
   },
@@ -465,7 +465,7 @@ export const api = {
     summary: string,
   ): Promise<AcceptLocalReviewResponse> {
     return jsonFetch<AcceptLocalReviewResponse>(
-      `/v1/projects/${projectId}/nodes/${nodeId}/accept-local-review`,
+      `/v3/projects/${projectId}/nodes/${nodeId}/accept-local-review`,
       { method: 'POST' },
       { summary },
     )
@@ -475,19 +475,19 @@ export const api = {
     reviewNodeId: string,
   ): Promise<AcceptRollupReviewResponse> {
     return jsonFetch<AcceptRollupReviewResponse>(
-      `/v1/projects/${projectId}/nodes/${reviewNodeId}/accept-rollup-review`,
+      `/v3/projects/${projectId}/nodes/${reviewNodeId}/accept-rollup-review`,
       { method: 'POST' },
     )
   },
   initGit(projectId: string): Promise<{ status: string; head_sha: string; message: string }> {
-    return jsonFetch(`/v1/projects/${projectId}/git/init`, { method: 'POST' })
+    return jsonFetch(`/v3/projects/${projectId}/git/init`, { method: 'POST' })
   },
   resetWorkspace(
     projectId: string,
     nodeId: string,
     target: 'initial' | 'head',
   ): Promise<{ status: string; target_sha: string; current_head_sha: string; task_present_in_current_workspace: boolean; detail_state: DetailState }> {
-    return jsonFetch(`/v1/projects/${projectId}/nodes/${nodeId}/reset-workspace`, { method: 'POST' }, { target })
+    return jsonFetch(`/v3/projects/${projectId}/nodes/${nodeId}/reset-workspace`, { method: 'POST' }, { target })
   },
   async getThreadSnapshotByIdV3(
     projectId: string,

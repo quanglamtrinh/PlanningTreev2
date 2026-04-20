@@ -143,7 +143,7 @@ def test_get_codex_account_snapshot_returns_normalized_shape(client: TestClient)
     _reset_codex_snapshot(client)
     client.app.state.codex_account_service._codex_client = FakeCodexAccountClient()
 
-    response = client.get("/v1/codex/account")
+    response = client.get("/v3/codex/account")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -197,7 +197,7 @@ def test_get_local_usage_snapshot_returns_expected_shape(
         ],
     )
 
-    response = client.get("/v1/codex/usage/local")
+    response = client.get("/v3/codex/usage/local")
 
     assert response.status_code == 200
     payload = response.json()
@@ -231,7 +231,7 @@ def test_get_local_usage_snapshot_honors_valid_days_query(
 ) -> None:
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
 
-    response = client.get("/v1/codex/usage/local?days=7")
+    response = client.get("/v3/codex/usage/local?days=7")
 
     assert response.status_code == 200
     payload = response.json()
@@ -256,7 +256,7 @@ def test_get_local_usage_snapshot_days_boundaries_and_fallback(
 ) -> None:
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
 
-    response = client.get(f"/v1/codex/usage/local?days={raw_days}")
+    response = client.get(f"/v3/codex/usage/local?days={raw_days}")
 
     assert response.status_code == 200
     payload = response.json()
@@ -277,7 +277,7 @@ def test_get_local_usage_snapshot_degraded_input_still_returns_valid_snapshot(
     (day_dir / "broken.jsonl").mkdir()
     (day_dir / "malformed.jsonl").write_text("{not-json\n", encoding="utf-8")
 
-    response = client.get("/v1/codex/usage/local?days=1")
+    response = client.get("/v3/codex/usage/local?days=1")
 
     assert response.status_code == 200
     payload = response.json()
@@ -294,7 +294,7 @@ def test_get_local_usage_snapshot_with_empty_sessions_directory_returns_valid_sn
     codex_home = tmp_path / ".codex-empty"
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
-    response = client.get("/v1/codex/usage/local?days=1")
+    response = client.get("/v3/codex/usage/local?days=1")
 
     assert response.status_code == 200
     payload = response.json()

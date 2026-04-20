@@ -116,7 +116,7 @@ function openEventStream(
     return
   }
 
-  const es = new EventSource(appendAuthToken('/v1/codex/events'))
+  const es = new EventSource(appendAuthToken('/v3/codex/events'))
   eventSource = es
 
   es.onopen = () => {

@@ -491,7 +491,7 @@ def test_phase6_production_finish_task_cuts_execution_auto_review_and_rollup_to_
 
         def invoke_finish_task() -> None:
             finish_response_holder["response"] = client.post(
-                f"/v1/projects/{project_id}/nodes/{child_id}/finish-task"
+                f"/v3/projects/{project_id}/nodes/{child_id}/finish-task"
             )
 
         finish_thread = threading.Thread(target=invoke_finish_task, daemon=True)

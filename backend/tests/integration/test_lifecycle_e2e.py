@@ -90,7 +90,7 @@ class _IntegrationCodex:
 
 
 def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
-    resp = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    resp = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert resp.status_code == 200
     snap = resp.json()
     return snap["project"]["id"], snap["tree_state"]["root_node_id"]
@@ -98,15 +98,15 @@ def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
 
 def _confirm_frame_and_spec(client: TestClient, project_id: str, node_id: str) -> None:
     client.put(
-        f"/v1/projects/{project_id}/nodes/{node_id}/documents/frame",
+        f"/v3/projects/{project_id}/nodes/{node_id}/documents/frame",
         json={"content": "# Task Title\nTask\n\n# Objective\nDo it\n"},
     )
-    client.post(f"/v1/projects/{project_id}/nodes/{node_id}/confirm-frame")
+    client.post(f"/v3/projects/{project_id}/nodes/{node_id}/confirm-frame")
     client.put(
-        f"/v1/projects/{project_id}/nodes/{node_id}/documents/spec",
+        f"/v3/projects/{project_id}/nodes/{node_id}/documents/spec",
         json={"content": "# Spec\nImplement it\n"},
     )
-    client.post(f"/v1/projects/{project_id}/nodes/{node_id}/confirm-spec")
+    client.post(f"/v3/projects/{project_id}/nodes/{node_id}/confirm-spec")
 
 
 def _force_status(client: TestClient, project_id: str, node_id: str, status: str) -> None:
@@ -167,7 +167,7 @@ def _add_review_node(client: TestClient, project_id: str, parent_id: str, review
 
 
 def _finish_and_wait_execution(client: TestClient, project_id: str, node_id: str) -> None:
-    resp = client.post(f"/v1/projects/{project_id}/nodes/{node_id}/finish-task")
+    resp = client.post(f"/v3/projects/{project_id}/nodes/{node_id}/finish-task")
     assert resp.status_code == 200
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline:
@@ -245,7 +245,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
     })
 
     initial_review_state = client.get(
-        f"/v1/projects/{project_id}/nodes/{review_id}/review-state"
+        f"/v3/projects/{project_id}/nodes/{review_id}/review-state"
     ).json()
     assert initial_review_state["sibling_manifest"] == [
         {
@@ -278,7 +278,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
 
     # --- Send audit write -> triggers start_local_review (completed -> review_pending) ---
     audit_resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{child_a_id}/chat/message",
+        f"/v3/projects/{project_id}/nodes/{child_a_id}/chat/message",
         params={"thread_role": "audit"},
         json={"content": "Reviewed subtask A output — looks good."},
     )
@@ -289,7 +289,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
 
     # --- Accept local review for child A (already review_pending from audit auto-trigger) ---
     accept_resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{child_a_id}/accept-local-review",
+        f"/v3/projects/{project_id}/nodes/{child_a_id}/accept-local-review",
         json={"summary": "Subtask A is correct and complete."},
     )
     assert accept_resp.status_code == 200
@@ -297,7 +297,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
     assert payload["status"] == "review_accepted"
 
     # Child A should be done
-    snap = client.get(f"/v1/projects/{project_id}/snapshot").json()
+    snap = client.get(f"/v3/projects/{project_id}/snapshot").json()
     child_a_node = next(n for n in snap["tree_state"]["node_registry"] if n["node_id"] == child_a_id)
     assert child_a_node["status"] == "done"
 
@@ -306,7 +306,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
     assert activated_id is not None, "Sibling B should have been activated"
 
     # Verify sibling B exists in snapshot
-    snap2 = client.get(f"/v1/projects/{project_id}/snapshot").json()
+    snap2 = client.get(f"/v3/projects/{project_id}/snapshot").json()
     child_b_node = next(
         (n for n in snap2["tree_state"]["node_registry"] if n["node_id"] == activated_id), None
     )
@@ -320,7 +320,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
     sib_b = next(s for s in review_state["pending_siblings"] if s["index"] == 2)
     assert sib_b["materialized_node_id"] == activated_id
     public_review_state = client.get(
-        f"/v1/projects/{project_id}/nodes/{review_id}/review-state"
+        f"/v3/projects/{project_id}/nodes/{review_id}/review-state"
     ).json()
     assert public_review_state["sibling_manifest"] == [
         {
@@ -348,7 +348,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
 
     # Audit write -> review_pending
     client.post(
-        f"/v1/projects/{project_id}/nodes/{activated_id}/chat/message",
+        f"/v3/projects/{project_id}/nodes/{activated_id}/chat/message",
         params={"thread_role": "audit"},
         json={"content": "Subtask B looks fine."},
     )
@@ -357,7 +357,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
 
     # Accept local review for sibling B
     accept_b_resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{activated_id}/accept-local-review",
+        f"/v3/projects/{project_id}/nodes/{activated_id}/accept-local-review",
         json={"summary": "Subtask B complete."},
     )
     assert accept_b_resp.status_code == 200
@@ -380,7 +380,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
     assert review_state3["rollup"]["draft"]["summary"] is not None
 
     # --- Accept rollup ---
-    rollup_resp = client.post(f"/v1/projects/{project_id}/nodes/{review_id}/accept-rollup-review")
+    rollup_resp = client.post(f"/v3/projects/{project_id}/nodes/{review_id}/accept-rollup-review")
     assert rollup_resp.status_code == 200
     assert rollup_resp.json()["rollup_status"] == "accepted"
 
@@ -395,7 +395,7 @@ def test_lazy_lifecycle_end_to_end(client: TestClient, workspace_root):
     assert len(system_msgs) == 1, "Rollup package should be appended to parent audit"
 
     # --- Verify snapshot review_summary includes derived sibling_manifest ---
-    final_snap = client.get(f"/v1/projects/{project_id}/snapshot").json()
+    final_snap = client.get(f"/v3/projects/{project_id}/snapshot").json()
     review_nodes = [n for n in final_snap["tree_state"]["node_registry"] if n["node_id"] == review_id]
     assert len(review_nodes) == 1
     summary = review_nodes[0].get("review_summary")
@@ -460,7 +460,7 @@ def test_legacy_eager_lifecycle(client: TestClient, workspace_root):
 
     # Audit write triggers review_pending
     client.post(
-        f"/v1/projects/{project_id}/nodes/{child_1_id}/chat/message",
+        f"/v3/projects/{project_id}/nodes/{child_1_id}/chat/message",
         params={"thread_role": "audit"},
         json={"content": "Execution output looks correct."},
     )
@@ -469,7 +469,7 @@ def test_legacy_eager_lifecycle(client: TestClient, workspace_root):
 
     # Accept local review
     accept_resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{child_1_id}/accept-local-review",
+        f"/v3/projects/{project_id}/nodes/{child_1_id}/accept-local-review",
         json={"summary": "Child 1 complete."},
     )
     assert accept_resp.status_code == 200
@@ -539,7 +539,7 @@ def test_package_audit_lifecycle(client: TestClient, workspace_root):
     assert rs["rollup"]["draft"]["summary"] is not None
 
     # Accept rollup
-    rollup_resp = client.post(f"/v1/projects/{project_id}/nodes/{review_id}/accept-rollup-review")
+    rollup_resp = client.post(f"/v3/projects/{project_id}/nodes/{review_id}/accept-rollup-review")
     assert rollup_resp.status_code == 200
     assert rollup_resp.json()["rollup_status"] == "accepted"
 
@@ -556,7 +556,7 @@ def test_package_audit_lifecycle(client: TestClient, workspace_root):
     assert review_id in package_msgs[0]["content"]
 
     # Verify parent detail-state shows package_audit_ready
-    detail_resp = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/detail-state")
+    detail_resp = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/detail-state")
     assert detail_resp.status_code == 200
     detail = detail_resp.json()
     assert detail.get("package_audit_ready") is True
@@ -601,7 +601,7 @@ def test_snapshot_review_summary_includes_sibling_manifest(client: TestClient, w
                     "draft": {"summary": None, "sha": None, "generated_at": None}},
     })
 
-    snap = client.get(f"/v1/projects/{project_id}/snapshot").json()
+    snap = client.get(f"/v3/projects/{project_id}/snapshot").json()
     review_nodes = [n for n in snap["tree_state"]["node_registry"] if n["node_id"] == review_id]
     assert len(review_nodes) == 1
 
