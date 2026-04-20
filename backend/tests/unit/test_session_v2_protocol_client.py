@@ -44,6 +44,23 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     client.thread_resume("thread-1", {"modelProvider": "openai", "cwd": "/tmp/work"})
     client.thread_list({"sourceKinds": ["appServer"], "modelProviders": ["openai"]})
     client.thread_read("thread-1", include_turns=True)
+    client.turn_start(
+        "thread-1",
+        {
+            "clientActionId": "start-1",
+            "input": [{"type": "text", "text": "hello"}],
+            "approvalPolicy": "onRequest",
+        },
+    )
+    client.turn_steer(
+        "thread-1",
+        {
+            "clientActionId": "steer-1",
+            "expectedTurnId": "turn-1",
+            "input": [{"type": "text", "text": "continue"}],
+        },
+    )
+    client.turn_interrupt("thread-1", "turn-1")
 
     assert transport.requests[0][0] == "initialize"
     assert transport.requests[0][1]["clientInfo"]["name"] == "PlanningTree"
@@ -61,4 +78,9 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
         "thread/read",
         {"threadId": "thread-1", "includeTurns": True},
     )
-
+    assert transport.requests[5][0] == "turn/start"
+    assert transport.requests[5][1]["threadId"] == "thread-1"
+    assert transport.requests[5][1]["clientActionId"] == "start-1"
+    assert transport.requests[6][0] == "turn/steer"
+    assert transport.requests[6][1]["expectedTurnId"] == "turn-1"
+    assert transport.requests[7] == ("turn/interrupt", {"threadId": "thread-1", "turnId": "turn-1"})

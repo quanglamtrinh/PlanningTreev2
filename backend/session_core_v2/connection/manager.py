@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from typing import Any
 
 from backend.session_core_v2.connection.state_machine import ConnectionStateMachine
@@ -9,15 +10,11 @@ from backend.session_core_v2.errors import SessionCoreError
 from backend.session_core_v2.protocol.client import SessionProtocolClientV2
 from backend.session_core_v2.storage.runtime_store import RuntimeStoreV2
 from backend.session_core_v2.threads.service import ThreadServiceV2
+from backend.session_core_v2.turns.service import TurnServiceV2
 
 logger = logging.getLogger(__name__)
 
-_THREAD_LEVEL_NOTIFICATION_METHODS: set[str] = {
-    "thread/started",
-    "thread/status/changed",
-    "thread/closed",
-    "error",
-}
+_TERMINAL_TURN_STATUSES: frozenset[str] = frozenset({"completed", "failed", "interrupted"})
 
 
 class SessionManagerV2:
@@ -32,8 +29,12 @@ class SessionManagerV2:
         self._runtime_store = runtime_store
         self._connection_state_machine = connection_state_machine
         self._thread_service = ThreadServiceV2(protocol_client, logger=logger)
+        self._turn_service = TurnServiceV2(protocol_client, logger=logger)
         self._protocol_client.set_notification_handler(self._on_notification)
 
+    # ------------------------------------------------------------------
+    # Connection and threads
+    # ------------------------------------------------------------------
     def initialize(self, request_payload: dict[str, Any]) -> dict[str, Any]:
         phase = self._connection_state_machine.phase
         if phase == "initialized":
@@ -103,6 +104,290 @@ class SessionManagerV2:
         self._ensure_initialized()
         return self._thread_service.thread_read(thread_id=thread_id, include_turns=include_turns)
 
+    # ------------------------------------------------------------------
+    # Turns
+    # ------------------------------------------------------------------
+    def turn_start(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_initialized()
+        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
+        input_payload = payload.get("input")
+        if not isinstance(input_payload, list):
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message="turn/start requires input list.",
+                status_code=400,
+                details={"field": "input"},
+            )
+
+        idempotent = self._runtime_store.resolve_idempotent_result(
+            action_type="turn/start",
+            key=client_action_id,
+            payload={"threadId": thread_id, **payload},
+        )
+        if idempotent is not None:
+            logger.info(
+                "session_core_v2 turn/start idempotent replay",
+                extra={
+                    "threadId": thread_id,
+                    "turnId": (idempotent.get("turn") or {}).get("id") if isinstance(idempotent.get("turn"), dict) else None,
+                    "clientActionId": client_action_id,
+                    "eventSeq": None,
+                    "errorCode": None,
+                },
+            )
+            return idempotent
+
+        active_turn = self._runtime_store.get_active_turn(thread_id=thread_id)
+        if active_turn is not None and str(active_turn.get("status")) not in _TERMINAL_TURN_STATUSES:
+            raise SessionCoreError(
+                code="ERR_TURN_NOT_STEERABLE",
+                message="Cannot start a new turn while another turn is active.",
+                status_code=409,
+                details={"threadId": thread_id, "activeTurnId": active_turn.get("id")},
+            )
+
+        rpc_payload = dict(payload)
+        rpc_payload.pop("clientActionId", None)
+        response = self._turn_service.turn_start(thread_id=thread_id, params=rpc_payload)
+        turn_id = self._extract_turn_id_from_response(response)
+        if not turn_id:
+            turn_id = str(uuid.uuid4())
+
+        self._runtime_store.create_turn(thread_id=thread_id, turn_id=turn_id, status="idle")
+        turn = self._runtime_store.transition_turn(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            next_status="inProgress",
+            allow_same=True,
+            last_codex_status="inProgress",
+        )
+        turn_payload = {"turn": self._to_api_turn(turn)}
+        self._runtime_store.record_idempotent_result(
+            action_type="turn/start",
+            key=client_action_id,
+            payload={"threadId": thread_id, **payload},
+            response=turn_payload,
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
+        logger.info(
+            "session_core_v2 turn/start accepted",
+            extra={
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "clientActionId": client_action_id,
+                "eventSeq": None,
+                "errorCode": None,
+            },
+        )
+        return turn_payload
+
+    def turn_steer(self, *, thread_id: str, path_turn_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_initialized()
+        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
+        expected_turn_id = self._require_non_empty(payload.get("expectedTurnId"), "expectedTurnId")
+        input_payload = payload.get("input")
+        if not isinstance(input_payload, list):
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message="turn/steer requires input list.",
+                status_code=400,
+                details={"field": "input"},
+            )
+
+        idempotent = self._runtime_store.resolve_idempotent_result(
+            action_type="turn/steer",
+            key=client_action_id,
+            payload={"threadId": thread_id, "pathTurnId": path_turn_id, **payload},
+        )
+        if idempotent is not None:
+            logger.info(
+                "session_core_v2 turn/steer idempotent replay",
+                extra={
+                    "threadId": thread_id,
+                    "turnId": path_turn_id,
+                    "clientActionId": client_action_id,
+                    "eventSeq": None,
+                    "errorCode": None,
+                },
+            )
+            return idempotent
+
+        active_turn = self._runtime_store.get_active_turn(thread_id=thread_id)
+        if active_turn is None:
+            raise SessionCoreError(
+                code="ERR_TURN_NOT_STEERABLE",
+                message="No active turn to steer.",
+                status_code=409,
+                details={"threadId": thread_id},
+            )
+        active_turn_id = str(active_turn.get("id") or "")
+        active_status = str(active_turn.get("status") or "")
+        if active_status in _TERMINAL_TURN_STATUSES:
+            raise SessionCoreError(
+                code="ERR_TURN_TERMINAL",
+                message=f"Turn {active_turn_id} is terminal.",
+                status_code=409,
+                details={"threadId": thread_id, "turnId": active_turn_id, "status": active_status},
+            )
+        if active_status != "inProgress":
+            raise SessionCoreError(
+                code="ERR_TURN_NOT_STEERABLE",
+                message=f"Turn {active_turn_id} is not inProgress.",
+                status_code=409,
+                details={"threadId": thread_id, "turnId": active_turn_id, "status": active_status},
+            )
+        if expected_turn_id != active_turn_id or path_turn_id != active_turn_id:
+            raise SessionCoreError(
+                code="ERR_ACTIVE_TURN_MISMATCH",
+                message="expectedTurnId/path turnId do not match active turn.",
+                status_code=409,
+                details={
+                    "threadId": thread_id,
+                    "activeTurnId": active_turn_id,
+                    "expectedTurnId": expected_turn_id,
+                    "pathTurnId": path_turn_id,
+                },
+            )
+
+        rpc_payload = dict(payload)
+        rpc_payload.pop("clientActionId", None)
+        self._turn_service.turn_steer(thread_id=thread_id, params=rpc_payload)
+        turn = self._runtime_store.transition_turn(
+            thread_id=thread_id,
+            turn_id=active_turn_id,
+            next_status="inProgress",
+            allow_same=True,
+            last_codex_status="inProgress",
+        )
+        turn_payload = {"turn": self._to_api_turn(turn)}
+        self._runtime_store.record_idempotent_result(
+            action_type="turn/steer",
+            key=client_action_id,
+            payload={"threadId": thread_id, "pathTurnId": path_turn_id, **payload},
+            response=turn_payload,
+            thread_id=thread_id,
+            turn_id=active_turn_id,
+        )
+        logger.info(
+            "session_core_v2 turn/steer accepted",
+            extra={
+                "threadId": thread_id,
+                "turnId": active_turn_id,
+                "clientActionId": client_action_id,
+                "eventSeq": None,
+                "errorCode": None,
+            },
+        )
+        return turn_payload
+
+    def turn_interrupt(self, *, thread_id: str, turn_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_initialized()
+        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
+
+        idempotent = self._runtime_store.resolve_idempotent_result(
+            action_type="turn/interrupt",
+            key=client_action_id,
+            payload={"threadId": thread_id, "turnId": turn_id, **payload},
+        )
+        if idempotent is not None:
+            logger.info(
+                "session_core_v2 turn/interrupt idempotent replay",
+                extra={
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "clientActionId": client_action_id,
+                    "eventSeq": None,
+                    "errorCode": None,
+                },
+            )
+            return idempotent
+
+        turn = self._runtime_store.get_turn(thread_id=thread_id, turn_id=turn_id)
+        if turn is None:
+            raise SessionCoreError(
+                code="ERR_TURN_NOT_STEERABLE",
+                message=f"Turn {turn_id} is not available for interrupt.",
+                status_code=409,
+                details={"threadId": thread_id, "turnId": turn_id},
+            )
+        status = str(turn.get("status") or "")
+        if status in _TERMINAL_TURN_STATUSES:
+            raise SessionCoreError(
+                code="ERR_TURN_TERMINAL",
+                message=f"Turn {turn_id} is terminal.",
+                status_code=409,
+                details={"threadId": thread_id, "turnId": turn_id, "status": status},
+            )
+        if status not in {"inProgress", "waitingUserInput"}:
+            raise SessionCoreError(
+                code="ERR_TURN_NOT_STEERABLE",
+                message=f"Turn {turn_id} cannot be interrupted in state {status}.",
+                status_code=409,
+                details={"threadId": thread_id, "turnId": turn_id, "status": status},
+            )
+
+        active_turn = self._runtime_store.get_active_turn(thread_id=thread_id)
+        if active_turn is not None and str(active_turn.get("id") or "") != turn_id:
+            raise SessionCoreError(
+                code="ERR_ACTIVE_TURN_MISMATCH",
+                message="Interrupt target does not match active turn.",
+                status_code=409,
+                details={"threadId": thread_id, "activeTurnId": active_turn.get("id"), "turnId": turn_id},
+            )
+
+        self._turn_service.turn_interrupt(thread_id=thread_id, turn_id=turn_id)
+        self._runtime_store.transition_turn(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            next_status="interrupted",
+            allow_same=True,
+            last_codex_status="interrupted",
+        )
+        response = {"status": "accepted"}
+        self._runtime_store.record_idempotent_result(
+            action_type="turn/interrupt",
+            key=client_action_id,
+            payload={"threadId": thread_id, "turnId": turn_id, **payload},
+            response=response,
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
+        logger.info(
+            "session_core_v2 turn/interrupt accepted",
+            extra={
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "clientActionId": client_action_id,
+                "eventSeq": None,
+                "errorCode": None,
+            },
+        )
+        return response
+
+    # ------------------------------------------------------------------
+    # Event stream
+    # ------------------------------------------------------------------
+    def open_event_stream(self, *, thread_id: str, cursor: str | None) -> dict[str, Any]:
+        self._ensure_initialized()
+        cursor_value = self._runtime_store.parse_cursor(thread_id=thread_id, cursor=cursor)
+        replay_events = self._runtime_store.replay_events(thread_id=thread_id, cursor_value=cursor_value)
+        subscriber_id = self._runtime_store.subscribe_thread_events(thread_id=thread_id)
+        return {
+            "cursorValue": cursor_value,
+            "replayEvents": replay_events,
+            "subscriberId": subscriber_id,
+        }
+
+    def read_stream_event(self, *, subscriber_id: str, timeout_sec: float) -> dict[str, Any] | None:
+        return self._runtime_store.read_subscriber_event(subscriber_id=subscriber_id, timeout_sec=timeout_sec)
+
+    def close_event_stream(self, *, subscriber_id: str) -> None:
+        self._runtime_store.unsubscribe(subscriber_id=subscriber_id)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
     def _ensure_initialized(self) -> None:
         if self._connection_state_machine.phase != "initialized":
             raise SessionCoreError(
@@ -113,22 +398,53 @@ class SessionManagerV2:
             )
 
     def _on_notification(self, method: str, params: dict[str, Any]) -> None:
-        if method not in _THREAD_LEVEL_NOTIFICATION_METHODS:
-            return
-        thread_id = self._extract_thread_id(params)
-        if not thread_id:
-            return
-        self._runtime_store.append_thread_event(thread_id=thread_id, method=method, params=params)
+        try:
+            self._runtime_store.append_notification(method=method, params=params)
+        except Exception:
+            logger.debug("session_core_v2 notification ingest failed", exc_info=True)
 
     @staticmethod
-    def _extract_thread_id(params: dict[str, Any]) -> str:
-        value = params.get("threadId")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-        nested_thread = params.get("thread")
-        if isinstance(nested_thread, dict):
-            nested_id = nested_thread.get("id")
-            if isinstance(nested_id, str) and nested_id.strip():
-                return nested_id.strip()
+    def _extract_turn_id_from_response(response: dict[str, Any]) -> str:
+        turn_id = response.get("turnId")
+        if isinstance(turn_id, str) and turn_id.strip():
+            return turn_id.strip()
+        snake_turn_id = response.get("turn_id")
+        if isinstance(snake_turn_id, str) and snake_turn_id.strip():
+            return snake_turn_id.strip()
+        turn = response.get("turn")
+        if isinstance(turn, dict):
+            nested = turn.get("id")
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()
         return ""
 
+    @staticmethod
+    def _to_api_turn(turn: dict[str, Any]) -> dict[str, Any]:
+        status = str(turn.get("status") or "inProgress")
+        if status == "waitingUserInput":
+            status = "inProgress"
+        if status == "idle":
+            status = "inProgress"
+        if status not in {"inProgress", "completed", "failed", "interrupted"}:
+            status = "failed"
+        payload = {
+            "id": str(turn.get("id") or ""),
+            "status": status,
+            "items": list(turn.get("items") or []),
+        }
+        error = turn.get("error")
+        if isinstance(error, dict):
+            payload["error"] = error
+        return payload
+
+    @staticmethod
+    def _require_non_empty(value: Any, field_name: str) -> str:
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+        raise SessionCoreError(
+            code="ERR_INTERNAL",
+            message=f"{field_name} is required.",
+            status_code=400,
+            details={"field": field_name},
+        )

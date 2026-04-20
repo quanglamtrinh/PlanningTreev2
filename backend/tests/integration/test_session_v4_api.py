@@ -45,6 +45,10 @@ class _FakeTransport:
     def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         self.notifications.append((method, params or {}))
 
+    def emit_notification(self, method: str, params: dict[str, Any]) -> None:
+        if self.notification_handler is not None:
+            self.notification_handler(method, params)
+
 
 def _fake_thread(thread_id: str) -> dict[str, Any]:
     return {
@@ -225,6 +229,121 @@ def test_session_v4_roundtrip_and_guard(client: TestClient) -> None:
     assert fake_transport.notifications == [("initialized", {})]
 
 
+def test_session_v4_turn_runtime_and_idempotency(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+            "turn/start": {"turnId": "turn-start-1"},
+            "turn/steer": {"turnId": "turn-start-1"},
+            "turn/interrupt": {},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    init_response = client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    )
+    assert init_response.status_code == 200
+
+    start_payload = {
+        "clientActionId": "start-1",
+        "input": [{"type": "text", "text": "hello"}],
+    }
+    start_response = client.post("/v4/session/threads/thread-1/turns/start", json=start_payload)
+    assert start_response.status_code == 200
+    assert start_response.json()["data"]["turn"]["id"] == "turn-start-1"
+    assert start_response.json()["data"]["turn"]["status"] == "inProgress"
+
+    duplicate_start_response = client.post("/v4/session/threads/thread-1/turns/start", json=start_payload)
+    assert duplicate_start_response.status_code == 200
+    assert duplicate_start_response.json()["data"]["turn"]["id"] == "turn-start-1"
+
+    request_methods = [method for method, _ in fake_transport.requests]
+    assert request_methods.count("turn/start") == 1
+
+    steer_response = client.post(
+        "/v4/session/threads/thread-1/turns/turn-start-1/steer",
+        json={
+            "clientActionId": "steer-1",
+            "expectedTurnId": "turn-start-1",
+            "input": [{"type": "text", "text": "continue"}],
+        },
+    )
+    assert steer_response.status_code == 200
+
+    mismatch_response = client.post(
+        "/v4/session/threads/thread-1/turns/turn-start-1/steer",
+        json={
+            "clientActionId": "steer-2",
+            "expectedTurnId": "turn-other",
+            "input": [{"type": "text", "text": "bad"}],
+        },
+    )
+    assert mismatch_response.status_code == 409
+    assert mismatch_response.json()["error"]["code"] == "ERR_ACTIVE_TURN_MISMATCH"
+
+    interrupt_response = client.post(
+        "/v4/session/threads/thread-1/turns/turn-start-1/interrupt",
+        json={"clientActionId": "interrupt-1"},
+    )
+    assert interrupt_response.status_code == 200
+
+
+def test_session_v4_events_stream_replay_format(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    init_response = client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    )
+    assert init_response.status_code == 200
+
+    fake_transport.emit_notification("thread/started", {"threadId": "thread-stream-1"})
+    fake_transport.emit_notification(
+        "thread/status/changed",
+        {"threadId": "thread-stream-1", "status": {"type": "idle"}},
+    )
+
+    manager = client.app.state.session_manager_v2
+    original_read_stream_event = manager.read_stream_event
+    manager.read_stream_event = lambda **_: None
+    try:
+        response = client.get("/v4/session/threads/thread-stream-1/events?cursor=0")
+    finally:
+        manager.read_stream_event = original_read_stream_event
+
+    assert response.status_code == 200
+    lines = [line for line in response.text.splitlines() if line]
+    assert any(line.startswith("id: ") for line in lines)
+    assert any(line.startswith("event: thread/") for line in lines)
+    assert any(line.startswith("data: ") for line in lines)
+
+
+def test_session_v4_feature_flags_gate_turns_and_events(client: TestClient) -> None:
+    client.app.state.session_core_v2_enable_turns = False
+    client.app.state.session_core_v2_enable_events = False
+    try:
+        turn_response = client.post(
+            "/v4/session/threads/thread-1/turns/start",
+            json={"clientActionId": "start-1", "input": [{"type": "text", "text": "hi"}]},
+        )
+        assert turn_response.status_code == 501
+        assert turn_response.json()["error"]["code"] == "ERR_PHASE_NOT_ENABLED"
+
+        events_response = client.get("/v4/session/threads/thread-1/events")
+        assert events_response.status_code == 501
+        assert events_response.json()["error"]["code"] == "ERR_PHASE_NOT_ENABLED"
+    finally:
+        client.app.state.session_core_v2_enable_turns = True
+        client.app.state.session_core_v2_enable_events = True
+
+
 def test_session_v4_initialize_failure_sets_error_state(client: TestClient) -> None:
     fake_transport = _FakeTransport(
         failures={
@@ -260,6 +379,9 @@ def test_session_v4_contract_conformance_for_phase1_endpoints(client: TestClient
             "thread/resume": {"thread": _fake_thread("thread-resume-1"), "modelProvider": "openai"},
             "thread/list": {"data": [_fake_thread("thread-list-1")], "nextCursor": None},
             "thread/read": {"thread": _fake_thread("thread-read-1")},
+            "turn/start": {"turnId": "turn-start-1"},
+            "turn/steer": {"turnId": "turn-start-1"},
+            "turn/interrupt": {},
         }
     )
     _install_fake_manager(client, fake_transport)
@@ -273,6 +395,22 @@ def test_session_v4_contract_conformance_for_phase1_endpoints(client: TestClient
     resume_payload = client.post("/v4/session/threads/thread-resume-1/resume", json={}).json()
     list_payload = client.get("/v4/session/threads/list").json()
     read_payload = client.get("/v4/session/threads/thread-read-1/read").json()
+    turn_start_payload = client.post(
+        "/v4/session/threads/thread-1/turns/start",
+        json={"clientActionId": "start-1", "input": [{"type": "text", "text": "hi"}]},
+    ).json()
+    turn_steer_payload = client.post(
+        "/v4/session/threads/thread-1/turns/turn-start-1/steer",
+        json={
+            "clientActionId": "steer-1",
+            "expectedTurnId": "turn-start-1",
+            "input": [{"type": "text", "text": "continue"}],
+        },
+    ).json()
+    turn_interrupt_payload = client.post(
+        "/v4/session/threads/thread-1/turns/turn-start-1/interrupt",
+        json={"clientActionId": "interrupt-1"},
+    ).json()
 
     _assert_component(init_payload, "InitializeResponseEnvelope", schema_doc)
     _assert_component(status_payload, "ConnectionStatusEnvelope", schema_doc)
@@ -280,6 +418,9 @@ def test_session_v4_contract_conformance_for_phase1_endpoints(client: TestClient
     _assert_component(resume_payload, "ThreadConfigEnvelope", schema_doc)
     _assert_component(list_payload, "ThreadListEnvelope", schema_doc)
     _assert_component(read_payload, "ThreadEnvelope", schema_doc)
+    _assert_component(turn_start_payload, "TurnEnvelope", schema_doc)
+    _assert_component(turn_steer_payload, "TurnEnvelope", schema_doc)
+    _assert_component(turn_interrupt_payload, "BasicOkEnvelope", schema_doc)
 
 
 def test_session_v4_phase_gated_route_returns_deterministic_501(client: TestClient) -> None:

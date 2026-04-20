@@ -33,12 +33,17 @@ from backend.config.app_config import (
     get_port,
     get_phase5_log_compact_min_events,
     get_rehearsal_workspace_root,
+    get_session_core_v2_event_queue_capacity,
+    get_session_core_v2_retention_days,
+    get_session_core_v2_retention_max_events,
     get_thread_raw_event_coalesce_ms,
     get_thread_stream_cadence_profile,
     get_sse_subscriber_queue_max,
     get_spec_gen_timeout,
     get_split_timeout,
     get_thread_actor_mode,
+    is_session_core_v2_events_enabled,
+    is_session_core_v2_turns_enabled,
     is_ask_v3_backend_enabled,
     is_ask_v3_frontend_enabled,
 )
@@ -88,6 +93,11 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     phase5_log_compact_min_events = get_phase5_log_compact_min_events()
     thread_stream_cadence_profile = get_thread_stream_cadence_profile()
     thread_raw_event_coalesce_ms = get_thread_raw_event_coalesce_ms()
+    session_core_v2_event_queue_capacity = get_session_core_v2_event_queue_capacity()
+    session_core_v2_retention_max_events = get_session_core_v2_retention_max_events()
+    session_core_v2_retention_days = get_session_core_v2_retention_days()
+    session_core_v2_enable_turns = is_session_core_v2_turns_enabled()
+    session_core_v2_enable_events = is_session_core_v2_events_enabled()
     ask_rollout_metrics_service = AskRolloutMetricsService()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
     project_service = ProjectService(
@@ -247,7 +257,12 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     )
     session_transport_v2 = StdioJsonRpcTransportV2(codex_cmd=get_codex_cmd())
     session_protocol_v2 = SessionProtocolClientV2(session_transport_v2)
-    session_runtime_store_v2 = RuntimeStoreV2()
+    session_runtime_store_v2 = RuntimeStoreV2(
+        db_path=paths.data_root / "session_core_v2.sqlite3",
+        subscriber_queue_capacity=session_core_v2_event_queue_capacity,
+        retention_max_events=session_core_v2_retention_max_events,
+        retention_days=session_core_v2_retention_days,
+    )
     session_connection_state_v2 = ConnectionStateMachine()
     session_manager_v2 = SessionManagerV2(
         protocol_client=session_protocol_v2,
@@ -263,6 +278,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         try:
             yield
         finally:
+            session_runtime_store_v2.close()
             session_transport_v2.stop()
             codex_client.stop()
 
@@ -330,6 +346,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.session_manager_v2 = session_manager_v2
     app.state.session_runtime_store_v2 = session_runtime_store_v2
     app.state.session_connection_state_v2 = session_connection_state_v2
+    app.state.session_core_v2_enable_turns = session_core_v2_enable_turns
+    app.state.session_core_v2_enable_events = session_core_v2_enable_events
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

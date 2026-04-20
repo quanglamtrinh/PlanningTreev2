@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
+from typing import Iterator
 from typing import Any
 
 from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.session_core_v2.errors import SessionCoreError, error_envelope
@@ -18,6 +21,17 @@ def _ok(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _error_response(error: SessionCoreError) -> JSONResponse:
+    details = error.details if isinstance(error.details, dict) else {}
+    logger.warning(
+        "session_v4 request failed",
+        extra={
+            "threadId": details.get("threadId"),
+            "turnId": details.get("turnId"),
+            "clientActionId": details.get("clientActionId"),
+            "eventSeq": details.get("eventSeq"),
+            "errorCode": error.code,
+        },
+    )
     return JSONResponse(status_code=error.status_code, content=error_envelope(error))
 
 
@@ -35,15 +49,23 @@ def _manager(request: Request) -> Any:
     return request.app.state.session_manager_v2
 
 
-def _phase_not_enabled(endpoint: str) -> JSONResponse:
+def _phase_not_enabled(endpoint: str, *, phase: str) -> JSONResponse:
     return _error_response(
         SessionCoreError(
             code="ERR_PHASE_NOT_ENABLED",
-            message=f"{endpoint} is not enabled in Session Core V2 Phase 1.",
+            message=f"{endpoint} is not enabled in Session Core V2 {phase}.",
             status_code=501,
-            details={"phase": "P1"},
+            details={"phase": phase},
         )
     )
+
+
+def _turns_enabled(request: Request) -> bool:
+    return bool(getattr(request.app.state, "session_core_v2_enable_turns", False))
+
+
+def _events_enabled(request: Request) -> bool:
+    return bool(getattr(request.app.state, "session_core_v2_enable_events", False))
 
 
 def _parse_csv_or_repeated_query(request: Request, key: str) -> list[str] | None:
@@ -101,6 +123,34 @@ class ThreadStartRequest(ThreadConfigOverrides):
 
 class ThreadResumeRequest(ThreadConfigOverrides):
     pass
+
+
+class TurnStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    clientActionId: str = Field(min_length=1)
+    input: list[dict[str, Any]]
+    model: str | None = None
+    cwd: str | None = None
+    approvalPolicy: str | dict[str, Any] | None = None
+    approvalsReviewer: str | None = None
+    sandboxPolicy: str | dict[str, Any] | None = None
+    personality: str | None = None
+    effort: str | None = None
+    summary: str | dict[str, Any] | None = None
+    serviceTier: str | None = None
+    outputSchema: dict[str, Any] | None = None
+
+
+class TurnSteerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    clientActionId: str = Field(min_length=1)
+    expectedTurnId: str = Field(min_length=1)
+    input: list[dict[str, Any]]
+
+
+class TurnInterruptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    clientActionId: str = Field(min_length=1)
 
 
 @router.post("/v4/session/initialize")
@@ -219,105 +269,181 @@ def session_thread_read_v4(
 @router.post("/v4/session/threads/{threadId}/fork")
 def session_thread_fork_not_enabled(threadId: str) -> JSONResponse:
     del threadId
-    return _phase_not_enabled("thread/fork")
+    return _phase_not_enabled("thread/fork", phase="Phase 2")
 
 
 @router.get("/v4/session/threads/{threadId}/turns")
 def session_thread_turns_not_enabled(threadId: str) -> JSONResponse:
     del threadId
-    return _phase_not_enabled("thread/turns/list")
+    return _phase_not_enabled("thread/turns/list", phase="Phase 2")
 
 
 @router.get("/v4/session/threads/loaded/list")
 def session_thread_loaded_list_not_enabled() -> JSONResponse:
-    return _phase_not_enabled("thread/loaded/list")
+    return _phase_not_enabled("thread/loaded/list", phase="Phase 2")
 
 
 @router.post("/v4/session/threads/{threadId}/unsubscribe")
 def session_thread_unsubscribe_not_enabled(threadId: str) -> JSONResponse:
     del threadId
-    return _phase_not_enabled("thread/unsubscribe")
+    return _phase_not_enabled("thread/unsubscribe", phase="Phase 2")
 
 
 @router.post("/v4/session/threads/{threadId}/archive")
 def session_thread_archive_not_enabled(threadId: str) -> JSONResponse:
     del threadId
-    return _phase_not_enabled("thread/archive")
+    return _phase_not_enabled("thread/archive", phase="Phase 2")
 
 
 @router.post("/v4/session/threads/{threadId}/unarchive")
 def session_thread_unarchive_not_enabled(threadId: str) -> JSONResponse:
     del threadId
-    return _phase_not_enabled("thread/unarchive")
+    return _phase_not_enabled("thread/unarchive", phase="Phase 2")
 
 
 @router.post("/v4/session/threads/{threadId}/name/set")
 def session_thread_name_set_not_enabled(threadId: str) -> JSONResponse:
     del threadId
-    return _phase_not_enabled("thread/name/set")
+    return _phase_not_enabled("thread/name/set", phase="Phase 2")
 
 
 @router.post("/v4/session/threads/{threadId}/metadata/update")
 def session_thread_metadata_update_not_enabled(threadId: str) -> JSONResponse:
     del threadId
-    return _phase_not_enabled("thread/metadata/update")
+    return _phase_not_enabled("thread/metadata/update", phase="Phase 2")
 
 
 @router.post("/v4/session/threads/{threadId}/rollback")
 def session_thread_rollback_not_enabled(threadId: str) -> JSONResponse:
     del threadId
-    return _phase_not_enabled("thread/rollback")
+    return _phase_not_enabled("thread/rollback", phase="Phase 2")
 
 
 @router.post("/v4/session/threads/{threadId}/compact/start")
 def session_thread_compact_start_not_enabled(threadId: str) -> JSONResponse:
     del threadId
-    return _phase_not_enabled("thread/compact/start")
+    return _phase_not_enabled("thread/compact/start", phase="Phase 2")
 
 
 @router.post("/v4/session/threads/{threadId}/turns/start")
-def session_turn_start_not_enabled(threadId: str) -> JSONResponse:
-    del threadId
-    return _phase_not_enabled("turn/start")
+def session_turn_start_v4(threadId: str, payload: TurnStartRequest, request: Request) -> JSONResponse:
+    if not _turns_enabled(request):
+        return _phase_not_enabled("turn/start", phase="Phase 2")
+    try:
+        response = _manager(request).turn_start(thread_id=threadId, payload=payload.model_dump(exclude_none=True))
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_turn_start_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.post("/v4/session/threads/{threadId}/turns/{turnId}/steer")
-def session_turn_steer_not_enabled(threadId: str, turnId: str) -> JSONResponse:
-    del threadId, turnId
-    return _phase_not_enabled("turn/steer")
+def session_turn_steer_v4(threadId: str, turnId: str, payload: TurnSteerRequest, request: Request) -> JSONResponse:
+    if not _turns_enabled(request):
+        return _phase_not_enabled("turn/steer", phase="Phase 2")
+    try:
+        response = _manager(request).turn_steer(
+            thread_id=threadId,
+            path_turn_id=turnId,
+            payload=payload.model_dump(exclude_none=True),
+        )
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_turn_steer_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.post("/v4/session/threads/{threadId}/turns/{turnId}/interrupt")
-def session_turn_interrupt_not_enabled(threadId: str, turnId: str) -> JSONResponse:
-    del threadId, turnId
-    return _phase_not_enabled("turn/interrupt")
+def session_turn_interrupt_v4(
+    threadId: str,
+    turnId: str,
+    payload: TurnInterruptRequest,
+    request: Request,
+) -> JSONResponse:
+    if not _turns_enabled(request):
+        return _phase_not_enabled("turn/interrupt", phase="Phase 2")
+    try:
+        _manager(request).turn_interrupt(
+            thread_id=threadId,
+            turn_id=turnId,
+            payload=payload.model_dump(exclude_none=True),
+        )
+        return JSONResponse(status_code=200, content=_ok({}))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_turn_interrupt_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.post("/v4/session/threads/{threadId}/inject-items")
 def session_inject_items_not_enabled(threadId: str) -> JSONResponse:
     del threadId
-    return _phase_not_enabled("thread/inject_items")
+    return _phase_not_enabled("thread/inject_items", phase="Phase 2")
 
 
 @router.get("/v4/session/requests/pending")
 def session_requests_pending_not_enabled() -> JSONResponse:
-    return _phase_not_enabled("requests/pending")
+    return _phase_not_enabled("requests/pending", phase="Phase 2")
 
 
 @router.post("/v4/session/requests/{requestId}/resolve")
 def session_requests_resolve_not_enabled(requestId: str) -> JSONResponse:
     del requestId
-    return _phase_not_enabled("requests/resolve")
+    return _phase_not_enabled("requests/resolve", phase="Phase 2")
 
 
 @router.post("/v4/session/requests/{requestId}/reject")
 def session_requests_reject_not_enabled(requestId: str) -> JSONResponse:
     del requestId
-    return _phase_not_enabled("requests/reject")
+    return _phase_not_enabled("requests/reject", phase="Phase 2")
 
 
 @router.get("/v4/session/threads/{threadId}/events")
-def session_thread_events_not_enabled(threadId: str) -> JSONResponse:
-    del threadId
-    return _phase_not_enabled("events/stream")
+def session_thread_events_v4(
+    threadId: str,
+    request: Request,
+    cursor: str | None = Query(default=None),
+) -> Any:
+    if not _events_enabled(request):
+        return _phase_not_enabled("events/stream", phase="Phase 2")
+    try:
+        header_cursor = request.headers.get("Last-Event-ID")
+        effective_cursor = header_cursor if header_cursor else cursor
+        stream_state = _manager(request).open_event_stream(thread_id=threadId, cursor=effective_cursor)
+        replay_events = stream_state["replayEvents"]
+        subscriber_id = stream_state["subscriberId"]
 
+        def _encode_sse(event: dict[str, Any]) -> str:
+            event_seq = event.get("eventSeq")
+            event_name = str(event.get("method") or "message")
+            data = json.dumps(event, ensure_ascii=True)
+            return f"id: {event_seq}\nevent: {event_name}\ndata: {data}\n\n"
+
+        def _iter_sse() -> Iterator[str]:
+            try:
+                for replay_event in replay_events:
+                    yield _encode_sse(replay_event)
+                while True:
+                    item = _manager(request).read_stream_event(subscriber_id=subscriber_id, timeout_sec=15.0)
+                    if item is None:
+                        break
+                    if item == {}:
+                        yield ": keep-alive\n\n"
+                        continue
+                    if item.get("__control") == "lagged":
+                        break
+                    yield _encode_sse(item)
+            finally:
+                _manager(request).close_event_stream(subscriber_id=subscriber_id)
+
+        return StreamingResponse(_iter_sse(), media_type="text/event-stream")
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_thread_events_v4 failed")
+        return _unexpected_error_response()

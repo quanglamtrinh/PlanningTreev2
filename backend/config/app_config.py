@@ -158,6 +158,41 @@ def get_sse_subscriber_queue_max() -> int:
     return max(1, min(4096, value))
 
 
+def is_session_core_v2_turns_enabled() -> bool:
+    return _bool_env("SESSION_CORE_V2_ENABLE_TURNS", default=True)
+
+
+def is_session_core_v2_events_enabled() -> bool:
+    return _bool_env("SESSION_CORE_V2_ENABLE_EVENTS", default=True)
+
+
+def get_session_core_v2_event_queue_capacity() -> int:
+    raw = os.environ.get("SESSION_CORE_V2_EVENT_QUEUE_CAPACITY", "128")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 128
+    return max(1, min(4096, value))
+
+
+def get_session_core_v2_retention_max_events() -> int:
+    raw = os.environ.get("SESSION_CORE_V2_RETENTION_MAX_EVENTS", "200000")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 200000
+    return max(1, value)
+
+
+def get_session_core_v2_retention_days() -> int:
+    raw = os.environ.get("SESSION_CORE_V2_RETENTION_DAYS", "7")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 7
+    return max(1, value)
+
+
 def get_phase5_log_compact_min_events() -> int:
     raw = os.environ.get("PLANNINGTREE_P05_LOG_COMPACT_MIN_EVENTS", "200")
     try:

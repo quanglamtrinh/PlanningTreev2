@@ -21,6 +21,9 @@ It is intentionally aligned to Codex app-server semantics and names.
 - `S7`: `s7-turn-state-machine-contract-v1.md`
 - `S8`: `s8-session-binding-contract-v1.md`
 - `Gate`: `phase-0-gate-report-v1.md`
+- `Phase 1 Gate`: `phase-1-gate-report-v1.md`
+- `Phase 2 Plan`: `phase-2-execution-plan-v1.md`
+- `Phase 2 Gate`: `phase-2-gate-report-v1.md`
 - `fixtures/`: canonical valid/invalid payload samples
 
 ## Source of truth rule

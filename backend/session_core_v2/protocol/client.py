@@ -6,7 +6,7 @@ from backend.session_core_v2.transport.stdio_jsonrpc import NotificationHandler,
 
 
 class SessionProtocolClientV2:
-    """Thin facade around Codex JSON-RPC methods used by Phase 1."""
+    """Thin facade around Codex JSON-RPC methods used by Session Core V2."""
 
     def __init__(self, transport: StdioJsonRpcTransportV2) -> None:
         self._transport = transport
@@ -35,3 +35,17 @@ class SessionProtocolClientV2:
             "thread/read",
             {"threadId": thread_id, "includeTurns": bool(include_turns)},
         )
+
+    def turn_start(self, thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
+        payload = {"threadId": thread_id}
+        payload.update(params)
+        return self._transport.request("turn/start", payload)
+
+    def turn_steer(self, thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
+        payload = {"threadId": thread_id}
+        payload.update(params)
+        return self._transport.request("turn/steer", payload)
+
+    def turn_interrupt(self, thread_id: str, turn_id: str) -> dict[str, Any]:
+        payload = {"threadId": thread_id, "turnId": turn_id}
+        return self._transport.request("turn/interrupt", payload)
