@@ -71,10 +71,10 @@ describe('Layout', () => {
 
   it('does not show Back to Graph on the graph route', () => {
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={['/graph']}>
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<div>workspace</div>} />
+            <Route path="/graph" element={<div>workspace</div>} />
           </Route>
         </Routes>
       </MemoryRouter>,
@@ -91,7 +91,7 @@ describe('Layout', () => {
       >
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<div>Graph workspace stub</div>} />
+            <Route path="/graph" element={<div>Graph workspace stub</div>} />
             <Route path="/projects/:projectId/nodes/:nodeId/chat" element={<div>breadcrumb chat</div>} />
           </Route>
         </Routes>
@@ -114,7 +114,7 @@ describe('Layout', () => {
       >
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<div>Graph workspace stub</div>} />
+            <Route path="/graph" element={<div>Graph workspace stub</div>} />
             <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<div>breadcrumb chat v2</div>} />
           </Route>
         </Routes>
@@ -132,7 +132,7 @@ describe('Layout', () => {
       >
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<div>Graph workspace stub</div>} />
+            <Route path="/graph" element={<div>Graph workspace stub</div>} />
             <Route path="/usage-snapshot" element={<div>Usage snapshot stub</div>} />
           </Route>
         </Routes>

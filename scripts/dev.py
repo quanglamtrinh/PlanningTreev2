@@ -219,6 +219,18 @@ def backend_reload_enabled() -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def resolve_session_core_v2_protocol_gate_for_dev() -> str:
+    raw = os.environ.get("SESSION_CORE_V2_PROTOCOL_GATE_ENABLED")
+    if raw is None:
+        return "false"
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return "true"
+    if value in {"0", "false", "no", "off"}:
+        return "false"
+    return "false"
+
+
 def create_windows_job() -> int | None:
     if os.name != "nt":
         return None
@@ -323,6 +335,12 @@ def main() -> None:
     backend_port = int(os.environ.get("PLANNINGTREE_PORT", str(BACKEND_PORT)))
     frontend_port = int(os.environ.get("PLANNINGTREE_FRONTEND_PORT", str(FRONTEND_PORT)))
     reload_backend = backend_reload_enabled()
+    session_core_v2_protocol_gate = resolve_session_core_v2_protocol_gate_for_dev()
+    if "SESSION_CORE_V2_PROTOCOL_GATE_ENABLED" not in os.environ:
+        print(
+            "Dev mode: SESSION_CORE_V2_PROTOCOL_GATE_ENABLED is not set; defaulting to false "
+            "to allow older Codex binaries."
+        )
 
     ensure_port_available(backend_port, "backend", "PLANNINGTREE_PORT")
     ensure_port_available(frontend_port, "frontend", "PLANNINGTREE_FRONTEND_PORT")
@@ -353,6 +371,7 @@ def main() -> None:
             env={
                 **os.environ,
                 "PLANNINGTREE_PORT": str(backend_port),
+                "SESSION_CORE_V2_PROTOCOL_GATE_ENABLED": session_core_v2_protocol_gate,
                 **({"PLANNINGTREE_CODEX_CMD": codex_cmd} if codex_cmd else {}),
             },
             windows_job=windows_job,

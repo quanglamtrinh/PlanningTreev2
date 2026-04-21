@@ -129,6 +129,10 @@ class ThreadResumeRequest(ThreadConfigOverrides):
     pass
 
 
+class ThreadForkRequest(ThreadConfigOverrides):
+    pass
+
+
 class TurnStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     clientActionId: str = Field(min_length=1)
@@ -283,26 +287,77 @@ def session_thread_read_v4(
 
 
 @router.post("/v4/session/threads/{threadId}/fork")
-def session_thread_fork_not_enabled(threadId: str) -> JSONResponse:
-    del threadId
-    return _phase_not_enabled("thread/fork", phase="Phase 2")
+def session_thread_fork_v4(
+    threadId: str,
+    request: Request,
+    payload: ThreadForkRequest | None = Body(default=None),
+) -> JSONResponse:
+    try:
+        response = _manager(request).thread_fork(
+            thread_id=threadId,
+            payload=(payload.model_dump(exclude_none=True) if payload else {}),
+        )
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_thread_fork_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.get("/v4/session/threads/{threadId}/turns")
-def session_thread_turns_not_enabled(threadId: str) -> JSONResponse:
-    del threadId
-    return _phase_not_enabled("thread/turns/list", phase="Phase 2")
+def session_thread_turns_v4(
+    threadId: str,
+    request: Request,
+    cursor: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=1000),
+) -> JSONResponse:
+    try:
+        payload: dict[str, Any] = {}
+        if cursor is not None:
+            payload["cursor"] = cursor
+        if limit is not None:
+            payload["limit"] = limit
+        response = _manager(request).thread_turns_list(thread_id=threadId, payload=payload)
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_thread_turns_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.get("/v4/session/threads/loaded/list")
-def session_thread_loaded_list_not_enabled() -> JSONResponse:
-    return _phase_not_enabled("thread/loaded/list", phase="Phase 2")
+def session_thread_loaded_list_v4(
+    request: Request,
+    cursor: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=1000),
+) -> JSONResponse:
+    try:
+        payload: dict[str, Any] = {}
+        if cursor is not None:
+            payload["cursor"] = cursor
+        if limit is not None:
+            payload["limit"] = limit
+        response = _manager(request).thread_loaded_list(payload=payload)
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_thread_loaded_list_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.post("/v4/session/threads/{threadId}/unsubscribe")
-def session_thread_unsubscribe_not_enabled(threadId: str) -> JSONResponse:
-    del threadId
-    return _phase_not_enabled("thread/unsubscribe", phase="Phase 2")
+def session_thread_unsubscribe_v4(threadId: str, request: Request) -> JSONResponse:
+    try:
+        response = _manager(request).thread_unsubscribe(thread_id=threadId)
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_thread_unsubscribe_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.post("/v4/session/threads/{threadId}/archive")

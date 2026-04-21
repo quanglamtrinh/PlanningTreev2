@@ -34,6 +34,7 @@ from backend.config.app_config import (
     get_phase5_log_compact_min_events,
     get_rehearsal_workspace_root,
     get_session_core_v2_event_queue_capacity,
+    get_session_core_v2_protocol_gate_timeout_sec,
     get_session_core_v2_server_request_queue_capacity,
     get_session_core_v2_retention_days,
     get_session_core_v2_retention_max_events,
@@ -44,6 +45,7 @@ from backend.config.app_config import (
     get_split_timeout,
     get_thread_actor_mode,
     is_session_core_v2_events_enabled,
+    is_session_core_v2_protocol_gate_enabled,
     is_session_core_v2_requests_enabled,
     is_session_core_v2_turns_enabled,
     is_ask_v3_backend_enabled,
@@ -54,7 +56,10 @@ from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import bootstrap, chat, codex, nodes, projects, session_v4, split, workflow_v3
 from backend.session_core_v2.connection import ConnectionStateMachine, SessionManagerV2
-from backend.session_core_v2.protocol import SessionProtocolClientV2
+from backend.session_core_v2.protocol import (
+    SessionProtocolClientV2,
+    ensure_session_core_v2_protocol_compatible,
+)
 from backend.session_core_v2.storage import RuntimeStoreV2
 from backend.session_core_v2.transport import StdioJsonRpcTransportV2
 from backend.services.chat_service import ChatService
@@ -102,6 +107,9 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     session_core_v2_enable_turns = is_session_core_v2_turns_enabled()
     session_core_v2_enable_events = is_session_core_v2_events_enabled()
     session_core_v2_enable_requests = is_session_core_v2_requests_enabled()
+    session_core_v2_protocol_gate_enabled = is_session_core_v2_protocol_gate_enabled()
+    session_core_v2_protocol_gate_timeout_sec = get_session_core_v2_protocol_gate_timeout_sec()
+    codex_cmd = get_codex_cmd() or "codex"
     ask_rollout_metrics_service = AskRolloutMetricsService()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
     project_service = ProjectService(
@@ -118,7 +126,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         tree_service,
         git_checkpoint_service=git_checkpoint_service,
     )
-    codex_client = CodexAppClient(StdioTransport(codex_cmd=get_codex_cmd() or "codex"))
+    codex_client = CodexAppClient(StdioTransport(codex_cmd=codex_cmd))
     thread_lineage_service = ThreadLineageService(
         storage,
         codex_client,
@@ -260,7 +268,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         codex_client=codex_client,
     )
     session_transport_v2 = StdioJsonRpcTransportV2(
-        codex_cmd=get_codex_cmd(),
+        codex_cmd=codex_cmd,
         server_request_queue_capacity=session_core_v2_server_request_queue_capacity,
     )
     session_protocol_v2 = SessionProtocolClientV2(session_transport_v2)
@@ -282,6 +290,19 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        if session_core_v2_enable_turns and session_core_v2_protocol_gate_enabled:
+            logger.info(
+                "Session Core V2 protocol compatibility gate started",
+                extra={
+                    "codex_cmd": codex_cmd,
+                    "timeout_sec": session_core_v2_protocol_gate_timeout_sec,
+                },
+            )
+            ensure_session_core_v2_protocol_compatible(
+                codex_cmd=codex_cmd,
+                timeout_sec=session_core_v2_protocol_gate_timeout_sec,
+            )
+            logger.info("Session Core V2 protocol compatibility gate passed")
         try:
             yield
         finally:

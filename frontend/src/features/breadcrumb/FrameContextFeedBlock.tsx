@@ -8,6 +8,7 @@ import {
 } from '../../stores/ask-shell-action-store'
 import { useClarifyStore } from '../../stores/clarify-store'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
+import { useProjectStore } from '../../stores/project-store'
 import { FrameMarkdownViewer } from './FrameMarkdownViewer'
 import styles from './FrameContextFeedBlock.module.css'
 
@@ -259,6 +260,11 @@ export function FrameContextFeedBlock({
   variant = 'ask',
   specConfirmed = false,
 }: Props) {
+  const projectRootPath = useProjectStore((state) =>
+    state.snapshot?.project.id === projectId
+      ? state.snapshot.project.project_path
+      : undefined,
+  )
   const rawChain = useMemo(() => buildAncestorChain(nodeId, nodeRegistry), [nodeId, nodeRegistry])
   const stripInitPrefix = rawChain.length > 0 && isInitNode(rawChain[0])
   const chain = useMemo(() => rawChain.filter((node) => !isInitNode(node)), [rawChain])
@@ -381,7 +387,11 @@ export function FrameContextFeedBlock({
                     ) : !frameEntry.content.trim() ? (
                       <div className={styles.stateEmpty}>No frame content yet.</div>
                     ) : (
-                      <FrameMarkdownViewer content={frameEntry.content} shellStyle />
+                      <FrameMarkdownViewer
+                        content={frameEntry.content}
+                        shellStyle
+                        projectRootPath={projectRootPath}
+                      />
                     )}
                   </div>
                 </NodePanel>
@@ -434,7 +444,10 @@ export function FrameContextFeedBlock({
                     ) : !specEntry.content.trim() ? (
                       <div className={styles.stateEmpty}>No spec content yet.</div>
                     ) : (
-                      <FrameMarkdownViewer content={specEntry.content} />
+                      <FrameMarkdownViewer
+                        content={specEntry.content}
+                        projectRootPath={projectRootPath}
+                      />
                     )}
                   </NodePanel>
                 ) : null}

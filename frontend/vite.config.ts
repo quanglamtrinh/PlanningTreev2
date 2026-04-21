@@ -15,6 +15,7 @@ export default defineConfig({
       '/v1': backendTarget,
       '/v2': backendTarget,
       '/v3': backendTarget,
+      '/v4': backendTarget,
       '/health': backendTarget,
     },
   },

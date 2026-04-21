@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from typing import Any
@@ -39,6 +40,8 @@ class SessionManagerV2:
         self._connection_state_machine = connection_state_machine
         self._thread_service = ThreadServiceV2(protocol_client, logger=logger)
         self._turn_service = TurnServiceV2(protocol_client, logger=logger)
+        # Serialize initialize to avoid concurrent connecting->connecting races.
+        self._initialize_lock = threading.Lock()
         self._protocol_client.set_notification_handler(self._on_notification)
         self._protocol_client.set_server_request_handler(self._on_server_request)
 
@@ -46,58 +49,59 @@ class SessionManagerV2:
     # Connection and threads
     # ------------------------------------------------------------------
     def initialize(self, request_payload: dict[str, Any]) -> dict[str, Any]:
-        phase = self._connection_state_machine.phase
-        if phase == "initialized":
-            return self.status()
+        with self._initialize_lock:
+            phase = self._connection_state_machine.phase
+            if phase == "initialized":
+                return self.status()
 
-        started = time.perf_counter()
-        client_info = request_payload.get("clientInfo")
-        client_name = client_info.get("name") if isinstance(client_info, dict) else None
-        try:
-            self._connection_state_machine.set_connecting()
-            response = self._protocol_client.initialize(request_payload)
-            server_info = response.get("serverInfo")
-            server_version = server_info.get("version") if isinstance(server_info, dict) else None
-            self._connection_state_machine.set_initialized(
-                client_name=str(client_name or ""),
-                server_version=str(server_version or ""),
-            )
-            expired_count = self._runtime_store.expire_pending_server_requests_for_new_session()
-            elapsed_ms = (time.perf_counter() - started) * 1000
-            logger.info(
-                "session_core_v2 initialize ok",
-                extra={"latency_ms": elapsed_ms, "expiredPendingRequests": expired_count},
-            )
-            return self.status()
-        except SessionCoreError as exc:
-            self._connection_state_machine.set_error(
-                code=exc.code,
-                message=exc.message,
-                details=exc.details,
-            )
-            elapsed_ms = (time.perf_counter() - started) * 1000
-            logger.warning(
-                "session_core_v2 initialize failed",
-                extra={"latency_ms": elapsed_ms, "error_code": exc.code},
-            )
-            raise
-        except Exception as exc:
-            self._connection_state_machine.set_error(
-                code="ERR_INTERNAL",
-                message="Unexpected initialization failure.",
-                details={"reason": str(exc)},
-            )
-            elapsed_ms = (time.perf_counter() - started) * 1000
-            logger.exception(
-                "session_core_v2 initialize unexpected failure",
-                extra={"latency_ms": elapsed_ms},
-            )
-            raise SessionCoreError(
-                code="ERR_INTERNAL",
-                message="Unexpected initialization failure.",
-                status_code=500,
-                details={"reason": str(exc)},
-            ) from exc
+            started = time.perf_counter()
+            client_info = request_payload.get("clientInfo")
+            client_name = client_info.get("name") if isinstance(client_info, dict) else None
+            try:
+                self._connection_state_machine.set_connecting()
+                response = self._protocol_client.initialize(request_payload)
+                server_info = response.get("serverInfo")
+                server_version = server_info.get("version") if isinstance(server_info, dict) else None
+                self._connection_state_machine.set_initialized(
+                    client_name=str(client_name or ""),
+                    server_version=str(server_version or ""),
+                )
+                expired_count = self._runtime_store.expire_pending_server_requests_for_new_session()
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                logger.info(
+                    "session_core_v2 initialize ok",
+                    extra={"latency_ms": elapsed_ms, "expiredPendingRequests": expired_count},
+                )
+                return self.status()
+            except SessionCoreError as exc:
+                self._connection_state_machine.set_error(
+                    code=exc.code,
+                    message=exc.message,
+                    details=exc.details,
+                )
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                logger.warning(
+                    "session_core_v2 initialize failed",
+                    extra={"latency_ms": elapsed_ms, "error_code": exc.code},
+                )
+                raise
+            except Exception as exc:
+                self._connection_state_machine.set_error(
+                    code="ERR_INTERNAL",
+                    message="Unexpected initialization failure.",
+                    details={"reason": str(exc)},
+                )
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                logger.exception(
+                    "session_core_v2 initialize unexpected failure",
+                    extra={"latency_ms": elapsed_ms},
+                )
+                raise SessionCoreError(
+                    code="ERR_INTERNAL",
+                    message="Unexpected initialization failure.",
+                    status_code=500,
+                    details={"reason": str(exc)},
+                ) from exc
 
     def status(self) -> dict[str, Any]:
         return {"connection": self._connection_state_machine.snapshot()}
@@ -110,6 +114,10 @@ class SessionManagerV2:
         self._ensure_initialized()
         return self._thread_service.thread_resume(thread_id=thread_id, params=payload)
 
+    def thread_fork(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._ensure_initialized()
+        return self._thread_service.thread_fork(thread_id=thread_id, params=payload)
+
     def thread_list(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
         return self._thread_service.thread_list(payload)
@@ -117,6 +125,18 @@ class SessionManagerV2:
     def thread_read(self, *, thread_id: str, include_turns: bool) -> dict[str, Any]:
         self._ensure_initialized()
         return self._thread_service.thread_read(thread_id=thread_id, include_turns=include_turns)
+
+    def thread_turns_list(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._ensure_initialized()
+        return self._thread_service.thread_turns_list(thread_id=thread_id, params=payload)
+
+    def thread_loaded_list(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._ensure_initialized()
+        return self._thread_service.thread_loaded_list(params=payload)
+
+    def thread_unsubscribe(self, *, thread_id: str) -> dict[str, Any]:
+        self._ensure_initialized()
+        return self._thread_service.thread_unsubscribe(thread_id=thread_id)
 
     # ------------------------------------------------------------------
     # Turns

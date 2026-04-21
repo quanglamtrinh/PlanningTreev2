@@ -383,6 +383,69 @@ describe('NodeDetailCard', () => {
     expect(screen.getByDisplayValue('# Frame')).toBeInTheDocument()
   })
 
+  it('shows Edit and Rich View toggle controls in both Frame and Spec tabs', async () => {
+    apiMock.getNodeDocument
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'frame',
+        content: '# Frame',
+        updated_at: '2026-03-21T00:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        node_id: 'root',
+        kind: 'spec',
+        content: '# Spec',
+        updated_at: '2026-03-21T00:00:01Z',
+      })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    await screen.findByDisplayValue('# Frame')
+    expect(screen.getByTestId('document-view-edit-frame')).toBeInTheDocument()
+    expect(screen.getByTestId('document-view-rich-frame')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Spec' }))
+    await screen.findByDisplayValue('# Spec')
+    expect(screen.getByTestId('document-view-edit-spec')).toBeInTheDocument()
+    expect(screen.getByTestId('document-view-rich-spec')).toBeInTheDocument()
+  })
+
+  it('renders Rich View from the current unsaved draft content', async () => {
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Frame',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({ status: 'ready' })}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    const editor = await screen.findByTestId('mock-codemirror')
+    fireEvent.change(editor, { target: { value: 'Draft preview paragraph' } })
+    fireEvent.click(screen.getByTestId('document-view-rich-frame'))
+
+    expect(screen.getByTestId('document-rich-view-frame')).toBeInTheDocument()
+    expect(screen.getByText('Draft preview paragraph')).toBeInTheDocument()
+    expect(apiMock.putNodeDocument).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('document-view-edit-frame'))
+    expect(screen.getByDisplayValue('Draft preview paragraph')).toBeInTheDocument()
+  })
+
   it('lazy-loads spec.md when switching to the Spec tab', async () => {
     apiMock.getNodeDocument
       .mockResolvedValueOnce({

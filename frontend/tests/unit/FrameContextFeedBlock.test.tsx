@@ -8,6 +8,7 @@ import {
 } from '../../src/stores/ask-shell-action-store'
 import { useClarifyStore } from '../../src/stores/clarify-store'
 import { useNodeDocumentStore } from '../../src/stores/node-document-store'
+import { useProjectStore } from '../../src/stores/project-store'
 
 function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
   return {
@@ -33,15 +34,24 @@ function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
   }
 }
 
-function seedDocumentStore(nodeId = 'root') {
+function seedDocumentStore(
+  nodeId = 'root',
+  {
+    frameContent = '# Frame\nLogin flow',
+    specContent = '# Spec\nAuth details',
+  }: {
+    frameContent?: string
+    specContent?: string
+  } = {},
+) {
   const loadDocument = vi.fn().mockResolvedValue(undefined)
   useNodeDocumentStore.setState({
     ...useNodeDocumentStore.getState(),
     loadDocument,
     entries: {
       [`project-1::${nodeId}::frame`]: {
-        content: '# Frame\nLogin flow',
-        savedContent: '# Frame\nLogin flow',
+        content: frameContent,
+        savedContent: frameContent,
         updatedAt: '2026-04-03T00:00:00Z',
         isLoading: false,
         isSaving: false,
@@ -49,8 +59,8 @@ function seedDocumentStore(nodeId = 'root') {
         hasLoaded: true,
       },
       [`project-1::${nodeId}::spec`]: {
-        content: '# Spec\nAuth details',
-        savedContent: '# Spec\nAuth details',
+        content: specContent,
+        savedContent: specContent,
         updatedAt: '2026-04-03T00:00:00Z',
         isLoading: false,
         isSaving: false,
@@ -106,6 +116,7 @@ describe('FrameContextFeedBlock', () => {
     useNodeDocumentStore.getState().reset()
     useClarifyStore.getState().reset()
     useAskShellActionStore.getState().reset()
+    useProjectStore.setState(useProjectStore.getInitialState())
   })
 
   it('shows frame and clarify context even when shaping is not frozen', async () => {
@@ -227,5 +238,59 @@ describe('FrameContextFeedBlock', () => {
     })
     expect(loadDocument).not.toHaveBeenCalledWith('project-1', 'init', 'frame')
     expect(loadClarify).not.toHaveBeenCalledWith('project-1', 'init')
+  })
+
+  it('renders local links in frame/spec context using normalized target text', async () => {
+    const loadDocument = seedDocumentStore('root', {
+      frameContent: '[Frame Doc](file:///C:/workspace/project/frame.md#L74C3)',
+      specContent: '[Spec Doc](file:///C:/workspace/project/spec.md#L12C8)',
+    })
+    const loadClarify = seedClarifyStore('root')
+
+    useProjectStore.setState({
+      snapshot: {
+        schema_version: 1,
+        project: {
+          id: 'project-1',
+          name: 'Test',
+          root_goal: 'Goal',
+          project_path: 'C:/workspace/project',
+          created_at: '2026-04-03T00:00:00Z',
+          updated_at: '2026-04-03T00:00:00Z',
+        },
+        tree_state: {
+          root_node_id: 'root',
+          active_node_id: 'root',
+          node_registry: [makeNode()],
+        },
+        updated_at: '2026-04-03T00:00:00Z',
+      },
+      selectedNodeId: 'root',
+    })
+
+    render(
+      <FrameContextFeedBlock
+        projectId="project-1"
+        nodeId="root"
+        nodeRegistry={[makeNode()]}
+        variant="audit"
+        specConfirmed
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Frame' }))
+    expect(await screen.findByText('frame.md:74:3')).toBeInTheDocument()
+    expect(screen.queryByText('Frame Doc')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Spec' }))
+    expect(await screen.findByText('spec.md:12:8')).toBeInTheDocument()
+    expect(screen.queryByText('Spec Doc')).not.toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(loadDocument).toHaveBeenCalledWith('project-1', 'root', 'frame')
+    })
+    await waitFor(() => {
+      expect(loadClarify).toHaveBeenCalledWith('project-1', 'root')
+    })
   })
 })

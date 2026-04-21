@@ -34,6 +34,11 @@ class SessionProtocolClientV2:
         payload.update(params or {})
         return self._transport.request("thread/resume", payload)
 
+    def thread_fork(self, thread_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = {"threadId": thread_id}
+        payload.update(params or {})
+        return self._transport.request("thread/fork", payload)
+
     def thread_list(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._transport.request("thread/list", params or {})
 
@@ -42,6 +47,17 @@ class SessionProtocolClientV2:
             "thread/read",
             {"threadId": thread_id, "includeTurns": bool(include_turns)},
         )
+
+    def thread_turns_list(self, thread_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = {"threadId": thread_id}
+        payload.update(params or {})
+        return self._transport.request("thread/turns/list", payload)
+
+    def thread_loaded_list(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._transport.request("thread/loaded/list", params or {})
+
+    def thread_unsubscribe(self, thread_id: str) -> dict[str, Any]:
+        return self._transport.request("thread/unsubscribe", {"threadId": thread_id})
 
     def turn_start(self, thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
         payload = {"threadId": thread_id}

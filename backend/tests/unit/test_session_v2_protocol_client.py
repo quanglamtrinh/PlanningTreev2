@@ -54,8 +54,12 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     )
     client.thread_start({"modelProvider": "openai", "approvalPolicy": "never"})
     client.thread_resume("thread-1", {"modelProvider": "openai", "cwd": "/tmp/work"})
+    client.thread_fork("thread-1", {"modelProvider": "openai"})
     client.thread_list({"sourceKinds": ["appServer"], "modelProviders": ["openai"]})
     client.thread_read("thread-1", include_turns=True)
+    client.thread_turns_list("thread-1", {"cursor": "c1", "limit": 20})
+    client.thread_loaded_list({"cursor": "c0", "limit": 10})
+    client.thread_unsubscribe("thread-1")
     client.turn_start(
         "thread-1",
         {
@@ -86,18 +90,24 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     assert transport.requests[2][0] == "thread/resume"
     assert transport.requests[2][1]["threadId"] == "thread-1"
     assert transport.requests[2][1]["modelProvider"] == "openai"
-    assert transport.requests[3][0] == "thread/list"
-    assert transport.requests[3][1]["sourceKinds"] == ["appServer"]
-    assert transport.requests[4] == (
+    assert transport.requests[3][0] == "thread/fork"
+    assert transport.requests[3][1]["threadId"] == "thread-1"
+    assert transport.requests[4][0] == "thread/list"
+    assert transport.requests[4][1]["sourceKinds"] == ["appServer"]
+    assert transport.requests[5] == (
         "thread/read",
         {"threadId": "thread-1", "includeTurns": True},
     )
-    assert transport.requests[5][0] == "turn/start"
-    assert transport.requests[5][1]["threadId"] == "thread-1"
-    assert transport.requests[5][1]["clientActionId"] == "start-1"
-    assert transport.requests[6][0] == "turn/steer"
-    assert transport.requests[6][1]["expectedTurnId"] == "turn-1"
-    assert transport.requests[7] == ("turn/interrupt", {"threadId": "thread-1", "turnId": "turn-1"})
+    assert transport.requests[6][0] == "thread/turns/list"
+    assert transport.requests[6][1]["threadId"] == "thread-1"
+    assert transport.requests[7][0] == "thread/loaded/list"
+    assert transport.requests[8] == ("thread/unsubscribe", {"threadId": "thread-1"})
+    assert transport.requests[9][0] == "turn/start"
+    assert transport.requests[9][1]["threadId"] == "thread-1"
+    assert transport.requests[9][1]["clientActionId"] == "start-1"
+    assert transport.requests[10][0] == "turn/steer"
+    assert transport.requests[10][1]["expectedTurnId"] == "turn-1"
+    assert transport.requests[11] == ("turn/interrupt", {"threadId": "thread-1", "turnId": "turn-1"})
     assert transport.server_responses == [(123, {"decision": "accept"})]
     assert transport.server_failures == [(124, {"code": -32000, "message": "rejected"})]
 

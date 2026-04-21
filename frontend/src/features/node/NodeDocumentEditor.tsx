@@ -13,6 +13,7 @@ import { useProjectStore } from '../../stores/project-store'
 import { useAskShellActionStore } from '../../stores/ask-shell-action-store'
 import { buildChatV2Url } from '../conversation/surfaceRouting'
 import { useWorkflowStateStoreV3 } from '../conversation/state/workflowStateStoreV3'
+import { SharedMarkdownRenderer } from '../markdown/SharedMarkdownRenderer'
 import type { WorkflowTab } from './WorkflowStepper'
 import { vscodeMarkdownSyntaxHighlighting } from './codemirror/vscodeMarkdownHighlight'
 import styles from './NodeDetailCard.module.css'
@@ -86,11 +87,17 @@ export function NodeDocumentEditor({
   const activeWorkflowMutation = useWorkflowStateStoreV3(
     (state) => state.activeMutations[detailStateKey] ?? null,
   )
+  const projectRootPath = useProjectStore((state) =>
+    state.snapshot?.project.id === projectId
+      ? state.snapshot.project.project_path
+      : undefined,
+  )
   const [isConfirming, setIsConfirming] = useState(false)
   const [pendingAction, setPendingAction] = useState<'confirm' | 'split' | 'create_spec' | 'finish' | null>(null)
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [genStatus, setGenStatus] = useState<FrameGenJobStatus>('idle')
   const [genError, setGenError] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<'edit' | 'rich'>('edit')
   const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
   const editorSurfaceRef = useRef<HTMLDivElement>(null)
   const isFinishingTask = activeWorkflowMutation === 'finish_task'
@@ -115,6 +122,7 @@ export function NodeDocumentEditor({
   }, [])
 
   const isGenerating = genStatus === 'active'
+  const isRichView = viewMode === 'rich'
   const isInitialFrameStep = kind === 'frame' && workflowTab !== 'frame_updated'
   const isUpdatedFrameStep = kind === 'frame' && workflowTab === 'frame_updated'
   const isSpecStep = kind === 'spec'
@@ -139,6 +147,10 @@ export function NodeDocumentEditor({
         pollRef.current = undefined
       }
     }
+  }, [kind, node.node_id, projectId])
+
+  useEffect(() => {
+    setViewMode('edit')
   }, [kind, node.node_id, projectId])
 
   const refreshSnapshot = useCallback(async () => {
@@ -598,7 +610,37 @@ export function NodeDocumentEditor({
         aria-busy={Boolean(entry.isLoading && !entry.hasLoaded)}
       >
         <div className={styles.editorSurfaceHeader}>
-          <span className={styles.editorSurfaceTitle}>Markdown editor</span>
+          <div className={styles.editorSurfaceHeaderMain}>
+            <span className={styles.editorSurfaceTitle}>Markdown editor</span>
+            <div
+              className={styles.editorModeToggle}
+              role="group"
+              aria-label={`${kind} document view mode`}
+            >
+              <button
+                type="button"
+                className={`${styles.editorModeToggleButton} ${!isRichView ? styles.editorModeToggleButtonActive : ''}`}
+                data-testid={`document-view-edit-${kind}`}
+                aria-pressed={!isRichView}
+                onClick={() => {
+                  setViewMode('edit')
+                }}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                className={`${styles.editorModeToggleButton} ${isRichView ? styles.editorModeToggleButtonActive : ''}`}
+                data-testid={`document-view-rich-${kind}`}
+                aria-pressed={isRichView}
+                onClick={() => {
+                  setViewMode('rich')
+                }}
+              >
+                Rich View
+              </button>
+            </div>
+          </div>
           <div className={styles.editorSurfaceHeaderActions}>
             <button
               type="button"
@@ -646,24 +688,38 @@ export function NodeDocumentEditor({
           </div>
         </div>
         <div className={styles.editorSurfaceBody}>
-          <CodeMirror
-            className={styles.codemirrorHost}
-            value={entry.content}
-            height="100%"
-            theme="none"
-            extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
-            basicSetup={{
-              foldGutter: false,
-              lineNumbers: true,
-            }}
-            editable={!isReadOnly}
-            onChange={(value) => {
-              updateDraft(projectId, node.node_id, kind, value)
-            }}
-            onBlur={() => {
-              void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
-            }}
-          />
+          {isRichView ? (
+            <div className={styles.richViewSurface} data-testid={`document-rich-view-${kind}`}>
+              {entry.content.trim() ? (
+                <SharedMarkdownRenderer
+                  content={entry.content}
+                  projectRootPath={projectRootPath}
+                  variant="document"
+                />
+              ) : (
+                <p className={styles.richViewEmpty}>No content yet.</p>
+              )}
+            </div>
+          ) : (
+            <CodeMirror
+              className={styles.codemirrorHost}
+              value={entry.content}
+              height="100%"
+              theme="none"
+              extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
+              basicSetup={{
+                foldGutter: false,
+                lineNumbers: true,
+              }}
+              editable={!isReadOnly}
+              onChange={(value) => {
+                updateDraft(projectId, node.node_id, kind, value)
+              }}
+              onBlur={() => {
+                void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
+              }}
+            />
+          )}
         </div>
       </div>
 

@@ -213,6 +213,10 @@ def test_session_v4_roundtrip_and_guard(client: TestClient) -> None:
             "thread/resume": {"thread": _fake_thread("thread-resume-1"), "modelProvider": "openai"},
             "thread/list": {"data": [_fake_thread("thread-list-1")], "nextCursor": None},
             "thread/read": {"thread": _fake_thread("thread-read-1")},
+            "thread/fork": {"thread": _fake_thread("thread-fork-1"), "modelProvider": "openai"},
+            "thread/turns/list": {"data": [{"id": "turn-1", "status": "completed", "items": []}], "nextCursor": None},
+            "thread/loaded/list": {"data": ["thread-resume-1"], "nextCursor": None},
+            "thread/unsubscribe": {"status": "unsubscribed"},
         }
     )
     _install_fake_manager(client, fake_transport)
@@ -248,12 +252,32 @@ def test_session_v4_roundtrip_and_guard(client: TestClient) -> None:
     assert read_response.status_code == 200
     assert read_response.json()["data"]["thread"]["id"] == "thread-read-1"
 
+    fork_response = client.post("/v4/session/threads/thread-resume-1/fork", json={})
+    assert fork_response.status_code == 200
+    assert fork_response.json()["data"]["thread"]["id"] == "thread-fork-1"
+
+    turns_response = client.get("/v4/session/threads/thread-read-1/turns?cursor=c1&limit=10")
+    assert turns_response.status_code == 200
+    assert turns_response.json()["data"]["data"][0]["id"] == "turn-1"
+
+    loaded_response = client.get("/v4/session/threads/loaded/list?cursor=c0&limit=10")
+    assert loaded_response.status_code == 200
+    assert loaded_response.json()["data"]["data"] == ["thread-resume-1"]
+
+    unsubscribe_response = client.post("/v4/session/threads/thread-read-1/unsubscribe")
+    assert unsubscribe_response.status_code == 200
+    assert unsubscribe_response.json()["data"]["status"] == "unsubscribed"
+
     assert [method for method, _ in fake_transport.requests] == [
         "initialize",
         "thread/start",
         "thread/resume",
         "thread/list",
         "thread/read",
+        "thread/fork",
+        "thread/turns/list",
+        "thread/loaded/list",
+        "thread/unsubscribe",
     ]
     assert fake_transport.notifications == [("initialized", {})]
 
@@ -713,8 +737,8 @@ def test_session_v4_contract_conformance_for_phase3_endpoints(client: TestClient
     _assert_component(reject_payload, "BasicOkEnvelope", schema_doc)
 
 
-def test_session_v4_phase_gated_route_returns_deterministic_501(client: TestClient) -> None:
-    response = client.post("/v4/session/threads/thread-1/fork", json={})
+def test_session_v4_remaining_phase_gated_route_returns_deterministic_501(client: TestClient) -> None:
+    response = client.post("/v4/session/threads/thread-1/archive", json={})
     assert response.status_code == 501
     payload = response.json()
     assert payload["ok"] is False

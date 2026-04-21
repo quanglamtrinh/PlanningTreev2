@@ -188,6 +188,19 @@ def get_session_core_v2_server_request_queue_capacity() -> int:
     return max(1, min(4096, value))
 
 
+def is_session_core_v2_protocol_gate_enabled() -> bool:
+    return _bool_env("SESSION_CORE_V2_PROTOCOL_GATE_ENABLED", default=True)
+
+
+def get_session_core_v2_protocol_gate_timeout_sec() -> int:
+    raw = os.environ.get("SESSION_CORE_V2_PROTOCOL_GATE_TIMEOUT_SEC", "12")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 12
+    return max(3, min(60, value))
+
+
 def get_session_core_v2_retention_max_events() -> int:
     raw = os.environ.get("SESSION_CORE_V2_RETENTION_MAX_EVENTS", "200000")
     try:

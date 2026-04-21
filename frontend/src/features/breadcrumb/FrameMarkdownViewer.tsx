@@ -1,10 +1,8 @@
 import { useMemo, type Key } from 'react'
-import ReactMarkdown from 'react-markdown'
-import type { Components } from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { SharedMarkdownRenderer } from '../markdown/SharedMarkdownRenderer'
 import styles from './FrameMarkdownViewer.module.css'
 
-// ─── Section types ─────────────────────────────────────────────────
+// Section types
 
 type Section =
   | { kind: 'h1'; text: string }
@@ -56,7 +54,7 @@ function buildShellPieces(sections: Section[]): ShellPiece[] {
   return pieces
 }
 
-/** "Task title" / "1. Task title" blocks repeat the node header in frame shell — drop them. */
+/** "Task title" / "1. Task title" blocks repeat the node header in frame shell. */
 function isTaskTitleShellLabel(label: string): boolean {
   const t = label
     .toLowerCase()
@@ -75,10 +73,10 @@ function filterShellPieces(pieces: ShellPiece[]): ShellPiece[] {
   })
 }
 
-// ─── Parser ────────────────────────────────────────────────────────
+// Parser
 
 const ADR_HEADING_RE = /^### (.+)$/
-const ADR_MATCH_RE = /\bADR[-–\s]\d+\b|\bDecision\b/i
+const ADR_MATCH_RE = /\bADR(?:-|\u2013|\s)\d+\b|\bDecision\b/i
 
 function parseDecisionHeading(heading: string): { eyebrow: string; title: string } {
   const colonIdx = heading.indexOf(':')
@@ -201,48 +199,8 @@ function parseFrameContent(content: string): Section[] {
   return sections
 }
 
-// ─── Shared markdown components ────────────────────────────────────
 
-// Flat components — no card wrapping; used inside callout bodies and decision bodies
-// to avoid double-boxing.
-const mdComponentsFlat: Components = {
-  p: ({ children }) => <p className={styles.p}>{children}</p>,
-  strong: ({ children }) => <strong className={styles.strong}>{children}</strong>,
-  ul: ({ children }) => <ul className={styles.ul}>{children}</ul>,
-  ol: ({ children }) => <ol className={styles.ol}>{children}</ol>,
-  li: ({ children }) => <li className={styles.li}>{children}</li>,
-  h3: ({ children }) => <h3 className={styles.h3}>{children}</h3>,
-  h4: ({ children }) => <h4 className={styles.h4}>{children}</h4>,
-  code: ({ className, children }) => {
-    if (className?.startsWith('language-')) {
-      return <code className={styles.codeBlock}>{children}</code>
-    }
-    return <code className={styles.inlineCode}>{children}</code>
-  },
-  pre: ({ children }) => <pre className={styles.pre}>{children}</pre>,
-}
-
-// Card components — wraps p and lists in bordered card boxes; used for top-level body sections.
-const mdComponents: Components = {
-  ...mdComponentsFlat,
-  p: ({ children }) => (
-    <div className={styles.paraCard}>
-      <p className={styles.p}>{children}</p>
-    </div>
-  ),
-  ul: ({ children }) => (
-    <div className={styles.listCard}>
-      <ul className={styles.ul}>{children}</ul>
-    </div>
-  ),
-  ol: ({ children }) => (
-    <div className={styles.listCard}>
-      <ol className={styles.ol}>{children}</ol>
-    </div>
-  ),
-}
-
-// ─── Metadata shell: styled blocks (frame sections) ─
+// Metadata shell: styled blocks (frame sections)
 
 type ShellFrameBlockVariant =
   | 'userStory'
@@ -337,38 +295,6 @@ function formatShapingFieldLabel(key: string): string {
   return key.replace(/\s+/g, ' ').trim().toUpperCase()
 }
 
-const mdShellStoryDesc: Components = {
-  p: ({ children }) => <p className={styles.shellStoryDescP}>{children}</p>,
-  strong: ({ children }) => <strong className={styles.shellStoryDescStrong}>{children}</strong>,
-  code: ({ className, children }) => {
-    if (className?.startsWith('language-')) {
-      return <code className={styles.codeBlock}>{children}</code>
-    }
-    return <code className={styles.shellInlineAccent}>{children}</code>
-  },
-}
-
-const mdShellFrItem: Components = {
-  p: ({ children }) => <p className={styles.shellFrItemP}>{children}</p>,
-  strong: ({ children }) => <strong className={styles.shellFrItemStrong}>{children}</strong>,
-  code: ({ className, children }) => {
-    if (className?.startsWith('language-')) {
-      return <code className={styles.codeBlock}>{children}</code>
-    }
-    return <code className={styles.shellInlineAccent}>{children}</code>
-  },
-}
-
-const mdShellOosItem: Components = {
-  p: ({ children }) => <p className={styles.shellOosMdP}>{children}</p>,
-  strong: ({ children }) => <strong className={styles.shellOosStrong}>{children}</strong>,
-  code: ({ className, children }) => {
-    if (className?.startsWith('language-')) {
-      return <code className={styles.codeBlock}>{children}</code>
-    }
-    return <code className={styles.shellOosCode}>{children}</code>
-  },
-}
 
 function IconUserStories() {
   return (
@@ -468,7 +394,15 @@ function IconTaskShaping() {
   )
 }
 
-function ShellUserStoriesSection({ label, markdown }: { label: string; markdown: string }) {
+function ShellUserStoriesSection({
+  label,
+  markdown,
+  projectRootPath,
+}: {
+  label: string
+  markdown: string
+  projectRootPath?: string
+}) {
   const items = parseUserStoryItems(markdown)
   return (
     <section className={styles.shellStyledSection}>
@@ -489,9 +423,11 @@ function ShellUserStoriesSection({ label, markdown }: { label: string; markdown:
                 ) : null}
                 {item.description ? (
                   <div className={styles.shellUserStoryDesc}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellStoryDesc}>
-                      {item.description}
-                    </ReactMarkdown>
+                    <SharedMarkdownRenderer
+                      content={item.description}
+                      projectRootPath={projectRootPath}
+                      variant="context-shell"
+                    />
                   </div>
                 ) : null}
               </div>
@@ -503,7 +439,15 @@ function ShellUserStoriesSection({ label, markdown }: { label: string; markdown:
   )
 }
 
-function ShellFunctionalRequirementsSection({ label, markdown }: { label: string; markdown: string }) {
+function ShellFunctionalRequirementsSection({
+  label,
+  markdown,
+  projectRootPath,
+}: {
+  label: string
+  markdown: string
+  projectRootPath?: string
+}) {
   const items = splitMarkdownListItems(markdown)
   return (
     <section className={styles.shellStyledSection}>
@@ -521,9 +465,11 @@ function ShellFunctionalRequirementsSection({ label, markdown }: { label: string
                 <CheckCircleGlyph />
               </span>
               <div className={styles.shellCheckListBody}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellFrItem}>
-                  {item}
-                </ReactMarkdown>
+                <SharedMarkdownRenderer
+                  content={item}
+                  projectRootPath={projectRootPath}
+                  variant="context-shell"
+                />
               </div>
             </li>
           ))}
@@ -533,7 +479,15 @@ function ShellFunctionalRequirementsSection({ label, markdown }: { label: string
   )
 }
 
-function ShellSuccessCriteriaSection({ label, markdown }: { label: string; markdown: string }) {
+function ShellSuccessCriteriaSection({
+  label,
+  markdown,
+  projectRootPath,
+}: {
+  label: string
+  markdown: string
+  projectRootPath?: string
+}) {
   const items = splitMarkdownListItems(markdown)
   return (
     <section className={styles.shellStyledSection}>
@@ -551,9 +505,11 @@ function ShellSuccessCriteriaSection({ label, markdown }: { label: string; markd
                 <CheckCircleGlyph />
               </span>
               <div className={styles.shellCheckListBody}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellFrItem}>
-                  {item}
-                </ReactMarkdown>
+                <SharedMarkdownRenderer
+                  content={item}
+                  projectRootPath={projectRootPath}
+                  variant="context-shell"
+                />
               </div>
             </li>
           ))}
@@ -563,7 +519,15 @@ function ShellSuccessCriteriaSection({ label, markdown }: { label: string; markd
   )
 }
 
-function ShellOutOfScopeSection({ label, markdown }: { label: string; markdown: string }) {
+function ShellOutOfScopeSection({
+  label,
+  markdown,
+  projectRootPath,
+}: {
+  label: string
+  markdown: string
+  projectRootPath?: string
+}) {
   const items = splitMarkdownListItems(markdown)
   return (
     <section className={styles.shellStyledSection}>
@@ -584,9 +548,11 @@ function ShellOutOfScopeSection({ label, markdown }: { label: string; markdown: 
                 </svg>
               </span>
               <div className={styles.shellOosText}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdShellOosItem}>
-                  {item}
-                </ReactMarkdown>
+                <SharedMarkdownRenderer
+                  content={item}
+                  projectRootPath={projectRootPath}
+                  variant="context-shell"
+                />
               </div>
             </li>
           ))}
@@ -624,7 +590,7 @@ function ShellTaskShapingSection({ label, markdown }: { label: string; markdown:
   )
 }
 
-function renderSectionBlock(section: Section, key: Key) {
+function renderSectionBlock(section: Section, key: Key, projectRootPath?: string) {
   if (section.kind === 'h1') {
     return <h1 key={key} className={styles.h1}>{section.text}</h1>
   }
@@ -639,9 +605,11 @@ function renderSectionBlock(section: Section, key: Key) {
         <span className={styles.calloutLabel}>{section.label}</span>
         {section.body && (
           <div className={styles.calloutBody}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponentsFlat}>
-              {section.body}
-            </ReactMarkdown>
+            <SharedMarkdownRenderer
+              content={section.body}
+              projectRootPath={projectRootPath}
+              variant="context-shell"
+            />
           </div>
         )}
       </div>
@@ -659,9 +627,11 @@ function renderSectionBlock(section: Section, key: Key) {
             )}
             {card.body && (
               <div className={styles.decisionBody}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponentsFlat}>
-                  {card.body}
-                </ReactMarkdown>
+                <SharedMarkdownRenderer
+                  content={card.body}
+                  projectRootPath={projectRootPath}
+                  variant="context-shell"
+                />
               </div>
             )}
           </div>
@@ -672,21 +642,25 @@ function renderSectionBlock(section: Section, key: Key) {
 
   return (
     <div key={key} className={styles.body}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-        {section.markdown}
-      </ReactMarkdown>
+      <SharedMarkdownRenderer
+        content={section.markdown}
+        projectRootPath={projectRootPath}
+        variant="context-shell"
+      />
     </div>
   )
 }
 
-// ─── Component ─────────────────────────────────────────────────────
+// Component
 
 export function FrameMarkdownViewer({
   content,
   shellStyle = false,
+  projectRootPath,
 }: {
   content: string
   shellStyle?: boolean
+  projectRootPath?: string
 }) {
   const sections = useMemo(() => parseFrameContent(content), [content])
   const shellPieces = useMemo(
@@ -706,18 +680,44 @@ export function FrameMarkdownViewer({
             const key = `qa-${piece.n}-${piece.label}`
             const blockVariant = shellFrameBlockVariant(piece.label)
             if (blockVariant === 'userStory') {
-              return <ShellUserStoriesSection key={key} label={piece.label} markdown={piece.markdown} />
+              return (
+                <ShellUserStoriesSection
+                  key={key}
+                  label={piece.label}
+                  markdown={piece.markdown}
+                  projectRootPath={projectRootPath}
+                />
+              )
             }
             if (blockVariant === 'functional') {
               return (
-                <ShellFunctionalRequirementsSection key={key} label={piece.label} markdown={piece.markdown} />
+                <ShellFunctionalRequirementsSection
+                  key={key}
+                  label={piece.label}
+                  markdown={piece.markdown}
+                  projectRootPath={projectRootPath}
+                />
               )
             }
             if (blockVariant === 'success') {
-              return <ShellSuccessCriteriaSection key={key} label={piece.label} markdown={piece.markdown} />
+              return (
+                <ShellSuccessCriteriaSection
+                  key={key}
+                  label={piece.label}
+                  markdown={piece.markdown}
+                  projectRootPath={projectRootPath}
+                />
+              )
             }
             if (blockVariant === 'outOfScope') {
-              return <ShellOutOfScopeSection key={key} label={piece.label} markdown={piece.markdown} />
+              return (
+                <ShellOutOfScopeSection
+                  key={key}
+                  label={piece.label}
+                  markdown={piece.markdown}
+                  projectRootPath={projectRootPath}
+                />
+              )
             }
             if (blockVariant === 'taskShaping') {
               return <ShellTaskShapingSection key={key} label={piece.label} markdown={piece.markdown} />
@@ -728,9 +728,11 @@ export function FrameMarkdownViewer({
                   {piece.n}. {piece.label}
                 </span>
                 <div className={styles.shellQaValue}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponentsFlat}>
-                    {piece.markdown}
-                  </ReactMarkdown>
+                  <SharedMarkdownRenderer
+                    content={piece.markdown}
+                    projectRootPath={projectRootPath}
+                    variant="context-shell"
+                  />
                 </div>
               </div>
             )
@@ -739,7 +741,14 @@ export function FrameMarkdownViewer({
             const qaeKey = `qae-${piece.n}-${piece.label}`
             const emptyVariant = shellFrameBlockVariant(piece.label)
             if (emptyVariant === 'outOfScope') {
-              return <ShellOutOfScopeSection key={qaeKey} label={piece.label} markdown="" />
+              return (
+                <ShellOutOfScopeSection
+                  key={qaeKey}
+                  label={piece.label}
+                  markdown=""
+                  projectRootPath={projectRootPath}
+                />
+              )
             }
             if (emptyVariant === 'taskShaping') {
               return <ShellTaskShapingSection key={qaeKey} label={piece.label} markdown="" />
@@ -756,13 +765,15 @@ export function FrameMarkdownViewer({
           if (piece.kind === 'body') {
             return (
               <div key={`body-${i}`} className={styles.shellBody}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponentsFlat}>
-                  {piece.markdown}
-                </ReactMarkdown>
+                <SharedMarkdownRenderer
+                  content={piece.markdown}
+                  projectRootPath={projectRootPath}
+                  variant="context-shell"
+                />
               </div>
             )
           }
-          return renderSectionBlock(piece.section, `sec-${i}`)
+          return renderSectionBlock(piece.section, `sec-${i}`, projectRootPath)
         })}
       </div>
     )
@@ -770,7 +781,7 @@ export function FrameMarkdownViewer({
 
   return (
     <div className={styles.viewer}>
-      {sections.map((section, i) => renderSectionBlock(section, i))}
+      {sections.map((section, i) => renderSectionBlock(section, i, projectRootPath))}
     </div>
   )
 }

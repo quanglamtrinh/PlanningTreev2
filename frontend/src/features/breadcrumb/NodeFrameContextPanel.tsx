@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { NodeRecord } from '../../api/types'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
+import { useProjectStore } from '../../stores/project-store'
 import { FrameMarkdownViewer } from './FrameMarkdownViewer'
 import styles from './NodeFrameContextPanel.module.css'
 
@@ -30,10 +31,11 @@ type FrameSectionProps = {
   projectId: string
   node: NodeRecord
   isCurrent: boolean
+  projectRootPath?: string
   sectionRef?: React.RefObject<HTMLDivElement>
 }
 
-function NodeFrameSection({ projectId, node, isCurrent, sectionRef }: FrameSectionProps) {
+function NodeFrameSection({ projectId, node, isCurrent, projectRootPath, sectionRef }: FrameSectionProps) {
   const entry = useNodeDocumentStore(
     useShallow((s) => s.entries[`${projectId}::${node.node_id}::frame`]),
   )
@@ -67,7 +69,7 @@ function NodeFrameSection({ projectId, node, isCurrent, sectionRef }: FrameSecti
         <div className={styles.frameEmpty}>No frame content yet.</div>
       ) : (
         <div className={styles.frameContent}>
-          <FrameMarkdownViewer content={entry.content} />
+          <FrameMarkdownViewer content={entry.content} projectRootPath={projectRootPath} />
         </div>
       )}
     </div>
@@ -80,6 +82,11 @@ export function NodeFrameContextPanel({ projectId, nodeId, nodeRegistry }: Props
   const [collapsed, setCollapsed] = useState(false)
   const currentSectionRef = useRef<HTMLDivElement>(null)
   const scrollBodyRef = useRef<HTMLDivElement>(null)
+  const projectRootPath = useProjectStore((state) =>
+    state.snapshot?.project.id === projectId
+      ? state.snapshot.project.project_path
+      : undefined,
+  )
 
   const chain = useMemo(
     () => buildAncestorChain(nodeId, nodeRegistry),
@@ -170,6 +177,7 @@ export function NodeFrameContextPanel({ projectId, nodeId, nodeRegistry }: Props
               projectId={projectId}
               node={node}
               isCurrent={node.node_id === nodeId}
+              projectRootPath={projectRootPath}
               sectionRef={currentSectionRef}
             />
           ))}
