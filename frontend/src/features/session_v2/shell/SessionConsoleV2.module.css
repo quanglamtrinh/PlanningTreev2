@@ -12,7 +12,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--surface-container-lowest);
+  background: #f7f8fa;
 }
 
 .statusBar {
@@ -21,8 +21,8 @@
   gap: 12px;
   align-items: center;
   padding: 10px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--outline) 12%, transparent);
-  background: var(--surface-container-low);
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
 }
 
 .statusBar strong {
@@ -190,52 +190,87 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 14px;
-  display: grid;
-  gap: 12px;
-}
-
-:global(.sessionV2Turn) {
-  border: 1px solid color-mix(in srgb, var(--outline) 12%, transparent);
-  border-radius: 12px;
-  background: var(--surface-container-low);
-}
-
-:global(.sessionV2TurnHeader) {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--outline) 10%, transparent);
-  font-size: 12px;
-}
-
-:global(.sessionV2TurnItems) {
-  padding: 12px;
+  padding: 22px 18px;
   display: grid;
   gap: 10px;
 }
 
-:global(.sessionV2Item) {
-  border: 1px solid color-mix(in srgb, var(--outline) 10%, transparent);
-  border-radius: 10px;
-  padding: 8px;
-  background: var(--surface-container-lowest);
-}
-
-:global(.sessionV2ItemMeta) {
+:global(.sessionV2MessageRow) {
+  width: min(860px, 100%);
+  margin: 0 auto;
   display: flex;
-  justify-content: space-between;
-  margin-bottom: 6px;
-  font-size: 11px;
-  color: var(--on-surface-variant);
+  justify-content: flex-start;
 }
 
-:global(.sessionV2ItemText) {
+:global(.sessionV2MessageRowUser) {
+  justify-content: flex-end;
+}
+
+:global(.sessionV2Bubble) {
+  max-width: min(860px, 100%);
+  border-radius: 14px;
+  padding: 12px 14px;
+  border: 1px solid #e6e8ee;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 6%);
+}
+
+:global(.sessionV2BubbleUser) {
+  max-width: min(640px, 100%);
+  background: #eef2ff;
+  border-color: #c7d2fe;
+}
+
+:global(.sessionV2MessageText) {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #111827;
+  font-family: var(--font-sans, 'Segoe UI', sans-serif);
+}
+
+:global(.sessionV2ToolSummary) {
+  width: min(860px, 100%);
+  margin: 0 auto;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #9ca3af;
+  padding: 2px 4px 4px;
+}
+
+:global(.sessionV2ToolCard) {
+  width: min(860px, 100%);
+  margin: 0 auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 6%);
+}
+
+:global(.sessionV2ToolCardHeader) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #eef0f4;
   font-size: 12px;
+  color: #4b5563;
+}
+
+:global(.sessionV2ToolCardText) {
+  margin: 0;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #111827;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  background: #fbfbfd;
+  border-radius: 0 0 12px 12px;
 }
 
 :global(.sessionV2Empty) {

@@ -11,7 +11,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route path="/" element={<Navigate replace to="/graph" />} />
+          <Route path="/" element={<Navigate replace to="/session-v2" />} />
           <Route path="/graph" element={<GraphWorkspace />} />
           <Route path="/usage-snapshot" element={<UsageSnapshotPage />} />
           <Route
@@ -23,7 +23,7 @@ export default function App() {
             element={<BreadcrumbPlaceholderV2 />}
           />
           <Route path="/session-v2" element={<SessionConsoleV2 />} />
-          <Route path="*" element={<Navigate replace to="/graph" />} />
+          <Route path="*" element={<Navigate replace to="/session-v2" />} />
         </Route>
       </Routes>
     </BrowserRouter>

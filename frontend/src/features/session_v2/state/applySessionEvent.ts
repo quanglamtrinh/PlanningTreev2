@@ -79,8 +79,10 @@ function normalizeSessionErrorCode(value: unknown): SessionErrorCode {
 }
 
 function normalizeItemKind(value: unknown): ItemKind {
+  if (value === 'userMessage') {
+    return 'userMessage'
+  }
   if (
-    value === 'userMessage' ||
     value === 'agentMessage' ||
     value === 'reasoning' ||
     value === 'plan' ||
@@ -91,12 +93,42 @@ function normalizeItemKind(value: unknown): ItemKind {
   ) {
     return value
   }
+  if (value === 'hookPrompt') {
+    return 'userMessage'
+  }
   return 'agentMessage'
 }
 
 function normalizeItemStatus(value: unknown): ItemStatus {
   if (value === 'inProgress' || value === 'completed' || value === 'failed') {
     return value
+  }
+  const normalized = String(value ?? '').trim()
+  if (
+    normalized === 'running' ||
+    normalized === 'requested' ||
+    normalized === 'answer_submitted'
+  ) {
+    return 'inProgress'
+  }
+  if (
+    normalized === 'approved' ||
+    normalized === 'answered' ||
+    normalized === 'success'
+  ) {
+    return 'completed'
+  }
+  if (
+    normalized === 'rejected' ||
+    normalized === 'declined' ||
+    normalized === 'denied' ||
+    normalized === 'aborted' ||
+    normalized === 'canceled' ||
+    normalized === 'cancelled' ||
+    normalized === 'expired' ||
+    normalized === 'stale'
+  ) {
+    return 'failed'
   }
   return 'inProgress'
 }
@@ -140,7 +172,91 @@ function upsertTurn(state: SessionProjectionState, threadId: string, turn: Sessi
   state.turnsByThread = { ...state.turnsByThread, [threadId]: nextList }
 }
 
-function upsertItem(state: SessionProjectionState, threadId: string, turnId: string | null, item: SessionItem): void {
+function isDeltaMethod(method: string): boolean {
+  return (
+    method === 'item/agentMessage/delta' ||
+    method === 'item/plan/delta' ||
+    method === 'item/reasoning/summaryTextDelta' ||
+    method === 'item/reasoning/summaryPartAdded' ||
+    method === 'item/reasoning/textDelta' ||
+    method === 'item/commandExecution/outputDelta' ||
+    method === 'item/fileChange/outputDelta'
+  )
+}
+
+function appendDelta(base: unknown, delta: unknown): string {
+  const baseText = typeof base === 'string' ? base : ''
+  const deltaText = typeof delta === 'string' ? delta : ''
+  return `${baseText}${deltaText}`
+}
+
+function toNonNegativeInteger(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+    return value
+  }
+  return fallback
+}
+
+function mergeDeltaPayload(
+  previousPayload: Record<string, unknown>,
+  incomingPayload: Record<string, unknown>,
+  method: string,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...previousPayload, ...incomingPayload }
+  const delta = incomingPayload.delta
+  if (typeof delta !== 'string' || delta.length === 0) {
+    return merged
+  }
+
+  if (method === 'item/agentMessage/delta' || method === 'item/plan/delta') {
+    merged.text = appendDelta(previousPayload.text, delta)
+    return merged
+  }
+
+  if (method === 'item/commandExecution/outputDelta') {
+    const nextOutput = appendDelta(previousPayload.aggregatedOutput ?? previousPayload.output, delta)
+    merged.aggregatedOutput = nextOutput
+    merged.output = nextOutput
+    return merged
+  }
+
+  if (method === 'item/fileChange/outputDelta') {
+    merged.output = appendDelta(previousPayload.output, delta)
+    return merged
+  }
+
+  if (method === 'item/reasoning/summaryTextDelta') {
+    const summaryIndex = toNonNegativeInteger(incomingPayload.summaryIndex, 0)
+    const previousSummary = Array.isArray(previousPayload.summary) ? [...previousPayload.summary] : []
+    const current = summaryIndex >= 0 ? previousSummary[summaryIndex] : ''
+    if (summaryIndex >= 0) {
+      previousSummary[summaryIndex] = appendDelta(current, delta)
+      merged.summary = previousSummary
+    }
+    return merged
+  }
+
+  if (method === 'item/reasoning/textDelta') {
+    const contentIndex = toNonNegativeInteger(incomingPayload.contentIndex, 0)
+    const previousContent = Array.isArray(previousPayload.content) ? [...previousPayload.content] : []
+    const current = contentIndex >= 0 ? previousContent[contentIndex] : ''
+    if (contentIndex >= 0) {
+      previousContent[contentIndex] = appendDelta(current, delta)
+      merged.content = previousContent
+    }
+    return merged
+  }
+
+  return merged
+}
+
+function upsertItem(
+  state: SessionProjectionState,
+  threadId: string,
+  turnId: string | null,
+  item: SessionItem,
+  method: string,
+): void {
   if (!turnId) {
     return
   }
@@ -149,8 +265,19 @@ function upsertItem(state: SessionProjectionState, threadId: string, turnId: str
   const index = list.findIndex((entry) => entry.id === item.id)
   let nextList: SessionItem[]
   if (index >= 0) {
+    const existing = list[index]
+    const mergedPayload =
+      isDeltaMethod(method) && existing.payload && item.payload
+        ? mergeDeltaPayload(existing.payload, item.payload, method)
+        : item.payload
     nextList = [...list]
-    nextList[index] = item
+    nextList[index] = {
+      ...existing,
+      ...item,
+      payload: mergedPayload,
+      createdAtMs: existing.createdAtMs,
+      status: method === 'item/completed' ? 'completed' : item.status,
+    }
   } else {
     nextList = [...list, item]
   }
@@ -217,7 +344,7 @@ function normalizeItemFromParams(
       id: itemId,
       threadId,
       turnId: typeof itemRecord.turnId === 'string' ? itemRecord.turnId : turnId,
-      kind: normalizeItemKind(itemRecord.kind),
+      kind: normalizeItemKind(itemRecord.kind ?? itemRecord.type),
       status: statusOverride ?? normalizeItemStatus(itemRecord.status),
       createdAtMs: typeof itemRecord.createdAtMs === 'number' ? itemRecord.createdAtMs : Date.now(),
       updatedAtMs: Date.now(),
@@ -324,7 +451,7 @@ export function applySessionEvent(
               { item: raw as Record<string, unknown> },
             )
             if (item) {
-              upsertItem(state, threadId, resolvedTurnId, item)
+              upsertItem(state, threadId, resolvedTurnId, item, envelope.method)
             }
           }
         }
@@ -348,7 +475,7 @@ export function applySessionEvent(
         envelope.method === 'item/completed' ? 'completed' : undefined,
       )
       if (item) {
-        upsertItem(state, threadId, item.turnId, item)
+        upsertItem(state, threadId, item.turnId, item, envelope.method)
       }
       break
     }

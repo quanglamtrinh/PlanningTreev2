@@ -160,6 +160,10 @@ export function SessionConsoleV2() {
     () => (activeThreadId ? turnsByThread[activeThreadId] ?? [] : []),
     [activeThreadId, turnsByThread],
   )
+  const activeThread = useMemo(
+    () => (activeThreadId ? threadsById[activeThreadId] ?? null : null),
+    [activeThreadId, threadsById],
+  )
 
   const activeRunningTurn = useMemo(() => {
     const candidates = [...activeTurns]
@@ -497,12 +501,12 @@ export function SessionConsoleV2() {
       <main className={styles.mainPane}>
         <header className={styles.statusBar}>
           <div>
-            <strong>Session V2</strong>
+            <strong>Session</strong>
             <span className={styles.muted}>connection: {connection.phase}</span>
           </div>
           <div className={styles.statusMeta}>
-            <span>thread: {activeThreadId ?? 'none'}</span>
-            <span>running: {activeRunningTurn ? activeRunningTurn.id : 'no'}</span>
+            <span>thread: {activeThread?.name ?? activeThreadId ?? 'none'}</span>
+            <span>running: {activeRunningTurn ? 'yes' : 'no'}</span>
             <span>queue: {queue.length}</span>
             <span>gap: {activeThreadId ? (gapDetectedByThread[activeThreadId] ? 'yes' : 'no') : 'n/a'}</span>
           </div>

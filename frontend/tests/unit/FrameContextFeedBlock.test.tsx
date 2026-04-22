@@ -293,4 +293,128 @@ describe('FrameContextFeedBlock', () => {
       expect(loadClarify).toHaveBeenCalledWith('project-1', 'root')
     })
   })
+
+  it('uses the same document chrome for frame, clarify, and spec panels', async () => {
+    seedDocumentStore('root', {
+      frameContent: '# Frame\nContent',
+      specContent: '# Spec\nContent',
+    })
+    seedClarifyStore('root')
+
+    render(
+      <FrameContextFeedBlock
+        projectId="project-1"
+        nodeId="root"
+        nodeRegistry={[makeNode()]}
+        variant="audit"
+        specConfirmed
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Frame' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Spec' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Clarify' }))
+
+    expect(await screen.findByTestId('frame-context-panel-body-frame')).toHaveAttribute('data-panel-chrome', 'document')
+    expect(screen.getByTestId('frame-context-panel-body-spec')).toHaveAttribute('data-panel-chrome', 'document')
+    expect(screen.getByTestId('frame-context-panel-body-clarify')).toHaveAttribute('data-panel-chrome', 'document')
+  })
+
+  it('renders split panel using document chrome for ancestor nodes', async () => {
+    const loadDocument = vi.fn().mockResolvedValue(undefined)
+    useNodeDocumentStore.setState({
+      ...useNodeDocumentStore.getState(),
+      loadDocument,
+      entries: {
+        'project-1::root::frame': {
+          content: '# Root Frame\nParent',
+          savedContent: '# Root Frame\nParent',
+          updatedAt: '2026-04-03T00:00:00Z',
+          isLoading: false,
+          isSaving: false,
+          error: null,
+          hasLoaded: true,
+        },
+        'project-1::child::frame': {
+          content: '# Child Frame\nCurrent',
+          savedContent: '# Child Frame\nCurrent',
+          updatedAt: '2026-04-03T00:00:00Z',
+          isLoading: false,
+          isSaving: false,
+          error: null,
+          hasLoaded: true,
+        },
+      },
+    } as Partial<ReturnType<typeof useNodeDocumentStore.getState>>)
+
+    const loadClarify = vi.fn().mockResolvedValue(undefined)
+    useClarifyStore.setState({
+      ...useClarifyStore.getState(),
+      loadClarify,
+      entries: {
+        'project-1::root': {
+          clarify: {
+            schema_version: 2,
+            source_frame_revision: 1,
+            confirmed_revision: 0,
+            confirmed_at: null,
+            questions: [],
+            updated_at: '2026-04-03T00:00:00Z',
+          },
+          savedQuestions: [],
+          isLoading: false,
+          isSaving: false,
+          loadError: '',
+          saveError: '',
+          hasLoaded: true,
+        },
+        'project-1::child': {
+          clarify: {
+            schema_version: 2,
+            source_frame_revision: 1,
+            confirmed_revision: 0,
+            confirmed_at: null,
+            questions: [],
+            updated_at: '2026-04-03T00:00:00Z',
+          },
+          savedQuestions: [],
+          isLoading: false,
+          isSaving: false,
+          loadError: '',
+          saveError: '',
+          hasLoaded: true,
+        },
+      },
+    } as Partial<ReturnType<typeof useClarifyStore.getState>>)
+
+    const rootNode = makeNode({
+      node_id: 'root',
+      title: 'Root task',
+      parent_id: null,
+      child_ids: ['child'],
+      hierarchical_number: '1',
+    })
+    const childNode = makeNode({
+      node_id: 'child',
+      title: 'Child task',
+      parent_id: 'root',
+      child_ids: [],
+      hierarchical_number: '1.1',
+      depth: 1,
+    })
+
+    render(
+      <FrameContextFeedBlock
+        projectId="project-1"
+        nodeId="child"
+        nodeRegistry={[rootNode, childNode]}
+        variant="ask"
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Split' }))
+
+    expect(await screen.findByTestId('frame-context-panel-body-split')).toHaveAttribute('data-panel-chrome', 'document')
+    expect(screen.getByTestId('frame-context-panel-body-split')).toHaveTextContent('Child task')
+  })
 })

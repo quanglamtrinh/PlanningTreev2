@@ -217,6 +217,10 @@
   border-top: 1px solid var(--fc-border-soft);
 }
 
+.documentPanel {
+  /* Marker class: Frame + Spec share the same document chrome in context feed. */
+}
+
 /* ─── Panel toggle button — matches image "∨ FRAME" style ─────────── */
 .panelToggle {
   display: flex;
@@ -282,11 +286,11 @@
   color: var(--fc-fg);
 }
 
-.nodeCardBody .panelBody:not(.framePanelBody) {
+.nodeCardBody .panelBody:not(.documentPanelBody) {
   padding: 15px 20px 18px;
 }
 
-.nodeCardBody .panelBody.framePanelBody {
+.nodeCardBody .panelBody.documentPanelBody {
   padding: 25px 50px 22px;
 }
 
@@ -368,11 +372,11 @@
 
 .clarifyQaQuestion {
   font-family: var(--fc-font);
-  font-size: var(--fc-size-body);
-  font-weight: 700;
-  color: var(--fc-mock-fg);
-  line-height: var(--fc-lh-body);
-  letter-spacing: -0.01em;
+  font-size: 17px;
+  font-weight: 800;
+  color: #000000a1;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
   display: block;
   margin: 0;
 }
@@ -443,18 +447,18 @@
 
 .childItem {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 6px 8px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
   border-radius: var(--radius-sm);
   background: transparent;
   border: none;
   box-sizing: border-box;
-  transition: background 0.1s ease;
+  transition: none;
 }
 
 .childItem:hover {
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  background: transparent;
 }
 
 .childNumber {
@@ -475,17 +479,18 @@
 
 .childTitle {
   font-family: var(--fc-font);
-  font-size: var(--fc-size-body);
-  font-weight: var(--fc-w-body-strong);
-  color: var(--fc-fg-muted);
-  line-height: var(--fc-lh-body);
+  font-size: 17px;
+  font-weight: 800;
+  color: #000000a1;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
   flex: 1;
   min-width: 0;
 }
 
 .childTitleCurrent {
-  color: var(--fc-fg);
-  font-weight: var(--fc-w-field-title);
+  color: #000000d0;
+  font-weight: 800;
 }
 
 /* ─── Footer spacer ────────────────────────────────────────────────── */
