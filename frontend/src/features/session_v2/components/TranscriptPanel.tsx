@@ -21,12 +21,37 @@ type TranscriptRow =
       key: string
       type: 'compactMarker'
     }
+  | {
+      key: string
+      type: 'turnFileSummary'
+      summary: TurnFileSummary
+    }
 
 type FileChangeStats = {
   created: number
   edited: number
   deleted: number
   renamed: number
+}
+
+type DiffStats = {
+  added: number
+  removed: number
+}
+
+type TurnFileChangeEntry = {
+  path: string
+  changeType: 'created' | 'updated' | 'deleted'
+  added: number
+  removed: number
+  summary: string | null
+}
+
+type TurnFileSummary = {
+  fileCount: number
+  added: number
+  removed: number
+  entries: TurnFileChangeEntry[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -51,6 +76,67 @@ function lowercaseFirst(text: string): string {
     return ''
   }
   return `${text.charAt(0).toLowerCase()}${text.slice(1)}`
+}
+
+function normalizeDiffText(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
+  return normalized ? normalized : null
+}
+
+function diffStatsFromText(text: string): DiffStats {
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  let added = 0
+  let removed = 0
+  for (const line of normalized.split('\n')) {
+    if (!line || line.startsWith('+++') || line.startsWith('---')) {
+      continue
+    }
+    if (line.startsWith('+')) {
+      added += 1
+      continue
+    }
+    if (line.startsWith('-')) {
+      removed += 1
+    }
+  }
+  return { added, removed }
+}
+
+function diffStatsFromSummary(text: string | null): DiffStats {
+  if (!text) {
+    return { added: 0, removed: 0 }
+  }
+  const ins = text.match(/(\d+)\s+insertions?\b/i)
+  const dels = text.match(/(\d+)\s+deletions?\b/i)
+  return {
+    added: ins ? Number(ins[1]) : 0,
+    removed: dels ? Number(dels[1]) : 0,
+  }
+}
+
+function normalizeChangeType(value: unknown): 'created' | 'updated' | 'deleted' {
+  const normalized = normalizeText(value).toLowerCase()
+  if (
+    normalized === 'add' ||
+    normalized === 'added' ||
+    normalized === 'create' ||
+    normalized === 'created' ||
+    normalized === 'new'
+  ) {
+    return 'created'
+  }
+  if (
+    normalized === 'delete' ||
+    normalized === 'deleted' ||
+    normalized === 'remove' ||
+    normalized === 'removed'
+  ) {
+    return 'deleted'
+  }
+  return 'updated'
 }
 
 function extractUserContent(content: unknown): string {
@@ -220,6 +306,82 @@ function isToolItem(item: SessionItem): boolean {
   return !isContextCompactionItem(item) && resolveRowVariant(item) === 'tool'
 }
 
+function isFileChangeItem(item: SessionItem): boolean {
+  return payloadTypeOf(item) === 'fileChange' || item.kind === 'fileChange'
+}
+
+function parseFileChangeEntriesFromPayload(payload: Record<string, unknown>): TurnFileChangeEntry[] {
+  const rawChanges =
+    Array.isArray(payload.changes) ? payload.changes : Array.isArray(payload.files) ? payload.files : []
+  const entries: TurnFileChangeEntry[] = []
+  for (const rawChange of rawChanges) {
+    if (!isRecord(rawChange)) {
+      continue
+    }
+    const path = normalizeText(rawChange.path)
+    if (!path) {
+      continue
+    }
+    const summary = normalizeText(rawChange.summary) || null
+    const diff =
+      normalizeDiffText(rawChange.diff) ??
+      normalizeDiffText(rawChange.patchText) ??
+      normalizeDiffText(rawChange.patch_text)
+    const diffStats = diff ? diffStatsFromText(diff) : diffStatsFromSummary(summary)
+    entries.push({
+      path,
+      changeType: normalizeChangeType(rawChange.kind || rawChange.changeType),
+      added: diffStats.added,
+      removed: diffStats.removed,
+      summary,
+    })
+  }
+  return entries
+}
+
+function summarizeTurnFileChanges(items: SessionItem[]): TurnFileSummary | null {
+  const byPath = new Map<string, TurnFileChangeEntry>()
+  for (const item of items) {
+    if (!isFileChangeItem(item)) {
+      continue
+    }
+    const payload = isRecord(item.payload) ? item.payload : {}
+    const entries = parseFileChangeEntriesFromPayload(payload)
+    for (const entry of entries) {
+      const existing = byPath.get(entry.path)
+      if (!existing) {
+        byPath.set(entry.path, { ...entry })
+        continue
+      }
+      byPath.set(entry.path, {
+        ...existing,
+        changeType: entry.changeType === 'deleted' ? 'deleted' : entry.changeType === 'created' ? 'created' : existing.changeType,
+        added: existing.added + entry.added,
+        removed: existing.removed + entry.removed,
+        summary: entry.summary ?? existing.summary,
+      })
+    }
+  }
+
+  const entries = [...byPath.values()]
+  if (entries.length === 0) {
+    return null
+  }
+  const totals = entries.reduce(
+    (acc, entry) => ({
+      added: acc.added + entry.added,
+      removed: acc.removed + entry.removed,
+    }),
+    { added: 0, removed: 0 },
+  )
+  return {
+    fileCount: entries.length,
+    added: totals.added,
+    removed: totals.removed,
+    entries,
+  }
+}
+
 function isTerminalTurn(turn: SessionTurn): boolean {
   return turn.status === 'completed' || turn.status === 'failed' || turn.status === 'interrupted'
 }
@@ -345,6 +507,16 @@ function renderToolTitle(item: SessionItem): string {
   return item.kind
 }
 
+function changeTypeLabel(changeType: 'created' | 'updated' | 'deleted'): string {
+  if (changeType === 'created') {
+    return 'created'
+  }
+  if (changeType === 'deleted') {
+    return 'deleted'
+  }
+  return 'updated'
+}
+
 function buildTranscriptRows(
   threadId: string,
   turns: SessionTurn[],
@@ -410,6 +582,14 @@ function buildTranscriptRows(
     }
 
     flushToolCluster()
+    const turnFileSummary = summarizeTurnFileChanges(items)
+    if (turnFileSummary) {
+      rows.push({
+        key: `${turn.id}:files-changed`,
+        type: 'turnFileSummary',
+        summary: turnFileSummary,
+      })
+    }
   }
   return rows
 }
@@ -440,6 +620,39 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
             <div key={row.key} className="sessionV2CompactMarker">
               <span className="sessionV2CompactMarkerText">Context automatically compacted</span>
             </div>
+          )
+        }
+        if (row.type === 'turnFileSummary') {
+          const summary = row.summary
+          return (
+            <article key={row.key} className="sessionV2TurnFileSummary">
+              <header className="sessionV2TurnFileSummaryHeader">
+                <span className="sessionV2TurnFileSummaryTitle">
+                  {pluralize(summary.fileCount, 'file', 'files')} changed
+                </span>
+                <span className="sessionV2TurnFileSummaryStats">
+                  <span className="sessionV2TurnFileSummaryAdd">+{summary.added}</span>
+                  <span className="sessionV2TurnFileSummaryDel">-{summary.removed}</span>
+                </span>
+              </header>
+              <ul className="sessionV2TurnFileSummaryList" aria-label="Changed files">
+                {summary.entries.map((entry) => (
+                  <li key={`${row.key}:${entry.path}`} className="sessionV2TurnFileSummaryItem">
+                    <div className="sessionV2TurnFileSummaryItemMain">
+                      <span className="sessionV2TurnFileSummaryBadge">{changeTypeLabel(entry.changeType)}</span>
+                      <code className="sessionV2TurnFileSummaryPath">{entry.path}</code>
+                    </div>
+                    <span className="sessionV2TurnFileSummaryItemStats">
+                      <span className="sessionV2TurnFileSummaryAdd">+{entry.added}</span>
+                      <span className="sessionV2TurnFileSummaryDel">-{entry.removed}</span>
+                    </span>
+                    {entry.summary ? (
+                      <div className="sessionV2TurnFileSummaryItemHint">{entry.summary}</div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </article>
           )
         }
         if (row.type === 'toolSummary') {

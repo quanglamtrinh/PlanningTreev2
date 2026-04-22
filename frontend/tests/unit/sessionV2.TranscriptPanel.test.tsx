@@ -113,7 +113,7 @@ describe('TranscriptPanel', () => {
     }
 
     const items = [message, command1, command2]
-    render(
+    const { container } = render(
       <TranscriptPanel
         threadId="thread-1"
         turns={[baseTurn(items, 'completed')]}
@@ -270,7 +270,7 @@ describe('TranscriptPanel', () => {
     }
 
     const items = [before, compact, after]
-    render(
+    const { container } = render(
       <TranscriptPanel
         threadId="thread-1"
         turns={[baseTurn(items, 'completed')]}
@@ -280,6 +280,77 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByText('Context automatically compacted')).toBeInTheDocument()
     expect(screen.queryByText('contextCompaction')).not.toBeInTheDocument()
+  })
+
+  it('renders end-of-turn files changed summary card', () => {
+    const message: SessionItem = {
+      id: 'item-msg',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'agentMessage',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'agentMessage',
+        text: 'Applied patches',
+      },
+    }
+    const fileChangeA: SessionItem = {
+      id: 'item-file-a',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'fileChange',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'fileChange',
+        changes: [
+          {
+            path: 'frontend/src/a.ts',
+            kind: 'modify',
+            diff: ['@@', '-old line', '+new line', '+newer line'].join('\n'),
+          },
+        ],
+      },
+    }
+    const fileChangeB: SessionItem = {
+      id: 'item-file-b',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'fileChange',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'fileChange',
+        changes: [
+          {
+            path: 'frontend/src/b.ts',
+            kind: 'delete',
+            diff: ['@@', '-gone'].join('\n'),
+          },
+        ],
+      },
+    }
+
+    const items = [message, fileChangeA, fileChangeB]
+    const { container } = render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn(items, 'completed')]}
+        itemsByTurn={{ 'thread-1:turn-1': items }}
+      />,
+    )
+
+    expect(screen.getByText('2 files changed')).toBeInTheDocument()
+    expect(screen.getByText('frontend/src/a.ts')).toBeInTheDocument()
+    expect(screen.getByText('frontend/src/b.ts')).toBeInTheDocument()
+    const allText = container.textContent ?? ''
+    expect(allText).toContain('+2')
+    expect(allText).toContain('-2')
+    expect(allText.indexOf('Applied patches')).toBeLessThan(allText.indexOf('2 files changed'))
   })
 
   it('keeps detailed tool cards while turn is running', () => {
