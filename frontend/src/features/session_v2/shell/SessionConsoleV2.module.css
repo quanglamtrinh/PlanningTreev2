@@ -204,7 +204,9 @@
 }
 
 :global(.sessionV2MessageRowUser) {
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+  padding-bottom: 8px;
 }
 
 :global(.sessionV2Bubble) {
@@ -218,8 +220,11 @@
 
 :global(.sessionV2BubbleUser) {
   max-width: min(640px, 100%);
-  background: #eef2ff;
-  border-color: #c7d2fe;
+  background: #e8e8ea;
+  border-color: #e8e8ea;
+  box-shadow: none;
+  padding: 14px 16px;
+  border-radius: 16px;
 }
 
 :global(.sessionV2MessageRowAssistant) {
@@ -251,6 +256,74 @@
   line-height: 1.6;
   color: #111827;
   font-family: var(--font-sans, 'Segoe UI', sans-serif);
+}
+
+:global(.sessionV2UserMessageToggle) {
+  margin-top: 10px;
+  border: none;
+  background: transparent;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 1.2;
+  padding: 0;
+  cursor: pointer;
+}
+
+:global(.sessionV2UserMessageToggle:hover) {
+  color: #111827;
+}
+
+:global(.sessionV2UserMeta) {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1;
+  min-height: 20px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease-in-out;
+}
+
+:global(.sessionV2UserMetaTime) {
+  white-space: nowrap;
+}
+
+:global(.sessionV2UserMetaCopy) {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 120ms ease-in-out;
+}
+
+:global(.sessionV2MessageRowUser:hover .sessionV2UserMeta),
+:global(.sessionV2MessageRowUser:focus-within .sessionV2UserMeta) {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+:global(.sessionV2MessageRowUser:hover .sessionV2UserMetaCopy),
+:global(.sessionV2MessageRowUser:focus-within .sessionV2UserMetaCopy) {
+  pointer-events: auto;
+}
+
+:global(.sessionV2UserMetaCopy:hover) {
+  color: #111827;
+}
+
+:global(.sessionV2UserMetaCopiedLabel) {
+  font-size: 11px;
+  font-weight: 500;
 }
 
 :global(.sessionV2ToolSummary) {

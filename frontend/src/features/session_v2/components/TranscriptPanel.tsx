@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { SharedMarkdownRenderer } from '../../markdown/SharedMarkdownRenderer'
 import type { SessionItem, SessionTurn } from '../contracts'
 
@@ -54,6 +55,9 @@ type TurnFileSummary = {
   removed: number
   entries: TurnFileChangeEntry[]
 }
+
+const USER_MESSAGE_COLLAPSE_CHAR_LIMIT = 1100
+const USER_MESSAGE_COLLAPSE_LINE_LIMIT = 14
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object'
@@ -523,6 +527,62 @@ function renderToolTitle(item: SessionItem): string {
   return item.kind
 }
 
+function shouldCollapseUserMessage(text: string): boolean {
+  if (!text) {
+    return false
+  }
+  if (text.length > USER_MESSAGE_COLLAPSE_CHAR_LIMIT) {
+    return true
+  }
+  return text.split(/\r\n|\r|\n/).length > USER_MESSAGE_COLLAPSE_LINE_LIMIT
+}
+
+function getCollapsedUserMessageText(text: string): string {
+  if (!shouldCollapseUserMessage(text)) {
+    return text
+  }
+
+  const lines = text.split(/\r\n|\r|\n/)
+  let clipped = lines.slice(0, USER_MESSAGE_COLLAPSE_LINE_LIMIT).join('\n')
+  if (clipped.length > USER_MESSAGE_COLLAPSE_CHAR_LIMIT) {
+    clipped = clipped.slice(0, USER_MESSAGE_COLLAPSE_CHAR_LIMIT)
+  }
+  const trimmed = clipped.trimEnd()
+  return `${trimmed}\n...`
+}
+
+function formatItemTimeLabel(timestampMs: number): string {
+  const fallback = new Date()
+  const value = Number.isFinite(timestampMs) ? new Date(timestampMs) : fallback
+  const date = Number.isNaN(value.getTime()) ? fallback : value
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+async function copyTextToClipboard(value: string): Promise<void> {
+  if (!value) {
+    return
+  }
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    await navigator.clipboard.writeText(value)
+    return
+  }
+  if (typeof document === 'undefined') {
+    return
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
+  try {
+    document.execCommand('copy')
+  } finally {
+    document.body.removeChild(textarea)
+  }
+}
+
 function buildTranscriptRows(
   threadId: string,
   turns: SessionTurn[],
@@ -601,6 +661,9 @@ function buildTranscriptRows(
 }
 
 export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPanelProps) {
+  const [expandedUserRows, setExpandedUserRows] = useState<Record<string, boolean>>({})
+  const [copiedUserRow, setCopiedUserRow] = useState<string | null>(null)
+
   if (!threadId) {
     return (
       <section className="sessionV2Transcript">
@@ -704,6 +767,36 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
             : variant === 'assistant'
               ? 'sessionV2Bubble sessionV2BubbleAssistantInline'
               : 'sessionV2Bubble'
+        const isUserMessage = variant === 'user'
+        const canCollapseUserMessage = isUserMessage && shouldCollapseUserMessage(text)
+        const isExpanded = isUserMessage && Boolean(expandedUserRows[row.key])
+        const messageText = canCollapseUserMessage && !isExpanded ? getCollapsedUserMessageText(text) : text
+        const timeLabel = isUserMessage ? formatItemTimeLabel(row.item.createdAtMs) : ''
+
+        const handleToggleUserMessage = () => {
+          if (!canCollapseUserMessage) {
+            return
+          }
+          setExpandedUserRows((prev) => ({
+            ...prev,
+            [row.key]: !Boolean(prev[row.key]),
+          }))
+        }
+
+        const handleCopyUserMessage = async () => {
+          if (!isUserMessage || !text) {
+            return
+          }
+          try {
+            await copyTextToClipboard(text)
+            setCopiedUserRow(row.key)
+            window.setTimeout(() => {
+              setCopiedUserRow((current) => (current === row.key ? null : current))
+            }, 1400)
+          } catch {
+            // ignore clipboard failures for non-secure contexts
+          }
+        }
 
         return (
           <article key={row.key} className={rowClassName}>
@@ -711,9 +804,42 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
               {variant === 'assistant' && text ? (
                 <SharedMarkdownRenderer content={text} variant="document" />
               ) : (
-                <pre className="sessionV2MessageText">{text || '...'}</pre>
+                <pre className="sessionV2MessageText">{messageText || '...'}</pre>
               )}
+              {canCollapseUserMessage ? (
+                <button
+                  type="button"
+                  className="sessionV2UserMessageToggle"
+                  onClick={handleToggleUserMessage}
+                  aria-expanded={isExpanded}
+                >
+                  {isExpanded ? 'Show less' : 'Show more'}
+                </button>
+              ) : null}
             </div>
+            {isUserMessage ? (
+              <div className="sessionV2UserMeta" aria-label="User message details">
+                <span className="sessionV2UserMetaTime">{timeLabel}</span>
+                <button
+                  type="button"
+                  className="sessionV2UserMetaCopy"
+                  onClick={() => {
+                    void handleCopyUserMessage()
+                  }}
+                  aria-label="Copy message"
+                  title="Copy message"
+                >
+                  {copiedUserRow === row.key ? (
+                    <span className="sessionV2UserMetaCopiedLabel">Copied</span>
+                  ) : (
+                    <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            ) : null}
           </article>
         )
       })}

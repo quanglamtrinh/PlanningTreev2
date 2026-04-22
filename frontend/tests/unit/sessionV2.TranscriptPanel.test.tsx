@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import type { SessionItem, SessionTurn } from '../../src/features/session_v2/contracts'
@@ -378,5 +378,64 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByText('commandExecution')).toBeInTheDocument()
     expect(screen.queryByText('Ran 1 command')).not.toBeInTheDocument()
+  })
+
+  it('collapses long user message and toggles show more/show less', () => {
+    const longText = Array.from({ length: 20 }, (_, index) => `line-${index + 1}`).join('\n')
+    const userItem: SessionItem = {
+      id: 'item-user-long',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'userMessage',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'userMessage',
+        text: longText,
+      },
+    }
+
+    const { container } = render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn([userItem], 'completed')]}
+        itemsByTurn={{ 'thread-1:turn-1': [userItem] }}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeInTheDocument()
+    expect(container.textContent ?? '').not.toContain('line-20')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument()
+    expect(container.textContent ?? '').toContain('line-20')
+  })
+
+  it('renders user message detail row with copy action', () => {
+    const userItem: SessionItem = {
+      id: 'item-user-detail',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'userMessage',
+      status: 'completed',
+      createdAtMs: Date.now(),
+      updatedAtMs: Date.now(),
+      payload: {
+        type: 'userMessage',
+        text: 'copy me',
+      },
+    }
+
+    render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn([userItem], 'completed')]}
+        itemsByTurn={{ 'thread-1:turn-1': [userItem] }}
+      />,
+    )
+
+    expect(screen.getByLabelText('User message details')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy message' })).toBeInTheDocument()
   })
 })
