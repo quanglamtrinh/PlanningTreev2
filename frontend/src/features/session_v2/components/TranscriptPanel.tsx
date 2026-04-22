@@ -1,3 +1,4 @@
+import { SharedMarkdownRenderer } from '../../markdown/SharedMarkdownRenderer'
 import type { SessionItem, SessionTurn } from '../contracts'
 
 type TranscriptPanelProps = {
@@ -56,6 +57,21 @@ type TurnFileSummary = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object'
+}
+
+function shortenPath(rawPath: string): string {
+  const normalized = rawPath.replace(/\\/g, '/')
+  // Try to strip common absolute path prefixes to get a workspace-relative path
+  const homeMatch = normalized.match(/^\/(?:Users|home)\/[^/]+\/(.+)$/)
+  if (homeMatch) {
+    return homeMatch[1]
+  }
+  // Windows: strip drive + Users/username prefix
+  const winMatch = normalized.match(/^[A-Za-z]:\/(?:Users|home)\/[^/]+\/(.+)$/i)
+  if (winMatch) {
+    return winMatch[1]
+  }
+  return normalized
 }
 
 function normalizeText(value: unknown): string {
@@ -507,16 +523,6 @@ function renderToolTitle(item: SessionItem): string {
   return item.kind
 }
 
-function changeTypeLabel(changeType: 'created' | 'updated' | 'deleted'): string {
-  if (changeType === 'created') {
-    return 'created'
-  }
-  if (changeType === 'deleted') {
-    return 'deleted'
-  }
-  return 'updated'
-}
-
 function buildTranscriptRows(
   threadId: string,
   turns: SessionTurn[],
@@ -629,23 +635,32 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
               <header className="sessionV2TurnFileSummaryHeader">
                 <span className="sessionV2TurnFileSummaryTitle">
                   {pluralize(summary.fileCount, 'file', 'files')} changed
+                  {summary.added > 0 || summary.removed > 0 ? (
+                    <span className="sessionV2TurnFileSummaryStats">
+                      <span className="sessionV2TurnFileSummaryAdd">+{summary.added}</span>
+                      <span className="sessionV2TurnFileSummaryDel">-{summary.removed}</span>
+                    </span>
+                  ) : null}
                 </span>
-                <span className="sessionV2TurnFileSummaryStats">
-                  <span className="sessionV2TurnFileSummaryAdd">+{summary.added}</span>
-                  <span className="sessionV2TurnFileSummaryDel">-{summary.removed}</span>
-                </span>
+                <button type="button" className="sessionV2TurnFileSummaryUndo" aria-label="Undo changes">
+                  Undo ↺
+                </button>
               </header>
               <ul className="sessionV2TurnFileSummaryList" aria-label="Changed files">
                 {summary.entries.map((entry) => (
                   <li key={`${row.key}:${entry.path}`} className="sessionV2TurnFileSummaryItem">
                     <div className="sessionV2TurnFileSummaryItemMain">
-                      <span className="sessionV2TurnFileSummaryBadge">{changeTypeLabel(entry.changeType)}</span>
-                      <code className="sessionV2TurnFileSummaryPath">{entry.path}</code>
+                      <span className="sessionV2TurnFileSummaryPath">{shortenPath(entry.path)}</span>
                     </div>
-                    <span className="sessionV2TurnFileSummaryItemStats">
-                      <span className="sessionV2TurnFileSummaryAdd">+{entry.added}</span>
-                      <span className="sessionV2TurnFileSummaryDel">-{entry.removed}</span>
-                    </span>
+                    <div className="sessionV2TurnFileSummaryItemRight">
+                      {(entry.added > 0 || entry.removed > 0) ? (
+                        <span className="sessionV2TurnFileSummaryItemStats">
+                          <span className="sessionV2TurnFileSummaryAdd">+{entry.added}</span>
+                          <span className="sessionV2TurnFileSummaryDel">-{entry.removed}</span>
+                        </span>
+                      ) : null}
+                      <span className="sessionV2TurnFileSummaryChevron" aria-hidden>∨</span>
+                    </div>
                     {entry.summary ? (
                       <div className="sessionV2TurnFileSummaryItemHint">{entry.summary}</div>
                     ) : null}
@@ -677,13 +692,27 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
           )
         }
 
+        const rowClassName =
+          variant === 'user'
+            ? 'sessionV2MessageRow sessionV2MessageRowUser'
+            : variant === 'assistant'
+              ? 'sessionV2MessageRow sessionV2MessageRowAssistant'
+              : 'sessionV2MessageRow'
+        const bubbleClassName =
+          variant === 'user'
+            ? 'sessionV2Bubble sessionV2BubbleUser'
+            : variant === 'assistant'
+              ? 'sessionV2Bubble sessionV2BubbleAssistantInline'
+              : 'sessionV2Bubble'
+
         return (
-          <article
-            key={row.key}
-            className={variant === 'user' ? 'sessionV2MessageRow sessionV2MessageRowUser' : 'sessionV2MessageRow'}
-          >
-            <div className={variant === 'user' ? 'sessionV2Bubble sessionV2BubbleUser' : 'sessionV2Bubble'}>
-              <pre className="sessionV2MessageText">{text || '...'}</pre>
+          <article key={row.key} className={rowClassName}>
+            <div className={bubbleClassName}>
+              {variant === 'assistant' && text ? (
+                <SharedMarkdownRenderer content={text} variant="document" />
+              ) : (
+                <pre className="sessionV2MessageText">{text || '...'}</pre>
+              )}
             </div>
           </article>
         )
