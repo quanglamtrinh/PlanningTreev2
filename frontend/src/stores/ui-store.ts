@@ -10,7 +10,7 @@ export interface ThemeOption {
 }
 
 export const THEME_OPTIONS: ThemeOption[] = [
-  { id: 'default', label: 'Canvas', swatch: '#2563eb' },
+  { id: 'default', label: 'Canvas', swatch: '#339cff' },
   { id: 'warm-earth', label: 'Terracotta', swatch: '#c2410c' },
   { id: 'slate', label: 'Fjord', swatch: '#0ea5e9' },
   { id: 'forest', label: 'Moss', swatch: '#047857' },

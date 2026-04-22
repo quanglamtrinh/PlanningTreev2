@@ -1,17 +1,22 @@
 .console {
   flex: 1;
+  height: 100%;
   min-height: 0;
+  min-width: 0;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 260px;
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: 0;
+  overflow: hidden;
   border-top: 1px solid color-mix(in srgb, var(--outline) 10%, transparent);
 }
 
 .mainPane {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: #ffffff;
 }
 
@@ -54,66 +59,16 @@
   color: #7f1d1d;
 }
 
-.requestPane {
-  min-width: 0;
-  border-left: 1px solid color-mix(in srgb, var(--outline) 12%, transparent);
-  background: var(--surface-container-low);
-  padding: 10px;
-  overflow: auto;
-}
-
-.requestPane h3 {
-  margin: 4px 0 10px;
-  font-size: 13px;
-}
-
-.requestPane ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 8px;
-}
-
-.requestPane li button {
-  width: 100%;
-  text-align: left;
-  border: 1px solid color-mix(in srgb, var(--outline) 12%, transparent);
-  border-radius: 10px;
-  padding: 8px;
-  background: var(--surface-container-lowest);
-  cursor: pointer;
-}
-
-.requestPane li button span {
-  display: block;
-  font-size: 12px;
-}
-
-.requestPane li button small {
-  font-size: 11px;
-  color: var(--on-surface-variant);
-}
-
-.requestActive button {
-  border-color: color-mix(in srgb, var(--color-accent) 70%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 16%, transparent);
-}
-
 @media (max-width: 1200px) {
   .console {
     grid-template-columns: 220px minmax(0, 1fr);
-  }
-
-  .requestPane {
-    display: none;
   }
 }
 
 @media (max-width: 900px) {
   .console {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 }
 
@@ -121,8 +76,10 @@
   border-right: 1px solid color-mix(in srgb, var(--outline) 12%, transparent);
   background: var(--surface-container-low);
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 :global(.sessionV2ThreadListHeader) {
@@ -150,7 +107,10 @@
   list-style: none;
   display: grid;
   gap: 8px;
-  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 :global(.sessionV2ThreadRow) {
@@ -189,11 +149,33 @@
 :global(.sessionV2Transcript) {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 22px 18px;
   display: grid;
   gap: 10px;
   background: #ffffff;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+
+:global(.sessionV2Transcript::-webkit-scrollbar) {
+  width: 8px;
+  height: 8px;
+}
+
+:global(.sessionV2Transcript::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+:global(.sessionV2Transcript::-webkit-scrollbar-thumb) {
+  background: color-mix(in srgb, var(--outline) 34%, transparent);
+  border-radius: 999px;
+}
+
+:global(.sessionV2Transcript::-webkit-scrollbar-thumb:hover) {
+  background: color-mix(in srgb, var(--outline) 52%, transparent);
 }
 
 :global(.sessionV2MessageRow) {
@@ -388,11 +370,11 @@
 }
 
 :global(.sessionV2TurnFileSummaryAdd) {
-  color: #16a34a;
+  color: var(--color-diff-added, #00a240);
 }
 
 :global(.sessionV2TurnFileSummaryDel) {
-  color: #dc2626;
+  color: var(--color-diff-removed, #ba2623);
 }
 
 :global(.sessionV2TurnFileSummaryList) {

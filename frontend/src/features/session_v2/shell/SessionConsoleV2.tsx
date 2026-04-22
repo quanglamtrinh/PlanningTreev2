@@ -529,26 +529,6 @@ export function SessionConsoleV2() {
         />
       </main>
 
-      <aside className={styles.requestPane}>
-        <h3>Pending requests</h3>
-        <ul>
-          {queue.map((requestId) => {
-            const request = pendingById[requestId]
-            if (!request) {
-              return null
-            }
-            return (
-              <li key={requestId} className={activeRequestId === requestId ? styles.requestActive : ''}>
-                <button type="button" onClick={() => setActiveRequest(requestId)}>
-                  <span>{request.method}</span>
-                  <small>{request.requestId.slice(0, 8)}</small>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      </aside>
-
       {activeRequest?.method === 'item/tool/requestUserInput' ? (
         <RequestUserInputOverlay request={activeRequest} onResolve={resolveRequest} onReject={rejectRequest} />
       ) : null}
