@@ -472,13 +472,31 @@
 }
 
 :global(.sessionV2TurnFileSummaryChevron) {
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 600;
   color: var(--session-v2-fg-muted);
-  transition: transform 120ms ease-in-out;
+  background: transparent;
+  transition:
+    transform 120ms ease-in-out,
+    color 120ms ease-in-out,
+    background-color 120ms ease-in-out;
 }
 
 :global(.sessionV2TurnFileSummaryChevronOpen) {
   transform: rotate(180deg);
+}
+
+:global(.sessionV2TurnFileSummaryItemButton:hover .sessionV2TurnFileSummaryChevron),
+:global(.sessionV2TurnFileSummaryItemButton:focus-visible .sessionV2TurnFileSummaryChevron) {
+  color: var(--session-v2-fg);
+  background: color-mix(in srgb, var(--session-v2-fg) 10%, transparent);
 }
 
 :global(.sessionV2TurnFileSummaryItemStats) {
@@ -549,6 +567,23 @@
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--session-v2-fg);
+}
+
+:global(.sessionV2DiffTokPlain) {
+  color: inherit;
+}
+
+:global(.sessionV2DiffTokKeyword) {
+  color: #b42318;
+  font-weight: 500;
+}
+
+:global(.sessionV2DiffTokString) {
+  color: #0f7a2f;
+}
+
+:global(.sessionV2DiffTokNumber) {
+  color: #175cd3;
 }
 
 :global(.sessionV2CompactMarker) {
@@ -821,4 +856,3 @@
   display: flex;
   gap: 8px;
 }
-

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { SharedMarkdownRenderer } from '../../markdown/SharedMarkdownRenderer'
 import type { SessionItem, SessionTurn } from '../contracts'
 
@@ -65,6 +65,9 @@ type RenderableDiffLine = {
 
 const USER_MESSAGE_COLLAPSE_CHAR_LIMIT = 1100
 const USER_MESSAGE_COLLAPSE_LINE_LIMIT = 14
+const DIFF_KEYWORD_RE =
+  /\b(import|export|const|let|var|function|return|async|await|new|from|default|class|extends|interface|type|if|else|for|while|switch|case|try|catch|finally|throw|break|continue|public|private|protected|readonly|static|implements|enum)\b/g
+const DIFF_NUMBER_RE = /\b(?:\d+\.?\d*|\.\d+)\b/g
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object'
@@ -261,6 +264,96 @@ function buildRenderableDiffLines(diffText: string | null): RenderableDiffLine[]
   }
 
   return rendered
+}
+
+function highlightCodeSegment(segment: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = []
+  const keywordRe = new RegExp(DIFF_KEYWORD_RE.source, 'g')
+  let cursor = 0
+  let match: RegExpExecArray | null
+  while ((match = keywordRe.exec(segment)) !== null) {
+    if (match.index > cursor) {
+      const plainChunk = segment.slice(cursor, match.index)
+      nodes.push(...highlightNumberChunk(plainChunk, `${keyPrefix}:plain:${cursor}`))
+    }
+    nodes.push(
+      <span key={`${keyPrefix}:kw:${match.index}`} className="sessionV2DiffTokKeyword">
+        {match[1]}
+      </span>,
+    )
+    cursor = match.index + match[0].length
+  }
+  if (cursor < segment.length) {
+    nodes.push(...highlightNumberChunk(segment.slice(cursor), `${keyPrefix}:tail`))
+  }
+  if (nodes.length === 0) {
+    nodes.push(
+      <span key={`${keyPrefix}:empty`} className="sessionV2DiffTokPlain">
+        {segment}
+      </span>,
+    )
+  }
+  return nodes
+}
+
+function highlightNumberChunk(chunk: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = []
+  const numberRe = new RegExp(DIFF_NUMBER_RE.source, 'g')
+  let cursor = 0
+  let match: RegExpExecArray | null
+  while ((match = numberRe.exec(chunk)) !== null) {
+    if (match.index > cursor) {
+      nodes.push(
+        <span key={`${keyPrefix}:plain:${cursor}`} className="sessionV2DiffTokPlain">
+          {chunk.slice(cursor, match.index)}
+        </span>,
+      )
+    }
+    nodes.push(
+      <span key={`${keyPrefix}:num:${match.index}`} className="sessionV2DiffTokNumber">
+        {match[0]}
+      </span>,
+    )
+    cursor = match.index + match[0].length
+  }
+  if (cursor < chunk.length) {
+    nodes.push(
+      <span key={`${keyPrefix}:plain:end`} className="sessionV2DiffTokPlain">
+        {chunk.slice(cursor)}
+      </span>,
+    )
+  }
+  if (nodes.length === 0) {
+    nodes.push(
+      <span key={`${keyPrefix}:plain:full`} className="sessionV2DiffTokPlain">
+        {chunk}
+      </span>,
+    )
+  }
+  return nodes
+}
+
+function highlightDiffCodeLine(line: string, lineKey: string): ReactNode {
+  const parts = line.split(/('[^']*'|"[^"]*"|`[^`]*`)/g)
+  const rendered: ReactNode[] = []
+  parts.forEach((part, index) => {
+    if (!part) {
+      return
+    }
+    if (/^['"`]/.test(part)) {
+      rendered.push(
+        <span key={`${lineKey}:str:${index}`} className="sessionV2DiffTokString">
+          {part}
+        </span>,
+      )
+      return
+    }
+    rendered.push(...highlightCodeSegment(part, `${lineKey}:seg:${index}`))
+  })
+  if (rendered.length === 0) {
+    return <span className="sessionV2DiffTokPlain">{line}</span>
+  }
+  return <>{rendered}</>
 }
 
 function extractUserContent(content: unknown): string {
@@ -870,7 +963,7 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
                                       {line.lineNumber ?? ''}
                                     </span>
                                     <code className="sessionV2TurnFileSummaryDiffCode">
-                                      {line.text || ' '}
+                                      {line.text ? highlightDiffCodeLine(line.text, `${entryKey}:code:${lineIndex}`) : ' '}
                                     </code>
                                   </div>
                                 )
