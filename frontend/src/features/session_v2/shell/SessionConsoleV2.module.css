@@ -384,16 +384,31 @@
 }
 
 :global(.sessionV2TurnFileSummaryItem) {
-  padding: 8px 12px;
+  padding: 0;
   border-bottom: 1px solid #edf1f6;
-  display: flex;
-  align-items: center;
-  gap: 8px;
   min-width: 0;
 }
 
 :global(.sessionV2TurnFileSummaryItem:last-child) {
   border-bottom: none;
+}
+
+:global(.sessionV2TurnFileSummaryItemButton) {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+:global(.sessionV2TurnFileSummaryItemButton:hover) {
+  background: #f3f4f6;
 }
 
 :global(.sessionV2TurnFileSummaryItemMain) {
@@ -428,6 +443,11 @@
 :global(.sessionV2TurnFileSummaryChevron) {
   font-size: 14px;
   color: #9ca3af;
+  transition: transform 120ms ease-in-out;
+}
+
+:global(.sessionV2TurnFileSummaryChevronOpen) {
+  transform: rotate(180deg);
 }
 
 :global(.sessionV2TurnFileSummaryItemStats) {
@@ -439,9 +459,65 @@
 }
 
 :global(.sessionV2TurnFileSummaryItemHint) {
-  grid-column: 1 / span 2;
   font-size: 12px;
   color: #6b7280;
+  padding: 8px 12px 10px;
+}
+
+:global(.sessionV2TurnFileSummaryDiffPanel) {
+  border-top: 1px solid #edf1f6;
+  background: #f3f4f6;
+  padding: 0 10px 10px 10px;
+}
+
+:global(.sessionV2TurnFileSummaryDiffViewport) {
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+  scrollbar-width: thin;
+}
+
+:global(.sessionV2TurnFileSummaryDiffRow) {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: stretch;
+  column-gap: 10px;
+  min-height: 1.5em;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+:global(.sessionV2TurnFileSummaryDiffRowAdd) {
+  background: color-mix(in srgb, var(--color-diff-added, #00a240) 14%, #ffffff);
+  border-left: 3px solid var(--color-diff-added, #00a240);
+}
+
+:global(.sessionV2TurnFileSummaryDiffRowDel) {
+  background: color-mix(in srgb, var(--color-diff-removed, #ba2623) 12%, #ffffff);
+  border-left: 3px solid var(--color-diff-removed, #ba2623);
+}
+
+:global(.sessionV2TurnFileSummaryDiffRowCtx) {
+  background: #ffffff;
+}
+
+:global(.sessionV2TurnFileSummaryDiffLineNum) {
+  text-align: right;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 0 2px 8px;
+  user-select: none;
+}
+
+:global(.sessionV2TurnFileSummaryDiffCode) {
+  margin: 0;
+  padding: 2px 12px 2px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #111827;
 }
 
 :global(.sessionV2CompactMarker) {

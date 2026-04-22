@@ -47,6 +47,7 @@ type TurnFileChangeEntry = {
   added: number
   removed: number
   summary: string | null
+  diffText: string | null
 }
 
 type TurnFileSummary = {
@@ -54,6 +55,12 @@ type TurnFileSummary = {
   added: number
   removed: number
   entries: TurnFileChangeEntry[]
+}
+
+type RenderableDiffLine = {
+  kind: 'added' | 'removed' | 'context'
+  lineNumber: number | null
+  text: string
 }
 
 const USER_MESSAGE_COLLAPSE_CHAR_LIMIT = 1100
@@ -157,6 +164,103 @@ function normalizeChangeType(value: unknown): 'created' | 'updated' | 'deleted' 
     return 'deleted'
   }
   return 'updated'
+}
+
+function mergeDiffText(existing: string | null, next: string | null): string | null {
+  if (!existing) {
+    return next
+  }
+  if (!next) {
+    return existing
+  }
+  if (existing.includes(next)) {
+    return existing
+  }
+  return `${existing}\n${next}`
+}
+
+function parseUnifiedDiffHunkHeader(line: string): { oldStart: number; newStart: number } | null {
+  const match = line.match(/^@@\s+\-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/)
+  if (!match) {
+    return null
+  }
+  return {
+    oldStart: Number(match[1]),
+    newStart: Number(match[2]),
+  }
+}
+
+function isDiffMetadataLine(line: string): boolean {
+  return (
+    line.startsWith('diff --git ') ||
+    line.startsWith('index ') ||
+    line.startsWith('--- ') ||
+    line.startsWith('+++ ') ||
+    line.startsWith('*** ')
+  )
+}
+
+function buildRenderableDiffLines(diffText: string | null): RenderableDiffLine[] {
+  if (!diffText) {
+    return []
+  }
+  const normalized = diffText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
+  if (!normalized) {
+    return []
+  }
+
+  const lines = normalized.split('\n')
+  const rendered: RenderableDiffLine[] = []
+  let oldLineNumber = 1
+  let newLineNumber = 1
+
+  for (const line of lines) {
+    const hunk = parseUnifiedDiffHunkHeader(line)
+    if (hunk) {
+      oldLineNumber = hunk.oldStart
+      newLineNumber = hunk.newStart
+      continue
+    }
+    if (isDiffMetadataLine(line)) {
+      continue
+    }
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      rendered.push({
+        kind: 'added',
+        lineNumber: newLineNumber > 0 ? newLineNumber : null,
+        text: line.slice(1),
+      })
+      if (newLineNumber > 0) {
+        newLineNumber += 1
+      }
+      continue
+    }
+    if (line.startsWith('-') && !line.startsWith('---')) {
+      rendered.push({
+        kind: 'removed',
+        lineNumber: oldLineNumber > 0 ? oldLineNumber : null,
+        text: line.slice(1),
+      })
+      if (oldLineNumber > 0) {
+        oldLineNumber += 1
+      }
+      continue
+    }
+    const contextText = line.startsWith(' ') ? line.slice(1) : line
+    rendered.push({
+      kind: 'context',
+      lineNumber: newLineNumber > 0 ? newLineNumber : null,
+      text: contextText,
+    })
+    if (oldLineNumber > 0) {
+      oldLineNumber += 1
+    }
+    if (newLineNumber > 0) {
+      newLineNumber += 1
+    }
+  }
+
+  return rendered
 }
 
 function extractUserContent(content: unknown): string {
@@ -354,6 +458,7 @@ function parseFileChangeEntriesFromPayload(payload: Record<string, unknown>): Tu
       added: diffStats.added,
       removed: diffStats.removed,
       summary,
+      diffText: diff,
     })
   }
   return entries
@@ -379,6 +484,7 @@ function summarizeTurnFileChanges(items: SessionItem[]): TurnFileSummary | null 
         added: existing.added + entry.added,
         removed: existing.removed + entry.removed,
         summary: entry.summary ?? existing.summary,
+        diffText: mergeDiffText(existing.diffText, entry.diffText),
       })
     }
   }
@@ -663,6 +769,7 @@ function buildTranscriptRows(
 export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPanelProps) {
   const [expandedUserRows, setExpandedUserRows] = useState<Record<string, boolean>>({})
   const [copiedUserRow, setCopiedUserRow] = useState<string | null>(null)
+  const [expandedFileRowsBySummary, setExpandedFileRowsBySummary] = useState<Record<string, string | null>>({})
 
   if (!threadId) {
     return (
@@ -693,6 +800,7 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
         }
         if (row.type === 'turnFileSummary') {
           const summary = row.summary
+          const expandedEntryKey = expandedFileRowsBySummary[row.key] ?? null
           return (
             <article key={row.key} className="sessionV2TurnFileSummary">
               <header className="sessionV2TurnFileSummaryHeader">
@@ -706,29 +814,78 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
                   ) : null}
                 </span>
                 <button type="button" className="sessionV2TurnFileSummaryUndo" aria-label="Undo changes">
-                  Undo ↺
+                  Undo
                 </button>
               </header>
               <ul className="sessionV2TurnFileSummaryList" aria-label="Changed files">
-                {summary.entries.map((entry) => (
-                  <li key={`${row.key}:${entry.path}`} className="sessionV2TurnFileSummaryItem">
-                    <div className="sessionV2TurnFileSummaryItemMain">
-                      <span className="sessionV2TurnFileSummaryPath">{shortenPath(entry.path)}</span>
-                    </div>
-                    <div className="sessionV2TurnFileSummaryItemRight">
-                      {(entry.added > 0 || entry.removed > 0) ? (
-                        <span className="sessionV2TurnFileSummaryItemStats">
-                          <span className="sessionV2TurnFileSummaryAdd">+{entry.added}</span>
-                          <span className="sessionV2TurnFileSummaryDel">-{entry.removed}</span>
-                        </span>
+                {summary.entries.map((entry, entryIndex) => {
+                  const entryKey = `${entry.path}:${entry.changeType}:${entryIndex}`
+                  const isExpanded = expandedEntryKey === entryKey
+                  const diffLines = buildRenderableDiffLines(entry.diffText)
+                  return (
+                    <li key={`${row.key}:${entryKey}`} className="sessionV2TurnFileSummaryItem">
+                      <button
+                        type="button"
+                        className="sessionV2TurnFileSummaryItemButton"
+                        aria-expanded={isExpanded}
+                        onClick={() => {
+                          setExpandedFileRowsBySummary((prev) => ({
+                            ...prev,
+                            [row.key]: prev[row.key] === entryKey ? null : entryKey,
+                          }))
+                        }}
+                      >
+                        <div className="sessionV2TurnFileSummaryItemMain">
+                          <span className="sessionV2TurnFileSummaryPath">{shortenPath(entry.path)}</span>
+                        </div>
+                        <div className="sessionV2TurnFileSummaryItemRight">
+                          {(entry.added > 0 || entry.removed > 0) ? (
+                            <span className="sessionV2TurnFileSummaryItemStats">
+                              <span className="sessionV2TurnFileSummaryAdd">+{entry.added}</span>
+                              <span className="sessionV2TurnFileSummaryDel">-{entry.removed}</span>
+                            </span>
+                          ) : null}
+                          <span
+                            className={`sessionV2TurnFileSummaryChevron ${isExpanded ? 'sessionV2TurnFileSummaryChevronOpen' : ''}`}
+                            aria-hidden
+                          >
+                            v
+                          </span>
+                        </div>
+                      </button>
+                      {isExpanded ? (
+                        <div className="sessionV2TurnFileSummaryDiffPanel">
+                          {diffLines.length > 0 ? (
+                            <div className="sessionV2TurnFileSummaryDiffViewport">
+                              {diffLines.map((line, lineIndex) => {
+                                const rowClassName =
+                                  line.kind === 'added'
+                                    ? 'sessionV2TurnFileSummaryDiffRow sessionV2TurnFileSummaryDiffRowAdd'
+                                    : line.kind === 'removed'
+                                      ? 'sessionV2TurnFileSummaryDiffRow sessionV2TurnFileSummaryDiffRowDel'
+                                      : 'sessionV2TurnFileSummaryDiffRow sessionV2TurnFileSummaryDiffRowCtx'
+                                return (
+                                  <div key={`${entryKey}:diff:${lineIndex}`} className={rowClassName}>
+                                    <span className="sessionV2TurnFileSummaryDiffLineNum">
+                                      {line.lineNumber ?? ''}
+                                    </span>
+                                    <code className="sessionV2TurnFileSummaryDiffCode">
+                                      {line.text || ' '}
+                                    </code>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ) : entry.summary ? (
+                            <div className="sessionV2TurnFileSummaryItemHint">{entry.summary}</div>
+                          ) : (
+                            <div className="sessionV2TurnFileSummaryItemHint">No diff excerpt for this file.</div>
+                          )}
+                        </div>
                       ) : null}
-                      <span className="sessionV2TurnFileSummaryChevron" aria-hidden>∨</span>
-                    </div>
-                    {entry.summary ? (
-                      <div className="sessionV2TurnFileSummaryItemHint">{entry.summary}</div>
-                    ) : null}
-                  </li>
-                ))}
+                    </li>
+                  )
+                })}
               </ul>
             </article>
           )
@@ -846,3 +1003,4 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
     </section>
   )
 }
+
