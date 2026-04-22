@@ -65,6 +65,7 @@ type RenderableDiffLine = {
 
 const USER_MESSAGE_COLLAPSE_CHAR_LIMIT = 1100
 const USER_MESSAGE_COLLAPSE_LINE_LIMIT = 14
+const SCROLL_SNAPSHOT_DEBOUNCE_MS = 120
 const DIFF_KEYWORD_RE =
   /\b(import|export|const|let|var|function|return|async|await|new|from|default|class|extends|interface|type|if|else|for|while|switch|case|try|catch|finally|throw|break|continue|public|private|protected|readonly|static|implements|enum)\b/g
 const DIFF_NUMBER_RE = /\b(?:\d+\.?\d*|\.\d+)\b/g
@@ -881,6 +882,36 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
   const observedThreadIdRef = useRef<string | null>(threadId)
   const activeThreadIdRef = useRef<string | null>(threadId)
   const pendingRestoreThreadIdRef = useRef<string | null>(null)
+  const scrollSaveTimerRef = useRef<number | null>(null)
+  const pendingScrollSaveRef = useRef<{ threadId: string; element: HTMLElement } | null>(null)
+
+  const flushPendingScrollSave = () => {
+    if (scrollSaveTimerRef.current !== null) {
+      window.clearTimeout(scrollSaveTimerRef.current)
+      scrollSaveTimerRef.current = null
+    }
+    const pending = pendingScrollSaveRef.current
+    if (!pending) {
+      return
+    }
+    rememberThreadScrollPosition(pending.threadId, pending.element)
+    pendingScrollSaveRef.current = null
+  }
+
+  const scheduleScrollSave = (targetThreadId: string, element: HTMLElement) => {
+    pendingScrollSaveRef.current = { threadId: targetThreadId, element }
+    if (scrollSaveTimerRef.current !== null) {
+      window.clearTimeout(scrollSaveTimerRef.current)
+    }
+    scrollSaveTimerRef.current = window.setTimeout(() => {
+      const pending = pendingScrollSaveRef.current
+      if (pending) {
+        rememberThreadScrollPosition(pending.threadId, pending.element)
+        pendingScrollSaveRef.current = null
+      }
+      scrollSaveTimerRef.current = null
+    }, SCROLL_SNAPSHOT_DEBOUNCE_MS)
+  }
 
   const rows = threadId ? buildTranscriptRows(threadId, turns, itemsByTurn) : []
   activeThreadIdRef.current = threadId
@@ -889,8 +920,13 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
     observedThreadIdRef.current = threadId
   }
 
+  useLayoutEffect(() => {
+    flushPendingScrollSave()
+  }, [threadId])
+
   useEffect(
     () => () => {
+      flushPendingScrollSave()
       const currentThreadId = activeThreadIdRef.current
       const element = transcriptRef.current
       if (currentThreadId && element) {
@@ -942,7 +978,7 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
     if (!element) {
       return
     }
-    rememberThreadScrollPosition(threadId, element)
+    scheduleScrollSave(threadId, element)
   }
 
   if (!threadId) {
@@ -1175,4 +1211,3 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
     </section>
   )
 }
-
