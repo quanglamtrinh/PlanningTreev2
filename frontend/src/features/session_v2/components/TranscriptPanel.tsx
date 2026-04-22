@@ -28,6 +28,27 @@ type TranscriptRow =
       type: 'turnFileSummary'
       summary: TurnFileSummary
     }
+  | {
+      key: string
+      type: 'agentWorkSummary'
+      entries: AgentWorkSummaryEntry[]
+    }
+
+type AgentWorkSummaryEntry =
+  | {
+      key: string
+      type: 'item'
+      item: SessionItem
+    }
+  | {
+      key: string
+      type: 'toolSummary'
+      summary: string
+    }
+  | {
+      key: string
+      type: 'compactMarker'
+    }
 
 type FileChangeStats = {
   created: number
@@ -538,6 +559,11 @@ function isToolItem(item: SessionItem): boolean {
   return !isContextCompactionItem(item) && resolveRowVariant(item) === 'tool'
 }
 
+function isAgentMessageItem(item: SessionItem): boolean {
+  const itemType = payloadTypeOf(item)
+  return item.kind === 'agentMessage' || itemType === 'agentMessage'
+}
+
 function isFileChangeItem(item: SessionItem): boolean {
   return payloadTypeOf(item) === 'fileChange' || item.kind === 'fileChange'
 }
@@ -824,6 +850,30 @@ function buildTranscriptRows(
       continue
     }
 
+    const agentMessageIndexes: number[] = []
+    for (let index = 0; index < items.length; index += 1) {
+      if (isAgentMessageItem(items[index])) {
+        agentMessageIndexes.push(index)
+      }
+    }
+    const summaryAgentIndex =
+      agentMessageIndexes.length > 1 ? agentMessageIndexes[agentMessageIndexes.length - 1] : -1
+    const hiddenReasoningEntries: AgentWorkSummaryEntry[] = []
+    let hiddenToolCluster: SessionItem[] = []
+    let hiddenToolSummaryIndex = 0
+    const flushHiddenToolCluster = () => {
+      if (hiddenToolCluster.length === 0) {
+        return
+      }
+      hiddenReasoningEntries.push({
+        key: `${turn.id}:agent-work-tool-summary-${hiddenToolSummaryIndex}`,
+        type: 'toolSummary',
+        summary: summarizeToolItems(hiddenToolCluster),
+      })
+      hiddenToolSummaryIndex += 1
+      hiddenToolCluster = []
+    }
+
     let toolCluster: SessionItem[] = []
     let toolSummaryIndex = 0
     const flushToolCluster = () => {
@@ -839,7 +889,32 @@ function buildTranscriptRows(
       toolCluster = []
     }
 
-    for (const item of items) {
+    for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+      const item = items[itemIndex]
+      if (summaryAgentIndex >= 0 && itemIndex < summaryAgentIndex) {
+        if (isContextCompactionItem(item)) {
+          flushHiddenToolCluster()
+          hiddenReasoningEntries.push({
+            key: `${turn.id}:${item.id}:compact-marker`,
+            type: 'compactMarker',
+          })
+          continue
+        }
+        if (isToolItem(item)) {
+          hiddenToolCluster.push(item)
+          continue
+        }
+        if (resolveRowVariant(item) !== 'user') {
+          flushHiddenToolCluster()
+          hiddenReasoningEntries.push({
+            key: `${turn.id}:${item.id}`,
+            type: 'item',
+            item,
+          })
+          continue
+        }
+      }
+
       if (isContextCompactionItem(item)) {
         flushToolCluster()
         rows.push({
@@ -848,12 +923,23 @@ function buildTranscriptRows(
         })
         continue
       }
+
       if (isToolItem(item)) {
         toolCluster.push(item)
         continue
       }
 
       flushToolCluster()
+      if (summaryAgentIndex >= 0 && itemIndex === summaryAgentIndex) {
+        flushHiddenToolCluster()
+      }
+      if (summaryAgentIndex >= 0 && itemIndex === summaryAgentIndex && hiddenReasoningEntries.length > 0) {
+        rows.push({
+          key: `${turn.id}:agent-work-summary`,
+          type: 'agentWorkSummary',
+          entries: [...hiddenReasoningEntries],
+        })
+      }
       rows.push({
         key: `${turn.id}:${item.id}`,
         type: 'item',
@@ -878,6 +964,7 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
   const [expandedUserRows, setExpandedUserRows] = useState<Record<string, boolean>>({})
   const [copiedUserRow, setCopiedUserRow] = useState<string | null>(null)
   const [expandedFileRowsBySummary, setExpandedFileRowsBySummary] = useState<Record<string, string | null>>({})
+  const [expandedAgentWorkRows, setExpandedAgentWorkRows] = useState<Record<string, boolean>>({})
   const transcriptRef = useRef<HTMLElement | null>(null)
   const observedThreadIdRef = useRef<string | null>(threadId)
   const activeThreadIdRef = useRef<string | null>(threadId)
@@ -1004,6 +1091,79 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
             <div key={row.key} className="sessionV2CompactMarker">
               <span className="sessionV2CompactMarkerText">Context automatically compacted</span>
             </div>
+          )
+        }
+        if (row.type === 'agentWorkSummary') {
+          const isExpanded = Boolean(expandedAgentWorkRows[row.key])
+          return (
+            <section key={row.key} className="sessionV2WorkSummary">
+              <button
+                type="button"
+                className="sessionV2WorkSummaryToggle"
+                aria-expanded={isExpanded}
+                onClick={() => {
+                  setExpandedAgentWorkRows((prev) => ({
+                    ...prev,
+                    [row.key]: !Boolean(prev[row.key]),
+                  }))
+                }}
+              >
+                <span className="sessionV2WorkSummaryLabel">Reasoning summary</span>
+                <span
+                  className={`sessionV2WorkSummaryChevron ${isExpanded ? 'sessionV2WorkSummaryChevronOpen' : ''}`}
+                  aria-hidden
+                >
+                  &gt;
+                </span>
+              </button>
+              {isExpanded ? (
+                <div className="sessionV2WorkSummaryExpanded">
+                  {row.entries.map((entry) => {
+                    if (entry.type === 'compactMarker') {
+                      return (
+                        <div key={`${row.key}:${entry.key}`} className="sessionV2CompactMarker">
+                          <span className="sessionV2CompactMarkerText">Context automatically compacted</span>
+                        </div>
+                      )
+                    }
+                    if (entry.type === 'toolSummary') {
+                      return (
+                        <div key={`${row.key}:${entry.key}`} className="sessionV2MessageRow sessionV2MessageRowAssistant">
+                          <div className="sessionV2ToolSummary">{entry.summary}</div>
+                        </div>
+                      )
+                    }
+
+                    const variant = resolveRowVariant(entry.item)
+                    const text = renderItemText(entry.item)
+                    const rowClassName =
+                      variant === 'assistant'
+                        ? 'sessionV2MessageRow sessionV2MessageRowAssistant'
+                        : variant === 'user'
+                          ? 'sessionV2MessageRow sessionV2MessageRowUser'
+                          : 'sessionV2MessageRow'
+                    const bubbleClassName =
+                      variant === 'assistant'
+                        ? 'sessionV2Bubble sessionV2BubbleAssistantInline'
+                        : variant === 'user'
+                          ? 'sessionV2Bubble sessionV2BubbleUser'
+                          : 'sessionV2Bubble'
+
+                    return (
+                      <article key={`${row.key}:${entry.key}`} className={rowClassName}>
+                        <div className={bubbleClassName}>
+                          {variant === 'assistant' && text ? (
+                            <SharedMarkdownRenderer content={text} variant="document" />
+                          ) : (
+                            <pre className="sessionV2MessageText">{text || '...'}</pre>
+                          )}
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              ) : null}
+            </section>
           )
         }
         if (row.type === 'turnFileSummary') {

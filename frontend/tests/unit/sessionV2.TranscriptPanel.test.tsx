@@ -43,6 +43,7 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByText('Rendered from payload.text')).toBeInTheDocument()
     expect(screen.queryByText('agentMessage')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Reasoning summary/i })).not.toBeInTheDocument()
   })
 
   it('renders delta-only payload while streaming', () => {
@@ -126,7 +127,7 @@ describe('TranscriptPanel', () => {
     expect(screen.queryByText('commandExecution')).not.toBeInTheDocument()
   })
 
-  it('keeps tool summaries interleaved in original order for terminal turns', () => {
+  it('hides tool summary lines inside reasoning summary and expands timeline in original order', () => {
     const messageA: SessionItem = {
       id: 'item-msg-a',
       threadId: 'thread-1',
@@ -215,18 +216,40 @@ describe('TranscriptPanel', () => {
       />,
     )
 
+    const reasoningSummaryToggle = screen.getByRole('button', { name: /Reasoning summary/i })
+    expect(reasoningSummaryToggle).toBeInTheDocument()
+    expect(screen.getByText('Step C')).toBeInTheDocument()
+    expect(screen.queryByText('Step A')).not.toBeInTheDocument()
+    expect(screen.queryByText('Step B')).not.toBeInTheDocument()
+    expect(screen.queryByText('Ran 2 commands')).not.toBeInTheDocument()
+    expect(screen.queryByText('Edited 1 file')).not.toBeInTheDocument()
+
     const allText = container.textContent ?? ''
-    const posMessageA = allText.indexOf('Step A')
-    const posCmdSummary = allText.indexOf('Ran 2 commands')
-    const posMessageB = allText.indexOf('Step B')
-    const posFileSummary = allText.indexOf('Edited 1 file')
+    const posReasoningSummary = allText.indexOf('Reasoning summary')
+    const posFileSummary = allText.indexOf('1 file changed')
     const posMessageC = allText.indexOf('Step C')
 
-    expect(posMessageA).toBeGreaterThanOrEqual(0)
-    expect(posCmdSummary).toBeGreaterThan(posMessageA)
-    expect(posMessageB).toBeGreaterThan(posCmdSummary)
-    expect(posFileSummary).toBeGreaterThan(posMessageB)
-    expect(posMessageC).toBeGreaterThan(posFileSummary)
+    expect(posReasoningSummary).toBeGreaterThanOrEqual(0)
+    expect(posMessageC).toBeGreaterThan(posReasoningSummary)
+    expect(posFileSummary).toBeGreaterThan(posMessageC)
+
+    fireEvent.click(reasoningSummaryToggle)
+    expect(screen.getByText('Step A')).toBeInTheDocument()
+    expect(screen.getByText('Step B')).toBeInTheDocument()
+    expect(screen.getByText('Ran 2 commands')).toBeInTheDocument()
+    expect(screen.getByText('Edited 1 file')).toBeInTheDocument()
+
+    const expandedText = container.textContent ?? ''
+    const posExpandedStepA = expandedText.indexOf('Step A')
+    const posExpandedRan = expandedText.indexOf('Ran 2 commands')
+    const posExpandedStepB = expandedText.indexOf('Step B')
+    const posExpandedEdited = expandedText.indexOf('Edited 1 file')
+    const posExpandedStepC = expandedText.indexOf('Step C')
+    expect(posExpandedStepA).toBeGreaterThanOrEqual(0)
+    expect(posExpandedRan).toBeGreaterThan(posExpandedStepA)
+    expect(posExpandedStepB).toBeGreaterThan(posExpandedRan)
+    expect(posExpandedEdited).toBeGreaterThan(posExpandedStepB)
+    expect(posExpandedStepC).toBeGreaterThan(posExpandedEdited)
   })
 
   it('renders context compaction marker instead of raw tool payload', () => {
@@ -278,6 +301,8 @@ describe('TranscriptPanel', () => {
       />,
     )
 
+    const reasoningSummaryToggle = screen.getByRole('button', { name: /Reasoning summary/i })
+    fireEvent.click(reasoningSummaryToggle)
     expect(screen.getByText('Context automatically compacted')).toBeInTheDocument()
     expect(screen.queryByText('contextCompaction')).not.toBeInTheDocument()
   })
