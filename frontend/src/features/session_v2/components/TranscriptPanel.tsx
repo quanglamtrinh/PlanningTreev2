@@ -1064,8 +1064,8 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
         }
         if (row.type === 'toolSummary') {
           return (
-            <div key={row.key} className="sessionV2ToolSummary">
-              {row.summary}
+            <div key={row.key} className="sessionV2MessageRow sessionV2MessageRowAssistant">
+              <div className="sessionV2ToolSummary">{row.summary}</div>
             </div>
           )
         }
