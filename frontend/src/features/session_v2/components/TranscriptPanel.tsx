@@ -17,6 +17,10 @@ type TranscriptRow =
       type: 'toolSummary'
       summary: string
     }
+  | {
+      key: string
+      type: 'compactMarker'
+    }
 
 type FileChangeStats = {
   created: number
@@ -31,6 +35,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function payloadTypeOf(item: SessionItem): string {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  return normalizeText(payload.type)
 }
 
 function pluralize(count: number, singular: string, plural: string): string {
@@ -186,8 +195,7 @@ function renderItemText(item: SessionItem): string {
 }
 
 function resolveRowVariant(item: SessionItem): 'user' | 'assistant' | 'tool' {
-  const payload = isRecord(item.payload) ? item.payload : {}
-  const itemType = normalizeText(payload.type)
+  const itemType = payloadTypeOf(item)
   if (item.kind === 'userMessage' || itemType === 'userMessage') {
     return 'user'
   }
@@ -202,6 +210,14 @@ function resolveRowVariant(item: SessionItem): 'user' | 'assistant' | 'tool' {
     return 'assistant'
   }
   return 'tool'
+}
+
+function isContextCompactionItem(item: SessionItem): boolean {
+  return payloadTypeOf(item) === 'contextCompaction'
+}
+
+function isToolItem(item: SessionItem): boolean {
+  return !isContextCompactionItem(item) && resolveRowVariant(item) === 'tool'
 }
 
 function isTerminalTurn(turn: SessionTurn): boolean {
@@ -322,8 +338,7 @@ function summarizeToolItems(items: SessionItem[]): string {
 }
 
 function renderToolTitle(item: SessionItem): string {
-  const payload = isRecord(item.payload) ? item.payload : {}
-  const itemType = normalizeText(payload.type)
+  const itemType = payloadTypeOf(item)
   if (itemType) {
     return itemType
   }
@@ -341,6 +356,13 @@ function buildTranscriptRows(
     const items = itemsByTurn[key] ?? []
     if (!isTerminalTurn(turn)) {
       for (const item of items) {
+        if (isContextCompactionItem(item)) {
+          rows.push({
+            key: `${turn.id}:${item.id}:compact-marker`,
+            type: 'compactMarker',
+          })
+          continue
+        }
         rows.push({
           key: `${turn.id}:${item.id}`,
           type: 'item',
@@ -350,23 +372,36 @@ function buildTranscriptRows(
       continue
     }
 
-    const toolItems = items.filter((item) => resolveRowVariant(item) === 'tool')
-    const toolSummary = toolItems.length > 0 ? summarizeToolItems(toolItems) : null
-    let toolSummaryInserted = false
+    let toolCluster: SessionItem[] = []
+    let toolSummaryIndex = 0
+    const flushToolCluster = () => {
+      if (toolCluster.length === 0) {
+        return
+      }
+      rows.push({
+        key: `${turn.id}:tool-summary-${toolSummaryIndex}`,
+        type: 'toolSummary',
+        summary: summarizeToolItems(toolCluster),
+      })
+      toolSummaryIndex += 1
+      toolCluster = []
+    }
 
     for (const item of items) {
-      if (resolveRowVariant(item) === 'tool') {
-        if (!toolSummaryInserted && toolSummary) {
-          rows.push({
-            key: `${turn.id}:tool-summary`,
-            type: 'toolSummary',
-            summary: toolSummary,
-          })
-          toolSummaryInserted = true
-        }
+      if (isContextCompactionItem(item)) {
+        flushToolCluster()
+        rows.push({
+          key: `${turn.id}:${item.id}:compact-marker`,
+          type: 'compactMarker',
+        })
+        continue
+      }
+      if (isToolItem(item)) {
+        toolCluster.push(item)
         continue
       }
 
+      flushToolCluster()
       rows.push({
         key: `${turn.id}:${item.id}`,
         type: 'item',
@@ -374,13 +409,7 @@ function buildTranscriptRows(
       })
     }
 
-    if (toolSummary && !toolSummaryInserted) {
-      rows.push({
-        key: `${turn.id}:tool-summary`,
-        type: 'toolSummary',
-        summary: toolSummary,
-      })
-    }
+    flushToolCluster()
   }
   return rows
 }
@@ -406,6 +435,13 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
   return (
     <section className="sessionV2Transcript">
       {rows.map((row) => {
+        if (row.type === 'compactMarker') {
+          return (
+            <div key={row.key} className="sessionV2CompactMarker">
+              <span className="sessionV2CompactMarkerText">Context automatically compacted</span>
+            </div>
+          )
+        }
         if (row.type === 'toolSummary') {
           return (
             <div key={row.key} className="sessionV2ToolSummary">

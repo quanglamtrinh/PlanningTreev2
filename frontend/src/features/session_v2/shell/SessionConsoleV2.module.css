@@ -240,6 +240,29 @@
   padding: 2px 4px 4px;
 }
 
+:global(.sessionV2CompactMarker) {
+  width: min(860px, 100%);
+  margin: 2px auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+:global(.sessionV2CompactMarker::before),
+:global(.sessionV2CompactMarker::after) {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
+}
+
+:global(.sessionV2CompactMarkerText) {
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #9ca3af;
+}
+
 :global(.sessionV2ToolCard) {
   width: min(860px, 100%);
   margin: 0 auto;

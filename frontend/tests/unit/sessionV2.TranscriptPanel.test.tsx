@@ -126,6 +126,162 @@ describe('TranscriptPanel', () => {
     expect(screen.queryByText('commandExecution')).not.toBeInTheDocument()
   })
 
+  it('keeps tool summaries interleaved in original order for terminal turns', () => {
+    const messageA: SessionItem = {
+      id: 'item-msg-a',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'agentMessage',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'agentMessage',
+        text: 'Step A',
+      },
+    }
+    const command1: SessionItem = {
+      id: 'item-cmd-a',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'commandExecution',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'commandExecution',
+        command: 'echo 1',
+      },
+    }
+    const command2: SessionItem = {
+      id: 'item-cmd-b',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'commandExecution',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'commandExecution',
+        command: 'echo 2',
+      },
+    }
+    const messageB: SessionItem = {
+      id: 'item-msg-b',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'agentMessage',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'agentMessage',
+        text: 'Step B',
+      },
+    }
+    const fileChange: SessionItem = {
+      id: 'item-file',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'fileChange',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'fileChange',
+        changes: [{ kind: 'edit', path: 'src/app.ts' }],
+      },
+    }
+    const messageC: SessionItem = {
+      id: 'item-msg-c',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'agentMessage',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'agentMessage',
+        text: 'Step C',
+      },
+    }
+
+    const items = [messageA, command1, command2, messageB, fileChange, messageC]
+    const { container } = render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn(items, 'completed')]}
+        itemsByTurn={{ 'thread-1:turn-1': items }}
+      />,
+    )
+
+    const allText = container.textContent ?? ''
+    const posMessageA = allText.indexOf('Step A')
+    const posCmdSummary = allText.indexOf('Ran 2 commands')
+    const posMessageB = allText.indexOf('Step B')
+    const posFileSummary = allText.indexOf('Edited 1 file')
+    const posMessageC = allText.indexOf('Step C')
+
+    expect(posMessageA).toBeGreaterThanOrEqual(0)
+    expect(posCmdSummary).toBeGreaterThan(posMessageA)
+    expect(posMessageB).toBeGreaterThan(posCmdSummary)
+    expect(posFileSummary).toBeGreaterThan(posMessageB)
+    expect(posMessageC).toBeGreaterThan(posFileSummary)
+  })
+
+  it('renders context compaction marker instead of raw tool payload', () => {
+    const before: SessionItem = {
+      id: 'item-before',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'agentMessage',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'agentMessage',
+        text: 'Before compact',
+      },
+    }
+    const compact: SessionItem = {
+      id: 'item-compact',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'error',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'contextCompaction',
+      },
+    }
+    const after: SessionItem = {
+      id: 'item-after',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'agentMessage',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'agentMessage',
+        text: 'After compact',
+      },
+    }
+
+    const items = [before, compact, after]
+    render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn(items, 'completed')]}
+        itemsByTurn={{ 'thread-1:turn-1': items }}
+      />,
+    )
+
+    expect(screen.getByText('Context automatically compacted')).toBeInTheDocument()
+    expect(screen.queryByText('contextCompaction')).not.toBeInTheDocument()
+  })
+
   it('keeps detailed tool cards while turn is running', () => {
     const command: SessionItem = {
       id: 'item-cmd-running',
