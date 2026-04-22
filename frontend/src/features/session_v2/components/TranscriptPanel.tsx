@@ -958,8 +958,8 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
         return (
           <article key={row.key} className={rowClassName}>
             <div className={bubbleClassName}>
-              {variant === 'assistant' && text ? (
-                <SharedMarkdownRenderer content={text} variant="document" />
+              {variant === 'assistant' && messageText ? (
+                <SharedMarkdownRenderer content={messageText} variant="document" />
               ) : (
                 <pre className="sessionV2MessageText">{messageText || '...'}</pre>
               )}
