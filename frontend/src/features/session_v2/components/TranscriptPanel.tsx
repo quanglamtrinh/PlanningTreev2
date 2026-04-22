@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { SharedMarkdownRenderer } from '../../markdown/SharedMarkdownRenderer'
 import type { SessionItem, SessionTurn } from '../contracts'
 
@@ -68,6 +68,20 @@ const USER_MESSAGE_COLLAPSE_LINE_LIMIT = 14
 const DIFF_KEYWORD_RE =
   /\b(import|export|const|let|var|function|return|async|await|new|from|default|class|extends|interface|type|if|else|for|while|switch|case|try|catch|finally|throw|break|continue|public|private|protected|readonly|static|implements|enum)\b/g
 const DIFF_NUMBER_RE = /\b(?:\d+\.?\d*|\.\d+)\b/g
+
+type ThreadScrollSnapshot = {
+  top: number
+  fromBottom: number
+}
+
+const threadScrollSnapshots = new Map<string, ThreadScrollSnapshot>()
+
+function rememberThreadScrollPosition(threadId: string, element: HTMLElement): void {
+  const maxTop = Math.max(0, element.scrollHeight - element.clientHeight)
+  const top = Math.min(maxTop, Math.max(0, element.scrollTop))
+  const fromBottom = Math.max(0, element.scrollHeight - element.clientHeight - top)
+  threadScrollSnapshots.set(threadId, { top, fromBottom })
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object'
@@ -863,26 +877,91 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
   const [expandedUserRows, setExpandedUserRows] = useState<Record<string, boolean>>({})
   const [copiedUserRow, setCopiedUserRow] = useState<string | null>(null)
   const [expandedFileRowsBySummary, setExpandedFileRowsBySummary] = useState<Record<string, string | null>>({})
+  const transcriptRef = useRef<HTMLElement | null>(null)
+  const observedThreadIdRef = useRef<string | null>(threadId)
+  const activeThreadIdRef = useRef<string | null>(threadId)
+  const pendingRestoreThreadIdRef = useRef<string | null>(null)
+
+  const rows = threadId ? buildTranscriptRows(threadId, turns, itemsByTurn) : []
+  activeThreadIdRef.current = threadId
+  if (observedThreadIdRef.current !== threadId) {
+    pendingRestoreThreadIdRef.current = threadId
+    observedThreadIdRef.current = threadId
+  }
+
+  useEffect(
+    () => () => {
+      const currentThreadId = activeThreadIdRef.current
+      const element = transcriptRef.current
+      if (currentThreadId && element) {
+        rememberThreadScrollPosition(currentThreadId, element)
+      }
+    },
+    [],
+  )
+
+  useLayoutEffect(() => {
+    if (!threadId) {
+      return
+    }
+    if (pendingRestoreThreadIdRef.current !== threadId) {
+      return
+    }
+    const element = transcriptRef.current
+    if (!element) {
+      return
+    }
+
+    const saved = threadScrollSnapshots.get(threadId)
+    if (saved && rows.length === 0) {
+      // Wait for the thread rows to hydrate before restoring a saved viewport.
+      return
+    }
+    if (!saved) {
+      // New threads should start near the most recent message.
+      element.scrollTop = element.scrollHeight
+      rememberThreadScrollPosition(threadId, element)
+      pendingRestoreThreadIdRef.current = null
+      return
+    }
+
+    const maxTop = Math.max(0, element.scrollHeight - element.clientHeight)
+    const restoredFromBottom = element.scrollHeight - element.clientHeight - saved.fromBottom
+    const targetTop = Number.isFinite(restoredFromBottom)
+      ? Math.min(maxTop, Math.max(0, restoredFromBottom))
+      : Math.min(maxTop, Math.max(0, saved.top))
+    element.scrollTop = targetTop
+    pendingRestoreThreadIdRef.current = null
+  }, [rows.length, threadId])
+
+  const handleTranscriptScroll = () => {
+    if (!threadId) {
+      return
+    }
+    const element = transcriptRef.current
+    if (!element) {
+      return
+    }
+    rememberThreadScrollPosition(threadId, element)
+  }
 
   if (!threadId) {
     return (
-      <section className="sessionV2Transcript">
+      <section className="sessionV2Transcript" ref={transcriptRef}>
         <div className="sessionV2Empty">No active thread</div>
       </section>
     )
   }
-
-  const rows = buildTranscriptRows(threadId, turns, itemsByTurn)
   if (rows.length === 0) {
     return (
-      <section className="sessionV2Transcript">
+      <section className="sessionV2Transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
         <div className="sessionV2Empty">No messages yet.</div>
       </section>
     )
   }
 
   return (
-    <section className="sessionV2Transcript">
+    <section className="sessionV2Transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
       {rows.map((row) => {
         if (row.type === 'compactMarker') {
           return (
