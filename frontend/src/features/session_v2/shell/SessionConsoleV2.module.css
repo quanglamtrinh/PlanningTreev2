@@ -1,4 +1,14 @@
 .console {
+  --session-v2-accent: #0169cc;
+  --session-v2-bg: #ffffff;
+  --session-v2-fg: #0d0d0d;
+  --session-v2-fg-muted: #6b7280;
+  --session-v2-border: #e5e7eb;
+  --session-v2-surface-subtle: #f8fafc;
+  --session-v2-surface-soft: #f3f4f6;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  --color-accent: var(--session-v2-accent);
   flex: 1;
   height: 100%;
   min-height: 0;
@@ -7,7 +17,10 @@
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
-  border-top: 1px solid color-mix(in srgb, var(--outline) 10%, transparent);
+  border-top: 1px solid var(--session-v2-border);
+  background: var(--session-v2-bg);
+  color: var(--session-v2-fg);
+  font-family: var(--font-sans);
 }
 
 .mainPane {
@@ -17,7 +30,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--session-v2-bg);
 }
 
 .statusBar {
@@ -26,8 +39,8 @@
   gap: 12px;
   align-items: center;
   padding: 10px 14px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #ffffff;
+  border-bottom: 1px solid var(--session-v2-border);
+  background: var(--session-v2-bg);
 }
 
 .statusBar strong {
@@ -35,7 +48,7 @@
 }
 
 .muted {
-  color: var(--on-surface-variant);
+  color: var(--session-v2-fg-muted);
   font-size: 12px;
 }
 
@@ -43,13 +56,13 @@
   display: flex;
   gap: 10px;
   font-size: 12px;
-  color: var(--on-surface-variant);
+  color: var(--session-v2-fg-muted);
 }
 
 .banner {
   padding: 10px 14px;
-  background: color-mix(in srgb, var(--surface-container-high) 88%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--outline) 10%, transparent);
+  background: var(--session-v2-surface-soft);
+  border-bottom: 1px solid var(--session-v2-border);
 }
 
 .errorBanner {
@@ -73,8 +86,8 @@
 }
 
 :global(.sessionV2ThreadList) {
-  border-right: 1px solid color-mix(in srgb, var(--outline) 12%, transparent);
-  background: var(--surface-container-low);
+  border-right: 1px solid var(--session-v2-border);
+  background: var(--session-v2-bg);
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -88,7 +101,7 @@
   align-items: center;
   gap: 8px;
   padding: 10px;
-  border-bottom: 1px solid color-mix(in srgb, var(--outline) 10%, transparent);
+  border-bottom: 1px solid var(--session-v2-border);
 }
 
 :global(.sessionV2ThreadListHeader h2) {
@@ -114,17 +127,17 @@
 }
 
 :global(.sessionV2ThreadRow) {
-  border: 1px solid color-mix(in srgb, var(--outline) 12%, transparent);
+  border: 1px solid var(--session-v2-border);
   border-radius: 10px;
-  background: var(--surface-container-lowest);
+  background: var(--session-v2-bg);
   display: grid;
   gap: 4px;
   padding: 6px;
 }
 
 :global(.sessionV2ThreadRow.active) {
-  border-color: color-mix(in srgb, var(--color-accent) 70%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--session-v2-accent) 70%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--session-v2-accent) 18%, transparent);
 }
 
 :global(.sessionV2ThreadMain) {
@@ -154,7 +167,7 @@
   padding: 22px 18px;
   display: grid;
   gap: 10px;
-  background: #ffffff;
+  background: var(--session-v2-bg);
   scrollbar-gutter: stable both-edges;
   scrollbar-width: thin;
   overscroll-behavior: contain;
@@ -170,12 +183,12 @@
 }
 
 :global(.sessionV2Transcript::-webkit-scrollbar-thumb) {
-  background: color-mix(in srgb, var(--outline) 34%, transparent);
+  background: color-mix(in srgb, var(--session-v2-fg) 25%, transparent);
   border-radius: 999px;
 }
 
 :global(.sessionV2Transcript::-webkit-scrollbar-thumb:hover) {
-  background: color-mix(in srgb, var(--outline) 52%, transparent);
+  background: color-mix(in srgb, var(--session-v2-fg) 38%, transparent);
 }
 
 :global(.sessionV2MessageRow) {
@@ -195,15 +208,15 @@
   max-width: min(860px, 100%);
   border-radius: 14px;
   padding: 12px 14px;
-  border: 1px solid #e6e8ee;
-  background: #ffffff;
+  border: 1px solid var(--session-v2-border);
+  background: var(--session-v2-bg);
   box-shadow: 0 1px 2px rgb(16 24 40 / 6%);
 }
 
 :global(.sessionV2BubbleUser) {
   max-width: min(640px, 100%);
-  background: #e8e8ea;
-  border-color: #e8e8ea;
+  background: var(--session-v2-surface-soft);
+  border-color: var(--session-v2-surface-soft);
   box-shadow: none;
   padding: 14px 16px;
   border-radius: 16px;
@@ -236,7 +249,7 @@
   word-break: break-word;
   font-size: 14px;
   line-height: 1.6;
-  color: #111827;
+  color: var(--session-v2-fg);
   font-family: var(--font-sans, 'Segoe UI', sans-serif);
 }
 
@@ -244,7 +257,7 @@
   margin-top: 10px;
   border: none;
   background: transparent;
-  color: #4b5563;
+  color: var(--session-v2-fg-muted);
   font-size: 13px;
   line-height: 1.2;
   padding: 0;
@@ -252,7 +265,7 @@
 }
 
 :global(.sessionV2UserMessageToggle:hover) {
-  color: #111827;
+  color: var(--session-v2-fg);
 }
 
 :global(.sessionV2UserMeta) {
@@ -261,7 +274,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  color: #6b7280;
+  color: var(--session-v2-fg-muted);
   font-size: 12px;
   line-height: 1;
   min-height: 20px;
@@ -278,7 +291,7 @@
 :global(.sessionV2UserMetaCopy) {
   border: none;
   background: transparent;
-  color: #6b7280;
+  color: var(--session-v2-fg-muted);
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -300,7 +313,7 @@
 }
 
 :global(.sessionV2UserMetaCopy:hover) {
-  color: #111827;
+  color: var(--session-v2-fg);
 }
 
 :global(.sessionV2UserMetaCopiedLabel) {
@@ -313,16 +326,16 @@
   margin: 0 auto;
   font-size: 14px;
   line-height: 1.5;
-  color: #9ca3af;
+  color: var(--session-v2-fg-muted);
   padding: 2px 4px 4px;
 }
 
 :global(.sessionV2TurnFileSummary) {
   width: min(860px, 100%);
   margin: 2px auto 8px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--session-v2-border);
   border-radius: 12px;
-  background: #fcfcfd;
+  background: var(--session-v2-bg);
 }
 
 :global(.sessionV2TurnFileSummaryHeader) {
@@ -331,7 +344,7 @@
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border-bottom: 1px solid #eceff4;
+  border-bottom: 1px solid var(--session-v2-border);
 }
 
 :global(.sessionV2TurnFileSummaryTitle) {
@@ -340,7 +353,7 @@
   gap: 8px;
   font-size: 13px;
   font-weight: 500;
-  color: #374151;
+  color: var(--session-v2-fg);
 }
 
 :global(.sessionV2TurnFileSummaryStats) {
@@ -354,19 +367,19 @@
 
 :global(.sessionV2TurnFileSummaryUndo) {
   background: none;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--session-v2-border);
   border-radius: 6px;
   padding: 3px 10px;
   font-size: 13px;
-  color: #374151;
+  color: var(--session-v2-fg);
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
 }
 
 :global(.sessionV2TurnFileSummaryUndo:hover) {
-  background: #f9fafb;
-  border-color: #d1d5db;
+  background: var(--session-v2-surface-soft);
+  border-color: color-mix(in srgb, var(--session-v2-fg) 24%, transparent);
 }
 
 :global(.sessionV2TurnFileSummaryAdd) {
@@ -385,7 +398,7 @@
 
 :global(.sessionV2TurnFileSummaryItem) {
   padding: 0;
-  border-bottom: 1px solid #edf1f6;
+  border-bottom: 1px solid var(--session-v2-border);
   min-width: 0;
 }
 
@@ -408,7 +421,7 @@
 }
 
 :global(.sessionV2TurnFileSummaryItemButton:hover) {
-  background: #f3f4f6;
+  background: var(--session-v2-surface-soft);
 }
 
 :global(.sessionV2TurnFileSummaryItemMain) {
@@ -429,7 +442,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
-  color: #374151;
+  color: var(--session-v2-fg);
   font-family: var(--font-sans, 'Segoe UI', sans-serif);
 }
 
@@ -442,7 +455,7 @@
 
 :global(.sessionV2TurnFileSummaryChevron) {
   font-size: 14px;
-  color: #9ca3af;
+  color: var(--session-v2-fg-muted);
   transition: transform 120ms ease-in-out;
 }
 
@@ -460,22 +473,22 @@
 
 :global(.sessionV2TurnFileSummaryItemHint) {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--session-v2-fg-muted);
   padding: 8px 12px 10px;
 }
 
 :global(.sessionV2TurnFileSummaryDiffPanel) {
-  border-top: 1px solid #edf1f6;
-  background: #f3f4f6;
+  border-top: 1px solid var(--session-v2-border);
+  background: var(--session-v2-surface-soft);
   padding: 0 10px 10px 10px;
 }
 
 :global(.sessionV2TurnFileSummaryDiffViewport) {
   max-height: 300px;
   overflow: auto;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--session-v2-border);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--session-v2-bg);
   scrollbar-width: thin;
 }
 
@@ -491,22 +504,22 @@
 }
 
 :global(.sessionV2TurnFileSummaryDiffRowAdd) {
-  background: color-mix(in srgb, var(--color-diff-added, #00a240) 14%, #ffffff);
+  background: color-mix(in srgb, var(--color-diff-added, #00a240) 14%, var(--session-v2-bg));
   border-left: 3px solid var(--color-diff-added, #00a240);
 }
 
 :global(.sessionV2TurnFileSummaryDiffRowDel) {
-  background: color-mix(in srgb, var(--color-diff-removed, #ba2623) 12%, #ffffff);
+  background: color-mix(in srgb, var(--color-diff-removed, #ba2623) 12%, var(--session-v2-bg));
   border-left: 3px solid var(--color-diff-removed, #ba2623);
 }
 
 :global(.sessionV2TurnFileSummaryDiffRowCtx) {
-  background: #ffffff;
+  background: var(--session-v2-bg);
 }
 
 :global(.sessionV2TurnFileSummaryDiffLineNum) {
   text-align: right;
-  color: #6b7280;
+  color: var(--session-v2-fg-muted);
   font-variant-numeric: tabular-nums;
   padding: 2px 0 2px 8px;
   user-select: none;
@@ -517,7 +530,7 @@
   padding: 2px 12px 2px 0;
   white-space: pre-wrap;
   word-break: break-word;
-  color: #111827;
+  color: var(--session-v2-fg);
 }
 
 :global(.sessionV2CompactMarker) {
@@ -533,22 +546,22 @@
   content: '';
   flex: 1;
   height: 1px;
-  background: #e5e7eb;
+  background: var(--session-v2-border);
 }
 
 :global(.sessionV2CompactMarkerText) {
   flex: 0 0 auto;
   font-size: 13px;
   line-height: 1.35;
-  color: #9ca3af;
+  color: var(--session-v2-fg-muted);
 }
 
 :global(.sessionV2ToolCard) {
   width: min(860px, 100%);
   margin: 0 auto;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--session-v2-border);
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--session-v2-bg);
   box-shadow: 0 1px 2px rgb(16 24 40 / 6%);
 }
 
@@ -558,9 +571,9 @@
   align-items: center;
   gap: 8px;
   padding: 9px 12px;
-  border-bottom: 1px solid #eef0f4;
+  border-bottom: 1px solid var(--session-v2-border);
   font-size: 12px;
-  color: #4b5563;
+  color: var(--session-v2-fg-muted);
 }
 
 :global(.sessionV2ToolCardText) {
@@ -570,28 +583,28 @@
   word-break: break-word;
   font-size: 12px;
   line-height: 1.5;
-  color: #111827;
+  color: var(--session-v2-fg);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  background: #fbfbfd;
+  background: var(--session-v2-surface-subtle);
   border-radius: 0 0 12px 12px;
 }
 
 :global(.sessionV2Empty) {
   padding: 20px;
-  border: 1px dashed color-mix(in srgb, var(--outline) 24%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--session-v2-fg) 18%, transparent);
   border-radius: 10px;
   font-size: 13px;
-  color: var(--on-surface-variant);
+  color: var(--session-v2-fg-muted);
 }
 
 :global(.sessionV2EmptyInline) {
   font-size: 12px;
-  color: var(--on-surface-variant);
+  color: var(--session-v2-fg-muted);
 }
 
 :global(.sessionV2Composer) {
-  border-top: 1px solid color-mix(in srgb, var(--outline) 12%, transparent);
-  background: var(--surface-container-low);
+  border-top: 1px solid var(--session-v2-border);
+  background: var(--session-v2-bg);
   padding: 10px;
   display: grid;
   gap: 8px;
@@ -608,7 +621,7 @@
   display: flex;
   gap: 8px;
   font-size: 11px;
-  color: var(--on-surface-variant);
+  color: var(--session-v2-fg-muted);
 }
 
 :global(.sessionV2ComposerActions) {
@@ -625,20 +638,20 @@
   display: flex;
   gap: 8px;
   font-size: 11px;
-  color: var(--on-surface-variant);
+  color: var(--session-v2-fg-muted);
 }
 
 :global(.sessionV2ReverseSearch) {
   display: grid;
   gap: 6px;
   padding: 8px;
-  border: 1px dashed color-mix(in srgb, var(--outline) 20%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--session-v2-fg) 20%, transparent);
   border-radius: 8px;
 }
 
 :global(.sessionV2ReversePreview) {
   font-size: 12px;
-  color: var(--on-surface-variant);
+  color: var(--session-v2-fg-muted);
 }
 
 :global(.sessionV2Popup) {
@@ -651,12 +664,12 @@
   width: 100%;
   resize: vertical;
   min-height: 88px;
-  border: 1px solid color-mix(in srgb, var(--outline) 14%, transparent);
+  border: 1px solid var(--session-v2-border);
   border-radius: 10px;
   padding: 10px;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 13px;
-  background: var(--surface-container-lowest);
+  background: var(--session-v2-bg);
 }
 
 :global(.sessionV2ComposerFooter) {
@@ -690,15 +703,15 @@
   width: min(760px, 100%);
   max-height: calc(100vh - 32px);
   overflow: auto;
-  background: var(--surface-container-lowest);
-  border: 1px solid color-mix(in srgb, var(--outline) 16%, transparent);
+  background: var(--session-v2-bg);
+  border: 1px solid var(--session-v2-border);
   border-radius: 14px;
   box-shadow: var(--shadow-md);
 }
 
 :global(.sessionV2OverlayHeader) {
   padding: 14px 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--outline) 10%, transparent);
+  border-bottom: 1px solid var(--session-v2-border);
 }
 
 :global(.sessionV2OverlayHeader h3) {
@@ -707,7 +720,7 @@
 
 :global(.sessionV2OverlayHeader p) {
   margin: 4px 0 0;
-  color: var(--on-surface-variant);
+  color: var(--session-v2-fg-muted);
   font-size: 12px;
 }
 
@@ -727,8 +740,8 @@
 }
 
 :global(.sessionV2Option) {
-  border: 1px solid color-mix(in srgb, var(--outline) 14%, transparent);
-  background: var(--surface-container-low);
+  border: 1px solid var(--session-v2-border);
+  background: var(--session-v2-bg);
   border-radius: 10px;
   padding: 8px 10px;
   text-align: left;
@@ -736,24 +749,24 @@
 }
 
 :global(.sessionV2Option.active) {
-  border-color: color-mix(in srgb, var(--color-accent) 70%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--session-v2-accent) 70%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--session-v2-accent) 16%, transparent);
 }
 
 :global(.sessionV2Option small) {
   display: block;
   margin-top: 4px;
-  color: var(--on-surface-variant);
+  color: var(--session-v2-fg-muted);
   font-size: 11px;
 }
 
 :global(.sessionV2OverlayNotes),
 :global(.sessionV2Field input) {
   width: 100%;
-  border: 1px solid color-mix(in srgb, var(--outline) 14%, transparent);
+  border: 1px solid var(--session-v2-border);
   border-radius: 8px;
   padding: 8px;
-  background: var(--surface-container-low);
+  background: var(--session-v2-bg);
 }
 
 :global(.sessionV2Field) {
@@ -770,9 +783,9 @@
 :global(.sessionV2Json) {
   margin: 0;
   padding: 10px;
-  border: 1px solid color-mix(in srgb, var(--outline) 10%, transparent);
+  border: 1px solid var(--session-v2-border);
   border-radius: 10px;
-  background: var(--surface-container-low);
+  background: var(--session-v2-surface-subtle);
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 12px;
