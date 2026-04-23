@@ -1,8 +1,0 @@
-{
-  "candidate_metrics": {
-    "ask_queue_acceptance_suite_pass_rate_pct": 100,
-    "ask_queue_acceptance_cases_total": 36,
-    "ask_queue_acceptance_cases_passed": 36,
-    "ask_queue_acceptance_cases_failed": 0
-  }
-}

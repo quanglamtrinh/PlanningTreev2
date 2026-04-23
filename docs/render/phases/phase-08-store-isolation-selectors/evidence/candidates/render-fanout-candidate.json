@@ -1,7 +1,0 @@
-{
-  "candidate_metrics": {
-    "component_invalidation_count": 6200,
-    "synthetic_workload_event_count": 1250,
-    "synthetic_workload_component_count": 360
-  }
-}

@@ -1,4 +1,0 @@
-baseline_commit=a999eb1
-candidate_commit=ec2e2b1
-measured_at=2026-04-12
-notes=Baseline uses phase-2.3 branch point. Candidate uses phase-3.3 closeout candidate.

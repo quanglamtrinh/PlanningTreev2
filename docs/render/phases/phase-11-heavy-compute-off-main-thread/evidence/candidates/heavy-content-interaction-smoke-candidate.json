@@ -1,7 +1,0 @@
-﻿{
-  "candidate_metrics": {
-    "interaction_freeze_events_over_50ms": 0,
-    "interaction_window_count": 64,
-    "sample_count": 24
-  }
-}

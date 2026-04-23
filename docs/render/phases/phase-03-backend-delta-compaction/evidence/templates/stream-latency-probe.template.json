@@ -1,6 +1,0 @@
-{
-  "added_stream_latency_p95_ms": 0.0,
-  "sample_count": 0,
-  "notes": "Candidate p95 minus baseline p95 for matched workload runs."
-}
-

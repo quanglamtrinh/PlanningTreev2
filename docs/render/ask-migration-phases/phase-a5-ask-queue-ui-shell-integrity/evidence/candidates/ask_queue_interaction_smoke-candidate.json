@@ -1,8 +1,0 @@
-{
-  "candidate_metrics": {
-    "ask_queue_panel_interaction_success_rate_pct": 99.5,
-    "total_interaction_checks": 200,
-    "failed_interaction_checks": 1,
-    "successful_interaction_checks": 199
-  }
-}

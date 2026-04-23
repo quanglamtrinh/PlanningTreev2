@@ -1,6 +1,0 @@
-﻿{
-  "crash_recovery_boundary_data_loss_events": 0,
-  "fault_injection_runs": 45,
-  "scenario": "phase04_boundary_fault_injection_v1",
-  "notes": "Crash points include after publish-before-checkpoint, after journal-before-snapshot, and during eviction."
-}

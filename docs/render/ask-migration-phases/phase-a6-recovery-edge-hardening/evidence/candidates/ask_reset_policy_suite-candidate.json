@@ -1,8 +1,0 @@
-{
-  "candidate_metrics": {
-    "ask_reset_policy_violation_events": 0,
-    "ask_reset_queue_clear_failures": 0,
-    "ask_reset_stale_thread_send_attempt_events": 0,
-    "ask_reset_scenarios_checked": 24
-  }
-}
