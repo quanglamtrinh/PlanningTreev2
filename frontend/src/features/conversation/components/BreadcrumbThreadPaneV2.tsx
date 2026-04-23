@@ -3,7 +3,7 @@ import type { PendingServerRequest } from '../../session_v2/contracts'
 import { ComposerPane } from '../../session_v2/components/ComposerPane'
 import { RequestUserInputOverlay } from '../../session_v2/components/RequestUserInputOverlay'
 import { TranscriptPanel } from '../../session_v2/components/TranscriptPanel'
-import '../../session_v2/shell/SessionConsoleV2.module.css'
+import sessionShellStyles from '../../session_v2/shell/SessionConsoleV2.module.css'
 import type { NodeRecord } from '../../../api/types'
 import styles from '../../breadcrumb/BreadcrumbChatView.module.css'
 import type {
@@ -57,7 +57,7 @@ export function BreadcrumbThreadPaneV2({
 
   return (
     <>
-      <div className={styles.threadPane} data-testid="breadcrumb-thread-pane">
+      <div className={`${styles.threadPane} ${sessionShellStyles.themeScope}`} data-testid="breadcrumb-thread-pane">
         <div className={styles.threadSurface}>
           <BreadcrumbThreadTabsV2
             threadTab={threadTab}
