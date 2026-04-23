@@ -3,15 +3,15 @@ import type { PendingServerRequest } from '../../session_v2/contracts'
 import { ComposerPane } from '../../session_v2/components/ComposerPane'
 import { RequestUserInputOverlay } from '../../session_v2/components/RequestUserInputOverlay'
 import { TranscriptPanel } from '../../session_v2/components/TranscriptPanel'
-import sessionShellStyles from '../../session_v2/shell/SessionConsoleV2.module.css'
+import '../../session_v2/shell/SessionConsoleV2.module.css'
 import type { NodeRecord } from '../../../api/types'
-import styles from '../../breadcrumb/BreadcrumbChatView.module.css'
 import type {
   BreadcrumbComposerAdapterModel,
   BreadcrumbTranscriptAdapterModel,
 } from '../sessionV2AdapterContracts'
 import { type ThreadTab } from '../surfaceRouting'
 import { BreadcrumbThreadTabsV2 } from './BreadcrumbThreadTabsV2'
+import designStyles from './BreadcrumbThreadPaneV2.design.module.css'
 import { WorkflowActionStripV2 } from './WorkflowActionStripV2'
 
 export type BreadcrumbThreadFrameContextProps = {
@@ -57,25 +57,25 @@ export function BreadcrumbThreadPaneV2({
 
   return (
     <>
-      <div className={`${styles.threadPane} ${sessionShellStyles.themeScope}`} data-testid="breadcrumb-thread-pane">
-        <div className={styles.threadSurface}>
+      <div className={`${designStyles.threadPane} ${designStyles.themeScope}`} data-testid="breadcrumb-thread-pane">
+        <div className={designStyles.threadSurface}>
           <BreadcrumbThreadTabsV2
             threadTab={threadTab}
             onThreadTabChange={onThreadTabChange}
           />
 
-          <div className={styles.threadTabBody} data-testid="breadcrumb-thread-body">
-            <div className={styles.threadBodyNoticeRow}>
+          <div className={designStyles.threadTabBody} data-testid="breadcrumb-thread-body">
+            <div className={designStyles.threadBodyNoticeRow}>
               {combinedError ? (
-                <div className={styles.errorBanner} role="alert">
+                <div className={designStyles.errorBanner} role="alert">
                   {combinedError}
                 </div>
               ) : null}
             </div>
 
             <div
-              className={`${styles.threadBodyMain}${
-                isExecutionTab ? ` ${styles.threadExecutionWhiteCanvas}` : ''
+              className={`${designStyles.threadBodyMain}${
+                isExecutionTab ? ` ${designStyles.threadExecutionWhiteCanvas}` : ''
               }`}
             >
               <TranscriptPanel
@@ -88,8 +88,8 @@ export function BreadcrumbThreadPaneV2({
             <WorkflowActionStripV2 actions={workflowStripProps.actions} />
 
             <div
-              className={`${styles.threadBodyComposer}${
-                isExecutionTab ? ` ${styles.threadExecutionWhiteCanvas}` : ''
+              className={`${designStyles.threadBodyComposer}${
+                isExecutionTab ? ` ${designStyles.threadExecutionWhiteCanvas}` : ''
               }`}
               data-testid="breadcrumb-thread-composer"
             >

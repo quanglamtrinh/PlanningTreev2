@@ -1,5 +1,6 @@
-import styles from '../../breadcrumb/BreadcrumbChatView.module.css'
 import type { ThreadTab } from '../surfaceRouting'
+import { BREADCRUMB_THREAD_TAB_DESIGN } from './BreadcrumbThreadPaneV2.design'
+import styles from './BreadcrumbThreadPaneV2.design.module.css'
 
 type BreadcrumbThreadTabsV2Props = {
   threadTab: ThreadTab
@@ -13,36 +14,19 @@ export function BreadcrumbThreadTabsV2({
   return (
     <div className={styles.threadTabBar} data-testid="breadcrumb-v2-thread-header">
       <nav className={styles.threadTabNav} role="tablist" aria-label="Thread mode">
-        <button
-          type="button"
-          role="tab"
-          className={`${styles.threadTab} ${threadTab === 'ask' ? styles.threadTabActive : ''}`}
-          data-testid="breadcrumb-thread-tab-ask"
-          aria-selected={threadTab === 'ask'}
-          onClick={() => onThreadTabChange('ask')}
-        >
-          Ask
-        </button>
-        <button
-          type="button"
-          role="tab"
-          className={`${styles.threadTab} ${threadTab === 'execution' ? styles.threadTabActive : ''}`}
-          data-testid="breadcrumb-thread-tab-execution"
-          aria-selected={threadTab === 'execution'}
-          onClick={() => onThreadTabChange('execution')}
-        >
-          Execution
-        </button>
-        <button
-          type="button"
-          role="tab"
-          className={`${styles.threadTab} ${threadTab === 'audit' ? styles.threadTabActive : ''}`}
-          data-testid="breadcrumb-thread-tab-audit"
-          aria-selected={threadTab === 'audit'}
-          onClick={() => onThreadTabChange('audit')}
-        >
-          Review
-        </button>
+        {BREADCRUMB_THREAD_TAB_DESIGN.map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            role="tab"
+            className={`${styles.threadTab} ${threadTab === tab.value ? styles.threadTabActive : ''}`}
+            data-testid={tab.testId}
+            aria-selected={threadTab === tab.value}
+            onClick={() => onThreadTabChange(tab.value)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </nav>
     </div>
   )

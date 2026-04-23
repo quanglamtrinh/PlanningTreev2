@@ -1,9 +1,12 @@
-import styles from '../../breadcrumb/BreadcrumbChatView.module.css'
 import type {
-  ExecutionFollowupQueueStatus,
   ThreadExecutionFollowupQueueActions,
   ThreadExecutionFollowupQueueState,
 } from '../state/threadByIdStoreV3'
+import {
+  renderExecutionQueuePauseReasonLabel,
+  renderQueueStatusLabel,
+} from './BreadcrumbThreadPaneV2.design'
+import styles from './BreadcrumbThreadPaneV2.design.module.css'
 
 type ExecutionFollowupQueuePanelV2Props = {
   executionQueueState: ThreadExecutionFollowupQueueState
@@ -13,35 +16,6 @@ type ExecutionFollowupQueuePanelV2Props = {
   >
 }
 
-function renderQueueStatusLabel(status: ExecutionFollowupQueueStatus): string {
-  if (status === 'queued') {
-    return 'Queued'
-  }
-  if (status === 'requires_confirmation') {
-    return 'Needs confirmation'
-  }
-  if (status === 'sending') {
-    return 'Sending'
-  }
-  return 'Failed'
-}
-
-function renderQueuePauseReasonLabel(reason: ThreadExecutionFollowupQueueState['executionQueuePauseReason']): string {
-  if (reason === 'none') {
-    return 'Auto-send ready'
-  }
-  if (reason === 'runtime_waiting_input') {
-    return 'Paused: waiting for required input'
-  }
-  if (reason === 'plan_ready_gate') {
-    return 'Paused: plan-ready gate'
-  }
-  if (reason === 'operator_pause') {
-    return 'Paused by operator'
-  }
-  return 'Paused: workflow blocked'
-}
-
 export function ExecutionFollowupQueuePanelV2({
   executionQueueState,
   executionQueueActions,
@@ -49,7 +23,9 @@ export function ExecutionFollowupQueuePanelV2({
   const executionQueueEntries = executionQueueState.executionFollowupQueue
   const executionQueueHasSending = executionQueueEntries.some((entry) => entry.status === 'sending')
   const executionQueueControlsDisabled = executionQueueHasSending || executionQueueState.isSending
-  const executionQueuePauseLabel = renderQueuePauseReasonLabel(executionQueueState.executionQueuePauseReason)
+  const executionQueuePauseLabel = renderExecutionQueuePauseReasonLabel(
+    executionQueueState.executionQueuePauseReason,
+  )
   const {
     removeQueued,
     reorderQueued,
