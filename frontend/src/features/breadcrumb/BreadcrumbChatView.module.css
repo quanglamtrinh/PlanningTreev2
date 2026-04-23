@@ -184,6 +184,21 @@
   background: var(--thread-chat-canvas);
 }
 
+.workflowActionStrip {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: center;
+  padding: 10px 20px 0;
+  background: var(--thread-chat-canvas);
+}
+
+.workflowActionStripInner {
+  display: flex;
+  gap: 8px;
+  width: min(860px, 100%);
+  flex-wrap: wrap;
+}
+
 /* Execution tab: white canvas so messages + command blocks read as on paper */
 .threadExecutionWhiteCanvas {
   --thread-chat-canvas: #ffffff;

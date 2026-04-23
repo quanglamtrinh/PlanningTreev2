@@ -2,20 +2,24 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../src/features/breadcrumb/ComposerBar', () => ({
-  ComposerBar: ({ disabled }: { disabled: boolean }) => (
-    <div data-testid="composer" data-disabled={String(disabled)}>
+vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
+  ComposerPane: ({ disabled }: { disabled?: boolean }) => (
+    <div data-testid="composer-pane" data-disabled={String(Boolean(disabled))}>
       Composer
     </div>
   ),
 }))
 
-vi.mock('../../src/features/conversation/components/v3/MessagesV3', () => ({
-  MessagesV3: () => <div data-testid="messages-v3">V3 Feed</div>,
+vi.mock('../../src/features/session_v2/components/TranscriptPanel', () => ({
+  TranscriptPanel: ({ threadId }: { threadId: string | null }) => (
+    <div data-testid="transcript-panel" data-thread-id={threadId ?? ''}>
+      Transcript
+    </div>
+  ),
 }))
 
-vi.mock('../../src/features/breadcrumb/FrameContextFeedBlock', () => ({
-  FrameContextFeedBlock: () => <div data-testid="frame-context">context</div>,
+vi.mock('../../src/features/session_v2/components/RequestUserInputOverlay', () => ({
+  RequestUserInputOverlay: () => <div data-testid="request-user-input-overlay">Overlay</div>,
 }))
 
 vi.mock('../../src/features/node/NodeDetailCard', () => ({
@@ -190,7 +194,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     useThreadByIdStoreV3.getState().disconnectThread()
   })
 
-  it('renders execution lane with V3 pipeline', async () => {
+  it('renders execution lane with session-native transcript/composer pipeline', async () => {
     seedBaseStores(makeWorkflowState(), makeProjectSnapshot('original'))
     const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
 
@@ -212,14 +216,13 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
+      expect(screen.getByTestId('transcript-panel')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('breadcrumb-thread-body')).toBeInTheDocument()
-    expect(screen.getByTestId('breadcrumb-thread-composer')).toBeInTheDocument()
+    expect(screen.getByTestId('composer-pane')).toBeInTheDocument()
     expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'exec-thread-1', 'execution')
   })
 
-  it('renders audit lane with V3 pipeline when review thread exists', async () => {
+  it('renders audit lane with session-native transcript when review thread exists', async () => {
     seedBaseStores(
       makeWorkflowState({
         workflowPhase: 'audit_decision_pending',
@@ -248,12 +251,12 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
+      expect(screen.getByTestId('transcript-panel')).toBeInTheDocument()
     })
     expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'audit-thread-1', 'audit')
   })
 
-  it('keeps ask lane on chat-v2', async () => {
+  it('keeps ask lane on chat-v2 with session-native transcript/composer', async () => {
     seedBaseStores(makeWorkflowState(), makeProjectSnapshot('original'))
     const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
     useThreadByIdStoreV3.setState({
@@ -274,7 +277,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
+      expect(screen.getByTestId('transcript-panel')).toBeInTheDocument()
     })
     expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'ask-thread-1', 'ask_planning')
   })

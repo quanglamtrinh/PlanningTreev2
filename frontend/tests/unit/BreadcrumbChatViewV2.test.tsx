@@ -1,43 +1,76 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../src/features/breadcrumb/ComposerBar', () => ({
-  ComposerBar: ({ disabled, onSend }: { disabled: boolean; onSend: (content: string) => void }) => (
-    <div data-testid="composer" data-disabled={String(disabled)}>
+vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
+  ComposerPane: ({
+    disabled,
+    onSubmit,
+  }: {
+    disabled?: boolean
+    onSubmit: (payload: {
+      input: Array<Record<string, unknown>>
+      text: string
+      accessMode: 'full-access' | 'default-permissions'
+    }) => Promise<void>
+  }) => (
+    <div data-testid="composer-pane" data-disabled={String(Boolean(disabled))}>
       <button
         type="button"
-        data-testid="composer-send-mock"
-        disabled={disabled}
-        onClick={() => onSend('queued from composer mock')}
+        data-testid="composer-submit-mock"
+        disabled={Boolean(disabled)}
+        onClick={() =>
+          void onSubmit({
+            input: [{ type: 'text', text: 'queued from composer mock' }],
+            text: 'queued from composer mock',
+            accessMode: 'full-access',
+          })
+        }
       >
-        Send mock
+        Send
       </button>
     </div>
   ),
 }))
 
-vi.mock('../../src/features/conversation/components/v3/MessagesV3', () => ({
-  MessagesV3: ({
-    prefix,
-    suffix,
-    isLoading,
-  }: {
-    prefix?: React.ReactNode
-    suffix?: React.ReactNode
-    isLoading?: boolean
-  }) => (
-    <div data-testid="messages-v3" data-loading={String(Boolean(isLoading))}>
-      {prefix ? <div data-testid="conversation-prefix">{prefix}</div> : null}
-      feed
-      {suffix ? <div data-testid="conversation-suffix">{suffix}</div> : null}
+vi.mock('../../src/features/session_v2/components/TranscriptPanel', () => ({
+  TranscriptPanel: ({ threadId }: { threadId: string | null }) => (
+    <div data-testid="transcript-panel" data-thread-id={threadId ?? ''}>
+      transcript
     </div>
   ),
 }))
 
-vi.mock('../../src/features/breadcrumb/FrameContextFeedBlock', () => ({
-  FrameContextFeedBlock: ({ variant }: { variant: 'ask' | 'audit' }) => (
-    <div data-testid={`frame-context-${variant}`}>context {variant}</div>
+vi.mock('../../src/features/session_v2/components/RequestUserInputOverlay', () => ({
+  RequestUserInputOverlay: ({
+    request,
+    onResolve,
+    onReject,
+  }: {
+    request: { requestId: string }
+    onResolve: (result: Record<string, unknown>) => Promise<void>
+    onReject: (reason?: string | null) => Promise<void>
+  }) => (
+    <div data-testid="request-user-input-overlay" data-request-id={request.requestId}>
+      <button
+        type="button"
+        data-testid="overlay-submit"
+        onClick={() =>
+          void onResolve({
+            answers: [{ id: 'q-1', selectedOption: 'Option A', notes: '', status: 'answered' }],
+          })
+        }
+      >
+        Submit
+      </button>
+      <button
+        type="button"
+        data-testid="overlay-cancel"
+        onClick={() => void onReject('cancel')}
+      >
+        Cancel
+      </button>
+    </div>
   ),
 }))
 
@@ -162,8 +195,11 @@ function seedStores(options: {
   workflowState?: NodeWorkflowView
   threadSnapshot?: ThreadSnapshotV3 | null
 }) {
-  const { nodeKind = 'original', workflowState = makeWorkflowState(), threadSnapshot = makeConversationSnapshot() } =
-    options
+  const {
+    nodeKind = 'original',
+    workflowState = makeWorkflowState(),
+    threadSnapshot = makeConversationSnapshot(),
+  } = options
 
   useProjectStore.setState({
     activeProjectId: 'project-1',
@@ -222,7 +258,6 @@ function seedStores(options: {
     sendTurn: vi.fn().mockResolvedValue(undefined),
     resolveUserInput: vi.fn().mockResolvedValue(undefined),
     runPlanAction: vi.fn().mockResolvedValue(undefined),
-    recordRenderError: vi.fn(),
     disconnectThread: vi.fn(),
   } as Partial<ReturnType<typeof useThreadByIdStoreV3.getState>>)
 }
@@ -237,7 +272,7 @@ describe('BreadcrumbChatViewV2', () => {
     useUIStore.setState(useUIStore.getInitialState())
   })
 
-  it('defaults non-review /chat-v2 routes to execution and loads execution thread by id', async () => {
+  it('defaults non-review /chat-v2 route to execution and loads execution thread by id', async () => {
     const loadThread = vi.fn().mockResolvedValue(undefined)
     seedStores({
       workflowState: makeWorkflowState({
@@ -271,35 +306,85 @@ describe('BreadcrumbChatViewV2', () => {
         '/projects/project-1/nodes/root/chat-v2?thread=execution',
       )
     })
-    expect(screen.getByTestId('breadcrumb-thread-body')).toBeInTheDocument()
-    expect(screen.getByTestId('breadcrumb-thread-composer')).toBeInTheDocument()
-    expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
+    expect(screen.getByTestId('transcript-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('composer-pane')).toBeInTheDocument()
     expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'exec-thread-1', 'execution')
   })
 
-  it('renders audit shell until review thread exists', () => {
+  it('keeps ask lane on /chat-v2 and loads ask thread by id', async () => {
+    const loadThread = vi.fn().mockResolvedValue(undefined)
     seedStores({
       workflowState: makeWorkflowState({
-        workflowPhase: 'execution_decision_pending',
-        reviewThreadId: null,
+        askThreadId: 'ask-thread-1',
       }),
-      threadSnapshot: null,
+      threadSnapshot: makeConversationSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning' }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      loadThread,
     })
 
     render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat-v2"
+            element={
+              <>
+                <BreadcrumbChatViewV2 />
+                <LocationProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-probe')).toHaveTextContent(
+        '/projects/project-1/nodes/root/chat-v2?thread=ask',
+      )
+    })
+    expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'ask-thread-1', 'ask_planning')
+    expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'ask-thread-1')
+  })
+
+  it('routes execution submit directly through sendTurn', async () => {
+    const enqueueFollowup = vi.fn().mockResolvedValue(undefined)
+    const sendTurn = vi.fn().mockResolvedValue(undefined)
+
+    seedStores({
+      workflowState: makeWorkflowState({
+        workflowPhase: 'execution_decision_pending',
+        canSendExecutionMessage: true,
+      }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      enqueueFollowup,
+      sendTurn,
+      activeThreadRole: 'execution',
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
         <Routes>
           <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
 
-    expect(screen.getByTestId('audit-shell')).toBeInTheDocument()
-    expect(screen.getByTestId('frame-context-audit')).toBeInTheDocument()
-    expect(screen.queryByTestId('messages-v3')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('composer-submit-mock'))
+
+    await waitFor(() => {
+      expect(sendTurn).toHaveBeenCalledWith('queued from composer mock')
+    })
+    expect(enqueueFollowup).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('execution-followup-queue-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ask-followup-queue-panel')).not.toBeInTheDocument()
   })
 
-  it('uses workflow-state actions and navigates from execution to audit review', async () => {
+  it('renders workflow actions in strip and runs review-in-audit action', async () => {
     const reviewInAudit = vi.fn().mockResolvedValue(undefined)
     seedStores({
       workflowState: makeWorkflowState({
@@ -336,6 +421,7 @@ describe('BreadcrumbChatViewV2', () => {
       </MemoryRouter>,
     )
 
+    expect(screen.getByTestId('workflow-action-strip')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('workflow-review-in-audit'))
 
     await waitFor(() => {
@@ -348,687 +434,185 @@ describe('BreadcrumbChatViewV2', () => {
     })
   })
 
-  it('keeps ask lane on /chat-v2 and loads ask thread by id', async () => {
-    const loadThread = vi.fn().mockResolvedValue(undefined)
-    seedStores({
-      workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
-      }),
-      threadSnapshot: makeConversationSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning' }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      loadThread,
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
-        <Routes>
-          <Route
-            path="/projects/:projectId/nodes/:nodeId/chat-v2"
-            element={
-              <>
-                <BreadcrumbChatViewV2 />
-                <LocationProbe />
-              </>
-            }
-          />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('location-probe')).toHaveTextContent('/projects/project-1/nodes/root/chat-v2?thread=ask')
-    })
-    expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'ask-thread-1', 'ask_planning')
-    expect(screen.getByTestId('frame-context-ask')).toBeInTheDocument()
-    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
-  })
-
-  it('keeps execution composer enabled while execution is running so follow-ups can be queued', async () => {
-    seedStores({
-      workflowState: makeWorkflowState({
-        workflowPhase: 'execution_running',
-        canSendExecutionMessage: false,
-      }),
-      threadSnapshot: makeConversationSnapshot({
-        activeTurnId: 'turn-running',
-        processingState: 'running',
-      }),
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
-    })
-  })
-
-  it('keeps ask composer enabled while ask turn is running so asks can be queued', async () => {
-    seedStores({
-      workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
-      }),
-      threadSnapshot: makeConversationSnapshot({
-        threadId: 'ask-thread-1',
-        threadRole: 'ask_planning',
-        activeTurnId: 'ask-running-turn',
-        processingState: 'running',
-      }),
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'false')
-    })
-  })
-
-  it('routes execution composer sends to enqueueFollowup instead of direct sendTurn', async () => {
-    const enqueueFollowup = vi.fn().mockResolvedValue(undefined)
-    const sendTurn = vi.fn().mockResolvedValue(undefined)
-
+  it('uses transcript native empty state path for audit lane without review thread', async () => {
     seedStores({
       workflowState: makeWorkflowState({
         workflowPhase: 'execution_decision_pending',
-        canSendExecutionMessage: true,
-      }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      enqueueFollowup,
-      sendTurn,
-      activeThreadRole: 'execution',
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    fireEvent.click(screen.getByTestId('composer-send-mock'))
-
-    await waitFor(() => {
-      expect(enqueueFollowup).toHaveBeenCalledWith('queued from composer mock')
-    })
-    expect(sendTurn).not.toHaveBeenCalled()
-  })
-
-  it('routes ask composer sends through sendTurn', async () => {
-    const enqueueFollowup = vi.fn().mockResolvedValue(undefined)
-    const sendTurn = vi.fn().mockResolvedValue(undefined)
-
-    seedStores({
-      workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
-      }),
-      threadSnapshot: makeConversationSnapshot({
-        threadId: 'ask-thread-1',
-        threadRole: 'ask_planning',
-      }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      enqueueFollowup,
-      sendTurn,
-      activeThreadRole: 'ask_planning',
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    fireEvent.click(screen.getByTestId('composer-send-mock'))
-
-    await waitFor(() => {
-      expect(sendTurn).toHaveBeenCalledWith('queued from composer mock')
-    })
-    expect(enqueueFollowup).not.toHaveBeenCalled()
-  })
-
-  it('keeps ask feed render unblocked while workflow state is refreshing after ask thread resolves', async () => {
-    seedStores({
-      workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
-      }),
-      threadSnapshot: makeConversationSnapshot({
-        threadId: 'ask-thread-1',
-        threadRole: 'ask_planning',
-      }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      activeThreadRole: 'ask_planning',
-      isLoading: false,
-    })
-    useWorkflowStateStoreV3.setState({
-      ...useWorkflowStateStoreV3.getState(),
-      loading: {
-        'project-1::root': true,
-      },
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    expect(screen.getByTestId('messages-v3')).toHaveAttribute('data-loading', 'false')
-  })
-
-  it('renders ask queue panel controls and dispatches ask queue actions', async () => {
-    const confirmQueued = vi.fn().mockResolvedValue(undefined)
-    const removeQueued = vi.fn()
-    const reorderAskQueued = vi.fn()
-    const sendAskQueuedNow = vi.fn().mockResolvedValue(undefined)
-    const retryAskQueued = vi.fn().mockResolvedValue(undefined)
-    seedStores({
-      workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
-      }),
-      threadSnapshot: makeConversationSnapshot({
-        threadId: 'ask-thread-1',
-        threadRole: 'ask_planning',
-      }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      activeThreadRole: 'ask_planning',
-      askFollowupQueue: [
-        {
-          entryId: 'ask-queued-1',
-          text: 'queued ask',
-          idempotencyKey: 'ask-idem-queued-1',
-          createdAtMs: Date.now(),
-          enqueueContext: {
-            threadId: 'ask-thread-1',
-            snapshotVersion: 1,
-            staleMarker: false,
-          },
-          status: 'queued',
-          attemptCount: 0,
-          lastError: null,
-          confirmationReason: null,
-        },
-        {
-          entryId: 'ask-blocked-1',
-          text: 'blocked ask',
-          idempotencyKey: 'ask-idem-blocked-1',
-          createdAtMs: Date.now(),
-          enqueueContext: {
-            threadId: 'ask-thread-1',
-            snapshotVersion: 1,
-            staleMarker: false,
-          },
-          status: 'requires_confirmation',
-          attemptCount: 0,
-          lastError: null,
-          confirmationReason: 'thread_drift',
-        },
-        {
-          entryId: 'ask-failed-1',
-          text: 'failed ask',
-          idempotencyKey: 'ask-idem-failed-1',
-          createdAtMs: Date.now(),
-          enqueueContext: {
-            threadId: 'ask-thread-1',
-            snapshotVersion: 1,
-            staleMarker: false,
-          },
-          status: 'failed',
-          attemptCount: 0,
-          lastError: 'send failed',
-          confirmationReason: null,
-        },
-      ],
-      askQueuePauseReason: 'requires_confirmation',
-      confirmQueued,
-      removeQueued,
-      reorderAskQueued,
-      sendAskQueuedNow,
-      retryAskQueued,
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    expect(screen.getByTestId('ask-followup-queue-panel')).toBeInTheDocument()
-    expect(screen.getByText('Paused: confirmation required')).toBeInTheDocument()
-
-    const queueItems = screen.getAllByRole('listitem')
-    const firstItem = queueItems[0]
-    const secondItem = queueItems[1]
-    const thirdItem = queueItems[2]
-
-    fireEvent.click(within(firstItem).getByRole('button', { name: 'Move down' }))
-    fireEvent.click(within(firstItem).getByRole('button', { name: 'Send now' }))
-    fireEvent.click(within(firstItem).getByRole('button', { name: 'Remove' }))
-    fireEvent.click(within(secondItem).getByRole('button', { name: 'Confirm' }))
-    fireEvent.click(within(thirdItem).getByRole('button', { name: 'Retry' }))
-
-    await waitFor(() => {
-      expect(reorderAskQueued).toHaveBeenCalledWith(0, 1)
-    })
-    await waitFor(() => {
-      expect(sendAskQueuedNow).toHaveBeenCalledWith('ask-queued-1')
-    })
-    expect(removeQueued).toHaveBeenCalledWith('ask-queued-1')
-    expect(confirmQueued).toHaveBeenCalledWith('ask-blocked-1')
-    expect(retryAskQueued).toHaveBeenCalledWith('ask-failed-1')
-  })
-
-  it('hides ask queue panel when ask follow-up queue rollout gate is disabled', async () => {
-    seedStores({
-      workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
-      }),
-      threadSnapshot: makeConversationSnapshot({
-        threadId: 'ask-thread-1',
-        threadRole: 'ask_planning',
-      }),
-    })
-    useProjectStore.setState((state) => ({
-      ...state,
-      bootstrap: {
-        ...(state.bootstrap ?? {
-          ready: true,
-          workspace_configured: true,
-          codex_available: true,
-          codex_path: 'codex',
-        }),
-        ask_followup_queue_enabled: false,
-      },
-    }))
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      activeThreadRole: 'ask_planning',
-      askFollowupQueue: [
-        {
-          entryId: 'ask-hidden-1',
-          text: 'hidden ask entry',
-          idempotencyKey: 'ask-hidden-idem',
-          createdAtMs: Date.now(),
-          enqueueContext: {
-            threadId: 'ask-thread-1',
-            snapshotVersion: 1,
-            staleMarker: false,
-          },
-          status: 'queued',
-          attemptCount: 0,
-          lastError: null,
-          confirmationReason: null,
-        },
-      ],
-      askQueuePauseReason: 'none',
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('messages-v3')).toBeInTheDocument()
-    })
-    expect(screen.queryByTestId('ask-followup-queue-panel')).not.toBeInTheDocument()
-  })
-
-  it('disables ask send-now for non-head and non-queued entries', async () => {
-    seedStores({
-      workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
-      }),
-      threadSnapshot: makeConversationSnapshot({
-        threadId: 'ask-thread-1',
-        threadRole: 'ask_planning',
-      }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      activeThreadRole: 'ask_planning',
-      askFollowupQueue: [
-        {
-          entryId: 'ask-blocked-1',
-          text: 'blocked ask',
-          idempotencyKey: 'ask-idem-blocked-1',
-          createdAtMs: Date.now(),
-          enqueueContext: {
-            threadId: 'ask-thread-1',
-            snapshotVersion: 1,
-            staleMarker: false,
-          },
-          status: 'requires_confirmation',
-          attemptCount: 0,
-          lastError: null,
-          confirmationReason: 'stale_age',
-        },
-        {
-          entryId: 'ask-queued-2',
-          text: 'queued ask',
-          idempotencyKey: 'ask-idem-queued-2',
-          createdAtMs: Date.now(),
-          enqueueContext: {
-            threadId: 'ask-thread-1',
-            snapshotVersion: 1,
-            staleMarker: false,
-          },
-          status: 'queued',
-          attemptCount: 0,
-          lastError: null,
-          confirmationReason: null,
-        },
-      ],
-      askQueuePauseReason: 'requires_confirmation',
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    const queueItems = screen.getAllByRole('listitem')
-    const blockedHead = queueItems[0]
-    const queuedTail = queueItems[1]
-    expect(within(blockedHead).getByRole('button', { name: 'Send now' })).toBeDisabled()
-    expect(within(queuedTail).getByRole('button', { name: 'Send now' })).toBeDisabled()
-  })
-
-  it('renders execution queue controls and dispatches queue actions', async () => {
-    const removeQueued = vi.fn()
-    const reorderQueued = vi.fn()
-    const sendQueuedNow = vi.fn().mockResolvedValue(undefined)
-    const confirmQueued = vi.fn().mockResolvedValue(undefined)
-    const setOperatorPause = vi.fn()
-
-    seedStores({
-      workflowState: makeWorkflowState({
-        workflowPhase: 'execution_decision_pending',
-        canSendExecutionMessage: true,
-        latestExecutionRunId: 'run-1',
-      }),
-      threadSnapshot: makeConversationSnapshot({
-        uiSignals: {
-          planReady: {
-            planItemId: 'plan-1',
-            revision: 7,
-            ready: true,
-            failed: false,
-          },
-          activeUserInputRequests: [],
-        },
-      }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      activeThreadRole: 'execution',
-      executionQueueOperatorPaused: false,
-      executionFollowupQueue: [
-        {
-          entryId: 'entry-1',
-          text: 'queued first',
-          idempotencyKey: 'idem-1',
-          createdAtMs: Date.now(),
-          enqueueContext: {
-            latestExecutionRunId: 'run-1',
-            planReadyRevision: null,
-          },
-          status: 'queued',
-          attemptCount: 0,
-          lastError: null,
-        },
-        {
-          entryId: 'entry-2',
-          text: 'queued second',
-          idempotencyKey: 'idem-2',
-          createdAtMs: Date.now(),
-          enqueueContext: {
-            latestExecutionRunId: 'run-1',
-            planReadyRevision: null,
-          },
-          status: 'requires_confirmation',
-          attemptCount: 0,
-          lastError: null,
-        },
-      ],
-      removeQueued,
-      reorderQueued,
-      sendQueuedNow,
-      confirmQueued,
-      setOperatorPause,
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    expect(screen.getByTestId('execution-followup-queue-panel')).toBeInTheDocument()
-    expect(screen.getByText('Paused: plan-ready gate')).toBeInTheDocument()
-
-    const queueItems = screen.getAllByRole('listitem')
-    const firstItem = queueItems[0]
-    const secondItem = queueItems[1]
-
-    fireEvent.click(within(firstItem).getByRole('button', { name: 'Move down' }))
-    fireEvent.click(within(firstItem).getByRole('button', { name: 'Send now' }))
-    fireEvent.click(within(firstItem).getByRole('button', { name: 'Remove' }))
-    fireEvent.click(within(secondItem).getByRole('button', { name: 'Confirm' }))
-    fireEvent.click(screen.getByTestId('execution-followup-operator-pause-toggle'))
-
-    await waitFor(() => {
-      expect(reorderQueued).toHaveBeenCalledWith(0, 1)
-    })
-    await waitFor(() => {
-      expect(sendQueuedNow).toHaveBeenCalledWith('entry-1')
-    })
-    expect(removeQueued).toHaveBeenCalledWith('entry-1')
-    expect(confirmQueued).toHaveBeenCalledWith('entry-2')
-    expect(setOperatorPause).toHaveBeenCalledWith(true)
-  })
-
-  it('keeps ask metadata shell visible when ask transcript is empty', async () => {
-    const loadThread = vi.fn().mockResolvedValue(undefined)
-    seedStores({
-      workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
+        reviewThreadId: null,
       }),
       threadSnapshot: null,
     })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      loadThread,
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
-        <Routes>
-          <Route
-            path="/projects/:projectId/nodes/:nodeId/chat-v2"
-            element={
-              <>
-                <BreadcrumbChatViewV2 />
-                <LocationProbe />
-              </>
-            }
-          />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await waitFor(() => {
-      expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'ask-thread-1', 'ask_planning')
-    })
-    expect(screen.getByTestId('frame-context-ask')).toBeInTheDocument()
-    expect(screen.getByTestId('composer')).toHaveAttribute('data-disabled', 'true')
-  })
-
-  it('marks done from execution and returns to graph immediately', async () => {
-    const markDoneFromExecution = vi.fn().mockResolvedValue(undefined)
-    seedStores({
-      workflowState: makeWorkflowState({
-        workflowPhase: 'execution_decision_pending',
-        canMarkDoneFromExecution: true,
-        currentExecutionDecision: {
-          status: 'current',
-          sourceExecutionRunId: 'exec-run-1',
-          executionTurnId: 'turn-1',
-          candidateWorkspaceHash: 'ws:abc',
-          summaryText: 'Execution summary',
-          createdAt: '2026-03-28T00:01:00Z',
-        },
-      }),
-    })
-    useWorkflowStateStoreV3.setState({
-      ...useWorkflowStateStoreV3.getState(),
-      markDoneFromExecution,
-    })
-    useUIStore.setState({ ...useUIStore.getState(), activeSurface: 'breadcrumb' })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
-        <Routes>
-          <Route path="/" element={<LocationProbe />} />
-          <Route
-            path="/projects/:projectId/nodes/:nodeId/chat-v2"
-            element={
-              <>
-                <BreadcrumbChatViewV2 />
-                <LocationProbe />
-              </>
-            }
-          />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    fireEvent.click(screen.getByTestId('workflow-mark-done-execution'))
-
-    await waitFor(() => {
-      expect(markDoneFromExecution).toHaveBeenCalledWith('project-1', 'root', 'ws:abc')
-    })
-    await waitFor(() => {
-      expect(screen.getByTestId('location-probe')).toHaveTextContent('/')
-    })
-    expect(useUIStore.getState().activeSurface).toBe('graph')
-  })
-
-  it('marks done from audit and returns to graph immediately', async () => {
-    const markDoneFromAudit = vi.fn().mockResolvedValue(undefined)
-    seedStores({
-      workflowState: makeWorkflowState({
-        workflowPhase: 'audit_decision_pending',
-        canMarkDoneFromAudit: true,
-        reviewThreadId: 'audit-thread-1',
-        currentAuditDecision: {
-          status: 'current',
-          sourceReviewCycleId: 'review-cycle-1',
-          reviewCommitSha: 'sha:abc',
-          finalReviewText: 'Audit summary',
-          reviewDisposition: 'approve',
-          createdAt: '2026-03-28T00:02:00Z',
-        },
-      }),
-      threadSnapshot: makeConversationSnapshot({ threadId: 'audit-thread-1', threadRole: 'audit' }),
-    })
-    useWorkflowStateStoreV3.setState({
-      ...useWorkflowStateStoreV3.getState(),
-      markDoneFromAudit,
-    })
-    useUIStore.setState({ ...useUIStore.getState(), activeSurface: 'breadcrumb' })
 
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
         <Routes>
-          <Route path="/" element={<LocationProbe />} />
-          <Route
-            path="/projects/:projectId/nodes/:nodeId/chat-v2"
-            element={
-              <>
-                <BreadcrumbChatViewV2 />
-                <LocationProbe />
-              </>
-            }
-          />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByTestId('workflow-mark-done-audit'))
-
-    await waitFor(() => {
-      expect(markDoneFromAudit).toHaveBeenCalledWith('project-1', 'root', 'sha:abc')
-    })
-    await waitFor(() => {
-      expect(screen.getByTestId('location-probe')).toHaveTextContent('/')
-    })
-    expect(useUIStore.getState().activeSurface).toBe('graph')
+    expect(screen.getByTestId('transcript-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('audit-shell')).not.toBeInTheDocument()
   })
 
-  it('keeps review-node routes inside chat-v2 audit lane', async () => {
+  it('renders pending request overlay and resolves user input with mapped answers', async () => {
+    const resolveUserInput = vi.fn().mockResolvedValue(undefined)
     seedStores({
-      nodeKind: 'review',
       workflowState: makeWorkflowState({
-        reviewThreadId: 'audit-thread-1',
+        askThreadId: 'ask-thread-1',
       }),
-      threadSnapshot: makeConversationSnapshot({ threadId: 'audit-thread-1', threadRole: 'audit' }),
+      threadSnapshot: makeConversationSnapshot({
+        threadId: 'ask-thread-1',
+        threadRole: 'ask_planning',
+        items: [
+          {
+            id: 'item-user-input-1',
+            kind: 'userInput',
+            threadId: 'ask-thread-1',
+            turnId: 'turn-1',
+            sequence: 1,
+            createdAt: '2026-03-28T00:00:01Z',
+            updatedAt: '2026-03-28T00:00:01Z',
+            status: 'requested',
+            source: 'upstream',
+            tone: 'neutral',
+            metadata: {},
+            requestId: 'req-1',
+            title: 'Need confirmation',
+            questions: [
+              {
+                id: 'q-1',
+                header: 'Decision',
+                prompt: 'Choose an option',
+                inputType: 'single_select',
+                options: [{ label: 'Option A', description: 'Recommended' }],
+              },
+            ],
+            answers: [],
+            requestedAt: '2026-03-28T00:00:01Z',
+            resolvedAt: null,
+          },
+        ],
+        uiSignals: {
+          planReady: {
+            planItemId: null,
+            revision: null,
+            ready: false,
+            failed: false,
+          },
+          activeUserInputRequests: [
+            {
+              requestId: 'req-1',
+              itemId: 'item-user-input-1',
+              threadId: 'ask-thread-1',
+              turnId: 'turn-1',
+              status: 'requested',
+              createdAt: '2026-03-28T00:00:01Z',
+              submittedAt: null,
+              resolvedAt: null,
+              answers: [],
+            },
+          ],
+        },
+      }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      resolveUserInput,
     })
 
     render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2']}>
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
-          <Route
-            path="/projects/:projectId/nodes/:nodeId/chat-v2"
-            element={
-              <>
-                <BreadcrumbChatViewV2 />
-                <LocationProbe />
-              </>
-            }
-          />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
 
+    expect(screen.getByTestId('request-user-input-overlay')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('overlay-submit'))
+
     await waitFor(() => {
-      expect(screen.getByTestId('location-probe')).toHaveTextContent(
-        '/projects/project-1/nodes/root/chat-v2?thread=audit',
-      )
+      expect(resolveUserInput).toHaveBeenCalledWith('req-1', [
+        {
+          questionId: 'q-1',
+          value: 'Option A',
+          label: 'Option A',
+        },
+      ])
+    })
+  })
+
+  it('rejects pending user input by resolving with empty answers', async () => {
+    const resolveUserInput = vi.fn().mockResolvedValue(undefined)
+    seedStores({
+      workflowState: makeWorkflowState({
+        askThreadId: 'ask-thread-1',
+      }),
+      threadSnapshot: makeConversationSnapshot({
+        threadId: 'ask-thread-1',
+        threadRole: 'ask_planning',
+        items: [
+          {
+            id: 'item-user-input-1',
+            kind: 'userInput',
+            threadId: 'ask-thread-1',
+            turnId: 'turn-1',
+            sequence: 1,
+            createdAt: '2026-03-28T00:00:01Z',
+            updatedAt: '2026-03-28T00:00:01Z',
+            status: 'requested',
+            source: 'upstream',
+            tone: 'neutral',
+            metadata: {},
+            requestId: 'req-1',
+            title: 'Need confirmation',
+            questions: [],
+            answers: [],
+            requestedAt: '2026-03-28T00:00:01Z',
+            resolvedAt: null,
+          },
+        ],
+        uiSignals: {
+          planReady: {
+            planItemId: null,
+            revision: null,
+            ready: false,
+            failed: false,
+          },
+          activeUserInputRequests: [
+            {
+              requestId: 'req-1',
+              itemId: 'item-user-input-1',
+              threadId: 'ask-thread-1',
+              turnId: 'turn-1',
+              status: 'requested',
+              createdAt: '2026-03-28T00:00:01Z',
+              submittedAt: null,
+              resolvedAt: null,
+              answers: [],
+            },
+          ],
+        },
+      }),
+    })
+    useThreadByIdStoreV3.setState({
+      ...useThreadByIdStoreV3.getState(),
+      resolveUserInput,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByTestId('overlay-cancel'))
+
+    await waitFor(() => {
+      expect(resolveUserInput).toHaveBeenCalledWith('req-1', [])
     })
   })
 })
