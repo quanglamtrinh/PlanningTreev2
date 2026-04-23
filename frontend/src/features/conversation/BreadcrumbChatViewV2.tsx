@@ -5,26 +5,21 @@ import type { ThreadRole } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
+import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { NodeDetailCard } from '../node/NodeDetailCard'
+import { BreadcrumbThreadPaneV2 } from './components/BreadcrumbThreadPaneV2'
+import { breadcrumbV3SessionUiAdapter } from './sessionV2Adapters'
 import {
   buildChatV2Url,
   parseThreadTab,
   resolveV2RouteTarget,
   type ThreadTab,
 } from './surfaceRouting'
-import styles from '../breadcrumb/BreadcrumbChatView.module.css'
-import { BreadcrumbThreadPaneV2 } from './components/BreadcrumbThreadPaneV2'
 import {
-  selectAskFollowupQueueActions,
-  selectAskFollowupQueueState,
   selectComposerState,
-  selectExecutionFollowupQueueActions,
-  selectExecutionFollowupQueueState,
   selectFeedRenderState,
-  selectHistoryUiState,
   selectThreadActions,
   selectTransportBannerState,
-  selectWorkflowActionState,
   useThreadByIdStoreV3,
 } from './state/threadByIdStoreV3'
 import { useWorkflowEventBridgeV3 } from './state/workflowEventBridgeV3'
@@ -55,43 +50,19 @@ export function BreadcrumbChatViewV2() {
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
 
   const feedRenderStateV3 = useThreadByIdStoreV3(useShallow(selectFeedRenderState))
-  const historyUiStateV3 = useThreadByIdStoreV3(useShallow(selectHistoryUiState))
   const composerStateV3 = useThreadByIdStoreV3(useShallow(selectComposerState))
   const transportBannerStateV3 = useThreadByIdStoreV3(useShallow(selectTransportBannerState))
-  const workflowActionStateV3 = useThreadByIdStoreV3(useShallow(selectWorkflowActionState))
   const {
     loadThread: loadThreadV3,
-    loadMoreHistory: loadMoreHistoryV3,
     sendTurn: sendTurnV3,
     resolveUserInput: resolveUserInputV3,
-    runPlanAction: runPlanActionV3,
-    recordRenderError: recordV3RenderError,
     disconnectThread: disconnectThreadV3,
   } = useThreadByIdStoreV3(useShallow(selectThreadActions))
-  const executionQueueState = useThreadByIdStoreV3(useShallow(selectExecutionFollowupQueueState))
-  const askQueueState = useThreadByIdStoreV3(useShallow(selectAskFollowupQueueState))
-  const {
-    enqueueFollowup,
-    removeQueued: removeExecutionQueued,
-    reorderQueued,
-    sendQueuedNow,
-    confirmQueued: confirmExecutionQueued,
-    retryQueued,
-    setOperatorPause,
-    syncExecutionQueueContext,
-  } = useThreadByIdStoreV3(useShallow(selectExecutionFollowupQueueActions))
+  const askFollowupQueueEnabled = useThreadByIdStoreV3((state) => state.askFollowupQueueEnabled)
   const setAskFollowupQueueEnabled = useThreadByIdStoreV3((state) => state.setAskFollowupQueueEnabled)
-  const {
-    removeQueued: removeAskQueued,
-    confirmQueued: confirmAskQueued,
-    reorderAskQueued,
-    sendAskQueuedNow,
-    retryAskQueued,
-  } = useThreadByIdStoreV3(useShallow(selectAskFollowupQueueActions))
 
   const {
     activeProjectId,
-    bootstrap,
     snapshot,
     selectedNodeId,
     isLoadingSnapshot,
@@ -101,7 +72,6 @@ export function BreadcrumbChatViewV2() {
   } = useProjectStore(
     useShallow((state) => ({
       activeProjectId: state.activeProjectId,
-      bootstrap: state.bootstrap,
       snapshot: state.snapshot,
       selectedNodeId: state.selectedNodeId,
       isLoadingSnapshot: state.isLoadingSnapshot,
@@ -119,7 +89,6 @@ export function BreadcrumbChatViewV2() {
 
   const {
     workflowState,
-    isWorkflowLoading,
     workflowError,
     activeMutation,
     loadWorkflowState,
@@ -130,7 +99,6 @@ export function BreadcrumbChatViewV2() {
   } = useWorkflowStateStoreV3(
     useShallow((state) => ({
       workflowState: detailStateKey ? state.entries[detailStateKey] : undefined,
-      isWorkflowLoading: detailStateKey ? state.loading[detailStateKey] === true : false,
       workflowError:
         detailStateKey && state.errors[detailStateKey] ? state.errors[detailStateKey] : null,
       activeMutation: detailStateKey ? state.activeMutations[detailStateKey] ?? null : null,
@@ -156,27 +124,16 @@ export function BreadcrumbChatViewV2() {
     isReviewNode,
   })
   const threadTab: ThreadTab = routeTarget.threadTab
-  const isLoading = feedRenderStateV3.isLoading
-  const isSending = feedRenderStateV3.isSending
-  const hasOlderHistory = historyUiStateV3.hasOlderHistory
-  const isLoadingHistory = historyUiStateV3.isLoadingHistory
-  const historyError = historyUiStateV3.historyError
-  const lastCompletedAt = workflowActionStateV3.lastCompletedAt
-  const lastDurationMs = workflowActionStateV3.lastDurationMs
   const error = transportBannerStateV3.error ?? feedRenderStateV3.error
   const loadThread = loadThreadV3
-  const loadMoreHistory = loadMoreHistoryV3
   const sendTurn = sendTurnV3
   const resolveUserInput = resolveUserInputV3
   const disconnectThread = disconnectThreadV3
   const threadRole = resolveThreadRole(threadTab)
-  const shouldCanonicalizeV2 = routeTarget.surface !== 'v2' || requestedThreadTab !== routeTarget.threadTab
+  const shouldCanonicalizeV2 =
+    routeTarget.surface !== 'v2' || requestedThreadTab !== routeTarget.threadTab
 
-  useWorkflowEventBridgeV3(
-    projectId,
-    nodeId,
-    Boolean(projectId && nodeId && !shouldCanonicalizeV2),
-  )
+  useWorkflowEventBridgeV3(projectId, nodeId, Boolean(projectId && nodeId && !shouldCanonicalizeV2))
 
   useEffect(() => {
     if (!projectId || !nodeId) {
@@ -188,14 +145,7 @@ export function BreadcrumbChatViewV2() {
     if (shouldCanonicalizeV2) {
       void navigate(buildChatV2Url(projectId, nodeId, threadTab), { replace: true })
     }
-  }, [
-    navigate,
-    nodeId,
-    projectId,
-    shouldCanonicalizeV2,
-    snapshot,
-    threadTab,
-  ])
+  }, [navigate, nodeId, projectId, shouldCanonicalizeV2, snapshot, threadTab])
 
   useEffect(() => {
     if (!projectId) {
@@ -255,14 +205,7 @@ export function BreadcrumbChatViewV2() {
       return
     }
     void loadWorkflowState(projectId, nodeId).catch(() => undefined)
-  }, [
-    detailNode,
-    loadWorkflowState,
-    nodeId,
-    projectId,
-    shouldCanonicalizeV2,
-    snapshot,
-  ])
+  }, [detailNode, loadWorkflowState, nodeId, projectId, shouldCanonicalizeV2, snapshot])
 
   const activeThreadId = useMemo(() => {
     if (!workflowState) {
@@ -308,9 +251,19 @@ export function BreadcrumbChatViewV2() {
     threadRole,
   ])
 
-  useEffect(() => () => {
-    disconnectThreadV3()
-  }, [disconnectThreadV3])
+  useEffect(
+    () => () => {
+      disconnectThreadV3()
+    },
+    [disconnectThreadV3],
+  )
+
+  useEffect(() => {
+    if (!askFollowupQueueEnabled) {
+      return
+    }
+    setAskFollowupQueueEnabled(false)
+  }, [askFollowupQueueEnabled, setAskFollowupQueueEnabled])
 
   const detailCardState = useMemo(() => {
     if (!projectId || !nodeId) {
@@ -344,91 +297,29 @@ export function BreadcrumbChatViewV2() {
     return 'Node details are unavailable for this breadcrumb route.'
   }, [activeProjectId, detailCardState, detailNode, nodeId, projectError, projectId, snapshot])
 
-  const showAuditShell = threadTab === 'audit' && !workflowState?.reviewThreadId
-  const executionQueueHasSending = executionQueueState.executionFollowupQueue.some(
-    (entry) => entry.status === 'sending',
-  )
-  const askQueueEnabled = bootstrap?.ask_followup_queue_enabled === true
-  const conversationLoading = isLoading || (threadTab === 'ask' ? false : isWorkflowLoading)
-  const composerDisabled = useMemo(() => {
-    if (!composerStateV3.snapshot) {
-      return true
-    }
-    if (threadTab === 'ask') {
-      return composerStateV3.isLoading
-    }
-    if (threadTab === 'execution') {
-      return composerStateV3.isLoading || executionQueueHasSending
-    }
-    return true
-  }, [
-    composerStateV3.isLoading,
-    composerStateV3.isSending,
-    composerStateV3.snapshot,
-    executionQueueHasSending,
-    threadTab,
-  ])
-
-  const combinedError = error ?? workflowError ?? historyError ?? null
+  const combinedError = error ?? workflowError ?? null
   const currentExecutionDecision = workflowState?.currentExecutionDecision ?? null
   const currentAuditDecision = workflowState?.currentAuditDecision ?? null
 
-  const handleSend = useCallback(
+  const composerDisabled = useMemo(() => {
+    if (!activeThreadId) {
+      return true
+    }
+    if (!composerStateV3.snapshot) {
+      return true
+    }
+    return composerStateV3.isLoading
+  }, [activeThreadId, composerStateV3.isLoading, composerStateV3.snapshot])
+
+  const handleSendText = useCallback(
     async (content: string) => {
       if (!projectId || !nodeId) {
-        return
-      }
-      if (threadTab === 'execution') {
-        await enqueueFollowup(content)
         return
       }
       await sendTurn(content)
       void loadWorkflowState(projectId, nodeId).catch(() => undefined)
     },
-    [enqueueFollowup, loadWorkflowState, nodeId, projectId, sendTurn, threadTab],
-  )
-
-  useEffect(() => {
-    if (askQueueState.askFollowupQueueEnabled === askQueueEnabled) {
-      return
-    }
-    setAskFollowupQueueEnabled(askQueueEnabled)
-  }, [askQueueEnabled, askQueueState.askFollowupQueueEnabled, setAskFollowupQueueEnabled])
-
-  useEffect(() => {
-    if (threadTab !== 'execution') {
-      void syncExecutionQueueContext({
-        workflowPhase: null,
-        canSendExecutionMessage: false,
-        latestExecutionRunId: null,
-      })
-      return
-    }
-    void syncExecutionQueueContext({
-      workflowPhase: workflowState?.workflowPhase ?? null,
-      canSendExecutionMessage: workflowState?.canSendExecutionMessage === true,
-      latestExecutionRunId: workflowState?.latestExecutionRunId ?? null,
-    })
-  }, [
-    threadTab,
-    workflowState?.canSendExecutionMessage,
-    workflowState?.latestExecutionRunId,
-    workflowState?.workflowPhase,
-    composerStateV3.snapshot?.activeTurnId,
-    composerStateV3.snapshot?.processingState,
-    composerStateV3.snapshot?.uiSignals.activeUserInputRequests,
-    composerStateV3.snapshot?.uiSignals.planReady.ready,
-    composerStateV3.snapshot?.uiSignals.planReady.failed,
-    composerStateV3.snapshot?.uiSignals.planReady.planItemId,
-    composerStateV3.snapshot?.uiSignals.planReady.revision,
-    syncExecutionQueueContext,
-  ])
-
-  const handleV3RenderError = useCallback(
-    (error: Error) => {
-      recordV3RenderError(error.message || 'Failed to render V3 conversation.')
-    },
-    [recordV3RenderError],
+    [loadWorkflowState, nodeId, projectId, sendTurn],
   )
 
   const handleMarkDoneFromExecution = useCallback(async () => {
@@ -569,52 +460,111 @@ export function BreadcrumbChatViewV2() {
     [navigate, nodeId, projectId],
   )
 
+  const adapterContext = useMemo(
+    () => ({
+      threadTab,
+      projectId: projectId ?? null,
+      nodeId: nodeId ?? null,
+      activeThreadId,
+    }),
+    [activeThreadId, nodeId, projectId, threadTab],
+  )
+
+  const transcriptProps = useMemo(
+    () =>
+      breadcrumbV3SessionUiAdapter.transcript.toTranscriptModel(
+        {
+          snapshot: feedRenderStateV3.snapshot,
+        },
+        adapterContext,
+      ),
+    [adapterContext, feedRenderStateV3.snapshot],
+  )
+
+  const composerProps = useMemo(
+    () =>
+      breadcrumbV3SessionUiAdapter.composer.toComposerModel(
+        {
+          composerState: composerStateV3,
+          submitText: handleSendText,
+          currentCwd: snapshot?.project.project_path ?? null,
+          disabled: composerDisabled,
+        },
+        adapterContext,
+      ),
+    [adapterContext, composerDisabled, composerStateV3, handleSendText, snapshot?.project.project_path],
+  )
+
+  const pendingRequest = useMemo(
+    () =>
+      breadcrumbV3SessionUiAdapter.pendingRequest.toPendingRequest(
+        {
+          snapshot: feedRenderStateV3.snapshot,
+        },
+        adapterContext,
+      ),
+    [adapterContext, feedRenderStateV3.snapshot],
+  )
+
+  const pendingRequestProps = useMemo(
+    () => ({
+      request: pendingRequest,
+      onResolve: async (result: Record<string, unknown>) => {
+        if (!pendingRequest) {
+          return
+        }
+        const answers = breadcrumbV3SessionUiAdapter.pendingRequest.toUserInputAnswers(
+          pendingRequest,
+          result,
+        )
+        await resolveUserInput(pendingRequest.requestId, answers)
+      },
+      onReject: async (_reason?: string | null) => {
+        if (!pendingRequest) {
+          return
+        }
+        await resolveUserInput(pendingRequest.requestId, [])
+      },
+    }),
+    [pendingRequest, resolveUserInput],
+  )
+
+  const workflowStripProps = useMemo(
+    () => ({
+      actions: composerWorkflowActions,
+    }),
+    [composerWorkflowActions],
+  )
+
+  const frameContextProps = useMemo(
+    () => ({
+      threadTab,
+      onThreadTabChange: handleThreadTabChange,
+      combinedError,
+      projectId,
+      nodeId,
+      nodeRegistry: snapshot?.tree_state.node_registry ?? null,
+      specConfirmed: nodeDetailState?.spec_confirmed === true,
+    }),
+    [
+      combinedError,
+      handleThreadTabChange,
+      nodeDetailState?.spec_confirmed,
+      nodeId,
+      projectId,
+      snapshot?.tree_state.node_registry,
+      threadTab,
+    ],
+  )
+
   return (
     <div className={styles.root}>
       <BreadcrumbThreadPaneV2
-        threadTab={threadTab}
-        projectId={projectId}
-        nodeId={nodeId}
-        onThreadTabChange={handleThreadTabChange}
-        combinedError={combinedError}
-        showAuditShell={showAuditShell}
-        nodeRegistry={snapshot?.tree_state.node_registry ?? null}
-        specConfirmed={nodeDetailState?.spec_confirmed === true}
-        activeThreadId={activeThreadId}
-        feedSnapshot={feedRenderStateV3.snapshot}
-        conversationLoading={conversationLoading}
-        isSending={isSending}
-        hasOlderHistory={hasOlderHistory}
-        isLoadingHistory={isLoadingHistory}
-        loadMoreHistory={loadMoreHistory}
-        resolveUserInput={resolveUserInput}
-        runPlanAction={runPlanActionV3}
-        lastCompletedAt={lastCompletedAt}
-        lastDurationMs={lastDurationMs}
-        onRenderError={handleV3RenderError}
-        composerWorkflowActions={composerWorkflowActions}
-        composerDisabled={composerDisabled}
-        earlyResponsePhase={composerStateV3.earlyResponse.phase}
-        onSend={(content) => {
-          void handleSend(content)
-        }}
-        executionQueueState={executionQueueState}
-        askQueueState={askQueueState}
-        executionQueueActions={{
-          removeQueued: removeExecutionQueued,
-          reorderQueued,
-          sendQueuedNow,
-          confirmQueued: confirmExecutionQueued,
-          retryQueued,
-          setOperatorPause,
-        }}
-        askQueueActions={{
-          removeQueued: removeAskQueued,
-          reorderAskQueued,
-          sendAskQueuedNow,
-          confirmQueued: confirmAskQueued,
-          retryAskQueued,
-        }}
+        transcriptProps={transcriptProps}
+        frameContextProps={frameContextProps}
+        pendingRequestProps={pendingRequestProps}
+        workflowStripProps={workflowStripProps}
+        composerProps={composerProps}
       />
 
       <aside className={styles.detailPane} data-testid="breadcrumb-detail-pane">
@@ -632,5 +582,3 @@ export function BreadcrumbChatViewV2() {
     </div>
   )
 }
-
-
