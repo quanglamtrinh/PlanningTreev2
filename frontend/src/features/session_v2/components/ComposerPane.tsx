@@ -101,10 +101,13 @@ export function ComposerPane({
   const [reverseSearchPreview, setReverseSearchPreview] = useState<string | null>(null)
   const [localImages, setLocalImages] = useState<string[]>([])
   const [remoteImages, setRemoteImages] = useState<string[]>([])
-  const [remoteImageInput, setRemoteImageInput] = useState('')
   const [mentionBindings, setMentionBindings] = useState<Record<string, string>>({})
   const [pasteBurstUntilMs, setPasteBurstUntilMs] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [effortLevel, setEffortLevel] = useState<'Low' | 'Medium' | 'High' | 'Extra High'>('Extra High')
+  const [workMode, setWorkMode] = useState<'locally' | 'remote'>('locally')
+  const [streamMode, setStreamMode] = useState<'streaming' | 'batch'>('streaming')
+  const [accessLevel, setAccessLevel] = useState<'Full access' | 'Read only'>('Full access')
 
   useEffect(() => {
     savePersistentHistory(persistentHistory)
@@ -220,7 +223,6 @@ export function ComposerPane({
       setDraft('')
       setLocalImages([])
       setRemoteImages([])
-      setRemoteImageInput('')
       setHistoryCursor(null)
       setReverseSearchEnabled(false)
       setReverseSearchQuery('')
@@ -300,8 +302,22 @@ export function ComposerPane({
 
   const shouldShowModelPicker = modelOptions.length > 0 || Boolean(selectedModel) || isModelLoading
 
+  const selectedModelLabel = useMemo(() => {
+    if (isModelLoading) return 'Loading...'
+    if (!selectedModel) return 'Select model'
+    const found = modelOptions.find((o) => o.value === selectedModel)
+    return found?.label ?? selectedModel
+  }, [isModelLoading, modelOptions, selectedModel])
+
+  const cycleEffort = () => {
+    const levels: typeof effortLevel[] = ['Low', 'Medium', 'High', 'Extra High']
+    const idx = levels.indexOf(effortLevel)
+    setEffortLevel(levels[(idx + 1) % levels.length])
+  }
+
   return (
     <section className="sessionV2Composer">
+      {/* Image attachments preview */}
       {imageRows.length > 0 ? (
         <div className="sessionV2ImageRows">
           {imageRows.map((row) => (
@@ -313,6 +329,7 @@ export function ComposerPane({
         </div>
       ) : null}
 
+      {/* Reverse search overlay */}
       {reverseSearchEnabled ? (
         <div className="sessionV2ReverseSearch">
           <label>
@@ -330,6 +347,7 @@ export function ComposerPane({
         </div>
       ) : null}
 
+      {/* Autocomplete popup */}
       {activePopup !== 'none' ? (
         <div className="sessionV2Popup">
           {activePopup === 'command' ? (
@@ -380,101 +398,208 @@ export function ComposerPane({
         </div>
       ) : null}
 
-      <div className="sessionV2ComposerEditor">
-        <textarea
-          ref={textareaRef}
-          value={draft}
-          onChange={(event) => {
-            const next = event.target.value
-            setDraft(next)
-            syncPopup(next)
-            if (reverseSearchEnabled) {
-              setReverseSearchQuery(next)
-            }
-          }}
-          onPaste={handlePaste}
-          onKeyDown={handleKeyDown}
-          placeholder={isTurnRunning ? 'Steer active turn...' : 'Start new turn...'}
-          rows={4}
-          disabled={disabled || isSubmitting}
-        />
-        <button
-          type="button"
-          className="sessionV2AttachButton"
-          disabled={disabled || isSubmitting}
-          onClick={() => fileInputRef.current?.click()}
-          title="Attach photos and files"
-          aria-label="Attach photos and files"
-        >
-          <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-            <path
-              d="M7 10.5L11.6 5.9C12.9 4.6 15 4.6 16.3 5.9C17.6 7.2 17.6 9.3 16.3 10.6L10.4 16.5C8.2 18.7 4.7 18.7 2.5 16.5C0.3 14.3 0.3 10.8 2.5 8.6L8.7 2.4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-      </div>
-
-      <div className="sessionV2ComposerFooter">
-        <div className="sessionV2ImageInput">
-          <input
-            type="text"
-            value={remoteImageInput}
-            onChange={(event) => setRemoteImageInput(event.target.value)}
-            placeholder="Remote image URL"
+      {/* Main card */}
+      <div className="sessionV2ComposerCard">
+        {/* Textarea row */}
+        <div className="sessionV2ComposerTextareaRow">
+          <textarea
+            ref={textareaRef}
+            className="sessionV2ComposerTextarea"
+            value={draft}
+            onChange={(event) => {
+              const next = event.target.value
+              setDraft(next)
+              syncPopup(next)
+              if (reverseSearchEnabled) {
+                setReverseSearchQuery(next)
+              }
+            }}
+            onPaste={handlePaste}
+            onKeyDown={handleKeyDown}
+            placeholder={isTurnRunning ? 'Steer active turn...' : 'Ask for follow-up changes'}
+            rows={3}
             disabled={disabled || isSubmitting}
           />
+        </div>
+
+        {/* Primary action row */}
+        <div className="sessionV2ComposerActionRow">
+          {/* Left side */}
+          <div className="sessionV2ComposerActionLeft">
+            {/* Attach button */}
+            <button
+              type="button"
+              className="sessionV2ComposerIconBtn"
+              disabled={disabled || isSubmitting}
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach photos and files"
+              aria-label="Attach photos and files"
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" width="16" height="16">
+                <path
+                  d="M7 10.5L11.6 5.9C12.9 4.6 15 4.6 16.3 5.9C17.6 7.2 17.6 9.3 16.3 10.6L10.4 16.5C8.2 18.7 4.7 18.7 2.5 16.5C0.3 14.3 0.3 10.8 2.5 8.6L8.7 2.4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+
+            {/* Access level pill */}
+            <button
+              type="button"
+              className="sessionV2ComposerPill sessionV2ComposerPillAccess"
+              onClick={() => setAccessLevel((prev) => prev === 'Full access' ? 'Read only' : 'Full access')}
+              title="Toggle access level"
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M8 4v4l2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              {accessLevel}
+              <svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true" fill="none">
+                <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Right side */}
+          <div className="sessionV2ComposerActionRight">
+            {/* Interrupt button (visible only when turn is running) */}
+            {isTurnRunning ? (
+              <button
+                type="button"
+                className="sessionV2ComposerPill sessionV2ComposerPillInterrupt"
+                disabled={disabled || isSubmitting}
+                onClick={() => void onInterrupt()}
+                title="Interrupt active turn"
+              >
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
+                  <rect x="3" y="3" width="10" height="10" rx="1" />
+                </svg>
+                Stop
+              </button>
+            ) : null}
+
+            {/* Model picker */}
+            {shouldShowModelPicker ? (
+              <div className="sessionV2ComposerModelWrap">
+                {isModelLoading ? (
+                  <span className="sessionV2ComposerModelSpinner" aria-hidden="true" />
+                ) : null}
+                <select
+                  className="sessionV2ComposerModelSelect"
+                  value={selectedModel ?? ''}
+                  onChange={(event) => onModelChange?.(event.target.value)}
+                  disabled={disabled || isSubmitting || isModelLoading || !onModelChange}
+                  aria-label="Select model"
+                  title={selectedModelLabel}
+                >
+                  {selectedModel && !modelOptions.some((option) => option.value === selectedModel) ? (
+                    <option value={selectedModel}>{selectedModel}</option>
+                  ) : null}
+                  {!selectedModel ? (
+                    <option value="" disabled>
+                      {isModelLoading ? 'Loading models...' : modelOptions.length > 0 ? 'Select model' : 'No models'}
+                    </option>
+                  ) : null}
+                  {modelOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="sessionV2ComposerModelLabel">{selectedModelLabel}</span>
+                <svg className="sessionV2ComposerModelChevron" viewBox="0 0 10 6" width="9" height="9" aria-hidden="true" fill="none">
+                  <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+            ) : null}
+
+            {/* Effort level */}
+            <button
+              type="button"
+              className="sessionV2ComposerPill"
+              onClick={cycleEffort}
+              title="Thinking effort level"
+            >
+              {effortLevel}
+              <svg viewBox="0 0 10 6" width="9" height="9" aria-hidden="true" fill="none">
+                <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+
+            {/* Mic button */}
+            <button
+              type="button"
+              className="sessionV2ComposerIconBtn"
+              disabled={disabled || isSubmitting}
+              title="Voice input"
+              aria-label="Voice input"
+            >
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true">
+                <rect x="7" y="2" width="6" height="10" rx="3" stroke="currentColor" strokeWidth="1.6" />
+                <path d="M4 10a6 6 0 0012 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                <line x1="10" y1="16" x2="10" y2="19" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </button>
+
+            {/* Submit button */}
+            <button
+              type="button"
+              className="sessionV2ComposerSubmitBtn"
+              disabled={disabled || isSubmitting}
+              onClick={() => void submitNow()}
+              title={isTurnRunning ? 'Steer turn (Enter)' : 'Send (Enter)'}
+              aria-label={isTurnRunning ? 'Steer turn' : 'Send'}
+            >
+              {isSubmitting ? (
+                <span className="sessionV2ComposerSubmitSpinner" aria-hidden="true" />
+              ) : (
+                <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true">
+                  <path d="M10 17V3M10 3L4 9M10 3l6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Secondary row: environment toggles */}
+        <div className="sessionV2ComposerEnvRow">
           <button
             type="button"
-            disabled={disabled || isSubmitting || remoteImageInput.trim().length === 0}
-            onClick={() => {
-              const next = remoteImageInput.trim()
-              if (!next) {
-                return
-              }
-              setRemoteImages((previous) => [...previous, next])
-              setRemoteImageInput('')
-            }}
+            className="sessionV2ComposerEnvPill"
+            onClick={() => setWorkMode((prev) => prev === 'locally' ? 'remote' : 'locally')}
+            title="Work environment"
           >
-            Add URL
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+              <rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.4" />
+              <path d="M5 13v1M11 13v1M3 15h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+            Work {workMode}
+            <svg viewBox="0 0 10 6" width="9" height="9" aria-hidden="true" fill="none">
+              <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
-        </div>
-        <div className="sessionV2ComposerSubmitActions">
-          {shouldShowModelPicker ? (
-            <label className="sessionV2ComposerModelPicker">
-              <span className="sessionV2ComposerModelLabel">Model</span>
-              <select
-                className="sessionV2ComposerModelSelect"
-                value={selectedModel ?? ''}
-                onChange={(event) => onModelChange?.(event.target.value)}
-                disabled={disabled || isSubmitting || isModelLoading || !onModelChange}
-                aria-label="Select model"
-              >
-                {selectedModel && !modelOptions.some((option) => option.value === selectedModel) ? (
-                  <option value={selectedModel}>{selectedModel}</option>
-                ) : null}
-                {selectedModel ? null : (
-                  <option value="" disabled>
-                    {isModelLoading ? 'Loading models...' : modelOptions.length > 0 ? 'Select model' : 'No models available'}
-                  </option>
-                )}
-                {modelOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <button type="button" disabled={disabled || isSubmitting || !isTurnRunning} onClick={() => void onInterrupt()}>
-            Interrupt
-          </button>
-          <button type="button" disabled={disabled || isSubmitting} onClick={() => void submitNow()}>
-            {isTurnRunning ? 'Steer (Enter)' : 'Send (Enter)'}
+          <button
+            type="button"
+            className="sessionV2ComposerEnvPill"
+            onClick={() => setStreamMode((prev) => prev === 'streaming' ? 'batch' : 'streaming')}
+            title="Output mode"
+          >
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+              <path d="M2 8h3M7 5h2M7 11h2M11 8h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <circle cx="5" cy="8" r="1.5" fill="currentColor" />
+              <circle cx="9" cy="5" r="1.5" fill="currentColor" />
+              <circle cx="9" cy="11" r="1.5" fill="currentColor" />
+              <circle cx="11" cy="8" r="1.5" fill="currentColor" />
+            </svg>
+            {streamMode}
+            <svg viewBox="0 0 10 6" width="9" height="9" aria-hidden="true" fill="none">
+              <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         </div>
       </div>

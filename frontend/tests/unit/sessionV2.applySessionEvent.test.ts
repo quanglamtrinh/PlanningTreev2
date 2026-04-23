@@ -78,6 +78,76 @@ describe('applySessionEvent', () => {
     expect(withGap.lastEventSeqByThread['thread-1']).toBe(4)
   })
 
+  it('does not bump thread ordering timestamp for status-only events', () => {
+    const initial = baseState()
+    initial.threadsById['thread-1'] = {
+      id: 'thread-1',
+      name: 'Thread 1',
+      modelProvider: 'openai',
+      cwd: 'C:/repo',
+      ephemeral: false,
+      archived: false,
+      status: { type: 'idle' },
+      createdAt: 1,
+      updatedAt: 10,
+      turns: [],
+    }
+    initial.threadOrder = ['thread-1']
+    initial.threadStatus['thread-1'] = { type: 'idle' }
+
+    const next = applySessionEvent(
+      initial,
+      event({
+        eventId: 'thread-1:10',
+        eventSeq: 10,
+        method: 'thread/status/changed',
+        occurredAtMs: 30,
+        params: { status: { type: 'active', activeFlags: ['connected'] } },
+      }),
+    )
+
+    expect(next.threadStatus['thread-1']).toEqual({ type: 'active', activeFlags: ['connected'] })
+    expect(next.threadsById['thread-1']?.updatedAt).toBe(10)
+  })
+
+  it('bumps thread ordering timestamp for real item activity', () => {
+    const initial = baseState()
+    initial.threadsById['thread-1'] = {
+      id: 'thread-1',
+      name: 'Thread 1',
+      modelProvider: 'openai',
+      cwd: 'C:/repo',
+      ephemeral: false,
+      archived: false,
+      status: { type: 'idle' },
+      createdAt: 1,
+      updatedAt: 10,
+      turns: [],
+    }
+    initial.threadOrder = ['thread-1']
+
+    const next = applySessionEvent(
+      initial,
+      event({
+        eventId: 'thread-1:11',
+        eventSeq: 11,
+        method: 'item/started',
+        turnId: 'turn-1',
+        occurredAtMs: 30,
+        params: {
+          item: {
+            id: 'item-1',
+            kind: 'userMessage',
+            status: 'completed',
+            text: 'hello',
+          },
+        },
+      }),
+    )
+
+    expect(next.threadsById['thread-1']?.updatedAt).toBe(30)
+  })
+
   it('upserts item lifecycle and completion state', () => {
     const started = applySessionEvent(
       baseState(),

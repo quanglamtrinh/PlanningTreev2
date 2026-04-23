@@ -15,7 +15,8 @@ type ThreadSessionStoreState = SessionProjectionState & {
   activeThreadId: string | null
   streamState: StreamState
   setThreadList: (threads: SessionThread[]) => void
-  upsertThread: (thread: SessionThread) => void
+  upsertThread: (thread: SessionThread, options?: { preserveUpdatedAt?: boolean }) => void
+  markThreadActivity: (threadId: string, updatedAt?: number) => void
   setActiveThreadId: (threadId: string | null) => void
   setThreadTurns: (threadId: string, turns: SessionTurn[]) => void
   setItemsForTurn: (threadId: string, turnId: string, items: SessionItem[]) => void
@@ -354,33 +355,214 @@ function normalizeTurnsForThread(threadId: string, turns: SessionTurn[]): Sessio
   return [...normalized].sort(compareTurnsChronologically)
 }
 
+function areStringArraysEqual(left: string[] | undefined, right: string[] | undefined): boolean {
+  if (left === right) {
+    return true
+  }
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    return false
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false
+    }
+  }
+  return true
+}
+
+function areThreadStatusEqual(left: SessionThread['status'], right: SessionThread['status']): boolean {
+  if (left === right) {
+    return true
+  }
+  if (left.type !== right.type) {
+    return false
+  }
+  if (left.type !== 'active' || right.type !== 'active') {
+    return true
+  }
+  return areStringArraysEqual(left.activeFlags, right.activeFlags)
+}
+
+function areThreadMetadataEqual(
+  left: SessionThread['metadata'],
+  right: SessionThread['metadata'],
+): boolean {
+  if (left === right) {
+    return true
+  }
+  if (!left && !right) {
+    return true
+  }
+  if (!left || !right) {
+    return false
+  }
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  if (leftKeys.length !== rightKeys.length) {
+    return false
+  }
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(right, key)) {
+      return false
+    }
+    if (!Object.is(left[key], right[key])) {
+      return false
+    }
+  }
+  return true
+}
+
+function areThreadTurnsEquivalent(left: SessionTurn[] | undefined, right: SessionTurn[] | undefined): boolean {
+  if (left === right) {
+    return true
+  }
+  const leftTurns = Array.isArray(left) ? left : []
+  const rightTurns = Array.isArray(right) ? right : []
+  return leftTurns.length === 0 && rightTurns.length === 0
+}
+
+function areThreadsEquivalent(left: SessionThread, right: SessionThread): boolean {
+  return (
+    left.id === right.id &&
+    left.name === right.name &&
+    left.preview === right.preview &&
+    left.model === right.model &&
+    left.modelProvider === right.modelProvider &&
+    left.cwd === right.cwd &&
+    left.path === right.path &&
+    left.ephemeral === right.ephemeral &&
+    left.archived === right.archived &&
+    left.createdAt === right.createdAt &&
+    left.updatedAt === right.updatedAt &&
+    areThreadStatusEqual(left.status, right.status) &&
+    areThreadMetadataEqual(left.metadata, right.metadata) &&
+    areThreadTurnsEquivalent(left.turns, right.turns)
+  )
+}
+
+function mergeThreadForStore(
+  existing: SessionThread | undefined,
+  incoming: SessionThread,
+  options?: { preserveUpdatedAt?: boolean },
+): SessionThread {
+  const updatedAt = options?.preserveUpdatedAt && existing ? existing.updatedAt : incoming.updatedAt
+  const status = existing && areThreadStatusEqual(existing.status, incoming.status) ? existing.status : incoming.status
+  const metadata =
+    existing && areThreadMetadataEqual(existing.metadata, incoming.metadata) ? existing.metadata : incoming.metadata
+  const turns = existing && areThreadTurnsEquivalent(existing.turns, incoming.turns) ? existing.turns : incoming.turns
+  return {
+    ...incoming,
+    updatedAt,
+    status,
+    metadata,
+    turns,
+  }
+}
+
+function areThreadOrdersEqual(left: string[], right: string[]): boolean {
+  if (left === right) {
+    return true
+  }
+  if (left.length !== right.length) {
+    return false
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false
+    }
+  }
+  return true
+}
+
 export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
   ...initialState,
   activeThreadId: null,
   streamState: initialStreamState,
   setThreadList(threads) {
-    const threadsById: Record<string, SessionThread> = {}
-    const threadOrder: string[] = []
-    const threadStatus: Record<string, SessionProjectionState['threadStatus'][string]> = {}
-    for (const thread of threads) {
-      threadsById[thread.id] = thread
-      threadOrder.push(thread.id)
-      threadStatus[thread.id] = thread.status
-    }
-    set((state) => ({
-      ...state,
-      threadsById: { ...state.threadsById, ...threadsById },
-      threadOrder: [...threadOrder, ...state.threadOrder.filter((threadId) => !threadOrder.includes(threadId))],
-      threadStatus: { ...state.threadStatus, ...threadStatus },
-    }))
+    set((state) => {
+      let nextThreadsById = state.threadsById
+      let nextThreadStatus = state.threadStatus
+      const incomingOrder: string[] = []
+      for (const thread of threads) {
+        incomingOrder.push(thread.id)
+        const existing = state.threadsById[thread.id]
+        const merged = mergeThreadForStore(existing, thread)
+        if (!existing || !areThreadsEquivalent(existing, merged)) {
+          if (nextThreadsById === state.threadsById) {
+            nextThreadsById = { ...state.threadsById }
+          }
+          nextThreadsById[thread.id] = merged
+        }
+        if (state.threadStatus[thread.id] !== merged.status) {
+          if (nextThreadStatus === state.threadStatus) {
+            nextThreadStatus = { ...state.threadStatus }
+          }
+          nextThreadStatus[thread.id] = merged.status
+        }
+      }
+
+      const incomingOrderSet = new Set(incomingOrder)
+      const nextThreadOrderCandidate = [
+        ...incomingOrder,
+        ...state.threadOrder.filter((threadId) => !incomingOrderSet.has(threadId)),
+      ]
+      const nextThreadOrder = areThreadOrdersEqual(state.threadOrder, nextThreadOrderCandidate)
+        ? state.threadOrder
+        : nextThreadOrderCandidate
+
+      if (
+        nextThreadsById === state.threadsById &&
+        nextThreadStatus === state.threadStatus &&
+        nextThreadOrder === state.threadOrder
+      ) {
+        return state
+      }
+
+      return {
+        ...state,
+        threadsById: nextThreadsById,
+        threadOrder: nextThreadOrder,
+        threadStatus: nextThreadStatus,
+      }
+    })
   },
-  upsertThread(thread) {
-    set((state) => ({
-      ...state,
-      threadsById: { ...state.threadsById, [thread.id]: thread },
-      threadOrder: state.threadOrder.includes(thread.id) ? state.threadOrder : [...state.threadOrder, thread.id],
-      threadStatus: { ...state.threadStatus, [thread.id]: thread.status },
-    }))
+  upsertThread(thread, options) {
+    set((state) => {
+      const existing = state.threadsById[thread.id]
+      const merged = mergeThreadForStore(existing, thread, options)
+      const hasThreadInOrder = state.threadOrder.includes(thread.id)
+      const statusChanged = state.threadStatus[thread.id] !== merged.status
+      const threadChanged = !existing || !areThreadsEquivalent(existing, merged)
+
+      if (!threadChanged && hasThreadInOrder && !statusChanged) {
+        return state
+      }
+
+      return {
+        ...state,
+        threadsById: threadChanged ? { ...state.threadsById, [thread.id]: merged } : state.threadsById,
+        threadOrder: hasThreadInOrder ? state.threadOrder : [...state.threadOrder, thread.id],
+        threadStatus: statusChanged ? { ...state.threadStatus, [thread.id]: merged.status } : state.threadStatus,
+      }
+    })
+  },
+  markThreadActivity(threadId, updatedAt = Date.now()) {
+    set((state) => {
+      const thread = state.threadsById[threadId]
+      if (!thread) {
+        return state
+      }
+      return {
+        ...state,
+        threadsById: {
+          ...state.threadsById,
+          [threadId]: {
+            ...thread,
+            updatedAt: Math.max(thread.updatedAt, updatedAt),
+          },
+        },
+      }
+    })
   },
   setActiveThreadId(threadId) {
     set({ activeThreadId: threadId })

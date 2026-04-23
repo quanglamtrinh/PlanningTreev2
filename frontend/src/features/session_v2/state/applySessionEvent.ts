@@ -172,6 +172,17 @@ function upsertTurn(state: SessionProjectionState, threadId: string, turn: Sessi
   state.turnsByThread = { ...state.turnsByThread, [threadId]: nextList }
 }
 
+function markThreadActivityAt(state: SessionProjectionState, threadId: string, updatedAtMs: number): void {
+  const thread = state.threadsById[threadId]
+  if (!thread || !Number.isFinite(updatedAtMs) || updatedAtMs < 0) {
+    return
+  }
+  if (thread.updatedAt >= updatedAtMs) {
+    return
+  }
+  state.threadsById[threadId] = { ...thread, updatedAt: updatedAtMs }
+}
+
 function isDeltaMethod(method: string): boolean {
   return (
     method === 'item/agentMessage/delta' ||
@@ -510,13 +521,13 @@ export function applySessionEvent(
     case 'thread/status/changed': {
       const nextStatus = normalizeThreadStatus(params.status)
       state.threadStatus[threadId] = nextStatus
-      state.threadsById[threadId] = { ...ensuredThread, status: nextStatus, updatedAt: Date.now() }
+      state.threadsById[threadId] = { ...ensuredThread, status: nextStatus }
       break
     }
     case 'thread/closed': {
       const nextStatus: ThreadStatus = { type: 'notLoaded' }
       state.threadStatus[threadId] = nextStatus
-      state.threadsById[threadId] = { ...ensuredThread, status: nextStatus, updatedAt: Date.now() }
+      state.threadsById[threadId] = { ...ensuredThread, status: nextStatus }
       break
     }
     case 'thread/tokenUsage/updated': {
@@ -531,6 +542,7 @@ export function applySessionEvent(
       if (resolvedTurnId) {
         const normalizedTurn = normalizeTurnFromEvent(threadId, resolvedTurnId, turnPayload)
         upsertTurn(state, threadId, normalizedTurn)
+        markThreadActivityAt(state, threadId, envelope.occurredAtMs)
         if (Array.isArray(turnPayload.items)) {
           for (const raw of turnPayload.items) {
             if (!raw || typeof raw !== 'object') {
@@ -568,6 +580,7 @@ export function applySessionEvent(
       )
       if (item) {
         upsertItem(state, threadId, item.turnId, item, envelope.method)
+        markThreadActivityAt(state, threadId, envelope.occurredAtMs)
       }
       break
     }

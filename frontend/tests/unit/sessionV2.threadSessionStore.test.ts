@@ -1,7 +1,23 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { SessionEventEnvelope, SessionItem, SessionTurn } from '../../src/features/session_v2/contracts'
+import type { SessionEventEnvelope, SessionItem, SessionThread, SessionTurn } from '../../src/features/session_v2/contracts'
 import { useThreadSessionStore } from '../../src/features/session_v2/store/threadSessionStore'
+
+function thread(overrides: Partial<SessionThread> & { id: string }): SessionThread {
+  return {
+    id: overrides.id,
+    name: null,
+    modelProvider: 'openai',
+    cwd: 'C:/repo',
+    ephemeral: false,
+    archived: false,
+    status: { type: 'idle' },
+    createdAt: 1,
+    updatedAt: 1,
+    turns: [],
+    ...overrides,
+  }
+}
 
 describe('threadSessionStore', () => {
   beforeEach(() => {
@@ -90,6 +106,64 @@ describe('threadSessionStore', () => {
 
     const snapshot = useThreadSessionStore.getState()
     expect(snapshot.threadOrder.slice(0, 2)).toEqual(['thread-new', 'thread-old'])
+  })
+
+  it('can hydrate a thread without bumping list activity timestamp', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadList([
+      thread({ id: 'thread-old', name: 'Old', updatedAt: 10 }),
+      thread({ id: 'thread-new', name: 'New', updatedAt: 20 }),
+    ])
+
+    store.upsertThread(
+      thread({ id: 'thread-old', name: 'Old loaded', status: { type: 'idle' }, updatedAt: 30 }),
+      { preserveUpdatedAt: true },
+    )
+
+    const snapshot = useThreadSessionStore.getState()
+    expect(snapshot.threadsById['thread-old']?.name).toBe('Old loaded')
+    expect(snapshot.threadsById['thread-old']?.updatedAt).toBe(10)
+  })
+
+  it('keeps state identity for idempotent hydrate upserts', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadList([thread({ id: 'thread-1', name: 'Thread 1', updatedAt: 10 })])
+
+    const beforeState = useThreadSessionStore.getState()
+    const beforeThread = beforeState.threadsById['thread-1']
+
+    store.upsertThread(
+      thread({ id: 'thread-1', name: 'Thread 1', status: { type: 'idle' }, updatedAt: 999 }),
+      { preserveUpdatedAt: true },
+    )
+
+    const afterState = useThreadSessionStore.getState()
+    expect(afterState).toBe(beforeState)
+    expect(afterState.threadsById['thread-1']).toBe(beforeThread)
+  })
+
+  it('keeps state identity when refresh list payload is unchanged', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadList([thread({ id: 'thread-1', name: 'Thread 1', updatedAt: 10 })])
+
+    const beforeState = useThreadSessionStore.getState()
+    const beforeThread = beforeState.threadsById['thread-1']
+
+    store.setThreadList([thread({ id: 'thread-1', name: 'Thread 1', status: { type: 'idle' }, updatedAt: 10 })])
+
+    const afterState = useThreadSessionStore.getState()
+    expect(afterState).toBe(beforeState)
+    expect(afterState.threadsById['thread-1']).toBe(beforeThread)
+  })
+
+  it('bumps list activity timestamp only through explicit thread activity', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadList([thread({ id: 'thread-1', updatedAt: 10 })])
+
+    store.markThreadActivity('thread-1', 25)
+
+    const snapshot = useThreadSessionStore.getState()
+    expect(snapshot.threadsById['thread-1']?.updatedAt).toBe(25)
   })
 
   it('tracks stream reconnect counters', () => {

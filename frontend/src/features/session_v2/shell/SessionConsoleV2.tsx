@@ -166,6 +166,7 @@ export function SessionConsoleV2() {
     gapDetectedByThread,
     setThreadList,
     upsertThread,
+    markThreadActivity,
     setActiveThreadId,
     setThreadTurns,
     applyEventsBatch,
@@ -184,6 +185,7 @@ export function SessionConsoleV2() {
       gapDetectedByThread: state.gapDetectedByThread,
       setThreadList: state.setThreadList,
       upsertThread: state.upsertThread,
+      markThreadActivity: state.markThreadActivity,
       setActiveThreadId: state.setActiveThreadId,
       setThreadTurns: state.setThreadTurns,
       applyEventsBatch: state.applyEventsBatch,
@@ -306,7 +308,7 @@ export function SessionConsoleV2() {
       return
     }
     const read = await readThreadV2(threadId, false)
-    upsertThread(read.thread)
+    upsertThread(read.thread, { preserveUpdatedAt: true })
     const turns = await listThreadTurnsV2(threadId, { limit: 200 })
     setThreadTurns(threadId, turns.data)
     hydratedThreadIdsRef.current.add(threadId)
@@ -318,7 +320,7 @@ export function SessionConsoleV2() {
     const needsResume = !cachedThread || cachedThread.status?.type === 'notLoaded'
     if (needsResume) {
       const resumed = await resumeThreadV2(threadId, {})
-      upsertThread(resumed.thread)
+      upsertThread(resumed.thread, { preserveUpdatedAt: true })
     }
     await hydrateThreadState(threadId, { force: Boolean(options?.forceHydrate) })
   }, [hydrateThreadState, upsertThread])
@@ -810,6 +812,7 @@ export function SessionConsoleV2() {
         })
         const nextTurns = upsertTurnList(activeTurns, result.turn)
         setThreadTurns(activeThreadId, nextTurns)
+        markThreadActivity(activeThreadId)
       } else {
         const result = await startTurnV2(activeThreadId, {
           clientActionId: actionId(),
@@ -818,13 +821,14 @@ export function SessionConsoleV2() {
         })
         const nextTurns = upsertTurnList(activeTurns, result.turn)
         setThreadTurns(activeThreadId, nextTurns)
+        markThreadActivity(activeThreadId)
       }
       setRuntimeError(null)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setRuntimeError(message)
     }
-  }, [activeRunningTurn, activeThreadId, activeTurns, selectedModel, setThreadTurns])
+  }, [activeRunningTurn, activeThreadId, activeTurns, markThreadActivity, selectedModel, setThreadTurns])
 
   const handleInterrupt = useCallback(async () => {
     if (!activeThreadId || !activeRunningTurn) {
