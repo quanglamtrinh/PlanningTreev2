@@ -717,11 +717,15 @@
 /* ─── Composer Shell ─────────────────────────────────────────────────────── */
 
 :global(.sessionV2Composer) {
-  border-top: 1px solid var(--session-v2-border);
   background: var(--session-v2-bg);
   padding: 12px 50px 16px;
   display: grid;
   gap: 8px;
+}
+
+:global(.sessionV2Composer > :not(input[type='file'])) {
+  width: min(860px, 100%);
+  margin: 0 auto;
 }
 
 :global(.sessionV2ImageRows) {
@@ -773,6 +777,20 @@
   padding: 14px 16px 6px;
 }
 
+:global(.sessionV2ComposerTextarea:hover) {
+  border: none;
+  outline: none;
+}
+
+:global(.sessionV2ComposerTextarea:focus),
+:global(.sessionV2ComposerTextarea:focus-visible),
+:global(.sessionV2ComposerTextarea:active) {
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+}
+
 :global(.sessionV2ComposerTextarea) {
   width: 100%;
   border: none;
@@ -781,7 +799,7 @@
   min-height: 44px;
   max-height: 200px;
   font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.55;
   color: var(--session-v2-fg);
   background: transparent;
