@@ -205,6 +205,19 @@ function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function parseBoolean(value: unknown, fallback = false): boolean {
+  if (typeof value === 'boolean') {
+    return value
+  }
+  if (value === 'true') {
+    return true
+  }
+  if (value === 'false') {
+    return false
+  }
+  return fallback
+}
+
 function extractContentText(content: unknown): string {
   if (!Array.isArray(content)) {
     return ''
@@ -528,6 +541,25 @@ export function applySessionEvent(
       const nextStatus: ThreadStatus = { type: 'notLoaded' }
       state.threadStatus[threadId] = nextStatus
       state.threadsById[threadId] = { ...ensuredThread, status: nextStatus }
+      markThreadActivityAt(state, threadId, envelope.occurredAtMs)
+      break
+    }
+    case 'thread/name/updated': {
+      const name = typeof params.name === 'string' ? params.name : ensuredThread.name
+      state.threadsById[threadId] = { ...ensuredThread, name }
+      markThreadActivityAt(state, threadId, envelope.occurredAtMs)
+      break
+    }
+    case 'thread/archived': {
+      const archived = parseBoolean(params.archived, true)
+      state.threadsById[threadId] = { ...ensuredThread, archived }
+      markThreadActivityAt(state, threadId, envelope.occurredAtMs)
+      break
+    }
+    case 'thread/unarchived': {
+      const archived = parseBoolean(params.archived, false)
+      state.threadsById[threadId] = { ...ensuredThread, archived }
+      markThreadActivityAt(state, threadId, envelope.occurredAtMs)
       break
     }
     case 'thread/tokenUsage/updated': {
@@ -584,11 +616,84 @@ export function applySessionEvent(
       }
       break
     }
-    case 'serverRequest/resolved':
-    case 'error':
-    case 'thread/archived':
-    case 'thread/unarchived':
-    case 'thread/name/updated':
+    case 'serverRequest/resolved': {
+      markThreadActivityAt(state, threadId, envelope.occurredAtMs)
+      break
+    }
+    case 'error': {
+      const occurredAtMs = Number.isFinite(envelope.occurredAtMs) && envelope.occurredAtMs > 0
+        ? envelope.occurredAtMs
+        : Date.now()
+      const paramsTurnId = typeof params.turnId === 'string' ? params.turnId.trim() : ''
+      const resolvedTurnId = String(envelope.turnId ?? paramsTurnId ?? '').trim() || null
+      const syntheticItemId = String(params.itemId ?? params.requestId ?? envelope.eventId ?? '').trim() || envelope.eventId
+      const rawError = params.error && typeof params.error === 'object'
+        ? (params.error as Record<string, unknown>)
+        : {}
+      const errorCode = normalizeSessionErrorCode(rawError.code ?? params.code)
+      const errorMessage = String(rawError.message ?? params.message ?? 'Session runtime error.')
+
+      if (resolvedTurnId) {
+        const existingTurn = (state.turnsByThread[threadId] ?? []).find((turn) => turn.id === resolvedTurnId) ?? null
+        const normalizedTurn: SessionTurn = existingTurn
+          ? {
+              ...existingTurn,
+              status:
+                existingTurn.status === 'completed'
+                  ? 'completed'
+                  : existingTurn.status === 'interrupted'
+                    ? 'interrupted'
+                    : 'failed',
+              lastCodexStatus:
+                existingTurn.status === 'completed'
+                  ? 'completed'
+                  : existingTurn.status === 'interrupted'
+                    ? 'interrupted'
+                    : 'failed',
+              completedAtMs: existingTurn.completedAtMs ?? occurredAtMs,
+              error: {
+                code: errorCode,
+                message: errorMessage,
+                details: rawError.details as Record<string, unknown> | undefined,
+              },
+            }
+          : {
+              id: resolvedTurnId,
+              threadId,
+              status: 'failed',
+              lastCodexStatus: 'failed',
+              startedAtMs: occurredAtMs,
+              completedAtMs: occurredAtMs,
+              items: [],
+              error: {
+                code: errorCode,
+                message: errorMessage,
+                details: rawError.details as Record<string, unknown> | undefined,
+              },
+            }
+        upsertTurn(state, threadId, normalizedTurn)
+
+        const errorItem: SessionItem = {
+          id: syntheticItemId,
+          threadId,
+          turnId: resolvedTurnId,
+          kind: 'error',
+          status: 'failed',
+          createdAtMs: occurredAtMs,
+          updatedAtMs: occurredAtMs,
+          payload: {
+            type: 'error',
+            code: errorCode,
+            message: errorMessage,
+            ...params,
+          },
+        }
+        upsertItem(state, threadId, resolvedTurnId, errorItem, envelope.method)
+      }
+
+      markThreadActivityAt(state, threadId, occurredAtMs)
+      break
+    }
     default:
       break
   }

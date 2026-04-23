@@ -1,9 +1,13 @@
-import styles from '../../breadcrumb/BreadcrumbChatView.module.css'
 import type {
-  AskFollowupQueueStatus,
   ThreadAskFollowupQueueActions,
   ThreadAskFollowupQueueState,
 } from '../state/threadByIdStoreV3'
+import {
+  renderAskConfirmationReasonLabel,
+  renderAskQueuePauseReasonLabel,
+  renderQueueStatusLabel,
+} from './BreadcrumbThreadPaneV2.design'
+import styles from '../../session_v2/shell/SessionConsoleV2.module.css'
 
 type AskFollowupQueuePanelV2Props = {
   askQueueState: ThreadAskFollowupQueueState
@@ -11,57 +15,6 @@ type AskFollowupQueuePanelV2Props = {
     ThreadAskFollowupQueueActions,
     'removeQueued' | 'reorderAskQueued' | 'sendAskQueuedNow' | 'confirmQueued' | 'retryAskQueued'
   >
-}
-
-function renderQueueStatusLabel(status: AskFollowupQueueStatus): string {
-  if (status === 'queued') {
-    return 'Queued'
-  }
-  if (status === 'requires_confirmation') {
-    return 'Needs confirmation'
-  }
-  if (status === 'sending') {
-    return 'Sending'
-  }
-  return 'Failed'
-}
-
-function renderAskQueuePauseReasonLabel(reason: ThreadAskFollowupQueueState['askQueuePauseReason']): string {
-  if (reason === 'none') {
-    return 'Auto-send ready'
-  }
-  if (reason === 'snapshot_unavailable') {
-    return 'Paused: snapshot unavailable'
-  }
-  if (reason === 'stream_or_state_mismatch') {
-    return 'Paused: stream/state mismatch'
-  }
-  if (reason === 'active_turn_running') {
-    return 'Paused: active turn running'
-  }
-  if (reason === 'waiting_user_input') {
-    return 'Paused: waiting for required input'
-  }
-  if (reason === 'operator_pause') {
-    return 'Paused by operator'
-  }
-  return 'Paused: confirmation required'
-}
-
-function renderAskConfirmationReasonLabel(reason: string | null | undefined): string {
-  if (reason === 'stale_age') {
-    return 'Queued ask is stale. Confirm before sending.'
-  }
-  if (reason === 'thread_drift') {
-    return 'Thread context changed. Confirm before sending.'
-  }
-  if (reason === 'snapshot_drift') {
-    return 'Snapshot context changed. Confirm before sending.'
-  }
-  if (reason === 'stale_marker') {
-    return 'Stream context changed. Confirm before sending.'
-  }
-  return 'Queued ask requires confirmation before sending.'
 }
 
 export function AskFollowupQueuePanelV2({

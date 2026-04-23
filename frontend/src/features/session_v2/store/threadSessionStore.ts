@@ -11,7 +11,7 @@ export type StreamState = {
   reconnectCountByThread: Record<string, number>
 }
 
-type ThreadSessionStoreState = SessionProjectionState & {
+export type ThreadSessionStoreState = SessionProjectionState & {
   activeThreadId: string | null
   streamState: StreamState
   setThreadList: (threads: SessionThread[]) => void
@@ -506,6 +506,84 @@ function areThreadOrdersEqual(left: string[], right: string[]): boolean {
     }
   }
   return true
+}
+
+function parseThreadTimestampMs(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) {
+      return parsed
+    }
+  }
+  return 0
+}
+
+export function selectThreadsSorted(state: ThreadSessionStoreState): SessionThread[] {
+  const indexById = new Map<string, number>()
+  state.threadOrder.forEach((threadId, index) => {
+    indexById.set(threadId, index)
+  })
+  return state.threadOrder
+    .map((threadId) => state.threadsById[threadId])
+    .filter((thread): thread is SessionThread => Boolean(thread))
+    .sort((left, right) => {
+      const diff = parseThreadTimestampMs(right.updatedAt) - parseThreadTimestampMs(left.updatedAt)
+      if (diff !== 0) {
+        return diff
+      }
+      return (indexById.get(left.id) ?? 0) - (indexById.get(right.id) ?? 0)
+    })
+}
+
+export function selectActiveThread(state: ThreadSessionStoreState): SessionThread | null {
+  if (!state.activeThreadId) {
+    return null
+  }
+  return state.threadsById[state.activeThreadId] ?? null
+}
+
+export function selectActiveTurns(state: ThreadSessionStoreState): SessionTurn[] {
+  if (!state.activeThreadId) {
+    return []
+  }
+  return state.turnsByThread[state.activeThreadId] ?? []
+}
+
+export function selectActiveRunningTurn(state: ThreadSessionStoreState): SessionTurn | null {
+  const turns = selectActiveTurns(state)
+  const running = [...turns]
+    .reverse()
+    .find((turn) => turn.status === 'inProgress' || turn.status === 'waitingUserInput')
+  return running ?? null
+}
+
+export function selectActiveItemsByTurn(state: ThreadSessionStoreState): Record<string, SessionItem[]> {
+  const activeThreadId = state.activeThreadId
+  if (!activeThreadId) {
+    return {}
+  }
+  const turns = state.turnsByThread[activeThreadId] ?? []
+  const rows: Record<string, SessionItem[]> = {}
+  for (const turn of turns) {
+    const key = `${activeThreadId}:${turn.id}`
+    rows[key] = state.itemsByTurn[key] ?? []
+  }
+  return rows
+}
+
+export function selectActiveTranscriptModel(state: ThreadSessionStoreState): {
+  threadId: string | null
+  turns: SessionTurn[]
+  itemsByTurn: Record<string, SessionItem[]>
+} {
+  return {
+    threadId: state.activeThreadId,
+    turns: selectActiveTurns(state),
+    itemsByTurn: selectActiveItemsByTurn(state),
+  }
 }
 
 export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({

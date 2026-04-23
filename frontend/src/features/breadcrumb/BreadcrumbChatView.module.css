@@ -34,8 +34,7 @@
   max-width: 100%;
   flex-direction: column;
   box-sizing: border-box;
-  /* Warm flat canvas for the whole thread column (tabs + body + composer) */
-  --thread-chat-canvas: #fcf9f7;
+  --thread-chat-canvas: #ffffff;
   --bg-app: var(--thread-chat-canvas);
   --bg-surface: var(--thread-chat-canvas);
 }

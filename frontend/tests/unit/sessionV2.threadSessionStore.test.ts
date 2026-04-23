@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { SessionEventEnvelope, SessionItem, SessionThread, SessionTurn } from '../../src/features/session_v2/contracts'
-import { useThreadSessionStore } from '../../src/features/session_v2/store/threadSessionStore'
+import {
+  selectActiveItemsByTurn,
+  selectActiveRunningTurn,
+  selectActiveThread,
+  selectActiveTranscriptModel,
+  selectActiveTurns,
+  selectThreadsSorted,
+  useThreadSessionStore,
+} from '../../src/features/session_v2/store/threadSessionStore'
 
 function thread(overrides: Partial<SessionThread> & { id: string }): SessionThread {
   return {
@@ -549,5 +557,64 @@ describe('threadSessionStore', () => {
     expect(items[0].payload.text).toBe('Hello there!')
     expect(snapshot.lastEventSeqByThread['thread-1']).toBe(3)
     expect(snapshot.lastEventIdByThread['thread-1']).toBe('thread-1:3')
+  })
+
+  it('exposes shared selectors for active thread transcript state', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadList([
+      thread({ id: 'thread-2', name: 'Older', updatedAt: 10 }),
+      thread({ id: 'thread-1', name: 'Newest', updatedAt: 20 }),
+    ])
+    store.setActiveThreadId('thread-1')
+    store.setThreadTurns('thread-1', [
+      {
+        id: 'turn-1',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 1,
+        completedAtMs: 2,
+        items: [],
+        error: null,
+      },
+      {
+        id: 'turn-2',
+        threadId: 'thread-1',
+        status: 'inProgress',
+        lastCodexStatus: 'inProgress',
+        startedAtMs: 3,
+        completedAtMs: null,
+        items: [],
+        error: null,
+      },
+    ])
+    store.setItemsForTurn('thread-1', 'turn-1', [
+      {
+        id: 'item-1',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        kind: 'agentMessage',
+        status: 'completed',
+        createdAtMs: 1,
+        updatedAtMs: 2,
+        payload: { type: 'agentMessage', text: 'done' },
+      },
+    ])
+
+    const snapshot = useThreadSessionStore.getState()
+    const threads = selectThreadsSorted(snapshot)
+    const activeThread = selectActiveThread(snapshot)
+    const activeTurns = selectActiveTurns(snapshot)
+    const activeRunningTurn = selectActiveRunningTurn(snapshot)
+    const activeItemsByTurn = selectActiveItemsByTurn(snapshot)
+    const transcript = selectActiveTranscriptModel(snapshot)
+
+    expect(threads.map((row) => row.id)).toEqual(['thread-1', 'thread-2'])
+    expect(activeThread?.id).toBe('thread-1')
+    expect(activeTurns.map((row) => row.id)).toEqual(['turn-1', 'turn-2'])
+    expect(activeRunningTurn?.id).toBe('turn-2')
+    expect(activeItemsByTurn['thread-1:turn-1']).toHaveLength(1)
+    expect(transcript.threadId).toBe('thread-1')
+    expect(transcript.turns.map((row) => row.id)).toEqual(['turn-1', 'turn-2'])
   })
 })

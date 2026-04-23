@@ -1,4 +1,63 @@
-/* ─── Outer wrapper (ReactFlow node container) ─── */
+﻿/* --- sessionV2 / threadPane parity token scope --------------------------
+   Resolves graph node + dropdown tokens to the same concrete values used by
+   sessionV2 so cards and menus match the threadPane design system.
+   ----------------------------------------------------------------------- */
+.wrapper {
+  /* Palette / surface */
+  --surface-container-lowest:  #ffffff;
+  --surface-container-low:     #f8fafc;
+  --surface-container:         #f3f4f6;
+  --surface-container-highest: #e5e7eb;
+  --on-surface:                #0d0d0d;
+  --outline:                   #0d0d0d;
+  --outline-variant:           color-mix(in srgb, #0d0d0d 15%, transparent);
+  /* Primary / accent */
+  --primary:               #0169cc;
+  --primary-container:     #0158ab;
+  --on-primary:            #ffffff;
+  --color-accent:          #0169cc;
+  --color-accent-hover:    #0158ab;
+  /* Semantic */
+  --danger:    #dc2626;
+  --warning:   #d97706;
+  --success:   #16a34a;
+  --tertiary:  #0d9488;
+  /* Graph node tokens */
+  --graph-node-radius:  10px;
+  --graph-node-shadow:  0 1px 4px rgb(16 24 40 / 8%);
+  --graph-node-border:  #e5e7eb;
+  /* Status tokens */
+  --color-status-locked:    #6b7280;
+  --color-status-locked-bg: #f8fafc;
+  --color-status-done:      #16a34a;
+  /* Typography */
+  --font-sans:    -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: var(--font-sans);
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  /* Radius */
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius-md:   8px;
+  --radius-lg:   10px;
+  --radius-pill: 999px;
+  /* Elevation */
+  --shadow-xs:  0 1px 2px rgb(16 24 40 / 6%);
+  --shadow-sm:  0 1px 3px rgb(16 24 40 / 8%);
+  --shadow-md:  0 4px 16px rgb(16 24 40 / 10%);
+  /* Color aliases */
+  --color-text-primary:   #0d0d0d;
+  --color-text-secondary: #374151;
+  --color-text-tertiary:  #6b7280;
+  --color-text-disabled:  #9ca3af;
+  --color-border:         #e5e7eb;
+  --color-border-subtle:  #e5e7eb;
+  --color-bg-hover:       #f3f4f6;
+  /* Font smoothing */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+/* â”€â”€â”€ Outer wrapper (ReactFlow node container) â”€â”€â”€ */
 .wrapper {
   position: relative;
   width: 270px;
@@ -7,7 +66,7 @@
   overflow: visible;
 }
 
-/* ─── Handles (invisible anchors — edges meet card like an org chart) ─── */
+/* â”€â”€â”€ Handles (invisible anchors â€” edges meet card like an org chart) â”€â”€â”€ */
 .handle {
   width: 1px;
   height: 1px;
@@ -19,7 +78,7 @@
   opacity: 0;
 }
 
-/* ─── Card — left rail + main column ─── */
+/* â”€â”€â”€ Card â€” left rail + main column â”€â”€â”€ */
 .card {
   width: 270px;
   display: flex;
@@ -40,7 +99,7 @@
     outline-color 0.14s ease;
 }
 
-/* Left rail — light strip + brown ink (editorial / clean reference) */
+/* Left rail â€” light strip + brown ink (editorial / clean reference) */
 .nodeRail {
   --rail-ink: #5d4037;
   --rail-ink-hover: #4a332c;
@@ -120,7 +179,7 @@
   outline-offset: 3px;
 }
 
-/* ─── States ─── */
+/* â”€â”€â”€ States â”€â”€â”€ */
 .selected {
   outline: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
   outline-offset: 0;
@@ -209,7 +268,7 @@
   height: 100%;
 }
 
-/* ─── Info (left rail) — solid ink disc + light “i” ─── */
+/* â”€â”€â”€ Info (left rail) â€” solid ink disc + light â€œiâ€ â”€â”€â”€ */
 .infoBtn {
   display: inline-flex;
   align-items: center;
@@ -237,7 +296,7 @@
   transform: scale(1.03);
 }
 
-/* ─── Description expand/collapse (rail) — chevron in rail ink ─── */
+/* â”€â”€â”€ Description expand/collapse (rail) â€” chevron in rail ink â”€â”€â”€ */
 .descToggle {
   display: inline-flex;
   align-items: center;
@@ -320,7 +379,7 @@
   color: var(--color-accent);
 }
 
-/* ─── Collapse toggle ─── */
+/* â”€â”€â”€ Collapse toggle â”€â”€â”€ */
 .collapseToggle {
   display: inline-flex;
   align-items: center;
@@ -350,7 +409,7 @@
   color: var(--color-text-tertiary);
 }
 
-/* ─── Action badge (⚡ button) — anchored bottom-right of node ─── */
+/* â”€â”€â”€ Action badge (âš¡ button) â€” anchored bottom-right of node â”€â”€â”€ */
 .menuAnchor {
   position: absolute;
   right: -14px;
@@ -391,7 +450,7 @@
   height: 16px;
 }
 
-/* ─── Dropdown menu (position set inline via portal + fixed; avoids node overlap & RF transform) ─── */
+/* â”€â”€â”€ Dropdown menu (position set inline via portal + fixed; avoids node overlap & RF transform) â”€â”€â”€ */
 @keyframes dropdownIn {
   from {
     opacity: 0;
@@ -547,7 +606,7 @@
   color: var(--color-text-secondary);
 }
 
-/* ─── Inline breadcrumb footer (mirrors ReviewGraphNode footer) ─── */
+/* â”€â”€â”€ Inline breadcrumb footer (mirrors ReviewGraphNode footer) â”€â”€â”€ */
 .footer {
   margin-top: 6px;
   padding-top: 8px;

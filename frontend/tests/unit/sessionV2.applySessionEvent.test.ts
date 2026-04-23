@@ -271,5 +271,208 @@ describe('applySessionEvent', () => {
     expect(list[0].id).toBe('item-user-1')
     expect(list[0].payload.text).toBe('same prompt')
   })
+
+  it('updates thread name + activity timestamp from thread/name/updated', () => {
+    const initial = baseState()
+    initial.threadsById['thread-1'] = {
+      id: 'thread-1',
+      name: 'Before',
+      modelProvider: 'openai',
+      cwd: 'C:/repo',
+      ephemeral: false,
+      archived: false,
+      status: { type: 'idle' },
+      createdAt: 1,
+      updatedAt: 10,
+      turns: [],
+    }
+    initial.threadOrder = ['thread-1']
+
+    const next = applySessionEvent(
+      initial,
+      event({
+        eventId: 'thread-1:100',
+        eventSeq: 100,
+        method: 'thread/name/updated',
+        occurredAtMs: 50,
+        params: { name: 'After' },
+      }),
+    )
+
+    expect(next.threadsById['thread-1']?.name).toBe('After')
+    expect(next.threadsById['thread-1']?.updatedAt).toBe(50)
+  })
+
+  it('handles thread archive/unarchive events and keeps activity timestamp monotonic', () => {
+    const initial = baseState()
+    initial.threadsById['thread-1'] = {
+      id: 'thread-1',
+      name: 'Thread',
+      modelProvider: 'openai',
+      cwd: 'C:/repo',
+      ephemeral: false,
+      archived: false,
+      status: { type: 'idle' },
+      createdAt: 1,
+      updatedAt: 10,
+      turns: [],
+    }
+    initial.threadOrder = ['thread-1']
+
+    const archived = applySessionEvent(
+      initial,
+      event({
+        eventId: 'thread-1:101',
+        eventSeq: 101,
+        method: 'thread/archived',
+        occurredAtMs: 40,
+        params: {},
+      }),
+    )
+    const unarchived = applySessionEvent(
+      archived,
+      event({
+        eventId: 'thread-1:102',
+        eventSeq: 102,
+        method: 'thread/unarchived',
+        occurredAtMs: 60,
+        params: {},
+      }),
+    )
+
+    expect(archived.threadsById['thread-1']?.archived).toBe(true)
+    expect(unarchived.threadsById['thread-1']?.archived).toBe(false)
+    expect(unarchived.threadsById['thread-1']?.updatedAt).toBe(60)
+  })
+
+  it('marks thread activity on serverRequest/resolved', () => {
+    const initial = baseState()
+    initial.threadsById['thread-1'] = {
+      id: 'thread-1',
+      name: 'Thread',
+      modelProvider: 'openai',
+      cwd: 'C:/repo',
+      ephemeral: false,
+      archived: false,
+      status: { type: 'idle' },
+      createdAt: 1,
+      updatedAt: 10,
+      turns: [],
+    }
+    initial.threadOrder = ['thread-1']
+
+    const next = applySessionEvent(
+      initial,
+      event({
+        eventId: 'thread-1:103',
+        eventSeq: 103,
+        method: 'serverRequest/resolved',
+        occurredAtMs: 70,
+        params: { requestId: 'request-1' },
+      }),
+    )
+
+    expect(next.threadsById['thread-1']?.updatedAt).toBe(70)
+  })
+
+  it('creates and deduplicates synthetic error item id when turnId exists', () => {
+    const initial = baseState()
+    initial.threadsById['thread-1'] = {
+      id: 'thread-1',
+      name: 'Thread',
+      modelProvider: 'openai',
+      cwd: 'C:/repo',
+      ephemeral: false,
+      archived: false,
+      status: { type: 'idle' },
+      createdAt: 1,
+      updatedAt: 10,
+      turns: [],
+    }
+    initial.threadOrder = ['thread-1']
+    initial.turnsByThread['thread-1'] = [
+      {
+        id: 'turn-1',
+        threadId: 'thread-1',
+        status: 'inProgress',
+        lastCodexStatus: 'inProgress',
+        startedAtMs: 5,
+        completedAtMs: null,
+        items: [],
+        error: null,
+      },
+    ]
+
+    const first = applySessionEvent(
+      initial,
+      event({
+        eventId: 'thread-1:104',
+        eventSeq: 104,
+        method: 'error',
+        turnId: 'turn-1',
+        occurredAtMs: 80,
+        params: {
+          itemId: 'item-error-1',
+          error: { code: 'ERR_INTERNAL', message: 'first' },
+        },
+      }),
+    )
+    const second = applySessionEvent(
+      first,
+      event({
+        eventId: 'thread-1:105',
+        eventSeq: 105,
+        method: 'error',
+        turnId: 'turn-1',
+        occurredAtMs: 90,
+        params: {
+          itemId: 'item-error-1',
+          error: { code: 'ERR_INTERNAL', message: 'second' },
+        },
+      }),
+    )
+
+    const items = second.itemsByTurn['thread-1:turn-1']
+    expect(items).toHaveLength(1)
+    expect(items[0].id).toBe('item-error-1')
+    expect(items[0].kind).toBe('error')
+    expect(items[0].status).toBe('failed')
+    expect(items[0].payload.message).toBe('second')
+  })
+
+  it('does not create turn item for error event without turnId', () => {
+    const initial = baseState()
+    initial.threadsById['thread-1'] = {
+      id: 'thread-1',
+      name: 'Thread',
+      modelProvider: 'openai',
+      cwd: 'C:/repo',
+      ephemeral: false,
+      archived: false,
+      status: { type: 'idle' },
+      createdAt: 1,
+      updatedAt: 10,
+      turns: [],
+    }
+    initial.threadOrder = ['thread-1']
+
+    const next = applySessionEvent(
+      initial,
+      event({
+        eventId: 'thread-1:106',
+        eventSeq: 106,
+        method: 'error',
+        turnId: null,
+        occurredAtMs: 95,
+        params: {
+          requestId: 'request-only',
+          error: { code: 'ERR_INTERNAL', message: 'request-level failure' },
+        },
+      }),
+    )
+
+    expect(next.itemsByTurn['thread-1:turn-1']).toBeUndefined()
+    expect(next.threadsById['thread-1']?.updatedAt).toBe(95)
+  })
 })
 

@@ -1,4 +1,5 @@
-.console {
+.console,
+.themeScope {
   --session-v2-accent: #0169cc;
   --session-v2-bg: #ffffff;
   --session-v2-fg: #0d0d0d;
@@ -8,7 +9,25 @@
   --session-v2-surface-soft: #f3f4f6;
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'SF Mono', 'SFMono-Regular', ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  --thread-pane-canvas-default: #ffffff;
+  --thread-pane-canvas-execution: #ffffff;
+  --thread-pane-bg-surface: var(--bg-surface);
+  --thread-pane-border-default: var(--border-default);
+  --thread-pane-border-subtle: var(--border-subtle);
+  --thread-pane-border-strong: var(--border-strong);
+  --thread-pane-text-primary: var(--text-primary);
+  --thread-pane-text-secondary: var(--text-secondary);
+  --thread-pane-text-tertiary: var(--text-tertiary);
+  --thread-pane-accent: var(--accent-primary);
+  --thread-pane-danger: var(--danger);
+  --thread-pane-warning: #f59e0b;
+  --thread-pane-info: #0891b2;
   --color-accent: var(--session-v2-accent);
+  color: var(--session-v2-fg);
+  font-family: var(--font-sans);
+}
+
+.console {
   flex: 1;
   height: 100%;
   min-height: 0;
@@ -19,8 +38,6 @@
   overflow: hidden;
   border-top: 1px solid var(--session-v2-border);
   background: var(--session-v2-bg);
-  color: var(--session-v2-fg);
-  font-family: var(--font-sans);
 }
 
 .mainPane {
@@ -70,6 +87,398 @@
   background: color-mix(in srgb, #dc2626 12%, transparent);
   border-bottom: 1px solid color-mix(in srgb, #dc2626 30%, transparent);
   color: #7f1d1d;
+}
+
+.threadPane {
+  display: flex;
+  flex: 5 1 0;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  border-right: 1px solid color-mix(in srgb, var(--thread-pane-border-subtle) 82%, transparent);
+}
+
+.threadSurface {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  flex-direction: column;
+  box-sizing: border-box;
+  --thread-chat-canvas: var(--thread-pane-canvas-default);
+  --bg-app: var(--thread-chat-canvas);
+  --bg-surface: var(--thread-chat-canvas);
+}
+
+.threadTabBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 10px 16px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--thread-pane-border-subtle) 82%, transparent);
+  background: var(--bg-app);
+}
+
+.threadTabNav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.threadTab {
+  padding: 6px 12px 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--thread-pane-text-tertiary);
+  cursor: pointer;
+  position: relative;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease;
+}
+
+.threadTab:hover:not(.threadTabActive) {
+  color: var(--thread-pane-text-secondary);
+  background: color-mix(in srgb, var(--thread-pane-bg-surface) 88%, transparent);
+}
+
+.threadTab:focus {
+  outline: none;
+}
+
+.threadTab:focus-visible {
+  outline: 2px solid var(--thread-pane-accent);
+  outline-offset: 2px;
+}
+
+.threadTab::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.14s ease;
+}
+
+.threadTabActive {
+  color: var(--thread-pane-accent);
+  font-weight: 600;
+}
+
+.threadTabActive::after {
+  background: var(--thread-pane-accent);
+}
+
+.threadTabBody {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--thread-chat-canvas);
+}
+
+.threadBodyNoticeRow {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  gap: 8px;
+}
+
+.threadBodyMain {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--thread-chat-canvas);
+}
+
+.threadBodyComposer {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-top: 1px solid color-mix(in srgb, var(--thread-pane-border-subtle) 72%, var(--thread-chat-canvas));
+  background: var(--thread-chat-canvas);
+}
+
+.workflowActionStrip {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: center;
+  padding: 10px 20px 0;
+  background: var(--thread-chat-canvas);
+}
+
+.workflowActionStripInner {
+  display: flex;
+  gap: 8px;
+  width: min(860px, 100%);
+  flex-wrap: wrap;
+}
+
+.threadExecutionWhiteCanvas {
+  --thread-chat-canvas: var(--thread-pane-canvas-execution);
+}
+
+.executionQueuePanel,
+.askQueuePanel {
+  max-width: 860px;
+  width: calc(100% - 40px);
+  margin: 12px auto 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--thread-pane-border-default) 84%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--thread-pane-bg-surface) 96%, var(--thread-chat-canvas));
+  box-sizing: border-box;
+}
+
+.executionQueueHeader,
+.askQueueHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.executionQueueTitle,
+.askQueueTitle {
+  color: var(--thread-pane-text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.executionQueueHeaderControls,
+.askQueueHeaderControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.executionQueuePauseReason,
+.askQueuePauseReason {
+  font-size: 11px;
+  color: var(--thread-pane-text-secondary);
+}
+
+.executionQueuePauseToggle {
+  border: 1px solid color-mix(in srgb, var(--thread-pane-border-default) 86%, transparent);
+  background: var(--thread-pane-bg-surface);
+  color: var(--thread-pane-text-secondary);
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.executionQueuePauseToggle:hover {
+  border-color: var(--thread-pane-border-strong);
+  color: var(--thread-pane-text-primary);
+}
+
+.executionQueueEmpty,
+.askQueueEmpty {
+  margin: 10px 0 2px;
+  color: var(--thread-pane-text-tertiary);
+  font-size: 12px;
+}
+
+.executionQueueList,
+.askQueueList {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.executionQueueItem,
+.askQueueItem {
+  border: 1px solid color-mix(in srgb, var(--thread-pane-border-subtle) 86%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--thread-chat-canvas) 88%, var(--thread-pane-bg-surface));
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.executionQueueItemMetaRow,
+.askQueueItemMetaRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.executionQueueStatusBadge,
+.askQueueStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+}
+
+.executionQueueStatusQueued,
+.askQueueStatusQueued {
+  background: color-mix(in srgb, var(--thread-pane-accent) 12%, transparent);
+  color: color-mix(in srgb, var(--thread-pane-accent) 80%, black);
+}
+
+.executionQueueStatusConfirmation,
+.askQueueStatusConfirmation {
+  background: color-mix(in srgb, var(--thread-pane-warning) 16%, transparent);
+  color: color-mix(in srgb, #92400e 86%, black);
+}
+
+.executionQueueStatusSending,
+.askQueueStatusSending {
+  background: color-mix(in srgb, var(--thread-pane-info) 16%, transparent);
+  color: color-mix(in srgb, #0e7490 80%, black);
+}
+
+.executionQueueStatusFailed,
+.askQueueStatusFailed {
+  background: color-mix(in srgb, var(--thread-pane-danger) 16%, transparent);
+  color: color-mix(in srgb, var(--thread-pane-danger) 80%, black);
+}
+
+.executionQueueMetaText,
+.askQueueMetaText {
+  font-size: 11px;
+  color: var(--thread-pane-text-tertiary);
+}
+
+.executionQueueText,
+.askQueueText {
+  margin: 0;
+  color: var(--thread-pane-text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.executionQueueError,
+.askQueueError {
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--thread-pane-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--thread-pane-danger) 20%, transparent);
+  padding: 6px 8px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--thread-pane-danger) 84%, black);
+}
+
+.executionQueueActions,
+.askQueueActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.executionQueueAction,
+.askQueueAction {
+  border: 1px solid color-mix(in srgb, var(--thread-pane-border-default) 88%, transparent);
+  background: var(--thread-pane-bg-surface);
+  color: var(--thread-pane-text-secondary);
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.executionQueueAction:hover:not(:disabled),
+.askQueueAction:hover:not(:disabled) {
+  border-color: var(--thread-pane-border-strong);
+  color: var(--thread-pane-text-primary);
+}
+
+.executionQueueActionPrimary,
+.askQueueActionPrimary {
+  background: var(--thread-pane-accent);
+  color: #fff;
+  border-color: var(--thread-pane-accent);
+}
+
+.executionQueueActionPrimary:hover:not(:disabled),
+.askQueueActionPrimary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--thread-pane-accent) 90%, black);
+  border-color: color-mix(in srgb, var(--thread-pane-accent) 88%, black);
+  color: #fff;
+}
+
+.executionQueueAction:disabled,
+.askQueueAction:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.askQueueReason {
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--thread-pane-warning) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--thread-pane-warning) 20%, transparent);
+  padding: 6px 8px;
+  font-size: 11px;
+  color: color-mix(in srgb, #92400e 86%, black);
+}
+
+.threadErrorBanner {
+  max-width: 860px;
+  width: calc(100% - 40px);
+  margin: 10px auto 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--thread-pane-danger) 22%, var(--thread-pane-border-default));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--thread-pane-danger) 8%, var(--thread-pane-bg-surface));
+  color: color-mix(in srgb, var(--thread-pane-danger) 74%, var(--thread-pane-text-primary));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 960px) {
+  .threadPane {
+    border-right: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--thread-pane-border-subtle) 82%, transparent);
+  }
+
+  .executionQueuePanel,
+  .askQueuePanel {
+    width: calc(100% - 24px);
+    margin-top: 10px;
+  }
+
+  .executionQueueHeader,
+  .askQueueHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .executionQueueHeaderControls,
+  .askQueueHeaderControls {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 
 @media (max-width: 1200px) {
