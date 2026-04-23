@@ -1,14 +1,115 @@
 /* ─── Sidebar shell — tonal rail, flush left (no drop shadow) ───────────────── */
+
+/* ─── sessionV2 / threadPane parity token scope ──────────────────────────────
+   Resolves all Sidebar tokens to the same concrete values used by sessionV2
+   so both panes share identical palette, font stack, borders, and interactions.
+   ─────────────────────────────────────────────────────────────────────────── */
 .sidebar {
+  /* ── Palette ──────────────────────────────────────────────────────────── */
+  --surface:                  #ffffff;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low:    #f8fafc;
+  --surface-container:        #f3f4f6;
+  --surface-container-highest: #e5e7eb;
+  --on-surface:               #0d0d0d;
+  --outline:                  #0d0d0d;
+  --outline-variant:          color-mix(in srgb, #0d0d0d 15%, transparent);
+
+  /* ── Primary / accent → sessionV2 blue ───────────────────────────────── */
+  --primary:                  #0169cc;
+  --primary-container:        #0158ab;
+  --on-primary:               #ffffff;
+  --accent-primary:           #0169cc;
+  --accent-primary-hover:     #0158ab;
+
+  /* ── Semantic ─────────────────────────────────────────────────────────── */
+  --tertiary:                 #0d9488;
+  --danger:                   #dc2626;
+  --success:                  #16a34a;
+  --warning:                  #d97706;
+
+  /* ── Text ─────────────────────────────────────────────────────────────── */
+  --text-primary:             #0d0d0d;
+  --text-secondary:           #374151;
+  --text-tertiary:            #6b7280;
+
+  /* ── Border ──────────────────────────────────────────────────────────── */
+  --border-default:           #e5e7eb;
+  --border-subtle:            #e5e7eb;
+  --border-strong:            #d1d5db;
+
+  /* ── Explorer-specific tokens (sidebar bg + interactive states) ───────── */
+  --color-explorer-bg:            #f8fafc;
+  --color-explorer-icon:          #6b7280;
+  --color-explorer-icon-hover:    #0d0d0d;
+  --color-explorer-icon-active:   #0d0d0d;
+  --color-explorer-item-hover:    #f3f4f6;
+  --color-explorer-item-active:   color-mix(in srgb, #0169cc 8%, #f3f4f6);
+  --color-explorer-border:        transparent;
+  --color-explorer-avatar-bg:     #f8fafc;
+  --color-explorer-avatar-fg:     #0169cc;
+
+  /* ── Typography ──────────────────────────────────────────────────────── */
+  --font-sans:    -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono:    'SF Mono', 'SFMono-Regular', ui-monospace, Menlo, Monaco, Consolas, monospace;
+  --font-size-xs:  11px;
+  --font-size-sm:  12px;
+  --font-size-base: 13px;
+  --font-size-md:  13px;
+  --font-size-lg:  15px;
+  --font-size-xl:  18px;
+  --line-height-ui:       1.35;
+  --line-height-relaxed:  1.6;
+
+  /* Type roles */
+  --type-title-sm-size:   12px;
+  --type-title-sm-weight: 600;
+  --type-display-md-size: 24px;
+  --type-display-md-weight: 600;
+  --type-display-md-line: 1.25;
+
+  /* ── Radius ──────────────────────────────────────────────────────────── */
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius-md:   8px;
+  --radius-lg:   10px;
+  --radius-xl:   16px;
+  --radius-pill: 999px;
+
+  /* ── Elevation ────────────────────────────────────────────────────────── */
+  --shadow-xs:    0 1px 2px rgb(16 24 40 / 6%);
+  --shadow-sm:    0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 5%);
+  --shadow-md:    0 4px 16px rgb(16 24 40 / 10%);
+  --shadow-float: 0 1px 2px rgb(16 24 40 / 6%);
+
+  /* ── Spacing ─────────────────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* ── Status dots ─────────────────────────────────────────────────────── */
+  --color-status-locked:    #6b7280;
+  --color-status-draft:     #374151;
+  --color-status-done:      #16a34a;
+
+  /* ── Apply base typography ────────────────────────────────────────────── */
+  font-family: var(--font-sans);
+  color: var(--on-surface);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
   width: 270px;
   height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--color-explorer-bg);
-  border-right: none;
+  border-right: 1px solid var(--border-default);
   overflow: hidden;
   flex-shrink: 0;
-  font-family: var(--font-sans);
   transition: width 0.18s ease, min-width 0.18s ease, max-width 0.18s ease;
 }
 

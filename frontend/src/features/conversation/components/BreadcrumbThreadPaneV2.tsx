@@ -11,7 +11,6 @@ import type {
 } from '../sessionV2AdapterContracts'
 import { type ThreadTab } from '../surfaceRouting'
 import { BreadcrumbThreadTabsV2 } from './BreadcrumbThreadTabsV2'
-import designStyles from './BreadcrumbThreadPaneV2.design.module.css'
 import { WorkflowActionStripV2 } from './WorkflowActionStripV2'
 
 export type BreadcrumbThreadFrameContextProps = {
@@ -58,27 +57,27 @@ export function BreadcrumbThreadPaneV2({
   return (
     <>
       <div
-        className={`${designStyles.threadPane} ${designStyles.themeScope} ${sessionShellStyles.themeScope}`}
+        className={`${sessionShellStyles.threadPane} ${sessionShellStyles.themeScope}`}
         data-testid="breadcrumb-thread-pane"
       >
-        <div className={designStyles.threadSurface}>
+        <div className={sessionShellStyles.threadSurface}>
           <BreadcrumbThreadTabsV2
             threadTab={threadTab}
             onThreadTabChange={onThreadTabChange}
           />
 
-          <div className={designStyles.threadTabBody} data-testid="breadcrumb-thread-body">
-            <div className={designStyles.threadBodyNoticeRow}>
+          <div className={sessionShellStyles.threadTabBody} data-testid="breadcrumb-thread-body">
+            <div className={sessionShellStyles.threadBodyNoticeRow}>
               {combinedError ? (
-                <div className={designStyles.errorBanner} role="alert">
+                <div className={sessionShellStyles.threadErrorBanner} role="alert">
                   {combinedError}
                 </div>
               ) : null}
             </div>
 
             <div
-              className={`${designStyles.threadBodyMain}${
-                isExecutionTab ? ` ${designStyles.threadExecutionWhiteCanvas}` : ''
+              className={`${sessionShellStyles.threadBodyMain}${
+                isExecutionTab ? ` ${sessionShellStyles.threadExecutionWhiteCanvas}` : ''
               }`}
             >
               <TranscriptPanel
@@ -91,8 +90,8 @@ export function BreadcrumbThreadPaneV2({
             <WorkflowActionStripV2 actions={workflowStripProps.actions} />
 
             <div
-              className={`${designStyles.threadBodyComposer}${
-                isExecutionTab ? ` ${designStyles.threadExecutionWhiteCanvas}` : ''
+              className={`${sessionShellStyles.threadBodyComposer}${
+                isExecutionTab ? ` ${sessionShellStyles.threadExecutionWhiteCanvas}` : ''
               }`}
               data-testid="breadcrumb-thread-composer"
             >

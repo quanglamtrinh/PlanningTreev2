@@ -1,6 +1,6 @@
 import type { ThreadTab } from '../surfaceRouting'
 import { BREADCRUMB_THREAD_TAB_DESIGN } from './BreadcrumbThreadPaneV2.design'
-import styles from './BreadcrumbThreadPaneV2.design.module.css'
+import styles from '../../session_v2/shell/SessionConsoleV2.module.css'
 
 type BreadcrumbThreadTabsV2Props = {
   threadTab: ThreadTab

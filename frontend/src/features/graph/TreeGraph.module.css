@@ -1,10 +1,71 @@
-/* ─── Graph shell: fills the entire parent (position:relative) ─── */
+﻿/* --- sessionV2 / threadPane parity token scope --------------------------
+   Resolves graph canvas and overlay tokens to the same concrete values used
+   by sessionV2 so both views share identical palette, font, radius, elevation.
+   ----------------------------------------------------------------------- */
+
+/* --- Graph shell: fills the entire parent (position:relative) --- */
+.graphShell {
+  /* Palette */
+  --surface-container-lowest:  #ffffff;
+  --surface-container-low:     #f8fafc;
+  --surface-container:         #f3f4f6;
+  --surface-container-highest: #e5e7eb;
+  --on-surface:                #0d0d0d;
+  --outline:                   #0d0d0d;
+  --outline-variant:           color-mix(in srgb, #0d0d0d 15%, transparent);
+  /* Primary / accent */
+  --primary:               #0169cc;
+  --primary-container:     #0158ab;
+  --on-primary:            #ffffff;
+  --color-accent:          #0169cc;
+  --color-accent-hover:    #0158ab;
+  /* Semantic */
+  --danger:    #dc2626;
+  --warning:   #d97706;
+  --success:   #16a34a;
+  /* Typography */
+  --font-sans:    -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: var(--font-sans);
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --line-height-relaxed: 1.6;
+  /* Radius */
+  --radius-sm:   6px;
+  --radius-md:   8px;
+  --radius-lg:   10px;
+  --radius-xl:   14px;
+  --radius-pill: 999px;
+  /* Elevation */
+  --shadow-xs:    0 1px 2px rgb(16 24 40 / 6%);
+  --shadow-sm:    0 1px 3px rgb(16 24 40 / 8%);
+  --shadow-md:    0 4px 16px rgb(16 24 40 / 10%);
+  --shadow-float: 0 2px 8px rgb(16 24 40 / 8%), 0 0 0 1px rgb(0 0 0 / 4%);
+  /* Graph-specific tokens -> sessionV2 clean palette */
+  --color-graph-bg:     #f8fafc;
+  --glass-fill:         #ffffff;
+  --graph-edge-stroke:  color-mix(in srgb, #0d0d0d 22%, transparent);
+  --graph-edge-width:   1.5px;
+  --graph-node-radius:  10px;
+  --graph-node-shadow:  0 1px 4px rgb(16 24 40 / 8%);
+  --graph-node-border:  #e5e7eb;
+  /* Color text aliases */
+  --color-text-primary:   #0d0d0d;
+  --color-text-secondary: #374151;
+  --color-text-tertiary:  #6b7280;
+  --color-border:         #e5e7eb;
+  --color-border-subtle:  #e5e7eb;
+  --color-bg-hover:       #f3f4f6;
+}
+/* â”€â”€â”€ Graph shell: fills the entire parent (position:relative) â”€â”€â”€ */
 .graphShell {
   position: absolute;
   inset: 0;
 }
 
-/* ─── ReactFlow global overrides ─── */
+/* â”€â”€â”€ ReactFlow global overrides â”€â”€â”€ */
 .graphShell :global(.react-flow) {
   background: var(--color-graph-bg);
 }
@@ -16,7 +77,7 @@
   }
 }
 
-/* Animated “flow” along edges (dash pattern moves along the path). */
+/* Animated â€œflowâ€ along edges (dash pattern moves along the path). */
 .graphShell :global(.react-flow__edge-path) {
   stroke: var(--graph-edge-stroke);
   stroke-width: var(--graph-edge-width);
@@ -69,7 +130,7 @@
   opacity: 0.22;
 }
 
-/* ─── Fullscreen mode ─── */
+/* â”€â”€â”€ Fullscreen mode â”€â”€â”€ */
 .graphShellFullscreen {
   position: fixed;
   inset: 0;
@@ -119,7 +180,7 @@
   color: color-mix(in srgb, var(--primary) 85%, #1a0a0a);
 }
 
-/* ─── Detail panel (right side) ─── */
+/* â”€â”€â”€ Detail panel (right side) â”€â”€â”€ */
 .detailPanel {
   pointer-events: all;
   height: calc(100% - 24px);
@@ -152,7 +213,7 @@
   box-shadow: 0 1px 0 color-mix(in srgb, var(--outline) 8%, transparent);
 }
 
-/* ─── Stepper nav ─── */
+/* â”€â”€â”€ Stepper nav â”€â”€â”€ */
 .detailStepper {
   display: flex;
   align-items: center;
@@ -232,7 +293,7 @@
   color: var(--color-text-primary);
 }
 
-/* ─── Clarify placeholder ─── */
+/* â”€â”€â”€ Clarify placeholder â”€â”€â”€ */
 .detailClarifyHint {
   display: flex;
   flex-direction: column;
@@ -310,7 +371,7 @@
   color: var(--color-text-secondary);
 }
 
-/* ─── Invalid snapshot state ─── */
+/* â”€â”€â”€ Invalid snapshot state â”€â”€â”€ */
 .invalidState {
   position: absolute;
   inset: 0;
@@ -337,7 +398,7 @@
   line-height: var(--line-height-relaxed);
 }
 
-/* ─── Responsive ─── */
+/* â”€â”€â”€ Responsive â”€â”€â”€ */
 .createTaskBackdrop {
   position: absolute;
   inset: 0;
@@ -452,3 +513,4 @@
     width: min(clamp(360px, 88vw, 520px), calc(100vw - 32px));
   }
 }
+

@@ -6,7 +6,7 @@ import {
   renderExecutionQueuePauseReasonLabel,
   renderQueueStatusLabel,
 } from './BreadcrumbThreadPaneV2.design'
-import styles from './BreadcrumbThreadPaneV2.design.module.css'
+import styles from '../../session_v2/shell/SessionConsoleV2.module.css'
 
 type ExecutionFollowupQueuePanelV2Props = {
   executionQueueState: ThreadExecutionFollowupQueueState
