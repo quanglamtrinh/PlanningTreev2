@@ -490,3 +490,17 @@ export function applySessionEvent(
 
   return state
 }
+
+export function applySessionEventsBatch(
+  previous: SessionProjectionState,
+  envelopes: SessionEventEnvelope[],
+): SessionProjectionState {
+  if (!Array.isArray(envelopes) || envelopes.length === 0) {
+    return previous
+  }
+  let next = previous
+  for (const envelope of envelopes) {
+    next = applySessionEvent(next, envelope)
+  }
+  return next
+}

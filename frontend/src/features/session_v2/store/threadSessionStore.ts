@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 import type { SessionEventEnvelope, SessionItem, SessionThread, SessionTurn } from '../contracts'
-import { applySessionEvent, type SessionProjectionState } from '../state/applySessionEvent'
+import {
+  applySessionEvent,
+  applySessionEventsBatch,
+  type SessionProjectionState,
+} from '../state/applySessionEvent'
 
 export type StreamState = {
   connectedByThread: Record<string, boolean>
@@ -16,6 +20,7 @@ type ThreadSessionStoreState = SessionProjectionState & {
   setThreadTurns: (threadId: string, turns: SessionTurn[]) => void
   setItemsForTurn: (threadId: string, turnId: string, items: SessionItem[]) => void
   applyEvent: (envelope: SessionEventEnvelope) => void
+  applyEventsBatch: (envelopes: SessionEventEnvelope[]) => void
   markStreamConnected: (threadId: string) => void
   markStreamDisconnected: (threadId: string) => void
   markStreamReconnect: (threadId: string) => void
@@ -305,6 +310,12 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
   },
   applyEvent(envelope) {
     set((state) => applySessionEvent(state, envelope))
+  },
+  applyEventsBatch(envelopes) {
+    if (!Array.isArray(envelopes) || envelopes.length === 0) {
+      return
+    }
+    set((state) => applySessionEventsBatch(state, envelopes))
   },
   markStreamConnected(threadId) {
     set((state) => ({

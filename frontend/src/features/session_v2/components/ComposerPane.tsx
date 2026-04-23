@@ -288,9 +288,6 @@ export function ComposerPane({ isTurnRunning, disabled, onSubmit, onInterrupt }:
           <span>history: {historyText.length}</span>
         </div>
         <div className="sessionV2ComposerActions">
-          <button type="button" disabled={disabled || isSubmitting} onClick={() => fileInputRef.current?.click()}>
-            Attach file
-          </button>
           <button type="button" disabled={disabled || isSubmitting || !isTurnRunning} onClick={() => void onInterrupt()}>
             Interrupt
           </button>
@@ -375,23 +372,44 @@ export function ComposerPane({ isTurnRunning, disabled, onSubmit, onInterrupt }:
         </div>
       ) : null}
 
-      <textarea
-        ref={textareaRef}
-        value={draft}
-        onChange={(event) => {
-          const next = event.target.value
-          setDraft(next)
-          syncPopup(next)
-          if (reverseSearchEnabled) {
-            setReverseSearchQuery(next)
-          }
-        }}
-        onPaste={handlePaste}
-        onKeyDown={handleKeyDown}
-        placeholder={isTurnRunning ? 'Steer active turn...' : 'Start new turn...'}
-        rows={4}
-        disabled={disabled || isSubmitting}
-      />
+      <div className="sessionV2ComposerEditor">
+        <textarea
+          ref={textareaRef}
+          value={draft}
+          onChange={(event) => {
+            const next = event.target.value
+            setDraft(next)
+            syncPopup(next)
+            if (reverseSearchEnabled) {
+              setReverseSearchQuery(next)
+            }
+          }}
+          onPaste={handlePaste}
+          onKeyDown={handleKeyDown}
+          placeholder={isTurnRunning ? 'Steer active turn...' : 'Start new turn...'}
+          rows={4}
+          disabled={disabled || isSubmitting}
+        />
+        <button
+          type="button"
+          className="sessionV2AttachButton"
+          disabled={disabled || isSubmitting}
+          onClick={() => fileInputRef.current?.click()}
+          title="Attach photos and files"
+          aria-label="Attach photos and files"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+            <path
+              d="M7 10.5L11.6 5.9C12.9 4.6 15 4.6 16.3 5.9C17.6 7.2 17.6 9.3 16.3 10.6L10.4 16.5C8.2 18.7 4.7 18.7 2.5 16.5C0.3 14.3 0.3 10.8 2.5 8.6L8.7 2.4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
 
       <div className="sessionV2ComposerFooter">
         <div className="sessionV2ImageInput">

@@ -37,5 +37,20 @@ describe('ComposerPane', () => {
     fireEvent.keyDown(textarea, { key: 'r', ctrlKey: true })
     expect(screen.getByPlaceholderText('Search history')).toBeInTheDocument()
   })
+
+  it('renders attach icon button with hover tooltip text', () => {
+    const onSubmit = vi.fn(async () => undefined)
+    const onInterrupt = vi.fn(async () => undefined)
+    render(
+      <ComposerPane
+        isTurnRunning={false}
+        onSubmit={onSubmit}
+        onInterrupt={onInterrupt}
+      />,
+    )
+
+    const attachButton = screen.getByRole('button', { name: 'Attach photos and files' })
+    expect(attachButton.getAttribute('title')).toBe('Attach photos and files')
+  })
 })
 

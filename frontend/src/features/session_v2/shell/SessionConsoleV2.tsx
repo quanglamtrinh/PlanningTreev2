@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import type { PendingServerRequest, SessionTurn } from '../contracts'
+import type { PendingServerRequest, SessionEventEnvelope, SessionTurn } from '../contracts'
 import {
   forkThreadV2,
   initializeSessionV2,
@@ -53,6 +53,38 @@ const EVENT_METHODS: string[] = [
   'error',
 ]
 
+const STREAM_BATCH_FALLBACK_FLUSH_MS = 16
+const STREAM_BATCH_PRIORITY_FLUSH_MS = 8
+const STREAM_BATCH_MAX_QUEUE_AGE_MS = 25
+const STREAM_CHUNKING_SMOOTH_DRAIN_MAX_EVENTS = 32
+const STREAM_CHUNKING_CATCH_UP_DRAIN_MAX_EVENTS = 128
+const STREAM_CHUNKING_ENTER_QUEUE_DEPTH = 64
+const STREAM_CHUNKING_ENTER_OLDEST_AGE_MS = 120
+const STREAM_CHUNKING_EXIT_QUEUE_DEPTH = 16
+const STREAM_CHUNKING_EXIT_OLDEST_AGE_MS = 40
+const STREAM_CHUNKING_EXIT_HOLD_MS = 250
+const STREAM_CHUNKING_REENTER_HOLD_MS = 250
+const STREAM_CHUNKING_SEVERE_QUEUE_DEPTH = 256
+const STREAM_CHUNKING_SEVERE_OLDEST_AGE_MS = 320
+
+const STREAM_FORCE_FLUSH_METHODS = new Set<string>([
+  'turn/completed',
+  'item/completed',
+  'error',
+  'thread/closed',
+  'serverRequest/resolved',
+])
+
+const STREAM_DELTA_METHODS = new Set<string>([
+  'item/agentMessage/delta',
+  'item/plan/delta',
+  'item/reasoning/summaryTextDelta',
+  'item/reasoning/summaryPartAdded',
+  'item/reasoning/textDelta',
+  'item/commandExecution/outputDelta',
+  'item/fileChange/outputDelta',
+])
+
 function actionId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -70,12 +102,21 @@ function upsertTurnList(existing: SessionTurn[], nextTurn: SessionTurn): Session
   return updated
 }
 
+function isDeltaEnvelope(envelope: SessionEventEnvelope): boolean {
+  return STREAM_DELTA_METHODS.has(envelope.method)
+}
+
+function shouldForceFlushEnvelope(envelope: SessionEventEnvelope): boolean {
+  return STREAM_FORCE_FLUSH_METHODS.has(envelope.method)
+}
+
 export function SessionConsoleV2() {
   const [runtimeError, setRuntimeError] = useState<string | null>(null)
   const [isBootstrapping, setIsBootstrapping] = useState(false)
   const reconnectTimerRef = useRef<number | null>(null)
   const pollTimerRef = useRef<number | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+  const clearStreamBufferRef = useRef<(() => void) | null>(null)
 
   const {
     threadsById,
@@ -89,7 +130,7 @@ export function SessionConsoleV2() {
     upsertThread,
     setActiveThreadId,
     setThreadTurns,
-    applyEvent,
+    applyEventsBatch,
     markStreamConnected,
     markStreamDisconnected,
     markStreamReconnect,
@@ -108,7 +149,7 @@ export function SessionConsoleV2() {
       upsertThread: state.upsertThread,
       setActiveThreadId: state.setActiveThreadId,
       setThreadTurns: state.setThreadTurns,
-      applyEvent: state.applyEvent,
+      applyEventsBatch: state.applyEventsBatch,
       markStreamConnected: state.markStreamConnected,
       markStreamDisconnected: state.markStreamDisconnected,
       markStreamReconnect: state.markStreamReconnect,
@@ -175,6 +216,11 @@ export function SessionConsoleV2() {
   const activeRequest: PendingServerRequest | null = activeRequestId ? (pendingById[activeRequestId] ?? null) : null
 
   const closeStream = useCallback((threadId: string | null) => {
+    const clearBuffer = clearStreamBufferRef.current
+    if (clearBuffer) {
+      clearBuffer()
+      clearStreamBufferRef.current = null
+    }
     if (threadId) {
       markStreamDisconnected(threadId)
     }
@@ -207,6 +253,178 @@ export function SessionConsoleV2() {
     const cursorEventId = lastEventIdByThread[threadId] ?? null
     const stream = openThreadEventsStreamV2(threadId, { cursorEventId })
     eventSourceRef.current = stream
+    type FlushReason = 'raf' | 'fallback' | 'forced' | 'max_age'
+    type StreamChunkingMode = 'smooth' | 'catch_up'
+    const queuedEnvelopes: SessionEventEnvelope[] = []
+    let queuedSinceMs: number | null = null
+    let rafFlushHandle: number | null = null
+    let fallbackFlushTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+    let maxAgeFlushTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+    let streamChunkingMode: StreamChunkingMode = 'smooth'
+    let streamChunkingBelowExitThresholdSinceMs: number | null = null
+    let streamChunkingLastCatchUpExitAtMs: number | null = null
+
+    const resetStreamChunkingMode = () => {
+      streamChunkingMode = 'smooth'
+      streamChunkingBelowExitThresholdSinceMs = null
+      streamChunkingLastCatchUpExitAtMs = null
+    }
+
+    const clearScheduledFlush = () => {
+      if (rafFlushHandle !== null && typeof globalThis.cancelAnimationFrame === 'function') {
+        globalThis.cancelAnimationFrame(rafFlushHandle)
+      }
+      rafFlushHandle = null
+      if (fallbackFlushTimer !== null) {
+        globalThis.clearTimeout(fallbackFlushTimer)
+      }
+      fallbackFlushTimer = null
+      if (maxAgeFlushTimer !== null) {
+        globalThis.clearTimeout(maxAgeFlushTimer)
+      }
+      maxAgeFlushTimer = null
+    }
+
+    const clearQueuedEnvelopes = () => {
+      queuedEnvelopes.length = 0
+      queuedSinceMs = null
+      resetStreamChunkingMode()
+      clearScheduledFlush()
+    }
+
+    clearStreamBufferRef.current = clearQueuedEnvelopes
+
+    const resolveStreamChunkingMode = (
+      queuedCount: number,
+      oldestAgeMs: number,
+      nowMs: number,
+    ): StreamChunkingMode => {
+      if (queuedCount <= 0) {
+        resetStreamChunkingMode()
+        return streamChunkingMode
+      }
+
+      const shouldEnterCatchUp =
+        queuedCount >= STREAM_CHUNKING_ENTER_QUEUE_DEPTH ||
+        oldestAgeMs >= STREAM_CHUNKING_ENTER_OLDEST_AGE_MS
+      const shouldExitCatchUp =
+        queuedCount <= STREAM_CHUNKING_EXIT_QUEUE_DEPTH &&
+        oldestAgeMs <= STREAM_CHUNKING_EXIT_OLDEST_AGE_MS
+      const severeBacklog =
+        queuedCount >= STREAM_CHUNKING_SEVERE_QUEUE_DEPTH ||
+        oldestAgeMs >= STREAM_CHUNKING_SEVERE_OLDEST_AGE_MS
+      const reentryHoldActive =
+        streamChunkingLastCatchUpExitAtMs != null &&
+        nowMs - streamChunkingLastCatchUpExitAtMs < STREAM_CHUNKING_REENTER_HOLD_MS
+
+      if (streamChunkingMode === 'smooth') {
+        if (shouldEnterCatchUp && (!reentryHoldActive || severeBacklog)) {
+          streamChunkingMode = 'catch_up'
+          streamChunkingBelowExitThresholdSinceMs = null
+          streamChunkingLastCatchUpExitAtMs = null
+        }
+        return streamChunkingMode
+      }
+
+      if (!shouldExitCatchUp) {
+        streamChunkingBelowExitThresholdSinceMs = null
+        return streamChunkingMode
+      }
+
+      if (streamChunkingBelowExitThresholdSinceMs == null) {
+        streamChunkingBelowExitThresholdSinceMs = nowMs
+        return streamChunkingMode
+      }
+
+      if (nowMs - streamChunkingBelowExitThresholdSinceMs >= STREAM_CHUNKING_EXIT_HOLD_MS) {
+        streamChunkingMode = 'smooth'
+        streamChunkingBelowExitThresholdSinceMs = null
+        streamChunkingLastCatchUpExitAtMs = nowMs
+      }
+
+      return streamChunkingMode
+    }
+
+    const scheduleQueuedFlush = (priority = false) => {
+      if (rafFlushHandle === null && typeof globalThis.requestAnimationFrame === 'function') {
+        rafFlushHandle = globalThis.requestAnimationFrame(() => {
+          rafFlushHandle = null
+          flushQueuedEnvelopes('raf')
+        })
+      }
+      const fallbackDelayMs = priority
+        ? Math.min(STREAM_BATCH_FALLBACK_FLUSH_MS, STREAM_BATCH_PRIORITY_FLUSH_MS)
+        : STREAM_BATCH_FALLBACK_FLUSH_MS
+      if (fallbackFlushTimer === null) {
+        fallbackFlushTimer = globalThis.setTimeout(() => {
+          fallbackFlushTimer = null
+          flushQueuedEnvelopes('fallback')
+        }, fallbackDelayMs)
+      }
+      if (maxAgeFlushTimer === null && queuedSinceMs !== null) {
+        const ageMs = Math.max(0, Date.now() - queuedSinceMs)
+        const maxAgeTargetMs = priority
+          ? Math.min(STREAM_BATCH_MAX_QUEUE_AGE_MS, STREAM_BATCH_PRIORITY_FLUSH_MS)
+          : STREAM_BATCH_MAX_QUEUE_AGE_MS
+        const waitMs = Math.max(0, maxAgeTargetMs - ageMs)
+        maxAgeFlushTimer = globalThis.setTimeout(() => {
+          maxAgeFlushTimer = null
+          flushQueuedEnvelopes('max_age')
+        }, waitMs)
+      }
+    }
+
+    const flushQueuedEnvelopes = (reason: FlushReason) => {
+      if (queuedEnvelopes.length === 0) {
+        return
+      }
+
+      clearScheduledFlush()
+      const nowMs = Date.now()
+      const oldestQueueAgeMs = queuedSinceMs == null ? 0 : Math.max(0, nowMs - queuedSinceMs)
+      const mode = resolveStreamChunkingMode(queuedEnvelopes.length, oldestQueueAgeMs, nowMs)
+      const maxEventsPerFlush =
+        reason === 'forced' || reason === 'max_age'
+          ? queuedEnvelopes.length
+          : mode === 'catch_up'
+            ? STREAM_CHUNKING_CATCH_UP_DRAIN_MAX_EVENTS
+            : STREAM_CHUNKING_SMOOTH_DRAIN_MAX_EVENTS
+      const drainCount = Math.max(1, Math.min(queuedEnvelopes.length, maxEventsPerFlush))
+      const envelopes = queuedEnvelopes.splice(0, drainCount)
+      if (queuedEnvelopes.length === 0) {
+        queuedSinceMs = null
+        resetStreamChunkingMode()
+      }
+
+      applyEventsBatch(envelopes)
+      const state = useThreadSessionStore.getState()
+      if (state.gapDetectedByThread[threadId]) {
+        clearGapDetected(threadId)
+        clearQueuedEnvelopes()
+        closeStream(threadId)
+        openStream(threadId)
+        return
+      }
+
+      if (queuedEnvelopes.length > 0) {
+        const nextEnvelope = queuedEnvelopes[0]
+        const priorityFlush = nextEnvelope != null && isDeltaEnvelope(nextEnvelope)
+        scheduleQueuedFlush(priorityFlush)
+      }
+    }
+
+    const enqueueEnvelope = (envelope: SessionEventEnvelope) => {
+      if (queuedEnvelopes.length === 0) {
+        queuedSinceMs = Date.now()
+      }
+      queuedEnvelopes.push(envelope)
+      if (shouldForceFlushEnvelope(envelope)) {
+        flushQueuedEnvelopes('forced')
+        return
+      }
+      const priorityFlush = isDeltaEnvelope(envelope)
+      scheduleQueuedFlush(priorityFlush)
+    }
 
     stream.onopen = () => {
       markStreamConnected(threadId)
@@ -219,6 +437,7 @@ export function SessionConsoleV2() {
       if (reconnectTimerRef.current !== null) {
         window.clearTimeout(reconnectTimerRef.current)
       }
+      clearQueuedEnvelopes()
       reconnectTimerRef.current = window.setTimeout(() => {
         openStream(threadId)
       }, 1000)
@@ -229,20 +448,14 @@ export function SessionConsoleV2() {
       if (!parsed) {
         return
       }
-      applyEvent(parsed)
-      const state = useThreadSessionStore.getState()
-      if (state.gapDetectedByThread[threadId]) {
-        clearGapDetected(threadId)
-        closeStream(threadId)
-        openStream(threadId)
-      }
+      enqueueEnvelope(parsed)
     }
 
     for (const method of EVENT_METHODS) {
       stream.addEventListener(method, handler as EventListener)
     }
   }, [
-    applyEvent,
+    applyEventsBatch,
     closeStream,
     clearGapDetected,
     lastEventIdByThread,

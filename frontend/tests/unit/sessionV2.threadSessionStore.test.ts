@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { SessionItem, SessionTurn } from '../../src/features/session_v2/contracts'
+import type { SessionEventEnvelope, SessionItem, SessionTurn } from '../../src/features/session_v2/contracts'
 import { useThreadSessionStore } from '../../src/features/session_v2/store/threadSessionStore'
 
 describe('threadSessionStore', () => {
@@ -154,5 +154,75 @@ describe('threadSessionStore', () => {
       'turn-middle',
       'turn-newest',
     ])
+  })
+
+  it('applies batched stream envelopes in order for delta-heavy updates', () => {
+    const store = useThreadSessionStore.getState()
+    const envelopes: SessionEventEnvelope[] = [
+      {
+        schemaVersion: 1,
+        eventId: 'thread-1:1',
+        eventSeq: 1,
+        tier: 'tier0',
+        method: 'item/started',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        occurredAtMs: 1,
+        replayable: true,
+        snapshotVersion: null,
+        source: 'journal',
+        params: {
+          item: {
+            id: 'item-1',
+            kind: 'agentMessage',
+            status: 'inProgress',
+            text: 'Hello',
+          },
+        },
+      },
+      {
+        schemaVersion: 1,
+        eventId: 'thread-1:2',
+        eventSeq: 2,
+        tier: 'tier0',
+        method: 'item/agentMessage/delta',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        occurredAtMs: 2,
+        replayable: true,
+        snapshotVersion: null,
+        source: 'journal',
+        params: {
+          itemId: 'item-1',
+          delta: ' there',
+        },
+      },
+      {
+        schemaVersion: 1,
+        eventId: 'thread-1:3',
+        eventSeq: 3,
+        tier: 'tier0',
+        method: 'item/agentMessage/delta',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        occurredAtMs: 3,
+        replayable: true,
+        snapshotVersion: null,
+        source: 'journal',
+        params: {
+          itemId: 'item-1',
+          delta: '!',
+        },
+      },
+    ]
+
+    store.applyEventsBatch(envelopes)
+
+    const snapshot = useThreadSessionStore.getState()
+    const items = snapshot.itemsByTurn['thread-1:turn-1']
+    expect(items).toHaveLength(1)
+    expect(items[0].payload.text).toBe('Hello there!')
+    expect(snapshot.lastEventSeqByThread['thread-1']).toBe(3)
+    expect(snapshot.lastEventIdByThread['thread-1']).toBe('thread-1:3')
   })
 })

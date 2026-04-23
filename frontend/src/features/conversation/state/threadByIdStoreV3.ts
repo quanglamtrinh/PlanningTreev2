@@ -85,6 +85,16 @@ const ASK_FOLLOWUP_QUEUE_STORAGE_PREFIX = 'ptm:v3:ask-followup-queue:'
 const ASK_FOLLOWUP_QUEUE_MAX_ITEMS = 20
 const ASK_THREAD_ROUTE_MISMATCH_ERROR_SUBSTRING = 'thread id does not match any active route for this node'
 const STREAMING_LANE_RECONCILE_WARN_THROTTLE_MS = 5000
+const STREAM_CHUNKING_SMOOTH_DRAIN_MAX_FRAMES = 32
+const STREAM_CHUNKING_CATCH_UP_DRAIN_MAX_FRAMES = 128
+const STREAM_CHUNKING_ENTER_QUEUE_DEPTH = 64
+const STREAM_CHUNKING_ENTER_OLDEST_AGE_MS = 120
+const STREAM_CHUNKING_EXIT_QUEUE_DEPTH = 16
+const STREAM_CHUNKING_EXIT_OLDEST_AGE_MS = 40
+const STREAM_CHUNKING_EXIT_HOLD_MS = 250
+const STREAM_CHUNKING_REENTER_HOLD_MS = 250
+const STREAM_CHUNKING_SEVERE_QUEUE_DEPTH = 256
+const STREAM_CHUNKING_SEVERE_OLDEST_AGE_MS = 320
 
 export type Phase12CapProfile = 'low' | 'standard' | 'high'
 export type Phase12CapPolicy = {
@@ -753,7 +763,7 @@ function pickMessageTextLaneUpdate(event: ThreadBusinessEventV3):
   }
 }
 
-function applyStreamingLanePatch(
+function appendStreamingLaneTextInPlace(
   lane: Record<string, StreamingTextLaneEntry>,
   {
     threadId,
@@ -766,23 +776,20 @@ function applyStreamingLanePatch(
     textAppend: string
     updatedAtMs: number
   },
-): Record<string, StreamingTextLaneEntry> {
+): void {
   const normalizedThreadId = String(threadId ?? '').trim()
   const normalizedItemId = String(itemId ?? '').trim()
   if (!normalizedThreadId || !normalizedItemId || !textAppend) {
-    return lane
+    return
   }
   const key = buildStreamingLaneKey(normalizedThreadId, normalizedItemId)
   const previous = lane[key]
   const previousText = previous?.text ?? ''
-  return {
-    ...lane,
-    [key]: {
-      threadId: normalizedThreadId,
-      itemId: normalizedItemId,
-      text: `${previousText}${textAppend}`,
-      updatedAtMs,
-    },
+  lane[key] = {
+    threadId: normalizedThreadId,
+    itemId: normalizedItemId,
+    text: `${previousText}${textAppend}`,
+    updatedAtMs,
   }
 }
 
@@ -2072,6 +2079,67 @@ async function openThreadEventStream(
   let rafFlushHandle: number | null = null
   let fallbackFlushTimer: ReturnType<typeof globalThis.setTimeout> | null = null
   let maxAgeFlushTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+  type StreamChunkingMode = 'smooth' | 'catch_up'
+  let streamChunkingMode: StreamChunkingMode = 'smooth'
+  let streamChunkingBelowExitThresholdSinceMs: number | null = null
+  let streamChunkingLastCatchUpExitAtMs: number | null = null
+
+  const resetStreamChunkingMode = () => {
+    streamChunkingMode = 'smooth'
+    streamChunkingBelowExitThresholdSinceMs = null
+    streamChunkingLastCatchUpExitAtMs = null
+  }
+
+  const resolveStreamChunkingMode = (
+    queuedCount: number,
+    oldestAgeMs: number,
+    nowMs: number,
+  ): StreamChunkingMode => {
+    if (queuedCount <= 0) {
+      resetStreamChunkingMode()
+      return streamChunkingMode
+    }
+
+    const shouldEnterCatchUp =
+      queuedCount >= STREAM_CHUNKING_ENTER_QUEUE_DEPTH ||
+      oldestAgeMs >= STREAM_CHUNKING_ENTER_OLDEST_AGE_MS
+    const shouldExitCatchUp =
+      queuedCount <= STREAM_CHUNKING_EXIT_QUEUE_DEPTH &&
+      oldestAgeMs <= STREAM_CHUNKING_EXIT_OLDEST_AGE_MS
+    const severeBacklog =
+      queuedCount >= STREAM_CHUNKING_SEVERE_QUEUE_DEPTH ||
+      oldestAgeMs >= STREAM_CHUNKING_SEVERE_OLDEST_AGE_MS
+    const reentryHoldActive =
+      streamChunkingLastCatchUpExitAtMs != null &&
+      nowMs - streamChunkingLastCatchUpExitAtMs < STREAM_CHUNKING_REENTER_HOLD_MS
+
+    if (streamChunkingMode === 'smooth') {
+      if (shouldEnterCatchUp && (!reentryHoldActive || severeBacklog)) {
+        streamChunkingMode = 'catch_up'
+        streamChunkingBelowExitThresholdSinceMs = null
+        streamChunkingLastCatchUpExitAtMs = null
+      }
+      return streamChunkingMode
+    }
+
+    if (!shouldExitCatchUp) {
+      streamChunkingBelowExitThresholdSinceMs = null
+      return streamChunkingMode
+    }
+
+    if (streamChunkingBelowExitThresholdSinceMs == null) {
+      streamChunkingBelowExitThresholdSinceMs = nowMs
+      return streamChunkingMode
+    }
+
+    if (nowMs - streamChunkingBelowExitThresholdSinceMs >= STREAM_CHUNKING_EXIT_HOLD_MS) {
+      streamChunkingMode = 'smooth'
+      streamChunkingBelowExitThresholdSinceMs = null
+      streamChunkingLastCatchUpExitAtMs = nowMs
+    }
+
+    return streamChunkingMode
+  }
 
   const clearScheduledFlush = () => {
     if (rafFlushHandle !== null && typeof globalThis.cancelAnimationFrame === 'function') {
@@ -2091,6 +2159,7 @@ async function openThreadEventStream(
   const clearQueuedBusinessFrames = () => {
     queuedBusinessFrames.length = 0
     queuedSinceMs = null
+    resetStreamChunkingMode()
     clearScheduledFlush()
   }
 
@@ -2228,9 +2297,22 @@ async function openThreadEventStream(
     if (queuedBusinessFrames.length === 0) {
       return
     }
-    const frames = queuedBusinessFrames.splice(0, queuedBusinessFrames.length)
-    queuedSinceMs = null
     clearScheduledFlush()
+    const nowMs = Date.now()
+    const oldestQueueAgeMs = queuedSinceMs == null ? 0 : Math.max(0, nowMs - queuedSinceMs)
+    const mode = resolveStreamChunkingMode(queuedBusinessFrames.length, oldestQueueAgeMs, nowMs)
+    const maxFramesPerFlush =
+      reason === 'forced' || reason === 'max_age'
+        ? queuedBusinessFrames.length
+        : mode === 'catch_up'
+          ? STREAM_CHUNKING_CATCH_UP_DRAIN_MAX_FRAMES
+          : STREAM_CHUNKING_SMOOTH_DRAIN_MAX_FRAMES
+    const drainCount = Math.max(1, Math.min(queuedBusinessFrames.length, maxFramesPerFlush))
+    const frames = queuedBusinessFrames.splice(0, drainCount)
+    if (queuedBusinessFrames.length === 0) {
+      queuedSinceMs = null
+      resetStreamChunkingMode()
+    }
 
     const currentState = get()
     if (
@@ -2258,6 +2340,7 @@ async function openThreadEventStream(
     let appliedEventCount = 0
     let fastAppendHitCount = 0
     let fastAppendFallbackCount = 0
+    let streamingTextLaneMutated = false
 
     for (const frame of frames) {
       const event = frame.event
@@ -2298,7 +2381,11 @@ async function openThreadEventStream(
 
       const lanePatch = pickMessageTextLaneUpdate(event)
       if (lanePatch) {
-        workingStreamingTextLane = applyStreamingLanePatch(workingStreamingTextLane, {
+        if (!streamingTextLaneMutated) {
+          workingStreamingTextLane = { ...workingStreamingTextLane }
+          streamingTextLaneMutated = true
+        }
+        appendStreamingLaneTextInPlace(workingStreamingTextLane, {
           threadId,
           itemId: lanePatch.itemId,
           textAppend: lanePatch.textAppend,
@@ -2473,6 +2560,14 @@ async function openThreadEventStream(
     })
     if (threadRole === 'ask_planning') {
       requestAskQueueFlush?.()
+    }
+    if (queuedBusinessFrames.length > 0) {
+      const nextEvent = queuedBusinessFrames[0]?.event
+      const priorityFlush =
+        THREAD_STREAM_LOW_LATENCY_ENABLED &&
+        nextEvent != null &&
+        isMessageTextPatchEvent(nextEvent)
+      scheduleQueuedBusinessFlush(priorityFlush)
     }
   }
 

@@ -87,6 +87,7 @@ type RenderableDiffLine = {
 const USER_MESSAGE_COLLAPSE_CHAR_LIMIT = 1100
 const USER_MESSAGE_COLLAPSE_LINE_LIMIT = 14
 const SCROLL_SNAPSHOT_DEBOUNCE_MS = 120
+const AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 64
 const DIFF_KEYWORD_RE =
   /\b(import|export|const|let|var|function|return|async|await|new|from|default|class|extends|interface|type|if|else|for|while|switch|case|try|catch|finally|throw|break|continue|public|private|protected|readonly|static|implements|enum)\b/g
 const DIFF_NUMBER_RE = /\b(?:\d+\.?\d*|\.\d+)\b/g
@@ -103,6 +104,13 @@ function rememberThreadScrollPosition(threadId: string, element: HTMLElement): v
   const top = Math.min(maxTop, Math.max(0, element.scrollTop))
   const fromBottom = Math.max(0, element.scrollHeight - element.clientHeight - top)
   threadScrollSnapshots.set(threadId, { top, fromBottom })
+}
+
+function isScrollNearBottom(element: HTMLElement): boolean {
+  const maxTop = Math.max(0, element.scrollHeight - element.clientHeight)
+  const clampedTop = Math.min(maxTop, Math.max(0, element.scrollTop))
+  const fromBottom = Math.max(0, maxTop - clampedTop)
+  return fromBottom <= AUTO_FOLLOW_BOTTOM_THRESHOLD_PX
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -791,6 +799,26 @@ function getCollapsedUserMessageText(text: string): string {
   return `${trimmed}\n...`
 }
 
+function getActiveAgentStreamToken(
+  threadId: string,
+  turns: SessionTurn[],
+  itemsByTurn: Record<string, SessionItem[]>,
+): string | null {
+  for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+    const turn = turns[turnIndex]
+    const items = itemsByTurn[`${threadId}:${turn.id}`] ?? []
+    for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+      const item = items[itemIndex]
+      if (!isAgentMessageItem(item) || item.status !== 'inProgress') {
+        continue
+      }
+      const textLength = renderItemText(item).length
+      return `${turn.id}:${item.id}:${item.updatedAtMs}:${textLength}`
+    }
+  }
+  return null
+}
+
 function formatItemTimeLabel(timestampMs: number): string {
   const fallback = new Date()
   const value = Number.isFinite(timestampMs) ? new Date(timestampMs) : fallback
@@ -969,6 +997,8 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
   const observedThreadIdRef = useRef<string | null>(threadId)
   const activeThreadIdRef = useRef<string | null>(threadId)
   const pendingRestoreThreadIdRef = useRef<string | null>(null)
+  const shouldAutoFollowRef = useRef<boolean>(true)
+  const wasStreamingAgentRef = useRef<boolean>(false)
   const scrollSaveTimerRef = useRef<number | null>(null)
   const pendingScrollSaveRef = useRef<{ threadId: string; element: HTMLElement } | null>(null)
 
@@ -1001,6 +1031,8 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
   }
 
   const rows = threadId ? buildTranscriptRows(threadId, turns, itemsByTurn) : []
+  const activeAgentStreamToken = threadId ? getActiveAgentStreamToken(threadId, turns, itemsByTurn) : null
+  const hasActiveAgentStream = Boolean(activeAgentStreamToken)
   activeThreadIdRef.current = threadId
   if (observedThreadIdRef.current !== threadId) {
     pendingRestoreThreadIdRef.current = threadId
@@ -1023,6 +1055,18 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
     [],
   )
 
+  useEffect(() => {
+    if (!threadId) {
+      wasStreamingAgentRef.current = false
+      return
+    }
+    if (hasActiveAgentStream && !wasStreamingAgentRef.current) {
+      // Start following automatically when a new agent response begins.
+      shouldAutoFollowRef.current = true
+    }
+    wasStreamingAgentRef.current = hasActiveAgentStream
+  }, [hasActiveAgentStream, threadId])
+
   useLayoutEffect(() => {
     if (!threadId) {
       return
@@ -1036,14 +1080,15 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
     }
 
     const saved = threadScrollSnapshots.get(threadId)
-    if (saved && rows.length === 0) {
-      // Wait for the thread rows to hydrate before restoring a saved viewport.
+    if (rows.length === 0) {
+      // Wait for the thread rows to hydrate before restoring or initializing viewport.
       return
     }
     if (!saved) {
       // New threads should start near the most recent message.
       element.scrollTop = element.scrollHeight
       rememberThreadScrollPosition(threadId, element)
+      shouldAutoFollowRef.current = true
       pendingRestoreThreadIdRef.current = null
       return
     }
@@ -1054,8 +1099,21 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
       ? Math.min(maxTop, Math.max(0, restoredFromBottom))
       : Math.min(maxTop, Math.max(0, saved.top))
     element.scrollTop = targetTop
+    shouldAutoFollowRef.current = isScrollNearBottom(element)
     pendingRestoreThreadIdRef.current = null
   }, [rows.length, threadId])
+
+  useLayoutEffect(() => {
+    if (!threadId || !activeAgentStreamToken || !shouldAutoFollowRef.current) {
+      return
+    }
+    const element = transcriptRef.current
+    if (!element) {
+      return
+    }
+    element.scrollTop = element.scrollHeight
+    rememberThreadScrollPosition(threadId, element)
+  }, [activeAgentStreamToken, threadId])
 
   const handleTranscriptScroll = () => {
     if (!threadId) {
@@ -1065,6 +1123,7 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
     if (!element) {
       return
     }
+    shouldAutoFollowRef.current = isScrollNearBottom(element)
     scheduleScrollSave(threadId, element)
   }
 
