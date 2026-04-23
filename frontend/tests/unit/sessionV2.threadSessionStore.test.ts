@@ -32,6 +32,66 @@ describe('threadSessionStore', () => {
     expect(snapshot.threadsById['thread-1']?.name).toBe('Thread 1')
   })
 
+  it('prioritizes latest server thread ordering on refresh', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadList([
+      {
+        id: 'thread-old',
+        name: 'Old',
+        modelProvider: 'openai',
+        cwd: 'C:/repo',
+        ephemeral: false,
+        archived: false,
+        status: { type: 'idle' },
+        createdAt: 1,
+        updatedAt: 1,
+        turns: [],
+      },
+      {
+        id: 'thread-new',
+        name: 'New',
+        modelProvider: 'openai',
+        cwd: 'C:/repo',
+        ephemeral: false,
+        archived: false,
+        status: { type: 'idle' },
+        createdAt: 2,
+        updatedAt: 2,
+        turns: [],
+      },
+    ])
+
+    store.setThreadList([
+      {
+        id: 'thread-new',
+        name: 'New',
+        modelProvider: 'openai',
+        cwd: 'C:/repo',
+        ephemeral: false,
+        archived: false,
+        status: { type: 'idle' },
+        createdAt: 2,
+        updatedAt: 3,
+        turns: [],
+      },
+      {
+        id: 'thread-old',
+        name: 'Old',
+        modelProvider: 'openai',
+        cwd: 'C:/repo',
+        ephemeral: false,
+        archived: false,
+        status: { type: 'idle' },
+        createdAt: 1,
+        updatedAt: 2,
+        turns: [],
+      },
+    ])
+
+    const snapshot = useThreadSessionStore.getState()
+    expect(snapshot.threadOrder.slice(0, 2)).toEqual(['thread-new', 'thread-old'])
+  })
+
   it('tracks stream reconnect counters', () => {
     const store = useThreadSessionStore.getState()
     store.markStreamConnected('thread-1')
@@ -78,6 +138,51 @@ describe('threadSessionStore', () => {
     expect(items[0].payload).toEqual({})
   })
 
+  it('deduplicates hydrated turn items by item id', () => {
+    const store = useThreadSessionStore.getState()
+    const turns: SessionTurn[] = [
+      {
+        id: 'turn-dup',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 1,
+        completedAtMs: 2,
+        error: null,
+        items: [
+          {
+            id: 'item-dup',
+            threadId: 'thread-1',
+            turnId: 'turn-dup',
+            kind: 'userMessage',
+            status: 'completed',
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            payload: { type: 'userMessage', text: 'same message' },
+          } as SessionItem,
+          {
+            id: 'item-dup',
+            threadId: 'thread-1',
+            turnId: 'turn-dup',
+            kind: 'userMessage',
+            status: 'completed',
+            createdAtMs: 1,
+            updatedAtMs: 2,
+            payload: { type: 'userMessage', text: 'same message' },
+          } as SessionItem,
+        ],
+      },
+    ]
+
+    store.setThreadTurns('thread-1', turns)
+
+    const snapshot = useThreadSessionStore.getState()
+    const items = snapshot.itemsByTurn['thread-1:turn-dup']
+    expect(items).toHaveLength(1)
+    expect(items[0].id).toBe('item-dup')
+    expect(items[0].payload.text).toBe('same message')
+  })
+
   it('maps Codex ThreadItem shape into payload text for transcript rendering', () => {
     const store = useThreadSessionStore.getState()
     const turns = [
@@ -107,8 +212,73 @@ describe('threadSessionStore', () => {
     const items = snapshot.itemsByTurn['thread-1:turn-2']
     expect(items).toHaveLength(1)
     expect(items[0].kind).toBe('agentMessage')
+    expect(items[0].status).toBe('completed')
     expect(items[0].payload.type).toBe('agentMessage')
     expect(items[0].payload.text).toBe('Hello from Codex')
+  })
+
+  it('infers failed item status from terminal turn when hydrate payload omits status', () => {
+    const store = useThreadSessionStore.getState()
+    const turns = [
+      {
+        id: 'turn-failed',
+        threadId: 'thread-1',
+        status: 'failed',
+        lastCodexStatus: 'failed',
+        startedAtMs: 10,
+        completedAtMs: 20,
+        error: null,
+        items: [
+          {
+            id: 'item-failed',
+            type: 'agentMessage',
+            text: 'partial output',
+          },
+        ],
+      },
+    ] as unknown as SessionTurn[]
+
+    store.setThreadTurns('thread-1', turns)
+
+    const snapshot = useThreadSessionStore.getState()
+    const items = snapshot.itemsByTurn['thread-1:turn-failed']
+    expect(items).toHaveLength(1)
+    expect(items[0].status).toBe('failed')
+  })
+
+  it('sorts hydrated turn items chronologically by created timestamp', () => {
+    const store = useThreadSessionStore.getState()
+    const turns = [
+      {
+        id: 'turn-order',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 10,
+        completedAtMs: 20,
+        error: null,
+        items: [
+          {
+            id: 'item-b',
+            type: 'agentMessage',
+            createdAt: '2026-01-01T00:00:02.000Z',
+            text: 'B',
+          },
+          {
+            id: 'item-a',
+            type: 'userMessage',
+            createdAt: '2026-01-01T00:00:01.000Z',
+            text: 'A',
+          },
+        ],
+      },
+    ] as unknown as SessionTurn[]
+
+    store.setThreadTurns('thread-1', turns)
+
+    const snapshot = useThreadSessionStore.getState()
+    const items = snapshot.itemsByTurn['thread-1:turn-order']
+    expect(items.map((item) => item.id)).toEqual(['item-a', 'item-b'])
   })
 
   it('stores turns in chronological order when provider returns newest first', () => {

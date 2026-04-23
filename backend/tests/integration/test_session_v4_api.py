@@ -217,6 +217,19 @@ def test_session_v4_roundtrip_and_guard(client: TestClient) -> None:
             "thread/turns/list": {"data": [{"id": "turn-1", "status": "completed", "items": []}], "nextCursor": None},
             "thread/loaded/list": {"data": ["thread-resume-1"], "nextCursor": None},
             "thread/unsubscribe": {"status": "unsubscribed"},
+            "model/list": {
+                "data": [
+                    {
+                        "id": "model-1",
+                        "model": "gpt-5.4",
+                        "displayName": "GPT-5.4",
+                        "description": "Default model",
+                        "hidden": False,
+                        "isDefault": True,
+                    }
+                ],
+                "nextCursor": None,
+            },
         }
     )
     _install_fake_manager(client, fake_transport)
@@ -268,6 +281,10 @@ def test_session_v4_roundtrip_and_guard(client: TestClient) -> None:
     assert unsubscribe_response.status_code == 200
     assert unsubscribe_response.json()["data"]["status"] == "unsubscribed"
 
+    models_response = client.get("/v4/session/models/list?limit=25&includeHidden=false")
+    assert models_response.status_code == 200
+    assert models_response.json()["data"]["data"][0]["model"] == "gpt-5.4"
+
     assert [method for method, _ in fake_transport.requests] == [
         "initialize",
         "thread/start",
@@ -278,6 +295,7 @@ def test_session_v4_roundtrip_and_guard(client: TestClient) -> None:
         "thread/turns/list",
         "thread/loaded/list",
         "thread/unsubscribe",
+        "model/list",
     ]
     assert fake_transport.notifications == [("initialized", {})]
 

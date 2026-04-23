@@ -240,7 +240,7 @@ describe('FrameContextFeedBlock', () => {
     expect(loadClarify).not.toHaveBeenCalledWith('project-1', 'init')
   })
 
-  it('renders local links in frame/spec context using normalized target text', async () => {
+  it('renders local links in frame/spec context using filename line labels', async () => {
     const loadDocument = seedDocumentStore('root', {
       frameContent: '[Frame Doc](file:///C:/workspace/project/frame.md#L74C3)',
       specContent: '[Spec Doc](file:///C:/workspace/project/spec.md#L12C8)',
@@ -279,11 +279,11 @@ describe('FrameContextFeedBlock', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Frame' }))
-    expect(await screen.findByText('frame.md:74:3')).toBeInTheDocument()
+    expect(await screen.findByText('frame.md (line 74, col 3)')).toBeInTheDocument()
     expect(screen.queryByText('Frame Doc')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Spec' }))
-    expect(await screen.findByText('spec.md:12:8')).toBeInTheDocument()
+    expect(await screen.findByText('spec.md (line 12, col 8)')).toBeInTheDocument()
     expect(screen.queryByText('Spec Doc')).not.toBeInTheDocument()
 
     await waitFor(() => {

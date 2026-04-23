@@ -88,6 +88,7 @@ const USER_MESSAGE_COLLAPSE_CHAR_LIMIT = 1100
 const USER_MESSAGE_COLLAPSE_LINE_LIMIT = 14
 const SCROLL_SNAPSHOT_DEBOUNCE_MS = 120
 const AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 64
+const LIVE_TOOL_PREVIEW_MAX_CHARS = 120
 const DIFF_KEYWORD_RE =
   /\b(import|export|const|let|var|function|return|async|await|new|from|default|class|extends|interface|type|if|else|for|while|switch|case|try|catch|finally|throw|break|continue|public|private|protected|readonly|static|implements|enum)\b/g
 const DIFF_NUMBER_RE = /\b(?:\d+\.?\d*|\.\d+)\b/g
@@ -150,6 +151,17 @@ function lowercaseFirst(text: string): string {
     return ''
   }
   return `${text.charAt(0).toLowerCase()}${text.slice(1)}`
+}
+
+function toSingleLinePreview(text: string, maxChars: number): string {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (!normalized) {
+    return ''
+  }
+  if (normalized.length <= maxChars) {
+    return normalized
+  }
+  return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`
 }
 
 function normalizeDiffText(value: unknown): string | null {
@@ -767,6 +779,29 @@ function summarizeToolItems(items: SessionItem[]): string {
   return [parts[0], ...parts.slice(1).map((part) => lowercaseFirst(part))].join(', ')
 }
 
+function summarizeLiveToolItems(items: SessionItem[]): string {
+  if (items.length !== 1) {
+    return summarizeToolItems(items)
+  }
+
+  const item = items[0]
+  const payload = isRecord(item.payload) ? item.payload : {}
+  const payloadType = normalizeText(payload.type)
+  const kind = payloadType || item.kind
+
+  if (kind === 'commandExecution') {
+    const commandPreview = toSingleLinePreview(normalizeText(payload.command), LIVE_TOOL_PREVIEW_MAX_CHARS)
+    return commandPreview ? `Ran ${commandPreview}` : 'Ran command'
+  }
+
+  const fallback = summarizeToolItems(items)
+  if (fallback === 'Used 1 tool call') {
+    const title = toSingleLinePreview(renderToolTitle(item), 48)
+    return title ? `Used ${title}` : fallback
+  }
+  return fallback
+}
+
 function renderToolTitle(item: SessionItem): string {
   const itemType = payloadTypeOf(item)
   if (itemType) {
@@ -799,6 +834,31 @@ function getCollapsedUserMessageText(text: string): string {
   return `${trimmed}\n...`
 }
 
+function dedupeTurnItems(items: SessionItem[]): SessionItem[] {
+  if (items.length <= 1) {
+    return items
+  }
+  const deduped: SessionItem[] = []
+  const indexById = new Map<string, number>()
+  for (const item of items) {
+    const existingIndex = indexById.get(item.id)
+    if (existingIndex === undefined) {
+      indexById.set(item.id, deduped.length)
+      deduped.push(item)
+      continue
+    }
+    const existing = deduped[existingIndex]
+    if (item.updatedAtMs >= existing.updatedAtMs) {
+      deduped[existingIndex] = {
+        ...existing,
+        ...item,
+        createdAtMs: existing.createdAtMs,
+      }
+    }
+  }
+  return deduped
+}
+
 function getActiveAgentStreamToken(
   threadId: string,
   turns: SessionTurn[],
@@ -806,7 +866,7 @@ function getActiveAgentStreamToken(
 ): string | null {
   for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
     const turn = turns[turnIndex]
-    const items = itemsByTurn[`${threadId}:${turn.id}`] ?? []
+    const items = dedupeTurnItems(itemsByTurn[`${threadId}:${turn.id}`] ?? [])
     for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
       const item = items[itemIndex]
       if (!isAgentMessageItem(item) || item.status !== 'inProgress') {
@@ -859,22 +919,44 @@ function buildTranscriptRows(
   const rows: TranscriptRow[] = []
   for (const turn of turns) {
     const key = `${threadId}:${turn.id}`
-    const items = itemsByTurn[key] ?? []
+    const items = dedupeTurnItems(itemsByTurn[key] ?? [])
     if (!isTerminalTurn(turn)) {
+      let liveToolCluster: SessionItem[] = []
+      let liveToolSummaryIndex = 0
+      const flushLiveToolCluster = () => {
+        if (liveToolCluster.length === 0) {
+          return
+        }
+        rows.push({
+          key: `${turn.id}:live-tool-summary-${liveToolSummaryIndex}`,
+          type: 'toolSummary',
+          summary: summarizeLiveToolItems(liveToolCluster),
+        })
+        liveToolSummaryIndex += 1
+        liveToolCluster = []
+      }
+
       for (const item of items) {
         if (isContextCompactionItem(item)) {
+          flushLiveToolCluster()
           rows.push({
             key: `${turn.id}:${item.id}:compact-marker`,
             type: 'compactMarker',
           })
           continue
         }
+        if (isToolItem(item)) {
+          liveToolCluster.push(item)
+          continue
+        }
+        flushLiveToolCluster()
         rows.push({
           key: `${turn.id}:${item.id}`,
           type: 'item',
           item,
         })
       }
+      flushLiveToolCluster()
       continue
     }
 

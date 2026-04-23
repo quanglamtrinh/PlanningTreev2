@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   normalizeMarkdownHashLocationSuffix,
   parseLocalLinkTarget,
+  renderLocalLinkDisplayLabel,
   renderLocalLinkTarget,
 } from '../../src/features/markdown/localLink'
 
@@ -37,5 +38,21 @@ describe('localLink normalization', () => {
         projectRootPath: '/Users/example/workspace',
       }),
     ).toBe('/Users/example/other/spec.md:12:8')
+  })
+
+  it('renders location links as filename with human-readable line label', () => {
+    expect(
+      renderLocalLinkDisplayLabel('/Users/example/workspace/docs/frame.md#L74C3', {
+        projectRootPath: '/Users/example/workspace',
+      }),
+    ).toBe('frame.md (line 74, col 3)')
+  })
+
+  it('renders line ranges with plural label', () => {
+    expect(
+      renderLocalLinkDisplayLabel('/Users/example/workspace/docs/frame.md:74-76', {
+        projectRootPath: '/Users/example/workspace',
+      }),
+    ).toBe('frame.md (lines 74-76)')
   })
 })

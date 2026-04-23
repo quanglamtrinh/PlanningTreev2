@@ -60,6 +60,7 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     client.thread_turns_list("thread-1", {"cursor": "c1", "limit": 20})
     client.thread_loaded_list({"cursor": "c0", "limit": 10})
     client.thread_unsubscribe("thread-1")
+    client.model_list({"limit": 50, "includeHidden": False})
     client.turn_start(
         "thread-1",
         {
@@ -102,12 +103,13 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     assert transport.requests[6][1]["threadId"] == "thread-1"
     assert transport.requests[7][0] == "thread/loaded/list"
     assert transport.requests[8] == ("thread/unsubscribe", {"threadId": "thread-1"})
-    assert transport.requests[9][0] == "turn/start"
-    assert transport.requests[9][1]["threadId"] == "thread-1"
-    assert transport.requests[9][1]["clientActionId"] == "start-1"
-    assert transport.requests[10][0] == "turn/steer"
-    assert transport.requests[10][1]["expectedTurnId"] == "turn-1"
-    assert transport.requests[11] == ("turn/interrupt", {"threadId": "thread-1", "turnId": "turn-1"})
+    assert transport.requests[9] == ("model/list", {"limit": 50, "includeHidden": False})
+    assert transport.requests[10][0] == "turn/start"
+    assert transport.requests[10][1]["threadId"] == "thread-1"
+    assert transport.requests[10][1]["clientActionId"] == "start-1"
+    assert transport.requests[11][0] == "turn/steer"
+    assert transport.requests[11][1]["expectedTurnId"] == "turn-1"
+    assert transport.requests[12] == ("turn/interrupt", {"threadId": "thread-1", "turnId": "turn-1"})
     assert transport.server_responses == [(123, {"decision": "accept"})]
     assert transport.server_failures == [(124, {"code": -32000, "message": "rejected"})]
 

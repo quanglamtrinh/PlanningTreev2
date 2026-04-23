@@ -1,5 +1,6 @@
 const HASH_LOCATION_SUFFIX_RE = /^L\d+(?:C\d+)?(?:-L\d+(?:C\d+)?)?$/
 const COLON_LOCATION_SUFFIX_RE = /:\d+(?::\d+)?(?:[-\u2013]\d+(?::\d+)?)?$/
+const COLON_LOCATION_COMPONENTS_RE = /^:(\d+)(?::(\d+))?(?:[-\u2013](\d+)(?::(\d+))?)?$/
 const URL_SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
 
 export type ParsedLocalLinkTarget = {
@@ -97,6 +98,16 @@ function trimTrailingLocalPathSeparator(pathText: string): string {
     return pathText
   }
   return pathText.replace(/\/+$/, '')
+}
+
+function basenameLocalPath(pathText: string): string {
+  const normalizedPath = trimTrailingLocalPathSeparator(pathText)
+  if (!normalizedPath) {
+    return pathText
+  }
+  const segments = normalizedPath.split('/')
+  const tail = segments[segments.length - 1]
+  return tail || normalizedPath
 }
 
 function stripLocalPathPrefix(pathText: string, rootText: string): string | null {
@@ -221,6 +232,23 @@ function displayLocalLinkPath(pathText: string, projectRootPath?: string): strin
   return stripped ?? normalizedPath
 }
 
+function formatLocalLinkLocationLabel(locationSuffix: string): string {
+  const match = locationSuffix.match(COLON_LOCATION_COMPONENTS_RE)
+  if (!match) {
+    return `line ${locationSuffix.replace(/^:/, '')}`
+  }
+  const [, startLine, startColumn, endLine, endColumn] = match
+  if (!endLine) {
+    return startColumn ? `line ${startLine}, col ${startColumn}` : `line ${startLine}`
+  }
+  if (!startColumn && !endColumn) {
+    return `lines ${startLine}-${endLine}`
+  }
+  const startPoint = startColumn ? `${startLine}:${startColumn}` : startLine
+  const endPoint = endColumn ? `${endLine}:${endColumn}` : endLine
+  return `lines ${startPoint}-${endPoint}`
+}
+
 export function renderLocalLinkTarget(
   destination: string,
   { projectRootPath }: { projectRootPath?: string } = {},
@@ -231,4 +259,28 @@ export function renderLocalLinkTarget(
   }
   const renderedPath = displayLocalLinkPath(parsed.normalizedPathText, projectRootPath)
   return parsed.locationSuffix ? `${renderedPath}${parsed.locationSuffix}` : renderedPath
+}
+
+export function renderLocalLinkDisplayLabel(
+  destination: string,
+  {
+    projectRootPath,
+    preferBasenameWithLocation = true,
+  }: {
+    projectRootPath?: string
+    preferBasenameWithLocation?: boolean
+  } = {},
+): string | null {
+  const parsed = parseLocalLinkTarget(destination)
+  if (!parsed) {
+    return null
+  }
+  const renderedPath = displayLocalLinkPath(parsed.normalizedPathText, projectRootPath)
+  if (!parsed.locationSuffix) {
+    return renderedPath
+  }
+  const pathLabel = preferBasenameWithLocation
+    ? basenameLocalPath(renderedPath)
+    : renderedPath
+  return `${pathLabel} (${formatLocalLinkLocationLabel(parsed.locationSuffix)})`
 }

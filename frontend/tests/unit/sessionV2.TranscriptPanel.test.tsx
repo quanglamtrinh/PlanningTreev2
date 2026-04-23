@@ -378,7 +378,7 @@ describe('TranscriptPanel', () => {
     expect(allText.indexOf('Applied patches')).toBeLessThan(allText.indexOf('2 files changed'))
   })
 
-  it('keeps detailed tool cards while turn is running', () => {
+  it('summarizes tool lines while turn is running', () => {
     const command: SessionItem = {
       id: 'item-cmd-running',
       threadId: 'thread-1',
@@ -401,8 +401,8 @@ describe('TranscriptPanel', () => {
       />,
     )
 
-    expect(screen.getByText('commandExecution')).toBeInTheDocument()
-    expect(screen.queryByText('Ran 1 command')).not.toBeInTheDocument()
+    expect(screen.getByText('Ran npm test')).toBeInTheDocument()
+    expect(screen.queryByText('commandExecution')).not.toBeInTheDocument()
   })
 
   it('collapses long user message and toggles show more/show less', () => {

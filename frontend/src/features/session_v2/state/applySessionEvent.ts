@@ -190,6 +190,81 @@ function appendDelta(base: unknown, delta: unknown): string {
   return `${baseText}${deltaText}`
 }
 
+function normalizeText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function extractContentText(content: unknown): string {
+  if (!Array.isArray(content)) {
+    return ''
+  }
+  const rows: string[] = []
+  for (const entry of content) {
+    if (!entry || typeof entry !== 'object') {
+      continue
+    }
+    const record = entry as Record<string, unknown>
+    const type = normalizeText(record.type)
+    if (type === 'text') {
+      const text = normalizeText(record.text)
+      if (text) {
+        rows.push(text)
+      }
+      continue
+    }
+    if (type === 'image' || type === 'localImage') {
+      const fallback = normalizeText(record.imageUrl ?? record.path)
+      if (fallback) {
+        rows.push(fallback)
+      }
+      continue
+    }
+    const fallback = normalizeText(record.text ?? record.output)
+    if (fallback) {
+      rows.push(fallback)
+    }
+  }
+  return rows.join('\n').trim()
+}
+
+function payloadSignature(item: SessionItem): string {
+  const payload = item.payload && typeof item.payload === 'object' ? (item.payload as Record<string, unknown>) : {}
+  const type = normalizeText(payload.type)
+  const directText = normalizeText(payload.text)
+  const contentText = extractContentText(payload.content)
+  const outputText = normalizeText(payload.aggregatedOutput ?? payload.output)
+  const commandText = normalizeText(payload.command)
+  const primary = directText || contentText || outputText || commandText
+  if (!primary) {
+    return ''
+  }
+  return `${type || item.kind}|${primary}`
+}
+
+function isHydratedFallbackItemId(turnId: string, itemId: string): boolean {
+  return itemId.startsWith(`${turnId}:item-`)
+}
+
+function findHydratedFallbackMatchIndex(
+  list: SessionItem[],
+  turnId: string,
+  item: SessionItem,
+): number {
+  const incomingSignature = payloadSignature(item)
+  if (!incomingSignature) {
+    return -1
+  }
+  return list.findIndex((entry) => {
+    if (!isHydratedFallbackItemId(turnId, entry.id)) {
+      return false
+    }
+    if (entry.kind !== item.kind) {
+      return false
+    }
+    return payloadSignature(entry) === incomingSignature
+  })
+}
+
 function toNonNegativeInteger(value: unknown, fallback = 0): number {
   if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
     return value
@@ -263,11 +338,16 @@ function upsertItem(
   const key = `${threadId}:${turnId}`
   const list = state.itemsByTurn[key] ?? []
   const index = list.findIndex((entry) => entry.id === item.id)
+  const isDelta = isDeltaMethod(method)
   let nextList: SessionItem[]
   if (index >= 0) {
     const existing = list[index]
+    if (isDelta && existing.status === 'completed') {
+      // Ignore replayed deltas once an item is terminal to avoid duplicate re-streaming text.
+      return
+    }
     const mergedPayload =
-      isDeltaMethod(method) && existing.payload && item.payload
+      isDelta && existing.payload && item.payload
         ? mergeDeltaPayload(existing.payload, item.payload, method)
         : item.payload
     nextList = [...list]
@@ -279,7 +359,19 @@ function upsertItem(
       status: method === 'item/completed' ? 'completed' : item.status,
     }
   } else {
-    nextList = [...list, item]
+    const fallbackIndex = isDelta ? -1 : findHydratedFallbackMatchIndex(list, turnId, item)
+    if (fallbackIndex >= 0) {
+      const existing = list[fallbackIndex]
+      nextList = [...list]
+      nextList[fallbackIndex] = {
+        ...existing,
+        ...item,
+        createdAtMs: existing.createdAtMs,
+        status: method === 'item/completed' ? 'completed' : item.status,
+      }
+    } else {
+      nextList = [...list, item]
+    }
   }
   state.itemsByTurn = { ...state.itemsByTurn, [key]: nextList }
 }

@@ -3,7 +3,7 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import type { Components } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
-import { isLocalPathLikeLink, renderLocalLinkTarget } from './localLink'
+import { isLocalPathLikeLink, renderLocalLinkDisplayLabel } from './localLink'
 import styles from './SharedMarkdownRenderer.module.css'
 
 type MarkdownVariant = 'document' | 'context-shell'
@@ -28,13 +28,27 @@ export function SharedMarkdownRenderer({
 }: Props) {
   const components = useMemo<Components>(
     () => ({
-      a: ({ node: _node, href, children, ...props }) => {
+      a: ({ node: _node, href, children, onClick, ...props }) => {
         const safeHref = typeof href === 'string' ? href : ''
-        const localTarget = safeHref
-          ? renderLocalLinkTarget(safeHref, { projectRootPath })
+        const localLabel = safeHref
+          ? renderLocalLinkDisplayLabel(safeHref, { projectRootPath })
           : null
-        if (localTarget) {
-          return <code className={styles.localPath}>{localTarget}</code>
+        if (localLabel) {
+          return (
+            <a
+              {...props}
+              href={safeHref}
+              className={styles.localPathLink}
+              onClick={(event) => {
+                onClick?.(event)
+                if (!event.defaultPrevented) {
+                  event.preventDefault()
+                }
+              }}
+            >
+              {localLabel}
+            </a>
+          )
         }
         return (
           <a {...props} href={safeHref}>

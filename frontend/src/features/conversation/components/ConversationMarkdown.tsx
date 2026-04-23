@@ -5,6 +5,7 @@ import styles from './ConversationMarkdown.module.css'
 import {
   getConversationMarkdownDesktopHooks,
 } from './markdownDesktopHooks'
+import { parseLocalLinkTarget, renderLocalLinkDisplayLabel } from '../../markdown/localLink'
 import {
   buildParseCacheKey,
   PARSE_CACHE_RENDERER_VERSION,
@@ -222,6 +223,11 @@ export function ConversationMarkdown({
             a: ({ node: _node, href, onClick, onContextMenu, children, ...props }) => {
               const safeHref = typeof href === 'string' ? href : ''
               const localPath = toLocalPathFromHref(safeHref)
+              const localLinkTarget = safeHref ? parseLocalLinkTarget(safeHref) : null
+              const localDisplayLabel =
+                localPath && localLinkTarget?.locationSuffix
+                  ? renderLocalLinkDisplayLabel(safeHref)
+                  : null
               const threadId = toThreadIdFromHref(safeHref)
               return (
                 <a
@@ -256,7 +262,7 @@ export function ConversationMarkdown({
                     })
                   }}
                 >
-                  {children}
+                  {localDisplayLabel ?? children}
                 </a>
               )
             },

@@ -119,5 +119,87 @@ describe('applySessionEvent', () => {
     expect(list[0].status).toBe('completed')
     expect(list[0].payload.text).toBe('final')
   })
+
+  it('ignores replayed delta for already completed item', () => {
+    const completed = applySessionEvent(
+      baseState(),
+      event({
+        eventId: 'thread-1:20',
+        eventSeq: 20,
+        method: 'item/completed',
+        turnId: 'turn-1',
+        params: {
+          item: {
+            id: 'item-1',
+            kind: 'agentMessage',
+            status: 'completed',
+            text: 'final answer',
+          },
+        },
+      }),
+    )
+
+    const replayDelta = applySessionEvent(
+      completed,
+      event({
+        eventId: 'thread-1:21',
+        eventSeq: 21,
+        method: 'item/agentMessage/delta',
+        turnId: 'turn-1',
+        params: {
+          itemId: 'item-1',
+          delta: ' duplicated',
+        },
+      }),
+    )
+
+    const list = replayDelta.itemsByTurn['thread-1:turn-1']
+    expect(list).toHaveLength(1)
+    expect(list[0].status).toBe('completed')
+    expect(list[0].payload.text).toBe('final answer')
+  })
+
+  it('reconciles hydrated fallback item with replayed real item id', () => {
+    const preloaded = baseState()
+    preloaded.itemsByTurn['thread-1:turn-1'] = [
+      {
+        id: 'turn-1:item-0',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        kind: 'userMessage',
+        status: 'completed',
+        createdAtMs: 1,
+        updatedAtMs: 1,
+        payload: {
+          type: 'userMessage',
+          text: 'same prompt',
+        },
+      },
+    ]
+
+    const replayed = applySessionEvent(
+      preloaded,
+      event({
+        eventId: 'thread-1:30',
+        eventSeq: 30,
+        method: 'item/completed',
+        turnId: 'turn-1',
+        params: {
+          item: {
+            id: 'item-user-1',
+            kind: 'userMessage',
+            status: 'completed',
+            text: 'same prompt',
+            type: 'userMessage',
+          },
+        },
+      }),
+    )
+
+    const list = replayed.itemsByTurn['thread-1:turn-1']
+    expect(list).toHaveLength(1)
+    expect(list[0].id).toBe('item-user-1')
+    expect(list[0].payload.text).toBe('same prompt')
+  })
 })
 

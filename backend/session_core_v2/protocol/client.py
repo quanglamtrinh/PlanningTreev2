@@ -59,6 +59,9 @@ class SessionProtocolClientV2:
     def thread_unsubscribe(self, thread_id: str) -> dict[str, Any]:
         return self._transport.request("thread/unsubscribe", {"threadId": thread_id})
 
+    def model_list(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._transport.request("model/list", params or {})
+
     def turn_start(self, thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
         payload = {"threadId": thread_id}
         payload.update(params)

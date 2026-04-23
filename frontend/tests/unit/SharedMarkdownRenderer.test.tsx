@@ -13,7 +13,7 @@ describe('SharedMarkdownRenderer', () => {
     expect(link.getAttribute('href')).toBe('https://example.com/docs')
   })
 
-  it('renders local links as normalized target text and hides markdown label', () => {
+  it('renders local links as line labels and hides markdown label', () => {
     render(
       <SharedMarkdownRenderer
         content={'[Open this file](file:///Users/example/workspace/frame.md#L74C3)'}
@@ -24,7 +24,9 @@ describe('SharedMarkdownRenderer', () => {
 
     expect(screen.queryByRole('link', { name: /open this file/i })).not.toBeInTheDocument()
     expect(screen.queryByText('Open this file')).not.toBeInTheDocument()
-    expect(screen.getByText('frame.md:74:3')).toBeInTheDocument()
+    const localLink = screen.getByRole('link', { name: 'frame.md (line 74, col 3)' })
+    expect(localLink).toBeInTheDocument()
+    expect(localLink.getAttribute('href')).toBe('file:///Users/example/workspace/frame.md#L74C3')
   })
 
   it('applies syntax highlight classes to fenced code blocks', () => {

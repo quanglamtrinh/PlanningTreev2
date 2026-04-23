@@ -138,6 +138,21 @@ class SessionManagerV2:
         self._ensure_initialized()
         return self._thread_service.thread_unsubscribe(thread_id=thread_id)
 
+    def model_list(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._ensure_initialized()
+        response = self._protocol_client.model_list(payload or {})
+        data = response.get("data")
+        if not isinstance(data, list):
+            data = []
+        normalized_data = [entry for entry in data if isinstance(entry, dict)]
+        next_cursor = response.get("nextCursor")
+        if next_cursor is not None and not isinstance(next_cursor, str):
+            next_cursor = str(next_cursor)
+        return {
+            "data": normalized_data,
+            "nextCursor": next_cursor,
+        }
+
     # ------------------------------------------------------------------
     # Turns
     # ------------------------------------------------------------------

@@ -107,13 +107,14 @@ function normalizeItemKindValue(
 function normalizeItemStatusValue(
   explicitStatus: unknown,
   payload: Record<string, unknown>,
+  fallbackStatus: SessionItem['status'] = 'inProgress',
 ): SessionItem['status'] {
   if (VALID_ITEM_STATUS.includes(explicitStatus as SessionItem['status'])) {
     return explicitStatus as SessionItem['status']
   }
   const candidate = String(payload.status ?? explicitStatus ?? '').trim()
   if (!candidate) {
-    return 'inProgress'
+    return fallbackStatus
   }
   if (
     candidate === 'inProgress' ||
@@ -144,7 +145,7 @@ function normalizeItemStatusValue(
   ) {
     return 'failed'
   }
-  return 'inProgress'
+  return fallbackStatus
 }
 
 function normalizeItemPayload(item: Partial<SessionItem>): Record<string, unknown> {
@@ -163,44 +164,142 @@ function normalizeItemPayload(item: Partial<SessionItem>): Record<string, unknow
   return fallback
 }
 
+function resolveItemTimestampMs(candidates: unknown[], fallback: number): number {
+  for (const candidate of candidates) {
+    const parsed = parseTimestampMs(candidate)
+    if (parsed !== null) {
+      return parsed
+    }
+  }
+  return fallback
+}
+
+function resolveItemCreatedTimestampMs(item: SessionItem): number | null {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  return (
+    parseTimestampMs(item.createdAtMs) ??
+    parseTimestampMs(payload.createdAtMs) ??
+    parseTimestampMs(payload.createdAt) ??
+    parseTimestampMs(payload.occurredAtMs) ??
+    parseTimestampMs(payload.timestamp)
+  )
+}
+
+function resolveItemUpdatedTimestampMs(item: SessionItem): number | null {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  return (
+    parseTimestampMs(item.updatedAtMs) ??
+    parseTimestampMs(payload.updatedAtMs) ??
+    parseTimestampMs(payload.updatedAt) ??
+    resolveItemCreatedTimestampMs(item)
+  )
+}
+
 function normalizeItemForStore(
   value: SessionItem,
   options: {
     threadId: string
     turnId: string
     fallbackId: string
+    fallbackStatus: SessionItem['status']
   },
 ): SessionItem {
-  const { threadId, turnId, fallbackId } = options
+  const { threadId, turnId, fallbackId, fallbackStatus } = options
   const item = value && typeof value === 'object' ? (value as Partial<SessionItem>) : {}
+  const itemRecord = item as unknown as Record<string, unknown>
   const payload = normalizeItemPayload(item)
   const kind = normalizeItemKindValue(item.kind, payload)
-  const status = normalizeItemStatusValue(item.status, payload)
+  const status = normalizeItemStatusValue(item.status, payload, fallbackStatus)
+  const now = Date.now()
+  const createdAtMs = resolveItemTimestampMs(
+    [item.createdAtMs, itemRecord.createdAt, payload.createdAtMs, payload.createdAt, payload.occurredAtMs, payload.timestamp],
+    now,
+  )
+  const updatedAtMs = resolveItemTimestampMs(
+    [item.updatedAtMs, itemRecord.updatedAt, payload.updatedAtMs, payload.updatedAt, createdAtMs],
+    createdAtMs,
+  )
   return {
     id: typeof item.id === 'string' && item.id.trim() ? item.id : fallbackId,
     threadId: typeof item.threadId === 'string' && item.threadId.trim() ? item.threadId : threadId,
     turnId: typeof item.turnId === 'string' && item.turnId.trim() ? item.turnId : turnId,
     kind,
     status,
-    createdAtMs: typeof item.createdAtMs === 'number' ? item.createdAtMs : Date.now(),
-    updatedAtMs: typeof item.updatedAtMs === 'number' ? item.updatedAtMs : Date.now(),
+    createdAtMs,
+    updatedAtMs,
     payload,
   }
 }
 
-function normalizeItemsForTurn(threadId: string, turnId: string, items: SessionItem[] | undefined): SessionItem[] {
+function normalizeItemsForTurnByStatus(
+  threadId: string,
+  turnId: string,
+  items: SessionItem[] | undefined,
+  turnStatus: SessionTurn['status'] | undefined,
+): SessionItem[] {
   if (!Array.isArray(items)) {
     return []
   }
-  return items
+  const fallbackStatus: SessionItem['status'] = (
+    turnStatus === 'completed'
+      ? 'completed'
+      : turnStatus === 'failed' || turnStatus === 'interrupted'
+        ? 'failed'
+        : 'inProgress'
+  )
+  const normalized: SessionItem[] = []
+  const indexById = new Map<string, number>()
+  const firstSeenById = new Map<string, number>()
+  items
     .filter((item): item is SessionItem => Boolean(item && typeof item === 'object'))
-    .map((item, itemIndex) =>
-      normalizeItemForStore(item, {
+    .forEach((item, itemIndex) => {
+      const nextItem = normalizeItemForStore(item, {
         threadId,
         turnId,
         fallbackId: `${turnId}:item-${itemIndex}`,
-      }),
-    )
+        fallbackStatus,
+      })
+      const existingIndex = indexById.get(nextItem.id)
+      if (existingIndex === undefined) {
+        indexById.set(nextItem.id, normalized.length)
+        firstSeenById.set(nextItem.id, itemIndex)
+        normalized.push(nextItem)
+        return
+      }
+      const existing = normalized[existingIndex]
+      normalized[existingIndex] = {
+        ...existing,
+        ...nextItem,
+        createdAtMs: existing.createdAtMs,
+      }
+    })
+  return [...normalized].sort((left, right) => {
+    const leftCreated = resolveItemCreatedTimestampMs(left)
+    const rightCreated = resolveItemCreatedTimestampMs(right)
+    if (leftCreated !== null && rightCreated !== null && leftCreated !== rightCreated) {
+      return leftCreated - rightCreated
+    }
+    if (leftCreated !== null && rightCreated === null) {
+      return -1
+    }
+    if (leftCreated === null && rightCreated !== null) {
+      return 1
+    }
+
+    const leftUpdated = resolveItemUpdatedTimestampMs(left)
+    const rightUpdated = resolveItemUpdatedTimestampMs(right)
+    if (leftUpdated !== null && rightUpdated !== null && leftUpdated !== rightUpdated) {
+      return leftUpdated - rightUpdated
+    }
+    if (leftUpdated !== null && rightUpdated === null) {
+      return -1
+    }
+    if (leftUpdated === null && rightUpdated !== null) {
+      return 1
+    }
+
+    return (firstSeenById.get(left.id) ?? 0) - (firstSeenById.get(right.id) ?? 0)
+  })
 }
 
 function parseTimestampMs(value: unknown): number | null {
@@ -245,7 +344,7 @@ function compareTurnsChronologically(left: SessionTurn, right: SessionTurn): num
 
 function normalizeTurnsForThread(threadId: string, turns: SessionTurn[]): SessionTurn[] {
   const normalized = turns.map((turn) => {
-    const normalizedItems = normalizeItemsForTurn(threadId, turn.id, turn.items)
+    const normalizedItems = normalizeItemsForTurnByStatus(threadId, turn.id, turn.items, turn.status)
     return {
       ...turn,
       threadId,
@@ -271,7 +370,7 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
     set((state) => ({
       ...state,
       threadsById: { ...state.threadsById, ...threadsById },
-      threadOrder: [...new Set([...state.threadOrder, ...threadOrder])],
+      threadOrder: [...threadOrder, ...state.threadOrder.filter((threadId) => !threadOrder.includes(threadId))],
       threadStatus: { ...state.threadStatus, ...threadStatus },
     }))
   },
@@ -292,7 +391,7 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
     const nextItemsByTurn: Record<string, SessionItem[]> = {}
     for (const turn of normalizedTurns) {
       const key = `${threadId}:${turn.id}`
-      nextItemsByTurn[key] = normalizeItemsForTurn(threadId, turn.id, turn.items)
+      nextItemsByTurn[key] = normalizeItemsForTurnByStatus(threadId, turn.id, turn.items, turn.status)
     }
     set((state) => ({
       ...state,
@@ -301,11 +400,17 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
     }))
   },
   setItemsForTurn(threadId, turnId, items) {
-    const key = `${threadId}:${turnId}`
-    const normalizedItems = normalizeItemsForTurn(threadId, turnId, items)
     set((state) => ({
       ...state,
-      itemsByTurn: { ...state.itemsByTurn, [key]: normalizedItems },
+      itemsByTurn: {
+        ...state.itemsByTurn,
+        [`${threadId}:${turnId}`]: normalizeItemsForTurnByStatus(
+          threadId,
+          turnId,
+          items,
+          state.turnsByThread[threadId]?.find((turn) => turn.id === turnId)?.status,
+        ),
+      },
     }))
   },
   applyEvent(envelope) {

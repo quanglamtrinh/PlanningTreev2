@@ -51,6 +51,20 @@ type ThreadListResponse = {
   nextCursor: string | null
 }
 
+export type SessionModelEntryV2 = {
+  id?: string
+  model?: string
+  displayName?: string
+  description?: string
+  hidden?: boolean
+  isDefault?: boolean
+}
+
+type ModelListResponse = {
+  data: SessionModelEntryV2[]
+  nextCursor: string | null
+}
+
 type TurnListResponse = {
   data: SessionTurn[]
   nextCursor: string | null
@@ -206,6 +220,22 @@ export async function listThreadsV2(
     searchTerm: payload?.searchTerm ?? null,
   })
   return jsonFetch<ThreadListResponse>(`/v4/session/threads/list${query}`)
+}
+
+export async function listModelsV2(
+  payload?: {
+    cursor?: string | null
+    limit?: number | null
+    includeHidden?: boolean | null
+  },
+): Promise<ModelListResponse> {
+  await initAuthToken()
+  const query = toQuery({
+    cursor: payload?.cursor ?? null,
+    limit: payload?.limit ?? null,
+    includeHidden: payload?.includeHidden ?? null,
+  })
+  return jsonFetch<ModelListResponse>(`/v4/session/models/list${query}`)
 }
 
 export async function readThreadV2(threadId: string, includeTurns = false): Promise<{ thread: SessionThread }> {

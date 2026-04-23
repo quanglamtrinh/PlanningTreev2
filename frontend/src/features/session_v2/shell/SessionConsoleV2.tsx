@@ -5,6 +5,7 @@ import {
   forkThreadV2,
   initializeSessionV2,
   interruptTurnV2,
+  listModelsV2,
   listLoadedThreadsV2,
   listPendingRequestsV2,
   listThreadsV2,
@@ -17,6 +18,7 @@ import {
   startThreadV2,
   startTurnV2,
   steerTurnV2,
+  type SessionModelEntryV2,
 } from '../api/client'
 import { parseSessionEvent } from '../state/sessionEventParser'
 import { useConnectionStore } from '../store/connectionStore'
@@ -85,6 +87,38 @@ const STREAM_DELTA_METHODS = new Set<string>([
   'item/fileChange/outputDelta',
 ])
 
+type ComposerModelOption = {
+  value: string
+  label: string
+  isDefault: boolean
+}
+
+function parseTimestampMs(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) {
+      return parsed
+    }
+  }
+  return 0
+}
+
+function normalizeModelOption(entry: SessionModelEntryV2): ComposerModelOption | null {
+  const model = typeof entry.model === 'string' ? entry.model.trim() : ''
+  if (!model) {
+    return null
+  }
+  const displayName = typeof entry.displayName === 'string' ? entry.displayName.trim() : ''
+  return {
+    value: model,
+    label: displayName || model,
+    isDefault: Boolean(entry.isDefault),
+  }
+}
+
 function actionId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -117,6 +151,11 @@ export function SessionConsoleV2() {
   const pollTimerRef = useRef<number | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const clearStreamBufferRef = useRef<(() => void) | null>(null)
+  const selectionIntentRef = useRef(0)
+  const hydratedThreadIdsRef = useRef<Set<string>>(new Set())
+  const [isModelLoading, setIsModelLoading] = useState(false)
+  const [modelOptions, setModelOptions] = useState<ComposerModelOption[]>([])
+  const [selectedModelByThread, setSelectedModelByThread] = useState<Record<string, string>>({})
 
   const {
     threadsById,
@@ -124,7 +163,6 @@ export function SessionConsoleV2() {
     turnsByThread,
     itemsByTurn,
     activeThreadId,
-    lastEventIdByThread,
     gapDetectedByThread,
     setThreadList,
     upsertThread,
@@ -143,7 +181,6 @@ export function SessionConsoleV2() {
       turnsByThread: state.turnsByThread,
       itemsByTurn: state.itemsByTurn,
       activeThreadId: state.activeThreadId,
-      lastEventIdByThread: state.lastEventIdByThread,
       gapDetectedByThread: state.gapDetectedByThread,
       setThreadList: state.setThreadList,
       upsertThread: state.upsertThread,
@@ -193,7 +230,22 @@ export function SessionConsoleV2() {
   )
 
   const threads = useMemo(
-    () => threadOrder.map((threadId) => threadsById[threadId]).filter((thread): thread is NonNullable<typeof thread> => Boolean(thread)),
+    () => {
+      const indexById = new Map<string, number>()
+      threadOrder.forEach((threadId, index) => {
+        indexById.set(threadId, index)
+      })
+      return threadOrder
+        .map((threadId) => threadsById[threadId])
+        .filter((thread): thread is NonNullable<typeof thread> => Boolean(thread))
+        .sort((left, right) => {
+          const diff = parseTimestampMs(right.updatedAt) - parseTimestampMs(left.updatedAt)
+          if (diff !== 0) {
+            return diff
+          }
+          return (indexById.get(left.id) ?? 0) - (indexById.get(right.id) ?? 0)
+        })
+    },
     [threadOrder, threadsById],
   )
 
@@ -215,6 +267,21 @@ export function SessionConsoleV2() {
 
   const activeRequest: PendingServerRequest | null = activeRequestId ? (pendingById[activeRequestId] ?? null) : null
 
+  const selectedModel = useMemo(() => {
+    if (!activeThreadId) {
+      return null
+    }
+    const chosen = selectedModelByThread[activeThreadId]
+    if (typeof chosen === 'string' && chosen.trim().length > 0) {
+      return chosen
+    }
+    const threadModel = typeof activeThread?.model === 'string' ? activeThread.model.trim() : ''
+    if (threadModel) {
+      return threadModel
+    }
+    return modelOptions.find((option) => option.isDefault)?.value ?? modelOptions[0]?.value ?? null
+  }, [activeThread?.model, activeThreadId, modelOptions, selectedModelByThread])
+
   const closeStream = useCallback((threadId: string | null) => {
     const clearBuffer = clearStreamBufferRef.current
     if (clearBuffer) {
@@ -234,23 +301,32 @@ export function SessionConsoleV2() {
     }
   }, [markStreamDisconnected])
 
-  const hydrateThreadState = useCallback(async (threadId: string) => {
+  const hydrateThreadState = useCallback(async (threadId: string, options?: { force?: boolean }) => {
+    if (!options?.force && hydratedThreadIdsRef.current.has(threadId)) {
+      return
+    }
     const read = await readThreadV2(threadId, false)
     upsertThread(read.thread)
     const turns = await listThreadTurnsV2(threadId, { limit: 200 })
     setThreadTurns(threadId, turns.data)
+    hydratedThreadIdsRef.current.add(threadId)
   }, [setThreadTurns, upsertThread])
 
-  const ensureThreadReady = useCallback(async (threadId: string) => {
-    const resumed = await resumeThreadV2(threadId, {})
-    upsertThread(resumed.thread)
-    await hydrateThreadState(threadId)
+  const ensureThreadReady = useCallback(async (threadId: string, options?: { forceHydrate?: boolean }) => {
+    const snapshot = useThreadSessionStore.getState()
+    const cachedThread = snapshot.threadsById[threadId]
+    const needsResume = !cachedThread || cachedThread.status?.type === 'notLoaded'
+    if (needsResume) {
+      const resumed = await resumeThreadV2(threadId, {})
+      upsertThread(resumed.thread)
+    }
+    await hydrateThreadState(threadId, { force: Boolean(options?.forceHydrate) })
   }, [hydrateThreadState, upsertThread])
 
   const openStream = useCallback((threadId: string) => {
     closeStream(threadId)
     clearGapDetected(threadId)
-    const cursorEventId = lastEventIdByThread[threadId] ?? null
+    const cursorEventId = useThreadSessionStore.getState().lastEventIdByThread[threadId] ?? null
     const stream = openThreadEventsStreamV2(threadId, { cursorEventId })
     eventSourceRef.current = stream
     type FlushReason = 'raf' | 'fallback' | 'forced' | 'max_age'
@@ -458,7 +534,6 @@ export function SessionConsoleV2() {
     applyEventsBatch,
     closeStream,
     clearGapDetected,
-    lastEventIdByThread,
     markStreamConnected,
     markStreamDisconnected,
     markStreamReconnect,
@@ -486,6 +561,47 @@ export function SessionConsoleV2() {
     }, intervalMs)
   }, [activeRunningTurn, pollPendingRequests, queue.length])
 
+  const loadModels = useCallback(async () => {
+    setIsModelLoading(true)
+    try {
+      let cursor: string | null = null
+      const nextOptions: ComposerModelOption[] = []
+      const seen = new Set<string>()
+
+      for (let page = 0; page < 5; page += 1) {
+        const listed = await listModelsV2({
+          cursor,
+          limit: 100,
+          includeHidden: false,
+        })
+        for (const entry of listed.data) {
+          const normalized = normalizeModelOption(entry)
+          if (!normalized || seen.has(normalized.value)) {
+            continue
+          }
+          seen.add(normalized.value)
+          nextOptions.push(normalized)
+        }
+        if (!listed.nextCursor) {
+          break
+        }
+        cursor = listed.nextCursor
+      }
+
+      nextOptions.sort((left, right) => {
+        if (left.isDefault !== right.isDefault) {
+          return left.isDefault ? -1 : 1
+        }
+        return left.label.localeCompare(right.label)
+      })
+      setModelOptions(nextOptions)
+    } catch {
+      setModelOptions([])
+    } finally {
+      setIsModelLoading(false)
+    }
+  }, [])
+
   const bootstrap = useCallback(async () => {
     setIsBootstrapping(true)
     setPhase('connecting')
@@ -495,6 +611,7 @@ export function SessionConsoleV2() {
         initialized.connection.clientName ?? 'PlanningTree Session V2',
         initialized.connection.serverVersion ?? null,
       )
+      void loadModels()
 
       let selectedThreadId: string | null = null
 
@@ -531,7 +648,7 @@ export function SessionConsoleV2() {
     } finally {
       setIsBootstrapping(false)
     }
-  }, [ensureThreadReady, setActiveThreadId, setError, setInitialized, setPhase, setThreadList, upsertThread])
+  }, [ensureThreadReady, loadModels, setActiveThreadId, setError, setInitialized, setPhase, setThreadList, upsertThread])
 
   useEffect(() => {
     void bootstrap()
@@ -544,6 +661,7 @@ export function SessionConsoleV2() {
       clearPendingRequestsStore()
       clearThreadSessionStore()
       resetConnectionStore()
+      hydratedThreadIdsRef.current.clear()
     }
   }, [bootstrap, clearPendingRequestsStore, clearThreadSessionStore, closeStream, resetConnectionStore])
 
@@ -569,38 +687,87 @@ export function SessionConsoleV2() {
     }
   }, [activeRequestId, queue, setActiveRequest])
 
+  useEffect(() => {
+    if (!activeThreadId || !selectedModel) {
+      return
+    }
+    setSelectedModelByThread((previous) => {
+      if (previous[activeThreadId]) {
+        return previous
+      }
+      return { ...previous, [activeThreadId]: selectedModel }
+    })
+  }, [activeThreadId, selectedModel])
+
   const handleSelectThread = useCallback(async (threadId: string) => {
-    setActiveThreadId(threadId)
+    const snapshot = useThreadSessionStore.getState()
+    if (snapshot.activeThreadId === threadId) {
+      setRuntimeError(null)
+      return
+    }
+
+    const cachedThread = snapshot.threadsById[threadId]
+    if (hydratedThreadIdsRef.current.has(threadId) && cachedThread?.status?.type !== 'notLoaded') {
+      setActiveThreadId(threadId)
+      setRuntimeError(null)
+      return
+    }
+
+    const selectionIntent = selectionIntentRef.current + 1
+    selectionIntentRef.current = selectionIntent
     try {
       await ensureThreadReady(threadId)
+      if (selectionIntentRef.current !== selectionIntent) {
+        return
+      }
+      setActiveThreadId(threadId)
       setRuntimeError(null)
     } catch (error) {
+      if (selectionIntentRef.current !== selectionIntent) {
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
       setRuntimeError(message)
     }
   }, [ensureThreadReady, setActiveThreadId])
 
   const handleCreateThread = useCallback(async () => {
+    const selectionIntent = selectionIntentRef.current + 1
+    selectionIntentRef.current = selectionIntent
     try {
       const created = await startThreadV2({ modelProvider: 'openai' })
       upsertThread(created.thread)
-      setActiveThreadId(created.thread.id)
       await ensureThreadReady(created.thread.id)
+      if (selectionIntentRef.current !== selectionIntent) {
+        return
+      }
+      setActiveThreadId(created.thread.id)
       setRuntimeError(null)
     } catch (error) {
+      if (selectionIntentRef.current !== selectionIntent) {
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
       setRuntimeError(message)
     }
   }, [ensureThreadReady, setActiveThreadId, upsertThread])
 
   const handleForkThread = useCallback(async (threadId: string) => {
+    const selectionIntent = selectionIntentRef.current + 1
+    selectionIntentRef.current = selectionIntent
     try {
       const forked = await forkThreadV2(threadId, {})
       upsertThread(forked.thread)
-      setActiveThreadId(forked.thread.id)
       await ensureThreadReady(forked.thread.id)
+      if (selectionIntentRef.current !== selectionIntent) {
+        return
+      }
+      setActiveThreadId(forked.thread.id)
       setRuntimeError(null)
     } catch (error) {
+      if (selectionIntentRef.current !== selectionIntent) {
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
       setRuntimeError(message)
     }
@@ -611,7 +778,7 @@ export function SessionConsoleV2() {
       const listed = await listThreadsV2({ limit: 50 })
       setThreadList(listed.data)
       if (activeThreadId) {
-        await hydrateThreadState(activeThreadId)
+        await hydrateThreadState(activeThreadId, { force: true })
       }
       setRuntimeError(null)
     } catch (error) {
@@ -620,7 +787,17 @@ export function SessionConsoleV2() {
     }
   }, [activeThreadId, hydrateThreadState, setThreadList])
 
-  const handleSubmit = useCallback(async (payload: { input: Array<Record<string, unknown>>; text: string }) => {
+  const handleModelChange = useCallback((model: string) => {
+    if (!activeThreadId) {
+      return
+    }
+    setSelectedModelByThread((previous) => ({
+      ...previous,
+      [activeThreadId]: model,
+    }))
+  }, [activeThreadId])
+
+  const handleSubmit = useCallback(async (payload: { input: Array<Record<string, unknown>>; text: string; model?: string | null }) => {
     if (!activeThreadId) {
       return
     }
@@ -637,6 +814,7 @@ export function SessionConsoleV2() {
         const result = await startTurnV2(activeThreadId, {
           clientActionId: actionId(),
           input: payload.input,
+          model: payload.model ?? selectedModel,
         })
         const nextTurns = upsertTurnList(activeTurns, result.turn)
         setThreadTurns(activeThreadId, nextTurns)
@@ -646,7 +824,7 @@ export function SessionConsoleV2() {
       const message = error instanceof Error ? error.message : String(error)
       setRuntimeError(message)
     }
-  }, [activeRunningTurn, activeThreadId, activeTurns, setThreadTurns])
+  }, [activeRunningTurn, activeThreadId, activeTurns, selectedModel, setThreadTurns])
 
   const handleInterrupt = useCallback(async () => {
     if (!activeThreadId || !activeRunningTurn) {
@@ -739,6 +917,10 @@ export function SessionConsoleV2() {
           disabled={!activeThreadId || connection.phase === 'error'}
           onSubmit={handleSubmit}
           onInterrupt={handleInterrupt}
+          modelOptions={modelOptions}
+          selectedModel={selectedModel}
+          onModelChange={handleModelChange}
+          isModelLoading={isModelLoading}
         />
       </main>
 

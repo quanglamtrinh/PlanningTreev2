@@ -4,6 +4,12 @@ import type { ClipboardEvent, KeyboardEvent } from 'react'
 type ComposerSubmitPayload = {
   input: Array<Record<string, unknown>>
   text: string
+  model?: string | null
+}
+
+type ComposerModelOption = {
+  value: string
+  label: string
 }
 
 type ComposerPaneProps = {
@@ -11,6 +17,10 @@ type ComposerPaneProps = {
   disabled?: boolean
   onSubmit: (payload: ComposerSubmitPayload) => Promise<void>
   onInterrupt: () => Promise<void>
+  modelOptions?: ComposerModelOption[]
+  selectedModel?: string | null
+  onModelChange?: (model: string) => void
+  isModelLoading?: boolean
 }
 
 type ActivePopup = 'none' | 'command' | 'file' | 'skill'
@@ -69,7 +79,16 @@ function normalizeImageRows(localImages: string[], remoteImages: string[]): { la
   return rows
 }
 
-export function ComposerPane({ isTurnRunning, disabled, onSubmit, onInterrupt }: ComposerPaneProps) {
+export function ComposerPane({
+  isTurnRunning,
+  disabled,
+  onSubmit,
+  onInterrupt,
+  modelOptions = [],
+  selectedModel = null,
+  onModelChange,
+  isModelLoading = false,
+}: ComposerPaneProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [draft, setDraft] = useState('')
@@ -196,7 +215,7 @@ export function ComposerPane({ isTurnRunning, disabled, onSubmit, onInterrupt }:
     }
     setIsSubmitting(true)
     try {
-      await onSubmit({ input, text: draft })
+      await onSubmit({ input, text: draft, model: selectedModel ?? null })
       registerHistoryEntry(draft, localImages, remoteImages)
       setDraft('')
       setLocalImages([])
@@ -279,21 +298,10 @@ export function ComposerPane({ isTurnRunning, disabled, onSubmit, onInterrupt }:
     setLocalImages((previous) => [...previous, ...paths.filter((path) => !previous.includes(path))])
   }
 
+  const shouldShowModelPicker = modelOptions.length > 0 || Boolean(selectedModel) || isModelLoading
+
   return (
     <section className="sessionV2Composer">
-      <div className="sessionV2ComposerHeader">
-        <div className="sessionV2ComposerBadges">
-          <span>{isTurnRunning ? 'turn: running' : 'turn: idle'}</span>
-          <span>popup: {activePopup}</span>
-          <span>history: {historyText.length}</span>
-        </div>
-        <div className="sessionV2ComposerActions">
-          <button type="button" disabled={disabled || isSubmitting || !isTurnRunning} onClick={() => void onInterrupt()}>
-            Interrupt
-          </button>
-        </div>
-      </div>
-
       {imageRows.length > 0 ? (
         <div className="sessionV2ImageRows">
           {imageRows.map((row) => (
@@ -435,9 +443,40 @@ export function ComposerPane({ isTurnRunning, disabled, onSubmit, onInterrupt }:
             Add URL
           </button>
         </div>
-        <button type="button" disabled={disabled || isSubmitting} onClick={() => void submitNow()}>
-          {isTurnRunning ? 'Steer (Enter)' : 'Send (Enter)'}
-        </button>
+        <div className="sessionV2ComposerSubmitActions">
+          {shouldShowModelPicker ? (
+            <label className="sessionV2ComposerModelPicker">
+              <span className="sessionV2ComposerModelLabel">Model</span>
+              <select
+                className="sessionV2ComposerModelSelect"
+                value={selectedModel ?? ''}
+                onChange={(event) => onModelChange?.(event.target.value)}
+                disabled={disabled || isSubmitting || isModelLoading || !onModelChange}
+                aria-label="Select model"
+              >
+                {selectedModel && !modelOptions.some((option) => option.value === selectedModel) ? (
+                  <option value={selectedModel}>{selectedModel}</option>
+                ) : null}
+                {selectedModel ? null : (
+                  <option value="" disabled>
+                    {isModelLoading ? 'Loading models...' : modelOptions.length > 0 ? 'Select model' : 'No models available'}
+                  </option>
+                )}
+                {modelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <button type="button" disabled={disabled || isSubmitting || !isTurnRunning} onClick={() => void onInterrupt()}>
+            Interrupt
+          </button>
+          <button type="button" disabled={disabled || isSubmitting} onClick={() => void submitNow()}>
+            {isTurnRunning ? 'Steer (Enter)' : 'Send (Enter)'}
+          </button>
+        </div>
       </div>
 
       <input
