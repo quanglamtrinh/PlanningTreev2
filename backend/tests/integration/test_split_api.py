@@ -49,7 +49,7 @@ class FakeCodexClient:
 def wait_for_terminal_status(client, project_id: str, timeout_sec: float = 2.0) -> dict:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
-        response = client.get(f"/v1/projects/{project_id}/split-status")
+        response = client.get(f"/v3/projects/{project_id}/split-status")
         assert response.status_code == 200
         payload = response.json()
         if payload["status"] != "active":
@@ -60,7 +60,7 @@ def wait_for_terminal_status(client, project_id: str, timeout_sec: float = 2.0) 
 
 def make_node_split_ready(client, project_id: str, node_id: str, title: str) -> None:
     frame_response = client.put(
-        f"/v1/projects/{project_id}/nodes/{node_id}/documents/frame",
+        f"/v3/projects/{project_id}/nodes/{node_id}/documents/frame",
         json={
             "content": (
                 f"# Task Title\n{title}\n\n"
@@ -70,7 +70,7 @@ def make_node_split_ready(client, project_id: str, node_id: str, title: str) -> 
         },
     )
     assert frame_response.status_code == 200
-    confirm_response = client.post(f"/v1/projects/{project_id}/nodes/{node_id}/confirm-frame")
+    confirm_response = client.post(f"/v3/projects/{project_id}/nodes/{node_id}/confirm-frame")
     assert confirm_response.status_code == 200
     assert confirm_response.json()["active_step"] == "spec"
 
@@ -80,7 +80,7 @@ def test_split_api_accepts_jobs_and_updates_snapshot(client, tmp_path: Path) -> 
     workspace_root.mkdir()
     project_dir = workspace_root / ".planningtree"
 
-    created = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    created = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert created.status_code == 200
     project_id = created.json()["project"]["id"]
     root_id = created.json()["tree_state"]["root_node_id"]
@@ -100,7 +100,7 @@ def test_split_api_accepts_jobs_and_updates_snapshot(client, tmp_path: Path) -> 
     )
 
     response = client.post(
-        f"/v1/projects/{project_id}/nodes/{root_id}/split",
+        f"/v3/projects/{project_id}/nodes/{root_id}/split",
         json={"mode": "workflow"},
     )
 
@@ -110,7 +110,7 @@ def test_split_api_accepts_jobs_and_updates_snapshot(client, tmp_path: Path) -> 
     terminal = wait_for_terminal_status(client, project_id)
     assert terminal["status"] == "idle"
 
-    snapshot = client.get(f"/v1/projects/{project_id}/snapshot")
+    snapshot = client.get(f"/v3/projects/{project_id}/snapshot")
     assert snapshot.status_code == 200
     payload = snapshot.json()
     root = next(node for node in payload["tree_state"]["node_registry"] if node["node_id"] == root_id)
@@ -128,7 +128,7 @@ def test_split_api_rejects_nodes_that_are_not_workflow_ready(client, tmp_path: P
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    created = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    created = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert created.status_code == 200
     project_id = created.json()["project"]["id"]
     root_id = created.json()["tree_state"]["root_node_id"]
@@ -147,7 +147,7 @@ def test_split_api_rejects_nodes_that_are_not_workflow_ready(client, tmp_path: P
     )
 
     response = client.post(
-        f"/v1/projects/{project_id}/nodes/{root_id}/split",
+        f"/v3/projects/{project_id}/nodes/{root_id}/split",
         json={"mode": "workflow"},
     )
 
@@ -159,13 +159,13 @@ def test_snapshot_includes_node_workflow_summary(client, tmp_path: Path) -> None
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    created = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    created = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert created.status_code == 200
     project_id = created.json()["project"]["id"]
     root_id = created.json()["tree_state"]["root_node_id"]
     make_node_split_ready(client, project_id, root_id, title=workspace_root.name)
 
-    snapshot = client.get(f"/v1/projects/{project_id}/snapshot")
+    snapshot = client.get(f"/v3/projects/{project_id}/snapshot")
     assert snapshot.status_code == 200
     payload = snapshot.json()
     root = next(node for node in payload["tree_state"]["node_registry"] if node["node_id"] == root_id)
@@ -182,13 +182,13 @@ def test_legacy_planning_routes_remain_absent_after_split_rebuild(client, tmp_pa
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    created = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    created = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert created.status_code == 200
     project_id = created.json()["project"]["id"]
     root_id = created.json()["tree_state"]["root_node_id"]
 
-    history_response = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/planning/history")
-    events_response = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/planning/events")
+    history_response = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/planning/history")
+    events_response = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/planning/events")
 
     assert history_response.status_code == 404
     assert events_response.status_code == 404

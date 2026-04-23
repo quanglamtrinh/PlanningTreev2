@@ -46,6 +46,7 @@ import {
   resetMessagesV3ProfilingState,
   type MessagesV3Phase10Mode,
 } from './messagesV3ProfilingHooks'
+import { selectStreamingTextLaneByItem, useThreadByIdStoreV3 } from '../../state/threadByIdStoreV3'
 import {
   buildParseCacheKey,
   PARSE_CACHE_RENDERER_VERSION,
@@ -640,6 +641,7 @@ function emitRowRenderProfileForItem(item: ConversationItemV3): void {
     updatedAt: item.updatedAt,
     sequence: item.sequence,
   })
+  useThreadByIdStoreV3.getState().recordStreamingRowRender(item.kind === 'message' && item.status === 'in_progress')
 }
 
 function sameRenderableItemVersion(
@@ -797,6 +799,17 @@ function CommandOutputViewportV3({
 
 function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'message' }> }) {
   emitRowRenderProfileForItem(item)
+  const streamingTextOverride = useThreadByIdStoreV3(
+    useCallback(
+      (state) => {
+        if (item.role !== 'assistant' || item.status !== 'in_progress') {
+          return null
+        }
+        return selectStreamingTextLaneByItem(state, item.threadId, item.id)?.text ?? null
+      },
+      [item.id, item.role, item.status, item.threadId],
+    ),
+  )
   const phase11Mode = resolveMessagesV3Phase11Mode(null)
 
   const roleClass =
@@ -812,10 +825,21 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
       : item.role === 'system'
         ? styles.messageBubbleSystem
         : styles.messageBubbleAssistant
+  const isStreamingMessage = item.role === 'assistant' && item.status === 'in_progress'
+  const hasStreamText = Boolean((streamingTextOverride ?? item.text ?? '').trim())
+  const messageSourceText =
+    streamingTextOverride ??
+    (isStreamingMessage && !hasStreamText ? 'Responding...' : (item.text ?? ''))
+  const streamOverlayToken =
+    streamingTextOverride == null
+      ? null
+      : `${streamingTextOverride.length}:${streamingTextOverride.slice(-32)}`
+  const messageRenderUpdatedAt =
+    streamOverlayToken == null ? item.updatedAt : `${item.updatedAt}:${streamOverlayToken}`
   const messageParseKey = buildParseCacheKey({
     threadId: item.threadId,
     itemId: item.id,
-    updatedAt: item.updatedAt,
+    updatedAt: messageRenderUpdatedAt,
     mode: 'message_markdown',
     rendererVersion: PARSE_CACHE_RENDERER_VERSION,
   })
@@ -823,8 +847,8 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
     buildParseArtifactVariantKey(messageParseKey, 'rendered_message_text'),
     () =>
       item.role === 'assistant'
-        ? extractReviewSummaryText(item.text) ?? item.text
-        : item.text,
+        ? extractReviewSummaryText(messageSourceText) ?? messageSourceText
+        : messageSourceText,
   ).value
 
   return (
@@ -838,10 +862,11 @@ function MessageRowV3({ item }: { item: Extract<ConversationItemV3, { kind: 'mes
               content={renderedText}
               phase11Mode={phase11Mode}
               phase11DeferredTimeoutMs={PHASE11_MARKDOWN_DEFERRED_TIMEOUT_MS}
+              streamingPlainTextMode={isStreamingMessage}
               parseTrace={{
                 threadId: item.threadId,
                 itemId: item.id,
-                updatedAt: item.updatedAt,
+                updatedAt: messageRenderUpdatedAt,
                 mode: 'message_markdown',
                 source: 'messages_v3.message_row',
               }}
@@ -1951,7 +1976,9 @@ function renderItemRowV3({
   const isExpanded = expandedItemIds.has(item.id)
 
   if (item.kind === 'message') {
-    return <MemoMessageRowV3 item={item} />
+    return (
+      <MemoMessageRowV3 item={item} />
+    )
   }
   if (item.kind === 'reasoning') {
     return (
@@ -2029,7 +2056,7 @@ export function MessagesV3({
   onLoadMoreHistory?: () => void
   prefix?: ReactNode
   suffix?: ReactNode
-  /** Breadcrumb thread: one #fcf9f7 canvas (no gray “cards” in the scroll area). */
+  /** Breadcrumb thread: one #fcf9f7 canvas (no gray Ã¢â‚¬Å“cardsÃ¢â‚¬Â in the scroll area). */
   threadChatFlatCanvas?: boolean
   onResolveUserInput: (requestId: string, answers: UserInputAnswerV3[]) => Promise<void> | void
   onPlanAction?: (
@@ -2963,3 +2990,18 @@ export function MessagesV3({
     </div>
   )
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

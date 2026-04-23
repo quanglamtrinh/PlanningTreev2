@@ -5,6 +5,7 @@ import styles from './ConversationMarkdown.module.css'
 import {
   getConversationMarkdownDesktopHooks,
 } from './markdownDesktopHooks'
+import { parseLocalLinkTarget, renderLocalLinkDisplayLabel } from '../../markdown/localLink'
 import {
   buildParseCacheKey,
   PARSE_CACHE_RENDERER_VERSION,
@@ -12,6 +13,8 @@ import {
 } from './v3/parseCacheContract'
 import { emitParseCacheTrace } from './v3/messagesV3ProfilingHooks'
 import type { MessagesV3Phase11Mode } from './v3/phase11Config'
+import { shouldStreamRenderPlainText } from './v3/streamMarkdownBoundary'
+import { useThreadByIdStoreV3 } from '../state/threadByIdStoreV3'
 
 export type ConversationMarkdownParseTrace = {
   threadId: string | null | undefined
@@ -76,17 +79,23 @@ export function ConversationMarkdown({
   parseTrace,
   phase11Mode = 'off',
   phase11DeferredTimeoutMs = 800,
+  streamingPlainTextMode = false,
 }: {
   content: string
   parseTrace?: ConversationMarkdownParseTrace
   phase11Mode?: MessagesV3Phase11Mode
   phase11DeferredTimeoutMs?: number
+  streamingPlainTextMode?: boolean
 }) {
   if (!content.trim()) {
     return null
   }
 
   const desktopHooks = getConversationMarkdownDesktopHooks()
+  const recordMarkdownParseDuration = useThreadByIdStoreV3((state) => state.recordMarkdownParseDuration)
+  const renderStartAtMsRef = useRef<number>(Date.now())
+  renderStartAtMsRef.current = Date.now()
+
   const traceSource = parseTrace?.source ?? 'conversation_markdown'
   const traceRendererVersion = parseTrace?.rendererVersion ?? PARSE_CACHE_RENDERER_VERSION
   const traceKey =
@@ -101,10 +110,14 @@ export function ConversationMarkdown({
         })
 
   const shouldDeferMarkdown = phase11Mode === 'on'
+  const shouldPreferPlainText = shouldStreamRenderPlainText(content, {
+    isStreaming: streamingPlainTextMode,
+  })
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [isVisibleInViewport, setIsVisibleInViewport] = useState(() => !shouldDeferMarkdown)
   const [isIdleReady, setIsIdleReady] = useState(() => !shouldDeferMarkdown)
-  const shouldRenderMarkdown = !shouldDeferMarkdown || isVisibleInViewport || isIdleReady
+  const shouldRenderMarkdown =
+    !shouldPreferPlainText && (!shouldDeferMarkdown || isVisibleInViewport || isIdleReady)
   const normalizedDeferredTimeoutMs = useMemo(() => {
     const value = Math.floor(phase11DeferredTimeoutMs)
     if (!Number.isFinite(value) || value <= 0) {
@@ -189,6 +202,17 @@ export function ConversationMarkdown({
     traceSource,
   ])
 
+  useEffect(() => {
+    const durationMs = Math.max(0, Date.now() - renderStartAtMsRef.current)
+    recordMarkdownParseDuration(durationMs)
+  }, [
+    content,
+    shouldRenderMarkdown,
+    parseTrace?.itemId,
+    parseTrace?.updatedAt,
+    recordMarkdownParseDuration,
+  ])
+
   return (
     <div className={styles.root} ref={rootRef}>
       {shouldRenderMarkdown ? (
@@ -199,6 +223,11 @@ export function ConversationMarkdown({
             a: ({ node: _node, href, onClick, onContextMenu, children, ...props }) => {
               const safeHref = typeof href === 'string' ? href : ''
               const localPath = toLocalPathFromHref(safeHref)
+              const localLinkTarget = safeHref ? parseLocalLinkTarget(safeHref) : null
+              const localDisplayLabel =
+                localPath && localLinkTarget?.locationSuffix
+                  ? renderLocalLinkDisplayLabel(safeHref)
+                  : null
               const threadId = toThreadIdFromHref(safeHref)
               return (
                 <a
@@ -233,7 +262,7 @@ export function ConversationMarkdown({
                     })
                   }}
                 >
-                  {children}
+                  {localDisplayLabel ?? children}
                 </a>
               )
             },

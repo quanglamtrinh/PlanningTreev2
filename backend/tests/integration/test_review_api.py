@@ -98,7 +98,7 @@ class StrictIntegrationRollupCodexClient(IntegrationRollupCodexClient):
 
 
 def _setup_project(client: TestClient, workspace_root) -> tuple[str, str]:
-    resp = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    resp = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert resp.status_code == 200
     snap = resp.json()
     project_id = snap["project"]["id"]
@@ -194,18 +194,18 @@ def _setup_node_with_execution_completed(
 
     # Write confirmed frame + spec so finish-task is allowed
     frame_resp = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame",
         json={"content": "# Task Title\nTask\n\n# Objective\nDo it\n"},
     )
     assert frame_resp.status_code == 200
-    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame").status_code == 200
+    assert client.post(f"/v3/projects/{project_id}/nodes/{root_id}/confirm-frame").status_code == 200
 
     spec_resp = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/spec",
         json={"content": "# Spec\nImplement it\n"},
     )
     assert spec_resp.status_code == 200
-    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-spec").status_code == 200
+    assert client.post(f"/v3/projects/{project_id}/nodes/{root_id}/confirm-spec").status_code == 200
 
     current_sha = "sha256:integration-ready"
     client.app.state.storage.execution_state_store.write_state(
@@ -269,7 +269,7 @@ def test_accept_local_review_route_happy_path(client: TestClient, workspace_root
     client.app.state.review_service.start_local_review(project_id, node_id)
 
     resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{node_id}/accept-local-review",
+        f"/v3/projects/{project_id}/nodes/{node_id}/accept-local-review",
         json={"summary": "Looks good, task completed correctly."},
     )
     assert resp.status_code == 200
@@ -291,7 +291,7 @@ def test_get_review_state_route_returns_default_state(client: TestClient, worksp
     project_id, root_id = _setup_project(client, workspace_root)
     review_id = _add_review_node(client, project_id, root_id)
 
-    resp = client.get(f"/v1/projects/{project_id}/nodes/{review_id}/review-state")
+    resp = client.get(f"/v3/projects/{project_id}/nodes/{review_id}/review-state")
     assert resp.status_code == 200
 
     payload = resp.json()
@@ -355,7 +355,7 @@ def test_get_review_state_route_returns_rollup_draft_and_progress(client: TestCl
         },
     )
 
-    resp = client.get(f"/v1/projects/{project_id}/nodes/{review_id}/review-state")
+    resp = client.get(f"/v3/projects/{project_id}/nodes/{review_id}/review-state")
     assert resp.status_code == 200
 
     payload = resp.json()
@@ -390,7 +390,7 @@ def test_accept_local_review_route_rejects_empty_summary(client: TestClient, wor
     client.app.state.review_service.start_local_review(project_id, node_id)
 
     resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{node_id}/accept-local-review",
+        f"/v3/projects/{project_id}/nodes/{node_id}/accept-local-review",
         json={"summary": ""},
     )
     assert resp.status_code == 422
@@ -400,7 +400,7 @@ def test_accept_local_review_route_rejects_wrong_status(client: TestClient, work
     project_id, node_id = _setup_node_with_execution_completed(client, workspace_root)
     # Still in 'completed', not 'review_pending'
     resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{node_id}/accept-local-review",
+        f"/v3/projects/{project_id}/nodes/{node_id}/accept-local-review",
         json={"summary": "Some summary"},
     )
     assert resp.status_code in {400, 409}
@@ -409,12 +409,12 @@ def test_accept_local_review_route_rejects_wrong_status(client: TestClient, work
 def test_detail_state_returns_can_accept_local_review(client: TestClient, workspace_root):
     project_id, node_id = _setup_node_with_execution_completed(client, workspace_root)
 
-    detail_before = client.get(f"/v1/projects/{project_id}/nodes/{node_id}/detail-state").json()
+    detail_before = client.get(f"/v3/projects/{project_id}/nodes/{node_id}/detail-state").json()
     assert detail_before["can_accept_local_review"] is False
 
     client.app.state.review_service.start_local_review(project_id, node_id)
 
-    detail_after = client.get(f"/v1/projects/{project_id}/nodes/{node_id}/detail-state").json()
+    detail_after = client.get(f"/v3/projects/{project_id}/nodes/{node_id}/detail-state").json()
     assert detail_after["can_accept_local_review"] is True
 
 
@@ -439,7 +439,7 @@ def test_first_audit_write_triggers_start_local_review(client: TestClient, works
 
     # Send first audit message
     resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{node_id}/chat/message",
+        f"/v3/projects/{project_id}/nodes/{node_id}/chat/message",
         params={"thread_role": "audit"},
         json={"content": "Reviewing the execution output."},
     )
@@ -449,7 +449,7 @@ def test_first_audit_write_triggers_start_local_review(client: TestClient, works
     exec_state = client.app.state.storage.execution_state_store.read_state(project_id, node_id)
     assert exec_state["status"] == "review_pending"
 
-    detail = client.get(f"/v1/projects/{project_id}/nodes/{node_id}/detail-state").json()
+    detail = client.get(f"/v3/projects/{project_id}/nodes/{node_id}/detail-state").json()
     assert detail["can_accept_local_review"] is True
 
 
@@ -463,7 +463,7 @@ def test_first_audit_write_injects_local_review_prompt_once(client: TestClient, 
     client.app.state.thread_lineage_service._codex_client = codex
 
     first = client.post(
-        f"/v1/projects/{project_id}/nodes/{node_id}/chat/message",
+        f"/v3/projects/{project_id}/nodes/{node_id}/chat/message",
         params={"thread_role": "audit"},
         json={"content": "Review the execution output."},
     )
@@ -483,7 +483,7 @@ def test_first_audit_write_injects_local_review_prompt_once(client: TestClient, 
     assert "Head SHA:" in codex.prompts[-1]
 
     second = client.post(
-        f"/v1/projects/{project_id}/nodes/{node_id}/chat/message",
+        f"/v3/projects/{project_id}/nodes/{node_id}/chat/message",
         params={"thread_role": "audit"},
         json={"content": "Second audit follow-up."},
     )
@@ -512,7 +512,7 @@ def test_second_audit_write_does_not_fail(client: TestClient, workspace_root):
 
     # First audit write triggers review_pending
     resp1 = client.post(
-        f"/v1/projects/{project_id}/nodes/{node_id}/chat/message",
+        f"/v3/projects/{project_id}/nodes/{node_id}/chat/message",
         params={"thread_role": "audit"},
         json={"content": "First audit message."},
     )
@@ -530,7 +530,7 @@ def test_second_audit_write_does_not_fail(client: TestClient, workspace_root):
 
     # Second audit write — auto-trigger fires again but is a no-op (already review_pending)
     resp2 = client.post(
-        f"/v1/projects/{project_id}/nodes/{node_id}/chat/message",
+        f"/v3/projects/{project_id}/nodes/{node_id}/chat/message",
         params={"thread_role": "audit"},
         json={"content": "Second audit message."},
     )
@@ -597,7 +597,7 @@ def test_accept_rollup_review_route_happy_path(client: TestClient, workspace_roo
 
     # Accept rollup via route
     resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{review_id}/accept-rollup-review",
+        f"/v3/projects/{project_id}/nodes/{review_id}/accept-rollup-review",
     )
     assert resp.status_code == 200
     payload = resp.json()
@@ -630,7 +630,7 @@ def test_accept_rollup_review_rejects_non_ready(client: TestClient, workspace_ro
     })
 
     resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{review_id}/accept-rollup-review",
+        f"/v3/projects/{project_id}/nodes/{review_id}/accept-rollup-review",
     )
     assert resp.status_code in {400, 409}
 
@@ -644,7 +644,7 @@ def test_snapshot_includes_review_nodes(client: TestClient, workspace_root):
     project_id, root_id = _setup_project(client, workspace_root)
     review_id = _add_review_node(client, project_id, root_id)
 
-    resp = client.get(f"/v1/projects/{project_id}/snapshot")
+    resp = client.get(f"/v3/projects/{project_id}/snapshot")
     assert resp.status_code == 200
     snap = resp.json()
     node_registry = snap["tree_state"]["node_registry"]

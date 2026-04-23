@@ -33,17 +33,35 @@ from backend.config.app_config import (
     get_port,
     get_phase5_log_compact_min_events,
     get_rehearsal_workspace_root,
+    get_session_core_v2_event_queue_capacity,
+    get_session_core_v2_protocol_gate_timeout_sec,
+    get_session_core_v2_server_request_queue_capacity,
+    get_session_core_v2_retention_days,
+    get_session_core_v2_retention_max_events,
     get_thread_raw_event_coalesce_ms,
+    get_thread_stream_cadence_profile,
     get_sse_subscriber_queue_max,
     get_spec_gen_timeout,
     get_split_timeout,
     get_thread_actor_mode,
+    is_session_core_v2_events_enabled,
+    is_session_core_v2_protocol_gate_enabled,
+    is_session_core_v2_requests_enabled,
+    is_session_core_v2_turns_enabled,
     is_ask_v3_backend_enabled,
     is_ask_v3_frontend_enabled,
 )
+from backend.config.api_version import API_PREFIX
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
-from backend.routes import bootstrap, chat, codex, nodes, projects, split, workflow_v3
+from backend.routes import bootstrap, chat, codex, nodes, projects, session_v4, split, workflow_v3
+from backend.session_core_v2.connection import ConnectionStateMachine, SessionManagerV2
+from backend.session_core_v2.protocol import (
+    SessionProtocolClientV2,
+    ensure_session_core_v2_protocol_compatible,
+)
+from backend.session_core_v2.storage import RuntimeStoreV2
+from backend.session_core_v2.transport import StdioJsonRpcTransportV2
 from backend.services.chat_service import ChatService
 from backend.services.ask_rollout_metrics_service import AskRolloutMetricsService
 from backend.services.codex_account_service import CodexAccountService
@@ -80,7 +98,18 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     rehearsal_workspace_root = get_rehearsal_workspace_root()
     sse_subscriber_queue_max = get_sse_subscriber_queue_max()
     phase5_log_compact_min_events = get_phase5_log_compact_min_events()
+    thread_stream_cadence_profile = get_thread_stream_cadence_profile()
     thread_raw_event_coalesce_ms = get_thread_raw_event_coalesce_ms()
+    session_core_v2_event_queue_capacity = get_session_core_v2_event_queue_capacity()
+    session_core_v2_server_request_queue_capacity = get_session_core_v2_server_request_queue_capacity()
+    session_core_v2_retention_max_events = get_session_core_v2_retention_max_events()
+    session_core_v2_retention_days = get_session_core_v2_retention_days()
+    session_core_v2_enable_turns = is_session_core_v2_turns_enabled()
+    session_core_v2_enable_events = is_session_core_v2_events_enabled()
+    session_core_v2_enable_requests = is_session_core_v2_requests_enabled()
+    session_core_v2_protocol_gate_enabled = is_session_core_v2_protocol_gate_enabled()
+    session_core_v2_protocol_gate_timeout_sec = get_session_core_v2_protocol_gate_timeout_sec()
+    codex_cmd = get_codex_cmd() or "codex"
     ask_rollout_metrics_service = AskRolloutMetricsService()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
     project_service = ProjectService(
@@ -97,7 +126,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         tree_service,
         git_checkpoint_service=git_checkpoint_service,
     )
-    codex_client = CodexAppClient(StdioTransport(codex_cmd=get_codex_cmd() or "codex"))
+    codex_client = CodexAppClient(StdioTransport(codex_cmd=codex_cmd))
     thread_lineage_service = ThreadLineageService(
         storage,
         codex_client,
@@ -190,6 +219,13 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         coalescing_window_ms=thread_raw_event_coalesce_ms,
         thread_actor_mode=thread_actor_mode,
     )
+    logger.info(
+        "Thread stream cadence configured",
+        extra={
+            "thread_stream_cadence_profile": thread_stream_cadence_profile,
+            "thread_raw_event_coalesce_ms": thread_raw_event_coalesce_ms,
+        },
+    )
     system_message_writer_v2.set_runtime_service(thread_runtime_service_v3)
     review_service = ReviewService(
         storage=storage,
@@ -231,15 +267,47 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         git_checkpoint_service=git_checkpoint_service,
         codex_client=codex_client,
     )
+    session_transport_v2 = StdioJsonRpcTransportV2(
+        codex_cmd=codex_cmd,
+        server_request_queue_capacity=session_core_v2_server_request_queue_capacity,
+    )
+    session_protocol_v2 = SessionProtocolClientV2(session_transport_v2)
+    session_runtime_store_v2 = RuntimeStoreV2(
+        db_path=paths.data_root / "session_core_v2.sqlite3",
+        subscriber_queue_capacity=session_core_v2_event_queue_capacity,
+        retention_max_events=session_core_v2_retention_max_events,
+        retention_days=session_core_v2_retention_days,
+    )
+    session_connection_state_v2 = ConnectionStateMachine()
+    session_manager_v2 = SessionManagerV2(
+        protocol_client=session_protocol_v2,
+        runtime_store=session_runtime_store_v2,
+        connection_state_machine=session_connection_state_v2,
+    )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service
     thread_lineage_service.set_thread_registry_service(thread_registry_service_v2)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        if session_core_v2_enable_turns and session_core_v2_protocol_gate_enabled:
+            logger.info(
+                "Session Core V2 protocol compatibility gate started",
+                extra={
+                    "codex_cmd": codex_cmd,
+                    "timeout_sec": session_core_v2_protocol_gate_timeout_sec,
+                },
+            )
+            ensure_session_core_v2_protocol_compatible(
+                codex_cmd=codex_cmd,
+                timeout_sec=session_core_v2_protocol_gate_timeout_sec,
+            )
+            logger.info("Session Core V2 protocol compatibility gate passed")
         try:
             yield
         finally:
+            session_runtime_store_v2.close()
+            session_transport_v2.stop()
             codex_client.stop()
 
     app = FastAPI(
@@ -303,6 +371,12 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.ask_v3_backend_enabled = ask_v3_backend_enabled
     app.state.ask_v3_frontend_enabled = ask_v3_frontend_enabled
     app.state.ask_rollout_metrics_service = ask_rollout_metrics_service
+    app.state.session_manager_v2 = session_manager_v2
+    app.state.session_runtime_store_v2 = session_runtime_store_v2
+    app.state.session_connection_state_v2 = session_connection_state_v2
+    app.state.session_core_v2_enable_turns = session_core_v2_enable_turns
+    app.state.session_core_v2_enable_events = session_core_v2_enable_events
+    app.state.session_core_v2_enable_requests = session_core_v2_enable_requests
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
@@ -326,13 +400,14 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     async def health() -> dict:
         return {"status": "ok", "version": "0.1.0"}
 
-    app.include_router(bootstrap.router, prefix="/v1")
-    app.include_router(codex.router, prefix="/v1")
-    app.include_router(projects.router, prefix="/v1")
-    app.include_router(nodes.router, prefix="/v1")
-    app.include_router(split.router, prefix="/v1")
-    app.include_router(chat.router, prefix="/v1")
-    app.include_router(workflow_v3.router, prefix="/v3")
+    app.include_router(bootstrap.router, prefix=API_PREFIX)
+    app.include_router(codex.router, prefix=API_PREFIX)
+    app.include_router(projects.router, prefix=API_PREFIX)
+    app.include_router(nodes.router, prefix=API_PREFIX)
+    app.include_router(split.router, prefix=API_PREFIX)
+    app.include_router(chat.router, prefix=API_PREFIX)
+    app.include_router(workflow_v3.router, prefix=API_PREFIX)
+    app.include_router(session_v4.router)
 
     if getattr(sys, "frozen", False):
         dist = Path(sys._MEIPASS) / "frontend" / "dist"  # type: ignore[attr-defined]

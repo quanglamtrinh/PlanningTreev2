@@ -8,6 +8,8 @@ import {
 } from '../../stores/ask-shell-action-store'
 import { useClarifyStore } from '../../stores/clarify-store'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
+import { useProjectStore } from '../../stores/project-store'
+import { SharedMarkdownRenderer } from '../markdown/SharedMarkdownRenderer'
 import { FrameMarkdownViewer } from './FrameMarkdownViewer'
 import styles from './FrameContextFeedBlock.module.css'
 
@@ -37,8 +39,8 @@ type PanelProps = {
   expanded: boolean
   onToggle: (nodeId: string, panelId: PanelId) => void
   children: React.ReactNode
-  /** Frame panel: shared chrome (toggle + body) for every node */
-  frameChrome?: boolean
+  /** Frame/Spec panels: shared document chrome (toggle + body) for every node */
+  documentChrome?: boolean
 }
 
 function buildAncestorChain(nodeId: string, registry: NodeRecord[]): NodeRecord[] {
@@ -233,9 +235,13 @@ function ContextSplitView({
   )
 }
 
-function NodePanel({ label, panelId, nodeId, expanded, onToggle, children, frameChrome }: PanelProps) {
+function NodePanel({ label, panelId, nodeId, expanded, onToggle, children, documentChrome }: PanelProps) {
+  const chrome = documentChrome ? 'document' : 'default'
   return (
-    <div className={`${styles.panel} ${frameChrome ? styles.panelFrame : ''}`}>
+    <div
+      className={`${styles.panel} ${documentChrome ? styles.documentPanel : ''}`}
+      data-panel-chrome={chrome}
+    >
       <button
         type="button"
         className={styles.panelToggle}
@@ -246,7 +252,13 @@ function NodePanel({ label, panelId, nodeId, expanded, onToggle, children, frame
         <span className={styles.panelLabel}>{label}</span>
       </button>
       {expanded ? (
-        <div className={`${styles.panelBody} ${frameChrome ? styles.framePanelBody : ''}`}>{children}</div>
+        <div
+          className={`${styles.panelBody} ${documentChrome ? styles.documentPanelBody : ''}`}
+          data-testid={`frame-context-panel-body-${panelId}`}
+          data-panel-chrome={chrome}
+        >
+          {children}
+        </div>
       ) : null}
     </div>
   )
@@ -259,6 +271,11 @@ export function FrameContextFeedBlock({
   variant = 'ask',
   specConfirmed = false,
 }: Props) {
+  const projectRootPath = useProjectStore((state) =>
+    state.snapshot?.project.id === projectId
+      ? state.snapshot.project.project_path
+      : undefined,
+  )
   const rawChain = useMemo(() => buildAncestorChain(nodeId, nodeRegistry), [nodeId, nodeRegistry])
   const stripInitPrefix = rawChain.length > 0 && isInitNode(rawChain[0])
   const chain = useMemo(() => rawChain.filter((node) => !isInitNode(node)), [rawChain])
@@ -342,104 +359,120 @@ export function FrameContextFeedBlock({
               </div>
 
               <div className={styles.nodeCard}>
-              {isCurrent && currentNodeActionChips.length > 0 ? (
-                <div className={styles.actionStatusRow} data-testid="frame-context-action-status-row">
-                  {currentNodeActionChips.map((chip) => (
-                    <span
-                      key={chip.artifact}
-                      className={`${styles.actionStatusChip} ${
-                        chip.tone === 'running'
-                          ? styles.actionStatusChipRunning
-                          : chip.tone === 'success'
-                            ? styles.actionStatusChipSuccess
-                            : styles.actionStatusChipError
-                      }`}
-                      data-testid={`frame-context-action-${chip.artifact}`}
-                    >
-                      <span className={styles.actionStatusArtifact}>{chip.artifact}</span>
-                      <span>{chip.text}</span>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-
-              <div className={styles.nodeCardBody}>
-                <div className={styles.panelList}>
-                <NodePanel
-                  label="Frame"
-                  panelId="frame"
-                  nodeId={node.node_id}
-                  expanded={isPanelExpanded(node.node_id, 'frame', isCurrent)}
-                  onToggle={togglePanel}
-                  frameChrome
-                >
-                  <div className={styles.framePanelInner}>
-                    {!frameEntry || frameEntry.isLoading ? (
-                      <div className={styles.stateLoading}>Loading...</div>
-                    ) : frameEntry.error ? (
-                      <div className={styles.stateError}>{frameEntry.error}</div>
-                    ) : !frameEntry.content.trim() ? (
-                      <div className={styles.stateEmpty}>No frame content yet.</div>
-                    ) : (
-                      <FrameMarkdownViewer content={frameEntry.content} shellStyle />
-                    )}
+                {isCurrent && currentNodeActionChips.length > 0 ? (
+                  <div className={styles.actionStatusRow} data-testid="frame-context-action-status-row">
+                    {currentNodeActionChips.map((chip) => (
+                      <span
+                        key={chip.artifact}
+                        className={`${styles.actionStatusChip} ${
+                          chip.tone === 'running'
+                            ? styles.actionStatusChipRunning
+                            : chip.tone === 'success'
+                              ? styles.actionStatusChipSuccess
+                              : styles.actionStatusChipError
+                        }`}
+                        data-testid={`frame-context-action-${chip.artifact}`}
+                      >
+                        <span className={styles.actionStatusArtifact}>{chip.artifact}</span>
+                        <span>{chip.text}</span>
+                      </span>
+                    ))}
                   </div>
-                </NodePanel>
-
-                <NodePanel
-                  label="Clarify"
-                  panelId="clarify"
-                  nodeId={node.node_id}
-                  expanded={isPanelExpanded(node.node_id, 'clarify', isCurrent)}
-                  onToggle={togglePanel}
-                >
-                  {!clarifyEntry || clarifyEntry.isLoading ? (
-                    <div className={styles.stateLoading}>Loading...</div>
-                  ) : clarifyEntry.loadError ? (
-                    <div className={styles.stateError}>{clarifyEntry.loadError}</div>
-                  ) : (
-                    <ContextClarifyView questions={clarifyQuestions} />
-                  )}
-                </NodePanel>
-
-                {!isCurrent ? (
-                  <NodePanel
-                    label="Split"
-                    panelId="split"
-                    nodeId={node.node_id}
-                    expanded={isPanelExpanded(node.node_id, 'split', isCurrent)}
-                    onToggle={togglePanel}
-                  >
-                    <ContextSplitView
-                      node={node}
-                      nodeRegistry={nodeRegistry}
-                      currentNodeId={nodeId}
-                      stripInitPrefix={stripInitPrefix}
-                    />
-                  </NodePanel>
                 ) : null}
 
-                {isCurrent && variant === 'audit' && specConfirmed ? (
-                  <NodePanel
-                    label="Spec"
-                    panelId="spec"
-                    nodeId={node.node_id}
-                    expanded={isPanelExpanded(node.node_id, 'spec', isCurrent)}
-                    onToggle={togglePanel}
-                  >
-                    {!specEntry || specEntry.isLoading ? (
-                      <div className={styles.stateLoading}>Loading...</div>
-                    ) : specEntry.error ? (
-                      <div className={styles.stateError}>{specEntry.error}</div>
-                    ) : !specEntry.content.trim() ? (
-                      <div className={styles.stateEmpty}>No spec content yet.</div>
-                    ) : (
-                      <FrameMarkdownViewer content={specEntry.content} />
-                    )}
-                  </NodePanel>
-                ) : null}
+                <div className={styles.nodeCardBody}>
+                  <div className={styles.panelList}>
+                    <NodePanel
+                      label="Frame"
+                      panelId="frame"
+                      nodeId={node.node_id}
+                      expanded={isPanelExpanded(node.node_id, 'frame', isCurrent)}
+                      onToggle={togglePanel}
+                      documentChrome
+                    >
+                      <div className={styles.framePanelInner}>
+                        {!frameEntry || frameEntry.isLoading ? (
+                          <div className={styles.stateLoading}>Loading...</div>
+                        ) : frameEntry.error ? (
+                          <div className={styles.stateError}>{frameEntry.error}</div>
+                        ) : !frameEntry.content.trim() ? (
+                          <div className={styles.stateEmpty}>No frame content yet.</div>
+                        ) : (
+                          <SharedMarkdownRenderer
+                            content={frameEntry.content}
+                            projectRootPath={projectRootPath}
+                            variant="document"
+                          />
+                        )}
+                      </div>
+                    </NodePanel>
+
+                    <NodePanel
+                      label="Clarify"
+                      panelId="clarify"
+                      nodeId={node.node_id}
+                      expanded={isPanelExpanded(node.node_id, 'clarify', isCurrent)}
+                      onToggle={togglePanel}
+                      documentChrome
+                    >
+                      <div className={styles.framePanelInner}>
+                        {!clarifyEntry || clarifyEntry.isLoading ? (
+                          <div className={styles.stateLoading}>Loading...</div>
+                        ) : clarifyEntry.loadError ? (
+                          <div className={styles.stateError}>{clarifyEntry.loadError}</div>
+                        ) : (
+                          <ContextClarifyView questions={clarifyQuestions} />
+                        )}
+                      </div>
+                    </NodePanel>
+
+                    {!isCurrent ? (
+                      <NodePanel
+                        label="Split"
+                        panelId="split"
+                        nodeId={node.node_id}
+                        expanded={isPanelExpanded(node.node_id, 'split', isCurrent)}
+                        onToggle={togglePanel}
+                        documentChrome
+                      >
+                        <div className={styles.framePanelInner}>
+                          <ContextSplitView
+                            node={node}
+                            nodeRegistry={nodeRegistry}
+                            currentNodeId={nodeId}
+                            stripInitPrefix={stripInitPrefix}
+                          />
+                        </div>
+                      </NodePanel>
+                    ) : null}
+
+                    {isCurrent && variant === 'audit' && specConfirmed ? (
+                      <NodePanel
+                        label="Spec"
+                        panelId="spec"
+                        nodeId={node.node_id}
+                        expanded={isPanelExpanded(node.node_id, 'spec', isCurrent)}
+                        onToggle={togglePanel}
+                        documentChrome
+                      >
+                        <div className={styles.framePanelInner}>
+                          {!specEntry || specEntry.isLoading ? (
+                            <div className={styles.stateLoading}>Loading...</div>
+                          ) : specEntry.error ? (
+                            <div className={styles.stateError}>{specEntry.error}</div>
+                          ) : !specEntry.content.trim() ? (
+                            <div className={styles.stateEmpty}>No spec content yet.</div>
+                          ) : (
+                            <FrameMarkdownViewer
+                              content={specEntry.content}
+                              projectRootPath={projectRootPath}
+                            />
+                          )}
+                        </div>
+                      </NodePanel>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
               </div>
             </div>
           )

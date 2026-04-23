@@ -586,6 +586,54 @@ function isAppendSafeMessagePatch(patch: MessagePatchV3): boolean {
   )
 }
 
+function tryApplyFastMessageAppendPatch(
+  snapshot: ThreadSnapshotV3,
+  itemId: string,
+  patch: MessagePatchV3,
+  {
+    nextSnapshotVersion,
+    nextUpdatedAt,
+    diagnostics,
+  }: {
+    nextSnapshotVersion: number
+    nextUpdatedAt: string
+    diagnostics?: ThreadEventApplyDiagnosticsV3
+  },
+): ThreadSnapshotV3 | null {
+  if (!isAppendSafeMessagePatch(patch)) {
+    return null
+  }
+  const textAppend = typeof patch.textAppend === 'string' ? patch.textAppend : ''
+  if (!textAppend) {
+    return null
+  }
+
+  const targetIndex = snapshot.items.findIndex((item) => item.id === itemId)
+  if (targetIndex < 0) {
+    return null
+  }
+  const target = snapshot.items[targetIndex]
+  if (target?.kind !== 'message') {
+    return null
+  }
+
+  const nextItem: ConversationMessageItemV3 = {
+    ...target,
+    text: `${target.text}${textAppend}`,
+    status: patch.status ?? target.status,
+    updatedAt: patch.updatedAt,
+  }
+  const nextItems = [...snapshot.items]
+  nextItems[targetIndex] = nextItem
+  markFastAppendUsed(diagnostics)
+  return {
+    ...snapshot,
+    snapshotVersion: nextSnapshotVersion,
+    updatedAt: patch.updatedAt ?? nextUpdatedAt,
+    items: nextItems,
+  }
+}
+
 export function applyOptimisticUserInputSubmissionV3(
   snapshot: ThreadSnapshotV3,
   requestId: string,
@@ -714,6 +762,23 @@ export function applyThreadEventV3(
     }
 
     case 'conversation.item.patch.v3': {
+      const patch = event.payload.patch
+      if (patch.kind === 'message') {
+        const fastSnapshot = tryApplyFastMessageAppendPatch(
+          snapshot,
+          event.payload.itemId,
+          patch as MessagePatchV3,
+          {
+            nextSnapshotVersion,
+            nextUpdatedAt,
+            diagnostics,
+          },
+        )
+        if (fastSnapshot) {
+          return fastSnapshot
+        }
+      }
+
       const normalized = normalizeSnapshot(snapshot)
       const target = normalized.itemsById[event.payload.itemId]
       if (!target) {
@@ -723,7 +788,6 @@ export function applyThreadEventV3(
         )
       }
 
-      const patch = event.payload.patch
       let nextItem: ConversationItemV3
       if (patch.kind === 'message') {
         const messagePatch = patch as MessagePatchV3

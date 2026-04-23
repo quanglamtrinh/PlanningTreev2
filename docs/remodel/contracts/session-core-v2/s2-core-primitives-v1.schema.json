@@ -1,0 +1,533 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://planningtree.local/contracts/session-core-v2/s2-core-primitives-v1.schema.json",
+  "title": "S2 Core Primitives v1",
+  "description": "Canonical Session Core V2 runtime primitives aligned to Codex semantics.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "connectionState": {
+      "$ref": "#/$defs/ConnectionState"
+    },
+    "thread": {
+      "$ref": "#/$defs/SessionThread"
+    },
+    "turn": {
+      "$ref": "#/$defs/SessionTurn"
+    },
+    "item": {
+      "$ref": "#/$defs/SessionItem"
+    },
+    "pendingRequest": {
+      "$ref": "#/$defs/PendingServerRequest"
+    },
+    "tokenUsage": {
+      "$ref": "#/$defs/ThreadTokenUsage"
+    }
+  },
+  "$defs": {
+    "ConnectionState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase"
+      ],
+      "properties": {
+        "phase": {
+          "type": "string",
+          "enum": [
+            "disconnected",
+            "connecting",
+            "initialized",
+            "error"
+          ]
+        },
+        "clientName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "serverVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/SessionError"
+        }
+      }
+    },
+    "ThreadStatus": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "notLoaded"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "idle"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "systemError"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "activeFlags"
+          ],
+          "properties": {
+            "type": {
+              "const": "active"
+            },
+            "activeFlags": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "waitingOnApproval",
+                  "waitingOnUserInput"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "TurnRuntimeStatus": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "inProgress",
+        "waitingUserInput",
+        "completed",
+        "failed",
+        "interrupted"
+      ]
+    },
+    "TurnCodexStatus": {
+      "type": "string",
+      "enum": [
+        "inProgress",
+        "completed",
+        "failed",
+        "interrupted"
+      ]
+    },
+    "ItemKind": {
+      "type": "string",
+      "enum": [
+        "userMessage",
+        "agentMessage",
+        "reasoning",
+        "plan",
+        "commandExecution",
+        "fileChange",
+        "userInput",
+        "error"
+      ]
+    },
+    "ItemStatus": {
+      "type": "string",
+      "enum": [
+        "inProgress",
+        "completed",
+        "failed"
+      ]
+    },
+    "ServerRequestMethod": {
+      "type": "string",
+      "enum": [
+        "item/tool/requestUserInput",
+        "item/commandExecution/requestApproval",
+        "item/fileChange/requestApproval",
+        "item/permissions/requestApproval",
+        "mcpServer/elicitation/request"
+      ]
+    },
+    "PendingRequestStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "submitted",
+        "resolved",
+        "rejected",
+        "expired"
+      ]
+    },
+    "SessionErrorCode": {
+      "type": "string",
+      "enum": [
+        "ERR_SESSION_NOT_INITIALIZED",
+        "ERR_CURSOR_INVALID",
+        "ERR_CURSOR_EXPIRED",
+        "ERR_TURN_TERMINAL",
+        "ERR_TURN_NOT_STEERABLE",
+        "ERR_ACTIVE_TURN_MISMATCH",
+        "ERR_REQUEST_STALE",
+        "ERR_IDEMPOTENCY_PAYLOAD_MISMATCH",
+        "ERR_PROVIDER_UNAVAILABLE",
+        "ERR_SANDBOX_FAILURE",
+        "ERR_INTERNAL"
+      ]
+    },
+    "SessionError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/SessionErrorCode"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "details": {
+          "type": "object"
+        }
+      }
+    },
+    "SessionThread": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "createdAt",
+        "updatedAt",
+        "cwd",
+        "ephemeral",
+        "archived",
+        "modelProvider",
+        "status",
+        "turns"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modelProvider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ephemeral": {
+          "type": "boolean"
+        },
+        "archived": {
+          "type": "boolean"
+        },
+        "status": {
+          "$ref": "#/$defs/ThreadStatus"
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Unix timestamp in seconds, aligned with Codex Thread."
+        },
+        "updatedAt": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Unix timestamp in seconds, aligned with Codex Thread."
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionTurn"
+          }
+        }
+      }
+    },
+    "SessionTurn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "threadId",
+        "status",
+        "startedAtMs",
+        "completedAtMs",
+        "items",
+        "error"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/TurnRuntimeStatus"
+        },
+        "lastCodexStatus": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TurnCodexStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completedAtMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionItem"
+          }
+        },
+        "error": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/SessionError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "SessionItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "threadId",
+        "turnId",
+        "kind",
+        "status",
+        "createdAtMs",
+        "updatedAtMs",
+        "payload"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "turnId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/ItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ItemStatus"
+        },
+        "createdAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object"
+        }
+      }
+    },
+    "PendingServerRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "method",
+        "threadId",
+        "turnId",
+        "itemId",
+        "status",
+        "createdAtMs",
+        "submittedAtMs",
+        "resolvedAtMs",
+        "payload"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method": {
+          "$ref": "#/$defs/ServerRequestMethod"
+        },
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "turnId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "itemId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/PendingRequestStatus"
+        },
+        "createdAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "submittedAtMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "resolvedAtMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "payload": {
+          "type": "object"
+        }
+      }
+    },
+    "TokenUsageBreakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inputTokens",
+        "cachedInputTokens",
+        "outputTokens",
+        "reasoningOutputTokens",
+        "totalTokens"
+      ],
+      "properties": {
+        "inputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cachedInputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoningOutputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalTokens": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "ThreadTokenUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "last",
+        "total"
+      ],
+      "properties": {
+        "last": {
+          "$ref": "#/$defs/TokenUsageBreakdown"
+        },
+        "total": {
+          "$ref": "#/$defs/TokenUsageBreakdown"
+        },
+        "modelContextWindow": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

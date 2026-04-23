@@ -158,6 +158,67 @@ def get_sse_subscriber_queue_max() -> int:
     return max(1, min(4096, value))
 
 
+def is_session_core_v2_turns_enabled() -> bool:
+    return _bool_env("SESSION_CORE_V2_ENABLE_TURNS", default=True)
+
+
+def is_session_core_v2_events_enabled() -> bool:
+    return _bool_env("SESSION_CORE_V2_ENABLE_EVENTS", default=True)
+
+
+def is_session_core_v2_requests_enabled() -> bool:
+    return _bool_env("SESSION_CORE_V2_ENABLE_REQUESTS", default=True)
+
+
+def get_session_core_v2_event_queue_capacity() -> int:
+    raw = os.environ.get("SESSION_CORE_V2_EVENT_QUEUE_CAPACITY", "128")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 128
+    return max(1, min(4096, value))
+
+
+def get_session_core_v2_server_request_queue_capacity() -> int:
+    raw = os.environ.get("SESSION_CORE_V2_SERVER_REQUEST_QUEUE_CAPACITY", "128")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 128
+    return max(1, min(4096, value))
+
+
+def is_session_core_v2_protocol_gate_enabled() -> bool:
+    return _bool_env("SESSION_CORE_V2_PROTOCOL_GATE_ENABLED", default=True)
+
+
+def get_session_core_v2_protocol_gate_timeout_sec() -> int:
+    raw = os.environ.get("SESSION_CORE_V2_PROTOCOL_GATE_TIMEOUT_SEC", "12")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 12
+    return max(3, min(60, value))
+
+
+def get_session_core_v2_retention_max_events() -> int:
+    raw = os.environ.get("SESSION_CORE_V2_RETENTION_MAX_EVENTS", "200000")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 200000
+    return max(1, value)
+
+
+def get_session_core_v2_retention_days() -> int:
+    raw = os.environ.get("SESSION_CORE_V2_RETENTION_DAYS", "7")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 7
+    return max(1, value)
+
+
 def get_phase5_log_compact_min_events() -> int:
     raw = os.environ.get("PLANNINGTREE_P05_LOG_COMPACT_MIN_EVENTS", "200")
     try:
@@ -167,13 +228,29 @@ def get_phase5_log_compact_min_events() -> int:
     return max(1, value)
 
 
+def get_thread_stream_cadence_profile() -> str:
+    raw = str(os.environ.get("PLANNINGTREE_THREAD_STREAM_CADENCE_PROFILE", "") or "").strip().lower()
+    if raw in {"low", "standard", "high"}:
+        return raw
+    return "high"
+
+
 def get_thread_raw_event_coalesce_ms() -> int:
-    raw = os.environ.get("PLANNINGTREE_THREAD_RAW_EVENT_COALESCE_MS", "50")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        value = 50
-    return max(10, min(80, value))
+    raw = str(os.environ.get("PLANNINGTREE_THREAD_RAW_EVENT_COALESCE_MS", "") or "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 50
+        return max(10, min(80, value))
+
+    profile = get_thread_stream_cadence_profile()
+    profile_defaults = {
+        "low": 60,
+        "standard": 25,
+        "high": 20,
+    }
+    return profile_defaults.get(profile, 25)
 
 
 def is_conversation_v3_bridge_allowed_for_project(project_id: str) -> bool:

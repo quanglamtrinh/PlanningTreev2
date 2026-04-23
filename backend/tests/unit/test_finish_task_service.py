@@ -7,10 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from backend.conversation.services.request_ledger_service import RequestLedgerService
-from backend.conversation.services.thread_query_service import ThreadQueryService
+from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
+from backend.conversation.services.thread_actor_runtime_v3 import ThreadActorRuntimeV3
+from backend.conversation.services.thread_checkpoint_policy_v3 import ThreadCheckpointPolicyV3
+from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
 from backend.conversation.services.thread_registry_service import ThreadRegistryService
-from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
+from backend.conversation.services.thread_replay_buffer_service_v3 import ThreadReplayBufferServiceV3
+from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.ai.execution_prompt_builder import build_execution_base_instructions
 from backend.ai.codex_client import CodexTransportError
@@ -77,72 +80,15 @@ class FakeExecutionCodexClient:
         on_tool_call = kwargs.get("on_tool_call")
         on_thread_status = kwargs.get("on_thread_status")
         on_item_event = kwargs.get("on_item_event")
-
-        if self.barrier is not None:
-            self.barrier.wait(timeout=5)
-
-        if on_thread_status:
-            on_thread_status({"status": {"type": "running"}})
-        if on_plan_delta:
-            on_plan_delta("Inspect existing files", {"id": "plan-1"})
-        if on_tool_call:
-            on_tool_call("write_file", {"path": self.create_file_name})
-        if on_item_event:
-            on_item_event(
-                "started",
-                {
-                    "type": "commandExecution",
-                    "id": "cmd-1",
-                    "command": f"Write {self.create_file_name}",
-                    "cwd": cwd if isinstance(cwd, str) else None,
-                    "source": "agent",
-                    "status": "inProgress",
-                },
-            )
-        if on_delta:
-            on_delta("Working ")
-            time.sleep(0.02)
-            on_delta("done")
-
-        if self.fail:
-            raise CodexTransportError("Execution failed", "rpc_error")
-
-        if isinstance(cwd, str) and cwd:
-            Path(cwd, self.create_file_name).write_text("updated by execution\n", encoding="utf-8")
-        if on_item_event:
-            on_item_event(
-                "completed",
-                {
-                    "type": "commandExecution",
-                    "id": "cmd-1",
-                    "command": f"Write {self.create_file_name}",
-                    "cwd": cwd if isinstance(cwd, str) else None,
-                    "source": "agent",
-                    "status": "completed",
-                    "aggregatedOutput": f"updated {self.create_file_name}",
-                    "exitCode": 0,
-                },
-            )
-
-        return {"stdout": self.response_text, "thread_id": thread_id}
-
-
-class FakeExecutionV2CodexClient(FakeExecutionCodexClient):
-    def run_turn_streaming(self, prompt: str, **kwargs: object) -> dict[str, str]:
-        thread_id = str(kwargs.get("thread_id") or "")
-        if prompt == _ROLLOUT_BOOTSTRAP_PROMPT:
-            return {"stdout": "READY", "thread_id": thread_id}
-        self.prompts.append(prompt)
         on_raw_event = kwargs.get("on_raw_event")
-        cwd = kwargs.get("cwd")
         output_schema = kwargs.get("output_schema")
 
-        if self.fail:
-            raise CodexTransportError("Execution failed", "rpc_error")
+        if callable(on_raw_event):
+            if self.fail:
+                raise CodexTransportError("Execution failed", "rpc_error")
 
-        if output_schema is not None:
-            rendered_message = "## Automated Local Review\n\nLooks solid overall."
-            if callable(on_raw_event):
+            if output_schema is not None:
+                rendered_message = "## Automated Local Review\n\nLooks solid overall."
                 on_raw_event(
                     {
                         "method": "item/started",
@@ -179,19 +125,18 @@ class FakeExecutionV2CodexClient(FakeExecutionCodexClient):
                         "params": {"turn": {"status": "completed"}},
                     }
                 )
-            return {
-                "stdout": (
-                    '{"summary":"Looks solid overall.","checkpoint_summary":"Looks solid overall.",'
-                    '"overall_severity":"info","overall_score":92,'
-                    '"findings":[{"title":"No blocking issues","severity":"info",'
-                    '"description":"Implementation matches the spec.","file_path":"","evidence":"",'
-                    '"suggested_followup":""}]}'
-                ),
-                "thread_id": thread_id,
-                "turn_status": "completed",
-            }
+                return {
+                    "stdout": (
+                        '{"summary":"Looks solid overall.","checkpoint_summary":"Looks solid overall.",'
+                        '"overall_severity":"info","overall_score":92,'
+                        '"findings":[{"title":"No blocking issues","severity":"info",'
+                        '"description":"Implementation matches the spec.","file_path":"","evidence":"",'
+                        '"suggested_followup":""}]}'
+                    ),
+                    "thread_id": thread_id,
+                    "turn_status": "completed",
+                }
 
-        if callable(on_raw_event):
             on_raw_event(
                 {
                     "method": "item/started",
@@ -266,9 +211,8 @@ class FakeExecutionV2CodexClient(FakeExecutionCodexClient):
                     },
                 }
             )
-        if isinstance(cwd, str) and cwd:
-            Path(cwd, self.create_file_name).write_text("updated by execution\n", encoding="utf-8")
-        if callable(on_raw_event):
+            if isinstance(cwd, str) and cwd:
+                Path(cwd, self.create_file_name).write_text("updated by execution\n", encoding="utf-8")
             on_raw_event(
                 {
                     "method": "item/completed",
@@ -299,7 +243,55 @@ class FakeExecutionV2CodexClient(FakeExecutionCodexClient):
                     "params": {"turn": {"status": "completed"}},
                 }
             )
-        return {"stdout": self.response_text, "thread_id": thread_id, "turn_status": "completed"}
+            return {"stdout": self.response_text, "thread_id": thread_id, "turn_status": "completed"}
+
+        if self.barrier is not None:
+            self.barrier.wait(timeout=5)
+
+        if on_thread_status:
+            on_thread_status({"status": {"type": "running"}})
+        if on_plan_delta:
+            on_plan_delta("Inspect existing files", {"id": "plan-1"})
+        if on_tool_call:
+            on_tool_call("write_file", {"path": self.create_file_name})
+        if on_item_event:
+            on_item_event(
+                "started",
+                {
+                    "type": "commandExecution",
+                    "id": "cmd-1",
+                    "command": f"Write {self.create_file_name}",
+                    "cwd": cwd if isinstance(cwd, str) else None,
+                    "source": "agent",
+                    "status": "inProgress",
+                },
+            )
+        if on_delta:
+            on_delta("Working ")
+            time.sleep(0.02)
+            on_delta("done")
+
+        if self.fail:
+            raise CodexTransportError("Execution failed", "rpc_error")
+
+        if isinstance(cwd, str) and cwd:
+            Path(cwd, self.create_file_name).write_text("updated by execution\n", encoding="utf-8")
+        if on_item_event:
+            on_item_event(
+                "completed",
+                {
+                    "type": "commandExecution",
+                    "id": "cmd-1",
+                    "command": f"Write {self.create_file_name}",
+                    "cwd": cwd if isinstance(cwd, str) else None,
+                    "source": "agent",
+                    "status": "completed",
+                    "aggregatedOutput": f"updated {self.create_file_name}",
+                    "exitCode": 0,
+                },
+            )
+
+        return {"stdout": self.response_text, "thread_id": thread_id}
 
 
 def _wait_for_condition(predicate, timeout: float = 2.0):
@@ -315,7 +307,7 @@ def _wait_for_condition(predicate, timeout: float = 2.0):
 def test_thread_runtime_service_prefers_patch_body_for_tool_call_arguments_text() -> None:
     patch_body = "*** Begin Patch\n*** Update File: src/app.ts\n@@\n+const ok = true\n*** End Patch"
     arguments = {"input": patch_body, "path": "src/app.ts"}
-    assert ThreadRuntimeService._tool_call_arguments_text(arguments) == patch_body
+    assert ThreadRuntimeServiceV3._tool_call_arguments_text(arguments) == patch_body
 
 
 def test_thread_runtime_service_matches_provisional_call_from_item_id_when_call_id_missing() -> None:
@@ -338,7 +330,7 @@ def test_thread_runtime_service_matches_provisional_call_from_item_id_when_call_
         }
     }
 
-    ThreadRuntimeService._enrich_started_item_from_provisional_call(raw_event, provisional_tool_calls)
+    ThreadRuntimeServiceV3._enrich_started_item_from_provisional_call(raw_event, provisional_tool_calls)
 
     item = raw_event["params"]["item"]
     assert item["callId"] == "call_patch_123"
@@ -347,29 +339,46 @@ def test_thread_runtime_service_matches_provisional_call_from_item_id_when_call_
     assert provisional_tool_calls["call_patch_123"]["matched"] is True
 
 
-def _build_v2_runtime(
+def _build_runtime_services(
     *,
     storage,
     tree_service,
-    chat_service,
     codex_client,
-) -> tuple[ThreadRuntimeService, WorkflowEventPublisher]:
-    request_ledger_service = RequestLedgerService()
+    chat_event_broker,
+):
+    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
+    chat_service = ChatService(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        thread_lineage_service=thread_lineage_service,
+        chat_event_broker=chat_event_broker,
+        chat_timeout=5,
+        max_message_chars=10000,
+    )
+    request_ledger_service = RequestLedgerServiceV3()
     thread_registry_service = ThreadRegistryService(storage.thread_registry_store)
-    chat_service._thread_lineage_service.set_thread_registry_service(thread_registry_service)
+    thread_lineage_service.set_thread_registry_service(thread_registry_service)
     conversation_event_broker = ChatEventBroker()
     workflow_event_broker = GlobalEventBroker()
-    query_service = ThreadQueryService(
+    query_service = ThreadQueryServiceV3(
         storage=storage,
         chat_service=chat_service,
-        thread_lineage_service=chat_service._thread_lineage_service,
+        thread_lineage_service=thread_lineage_service,
         codex_client=codex_client,
-        snapshot_store=storage.thread_snapshot_store_v2,
-        registry_service=thread_registry_service,
+        snapshot_store_v3=storage.thread_snapshot_store_v3,
+        snapshot_store_v2=storage.thread_snapshot_store_v2,
+        registry_service_v2=thread_registry_service,
         request_ledger_service=request_ledger_service,
         thread_event_broker=conversation_event_broker,
+        replay_buffer_service=ThreadReplayBufferServiceV3(max_events=500, ttl_seconds=15 * 60),
+        mini_journal_store_v3=storage.thread_mini_journal_store_v3,
+        event_log_store_v3=storage.thread_event_log_store_v3,
+        checkpoint_policy_v3=ThreadCheckpointPolicyV3(timer_checkpoint_ms=5000),
+        actor_runtime_v3=ThreadActorRuntimeV3(),
+        thread_actor_mode="off",
     )
-    runtime = ThreadRuntimeService(
+    runtime = ThreadRuntimeServiceV3(
         storage=storage,
         tree_service=tree_service,
         chat_service=chat_service,
@@ -378,9 +387,10 @@ def _build_v2_runtime(
         request_ledger_service=request_ledger_service,
         chat_timeout=5,
         max_message_chars=10000,
+        thread_actor_mode="off",
     )
     workflow_publisher = WorkflowEventPublisher(workflow_event_broker)
-    return runtime, workflow_publisher
+    return thread_lineage_service, chat_service, runtime, query_service, workflow_publisher
 
 
 @pytest.fixture
@@ -412,14 +422,30 @@ def codex_client():
 
 @pytest.fixture
 def finish_service(storage, tree_service, detail_service, codex_client, chat_event_broker):
+    (
+        thread_lineage_service,
+        chat_service,
+        thread_runtime_service,
+        thread_query_service,
+        workflow_event_publisher,
+    ) = _build_runtime_services(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        chat_event_broker=chat_event_broker,
+    )
     return FinishTaskService(
         storage=storage,
         tree_service=tree_service,
         node_detail_service=detail_service,
         codex_client=codex_client,
-        thread_lineage_service=ThreadLineageService(storage, codex_client, tree_service),
+        thread_lineage_service=thread_lineage_service,
         chat_event_broker=chat_event_broker,
         chat_timeout=5,
+        chat_service=chat_service,
+        thread_runtime_service=thread_runtime_service,
+        thread_query_service=thread_query_service,
+        workflow_event_publisher=workflow_event_publisher,
     )
 
 
@@ -529,14 +555,30 @@ def test_finish_task_creates_execution_state_session_and_thread(
     _confirm_spec(storage, project_id, root_node_id)
     barrier = threading.Event()
     codex_client = FakeExecutionCodexClient(barrier=barrier)
+    (
+        thread_lineage_service,
+        chat_service,
+        thread_runtime_service,
+        thread_query_service,
+        workflow_event_publisher,
+    ) = _build_runtime_services(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        chat_event_broker=chat_event_broker,
+    )
     finish_service = FinishTaskService(
         storage,
         tree_service,
         detail_service,
         codex_client,
-        ThreadLineageService(storage, codex_client, tree_service),
+        thread_lineage_service,
         chat_event_broker,
         chat_timeout=5,
+        chat_service=chat_service,
+        thread_runtime_service=thread_runtime_service,
+        thread_query_service=thread_query_service,
+        workflow_event_publisher=workflow_event_publisher,
     )
 
     result = finish_service.finish_task(project_id, root_node_id)
@@ -550,18 +592,12 @@ def test_finish_task_creates_execution_state_session_and_thread(
     assert result["execution_status"] == "executing"
     assert result["shaping_frozen"] is True
 
-    session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")
-    assert session["thread_id"] == "exec-fork-thread-1"
-    assert session["fork_reason"] == "execution_bootstrap"
-    assert session["forked_from_role"] == "audit"
-    assert session["forked_from_thread_id"] is not None
-    assert session["lineage_root_thread_id"] is not None
-    assert session["active_turn_id"] is not None
-    assert len(session["messages"]) == 1
-    assert session["messages"][0]["role"] == "assistant"
-    assert session["messages"][0]["status"] == "pending"
-    assert storage.chat_state_store.path(project_id, root_node_id, thread_role="execution").exists()
-    assert len(codex_client.started_threads) == 1
+    execution_registry = storage.thread_registry_store.read_entry(project_id, root_node_id, "execution")
+    assert execution_registry["threadId"] == "exec-fork-thread-1"
+    execution_snapshot = storage.thread_snapshot_store_v3.read_snapshot(project_id, root_node_id, "execution")
+    assert execution_snapshot["threadId"] == "exec-fork-thread-1"
+    assert execution_snapshot["activeTurnId"] is not None
+    assert execution_snapshot["processingState"] == "running"
     assert len(codex_client.forked_threads) == 1
     assert codex_client.forked_threads[0]["base_instructions"] == build_execution_base_instructions()
     assert codex_client.forked_threads[0]["dynamic_tools"] == []
@@ -602,51 +638,22 @@ def test_finish_task_background_completion_publishes_sse_and_head_sha(
         )
         and state["status"] == "completed"
         and state["head_sha"] is not None
-        and storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")[
-            "active_turn_id"
-        ] is None
+        and (
+            snapshot := storage.thread_snapshot_store_v3.read_snapshot(project_id, root_node_id, "execution")
+        )
+        and snapshot.get("activeTurnId") is None
+        and snapshot.get("processingState") == "idle"
     )
 
-    session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")
-    assert session["active_turn_id"] is None
-    assert session["messages"][0]["status"] == "completed"
-    assert session["messages"][0]["content"] == "Implemented the task."
-    part_types = [part["type"] for part in session["messages"][0].get("parts", [])]
-    assert "plan_item" in part_types
-    assert "tool_call" in part_types
-    assert "status_block" in part_types
-    items = session["messages"][0].get("items", [])
-    assert any(item.get("item_type") == "plan_item" for item in items)
-    assert any(item.get("item_type") == "tool_call" for item in items)
-    assert any(item.get("item_type") == "commandExecution" for item in items)
-    command_tool = next(
-        part
-        for part in session["messages"][0]["parts"]
-        if part["type"] == "tool_call" and part.get("call_id") == "cmd-1"
-    )
-    assert command_tool["status"] == "completed"
-    assert command_tool["output"] == "updated execution-output.txt"
-    assert command_tool["exit_code"] == 0
+    snapshot = storage.thread_snapshot_store_v3.read_snapshot(project_id, root_node_id, "execution")
+    assistant_messages = [
+        item
+        for item in snapshot.get("items", [])
+        if isinstance(item, dict) and item.get("kind") == "message" and item.get("role") == "assistant"
+    ]
+    assert assistant_messages
+    assert "Implemented the task." in str(assistant_messages[-1].get("text") or "")
     assert Path(storage.workspace_store.get_folder_path(project_id), "execution-output.txt").exists()
-
-    assert any(
-        item["thread_role"] == "execution"
-        and isinstance(item["event"], dict)
-        and item["event"].get("type") == "execution_completed"
-        for item in published
-    )
-    assert any(
-        item["thread_role"] == "execution"
-        and isinstance(item["event"], dict)
-        and item["event"].get("type") == "assistant_plan_delta"
-        for item in published
-    )
-    assert any(
-        item["thread_role"] == "execution"
-        and isinstance(item["event"], dict)
-        and item["event"].get("type") == "assistant_tool_result"
-        for item in published
-    )
 
 
 def test_execution_session_stays_live_while_background_turn_is_running(
@@ -660,43 +667,49 @@ def test_execution_session_stays_live_while_background_turn_is_running(
     _confirm_spec(storage, project_id, root_node_id)
     barrier = threading.Event()
     codex_client = FakeExecutionCodexClient(barrier=barrier)
-    chat_service = ChatService(
+    (
+        thread_lineage_service,
+        chat_service,
+        thread_runtime_service,
+        thread_query_service,
+        workflow_event_publisher,
+    ) = _build_runtime_services(
         storage=storage,
         tree_service=tree_service,
         codex_client=codex_client,
-        thread_lineage_service=ThreadLineageService(storage, codex_client, tree_service),
         chat_event_broker=chat_event_broker,
-        chat_timeout=5,
-        max_message_chars=10000,
     )
     finish_service = FinishTaskService(
         storage,
         tree_service,
         detail_service,
         codex_client,
-        ThreadLineageService(storage, codex_client, tree_service),
+        thread_lineage_service,
         chat_event_broker,
         chat_timeout=5,
         chat_service=chat_service,
+        thread_runtime_service=thread_runtime_service,
+        thread_query_service=thread_query_service,
+        workflow_event_publisher=workflow_event_publisher,
     )
 
     finish_service.finish_task(project_id, root_node_id)
 
-    recovered = chat_service.get_session(project_id, root_node_id, thread_role="execution")
-    assert recovered["active_turn_id"] is not None
-    assert recovered["messages"][0]["status"] == "pending"
-    assert recovered["messages"][0]["error"] is None
+    recovered_snapshot = storage.thread_snapshot_store_v3.read_snapshot(project_id, root_node_id, "execution")
+    assert recovered_snapshot["activeTurnId"] is not None
+    assert recovered_snapshot["processingState"] == "running"
 
     barrier.set()
     _wait_for_condition(
         lambda: (
-            session := storage.chat_state_store.read_session(
+            snapshot := storage.thread_snapshot_store_v3.read_snapshot(
                 project_id,
                 root_node_id,
-                thread_role="execution",
+                "execution",
             )
         )
-        and session["active_turn_id"] is None
+        and snapshot["activeTurnId"] is None
+        and snapshot.get("processingState") == "idle"
     )
 
 
@@ -710,14 +723,30 @@ def test_finish_task_background_failure_marks_error_and_completes_without_head_s
 ):
     _confirm_spec(storage, project_id, root_node_id)
     codex_client = FakeExecutionCodexClient(fail=True)
+    (
+        thread_lineage_service,
+        chat_service,
+        thread_runtime_service,
+        thread_query_service,
+        workflow_event_publisher,
+    ) = _build_runtime_services(
+        storage=storage,
+        tree_service=tree_service,
+        codex_client=codex_client,
+        chat_event_broker=chat_event_broker,
+    )
     finish_service = FinishTaskService(
         storage,
         tree_service,
         detail_service,
         codex_client,
-        ThreadLineageService(storage, codex_client, tree_service),
+        thread_lineage_service,
         chat_event_broker,
         chat_timeout=5,
+        chat_service=chat_service,
+        thread_runtime_service=thread_runtime_service,
+        thread_query_service=thread_query_service,
+        workflow_event_publisher=workflow_event_publisher,
     )
 
     finish_service.finish_task(project_id, root_node_id)
@@ -734,9 +763,15 @@ def test_finish_task_background_failure_marks_error_and_completes_without_head_s
     assert exec_state["head_sha"] is None
     assert exec_state["error_message"] is not None
 
-    session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")
-    assert session["messages"][0]["status"] == "error"
-    assert session["messages"][0]["error"] is not None
+    snapshot = storage.thread_snapshot_store_v3.read_snapshot(project_id, root_node_id, "execution")
+    assert snapshot["activeTurnId"] is None
+    assert snapshot["processingState"] == "idle"
+    error_items = [
+        item
+        for item in snapshot.get("items", [])
+        if isinstance(item, dict) and item.get("kind") == "error"
+    ]
+    assert error_items
 
 
 def test_complete_execution_updates_state(finish_service, storage, project_id, root_node_id):
@@ -799,414 +834,3 @@ def test_workspace_sha_is_deterministic_and_ignores_planningtree(
     third = compute_workspace_sha(workspace_root)
     assert third != first
     assert third.startswith("sha256:")
-
-
-def test_finish_task_v2_rehearsal_uses_v2_snapshot_without_legacy_conversation_events(
-    storage,
-    tree_service,
-    detail_service,
-    chat_event_broker,
-    project_id,
-    root_node_id,
-) -> None:
-    _confirm_spec(storage, project_id, root_node_id)
-    codex_client = FakeExecutionV2CodexClient()
-    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
-    chat_service = ChatService(
-        storage=storage,
-        tree_service=tree_service,
-        codex_client=codex_client,
-        thread_lineage_service=thread_lineage_service,
-        chat_event_broker=chat_event_broker,
-        chat_timeout=5,
-        max_message_chars=10000,
-    )
-    thread_runtime_service_v2, workflow_event_publisher_v2 = _build_v2_runtime(
-        storage=storage,
-        tree_service=tree_service,
-        chat_service=chat_service,
-        codex_client=codex_client,
-    )
-    published: list[dict[str, object]] = []
-    original_publish = chat_event_broker.publish
-
-    def capture_publish(project_id_arg, node_id_arg, event, thread_role=""):
-        published.append(
-            {
-                "project_id": project_id_arg,
-                "node_id": node_id_arg,
-                "thread_role": thread_role,
-                "event": dict(event),
-            }
-        )
-        return original_publish(project_id_arg, node_id_arg, event, thread_role=thread_role)
-
-    chat_event_broker.publish = capture_publish  # type: ignore[method-assign]
-    finish_service = FinishTaskService(
-        storage=storage,
-        tree_service=tree_service,
-        node_detail_service=detail_service,
-        codex_client=codex_client,
-        thread_lineage_service=thread_lineage_service,
-        chat_event_broker=chat_event_broker,
-        chat_timeout=5,
-        chat_service=chat_service,
-        thread_runtime_service_v2=thread_runtime_service_v2,
-        workflow_event_publisher_v2=workflow_event_publisher_v2,
-        execution_audit_v2_rehearsal_enabled=True,
-        rehearsal_workspace_root=Path(storage.workspace_store.get_folder_path(project_id)).parent,
-    )
-
-    result = finish_service.finish_task(project_id, root_node_id)
-    assert result["execution_started"] is True
-
-    execution_snapshot = _wait_for_condition(
-        lambda: (
-            snapshot := storage.thread_snapshot_store_v2.read_snapshot(project_id, root_node_id, "execution")
-        )
-        and snapshot.get("processingState") == "idle"
-        and snapshot.get("activeTurnId") is None
-        and any(item.get("kind") == "tool" for item in snapshot.get("items", []))
-        and (
-            exec_state := storage.execution_state_store.read_state(project_id, root_node_id)
-        )
-        and exec_state.get("status") == "completed"
-        and snapshot,
-    )
-    exec_state = storage.execution_state_store.read_state(project_id, root_node_id)
-    assert exec_state is not None
-    assert exec_state["status"] == "completed"
-
-    session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")
-    assert session["active_turn_id"] is None
-    assert session["messages"] == []
-
-    assistant_messages = [
-        item for item in execution_snapshot["items"]
-        if item.get("kind") == "message" and item.get("role") == "assistant"
-    ]
-    assert len(assistant_messages) == 1
-    assert assistant_messages[0]["text"] == "Implemented the task."
-
-    tool_items = [item for item in execution_snapshot["items"] if item.get("kind") == "tool"]
-    assert len(tool_items) == 1
-    tool_item = tool_items[0]
-    assert tool_item["id"] == "file-1"
-    assert tool_item["argumentsText"] == '{"path": "execution-output.txt"}'
-    assert tool_item["outputFiles"] == [{"path": "final.txt", "changeType": "updated", "summary": "final"}]
-    assert all(item.get("id") != "tool-call:call-1" for item in execution_snapshot["items"])
-    assert Path(storage.workspace_store.get_folder_path(project_id), "execution-output.txt").exists()
-
-    legacy_types = {
-        "message_created",
-        "assistant_delta",
-        "assistant_tool_call",
-        "assistant_completed",
-        "execution_completed",
-    }
-    assert not any(
-        item["thread_role"] == "execution"
-        and isinstance(item["event"], dict)
-        and item["event"].get("type") in legacy_types
-        for item in published
-    )
-
-
-def test_finish_task_v2_raw_event_callbacks_do_not_reenter_thread_binding(
-    storage,
-    tree_service,
-    detail_service,
-    chat_event_broker,
-    project_id,
-    root_node_id,
-) -> None:
-    _confirm_spec(storage, project_id, root_node_id)
-    codex_client = FakeExecutionV2CodexClient()
-    original_run_turn_streaming = codex_client.run_turn_streaming
-    callback_depth = 0
-
-    def wrapped_run_turn_streaming(prompt: str, **kwargs: object) -> dict[str, str]:
-        on_raw_event = kwargs.get("on_raw_event")
-        if callable(on_raw_event):
-            def wrapped_on_raw_event(raw_event: dict[str, object]) -> None:
-                nonlocal callback_depth
-                callback_depth += 1
-                try:
-                    on_raw_event(raw_event)
-                finally:
-                    callback_depth -= 1
-
-            kwargs = dict(kwargs)
-            kwargs["on_raw_event"] = wrapped_on_raw_event
-        return original_run_turn_streaming(prompt, **kwargs)
-
-    codex_client.run_turn_streaming = wrapped_run_turn_streaming  # type: ignore[method-assign]
-    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
-    chat_service = ChatService(
-        storage=storage,
-        tree_service=tree_service,
-        codex_client=codex_client,
-        thread_lineage_service=thread_lineage_service,
-        chat_event_broker=chat_event_broker,
-        chat_timeout=5,
-        max_message_chars=10000,
-    )
-    thread_runtime_service_v2, workflow_event_publisher_v2 = _build_v2_runtime(
-        storage=storage,
-        tree_service=tree_service,
-        chat_service=chat_service,
-        codex_client=codex_client,
-    )
-    original_get_thread_snapshot = thread_runtime_service_v2._query_service.get_thread_snapshot
-    callback_snapshot_calls: list[dict[str, object]] = []
-
-    def wrapped_get_thread_snapshot(
-        project_id_arg: str,
-        node_id_arg: str,
-        thread_role_arg: str,
-        **kwargs: object,
-    ):
-        if callback_depth:
-            callback_snapshot_calls.append(
-                {
-                    "project_id": project_id_arg,
-                    "node_id": node_id_arg,
-                    "thread_role": thread_role_arg,
-                    **kwargs,
-                }
-            )
-            assert kwargs.get("ensure_binding") is False
-            assert kwargs.get("allow_thread_read_hydration") is False
-        return original_get_thread_snapshot(project_id_arg, node_id_arg, thread_role_arg, **kwargs)
-
-    thread_runtime_service_v2._query_service.get_thread_snapshot = wrapped_get_thread_snapshot  # type: ignore[method-assign]
-    finish_service = FinishTaskService(
-        storage=storage,
-        tree_service=tree_service,
-        node_detail_service=detail_service,
-        codex_client=codex_client,
-        thread_lineage_service=thread_lineage_service,
-        chat_event_broker=chat_event_broker,
-        chat_timeout=5,
-        chat_service=chat_service,
-        thread_runtime_service_v2=thread_runtime_service_v2,
-        workflow_event_publisher_v2=workflow_event_publisher_v2,
-        execution_audit_v2_rehearsal_enabled=True,
-        rehearsal_workspace_root=Path(storage.workspace_store.get_folder_path(project_id)).parent,
-    )
-
-    result = finish_service.finish_task(project_id, root_node_id)
-    assert result["execution_started"] is True
-    assert callback_snapshot_calls
-    assert all(call["thread_role"] == "execution" for call in callback_snapshot_calls)
-
-
-def test_finish_task_v2_rehearsal_rejects_workspace_outside_sandbox_root(
-    storage,
-    tree_service,
-    detail_service,
-    chat_event_broker,
-    project_id,
-    root_node_id,
-) -> None:
-    _confirm_spec(storage, project_id, root_node_id)
-    codex_client = FakeExecutionV2CodexClient()
-    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
-    chat_service = ChatService(
-        storage=storage,
-        tree_service=tree_service,
-        codex_client=codex_client,
-        thread_lineage_service=thread_lineage_service,
-        chat_event_broker=chat_event_broker,
-        chat_timeout=5,
-        max_message_chars=10000,
-    )
-    thread_runtime_service_v2, workflow_event_publisher_v2 = _build_v2_runtime(
-        storage=storage,
-        tree_service=tree_service,
-        chat_service=chat_service,
-        codex_client=codex_client,
-    )
-    finish_service = FinishTaskService(
-        storage=storage,
-        tree_service=tree_service,
-        node_detail_service=detail_service,
-        codex_client=codex_client,
-        thread_lineage_service=thread_lineage_service,
-        chat_event_broker=chat_event_broker,
-        chat_timeout=5,
-        chat_service=chat_service,
-        thread_runtime_service_v2=thread_runtime_service_v2,
-        workflow_event_publisher_v2=workflow_event_publisher_v2,
-        execution_audit_v2_rehearsal_enabled=True,
-        rehearsal_workspace_root=Path(storage.workspace_store.get_folder_path(project_id)) / "outside-root",
-    )
-
-    with pytest.raises(ExecutionAuditRehearsalWorkspaceUnsafe):
-        finish_service.finish_task(project_id, root_node_id)
-
-
-def test_finish_task_v2_production_cuts_execution_and_auto_review_to_v2(
-    storage,
-    tree_service,
-    detail_service,
-    chat_event_broker,
-    project_id,
-    root_node_id,
-) -> None:
-    _confirm_spec(storage, project_id, root_node_id)
-    codex_client = FakeExecutionV2CodexClient()
-    thread_lineage_service = ThreadLineageService(storage, codex_client, tree_service)
-    chat_service = ChatService(
-        storage=storage,
-        tree_service=tree_service,
-        codex_client=codex_client,
-        thread_lineage_service=thread_lineage_service,
-        chat_event_broker=chat_event_broker,
-        chat_timeout=5,
-        max_message_chars=10000,
-    )
-    thread_runtime_service_v2, workflow_event_publisher_v2 = _build_v2_runtime(
-        storage=storage,
-        tree_service=tree_service,
-        chat_service=chat_service,
-        codex_client=codex_client,
-    )
-    review_service = ReviewService(
-        storage=storage,
-        tree_service=tree_service,
-        codex_client=codex_client,
-        thread_lineage_service=thread_lineage_service,
-        chat_event_broker=chat_event_broker,
-        chat_timeout=5,
-        chat_service=chat_service,
-        thread_runtime_service_v2=thread_runtime_service_v2,
-        workflow_event_publisher_v2=workflow_event_publisher_v2,
-        execution_audit_v2_enabled=True,
-    )
-    published: list[dict[str, object]] = []
-    original_publish = chat_event_broker.publish
-
-    def capture_publish(project_id_arg, node_id_arg, event, thread_role=""):
-        published.append(
-            {
-                "project_id": project_id_arg,
-                "node_id": node_id_arg,
-                "thread_role": thread_role,
-                "event": dict(event),
-            }
-        )
-        return original_publish(project_id_arg, node_id_arg, event, thread_role=thread_role)
-
-    chat_event_broker.publish = capture_publish  # type: ignore[method-assign]
-    workflow_events: list[tuple[str, dict[str, object]]] = []
-    original_workflow_updated = workflow_event_publisher_v2.publish_workflow_updated
-    original_detail_invalidate = workflow_event_publisher_v2.publish_detail_invalidate
-
-    def capture_workflow_updated(**kwargs):
-        envelope = original_workflow_updated(**kwargs)
-        workflow_events.append(("updated", envelope))
-        return envelope
-
-    def capture_detail_invalidate(**kwargs):
-        envelope = original_detail_invalidate(**kwargs)
-        workflow_events.append(("invalidate", envelope))
-        return envelope
-
-    workflow_event_publisher_v2.publish_workflow_updated = capture_workflow_updated  # type: ignore[method-assign]
-    workflow_event_publisher_v2.publish_detail_invalidate = capture_detail_invalidate  # type: ignore[method-assign]
-    finish_service = FinishTaskService(
-        storage=storage,
-        tree_service=tree_service,
-        node_detail_service=detail_service,
-        codex_client=codex_client,
-        thread_lineage_service=thread_lineage_service,
-        chat_event_broker=chat_event_broker,
-        chat_timeout=5,
-        chat_service=chat_service,
-        review_service=review_service,
-        thread_runtime_service_v2=thread_runtime_service_v2,
-        workflow_event_publisher_v2=workflow_event_publisher_v2,
-        execution_audit_v2_enabled=True,
-    )
-
-    result = finish_service.finish_task(project_id, root_node_id)
-    assert result["execution_started"] is True
-
-    execution_snapshot = _wait_for_condition(
-        lambda: (
-            snapshot := storage.thread_snapshot_store_v2.read_snapshot(project_id, root_node_id, "execution")
-        )
-        and snapshot.get("processingState") == "idle"
-        and snapshot.get("activeTurnId") is None
-        and any(item.get("kind") == "tool" for item in snapshot.get("items", []))
-        and snapshot
-    )
-    audit_snapshot = _wait_for_condition(
-        lambda: (
-            snapshot := storage.thread_snapshot_store_v2.read_snapshot(project_id, root_node_id, "audit")
-        )
-        and snapshot.get("processingState") == "idle"
-        and snapshot.get("activeTurnId") is None
-        and any(
-            item.get("kind") == "message" and item.get("role") == "assistant"
-            for item in snapshot.get("items", [])
-        )
-        and (
-            exec_state := storage.execution_state_store.read_state(project_id, root_node_id)
-        )
-        and isinstance(exec_state.get("auto_review"), dict)
-        and exec_state["auto_review"].get("status") == "completed"
-        and snapshot
-    )
-
-    exec_state = _wait_for_condition(
-        lambda: (
-            state := storage.execution_state_store.read_state(project_id, root_node_id)
-        )
-        and state.get("status") == "review_accepted"
-        and state
-    )
-    assert exec_state is not None
-    assert exec_state["auto_review"]["summary"] == "Looks solid overall."
-
-    execution_session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="execution")
-    audit_session = storage.chat_state_store.read_session(project_id, root_node_id, thread_role="audit")
-    assert execution_session["messages"] == []
-    assert audit_session["messages"] == []
-
-    tool_items = [item for item in execution_snapshot["items"] if item.get("kind") == "tool"]
-    assert len(tool_items) == 1
-    assert tool_items[0]["outputFiles"] == [{"path": "final.txt", "changeType": "updated", "summary": "final"}]
-
-    audit_messages = [
-        item for item in audit_snapshot["items"]
-        if item.get("kind") == "message" and item.get("role") == "assistant"
-    ]
-    assert len(audit_messages) == 1
-    assert "Looks solid overall." in audit_messages[0]["text"]
-
-    legacy_types = {
-        "message_created",
-        "assistant_delta",
-        "assistant_tool_call",
-        "assistant_completed",
-        "assistant_error",
-        "execution_completed",
-    }
-    assert not any(
-        item["thread_role"] in {"execution", "audit"}
-        and isinstance(item["event"], dict)
-        and item["event"].get("type") in legacy_types
-        for item in published
-    )
-
-    invalidate_reasons = [
-        envelope["payload"]["reason"]
-        for kind, envelope in workflow_events
-        if kind == "invalidate"
-    ]
-    assert "execution_started" in invalidate_reasons
-    assert "execution_completed" in invalidate_reasons
-    assert "auto_review_started" in invalidate_reasons
-    assert "auto_review_completed" in invalidate_reasons

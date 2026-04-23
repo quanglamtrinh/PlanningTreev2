@@ -79,7 +79,7 @@ class _FailingCodex(_ExecutionCodex):
 # ---------------------------------------------------------------------------
 
 def _setup_project(client: TestClient, workspace_root: Path) -> tuple[str, str]:
-    resp = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    resp = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert resp.status_code == 200
     snap = resp.json()
     return snap["project"]["id"], snap["tree_state"]["root_node_id"]
@@ -87,15 +87,15 @@ def _setup_project(client: TestClient, workspace_root: Path) -> tuple[str, str]:
 
 def _confirm_spec(client: TestClient, project_id: str, node_id: str) -> None:
     client.put(
-        f"/v1/projects/{project_id}/nodes/{node_id}/documents/frame",
+        f"/v3/projects/{project_id}/nodes/{node_id}/documents/frame",
         json={"content": "# Task Title\nTask\n\n# Objective\nDo it\n"},
     )
-    client.post(f"/v1/projects/{project_id}/nodes/{node_id}/confirm-frame")
+    client.post(f"/v3/projects/{project_id}/nodes/{node_id}/confirm-frame")
     client.put(
-        f"/v1/projects/{project_id}/nodes/{node_id}/documents/spec",
+        f"/v3/projects/{project_id}/nodes/{node_id}/documents/spec",
         json={"content": "# Spec\nImplement it\n"},
     )
-    client.post(f"/v1/projects/{project_id}/nodes/{node_id}/confirm-spec")
+    client.post(f"/v3/projects/{project_id}/nodes/{node_id}/confirm-spec")
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][node_id]["status"] = "ready"
     client.app.state.storage.project_store.save_snapshot(project_id, snapshot)
@@ -153,7 +153,7 @@ def test_full_lifecycle(client: TestClient, workspace_root):
     _confirm_spec(client, project_id, root_id)
 
     # Finish task
-    resp = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
+    resp = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/finish-task")
     assert resp.status_code == 200
 
     exec_state = _wait_execution(client, project_id, root_id)
@@ -172,7 +172,7 @@ def test_full_lifecycle(client: TestClient, workspace_root):
     assert "output.txt" in paths
 
     # Verify detail-state
-    detail = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/detail-state").json()
+    detail = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/detail-state").json()
     assert detail["initial_sha"] == exec_state["initial_sha"]
     assert detail["head_sha"] == exec_state["head_sha"]
     assert detail["commit_message"] == exec_state["commit_message"]
@@ -184,7 +184,7 @@ def test_full_lifecycle(client: TestClient, workspace_root):
 
     # Reset to initial
     reset_resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{root_id}/reset-workspace",
+        f"/v3/projects/{project_id}/nodes/{root_id}/reset-workspace",
         json={"target": "initial"},
     )
     assert reset_resp.status_code == 200
@@ -194,7 +194,7 @@ def test_full_lifecycle(client: TestClient, workspace_root):
 
     # Reset to head
     reset_resp2 = client.post(
-        f"/v1/projects/{project_id}/nodes/{root_id}/reset-workspace",
+        f"/v3/projects/{project_id}/nodes/{root_id}/reset-workspace",
         json={"target": "head"},
     )
     assert reset_resp2.status_code == 200
@@ -213,13 +213,13 @@ def test_dirty_tree_does_not_block_finish_task(client: TestClient, workspace_roo
     # Make workspace dirty
     (workspace_root / "uncommitted.txt").write_text("dirty")
 
-    resp = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
+    resp = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/finish-task")
     assert resp.status_code == 200
 
     _wait_execution(client, project_id, root_id)
 
     # Detail state should stay git_ready=true even with dirty workspace.
-    detail = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/detail-state").json()
+    detail = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/detail-state").json()
     assert detail["git_ready"] is True
     assert detail["git_blocker_message"] is None
 
@@ -233,7 +233,7 @@ def test_no_diff_execution(client: TestClient, workspace_root):
     project_id, root_id = _setup_project(client, workspace_root)
     _confirm_spec(client, project_id, root_id)
 
-    resp = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
+    resp = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/finish-task")
     assert resp.status_code == 200
 
     exec_state = _wait_execution(client, project_id, root_id)
@@ -251,11 +251,11 @@ def test_probe_git_initialized_subfolder(client: TestClient, tmp_path):
     subfolder = parent / "child_project"
     subfolder.mkdir()
 
-    resp = client.post("/v1/projects/attach", json={"folder_path": str(subfolder)})
+    resp = client.post("/v3/projects/attach", json={"folder_path": str(subfolder)})
     assert resp.status_code == 200
     project_id = resp.json()["project"]["id"]
 
-    projects = client.get("/v1/projects").json()
+    projects = client.get("/v3/projects").json()
     project = next(p for p in projects if p["id"] == project_id)
     assert project.get("git_initialized") is False
 
@@ -269,11 +269,11 @@ def test_init_blocks_nested_repo(client: TestClient, tmp_path):
     subfolder = parent / "nested_project"
     subfolder.mkdir()
 
-    resp = client.post("/v1/projects/attach", json={"folder_path": str(subfolder)})
+    resp = client.post("/v3/projects/attach", json={"folder_path": str(subfolder)})
     assert resp.status_code == 200
     project_id = resp.json()["project"]["id"]
 
-    init_resp = client.post(f"/v1/projects/{project_id}/git/init")
+    init_resp = client.post(f"/v3/projects/{project_id}/git/init")
     assert init_resp.status_code == 400
     assert "inside" in init_resp.json()["message"].lower()
 
@@ -283,21 +283,21 @@ def test_init_git_success(client: TestClient, workspace_root, monkeypatch):
     project_id, root_id = _setup_project(client, workspace_root)
 
     # Before init: git_initialized = false
-    projects = client.get("/v1/projects").json()
+    projects = client.get("/v3/projects").json()
     project = next(p for p in projects if p["id"] == project_id)
     assert project.get("git_initialized") is False
 
     # Configure git identity for this test only; do not mutate the real global config.
     _set_temp_global_git_identity(monkeypatch, workspace_root)
 
-    init_resp = client.post(f"/v1/projects/{project_id}/git/init")
+    init_resp = client.post(f"/v3/projects/{project_id}/git/init")
     assert init_resp.status_code == 200
     body = init_resp.json()
     assert body["status"] == "initialized"
     assert len(body["head_sha"]) == 40
 
     # After init: git_initialized = true
-    projects = client.get("/v1/projects").json()
+    projects = client.get("/v3/projects").json()
     project = next(p for p in projects if p["id"] == project_id)
     assert project.get("git_initialized") is True
 
@@ -312,7 +312,7 @@ def test_failed_execution_retry(client: TestClient, workspace_root):
     _confirm_spec(client, project_id, root_id)
 
     # First attempt: fails
-    resp = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
+    resp = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/finish-task")
     assert resp.status_code == 200
 
     exec_state = _wait_execution(client, project_id, root_id, status="failed")
@@ -323,7 +323,7 @@ def test_failed_execution_retry(client: TestClient, workspace_root):
     good_codex = _ExecutionCodex()
     _set_codex(client, good_codex)
 
-    resp2 = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
+    resp2 = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/finish-task")
     assert resp2.status_code == 200
 
     exec_state2 = _wait_execution(client, project_id, root_id, status="completed")
@@ -340,13 +340,13 @@ def test_failed_execution_does_not_freeze_shaping(client: TestClient, workspace_
     project_id, root_id = _setup_project(client, workspace_root)
     _confirm_spec(client, project_id, root_id)
 
-    resp = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
+    resp = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/finish-task")
     assert resp.status_code == 200
 
     _wait_execution(client, project_id, root_id, status="failed")
 
     # Shaping should not be frozen — detail-state should allow editing
-    detail = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/detail-state").json()
+    detail = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/detail-state").json()
     assert detail.get("shaping_frozen") is not True
 
 
@@ -356,7 +356,7 @@ def test_reset_no_exec_state(client: TestClient, workspace_root):
     project_id, root_id = _setup_project(client, workspace_root)
 
     resp = client.post(
-        f"/v1/projects/{project_id}/nodes/{root_id}/reset-workspace",
+        f"/v3/projects/{project_id}/nodes/{root_id}/reset-workspace",
         json={"target": "initial"},
     )
     assert resp.status_code == 400

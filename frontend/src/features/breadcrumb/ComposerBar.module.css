@@ -53,6 +53,23 @@
   color: var(--text-tertiary);
 }
 
+.responseStatus {
+  min-width: 120px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.responseStatusText {
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--text-tertiary);
+  opacity: 0.95;
+}
+
 .sendBtn {
   width: 34px;
   height: 34px;

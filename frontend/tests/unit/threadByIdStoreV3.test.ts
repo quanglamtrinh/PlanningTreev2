@@ -34,6 +34,8 @@ import {
   decideReloadPolicy,
   resolvePhase12CapPolicy,
   resolvePhase12CapProfile,
+  resolveThreadStreamCadencePolicy,
+  resolveThreadStreamCadenceProfile,
   selectAskFollowupQueueState,
   selectComposerState,
   selectCore,
@@ -395,6 +397,35 @@ describe('threadByIdStoreV3', () => {
     })
   })
 
+  it('resolves thread stream cadence profile by env > legacy low-latency > device memory', () => {
+    expect(resolveThreadStreamCadenceProfile({ envValue: 'HIGH', deviceMemory: 2 })).toBe('high')
+    expect(resolveThreadStreamCadenceProfile({ legacyLowLatencyEnabled: false, deviceMemory: 16 })).toBe('low')
+    expect(resolveThreadStreamCadenceProfile({ deviceMemory: 2 })).toBe('low')
+    expect(resolveThreadStreamCadenceProfile({ deviceMemory: 6 })).toBe('standard')
+    expect(resolveThreadStreamCadenceProfile({ deviceMemory: 12 })).toBe('high')
+  })
+
+  it('resolves thread stream cadence policy presets by profile', () => {
+    expect(resolveThreadStreamCadencePolicy({ envValue: 'low' })).toEqual({
+      profile: 'low',
+      fallbackFlushMs: 20,
+      priorityFlushMs: 12,
+      maxQueueAgeMs: 60,
+    })
+    expect(resolveThreadStreamCadencePolicy({ envValue: 'standard' })).toEqual({
+      profile: 'standard',
+      fallbackFlushMs: 16,
+      priorityFlushMs: 8,
+      maxQueueAgeMs: 25,
+    })
+    expect(resolveThreadStreamCadencePolicy({ envValue: 'high' })).toEqual({
+      profile: 'high',
+      fallbackFlushMs: 12,
+      priorityFlushMs: 6,
+      maxQueueAgeMs: 20,
+    })
+  })
+
   it('enforces scrollback trim hysteresis on oversized snapshots', async () => {
     const oversizedItems = Array.from({ length: 1300 }, (_, index) => {
       const sequence = index + 1
@@ -642,7 +673,7 @@ describe('threadByIdStoreV3', () => {
       ['error', 'isLoading', 'isSending', 'lastCompletedAt', 'lastDurationMs', 'snapshot'].sort(),
     )
     expect(Object.keys(composer).sort()).toEqual(
-      ['isActiveTurn', 'isLoading', 'isSending', 'snapshot'].sort(),
+      ['earlyResponse', 'isActiveTurn', 'isLoading', 'isSending', 'snapshot'].sort(),
     )
     expect(Object.keys(transportBanner).sort()).toEqual(
       ['error', 'forcedReloadCount', 'lastForcedReloadReason', 'streamStatus'].sort(),
@@ -793,6 +824,74 @@ describe('threadByIdStoreV3', () => {
     expect(state.lastEventId).toBeNull()
     expect(state.telemetry.heartbeat_cursor_pollution_count).toBe(0)
     expect(state.telemetry.firstMeaningfulFrameLatencyMs).not.toBeNull()
+  })
+
+  it('transitions early-response phase from pending_send to stream_open to first_delta', async () => {
+    apiMock.getThreadSnapshotByIdV3.mockResolvedValue(makeSnapshot())
+    apiMock.startThreadTurnByIdV3.mockResolvedValue({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      snapshotVersion: 2,
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3
+        .getState()
+        .loadThread('project-1', 'node-1', 'thread-1', 'execution')
+    })
+
+    await act(async () => {
+      await useThreadByIdStoreV3.getState().sendTurn('hello phase 14.6')
+    })
+
+    expect(selectComposerState(useThreadByIdStoreV3.getState()).earlyResponse.phase).toBe('pending_send')
+
+    const eventSource = getEventSourceMock().instances[0]
+    eventSource.emitOpen()
+
+    await act(async () => {
+      eventSource.emitMessage(
+        JSON.stringify({
+          schema_version: 1,
+          event_type: 'stream_open',
+          thread_id: 'thread-1',
+          turn_id: null,
+          snapshot_version: 2,
+          occurred_at_ms: Date.parse('2026-04-01T00:00:01Z'),
+          channel: 'thread',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          threadRole: 'execution',
+          occurredAt: '2026-04-01T00:00:01Z',
+          snapshotVersion: 2,
+          type: 'stream_open',
+          payload: {
+            streamStatus: 'open',
+            threadId: 'thread-1',
+            threadRole: 'execution',
+            snapshotVersion: 2,
+            processingState: 'running',
+            activeTurnId: 'turn-1',
+          },
+        }),
+      )
+    })
+
+    expect(selectComposerState(useThreadByIdStoreV3.getState()).earlyResponse.phase).toBe('stream_open')
+
+    await act(async () => {
+      eventSource.emitMessage(JSON.stringify(makeMessageUpsertEnvelope('3', 3, 'delta ready')))
+    })
+
+    await waitFor(() => {
+      expect(selectComposerState(useThreadByIdStoreV3.getState()).earlyResponse.phase).toBe('first_delta')
+    })
+
+    act(() => {
+      useThreadByIdStoreV3.getState().disconnectThread()
+    })
+
+    expect(selectComposerState(useThreadByIdStoreV3.getState()).earlyResponse.phase).toBe('idle')
   })
 
   it('uses legacy fallback parser path and tracks fallback counter', async () => {
@@ -1584,6 +1683,10 @@ describe('threadByIdStoreV3', () => {
       expect(state.telemetry.forcedFlushCount).toBe(0)
       expect(state.telemetry.fastAppendHitCount).toBe(2)
       expect(state.telemetry.fastAppendFallbackCount).toBe(0)
+      expect(state.telemetry.lastStreamUpdateAtMs).not.toBeNull()
+      expect(state.telemetry.interUpdateGapSamples).toBeGreaterThanOrEqual(0)
+      expect(state.telemetry.interUpdateGapTotalMs).toBeGreaterThanOrEqual(0)
+      expect(state.telemetry.interUpdateGapMaxMs).toBeGreaterThanOrEqual(0)
     } finally {
       vi.useRealTimers()
     }
@@ -2595,5 +2698,24 @@ describe('threadByIdStoreV3', () => {
     const state = useThreadByIdStoreV3.getState()
     expect(state.error).toBe('render failed')
     expect(state.telemetry.renderErrorCount).toBe(1)
+  })
+
+  it('tracks streaming row renders and markdown parse duration telemetry', () => {
+    const initial = useThreadByIdStoreV3.getState()
+    expect(initial.telemetry.streamingRowRenderCount).toBe(0)
+    expect(initial.telemetry.markdownParseDurationSamples).toBe(0)
+
+    useThreadByIdStoreV3.getState().recordStreamingRowRender(false)
+    useThreadByIdStoreV3.getState().recordStreamingRowRender(true)
+    useThreadByIdStoreV3.getState().recordStreamingRowRender(true)
+    useThreadByIdStoreV3.getState().recordMarkdownParseDuration(12)
+    useThreadByIdStoreV3.getState().recordMarkdownParseDuration(0)
+    useThreadByIdStoreV3.getState().recordMarkdownParseDuration(-5)
+
+    const state = useThreadByIdStoreV3.getState()
+    expect(state.telemetry.streamingRowRenderCount).toBe(2)
+    expect(state.telemetry.markdownParseDurationSamples).toBe(3)
+    expect(state.telemetry.markdownParseDurationTotalMs).toBe(12)
+    expect(state.telemetry.markdownParseDurationMaxMs).toBe(12)
   })
 })

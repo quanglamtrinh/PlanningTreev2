@@ -65,3 +65,8 @@ def client(data_root: Path) -> TestClient:
     app = create_app(data_root=data_root)
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture(autouse=True)
+def disable_session_core_v2_protocol_gate_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SESSION_CORE_V2_PROTOCOL_GATE_ENABLED", "false")

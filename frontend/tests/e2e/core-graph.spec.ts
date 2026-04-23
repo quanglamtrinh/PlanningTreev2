@@ -13,7 +13,7 @@ test('attaches project folders, renders the graph shell, and opens the breadcrum
   await mkdir(workspaceRoot, { recursive: true })
   await page.goto('/')
 
-  const attachProjectResponse = await request.post('/v1/projects/attach', {
+  const attachProjectResponse = await request.post('/v3/projects/attach', {
     data: { folder_path: workspaceRoot },
   })
   expect(attachProjectResponse.ok()).toBeTruthy()
@@ -29,7 +29,7 @@ test('attaches project folders, renders the graph shell, and opens the breadcrum
     .waitForResponse(
       (response) =>
         response.request().method() === 'GET' &&
-        response.url().includes(`/v1/projects/${attachedSnapshot.project.id}/snapshot`),
+        response.url().includes(`/v3/projects/${attachedSnapshot.project.id}/snapshot`),
       { timeout: 45_000 },
     )
     .catch(() => null)

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "eventId": "thread_01:1042",
+  "tier": "tier0",
+  "method": "item/agentMessage/delta",
+  "threadId": "thread_01",
+  "turnId": "turn_77",
+  "occurredAtMs": 1770000000123,
+  "replayable": true,
+  "snapshotVersion": 14,
+  "source": "journal",
+  "params": {
+    "threadId": "thread_01",
+    "turnId": "turn_77",
+    "itemId": "item_88",
+    "delta": "hello"
+  }
+}
+

@@ -5,17 +5,17 @@
   font-family: var(--font-sans);
   font-size: 14px;
 
-  /* Semantic surface system (Methodical Canvas) */
-  --surface: #f9f9f7;
-  --surface-container-low: #f4f4f2;
-  --surface-container-highest: #e2e3e1;
+  /* Semantic surface system */
+  --surface: #ffffff;
+  --surface-container-low: #f6f8fb;
+  --surface-container-highest: #e8edf4;
   --surface-container-lowest: #ffffff;
-  --on-surface: #1a1c1b;
-  --primary: #9a401c;
-  --primary-container: #ba5831;
-  --on-primary: #faf8f5;
-  --tertiary: #0d9488;
-  --outline: #1a1c1b;
+  --on-surface: #1a1c1f;
+  --primary: #339cff;
+  --primary-container: #d7ebff;
+  --on-primary: #ffffff;
+  --tertiary: #924ff7;
+  --outline: #1a1c1f;
   --outline-variant: color-mix(in srgb, var(--outline) 15%, transparent);
   --glass-fill: color-mix(in srgb, var(--surface-container-lowest) 80%, transparent);
 
@@ -32,20 +32,23 @@
   --border-strong: color-mix(in srgb, var(--outline) 24%, var(--surface-container-low));
 
   --text-primary: var(--on-surface);
-  --text-secondary: #575b59;
-  --text-tertiary: #7a7e7c;
-  --text-quaternary: #a1a5a3;
+  --text-secondary: #4e5560;
+  --text-tertiary: #6f7783;
+  --text-quaternary: #9ca4b0;
   --text-on-dark: rgba(255, 255, 255, 0.92);
   --text-on-dark-muted: rgba(255, 255, 255, 0.65);
 
   --accent-primary: var(--primary);
-  --accent-primary-hover: color-mix(in srgb, var(--primary) 88%, #0a0b0a);
-  --accent-primary-pressed: color-mix(in srgb, var(--primary) 78%, #0a0b0a);
-  --accent-soft: color-mix(in srgb, var(--primary) 11%, transparent);
+  --accent-primary-hover: #238ff6;
+  --accent-primary-pressed: #147edc;
+  --accent-soft: color-mix(in srgb, var(--primary) 12%, transparent);
 
-  --success: #15803d;
+  --success: #00a240;
   --warning: #b45309;
-  --danger: #b91c1c;
+  --danger: #ba2623;
+  --color-diff-added: #00a240;
+  --color-diff-removed: #ba2623;
+  --color-skill: #924ff7;
 
   --chip-bg: color-mix(in srgb, var(--on-surface) 5%, var(--surface-container-low));
   --chip-text: #52525b;
@@ -87,8 +90,8 @@
   --step-done-bg: color-mix(in srgb, var(--color-accent) 72%, #2a1814);
   --step-done-fg: #ffffff;
 
-  --color-status-locked: #71717a;
-  --color-status-draft: #52525b;
+  --color-status-locked: #6f7783;
+  --color-status-draft: #4e5560;
   --color-status-ready: var(--accent-primary);
   --color-status-in-progress: var(--warning);
   --color-status-done: var(--success);
@@ -209,8 +212,8 @@
   --syntax-bracket: color-mix(in srgb, var(--color-accent) 44%, var(--text-primary));
   --syntax-angle: var(--color-text-tertiary);
   --syntax-invalid: var(--danger);
-  --syntax-inserted: var(--success);
-  --syntax-deleted: var(--danger);
+  --syntax-inserted: var(--color-diff-added);
+  --syntax-deleted: var(--color-diff-removed);
   --syntax-name: var(--color-text-primary);
   --syntax-content: var(--color-text-primary);
 }

@@ -14,7 +14,7 @@ from backend.ai.auto_review_prompt_builder import (
     extract_auto_review_result,
 )
 from backend.ai.codex_client import CodexAppClient
-from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
+from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.ai.execution_prompt_builder import (
     build_execution_base_instructions,
@@ -67,7 +67,7 @@ class FinishTaskService:
         chat_service: ChatService | None = None,
         git_checkpoint_service: Any = None,
         review_service: ReviewService | None = None,
-        thread_runtime_service: ThreadRuntimeService | None = None,
+        thread_runtime_service: ThreadRuntimeServiceV3 | None = None,
         thread_query_service: Any | None = None,
         workflow_event_publisher: WorkflowEventPublisher | None = None,
         rehearsal_workspace_root: Path | None = None,
@@ -119,9 +119,12 @@ class FinishTaskService:
         )
 
     def _resolve_thread_query_service(self) -> Any | None:
-        if self._thread_query_service is not None:
-            return self._thread_query_service
-        runtime = self._thread_runtime_service
+        query_service = getattr(self, "_thread_query_service", None)
+        if query_service is not None:
+            return query_service
+        runtime = getattr(self, "_thread_runtime_service", None)
+        if runtime is None:
+            runtime = getattr(self, "_thread_runtime_service_v2", None)
         if runtime is None:
             return None
         return getattr(runtime, "_query_service", None)

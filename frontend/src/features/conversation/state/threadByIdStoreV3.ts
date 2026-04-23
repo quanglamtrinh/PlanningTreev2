@@ -46,10 +46,30 @@ import {
 const SSE_RECONNECT_RETRY_MS = 1000
 const USER_INPUT_RESOLVE_FALLBACK_RELOAD_MS = 1500
 const THREAD_STREAM_LOW_LATENCY_ENV_FLAG = 'VITE_THREAD_STREAM_LOW_LATENCY'
+const THREAD_STREAM_CADENCE_PROFILE_ENV_FLAG = 'VITE_THREAD_STREAM_CADENCE_PROFILE'
 const FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT = 16
 const FRAME_BATCH_PRIORITY_FLUSH_MS_LOW_LATENCY = 8
-const FRAME_BATCH_MAX_QUEUE_AGE_MS_DEFAULT = 50
 const FRAME_BATCH_MAX_QUEUE_AGE_MS_LOW_LATENCY = 25
+const THREAD_STREAM_CADENCE_BY_PROFILE: Record<ThreadStreamCadenceProfile, ThreadStreamCadencePolicy> = {
+  low: {
+    profile: 'low',
+    fallbackFlushMs: 20,
+    priorityFlushMs: 12,
+    maxQueueAgeMs: 60,
+  },
+  standard: {
+    profile: 'standard',
+    fallbackFlushMs: FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT,
+    priorityFlushMs: FRAME_BATCH_PRIORITY_FLUSH_MS_LOW_LATENCY,
+    maxQueueAgeMs: FRAME_BATCH_MAX_QUEUE_AGE_MS_LOW_LATENCY,
+  },
+  high: {
+    profile: 'high',
+    fallbackFlushMs: 12,
+    priorityFlushMs: 6,
+    maxQueueAgeMs: 20,
+  },
+}
 const SCROLLBACK_SOFT_CAP = 1000
 const PHASE12_CAP_PROFILE_ENV_FLAG = 'VITE_PTM_PHASE12_CAP_PROFILE'
 const DEFAULT_PHASE12_CAP_PROFILE: Phase12CapProfile = 'standard'
@@ -64,6 +84,17 @@ const EXECUTION_FOLLOWUP_QUEUE_MAX_ITEMS = 20
 const ASK_FOLLOWUP_QUEUE_STORAGE_PREFIX = 'ptm:v3:ask-followup-queue:'
 const ASK_FOLLOWUP_QUEUE_MAX_ITEMS = 20
 const ASK_THREAD_ROUTE_MISMATCH_ERROR_SUBSTRING = 'thread id does not match any active route for this node'
+const STREAMING_LANE_RECONCILE_WARN_THROTTLE_MS = 5000
+const STREAM_CHUNKING_SMOOTH_DRAIN_MAX_FRAMES = 32
+const STREAM_CHUNKING_CATCH_UP_DRAIN_MAX_FRAMES = 128
+const STREAM_CHUNKING_ENTER_QUEUE_DEPTH = 64
+const STREAM_CHUNKING_ENTER_OLDEST_AGE_MS = 120
+const STREAM_CHUNKING_EXIT_QUEUE_DEPTH = 16
+const STREAM_CHUNKING_EXIT_OLDEST_AGE_MS = 40
+const STREAM_CHUNKING_EXIT_HOLD_MS = 250
+const STREAM_CHUNKING_REENTER_HOLD_MS = 250
+const STREAM_CHUNKING_SEVERE_QUEUE_DEPTH = 256
+const STREAM_CHUNKING_SEVERE_OLDEST_AGE_MS = 320
 
 export type Phase12CapProfile = 'low' | 'standard' | 'high'
 export type Phase12CapPolicy = {
@@ -74,7 +105,27 @@ export type Phase12CapPolicy = {
   effectiveTrimTarget: number
 }
 
+export type ThreadStreamCadenceProfile = 'low' | 'standard' | 'high'
+export type ThreadStreamCadencePolicy = {
+  profile: ThreadStreamCadenceProfile
+  fallbackFlushMs: number
+  priorityFlushMs: number
+  maxQueueAgeMs: number
+}
+
 function normalizePhase12CapProfile(value: string | null | undefined): Phase12CapProfile | null {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'low' || normalized === 'standard' || normalized === 'high') {
+    return normalized
+  }
+  return null
+}
+
+function normalizeThreadStreamCadenceProfile(
+  value: string | null | undefined,
+): ThreadStreamCadenceProfile | null {
   const normalized = String(value ?? '')
     .trim()
     .toLowerCase()
@@ -158,13 +209,59 @@ const THREAD_STREAM_LOW_LATENCY_ENABLED = resolveBooleanEnvFlag(
   (import.meta.env as Record<string, unknown>)[THREAD_STREAM_LOW_LATENCY_ENV_FLAG],
   true,
 )
-const FRAME_BATCH_FALLBACK_FLUSH_MS = FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT
-const FRAME_BATCH_PRIORITY_FLUSH_MS = THREAD_STREAM_LOW_LATENCY_ENABLED
-  ? FRAME_BATCH_PRIORITY_FLUSH_MS_LOW_LATENCY
-  : FRAME_BATCH_FALLBACK_FLUSH_MS_DEFAULT
-const FRAME_BATCH_MAX_QUEUE_AGE_MS = THREAD_STREAM_LOW_LATENCY_ENABLED
-  ? FRAME_BATCH_MAX_QUEUE_AGE_MS_LOW_LATENCY
-  : FRAME_BATCH_MAX_QUEUE_AGE_MS_DEFAULT
+
+export function resolveThreadStreamCadenceProfile(options: {
+  envValue?: string | null
+  deviceMemory?: number | null
+  legacyLowLatencyEnabled?: boolean | null
+} = {}): ThreadStreamCadenceProfile {
+  const envProfile = normalizeThreadStreamCadenceProfile(options.envValue)
+  if (envProfile) {
+    return envProfile
+  }
+  if (options.legacyLowLatencyEnabled === false) {
+    return 'low'
+  }
+  const deviceMemory =
+    options.deviceMemory != null && Number.isFinite(options.deviceMemory)
+      ? Number(options.deviceMemory)
+      : resolveDeviceMemoryHint()
+  if (deviceMemory != null) {
+    if (deviceMemory < 4) {
+      return 'low'
+    }
+    if (deviceMemory >= 8) {
+      return 'high'
+    }
+  }
+  return 'high'
+}
+
+export function resolveThreadStreamCadencePolicy(options: {
+  envValue?: string | null
+  deviceMemory?: number | null
+  legacyLowLatencyEnabled?: boolean | null
+} = {}): ThreadStreamCadencePolicy {
+  const envValue =
+    options.envValue ??
+    String((import.meta.env as Record<string, unknown>)[THREAD_STREAM_CADENCE_PROFILE_ENV_FLAG] ?? '')
+  const profile = resolveThreadStreamCadenceProfile({
+    envValue,
+    deviceMemory: options.deviceMemory,
+    legacyLowLatencyEnabled:
+      options.legacyLowLatencyEnabled == null
+        ? THREAD_STREAM_LOW_LATENCY_ENABLED
+        : options.legacyLowLatencyEnabled,
+  })
+  return THREAD_STREAM_CADENCE_BY_PROFILE[profile]
+}
+
+const THREAD_STREAM_CADENCE_POLICY = resolveThreadStreamCadencePolicy({
+  legacyLowLatencyEnabled: THREAD_STREAM_LOW_LATENCY_ENABLED,
+})
+const FRAME_BATCH_FALLBACK_FLUSH_MS = THREAD_STREAM_CADENCE_POLICY.fallbackFlushMs
+const FRAME_BATCH_PRIORITY_FLUSH_MS = THREAD_STREAM_CADENCE_POLICY.priorityFlushMs
+const FRAME_BATCH_MAX_QUEUE_AGE_MS = THREAD_STREAM_CADENCE_POLICY.maxQueueAgeMs
 
 const SCROLLBACK_CAP_POLICY = resolvePhase12CapPolicy()
 const SNAPSHOT_LIVE_LIMIT = SCROLLBACK_CAP_POLICY.softCap
@@ -191,6 +288,14 @@ export type ReloadReasonCode =
   | 'USER_INPUT_RESOLVE_REQUEST_FAILED'
   | 'STREAM_HEALTHCHECK_FAILED'
   | 'MANUAL_RETRY'
+
+export type StreamingTextLaneEntry = {
+  threadId: string
+  itemId: string
+  text: string
+  updatedAtMs: number
+}
+
 export type ThreadByIdTelemetryV3 = {
   streamReconnectCount: number
   applyErrorCount: number
@@ -203,6 +308,14 @@ export type ThreadByIdTelemetryV3 = {
   fastAppendFallbackCount: number
   firstFrameLatencyMs: number | null
   firstMeaningfulFrameLatencyMs: number | null
+  lastStreamUpdateAtMs: number | null
+  interUpdateGapMaxMs: number
+  interUpdateGapTotalMs: number
+  interUpdateGapSamples: number
+  streamingRowRenderCount: number
+  markdownParseDurationTotalMs: number
+  markdownParseDurationMaxMs: number
+  markdownParseDurationSamples: number
   renderErrorCount: number
   legacy_fallback_used_count: number
   envelope_validation_failure_count: number
@@ -211,6 +324,7 @@ export type ThreadByIdTelemetryV3 = {
 
 export type ThreadByIdStoreV3State = {
   snapshot: ThreadSnapshotV3 | null
+  streamingTextLane: Record<string, StreamingTextLaneEntry>
   activeProjectId: string | null
   activeNodeId: string | null
   activeThreadId: string | null
@@ -239,6 +353,7 @@ export type ThreadByIdStoreV3State = {
   executionQueueWorkflowPhase: string | null
   executionQueueCanSendExecutionMessage: boolean
   executionQueueLatestExecutionRunId: string | null
+  earlyResponse: ThreadEarlyResponseState
 
   loadThread: (
     projectId: string,
@@ -272,12 +387,15 @@ export type ThreadByIdStoreV3State = {
     latestExecutionRunId: string | null
   }) => Promise<void>
   recordRenderError: (reason: string) => void
+  recordStreamingRowRender: (isStreamingCandidate: boolean) => void
+  recordMarkdownParseDuration: (durationMs: number) => void
   disconnectThread: () => void
 }
 
 export type ThreadCoreState = Pick<
   ThreadByIdStoreV3State,
   | 'snapshot'
+  | 'streamingTextLane'
   | 'lastEventId'
   | 'lastSnapshotVersion'
   | 'processingStartedAt'
@@ -303,6 +421,8 @@ export type ThreadActionHandlers = Pick<
   | 'resolveUserInput'
   | 'runPlanAction'
   | 'recordRenderError'
+  | 'recordStreamingRowRender'
+  | 'recordMarkdownParseDuration'
   | 'disconnectThread'
 >
 export type ThreadExecutionFollowupQueueState = Pick<
@@ -345,11 +465,19 @@ export type ThreadHistoryUiState = {
   isLoadingHistory: boolean
   historyError: string | null
 }
+export type EarlyResponsePhase = 'idle' | 'pending_send' | 'stream_open' | 'first_delta'
+
+export type ThreadEarlyResponseState = {
+  phase: EarlyResponsePhase
+  pendingSinceMs: number | null
+}
+
 export type ThreadComposerState = {
   snapshot: ThreadSnapshotV3 | null
   isLoading: boolean
   isSending: boolean
   isActiveTurn: boolean
+  earlyResponse: ThreadEarlyResponseState
 }
 export type ThreadTransportBannerState = {
   streamStatus: ThreadByIdStreamStatusV3
@@ -368,6 +496,7 @@ export type ThreadWorkflowActionState = {
 export function selectCore(state: ThreadByIdStoreV3State): ThreadCoreState {
   return {
     snapshot: state.snapshot,
+    streamingTextLane: state.streamingTextLane,
     lastEventId: state.lastEventId,
     lastSnapshotVersion: state.lastSnapshotVersion,
     processingStartedAt: state.processingStartedAt,
@@ -408,8 +537,23 @@ export function selectThreadActions(state: ThreadByIdStoreV3State): ThreadAction
     resolveUserInput: state.resolveUserInput,
     runPlanAction: state.runPlanAction,
     recordRenderError: state.recordRenderError,
+    recordStreamingRowRender: state.recordStreamingRowRender,
+    recordMarkdownParseDuration: state.recordMarkdownParseDuration,
     disconnectThread: state.disconnectThread,
   }
+}
+
+export function selectStreamingTextLaneByItem(
+  state: ThreadByIdStoreV3State,
+  threadId: string | null | undefined,
+  itemId: string | null | undefined,
+): StreamingTextLaneEntry | null {
+  const normalizedThreadId = String(threadId ?? '').trim()
+  const normalizedItemId = String(itemId ?? '').trim()
+  if (!normalizedThreadId || !normalizedItemId) {
+    return null
+  }
+  return state.streamingTextLane[buildStreamingLaneKey(normalizedThreadId, normalizedItemId)] ?? null
 }
 
 export function selectExecutionFollowupQueueState(
@@ -488,6 +632,7 @@ export function selectComposerState(state: ThreadByIdStoreV3State): ThreadCompos
     isLoading: state.isLoading,
     isSending: state.isSending,
     isActiveTurn: Boolean(state.snapshot?.activeTurnId),
+    earlyResponse: state.earlyResponse,
   }
 }
 
@@ -526,6 +671,7 @@ type ThreadDomainPatch = {
   core?: ThreadCorePatch
   transport?: ThreadTransportPatch
   uiControl?: ThreadUiControlPatch
+  earlyResponse?: ThreadEarlyResponseState
 }
 
 function composeDomainPatch(...patches: ThreadDomainPatch[]): Partial<ThreadByIdStoreV3State> {
@@ -539,6 +685,9 @@ function composeDomainPatch(...patches: ThreadDomainPatch[]): Partial<ThreadById
     }
     if (patch.uiControl) {
       Object.assign(merged, patch.uiControl)
+    }
+    if (patch.earlyResponse) {
+      merged.earlyResponse = patch.earlyResponse
     }
   }
   return merged
@@ -568,6 +717,14 @@ const DEFAULT_TELEMETRY_V3: ThreadByIdTelemetryV3 = {
   fastAppendFallbackCount: 0,
   firstFrameLatencyMs: null,
   firstMeaningfulFrameLatencyMs: null,
+  lastStreamUpdateAtMs: null,
+  interUpdateGapMaxMs: 0,
+  interUpdateGapTotalMs: 0,
+  interUpdateGapSamples: 0,
+  streamingRowRenderCount: 0,
+  markdownParseDurationTotalMs: 0,
+  markdownParseDurationMaxMs: 0,
+  markdownParseDurationSamples: 0,
   renderErrorCount: 0,
   legacy_fallback_used_count: 0,
   envelope_validation_failure_count: 0,
@@ -576,6 +733,203 @@ const DEFAULT_TELEMETRY_V3: ThreadByIdTelemetryV3 = {
 
 function resetTelemetryV3(): ThreadByIdTelemetryV3 {
   return { ...DEFAULT_TELEMETRY_V3 }
+}
+
+function buildStreamingLaneKey(threadId: string, itemId: string): string {
+  return `${threadId}::${itemId}`
+}
+
+function pickMessageTextLaneUpdate(event: ThreadBusinessEventV3):
+  | { itemId: string; textAppend: string }
+  | null {
+  if (event.type !== 'conversation.item.patch.v3') {
+    return null
+  }
+  const patch = event.payload.patch
+  if (patch.kind !== 'message') {
+    return null
+  }
+  const textAppend = typeof patch.textAppend === 'string' ? patch.textAppend : ''
+  if (!textAppend) {
+    return null
+  }
+  const itemId = String(event.payload.itemId ?? '').trim()
+  if (!itemId) {
+    return null
+  }
+  return {
+    itemId,
+    textAppend,
+  }
+}
+
+function appendStreamingLaneTextInPlace(
+  lane: Record<string, StreamingTextLaneEntry>,
+  {
+    threadId,
+    itemId,
+    textAppend,
+    updatedAtMs,
+  }: {
+    threadId: string
+    itemId: string
+    textAppend: string
+    updatedAtMs: number
+  },
+): void {
+  const normalizedThreadId = String(threadId ?? '').trim()
+  const normalizedItemId = String(itemId ?? '').trim()
+  if (!normalizedThreadId || !normalizedItemId || !textAppend) {
+    return
+  }
+  const key = buildStreamingLaneKey(normalizedThreadId, normalizedItemId)
+  const previous = lane[key]
+  const previousText = previous?.text ?? ''
+  lane[key] = {
+    threadId: normalizedThreadId,
+    itemId: normalizedItemId,
+    text: `${previousText}${textAppend}`,
+    updatedAtMs,
+  }
+}
+
+function clearStreamingLaneForThread(
+  lane: Record<string, StreamingTextLaneEntry>,
+  threadId: string,
+): Record<string, StreamingTextLaneEntry> {
+  let changed = false
+  const next: Record<string, StreamingTextLaneEntry> = {}
+  for (const [key, entry] of Object.entries(lane)) {
+    if (entry.threadId === threadId) {
+      changed = true
+      continue
+    }
+    next[key] = entry
+  }
+  return changed ? next : lane
+}
+
+let lastStreamingLaneReconcileWarnAtMs = 0
+
+function emitStreamingLaneReconcileWarning(
+  code:
+    | 'snapshot_thread_id_missing'
+    | 'entry_thread_mismatch'
+    | 'entry_not_in_progress_or_missing'
+    | 'entry_text_suffix_mismatch',
+  detail: {
+    threadId?: string | null
+    itemId?: string | null
+    laneTextLength?: number
+    snapshotTextLength?: number
+  },
+): void {
+  const now = Date.now()
+  if (now - lastStreamingLaneReconcileWarnAtMs < STREAMING_LANE_RECONCILE_WARN_THROTTLE_MS) {
+    return
+  }
+  lastStreamingLaneReconcileWarnAtMs = now
+  console.warn('[threadByIdStoreV3] streaming lane reconcile anomaly', {
+    code,
+    ...detail,
+    atMs: now,
+  })
+}
+
+function reconcileStreamingLaneWithSnapshot(
+  lane: Record<string, StreamingTextLaneEntry>,
+  snapshot: ThreadSnapshotV3 | null,
+): Record<string, StreamingTextLaneEntry> {
+  if (!snapshot) {
+    return lane
+  }
+  const threadId = snapshot.threadId
+  if (!threadId) {
+    emitStreamingLaneReconcileWarning('snapshot_thread_id_missing', {
+      threadId: snapshot.threadId ?? null,
+      itemId: null,
+    })
+    return lane
+  }
+
+  let changed = false
+  let nextLane = lane
+  const snapshotMessageById = new Map<string, Extract<ConversationItemV3, { kind: 'message' }>>()
+  for (const item of snapshot.items) {
+    if (item.kind === 'message') {
+      snapshotMessageById.set(item.id, item)
+    }
+  }
+
+  for (const [key, entry] of Object.entries(lane)) {
+    if (!entry.threadId || entry.threadId !== threadId) {
+      emitStreamingLaneReconcileWarning('entry_thread_mismatch', {
+        threadId,
+        itemId: entry.itemId,
+        laneTextLength: entry.text.length,
+      })
+      continue
+    }
+    const snapshotMessage = snapshotMessageById.get(entry.itemId)
+    if (!snapshotMessage || snapshotMessage.status !== 'in_progress') {
+      emitStreamingLaneReconcileWarning('entry_not_in_progress_or_missing', {
+        threadId,
+        itemId: entry.itemId,
+        laneTextLength: entry.text.length,
+        snapshotTextLength: snapshotMessage?.text.length,
+      })
+      if (!changed) {
+        nextLane = { ...nextLane }
+        changed = true
+      }
+      delete nextLane[key]
+      continue
+    }
+    if (!snapshotMessage.text.endsWith(entry.text)) {
+      emitStreamingLaneReconcileWarning('entry_text_suffix_mismatch', {
+        threadId,
+        itemId: entry.itemId,
+        laneTextLength: entry.text.length,
+        snapshotTextLength: snapshotMessage.text.length,
+      })
+      if (!changed) {
+        nextLane = { ...nextLane }
+        changed = true
+      }
+      nextLane[key] = {
+        ...entry,
+        text: snapshotMessage.text,
+        updatedAtMs: entry.updatedAtMs,
+      }
+    }
+  }
+
+  return changed ? nextLane : lane
+}
+
+function updateInterUpdateGapTelemetry(
+  telemetry: ThreadByIdTelemetryV3,
+  nowMs: number,
+): Pick<
+  ThreadByIdTelemetryV3,
+  'lastStreamUpdateAtMs' | 'interUpdateGapMaxMs' | 'interUpdateGapTotalMs' | 'interUpdateGapSamples'
+> {
+  const previousUpdateAtMs = telemetry.lastStreamUpdateAtMs
+  if (previousUpdateAtMs == null) {
+    return {
+      lastStreamUpdateAtMs: nowMs,
+      interUpdateGapMaxMs: telemetry.interUpdateGapMaxMs,
+      interUpdateGapTotalMs: telemetry.interUpdateGapTotalMs,
+      interUpdateGapSamples: telemetry.interUpdateGapSamples,
+    }
+  }
+  const gapMs = Math.max(0, nowMs - previousUpdateAtMs)
+  return {
+    lastStreamUpdateAtMs: nowMs,
+    interUpdateGapMaxMs: Math.max(telemetry.interUpdateGapMaxMs, gapMs),
+    interUpdateGapTotalMs: telemetry.interUpdateGapTotalMs + gapMs,
+    interUpdateGapSamples: telemetry.interUpdateGapSamples + 1,
+  }
 }
 
 function selectProcessingTelemetry(state: ProcessingTelemetryState): ProcessingTelemetryState {
@@ -1054,6 +1408,32 @@ function completeProcessingTelemetry(state: ProcessingTelemetryState): Processin
   }
 }
 
+const EARLY_RESPONSE_DELAY_WARNING_MS = 1200
+
+function resetEarlyResponseState(): ThreadEarlyResponseState {
+  return {
+    phase: 'idle',
+    pendingSinceMs: null,
+  }
+}
+
+function buildPendingSendEarlyResponse(previous: ThreadEarlyResponseState): ThreadEarlyResponseState {
+  return {
+    phase: 'pending_send',
+    pendingSinceMs: previous.pendingSinceMs ?? Date.now(),
+  }
+}
+
+function buildEarlyResponsePhase(
+  phase: Exclude<EarlyResponsePhase, 'pending_send'>,
+  previous: ThreadEarlyResponseState,
+): ThreadEarlyResponseState {
+  return {
+    phase,
+    pendingSinceMs: previous.pendingSinceMs,
+  }
+}
+
 function buildDisconnectedStatePatch(): ThreadRuntimeStateV3 {
   return {
     snapshot: null,
@@ -1068,6 +1448,7 @@ function buildDisconnectedStatePatch(): ThreadRuntimeStateV3 {
     lastSnapshotVersion: null,
     ...resetProcessingTelemetry(),
     telemetry: resetTelemetryV3(),
+    streamingTextLane: {},
     error: null,
     hasOlderHistory: false,
     oldestVisibleSequence: null,
@@ -1083,6 +1464,7 @@ function buildDisconnectedStatePatch(): ThreadRuntimeStateV3 {
     executionQueueWorkflowPhase: null,
     executionQueueCanSendExecutionMessage: false,
     executionQueueLatestExecutionRunId: null,
+    earlyResponse: resetEarlyResponseState(),
   }
 }
 
@@ -1097,6 +1479,7 @@ function buildThreadLoadStartPatch(
       {
         core: {
           snapshot: null,
+          streamingTextLane: {},
           lastEventId: null,
           lastSnapshotVersion: null,
           ...resetProcessingTelemetry(),
@@ -1133,6 +1516,7 @@ function buildThreadLoadStartPatch(
     executionQueueWorkflowPhase: null,
     executionQueueCanSendExecutionMessage: false,
     executionQueueLatestExecutionRunId: null,
+    earlyResponse: resetEarlyResponseState(),
   }
 }
 
@@ -1151,6 +1535,9 @@ function buildSnapshotHydratedPatch(
     {
       core: {
         snapshot: capped.snapshot,
+        streamingTextLane: snapshot.threadId
+          ? clearStreamingLaneForThread(state.streamingTextLane, snapshot.threadId)
+          : state.streamingTextLane,
         lastEventId: null,
         lastSnapshotVersion: snapshot.snapshotVersion,
         ...seedRunningTelemetry(state, capped.snapshot),
@@ -1692,6 +2079,67 @@ async function openThreadEventStream(
   let rafFlushHandle: number | null = null
   let fallbackFlushTimer: ReturnType<typeof globalThis.setTimeout> | null = null
   let maxAgeFlushTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+  type StreamChunkingMode = 'smooth' | 'catch_up'
+  let streamChunkingMode: StreamChunkingMode = 'smooth'
+  let streamChunkingBelowExitThresholdSinceMs: number | null = null
+  let streamChunkingLastCatchUpExitAtMs: number | null = null
+
+  const resetStreamChunkingMode = () => {
+    streamChunkingMode = 'smooth'
+    streamChunkingBelowExitThresholdSinceMs = null
+    streamChunkingLastCatchUpExitAtMs = null
+  }
+
+  const resolveStreamChunkingMode = (
+    queuedCount: number,
+    oldestAgeMs: number,
+    nowMs: number,
+  ): StreamChunkingMode => {
+    if (queuedCount <= 0) {
+      resetStreamChunkingMode()
+      return streamChunkingMode
+    }
+
+    const shouldEnterCatchUp =
+      queuedCount >= STREAM_CHUNKING_ENTER_QUEUE_DEPTH ||
+      oldestAgeMs >= STREAM_CHUNKING_ENTER_OLDEST_AGE_MS
+    const shouldExitCatchUp =
+      queuedCount <= STREAM_CHUNKING_EXIT_QUEUE_DEPTH &&
+      oldestAgeMs <= STREAM_CHUNKING_EXIT_OLDEST_AGE_MS
+    const severeBacklog =
+      queuedCount >= STREAM_CHUNKING_SEVERE_QUEUE_DEPTH ||
+      oldestAgeMs >= STREAM_CHUNKING_SEVERE_OLDEST_AGE_MS
+    const reentryHoldActive =
+      streamChunkingLastCatchUpExitAtMs != null &&
+      nowMs - streamChunkingLastCatchUpExitAtMs < STREAM_CHUNKING_REENTER_HOLD_MS
+
+    if (streamChunkingMode === 'smooth') {
+      if (shouldEnterCatchUp && (!reentryHoldActive || severeBacklog)) {
+        streamChunkingMode = 'catch_up'
+        streamChunkingBelowExitThresholdSinceMs = null
+        streamChunkingLastCatchUpExitAtMs = null
+      }
+      return streamChunkingMode
+    }
+
+    if (!shouldExitCatchUp) {
+      streamChunkingBelowExitThresholdSinceMs = null
+      return streamChunkingMode
+    }
+
+    if (streamChunkingBelowExitThresholdSinceMs == null) {
+      streamChunkingBelowExitThresholdSinceMs = nowMs
+      return streamChunkingMode
+    }
+
+    if (nowMs - streamChunkingBelowExitThresholdSinceMs >= STREAM_CHUNKING_EXIT_HOLD_MS) {
+      streamChunkingMode = 'smooth'
+      streamChunkingBelowExitThresholdSinceMs = null
+      streamChunkingLastCatchUpExitAtMs = nowMs
+    }
+
+    return streamChunkingMode
+  }
 
   const clearScheduledFlush = () => {
     if (rafFlushHandle !== null && typeof globalThis.cancelAnimationFrame === 'function') {
@@ -1711,6 +2159,7 @@ async function openThreadEventStream(
   const clearQueuedBusinessFrames = () => {
     queuedBusinessFrames.length = 0
     queuedSinceMs = null
+    resetStreamChunkingMode()
     clearScheduledFlush()
   }
 
@@ -1805,6 +2254,7 @@ async function openThreadEventStream(
                 Math.max(0, Date.now() - streamSubscribedAt),
             },
           },
+          earlyResponse: buildEarlyResponsePhase('stream_open', state.earlyResponse),
         },
       )
     })
@@ -1847,9 +2297,22 @@ async function openThreadEventStream(
     if (queuedBusinessFrames.length === 0) {
       return
     }
-    const frames = queuedBusinessFrames.splice(0, queuedBusinessFrames.length)
-    queuedSinceMs = null
     clearScheduledFlush()
+    const nowMs = Date.now()
+    const oldestQueueAgeMs = queuedSinceMs == null ? 0 : Math.max(0, nowMs - queuedSinceMs)
+    const mode = resolveStreamChunkingMode(queuedBusinessFrames.length, oldestQueueAgeMs, nowMs)
+    const maxFramesPerFlush =
+      reason === 'forced' || reason === 'max_age'
+        ? queuedBusinessFrames.length
+        : mode === 'catch_up'
+          ? STREAM_CHUNKING_CATCH_UP_DRAIN_MAX_FRAMES
+          : STREAM_CHUNKING_SMOOTH_DRAIN_MAX_FRAMES
+    const drainCount = Math.max(1, Math.min(queuedBusinessFrames.length, maxFramesPerFlush))
+    const frames = queuedBusinessFrames.splice(0, drainCount)
+    if (queuedBusinessFrames.length === 0) {
+      queuedSinceMs = null
+      resetStreamChunkingMode()
+    }
 
     const currentState = get()
     if (
@@ -1860,6 +2323,7 @@ async function openThreadEventStream(
     }
 
     let workingSnapshot = currentState.snapshot
+    let workingStreamingTextLane = currentState.streamingTextLane
     let workingLastEventId = currentState.lastEventId
     let workingLastSnapshotVersion = currentState.lastSnapshotVersion
     let workingError = currentState.error
@@ -1871,10 +2335,12 @@ async function openThreadEventStream(
     }
     let processingTelemetry = selectProcessingTelemetry(currentState)
     let shouldReconcileResolveFallback = false
+    let shouldResetEarlyResponse = false
     let legacyFallbackUsedCount = 0
     let appliedEventCount = 0
     let fastAppendHitCount = 0
     let fastAppendFallbackCount = 0
+    let streamingTextLaneMutated = false
 
     for (const frame of frames) {
       const event = frame.event
@@ -1911,6 +2377,20 @@ async function openThreadEventStream(
           message: `Invalid event_id cursor state. last_event_id=${workingLastEventId}`,
         })
         return
+      }
+
+      const lanePatch = pickMessageTextLaneUpdate(event)
+      if (lanePatch) {
+        if (!streamingTextLaneMutated) {
+          workingStreamingTextLane = { ...workingStreamingTextLane }
+          streamingTextLaneMutated = true
+        }
+        appendStreamingLaneTextInPlace(workingStreamingTextLane, {
+          threadId,
+          itemId: lanePatch.itemId,
+          textAppend: lanePatch.textAppend,
+          updatedAtMs: Date.now(),
+        })
       }
 
       const beforeSnapshot = workingSnapshot
@@ -1981,6 +2461,7 @@ async function openThreadEventStream(
           (nextSnapshot.processingState === 'idle' || nextSnapshot.processingState === 'failed')
         ) {
           processingTelemetry = completeProcessingTelemetry(processingTelemetry)
+          shouldResetEarlyResponse = true
         } else {
           processingTelemetry = seedRunningTelemetry(processingTelemetry, nextSnapshot)
         }
@@ -2002,6 +2483,7 @@ async function openThreadEventStream(
           event.payload.state === 'turn_failed'
         ) {
           processingTelemetry = completeProcessingTelemetry(processingTelemetry)
+          shouldResetEarlyResponse = true
         }
       }
     }
@@ -2013,12 +2495,17 @@ async function openThreadEventStream(
     const cappedResult = enforceScrollbackCap(workingSnapshot, workingHistory)
     workingSnapshot = cappedResult.snapshot
     workingHistory = cappedResult.history
+    workingStreamingTextLane = reconcileStreamingLaneWithSnapshot(
+      workingStreamingTextLane,
+      workingSnapshot,
+    )
 
     if (shouldReconcileResolveFallback && workingSnapshot) {
       reconcileResolveFallbackTimers(workingSnapshot)
     }
 
     const forcedFlushDelta = reason === 'forced' || reason === 'max_age' ? 1 : 0
+    const streamUpdatedAtMs = Date.now()
     set((state) => {
       if (
         !isCurrentGeneration(generation) ||
@@ -2026,10 +2513,15 @@ async function openThreadEventStream(
       ) {
         return {}
       }
+      const interUpdateGapTelemetry = updateInterUpdateGapTelemetry(
+        state.telemetry,
+        streamUpdatedAtMs,
+      )
       return composeDomainPatch(
         {
           core: {
             snapshot: workingSnapshot,
+            streamingTextLane: workingStreamingTextLane,
             lastEventId: workingLastEventId,
             lastSnapshotVersion: workingLastSnapshotVersion,
             ...processingTelemetry,
@@ -2050,6 +2542,7 @@ async function openThreadEventStream(
             historyError: null,
             telemetry: {
               ...state.telemetry,
+              ...interUpdateGapTelemetry,
               legacy_fallback_used_count:
                 state.telemetry.legacy_fallback_used_count + legacyFallbackUsedCount,
               batchedFlushCount: state.telemetry.batchedFlushCount + 1,
@@ -2059,11 +2552,22 @@ async function openThreadEventStream(
               fastAppendFallbackCount: state.telemetry.fastAppendFallbackCount + fastAppendFallbackCount,
             },
           },
+          earlyResponse: shouldResetEarlyResponse
+            ? resetEarlyResponseState()
+            : buildEarlyResponsePhase('first_delta', state.earlyResponse),
         },
       )
     })
     if (threadRole === 'ask_planning') {
       requestAskQueueFlush?.()
+    }
+    if (queuedBusinessFrames.length > 0) {
+      const nextEvent = queuedBusinessFrames[0]?.event
+      const priorityFlush =
+        THREAD_STREAM_LOW_LATENCY_ENABLED &&
+        nextEvent != null &&
+        isMessageTextPatchEvent(nextEvent)
+      scheduleQueuedBusinessFlush(priorityFlush)
     }
   }
 
@@ -2162,6 +2666,19 @@ async function openThreadEventStream(
     }
     clearQueuedBusinessFrames()
     closeThreadEventSource()
+    set((current) =>
+      composeDomainPatch({
+        earlyResponse: resetEarlyResponseState(),
+        uiControl: {
+          error:
+            current.earlyResponse.phase === 'pending_send' &&
+            current.earlyResponse.pendingSinceMs != null &&
+            Date.now() - current.earlyResponse.pendingSinceMs > EARLY_RESPONSE_DELAY_WARNING_MS
+              ? 'Waiting for stream response... reconnecting.'
+              : current.error,
+        },
+      }),
+    )
     scheduleStreamReopen(get, set, projectId, nodeId, threadId, threadRole, generation)
   }
 }
@@ -2348,12 +2865,13 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
         sendMetadata.idempotencyKey = newExecutionQueueId('ask_turn')
       }
     }
-    set(
+    set((state) =>
       composeDomainPatch({
         uiControl: {
           isSending: true,
           error: null,
         },
+        earlyResponse: buildPendingSendEarlyResponse(state.earlyResponse),
       }),
     )
 
@@ -2444,6 +2962,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
             isSending: false,
             error: reason,
           },
+          earlyResponse: resetEarlyResponseState(),
         }),
       )
       return {
@@ -2889,6 +3408,10 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
           {
             core: {
               snapshot: nextSnapshot,
+              streamingTextLane: reconcileStreamingLaneWithSnapshot(
+                current.streamingTextLane,
+                nextSnapshot,
+              ),
               hasOlderHistory: capped.history.hasOlderHistory,
               oldestVisibleSequence: capped.history.oldestVisibleSequence,
               totalItemCount: capped.history.totalItemCount,
@@ -3100,12 +3623,13 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     }
 
     const generation = threadGeneration
-    set(
+    set((state) =>
       composeDomainPatch({
         uiControl: {
           isSending: true,
           error: null,
         },
+        earlyResponse: buildPendingSendEarlyResponse(state.earlyResponse),
       }),
     )
     try {
@@ -3166,6 +3690,7 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
             isSending: false,
             error: error instanceof Error ? error.message : String(error),
           },
+          earlyResponse: resetEarlyResponseState(),
         }),
       )
     }
@@ -3583,6 +4108,36 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
     )
   },
 
+  recordStreamingRowRender(isStreamingCandidate: boolean) {
+    if (!isStreamingCandidate) {
+      return
+    }
+    set((state) => ({
+      telemetry: {
+        ...state.telemetry,
+        streamingRowRenderCount: state.telemetry.streamingRowRenderCount + 1,
+      },
+    }))
+  },
+
+  recordMarkdownParseDuration(durationMs: number) {
+    const normalizedDurationMs = Number.isFinite(durationMs)
+      ? Math.max(0, Math.floor(durationMs))
+      : 0
+    set((state) => ({
+      telemetry: {
+        ...state.telemetry,
+        markdownParseDurationTotalMs:
+          state.telemetry.markdownParseDurationTotalMs + normalizedDurationMs,
+        markdownParseDurationMaxMs: Math.max(
+          state.telemetry.markdownParseDurationMaxMs,
+          normalizedDurationMs,
+        ),
+        markdownParseDurationSamples: state.telemetry.markdownParseDurationSamples + 1,
+      },
+    }))
+  },
+
   disconnectThread() {
     threadGeneration += 1
     clearReconnectTimer()
@@ -3592,3 +4147,6 @@ export const useThreadByIdStoreV3 = create<ThreadByIdStoreV3State>((set, get) =>
   },
   }
 })
+
+
+

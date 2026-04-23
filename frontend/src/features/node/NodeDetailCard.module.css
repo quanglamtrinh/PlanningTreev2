@@ -182,7 +182,7 @@ section[data-variant='breadcrumb'] .cardHeader {
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
-/* Underline-tab strip: transparent, flush with parent — matches screenshot nav */
+/* Underline-tab strip: transparent, flush with parent; matches screenshot nav */
 .breadcrumbDetailTablistEmbedded {
   padding: 0;
   margin: 0;
@@ -446,7 +446,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   background: var(--color-bg-hover);
 }
 
-/* ─── Info / Describe tab (readable column + section cards) ─ */
+/* Info/Describe tab: readable column + section cards */
 .cardBodyAuxDescribe {
   padding: 10px 12px 22px;
   box-sizing: border-box;
@@ -539,7 +539,8 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 .describeWorkspaceSection,
 .describeDocsSection,
 .describeSystemPromptsSection,
-.describeSkillsSection {
+.describeSkillsSection,
+.describeExtensionsSection {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -567,6 +568,10 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 
 .describeSystemPromptsSection {
   border-left: 3px solid color-mix(in srgb, var(--color-accent) 22%, var(--color-text-tertiary) 78%);
+}
+
+.describeExtensionsSection {
+  border-left: 3px solid color-mix(in srgb, var(--color-text-secondary) 55%, var(--color-border-subtle));
 }
 
 .describeTaskMissingBanner {
@@ -911,7 +916,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 }
 
 .documentPanel {
-  /* Editor chrome — aligned with app surface / accent tokens (not fixed VS Code dark) */
+  /* Editor chrome aligned with app surface/accent tokens (not fixed VS Code dark). */
   --editor-vscode-bg: var(--color-bg-input);
   --editor-vscode-panel: var(--color-bg-panel-alt);
   --editor-vscode-border: var(--color-border-subtle);
@@ -939,7 +944,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   margin-top: 10px;
 }
 
-/* Syntax token classes — colors from tokens.css (--syntax-*) */
+/* Syntax token classes from tokens.css (--syntax-*). */
 .documentPanel :global(.pt-sx-md-h1) {
   color: var(--syntax-md-h1);
   font-weight: 800;
@@ -1161,7 +1166,7 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 6%, transparent);
 }
 
-/* Tab strip fills this row edge-to-edge — transparent underline nav */
+/* Tab strip fills this row edge-to-edge with transparent underline nav. */
 .documentStatusRowEmbedTabs {
   padding: 0 4px;
   overflow: hidden;
@@ -1308,6 +1313,13 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   box-sizing: border-box;
 }
 
+.editorSurfaceHeaderMain {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .editorSurfaceTitle {
   font-family: var(--font-sans, system-ui, sans-serif);
   font-size: 10px;
@@ -1317,6 +1329,42 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   color: color-mix(in srgb, var(--editor-vscode-text) 58%, var(--color-text-tertiary));
   line-height: 1.2;
   user-select: none;
+}
+
+.editorModeToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--editor-vscode-text) 18%, transparent);
+  background: color-mix(in srgb, var(--editor-vscode-bg) 84%, var(--editor-vscode-text) 4%);
+}
+
+.editorModeToggleButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in srgb, var(--editor-vscode-text) 66%, var(--color-text-tertiary));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.editorModeToggleButton:hover {
+  color: var(--editor-vscode-text);
+}
+
+.editorModeToggleButtonActive {
+  background: color-mix(in srgb, var(--editor-vscode-text) 12%, transparent);
+  color: var(--editor-vscode-text);
 }
 
 .editorSurfaceHeaderActions {
@@ -1359,7 +1407,21 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   box-sizing: border-box;
 }
 
-/* @uiw/react-codemirror root — must fill .editorSurface or height:100% chain breaks */
+.richViewSurface {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.richViewEmpty {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--editor-vscode-muted);
+}
+
+/* @uiw/react-codemirror root must fill .editorSurface or height:100% chain breaks. */
 .codemirrorHost {
   flex: 1;
   min-height: 0;
@@ -1384,13 +1446,13 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 .editorSurface :global(.cm-scroller) {
   flex: 1;
   min-height: 0;
-  /* Do not use overflow-x:hidden — it can clip the line-number gutter when content is wide */
+  /* Do not use overflow-x:hidden; it can clip the line-number gutter when content is wide. */
   overflow: auto !important;
   overscroll-behavior: contain;
   background: var(--editor-vscode-bg);
 }
 
-/* Only the text document should shrink in flex layouts — gutters must not get min-height:0 */
+/* Only text document content should shrink in flex layouts; gutters must not get min-height:0. */
 .editorSurface :global(.cm-content) {
   min-height: 0 !important;
   font-family: var(--doc-editor-body-font);
@@ -1738,7 +1800,7 @@ section[data-variant='graph'] .cardBodyAux {
 section[data-variant='graph'] .documentTabStack {
   flex: 1;
   min-height: 0;
-  /* Hidden on both axes clips the editor’s left gutter when inner width overflows */
+  /* Hidden on both axes clips the editor left gutter when inner width overflows. */
   overflow-x: visible;
   overflow-y: hidden;
 }
@@ -1851,6 +1913,20 @@ section[data-variant='breadcrumb'] .editorSurfaceTitle {
   color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-tertiary));
 }
 
+section[data-variant='breadcrumb'] .editorModeToggle {
+  border-color: color-mix(in srgb, var(--text-secondary) 28%, transparent);
+  background: color-mix(in srgb, var(--bg-surface) 76%, var(--text-primary) 4%);
+}
+
+section[data-variant='breadcrumb'] .editorModeToggleButton {
+  color: color-mix(in srgb, var(--text-secondary) 84%, var(--text-tertiary));
+}
+
+section[data-variant='breadcrumb'] .editorModeToggleButtonActive {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
 section[data-variant='breadcrumb'] .editorSurfaceHeaderIcon {
   color: color-mix(in srgb, var(--text-secondary) 72%, var(--text-tertiary));
 }
@@ -1861,6 +1937,10 @@ section[data-variant='breadcrumb'] .editorSurfaceHeaderIcon:hover {
 
 section[data-variant='breadcrumb'] .editorSurfaceBody {
   padding: 12px 14px;
+}
+
+section[data-variant='breadcrumb'] .richViewSurface {
+  padding-right: 0;
 }
 
 section[data-variant='breadcrumb'] .editorSurface :global(.cm-gutters) {

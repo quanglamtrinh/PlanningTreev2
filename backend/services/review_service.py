@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.conversation.services.system_message_writer import ConversationSystemMessageWriter
-from backend.conversation.services.thread_runtime_service import ThreadRuntimeService
+from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.ai.review_rollup_prompt_builder import (
     build_review_rollup_base_instructions,
@@ -54,7 +54,7 @@ class ReviewService:
         chat_timeout: int = 30,
         chat_service: ChatService | None = None,
         system_message_writer: ConversationSystemMessageWriter | None = None,
-        thread_runtime_service: ThreadRuntimeService | None = None,
+        thread_runtime_service: ThreadRuntimeServiceV3 | None = None,
         workflow_event_publisher: WorkflowEventPublisher | None = None,
         rehearsal_workspace_root: Path | None = None,
     ) -> None:
@@ -412,6 +412,7 @@ class ReviewService:
                     f"Cannot accept rollup: rollup status is '{rollup.get('status')}', expected 'ready'."
                 )
 
+            active_turn_id = None
             try:
                 audit_snapshot = self._storage.thread_snapshot_store_v3.read_snapshot(
                     project_id,
@@ -420,6 +421,8 @@ class ReviewService:
                 )
                 active_turn_id = audit_snapshot.get("activeTurnId")
             except Exception:
+                active_turn_id = None
+            if not active_turn_id:
                 session = self._storage.chat_state_store.read_session(
                     project_id,
                     review_node_id,

@@ -52,7 +52,7 @@ class FinishTaskCodexClient:
 def wait_for_terminal_status(client, project_id: str, timeout_sec: float = 2.0) -> dict:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
-        response = client.get(f"/v1/projects/{project_id}/split-status")
+        response = client.get(f"/v3/projects/{project_id}/split-status")
         assert response.status_code == 200
         payload = response.json()
         if payload["status"] != "active":
@@ -73,27 +73,27 @@ def test_root_documents_can_be_read_and_written(client, tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    attached = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert attached.status_code == 200
     payload = attached.json()
     project_id = payload["project"]["id"]
     root_id = payload["tree_state"]["root_node_id"]
 
-    frame = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame")
-    spec = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec")
+    frame = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame")
+    spec = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/documents/spec")
     assert frame.status_code == 200
     assert spec.status_code == 200
     assert frame.json()["content"] == ""
     assert spec.json()["content"] == ""
 
     updated = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame",
         json={"content": "# Root frame"},
     )
     assert updated.status_code == 200
     assert updated.json()["content"] == "# Root frame"
 
-    refreshed = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame")
+    refreshed = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame")
     assert refreshed.status_code == 200
     assert refreshed.json()["content"] == "# Root frame"
 
@@ -102,15 +102,15 @@ def test_child_document_endpoints_work_immediately_after_create_child(client, tm
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    attached = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     project_id = attached.json()["project"]["id"]
     root_id = attached.json()["tree_state"]["root_node_id"]
 
-    created = client.post(f"/v1/projects/{project_id}/nodes", json={"parent_id": root_id})
+    created = client.post(f"/v3/projects/{project_id}/nodes", json={"parent_id": root_id})
     assert created.status_code == 200
     child_id = created.json()["tree_state"]["active_node_id"]
 
-    response = client.get(f"/v1/projects/{project_id}/nodes/{child_id}/documents/spec")
+    response = client.get(f"/v3/projects/{project_id}/nodes/{child_id}/documents/spec")
     assert response.status_code == 200
     assert response.json()["content"] == ""
 
@@ -122,24 +122,24 @@ def test_confirm_frame_route_does_not_write_v2_audit_item(
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    attached = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert attached.status_code == 200
     payload = attached.json()
     project_id = payload["project"]["id"]
     root_id = payload["tree_state"]["root_node_id"]
 
     put_response = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame",
         json={"content": "# Task Title\nLogin flow\n\n# Task-Shaping Fields\n- target platform: web\n"},
     )
     assert put_response.status_code == 200
 
-    first_confirm = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame")
+    first_confirm = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/confirm-frame")
     assert first_confirm.status_code == 200
     first_item = _find_audit_snapshot_item(client, project_id, root_id, "audit-record:frame")
     assert first_item is None
 
-    second_confirm = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame")
+    second_confirm = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/confirm-frame")
     assert second_confirm.status_code == 200
     second_item = _find_audit_snapshot_item(client, project_id, root_id, "audit-record:frame")
     assert second_item is None
@@ -149,25 +149,25 @@ def test_confirm_spec_route_does_not_write_v2_audit_item(client, tmp_path: Path)
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    attached = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert attached.status_code == 200
     payload = attached.json()
     project_id = payload["project"]["id"]
     root_id = payload["tree_state"]["root_node_id"]
 
     frame_response = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame",
         json={"content": "# Task Title\nLogin flow\n\n# Task-Shaping Fields\n- target platform: web\n"},
     )
     assert frame_response.status_code == 200
-    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame").status_code == 200
+    assert client.post(f"/v3/projects/{project_id}/nodes/{root_id}/confirm-frame").status_code == 200
 
     spec_response = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/spec",
         json={"content": "# Spec\nBuild the login flow.\n"},
     )
     assert spec_response.status_code == 200
-    confirm_response = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-spec")
+    confirm_response = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/confirm-spec")
     assert confirm_response.status_code == 200
 
     item = _find_audit_snapshot_item(client, project_id, root_id, "audit-record:spec")
@@ -178,7 +178,7 @@ def test_split_created_child_document_endpoints_work(client, tmp_path: Path) -> 
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    attached = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     project_id = attached.json()["project"]["id"]
     root_id = attached.json()["tree_state"]["root_node_id"]
     _prepare_finishable_task(client, project_id, root_id)
@@ -197,7 +197,7 @@ def test_split_created_child_document_endpoints_work(client, tmp_path: Path) -> 
     )
 
     response = client.post(
-        f"/v1/projects/{project_id}/nodes/{root_id}/split",
+        f"/v3/projects/{project_id}/nodes/{root_id}/split",
         json={"mode": "workflow"},
     )
     assert response.status_code == 202
@@ -205,32 +205,32 @@ def test_split_created_child_document_endpoints_work(client, tmp_path: Path) -> 
     terminal = wait_for_terminal_status(client, project_id)
     assert terminal["status"] == "idle"
 
-    snapshot = client.get(f"/v1/projects/{project_id}/snapshot")
+    snapshot = client.get(f"/v3/projects/{project_id}/snapshot")
     assert snapshot.status_code == 200
     root = next(
         node for node in snapshot.json()["tree_state"]["node_registry"] if node["node_id"] == root_id
     )
     child_id = root["child_ids"][0]
 
-    child_frame = client.get(f"/v1/projects/{project_id}/nodes/{child_id}/documents/frame")
+    child_frame = client.get(f"/v3/projects/{project_id}/nodes/{child_id}/documents/frame")
     assert child_frame.status_code == 200
     assert child_frame.json()["content"] == ""
 
 
 def _prepare_finishable_task(client, project_id: str, root_id: str) -> None:
     frame_resp = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame",
         json={"content": "# Task Title\nTask\n\n# Objective\nDo it\n"},
     )
     assert frame_resp.status_code == 200
-    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame").status_code == 200
+    assert client.post(f"/v3/projects/{project_id}/nodes/{root_id}/confirm-frame").status_code == 200
 
     spec_resp = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/spec",
         json={"content": "# Spec\nImplement it\n"},
     )
     assert spec_resp.status_code == 200
-    assert client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-spec").status_code == 200
+    assert client.post(f"/v3/projects/{project_id}/nodes/{root_id}/confirm-spec").status_code == 200
 
     snapshot = client.app.state.storage.project_store.load_snapshot(project_id)
     snapshot["tree_state"]["node_index"][root_id]["status"] = "ready"
@@ -241,19 +241,19 @@ def test_frozen_frame_and_spec_saves_do_not_mutate_files(client, tmp_path: Path)
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    attached = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert attached.status_code == 200
     payload = attached.json()
     project_id = payload["project"]["id"]
     root_id = payload["tree_state"]["root_node_id"]
 
     initial_frame = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame",
         json={"content": "# Original Frame\n"},
     )
     assert initial_frame.status_code == 200
     initial_spec = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/spec",
         json={"content": "# Original Spec\n"},
     )
     assert initial_spec.status_code == 200
@@ -271,22 +271,22 @@ def test_frozen_frame_and_spec_saves_do_not_mutate_files(client, tmp_path: Path)
     )
 
     frame_resp = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame",
         json={"content": "# New Frame\n"},
     )
     assert frame_resp.status_code == 409
     assert frame_resp.json()["code"] == "shaping_frozen"
-    refreshed_frame = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame")
+    refreshed_frame = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame")
     assert refreshed_frame.status_code == 200
     assert refreshed_frame.json()["content"] == "# Original Frame\n"
 
     spec_resp = client.put(
-        f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec",
+        f"/v3/projects/{project_id}/nodes/{root_id}/documents/spec",
         json={"content": "# New Spec\n"},
     )
     assert spec_resp.status_code == 409
     assert spec_resp.json()["code"] == "shaping_frozen"
-    refreshed_spec = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/documents/spec")
+    refreshed_spec = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/documents/spec")
     assert refreshed_spec.status_code == 200
     assert refreshed_spec.json()["content"] == "# Original Spec\n"
 
@@ -295,7 +295,7 @@ def test_frame_save_is_atomic_against_concurrent_finish_task(client, tmp_path: P
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    attached = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    attached = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert attached.status_code == 200
     payload = attached.json()
     project_id = payload["project"]["id"]
@@ -321,12 +321,12 @@ def test_frame_save_is_atomic_against_concurrent_finish_task(client, tmp_path: P
 
     def do_put() -> None:
         put_result["response"] = client.put(
-            f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame",
+            f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame",
             json={"content": "# Task Title\nTask updated\n\n# Objective\nDo it now\n"},
         )
 
     def do_finish() -> None:
-        finish_result["response"] = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/finish-task")
+        finish_result["response"] = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/finish-task")
 
     put_thread = threading.Thread(target=do_put, daemon=True)
     finish_thread = threading.Thread(target=do_finish, daemon=True)
@@ -348,11 +348,11 @@ def test_frame_save_is_atomic_against_concurrent_finish_task(client, tmp_path: P
     assert put_result["response"].status_code == 200
     assert finish_result["response"].status_code == 400
 
-    frame_resp = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/documents/frame")
+    frame_resp = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/documents/frame")
     assert frame_resp.status_code == 200
     assert frame_resp.json()["content"] == "# Task Title\nTask updated\n\n# Objective\nDo it now\n"
 
-    detail_resp = client.get(f"/v1/projects/{project_id}/nodes/{root_id}/detail-state")
+    detail_resp = client.get(f"/v3/projects/{project_id}/nodes/{root_id}/detail-state")
     assert detail_resp.status_code == 200
     detail = detail_resp.json()
     assert detail["frame_revision"] >= 2

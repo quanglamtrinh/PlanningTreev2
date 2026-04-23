@@ -243,6 +243,15 @@ export function NodeDescribePanel({
             </div>
           </div>
 
+          <div className={styles.describeDocSection}>
+            <div className={styles.describeExtensionsSection}>
+              <h2 className={styles.describeSectionTitle}>Extensions</h2>
+              <p className={styles.changedFilesEmpty} data-testid="info-tab-extensions">
+                No extensions registered for this node.
+              </p>
+            </div>
+          </div>
+
           {taskMissing ? (
             <div className={styles.describeDocSection}>
               <div className={styles.describeTaskMissingBanner} role="note">

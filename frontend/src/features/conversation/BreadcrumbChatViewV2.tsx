@@ -6,8 +6,6 @@ import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import { NodeDetailCard } from '../node/NodeDetailCard'
-import { ComposerBar } from '../breadcrumb/ComposerBar'
-import { FrameContextFeedBlock } from '../breadcrumb/FrameContextFeedBlock'
 import {
   buildChatV2Url,
   parseThreadTab,
@@ -15,13 +13,8 @@ import {
   type ThreadTab,
 } from './surfaceRouting'
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
-import { MessagesV3 } from './components/v3/MessagesV3'
-import { MessagesV3ErrorBoundary } from './components/v3/MessagesV3ErrorBoundary'
+import { BreadcrumbThreadPaneV2 } from './components/BreadcrumbThreadPaneV2'
 import {
-  type AskFollowupQueuePauseReason,
-  type AskFollowupQueueStatus,
-  type ExecutionFollowupQueuePauseReason,
-  type ExecutionFollowupQueueStatus,
   selectAskFollowupQueueActions,
   selectAskFollowupQueueState,
   selectComposerState,
@@ -52,73 +45,6 @@ function resolveThreadRole(threadTab: ThreadTab): ThreadRole | null {
 
 function renderActionLabel(action: string | null, idleLabel: string, busyLabel: string): string {
   return action ? busyLabel : idleLabel
-}
-
-function renderQueueStatusLabel(status: ExecutionFollowupQueueStatus | AskFollowupQueueStatus): string {
-  if (status === 'queued') {
-    return 'Queued'
-  }
-  if (status === 'requires_confirmation') {
-    return 'Needs confirmation'
-  }
-  if (status === 'sending') {
-    return 'Sending'
-  }
-  return 'Failed'
-}
-
-function renderQueuePauseReasonLabel(reason: ExecutionFollowupQueuePauseReason): string {
-  if (reason === 'none') {
-    return 'Auto-send ready'
-  }
-  if (reason === 'runtime_waiting_input') {
-    return 'Paused: waiting for required input'
-  }
-  if (reason === 'plan_ready_gate') {
-    return 'Paused: plan-ready gate'
-  }
-  if (reason === 'operator_pause') {
-    return 'Paused by operator'
-  }
-  return 'Paused: workflow blocked'
-}
-
-function renderAskQueuePauseReasonLabel(reason: AskFollowupQueuePauseReason): string {
-  if (reason === 'none') {
-    return 'Auto-send ready'
-  }
-  if (reason === 'snapshot_unavailable') {
-    return 'Paused: snapshot unavailable'
-  }
-  if (reason === 'stream_or_state_mismatch') {
-    return 'Paused: stream/state mismatch'
-  }
-  if (reason === 'active_turn_running') {
-    return 'Paused: active turn running'
-  }
-  if (reason === 'waiting_user_input') {
-    return 'Paused: waiting for required input'
-  }
-  if (reason === 'operator_pause') {
-    return 'Paused by operator'
-  }
-  return 'Paused: confirmation required'
-}
-
-function renderAskConfirmationReasonLabel(reason: string | null | undefined): string {
-  if (reason === 'stale_age') {
-    return 'Queued ask is stale. Confirm before sending.'
-  }
-  if (reason === 'thread_drift') {
-    return 'Thread context changed. Confirm before sending.'
-  }
-  if (reason === 'snapshot_drift') {
-    return 'Snapshot context changed. Confirm before sending.'
-  }
-  if (reason === 'stale_marker') {
-    return 'Stream context changed. Confirm before sending.'
-  }
-  return 'Queued ask requires confirmation before sending.'
 }
 
 export function BreadcrumbChatViewV2() {
@@ -419,15 +345,10 @@ export function BreadcrumbChatViewV2() {
   }, [activeProjectId, detailCardState, detailNode, nodeId, projectError, projectId, snapshot])
 
   const showAuditShell = threadTab === 'audit' && !workflowState?.reviewThreadId
-  const executionQueueEntries = executionQueueState.executionFollowupQueue
-  const executionQueueHasSending = executionQueueEntries.some((entry) => entry.status === 'sending')
-  const executionQueueControlsDisabled = executionQueueHasSending || executionQueueState.isSending
-  const executionQueuePauseLabel = renderQueuePauseReasonLabel(executionQueueState.executionQueuePauseReason)
+  const executionQueueHasSending = executionQueueState.executionFollowupQueue.some(
+    (entry) => entry.status === 'sending',
+  )
   const askQueueEnabled = bootstrap?.ask_followup_queue_enabled === true
-  const askQueueEntries = askQueueState.askFollowupQueue
-  const askQueueHasSending = askQueueEntries.some((entry) => entry.status === 'sending')
-  const askQueueControlsDisabled = askQueueHasSending || askQueueState.isSending
-  const askQueuePauseLabel = renderAskQueuePauseReasonLabel(askQueueState.askQueuePauseReason)
   const conversationLoading = isLoading || (threadTab === 'ask' ? false : isWorkflowLoading)
   const composerDisabled = useMemo(() => {
     if (!composerStateV3.snapshot) {
@@ -638,360 +559,63 @@ export function BreadcrumbChatViewV2() {
     workflowState,
   ])
 
+  const handleThreadTabChange = useCallback(
+    (nextThreadTab: ThreadTab) => {
+      if (!projectId || !nodeId) {
+        return
+      }
+      void navigate(buildChatV2Url(projectId, nodeId, nextThreadTab))
+    },
+    [navigate, nodeId, projectId],
+  )
+
   return (
     <div className={styles.root}>
-      <div className={styles.threadPane} data-testid="breadcrumb-thread-pane">
-        <div className={styles.threadSurface}>
-          <div className={styles.threadTabBar} data-testid="breadcrumb-v2-thread-header">
-            <nav className={styles.threadTabNav} role="tablist" aria-label="Thread mode">
-              <button
-                type="button"
-                role="tab"
-                className={`${styles.threadTab} ${threadTab === 'ask' ? styles.threadTabActive : ''}`}
-                data-testid="breadcrumb-thread-tab-ask"
-                aria-selected={threadTab === 'ask'}
-                onClick={() => {
-                  if (projectId && nodeId) {
-                    void navigate(buildChatV2Url(projectId, nodeId, 'ask'))
-                  }
-                }}
-              >
-                Ask
-              </button>
-              <button
-                type="button"
-                role="tab"
-                className={`${styles.threadTab} ${threadTab === 'execution' ? styles.threadTabActive : ''}`}
-                data-testid="breadcrumb-thread-tab-execution"
-                aria-selected={threadTab === 'execution'}
-                onClick={() => {
-                  if (projectId && nodeId) {
-                    void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
-                  }
-                }}
-              >
-                Execution
-              </button>
-              <button
-                type="button"
-                role="tab"
-                className={`${styles.threadTab} ${threadTab === 'audit' ? styles.threadTabActive : ''}`}
-                data-testid="breadcrumb-thread-tab-audit"
-                aria-selected={threadTab === 'audit'}
-                onClick={() => {
-                  if (projectId && nodeId) {
-                    void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
-                  }
-                }}
-              >
-                Audit
-              </button>
-            </nav>
-          </div>
-
-          <div className={styles.threadTabBody} data-testid="breadcrumb-thread-body">
-            <div className={styles.threadBodyNoticeRow}>
-              {combinedError ? (
-                <div className={styles.errorBanner} role="alert">
-                  {combinedError}
-                </div>
-              ) : null}
-            </div>
-
-            <div
-              className={`${styles.threadBodyMain}${
-                threadTab === 'execution' ? ` ${styles.threadExecutionWhiteCanvas}` : ''
-              }`}
-            >
-              {showAuditShell ? (
-                <div className={styles.auditShell} data-testid="audit-shell">
-                  {snapshot && projectId && nodeId ? (
-                    <FrameContextFeedBlock
-                      projectId={projectId}
-                      nodeId={nodeId}
-                      nodeRegistry={snapshot.tree_state.node_registry}
-                      variant="audit"
-                      specConfirmed={nodeDetailState?.spec_confirmed === true}
-                    />
-                  ) : null}
-                  <div className={styles.auditShellBody}>
-                    <div className={styles.auditShellTitle}>Audit Review Not Started Yet</div>
-                    <div className={styles.auditShellText}>
-                      Start review from the execution tab once the current execution decision is ready.
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <MessagesV3ErrorBoundary
-                  key={`${threadTab}:${activeThreadId ?? 'none'}`}
-                  onRenderError={handleV3RenderError}
-                >
-                  <MessagesV3
-                    snapshot={feedRenderStateV3.snapshot}
-                    isLoading={conversationLoading}
-                    isSending={isSending}
-                    hasOlderHistory={hasOlderHistory}
-                    isLoadingHistory={isLoadingHistory}
-                    onLoadMoreHistory={() => void loadMoreHistory()}
-                    onResolveUserInput={resolveUserInput}
-                    onPlanAction={runPlanActionV3}
-                    lastCompletedAt={lastCompletedAt}
-                    lastDurationMs={lastDurationMs}
-                    threadChatFlatCanvas
-                    prefix={
-                      (threadTab === 'ask' || threadTab === 'audit') && snapshot && projectId && nodeId ? (
-                        <FrameContextFeedBlock
-                          projectId={projectId}
-                          nodeId={nodeId}
-                          nodeRegistry={snapshot.tree_state.node_registry}
-                          variant={threadTab === 'audit' ? 'audit' : 'ask'}
-                          specConfirmed={nodeDetailState?.spec_confirmed === true}
-                        />
-                      ) : undefined
-                    }
-                    suffix={composerWorkflowActions ?? undefined}
-                  />
-                </MessagesV3ErrorBoundary>
-              )}
-            </div>
-
-            <div
-              className={`${styles.threadBodyComposer}${
-                threadTab === 'execution' ? ` ${styles.threadExecutionWhiteCanvas}` : ''
-              }`}
-              data-testid="breadcrumb-thread-composer"
-            >
-              {threadTab === 'execution' ? (
-                <section
-                  className={styles.executionQueuePanel}
-                  aria-label="Queued execution follow-ups"
-                  data-testid="execution-followup-queue-panel"
-                >
-                  <div className={styles.executionQueueHeader}>
-                    <div className={styles.executionQueueTitle}>
-                      Queued Follow-ups ({executionQueueEntries.length})
-                    </div>
-                    <div className={styles.executionQueueHeaderControls}>
-                      <span className={styles.executionQueuePauseReason}>{executionQueuePauseLabel}</span>
-                      <button
-                        type="button"
-                        className={styles.executionQueuePauseToggle}
-                        onClick={() => setOperatorPause(!executionQueueState.executionQueueOperatorPaused)}
-                        data-testid="execution-followup-operator-pause-toggle"
-                      >
-                        {executionQueueState.executionQueueOperatorPaused ? 'Resume auto-send' : 'Pause auto-send'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {executionQueueEntries.length === 0 ? (
-                    <p className={styles.executionQueueEmpty}>No queued follow-ups.</p>
-                  ) : (
-                    <ol className={styles.executionQueueList}>
-                      {executionQueueEntries.map((entry, index) => (
-                        <li key={entry.entryId} className={styles.executionQueueItem}>
-                          <div className={styles.executionQueueItemMetaRow}>
-                            <span
-                              className={`${styles.executionQueueStatusBadge} ${
-                                entry.status === 'failed'
-                                  ? styles.executionQueueStatusFailed
-                                  : entry.status === 'requires_confirmation'
-                                    ? styles.executionQueueStatusConfirmation
-                                    : entry.status === 'sending'
-                                      ? styles.executionQueueStatusSending
-                                      : styles.executionQueueStatusQueued
-                              }`}
-                            >
-                              {renderQueueStatusLabel(entry.status)}
-                            </span>
-                            <span className={styles.executionQueueMetaText}>Attempt {entry.attemptCount + 1}</span>
-                          </div>
-                          <p className={styles.executionQueueText}>{entry.text}</p>
-                          {entry.lastError ? (
-                            <div className={styles.executionQueueError}>Last error: {entry.lastError}</div>
-                          ) : null}
-                          <div className={styles.executionQueueActions}>
-                            <button
-                              type="button"
-                              className={styles.executionQueueAction}
-                              disabled={executionQueueControlsDisabled || index === 0}
-                              onClick={() => reorderQueued(index, index - 1)}
-                            >
-                              Move up
-                            </button>
-                            <button
-                              type="button"
-                              className={styles.executionQueueAction}
-                              disabled={
-                                executionQueueControlsDisabled || index === executionQueueEntries.length - 1
-                              }
-                              onClick={() => reorderQueued(index, index + 1)}
-                            >
-                              Move down
-                            </button>
-                            <button
-                              type="button"
-                              className={styles.executionQueueAction}
-                              disabled={
-                                executionQueueControlsDisabled ||
-                                entry.status === 'sending' ||
-                                entry.status === 'requires_confirmation'
-                              }
-                              onClick={() => void sendQueuedNow(entry.entryId)}
-                            >
-                              Send now
-                            </button>
-                            {entry.status === 'requires_confirmation' ? (
-                              <button
-                                type="button"
-                                className={`${styles.executionQueueAction} ${styles.executionQueueActionPrimary}`}
-                                disabled={executionQueueControlsDisabled}
-                                onClick={() => void confirmExecutionQueued(entry.entryId)}
-                              >
-                                Confirm
-                              </button>
-                            ) : null}
-                            {entry.status === 'failed' ? (
-                              <button
-                                type="button"
-                                className={`${styles.executionQueueAction} ${styles.executionQueueActionPrimary}`}
-                                disabled={executionQueueControlsDisabled}
-                                onClick={() => void retryQueued(entry.entryId)}
-                              >
-                                Retry
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              className={styles.executionQueueAction}
-                              disabled={executionQueueControlsDisabled || entry.status === 'sending'}
-                              onClick={() => removeExecutionQueued(entry.entryId)}
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                </section>
-              ) : null}
-              {threadTab === 'ask' && askQueueState.askFollowupQueueEnabled ? (
-                <section
-                  className={styles.askQueuePanel}
-                  aria-label="Queued ask follow-ups"
-                  data-testid="ask-followup-queue-panel"
-                >
-                  <div className={styles.askQueueHeader}>
-                    <div className={styles.askQueueTitle}>Queued Ask Follow-ups ({askQueueEntries.length})</div>
-                    <div className={styles.askQueueHeaderControls}>
-                      <span className={styles.askQueuePauseReason}>{askQueuePauseLabel}</span>
-                    </div>
-                  </div>
-
-                  {askQueueEntries.length === 0 ? (
-                    <p className={styles.askQueueEmpty}>No queued ask follow-ups.</p>
-                  ) : (
-                    <ol className={styles.askQueueList}>
-                      {askQueueEntries.map((entry, index) => (
-                        <li key={entry.entryId} className={styles.askQueueItem}>
-                          <div className={styles.askQueueItemMetaRow}>
-                            <span
-                              className={`${styles.askQueueStatusBadge} ${
-                                entry.status === 'failed'
-                                  ? styles.askQueueStatusFailed
-                                  : entry.status === 'requires_confirmation'
-                                    ? styles.askQueueStatusConfirmation
-                                    : entry.status === 'sending'
-                                      ? styles.askQueueStatusSending
-                                      : styles.askQueueStatusQueued
-                              }`}
-                            >
-                              {renderQueueStatusLabel(entry.status)}
-                            </span>
-                            <span className={styles.askQueueMetaText}>Attempt {entry.attemptCount + 1}</span>
-                          </div>
-                          <p className={styles.askQueueText}>{entry.text}</p>
-                          {entry.status === 'requires_confirmation' ? (
-                            <div className={styles.askQueueReason}>
-                              {renderAskConfirmationReasonLabel(entry.confirmationReason)}
-                            </div>
-                          ) : null}
-                          {entry.lastError ? (
-                            <div className={styles.askQueueError}>Last error: {entry.lastError}</div>
-                          ) : null}
-                          <div className={styles.askQueueActions}>
-                            <button
-                              type="button"
-                              className={styles.askQueueAction}
-                              disabled={askQueueControlsDisabled || index === 0}
-                              onClick={() => reorderAskQueued(index, index - 1)}
-                            >
-                              Move up
-                            </button>
-                            <button
-                              type="button"
-                              className={styles.askQueueAction}
-                              disabled={askQueueControlsDisabled || index === askQueueEntries.length - 1}
-                              onClick={() => reorderAskQueued(index, index + 1)}
-                            >
-                              Move down
-                            </button>
-                            <button
-                              type="button"
-                              className={styles.askQueueAction}
-                              disabled={
-                                askQueueControlsDisabled || index !== 0 || entry.status !== 'queued'
-                              }
-                              onClick={() => void sendAskQueuedNow(entry.entryId)}
-                            >
-                              Send now
-                            </button>
-                            {entry.status === 'requires_confirmation' ? (
-                              <button
-                                type="button"
-                                className={`${styles.askQueueAction} ${styles.askQueueActionPrimary}`}
-                                disabled={askQueueControlsDisabled}
-                                onClick={() => void confirmAskQueued(entry.entryId)}
-                              >
-                                Confirm
-                              </button>
-                            ) : null}
-                            {entry.status === 'failed' ? (
-                              <button
-                                type="button"
-                                className={`${styles.askQueueAction} ${styles.askQueueActionPrimary}`}
-                                disabled={askQueueControlsDisabled}
-                                onClick={() => void retryAskQueued(entry.entryId)}
-                              >
-                                Retry
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              className={styles.askQueueAction}
-                              disabled={askQueueControlsDisabled || entry.status === 'sending'}
-                              onClick={() => removeAskQueued(entry.entryId)}
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                </section>
-              ) : null}
-              <ComposerBar
-                onSend={(content) => {
-                  void handleSend(content)
-                }}
-                disabled={composerDisabled}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
+      <BreadcrumbThreadPaneV2
+        threadTab={threadTab}
+        projectId={projectId}
+        nodeId={nodeId}
+        onThreadTabChange={handleThreadTabChange}
+        combinedError={combinedError}
+        showAuditShell={showAuditShell}
+        nodeRegistry={snapshot?.tree_state.node_registry ?? null}
+        specConfirmed={nodeDetailState?.spec_confirmed === true}
+        activeThreadId={activeThreadId}
+        feedSnapshot={feedRenderStateV3.snapshot}
+        conversationLoading={conversationLoading}
+        isSending={isSending}
+        hasOlderHistory={hasOlderHistory}
+        isLoadingHistory={isLoadingHistory}
+        loadMoreHistory={loadMoreHistory}
+        resolveUserInput={resolveUserInput}
+        runPlanAction={runPlanActionV3}
+        lastCompletedAt={lastCompletedAt}
+        lastDurationMs={lastDurationMs}
+        onRenderError={handleV3RenderError}
+        composerWorkflowActions={composerWorkflowActions}
+        composerDisabled={composerDisabled}
+        earlyResponsePhase={composerStateV3.earlyResponse.phase}
+        onSend={(content) => {
+          void handleSend(content)
+        }}
+        executionQueueState={executionQueueState}
+        askQueueState={askQueueState}
+        executionQueueActions={{
+          removeQueued: removeExecutionQueued,
+          reorderQueued,
+          sendQueuedNow,
+          confirmQueued: confirmExecutionQueued,
+          retryQueued,
+          setOperatorPause,
+        }}
+        askQueueActions={{
+          removeQueued: removeAskQueued,
+          reorderAskQueued,
+          sendAskQueuedNow,
+          confirmQueued: confirmAskQueued,
+          retryAskQueued,
+        }}
+      />
 
       <aside className={styles.detailPane} data-testid="breadcrumb-detail-pane">
         <div className={styles.detailRail}>
@@ -1008,3 +632,5 @@ export function BreadcrumbChatViewV2() {
     </div>
   )
 }
+
+

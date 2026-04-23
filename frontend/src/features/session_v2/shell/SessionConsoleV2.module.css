@@ -1,0 +1,1231 @@
+.console {
+  --session-v2-accent: #0169cc;
+  --session-v2-bg: #ffffff;
+  --session-v2-fg: #0d0d0d;
+  --session-v2-fg-muted: #6b7280;
+  --session-v2-border: #e5e7eb;
+  --session-v2-surface-subtle: #f8fafc;
+  --session-v2-surface-soft: #f3f4f6;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'SF Mono', 'SFMono-Regular', ui-monospace, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  --color-accent: var(--session-v2-accent);
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--session-v2-border);
+  background: var(--session-v2-bg);
+  color: var(--session-v2-fg);
+  font-family: var(--font-sans);
+}
+
+.mainPane {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--session-v2-bg);
+}
+
+.statusBar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--session-v2-border);
+  background: var(--session-v2-bg);
+}
+
+.statusBar strong {
+  margin-right: 10px;
+}
+
+.muted {
+  color: var(--session-v2-fg-muted);
+  font-size: 12px;
+}
+
+.statusMeta {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--session-v2-fg-muted);
+}
+
+.banner {
+  padding: 10px 14px;
+  background: var(--session-v2-surface-soft);
+  border-bottom: 1px solid var(--session-v2-border);
+}
+
+.errorBanner {
+  padding: 10px 14px;
+  background: color-mix(in srgb, #dc2626 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #dc2626 30%, transparent);
+  color: #7f1d1d;
+}
+
+@media (max-width: 1200px) {
+  .console {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .console {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+}
+
+:global(.sessionV2ThreadList) {
+  border-right: 1px solid var(--session-v2-border);
+  background: var(--session-v2-bg);
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+:global(.sessionV2ThreadListHeader) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--session-v2-border);
+}
+
+:global(.sessionV2ThreadListHeader h2) {
+  margin: 0;
+  font-size: 14px;
+}
+
+:global(.sessionV2ThreadListActions) {
+  display: flex;
+  gap: 6px;
+}
+
+:global(.sessionV2ThreadListItems) {
+  margin: 0;
+  padding: 10px;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+:global(.sessionV2ThreadRow) {
+  border: 1px solid var(--session-v2-border);
+  border-radius: 10px;
+  background: var(--session-v2-bg);
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+}
+
+:global(.sessionV2ThreadRow.active) {
+  border-color: color-mix(in srgb, var(--session-v2-accent) 70%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--session-v2-accent) 18%, transparent);
+}
+
+:global(.sessionV2ThreadMain) {
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  padding: 2px;
+}
+
+:global(.sessionV2ThreadName) {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:global(.sessionV2ThreadRowActions) {
+  display: flex;
+  gap: 4px;
+}
+
+:global(.sessionV2Transcript) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 22px 50px 70px;
+  display: grid;
+  gap: 10px;
+  background: var(--session-v2-bg);
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+
+:global(.sessionV2Transcript::-webkit-scrollbar) {
+  width: 8px;
+  height: 8px;
+}
+
+:global(.sessionV2Transcript::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+:global(.sessionV2Transcript::-webkit-scrollbar-thumb) {
+  background: color-mix(in srgb, var(--session-v2-fg) 25%, transparent);
+  border-radius: 999px;
+}
+
+:global(.sessionV2Transcript::-webkit-scrollbar-thumb:hover) {
+  background: color-mix(in srgb, var(--session-v2-fg) 38%, transparent);
+}
+
+:global(.sessionV2MessageRow) {
+  width: min(860px, 100%);
+  margin: 0 auto;
+  display: flex;
+  justify-content: flex-start;
+}
+
+:global(.sessionV2MessageRowUser) {
+  flex-direction: column;
+  align-items: flex-end;
+  padding-bottom: 8px;
+}
+
+:global(.sessionV2Bubble) {
+  max-width: min(860px, 100%);
+  border-radius: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--session-v2-border);
+  background: var(--session-v2-bg);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 6%);
+}
+
+:global(.sessionV2BubbleUser) {
+  max-width: min(760px, 80%);
+  border: 1px solid var(--session-v2-surface-soft);
+  border-radius: 16px;
+  background: var(--session-v2-surface-soft);
+  box-shadow: none;
+  padding: 10px;
+  text-shadow: 0 0 0.3px;
+}
+
+:global(.sessionV2BubbleUser > :first-child) {
+  margin-top: initial;
+}
+
+:global(.sessionV2BubbleUser > :last-child) {
+  margin-bottom: initial;
+}
+
+:global(.sessionV2MessageRowAssistant) {
+  justify-content: flex-start;
+}
+
+:global(.sessionV2BubbleAssistantInline) {
+  max-width: min(860px, 100%);
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  text-shadow: 0 0 0.3px;
+}
+
+:global(.sessionV2BubbleAssistantInline > :first-child) {
+  margin-top: 0;
+}
+
+:global(.sessionV2BubbleAssistantInline > :last-child) {
+  margin-bottom: 0;
+}
+
+:global(.sessionV2MessageText) {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--session-v2-fg);
+  font-family: var(--font-sans, 'Segoe UI', sans-serif);
+}
+
+:global(.sessionV2Transcript code),
+:global(.sessionV2TurnFileSummaryDiffRow),
+:global(.sessionV2ToolCardText) {
+  font-family: var(--font-mono, 'SF Mono', 'SFMono-Regular', ui-monospace, Menlo, Monaco, Consolas, monospace);
+  font-variant-ligatures: none;
+  font-feature-settings: 'calt' 0, 'liga' 0;
+}
+
+:global(.sessionV2UserMessageToggle) {
+  margin-top: 10px;
+  border: none;
+  background: transparent;
+  color: var(--session-v2-fg-muted);
+  font-size: 13px;
+  line-height: 1.2;
+  padding: 0;
+  cursor: pointer;
+}
+
+:global(.sessionV2UserMessageToggle:hover) {
+  color: var(--session-v2-fg);
+}
+
+:global(.sessionV2UserMeta) {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--session-v2-fg-muted);
+  font-size: 12px;
+  line-height: 1;
+  min-height: 20px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease-in-out;
+}
+
+:global(.sessionV2UserMetaTime) {
+  white-space: nowrap;
+}
+
+:global(.sessionV2UserMetaCopy) {
+  border: none;
+  background: transparent;
+  color: var(--session-v2-fg-muted);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 120ms ease-in-out;
+}
+
+:global(.sessionV2MessageRowUser:hover .sessionV2UserMeta),
+:global(.sessionV2MessageRowUser:focus-within .sessionV2UserMeta) {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+:global(.sessionV2MessageRowUser:hover .sessionV2UserMetaCopy),
+:global(.sessionV2MessageRowUser:focus-within .sessionV2UserMetaCopy) {
+  pointer-events: auto;
+}
+
+:global(.sessionV2UserMetaCopy:hover) {
+  color: var(--session-v2-fg);
+}
+
+:global(.sessionV2UserMetaCopiedLabel) {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+:global(.sessionV2ToolSummary) {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: #989898;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  text-shadow: 0 0 0.3px;
+}
+
+:global(.sessionV2WorkSummary) {
+  width: min(860px, 100%);
+  margin: 0 auto 2px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--session-v2-border);
+}
+
+:global(.sessionV2WorkSummaryToggle) {
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--session-v2-fg-muted);
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+
+:global(.sessionV2WorkSummaryLabel) {
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+:global(.sessionV2WorkSummaryChevron) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--session-v2-fg-muted);
+  transition: transform 140ms ease-in-out;
+}
+
+:global(.sessionV2WorkSummaryChevronOpen) {
+  transform: rotate(90deg);
+}
+
+:global(.sessionV2WorkSummaryExpanded) {
+  display: grid;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+:global(.sessionV2TurnFileSummary) {
+  
+  width: min(860px, 100%);
+  margin: 30px auto 8px;
+  border: 1px solid var(--session-v2-border);
+  border-radius: 12px;
+  background: var(--session-v2-bg);
+}
+
+:global(.sessionV2TurnFileSummaryHeader) {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--session-v2-border);
+}
+
+:global(.sessionV2TurnFileSummaryTitle) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--session-v2-fg);
+  text-shadow: 0 0 0.3px;
+}
+
+:global(.sessionV2TurnFileSummaryStats) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 400;
+  margin-left: 2px;
+}
+
+:global(.sessionV2TurnFileSummaryUndo) {
+  background: none;
+  border: 1px solid var(--session-v2-border);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 13px;
+  color: var(--session-v2-fg);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+:global(.sessionV2TurnFileSummaryUndo:hover) {
+  background: var(--session-v2-surface-soft);
+  border-color: color-mix(in srgb, var(--session-v2-fg) 24%, transparent);
+}
+
+:global(.sessionV2TurnFileSummaryAdd) {
+  color: var(--color-diff-added, #00a240);
+}
+
+:global(.sessionV2TurnFileSummaryDel) {
+  color: var(--color-diff-removed, #ba2623);
+}
+
+:global(.sessionV2TurnFileSummaryList) {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+:global(.sessionV2TurnFileSummaryItem) {
+  padding: 0;
+  border-bottom: 1px solid var(--session-v2-border);
+  min-width: 0;
+}
+
+:global(.sessionV2TurnFileSummaryItem:last-child) {
+  border-bottom: none;
+}
+
+:global(.sessionV2TurnFileSummaryItemButton) {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 12px;
+  text-align: left;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+:global(.sessionV2TurnFileSummaryItemButton:hover) {
+  background: var(--session-v2-surface-soft);
+}
+
+:global(.sessionV2TurnFileSummaryItemMain) {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Badge is no longer shown but kept for backward compat */
+:global(.sessionV2TurnFileSummaryBadge) {
+  display: none;
+}
+
+:global(.sessionV2TurnFileSummaryPath) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--session-v2-fg);
+  font-family: var(--font-sans, 'Segoe UI', sans-serif);
+  text-shadow: 0 0 0.3px;
+}
+
+:global(.sessionV2TurnFileSummaryItemRight) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+:global(.sessionV2TurnFileSummaryChevron) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--session-v2-fg-muted);
+  background: transparent;
+  transition:
+    transform 120ms ease-in-out,
+    color 120ms ease-in-out,
+    background-color 120ms ease-in-out;
+}
+
+:global(.sessionV2TurnFileSummaryChevronOpen) {
+  transform: rotate(180deg);
+}
+
+:global(.sessionV2TurnFileSummaryItemButton:hover .sessionV2TurnFileSummaryChevron),
+:global(.sessionV2TurnFileSummaryItemButton:focus-visible .sessionV2TurnFileSummaryChevron) {
+  color: var(--session-v2-fg);
+  background: color-mix(in srgb, var(--session-v2-fg) 10%, transparent);
+}
+
+:global(.sessionV2TurnFileSummaryItemStats) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 400;
+  text-shadow: 0 0 0.3px;
+}
+
+:global(.sessionV2TurnFileSummaryItemHint) {
+  font-size: 12px;
+  color: var(--session-v2-fg-muted);
+  padding: 8px 12px 10px;
+  text-shadow: 0 0 0.3px;
+}
+
+:global(.sessionV2TurnFileSummaryDiffPanel) {
+  border-top: 1px solid var(--session-v2-border);
+  background: var(--session-v2-surface-soft);
+  padding: 0 10px 10px 10px;
+}
+
+:global(.sessionV2TurnFileSummaryDiffViewport) {
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--session-v2-border);
+  border-radius: 8px;
+  background: var(--session-v2-bg);
+  scrollbar-width: thin;
+}
+
+:global(.sessionV2TurnFileSummaryDiffRow) {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: stretch;
+  column-gap: 10px;
+  min-height: 1.5em;
+  font-family: var(--font-mono, 'SF Mono', 'SFMono-Regular', ui-monospace, Menlo, Monaco, Consolas, monospace);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+:global(.sessionV2TurnFileSummaryDiffRowAdd) {
+  background: color-mix(in srgb, var(--color-diff-added, #00a240) 14%, var(--session-v2-bg));
+  border-left: 3px solid var(--color-diff-added, #00a240);
+}
+
+:global(.sessionV2TurnFileSummaryDiffRowDel) {
+  background: color-mix(in srgb, var(--color-diff-removed, #ba2623) 12%, var(--session-v2-bg));
+  border-left: 3px solid var(--color-diff-removed, #ba2623);
+}
+
+:global(.sessionV2TurnFileSummaryDiffRowCtx) {
+  background: var(--session-v2-bg);
+}
+
+:global(.sessionV2TurnFileSummaryDiffLineNum) {
+  text-align: right;
+  color: var(--session-v2-fg-muted);
+  font-variant-numeric: tabular-nums;
+  padding: 2px 0 2px 8px;
+  user-select: none;
+}
+
+:global(.sessionV2TurnFileSummaryDiffCode) {
+  margin: 0;
+  padding: 2px 12px 2px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--session-v2-fg);
+}
+
+:global(.sessionV2DiffTokPlain) {
+  color: inherit;
+}
+
+:global(.sessionV2DiffTokKeyword) {
+  color: #b42318;
+  font-weight: 500;
+}
+
+:global(.sessionV2DiffTokString) {
+  color: #0f7a2f;
+}
+
+:global(.sessionV2DiffTokNumber) {
+  color: #175cd3;
+}
+
+:global(.sessionV2CompactMarker) {
+  width: min(860px, 100%);
+  margin: 2px auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+:global(.sessionV2CompactMarker::before),
+:global(.sessionV2CompactMarker::after) {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--session-v2-border);
+}
+
+:global(.sessionV2CompactMarkerText) {
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--session-v2-fg-muted);
+}
+
+:global(.sessionV2ToolCard) {
+  width: min(860px, 100%);
+  margin: 0 auto;
+  border: 1px solid var(--session-v2-border);
+  border-radius: 12px;
+  background: var(--session-v2-bg);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 6%);
+}
+
+:global(.sessionV2ToolCardHeader) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--session-v2-border);
+  font-size: 12px;
+  color: var(--session-v2-fg-muted);
+}
+
+:global(.sessionV2ToolCardText) {
+  margin: 0;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--session-v2-fg);
+  font-family: var(--font-mono, 'SF Mono', 'SFMono-Regular', ui-monospace, Menlo, Monaco, Consolas, monospace);
+  background: var(--session-v2-surface-subtle);
+  border-radius: 0 0 12px 12px;
+}
+
+:global(.sessionV2Empty) {
+  padding: 20px;
+  border: 1px dashed color-mix(in srgb, var(--session-v2-fg) 18%, transparent);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--session-v2-fg-muted);
+}
+
+:global(.sessionV2EmptyInline) {
+  font-size: 12px;
+  color: var(--session-v2-fg-muted);
+}
+
+/* ─── Composer Shell ─────────────────────────────────────────────────────── */
+
+:global(.sessionV2Composer) {
+  background: var(--session-v2-bg);
+  padding: 12px 50px 16px;
+  display: grid;
+  gap: 8px;
+}
+
+:global(.sessionV2Composer > :not(input[type='file'])) {
+  width: min(860px, 100%);
+  margin: 0 auto;
+}
+
+:global(.sessionV2ImageRows) {
+  display: grid;
+  gap: 4px;
+  padding: 0 2px;
+}
+
+:global(.sessionV2ImageRow) {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--session-v2-fg-muted);
+}
+
+:global(.sessionV2ReverseSearch) {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px dashed color-mix(in srgb, var(--session-v2-fg) 20%, transparent);
+  border-radius: 8px;
+}
+
+:global(.sessionV2ReversePreview) {
+  font-size: 12px;
+  color: var(--session-v2-fg-muted);
+}
+
+:global(.sessionV2Popup) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+/* ─── Composer Card ─────────────────────────────────────────────────────── */
+
+:global(.sessionV2ComposerCard) {
+  border: 1px solid var(--session-v2-border);
+  border-radius: 16px;
+  background: var(--session-v2-bg);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 6%), 0 0 0 1px rgb(0 0 0 / 2%);
+  overflow: hidden;
+}
+
+/* ─── Textarea Row ──────────────────────────────────────────────────────── */
+
+:global(.sessionV2ComposerTextareaRow) {
+  padding: 14px 16px 6px;
+}
+
+:global(.sessionV2ComposerTextarea:hover) {
+  border: none;
+  outline: none;
+}
+
+:global(.sessionV2ComposerTextarea:focus),
+:global(.sessionV2ComposerTextarea:focus-visible),
+:global(.sessionV2ComposerTextarea:active) {
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+:global(.sessionV2ComposerTextarea) {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  min-height: 44px;
+  max-height: 200px;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--session-v2-fg);
+  background: transparent;
+  padding: 0;
+}
+
+:global(.sessionV2ComposerTextarea::placeholder) {
+  color: color-mix(in srgb, var(--session-v2-fg-muted) 70%, transparent);
+}
+
+:global(.sessionV2ComposerTextarea:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ─── Primary Action Row ────────────────────────────────────────────────── */
+
+:global(.sessionV2ComposerActionRow) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--session-v2-border);
+}
+
+:global(.sessionV2ComposerActionLeft) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+:global(.sessionV2ComposerActionRight) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ─── Icon Buttons ──────────────────────────────────────────────────────── */
+
+:global(.sessionV2ComposerIconBtn) {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--session-v2-fg-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+  flex-shrink: 0;
+}
+
+:global(.sessionV2ComposerIconBtn:hover:not(:disabled)) {
+  color: var(--session-v2-fg);
+  background: color-mix(in srgb, var(--session-v2-fg) 8%, transparent);
+}
+
+:global(.sessionV2ComposerIconBtn:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--session-v2-accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+:global(.sessionV2ComposerIconBtn:disabled) {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* ─── Pill Controls ─────────────────────────────────────────────────────── */
+
+:global(.sessionV2ComposerPill) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--session-v2-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--session-v2-fg);
+  font-size: 12.5px;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+  flex-shrink: 0;
+}
+
+:global(.sessionV2ComposerPill:hover:not(:disabled)) {
+  background: color-mix(in srgb, var(--session-v2-fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--session-v2-fg) 22%, transparent);
+}
+
+:global(.sessionV2ComposerPill:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--session-v2-accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+:global(.sessionV2ComposerPill:disabled) {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Access-level pill: orange */
+:global(.sessionV2ComposerPillAccess) {
+  color: #c2410c;
+  border-color: color-mix(in srgb, #c2410c 28%, transparent);
+  background: color-mix(in srgb, #f97316 8%, transparent);
+}
+
+:global(.sessionV2ComposerPillAccess:hover:not(:disabled)) {
+  background: color-mix(in srgb, #f97316 14%, transparent);
+  border-color: color-mix(in srgb, #c2410c 40%, transparent);
+}
+
+:global(.sessionV2ComposerPillCwd) {
+  min-width: 0;
+  max-width: min(420px, 42vw);
+  flex-shrink: 1;
+  color: var(--session-v2-fg-muted);
+}
+
+:global(.sessionV2ComposerPillCwd:hover:not(:disabled)) {
+  color: var(--session-v2-fg);
+}
+
+:global(.sessionV2ComposerCwdPrefix) {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  font-weight: 600;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+:global(.sessionV2ComposerCwdPath) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Interrupt (stop) pill */
+:global(.sessionV2ComposerPillInterrupt) {
+  color: #b91c1c;
+  border-color: color-mix(in srgb, #b91c1c 28%, transparent);
+  background: color-mix(in srgb, #ef4444 8%, transparent);
+}
+
+:global(.sessionV2ComposerPillInterrupt:hover:not(:disabled)) {
+  background: color-mix(in srgb, #ef4444 15%, transparent);
+}
+
+/* ─── Model Picker ──────────────────────────────────────────────────────── */
+
+:global(.sessionV2ComposerModelWrap) {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--session-v2-border);
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+  flex-shrink: 0;
+}
+
+:global(.sessionV2ComposerModelWrap:hover) {
+  background: color-mix(in srgb, var(--session-v2-fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--session-v2-fg) 22%, transparent);
+}
+
+:global(.sessionV2ComposerModelSelect) {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+}
+
+:global(.sessionV2ComposerModelSelect:disabled) {
+  cursor: not-allowed;
+}
+
+:global(.sessionV2ComposerModelLabel) {
+  font-size: 12.5px;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  font-weight: 500;
+  color: var(--session-v2-fg);
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+:global(.sessionV2ComposerModelChevron) {
+  color: var(--session-v2-fg-muted);
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+:global(.sessionV2ComposerModelSpinner) {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid color-mix(in srgb, var(--session-v2-fg) 20%, transparent);
+  border-top-color: var(--session-v2-fg-muted);
+  border-radius: 50%;
+  animation: sessionV2Spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+/* ─── Submit Button ─────────────────────────────────────────────────────── */
+
+:global(.sessionV2ComposerSubmitBtn) {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: var(--session-v2-fg);
+  color: var(--session-v2-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 140ms ease, transform 100ms ease;
+  flex-shrink: 0;
+}
+
+:global(.sessionV2ComposerSubmitBtn:hover:not(:disabled)) {
+  opacity: 0.85;
+}
+
+:global(.sessionV2ComposerSubmitBtn:active:not(:disabled)) {
+  transform: scale(0.93);
+}
+
+:global(.sessionV2ComposerSubmitBtn:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--session-v2-fg) 45%, transparent);
+  outline-offset: 2px;
+}
+
+:global(.sessionV2ComposerSubmitBtn:disabled) {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+:global(.sessionV2ComposerSubmitSpinner) {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--session-v2-bg) 35%, transparent);
+  border-top-color: var(--session-v2-bg);
+  border-radius: 50%;
+  animation: sessionV2Spin 0.6s linear infinite;
+}
+
+/* ─── Environment / Footer Row ──────────────────────────────────────────── */
+
+:global(.sessionV2ComposerEnvRow) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px 8px;
+  border-top: 1px solid var(--session-v2-border);
+}
+
+:global(.sessionV2ComposerEnvPill) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--session-v2-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--session-v2-fg-muted);
+  font-size: 12px;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  flex-shrink: 0;
+}
+
+:global(.sessionV2ComposerEnvPill:hover:not(:disabled)) {
+  background: color-mix(in srgb, var(--session-v2-fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--session-v2-fg) 22%, transparent);
+  color: var(--session-v2-fg);
+}
+
+:global(.sessionV2ComposerEnvPill:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--session-v2-accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+/* ─── Spinner Keyframes ─────────────────────────────────────────────────── */
+
+@keyframes :global(sessionV2Spin) {
+  to { transform: rotate(360deg); }
+}
+
+:global(.sessionV2Overlay) {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, #0f172a 36%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 16px;
+}
+
+:global(.sessionV2OverlayCard) {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  background: var(--session-v2-bg);
+  border: 1px solid var(--session-v2-border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-md);
+}
+
+:global(.sessionV2OverlayHeader) {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--session-v2-border);
+}
+
+:global(.sessionV2OverlayHeader h3) {
+  margin: 0;
+}
+
+:global(.sessionV2OverlayHeader p) {
+  margin: 4px 0 0;
+  color: var(--session-v2-fg-muted);
+  font-size: 12px;
+}
+
+:global(.sessionV2OverlayBody) {
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+:global(.sessionV2Question) {
+  font-weight: 600;
+}
+
+:global(.sessionV2Options) {
+  display: grid;
+  gap: 8px;
+}
+
+:global(.sessionV2Option) {
+  border: 1px solid var(--session-v2-border);
+  background: var(--session-v2-bg);
+  border-radius: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+:global(.sessionV2Option.active) {
+  border-color: color-mix(in srgb, var(--session-v2-accent) 70%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--session-v2-accent) 16%, transparent);
+}
+
+:global(.sessionV2Option small) {
+  display: block;
+  margin-top: 4px;
+  color: var(--session-v2-fg-muted);
+  font-size: 11px;
+}
+
+:global(.sessionV2OverlayNotes),
+:global(.sessionV2Field input) {
+  width: 100%;
+  border: 1px solid var(--session-v2-border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--session-v2-bg);
+}
+
+:global(.sessionV2Field) {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+
+:global(.sessionV2FieldList) {
+  display: grid;
+  gap: 10px;
+}
+
+:global(.sessionV2Json) {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--session-v2-border);
+  border-radius: 10px;
+  background: var(--session-v2-surface-subtle);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
+
+:global(.sessionV2OverlayFooter) {
+  padding: 12px 16px 16px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+:global(.sessionV2OverlayNav),
+:global(.sessionV2OverlayActions) {
+  display: flex;
+  gap: 8px;
+}

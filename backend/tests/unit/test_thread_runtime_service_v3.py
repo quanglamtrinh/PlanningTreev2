@@ -432,6 +432,12 @@ def test_thread_runtime_service_v3_start_turn_runs_to_completion(storage, worksp
         "Start this turn",
     )
     assert payload["accepted"] is True
+    created_items = payload.get("createdItems") or []
+    assert any(item.get("role") == "user" for item in created_items)
+    assert any(
+        item.get("role") == "assistant" and item.get("status") == "in_progress"
+        for item in created_items
+    )
 
     snapshot = query.get_thread_snapshot(project_id, node_id, "execution", publish_repairs=False)
     assert snapshot["processingState"] == "idle"

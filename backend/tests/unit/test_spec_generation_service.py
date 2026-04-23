@@ -309,7 +309,7 @@ def test_confirm_frame_route_does_not_start_spec_generation_after_apply_and_reco
     )
     app.state.spec_generation_service.generate_spec = generate_spec_mock
 
-    response = client.post(f"/v1/projects/{project_id}/nodes/{root_id}/confirm-frame")
+    response = client.post(f"/v3/projects/{project_id}/nodes/{root_id}/confirm-frame")
 
     assert response.status_code == 200
     payload = response.json()

@@ -1,0 +1,44 @@
+{
+  "phase": "14.8",
+  "generated_at": "2026-04-17T19:44:09Z",
+  "source": "canary_rollout_and_rollback_drills",
+  "evidence_mode": "synthetic",
+  "gate_eligible": false,
+  "status": "pass",
+  "pass": true,
+  "context": {
+    "candidate_path": null,
+    "candidate_commit_sha": "synthetic-local",
+    "thresholds": {
+      "inter_update_gap_regression_ratio_lte": 1.1,
+      "ask_reconnect_per_session_lte": 0.5,
+      "execution_reconnect_per_session_lte": 0.6,
+      "mismatch_reload_rate_lte": 1.5,
+      "rollback_drill_validated_eq": true
+    },
+    "metrics": {
+      "ask_inter_update_gap_p95_ms": 80.0,
+      "execution_inter_update_gap_p95_ms": 120.0,
+      "ask_baseline_inter_update_gap_p95_ms": 90.0,
+      "execution_baseline_inter_update_gap_p95_ms": 130.0,
+      "ask_reconnect_per_session": 0.25,
+      "execution_reconnect_per_session": 0.32,
+      "mismatch_reload_rate": 1.0,
+      "rollback_drill_validated": true,
+      "ask_gap_regression_ratio": 0.8889,
+      "execution_gap_regression_ratio": 0.9231
+    },
+    "checks": {
+      "ask_inter_update_gap_regression": true,
+      "execution_inter_update_gap_regression": true,
+      "ask_reconnect_per_session": true,
+      "execution_reconnect_per_session": true,
+      "mismatch_reload_rate": true,
+      "rollback_drill_validated": true
+    },
+    "notes": [
+      "Phase 14.8 gates canary rollout progression and rollback drill completion.",
+      "Synthetic mode is non-gate-eligible and for local dry-run only."
+    ]
+  }
+}

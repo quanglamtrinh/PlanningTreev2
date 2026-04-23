@@ -7,6 +7,7 @@ import styles from './Layout.module.css'
 const BREADCRUMB_CHAT_PATHS = [
   '/projects/:projectId/nodes/:nodeId/chat',
   '/projects/:projectId/nodes/:nodeId/chat-v2',
+  '/session-v2',
 ]
 
 export function Layout() {
@@ -48,7 +49,7 @@ export function Layout() {
 
   function handleBackToGraph() {
     setActiveSurface('graph')
-    navigate('/')
+    navigate('/graph')
   }
 
   return (

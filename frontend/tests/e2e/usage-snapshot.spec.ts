@@ -132,7 +132,7 @@ async function seedAttachedProject(
   await mkdir(workspaceRoot, { recursive: true })
 
   await page.goto('/')
-  const attachResponse = await request.post('/v1/projects/attach', {
+  const attachResponse = await request.post('/v3/projects/attach', {
     data: { folder_path: workspaceRoot },
   })
   expect(attachResponse.ok()).toBeTruthy()
@@ -140,7 +140,7 @@ async function seedAttachedProject(
 
 test('opens usage snapshot from sidebar and renders key usage blocks', async ({ page, request }) => {
   const snapshotPayload = buildSnapshotPayload()
-  await page.route('**/v1/codex/usage/local*', async (route) => {
+  await page.route('**/v3/codex/usage/local*', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -173,7 +173,7 @@ test('keeps snapshot content visible and shows non-blocking error when refresh f
 }) => {
   const snapshotPayload = buildSnapshotPayload()
   let shouldFailUsageRequest = false
-  await page.route('**/v1/codex/usage/local*', async (route) => {
+  await page.route('**/v3/codex/usage/local*', async (route) => {
     if (shouldFailUsageRequest) {
       await route.fulfill({
         status: 500,

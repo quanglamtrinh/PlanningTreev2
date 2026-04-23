@@ -87,7 +87,7 @@ def _assert_file_change_item_strict(item: dict[str, object]) -> None:
 
 
 def _setup_project(client: TestClient, workspace_root: Path) -> tuple[str, str]:
-    response = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    response = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert response.status_code == 200
     payload = response.json()
     return payload["project"]["id"], payload["tree_state"]["root_node_id"]

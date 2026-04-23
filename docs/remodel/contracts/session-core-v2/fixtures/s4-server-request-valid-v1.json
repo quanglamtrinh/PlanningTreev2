@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "requestId": "rpc_req_123",
+  "method": "item/tool/requestUserInput",
+  "threadId": "thread_01",
+  "turnId": "turn_77",
+  "itemId": "item_90",
+  "status": "pending",
+  "occurredAtMs": 1770000000899,
+  "params": {
+    "questions": [
+      {
+        "id": "target_env",
+        "question": "Choose deployment environment.",
+        "options": [
+          {
+            "label": "Staging",
+            "description": "Lower risk validation."
+          },
+          {
+            "label": "Production",
+            "description": "Immediate live rollout."
+          }
+        ]
+      }
+    ]
+  }
+}
+

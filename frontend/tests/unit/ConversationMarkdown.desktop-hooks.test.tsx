@@ -20,6 +20,18 @@ describe('ConversationMarkdown desktop hooks', () => {
     expect(link.getAttribute('href')).toBe('https://example.com')
   })
 
+  it('formats local file links with line location into filename labels', () => {
+    render(
+      <ConversationMarkdown
+        content={'[/Users/example/workspace/src/ComposerPane.tsx:290](/Users/example/workspace/src/ComposerPane.tsx:290)'}
+      />,
+    )
+
+    const localLink = screen.getByRole('link', { name: 'ComposerPane.tsx (line 290)' })
+    expect(localLink).toBeInTheDocument()
+    expect(localLink.getAttribute('href')).toBe('/Users/example/workspace/src/ComposerPane.tsx:290')
+  })
+
   it('invokes desktop-prep hooks for local file, thread link, image lightbox, and code copy', () => {
     const openLocalFile = vi.fn().mockReturnValue(true)
     const onFileLinkContextMenu = vi.fn()

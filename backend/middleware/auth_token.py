@@ -14,10 +14,12 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
+from backend.config.api_version import API_PREFIX_WITH_TRAILING_SLASH
+
 # Only API routes require auth.  Static assets, the HTML shell, /health,
 # and docs are public — the BrowserWindow must load the page before the
 # renderer can obtain the token via preload IPC.
-_PROTECTED_PREFIXES = ("/v1/", "/v2/")
+_PROTECTED_PREFIXES = (API_PREFIX_WITH_TRAILING_SLASH,)
 
 
 def get_auth_token() -> str | None:

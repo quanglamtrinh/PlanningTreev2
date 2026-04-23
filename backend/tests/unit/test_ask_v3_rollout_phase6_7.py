@@ -8,7 +8,7 @@ from backend.services.ask_rollout_metrics_service import AskRolloutMetricsServic
 
 
 def _attach_project(client: TestClient, workspace_root: Path) -> tuple[str, str]:
-    response = client.post("/v1/projects/attach", json={"folder_path": str(workspace_root)})
+    response = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
     assert response.status_code == 200
     payload = response.json()
     return payload["project"]["id"], payload["tree_state"]["root_node_id"]
@@ -32,47 +32,46 @@ def test_ask_rollout_metrics_service_computes_rates() -> None:
 
 
 def test_bootstrap_ask_rollout_metrics_event_endpoints(client: TestClient) -> None:
-    initial = client.get("/v1/ask-rollout/metrics")
+    initial = client.get("/v3/ask-rollout/metrics")
     assert initial.status_code == 200
     initial_payload = initial.json()
     assert initial_payload["ask_stream_reconnect_total"] == 0
     assert initial_payload["ask_stream_error_total"] == 0
 
-    reconnect = client.post("/v1/ask-rollout/metrics/events", json={"event": "stream_reconnect"})
+    reconnect = client.post("/v3/ask-rollout/metrics/events", json={"event": "stream_reconnect"})
     assert reconnect.status_code == 200
     assert reconnect.json() == {"ok": True}
 
-    stream_error = client.post("/v1/ask-rollout/metrics/events", json={"event": "stream_error"})
+    stream_error = client.post("/v3/ask-rollout/metrics/events", json={"event": "stream_error"})
     assert stream_error.status_code == 200
     assert stream_error.json() == {"ok": True}
 
-    updated = client.get("/v1/ask-rollout/metrics")
+    updated = client.get("/v3/ask-rollout/metrics")
     assert updated.status_code == 200
     updated_payload = updated.json()
     assert updated_payload["ask_stream_reconnect_total"] == 1
     assert updated_payload["ask_stream_error_total"] == 1
 
 
-def test_v1_legacy_chat_ask_handlers_are_disabled(client: TestClient) -> None:
-    session = client.get("/v1/projects/project-x/nodes/node-y/chat/session")
+def test_chat_handlers_use_unified_v3_contract(client: TestClient) -> None:
+    session = client.get("/v3/projects/project-x/nodes/node-y/chat/session")
     assert session.status_code == 400
-    assert session.json()["code"] == "invalid_request"
-    assert "no longer served on /v1 chat APIs" in session.json()["message"]
+    assert session.json()["code"] == "invalid_project_id"
 
     message = client.post(
-        "/v1/projects/project-x/nodes/node-y/chat/message",
+        "/v3/projects/project-x/nodes/node-y/chat/message",
         json={"content": "hello"},
     )
     assert message.status_code == 400
-    assert message.json()["code"] == "invalid_request"
+    assert message.json()["code"] == "invalid_project_id"
 
-    reset = client.post("/v1/projects/project-x/nodes/node-y/chat/reset")
+    reset = client.post("/v3/projects/project-x/nodes/node-y/chat/reset")
     assert reset.status_code == 400
-    assert reset.json()["code"] == "invalid_request"
+    assert reset.json()["code"] == "invalid_project_id"
 
-    events = client.get("/v1/projects/project-x/nodes/node-y/chat/events")
+    events = client.get("/v3/projects/project-x/nodes/node-y/chat/events")
     assert events.status_code == 400
-    assert events.json()["code"] == "invalid_request"
+    assert events.json()["code"] == "invalid_project_id"
 
 
 def test_v3_ask_by_id_returns_typed_error_when_backend_gate_off(

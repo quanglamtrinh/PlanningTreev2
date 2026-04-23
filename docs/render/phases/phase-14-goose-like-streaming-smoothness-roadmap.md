@@ -192,6 +192,11 @@ Stop re-applying heavy snapshot path on every text delta.
 - active streaming row render cost reduced significantly (>30% fewer heavy renders)
 - no correctness test regressions
 
+### Phase 14.3C completion note
+- Added UI parity test asserting streaming text lane override wins over snapshot text for assistant `in_progress` rows.
+- Added lane guard normalization for thread/item keys before lane patch apply to reduce drift from malformed payloads.
+- Verified with frontend typecheck + unit suites (including `MessagesV3`, `threadByIdStoreV3`, profiling hooks).
+
 ---
 
 ## Phase 14.4 — Row-level Render Isolation (3–4 days)
@@ -213,6 +218,12 @@ Prevent “whole list rerender” during streaming.
 
 ### Exit criteria
 - row render profile confirms only active streaming row updates for text deltas.
+
+### Phase 14.4 completion note
+- Moved streaming lane subscription from list-level `MessagesV3` into row-level `MessageRowV3` selector keyed by `(threadId, itemId)`.
+- Removed list-level `streamingTextLaneByItemId` map wiring from grouped render path.
+- Added profiling unit test asserting lane updates rerender targeted active row without rerendering stable neighbor rows.
+- Verified via frontend typecheck + unit suite.
 
 ---
 
@@ -244,6 +255,13 @@ Reduce markdown parse churn + avoid malformed partial rendering during stream.
 ### Exit criteria
 - markdown-heavy execution turns no longer drop FPS sharply on each delta.
 
+### Phase 14.5 completion note
+- Added `streamMarkdownBoundary` utility to classify whether streaming content should stay plain text (unclosed fences/inline code/dangling links/no stable boundary).
+- Added staged markdown rendering path in `ConversationMarkdown` via `streamingPlainTextMode` with safe-boundary promotion back to markdown rendering.
+- Wired `MessageRowV3` to enable staged mode for assistant `in_progress` stream rows.
+- Added unit tests for boundary detector and `ConversationMarkdown` streaming fallback/promotion behavior.
+- Verified with frontend typecheck + unit suite.
+
 ---
 
 ## Phase 14.6 — Early Response UX (post-send responsiveness) (2–3 days)
@@ -265,6 +283,13 @@ Perceived instant response right after user submits.
 
 ### Exit criteria
 - UX audit confirms immediate feedback after send in ask and execution.
+
+### Phase 14.6 completion note
+- Added deterministic early-response state machine in `threadByIdStoreV3`: `idle -> pending_send -> stream_open -> first_delta -> idle`.
+- Wired transitions to send/start-action paths, stream-open envelopes, first business delta flush, terminal lifecycle/snapshot states, stream errors, and disconnect resets.
+- Exposed early-response state via `selectComposerState` and surfaced non-shifting composer status text in `ComposerBar` (`Sending...`, `Agent connected...`, `Responding...`).
+- Added unit coverage for store transitions and composer status rendering.
+- Verified with frontend typecheck + unit suite.
 
 ---
 
@@ -289,6 +314,12 @@ Ensure smoothness improvements do not hurt reconnect/replay resilience.
 ### Exit criteria
 - resilience metrics within gate thresholds.
 
+### Phase 14.7 completion note
+- Added throttled defensive logging for streaming-lane reconcile anomalies in `threadByIdStoreV3` (`snapshot_thread_id_missing`, `entry_thread_mismatch`, `entry_not_in_progress_or_missing`, `entry_text_suffix_mismatch`).
+- Added `scripts/phase14_7_resilience_hardening_report.py` to aggregate lagged-subscriber, replay-edge, and long-session resilience metrics into a gate-style JSON artifact.
+- Added runbook `phase-14.7-resilience-long-session-hardening.md` with thresholds, execution commands, and rollback/safety notes.
+- Verified via script self-test + synthetic dry-run artifact generation.
+
 ---
 
 ## Phase 14.8 — Canary Rollout & Rollback Drills (2–3 days)
@@ -310,6 +341,20 @@ Safe production adoption.
 ### Exit criteria
 - all KPI gates green for 1 full cycle
 - rollback drill validated
+
+### Phase 14.8 completion note
+- Added canary rollout + rollback drill runbook: `phase-14.8-canary-rollout-rollback-drill.md`.
+- Added gate report script: `scripts/phase14_8_canary_rollout_report.py` (candidate/synthetic mode, self-test contract validation).
+- Defined rollout steps ask/execution (10% -> 50% -> 100%, 48h monitoring per step) and rollback controls (FE/BE + feature-path isolation).
+- Defined KPI progression gates + rollback drill acceptance checks.
+- Added full-rollout cutover pack:
+  - `phase-14.8-full-rollout-cutover.md`
+  - `deploy/env/streaming-rollout-full.env.example`
+  - `deploy/env/streaming-rollout-rollback.env.example`
+  - `scripts/phase14_full_rollout_preflight.py`
+- Switched rollout defaults to full profile in codebase:
+  - FE cadence fallback default -> `high`
+  - BE cadence profile default -> `high`
 
 ---
 

@@ -7,9 +7,12 @@ const MOCK_THINKING_EFFORT = ['xhigh', 'high', 'medium', 'low'] as const
 const MOCK_PERMISSIONS = ['On-Request', 'Always', 'Never'] as const
 const MOCK_CONTEXT_USAGE_RATIO = 0.28
 
+type ComposerEarlyResponsePhase = 'idle' | 'pending_send' | 'stream_open' | 'first_delta'
+
 interface ComposerBarProps {
   onSend: (content: string) => void
   disabled: boolean
+  earlyResponsePhase?: ComposerEarlyResponsePhase
 }
 
 function IconListPlan() {
@@ -112,7 +115,7 @@ function ContextUsageRing({ ratio }: { ratio: number }) {
   )
 }
 
-export function ComposerBar({ onSend, disabled }: ComposerBarProps) {
+export function ComposerBar({ onSend, disabled, earlyResponsePhase = 'idle' }: ComposerBarProps) {
   const [text, setText] = useState('')
   const [planEnabled, setPlanEnabled] = useState(false)
   const [model, setModel] = useState<string>(MOCK_MODELS[0])
@@ -148,6 +151,15 @@ export function ComposerBar({ onSend, disabled }: ComposerBarProps) {
     el.style.height = `${el.scrollHeight}px`
   }, [])
 
+  const earlyResponseLabel =
+    earlyResponsePhase === 'pending_send'
+      ? 'Sending...'
+      : earlyResponsePhase === 'stream_open'
+        ? 'Agent connected...'
+        : earlyResponsePhase === 'first_delta'
+          ? 'Responding...'
+          : null
+
   return (
     <div className={styles.wrap} data-testid="composer">
       <div className={styles.composer}>
@@ -162,6 +174,9 @@ export function ComposerBar({ onSend, disabled }: ComposerBarProps) {
             disabled={disabled}
             rows={1}
           />
+          <div className={styles.responseStatus} aria-live="polite">
+            <span className={styles.responseStatusText}>{earlyResponseLabel ?? ' '}</span>
+          </div>
           <button
             type="button"
             className={styles.sendBtn}

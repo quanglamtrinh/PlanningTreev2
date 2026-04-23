@@ -1,0 +1,35 @@
+{
+  "phase": "14.7",
+  "generated_at": "2026-04-17T19:33:59Z",
+  "source": "resilience_long_session_hardening",
+  "evidence_mode": "synthetic",
+  "gate_eligible": false,
+  "status": "pass",
+  "pass": true,
+  "context": {
+    "candidate_path": null,
+    "candidate_commit_sha": "synthetic-local",
+    "thresholds": {
+      "lagged_subscriber_reconnect_rate_lte": 0.35,
+      "replay_edge_mismatch_reload_rate_lte": 1.5,
+      "long_session_live_items_exceeds_cap_events_eq": 0.0,
+      "transient_reconnect_unnecessary_forced_reload_eq": 0.0
+    },
+    "metrics": {
+      "lagged_subscriber_reconnect_rate": 0.15,
+      "replay_edge_mismatch_reload_rate": 0.8,
+      "long_session_live_items_exceeds_cap_events": 0,
+      "transient_reconnect_unnecessary_forced_reload": 0
+    },
+    "checks": {
+      "lagged_subscriber_reconnect_rate": true,
+      "replay_edge_mismatch_reload_rate": true,
+      "long_session_live_items_exceeds_cap_events": true,
+      "transient_reconnect_unnecessary_forced_reload": true
+    },
+    "notes": [
+      "Phase 14.7 aggregates lagged-subscriber, replay-edge, and long-session resilience checks.",
+      "Synthetic mode is non-gate-eligible and for local dry-run only."
+    ]
+  }
+}

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ThreadSnapshotV3 } from '../../src/api/types'
 import { MessagesV3 } from '../../src/features/conversation/components/v3/MessagesV3'
+import { useThreadByIdStoreV3 } from '../../src/features/conversation/state/threadByIdStoreV3'
 
 function makeSnapshot(overrides: Partial<ThreadSnapshotV3> = {}): ThreadSnapshotV3 {
   const snapshot: ThreadSnapshotV3 = {
@@ -1209,5 +1210,89 @@ describe('MessagesV3', () => {
 
     expect(screen.queryByTestId('conversation-v3-tool-output-tool-manual-priority-1')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Expand command details' })).toBeInTheDocument()
+  })
+
+  it('prefers streaming text lane override for assistant in-progress message rows', () => {
+    const onResolveUserInput = vi.fn().mockResolvedValue(undefined)
+    const laneKey = 'thread-1::msg-stream-1'
+
+    useThreadByIdStoreV3.setState((state) => ({
+      ...state,
+      streamingTextLane: {
+        ...state.streamingTextLane,
+        [laneKey]: {
+          threadId: 'thread-1',
+          itemId: 'msg-stream-1',
+          text: 'lane override text',
+          updatedAtMs: Date.now(),
+        },
+      },
+    }))
+
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'msg-stream-1',
+              kind: 'message',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 9,
+              createdAt: '2026-04-01T00:00:09Z',
+              updatedAt: '2026-04-01T00:00:09Z',
+              status: 'in_progress',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              role: 'assistant',
+              text: 'snapshot base text',
+              format: 'markdown',
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={onResolveUserInput}
+      />,
+    )
+
+    expect(screen.getByText('lane override text')).toBeInTheDocument()
+    expect(screen.queryByText('snapshot base text')).not.toBeInTheDocument()
+
+    useThreadByIdStoreV3.setState((state) => ({
+      ...state,
+      streamingTextLane: {},
+    }))
+  })
+
+  it('shows responding placeholder for assistant in-progress message when text is empty', () => {
+    render(
+      <MessagesV3
+        snapshot={makeSnapshot({
+          items: [
+            {
+              id: 'msg-stream-empty-1',
+              kind: 'message',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              sequence: 10,
+              createdAt: '2026-04-01T00:00:10Z',
+              updatedAt: '2026-04-01T00:00:10Z',
+              status: 'in_progress',
+              source: 'upstream',
+              tone: 'neutral',
+              metadata: {},
+              role: 'assistant',
+              text: '',
+              format: 'markdown',
+            },
+          ],
+        })}
+        isLoading={false}
+        onResolveUserInput={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    expect(screen.getByText('Responding...')).toBeInTheDocument()
   })
 })
