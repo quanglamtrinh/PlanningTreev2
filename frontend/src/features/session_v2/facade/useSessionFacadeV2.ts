@@ -7,6 +7,7 @@ import {
   createSessionRuntimeController,
   type ComposerModelOption,
   type RuntimeSnapshot,
+  type SessionBootstrapPolicy,
   type SessionRuntimeController,
 } from './sessionRuntimeController'
 import { useConnectionStore } from '../store/connectionStore'
@@ -79,6 +80,8 @@ export type SessionFacadeState = {
   selectedModel: string | null
   runtimeError: string | null
   isBootstrapping: boolean
+  isSelectingThread: boolean
+  isActiveThreadReady: boolean
   isModelLoading: boolean
   queueLength: number
   gapDetected: boolean
@@ -91,7 +94,7 @@ export type SessionFacadeState = {
 
 export type SessionFacadeCommands = {
   bootstrap: () => Promise<void>
-  selectThread: (threadId: string) => Promise<void>
+  selectThread: (threadId: string | null) => Promise<void>
   createThread: () => Promise<void>
   forkThread: (threadId: string) => Promise<void>
   refreshThreads: () => Promise<void>
@@ -105,6 +108,61 @@ export type SessionFacadeCommands = {
 export type SessionFacadeV2 = {
   state: SessionFacadeState
   commands: SessionFacadeCommands
+}
+
+export type SessionFacadePendingRequestScope = 'global' | 'activeThread'
+
+export type SessionFacadeBootstrapPolicy = SessionBootstrapPolicy & {
+  autoBootstrapOnMount: boolean
+}
+
+export type SessionFacadeOptions = {
+  bootstrapPolicy?: Partial<SessionFacadeBootstrapPolicy>
+  pendingRequestScope?: SessionFacadePendingRequestScope
+}
+
+const DEFAULT_BOOTSTRAP_POLICY: SessionFacadeBootstrapPolicy = {
+  autoBootstrapOnMount: true,
+  autoSelectInitialThread: true,
+  autoCreateThreadWhenEmpty: true,
+}
+
+function resolveBootstrapPolicy(
+  policy?: Partial<SessionFacadeBootstrapPolicy>,
+): SessionFacadeBootstrapPolicy {
+  return {
+    autoBootstrapOnMount:
+      policy?.autoBootstrapOnMount ?? DEFAULT_BOOTSTRAP_POLICY.autoBootstrapOnMount,
+    autoSelectInitialThread:
+      policy?.autoSelectInitialThread ?? DEFAULT_BOOTSTRAP_POLICY.autoSelectInitialThread,
+    autoCreateThreadWhenEmpty:
+      policy?.autoCreateThreadWhenEmpty ?? DEFAULT_BOOTSTRAP_POLICY.autoCreateThreadWhenEmpty,
+  }
+}
+
+function resolvePendingRequestScope(
+  scope?: SessionFacadePendingRequestScope,
+): SessionFacadePendingRequestScope {
+  return scope === 'activeThread' ? 'activeThread' : 'global'
+}
+
+function resolveActiveRequestId(options: {
+  activeRequestId: string | null
+  queue: string[]
+  pendingById: Record<string, PendingServerRequest>
+  activeThreadId: string | null
+  pendingRequestScope: SessionFacadePendingRequestScope
+}): string | null {
+  const { activeRequestId, queue, pendingById, activeThreadId, pendingRequestScope } = options
+  const scopedQueue =
+    pendingRequestScope === 'activeThread'
+      ? queue.filter((requestId) => pendingById[requestId]?.threadId === activeThreadId)
+      : queue
+
+  if (activeRequestId && scopedQueue.includes(activeRequestId)) {
+    return activeRequestId
+  }
+  return scopedQueue[0] ?? null
 }
 
 function resolveSelectedModel(
@@ -130,13 +188,16 @@ function resolveSelectedModel(
   return modelOptions.find((option) => option.isDefault)?.value ?? modelOptions[0]?.value ?? null
 }
 
-export function useSessionFacadeV2(): SessionFacadeV2 {
+export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacadeV2 {
   const threadStoreState = useThreadSessionStore()
   const connectionStoreState = useConnectionStore()
   const pendingRequestsStoreState = usePendingRequestsStore()
+  const bootstrapPolicy = resolveBootstrapPolicy(options?.bootstrapPolicy)
+  const pendingRequestScope = resolvePendingRequestScope(options?.pendingRequestScope)
 
   const [runtimeError, setRuntimeError] = useState<string | null>(null)
   const [isBootstrapping, setIsBootstrapping] = useState(false)
+  const [isSelectingThread, setIsSelectingThread] = useState(false)
   const [isModelLoading, setIsModelLoading] = useState(false)
   const [modelOptions, setModelOptions] = useState<ComposerModelOption[]>([])
   const [selectedModelByThread, setSelectedModelByThread] = useState<Record<string, string>>({})
@@ -154,6 +215,7 @@ export function useSessionFacadeV2(): SessionFacadeV2 {
   const disposedRef = useRef(false)
   const pollTimerRef = useRef<number | null>(null)
   const pollGenerationRef = useRef(0)
+  const selectingOperationCountRef = useRef(0)
 
   const threads = useMemo(() => selectThreadsSorted(threadStoreState), [threadStoreState])
   const activeThread = useMemo(() => selectActiveThread(threadStoreState), [threadStoreState])
@@ -162,12 +224,24 @@ export function useSessionFacadeV2(): SessionFacadeV2 {
   const activeRunningTurn = useMemo(() => selectActiveRunningTurn(threadStoreState), [threadStoreState])
 
   const activeRequest = useMemo(() => {
-    const requestId = pendingRequestsStoreState.activeRequestId
+    const requestId = resolveActiveRequestId({
+      activeRequestId: pendingRequestsStoreState.activeRequestId,
+      queue: pendingRequestsStoreState.queue,
+      pendingById: pendingRequestsStoreState.pendingById,
+      activeThreadId: threadStoreState.activeThreadId,
+      pendingRequestScope,
+    })
     if (!requestId) {
       return null
     }
     return pendingRequestsStoreState.pendingById[requestId] ?? null
-  }, [pendingRequestsStoreState.activeRequestId, pendingRequestsStoreState.pendingById])
+  }, [
+    pendingRequestScope,
+    pendingRequestsStoreState.activeRequestId,
+    pendingRequestsStoreState.pendingById,
+    pendingRequestsStoreState.queue,
+    threadStoreState.activeThreadId,
+  ])
 
   const selectedModel = useMemo(() => {
     return resolveSelectedModel(threadStoreState.activeThreadId, activeThread, modelOptions, selectedModelByThread)
@@ -180,6 +254,16 @@ export function useSessionFacadeV2(): SessionFacadeV2 {
     }
     return threadStoreState.threadStatus[activeThreadId] ?? activeThread?.status ?? null
   }, [activeThread, threadStoreState.activeThreadId, threadStoreState.threadStatus])
+
+  const isActiveThreadReady = useMemo(() => {
+    if (!threadStoreState.activeThreadId || isSelectingThread) {
+      return false
+    }
+    if (!threadStatus) {
+      return false
+    }
+    return threadStatus.type !== 'notLoaded'
+  }, [isSelectingThread, threadStatus, threadStoreState.activeThreadId])
 
   const tokenUsage = useMemo(() => {
     const activeThreadId = threadStoreState.activeThreadId
@@ -303,8 +387,11 @@ export function useSessionFacadeV2(): SessionFacadeV2 {
     leaseRef.current = lease
     disposedRef.current = false
 
-    if (lease.isPrimary) {
-      void runtimeControllerRef.current?.bootstrap()
+    if (lease.isPrimary && bootstrapPolicy.autoBootstrapOnMount) {
+      void runtimeControllerRef.current?.bootstrap({
+        autoSelectInitialThread: bootstrapPolicy.autoSelectInitialThread,
+        autoCreateThreadWhenEmpty: bootstrapPolicy.autoCreateThreadWhenEmpty,
+      })
     }
 
     return () => {
@@ -324,7 +411,12 @@ export function useSessionFacadeV2(): SessionFacadeV2 {
         useConnectionStore.getState().reset()
       }
     }
-  }, [clearPendingPollTimer])
+  }, [
+    bootstrapPolicy.autoBootstrapOnMount,
+    bootstrapPolicy.autoCreateThreadWhenEmpty,
+    bootstrapPolicy.autoSelectInitialThread,
+    clearPendingPollTimer,
+  ])
 
   useEffect(() => {
     if (!threadStoreState.activeThreadId || !leaseRef.current?.isPrimary) {
@@ -344,11 +436,12 @@ export function useSessionFacadeV2(): SessionFacadeV2 {
   }, [clearPendingPollTimer, pollPendingRequests, schedulePendingPoll, threadStoreState.activeThreadId])
 
   useEffect(() => {
-    if (pendingRequestsStoreState.activeRequestId || pendingRequestsStoreState.queue.length === 0) {
+    const resolvedActiveRequestId = activeRequest?.requestId ?? null
+    if (pendingRequestsStoreState.activeRequestId === resolvedActiveRequestId) {
       return
     }
-    usePendingRequestsStore.getState().setActiveRequest(pendingRequestsStoreState.queue[0])
-  }, [pendingRequestsStoreState.activeRequestId, pendingRequestsStoreState.queue])
+    usePendingRequestsStore.getState().setActiveRequest(resolvedActiveRequestId)
+  }, [activeRequest?.requestId, pendingRequestsStoreState.activeRequestId])
 
   useEffect(() => {
     const activeThreadId = threadStoreState.activeThreadId
@@ -388,21 +481,50 @@ export function useSessionFacadeV2(): SessionFacadeV2 {
     }
   }, [activeRequest, pendingRequestsStoreState.pendingById])
 
-  const bootstrap = useCallback(async () => {
-    await runtimeControllerRef.current?.bootstrap()
+  const runSelectingCommand = useCallback(async (run: () => Promise<void>) => {
+    selectingOperationCountRef.current += 1
+    setIsSelectingThread(true)
+    try {
+      await run()
+    } finally {
+      selectingOperationCountRef.current = Math.max(0, selectingOperationCountRef.current - 1)
+      if (selectingOperationCountRef.current === 0) {
+        setIsSelectingThread(false)
+      }
+    }
   }, [])
 
-  const selectThread = useCallback(async (threadId: string) => {
-    await runtimeControllerRef.current?.selectThread(threadId)
-  }, [])
+  const bootstrap = useCallback(async () => {
+    await runtimeControllerRef.current?.bootstrap({
+      autoSelectInitialThread: bootstrapPolicy.autoSelectInitialThread,
+      autoCreateThreadWhenEmpty: bootstrapPolicy.autoCreateThreadWhenEmpty,
+    })
+  }, [bootstrapPolicy.autoCreateThreadWhenEmpty, bootstrapPolicy.autoSelectInitialThread])
+
+  const selectThread = useCallback(async (threadId: string | null) => {
+    if (threadId === null) {
+      pollGenerationRef.current += 1
+      clearPendingPollTimer()
+      const activeThreadId = useThreadSessionStore.getState().activeThreadId
+      streamControllerRef.current?.close(activeThreadId)
+    }
+
+    await runSelectingCommand(async () => {
+      await runtimeControllerRef.current?.selectThread(threadId)
+    })
+  }, [clearPendingPollTimer, runSelectingCommand])
 
   const createThread = useCallback(async () => {
-    await runtimeControllerRef.current?.createThread()
-  }, [])
+    await runSelectingCommand(async () => {
+      await runtimeControllerRef.current?.createThread()
+    })
+  }, [runSelectingCommand])
 
   const forkThread = useCallback(async (threadId: string) => {
-    await runtimeControllerRef.current?.forkThread(threadId)
-  }, [])
+    await runSelectingCommand(async () => {
+      await runtimeControllerRef.current?.forkThread(threadId)
+    })
+  }, [runSelectingCommand])
 
   const refreshThreads = useCallback(async () => {
     await runtimeControllerRef.current?.refreshThreads()
@@ -456,6 +578,8 @@ export function useSessionFacadeV2(): SessionFacadeV2 {
     selectedModel,
     runtimeError,
     isBootstrapping,
+    isSelectingThread,
+    isActiveThreadReady,
     isModelLoading,
     queueLength,
     gapDetected,

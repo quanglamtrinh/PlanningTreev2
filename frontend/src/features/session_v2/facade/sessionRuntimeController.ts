@@ -33,6 +33,16 @@ export type ComposerModelOption = {
   isDefault: boolean
 }
 
+export type SessionBootstrapPolicy = {
+  autoSelectInitialThread: boolean
+  autoCreateThreadWhenEmpty: boolean
+}
+
+const DEFAULT_BOOTSTRAP_POLICY: SessionBootstrapPolicy = {
+  autoSelectInitialThread: true,
+  autoCreateThreadWhenEmpty: true,
+}
+
 export type RuntimeSnapshot = {
   activeThreadId: string | null
   activeTurns: SessionTurn[]
@@ -92,12 +102,12 @@ export type EnsureThreadReadyOptions = {
 }
 
 export type SessionRuntimeController = {
-  bootstrap: () => Promise<void>
+  bootstrap: (policy?: Partial<SessionBootstrapPolicy>) => Promise<void>
   hydrateThreadState: (threadId: string, options?: HydrateOptions) => Promise<void>
   ensureThreadReady: (threadId: string, options?: EnsureThreadReadyOptions) => Promise<void>
   loadModels: () => Promise<void>
   pollPendingRequests: () => Promise<void>
-  selectThread: (threadId: string) => Promise<void>
+  selectThread: (threadId: string | null) => Promise<void>
   createThread: () => Promise<void>
   forkThread: (threadId: string) => Promise<void>
   refreshThreads: () => Promise<void>
@@ -156,6 +166,17 @@ function defaultApi(): RuntimeApi {
     startThread: startThreadV2,
     startTurn: startTurnV2,
     steerTurn: steerTurnV2,
+  }
+}
+
+function resolveBootstrapPolicy(
+  policy?: Partial<SessionBootstrapPolicy>,
+): SessionBootstrapPolicy {
+  return {
+    autoSelectInitialThread:
+      policy?.autoSelectInitialThread ?? DEFAULT_BOOTSTRAP_POLICY.autoSelectInitialThread,
+    autoCreateThreadWhenEmpty:
+      policy?.autoCreateThreadWhenEmpty ?? DEFAULT_BOOTSTRAP_POLICY.autoCreateThreadWhenEmpty,
   }
 }
 
@@ -323,9 +344,20 @@ export function createSessionRuntimeController(
     }
   }
 
-  const selectThread = async (threadId: string): Promise<void> => {
+  const selectThread = async (threadId: string | null): Promise<void> => {
     const scope = buildGuard('selectThread')
     if (!scope.isCurrent()) {
+      return
+    }
+
+    const intent = selectionIntent + 1
+    selectionIntent = intent
+    scopeTokens.hydrateThread += 1
+    const isCurrent = () => scope.isCurrent() && selectionIntent === intent
+
+    if (threadId === null) {
+      dependencies.setActiveThreadId(null)
+      dependencies.setRuntimeError(null)
       return
     }
 
@@ -341,10 +373,6 @@ export function createSessionRuntimeController(
       dependencies.setRuntimeError(null)
       return
     }
-
-    const intent = selectionIntent + 1
-    selectionIntent = intent
-    const isCurrent = () => scope.isCurrent() && selectionIntent === intent
 
     try {
       await ensureThreadReady(threadId, { isCurrent })
@@ -522,14 +550,23 @@ export function createSessionRuntimeController(
       return
     }
 
-    await api.resolvePendingRequest(activeRequest.requestId, {
-      resolutionKey: actionId(),
-      result,
-    })
-    if (!isControllerAlive()) {
-      return
+    try {
+      await api.resolvePendingRequest(activeRequest.requestId, {
+        resolutionKey: actionId(),
+        result,
+      })
+      if (!isControllerAlive()) {
+        return
+      }
+      dependencies.markPendingRequestSubmitted(activeRequest.requestId)
+      dependencies.setRuntimeError(null)
+    } catch (error) {
+      if (!isControllerAlive()) {
+        return
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      dependencies.setRuntimeError(message)
     }
-    dependencies.markPendingRequestSubmitted(activeRequest.requestId)
   }
 
   const rejectRequest = async (reason?: string | null): Promise<void> => {
@@ -539,21 +576,32 @@ export function createSessionRuntimeController(
       return
     }
 
-    await api.rejectPendingRequest(activeRequest.requestId, {
-      resolutionKey: actionId(),
-      reason: reason ?? null,
-    })
-    if (!isControllerAlive()) {
-      return
+    try {
+      await api.rejectPendingRequest(activeRequest.requestId, {
+        resolutionKey: actionId(),
+        reason: reason ?? null,
+      })
+      if (!isControllerAlive()) {
+        return
+      }
+      dependencies.markPendingRequestSubmitted(activeRequest.requestId)
+      dependencies.setRuntimeError(null)
+    } catch (error) {
+      if (!isControllerAlive()) {
+        return
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      dependencies.setRuntimeError(message)
     }
-    dependencies.markPendingRequestSubmitted(activeRequest.requestId)
   }
 
-  const bootstrap = async (): Promise<void> => {
+  const bootstrap = async (policy?: Partial<SessionBootstrapPolicy>): Promise<void> => {
     const guard = buildGuard('bootstrap')
     if (!guard.isCurrent()) {
       return
     }
+    const bootstrapPolicy = resolveBootstrapPolicy(policy)
+    const bootstrapIntent = selectionIntent
 
     dependencies.setIsBootstrapping(true)
     dependencies.setConnectionPhase('connecting')
@@ -568,39 +616,44 @@ export function createSessionRuntimeController(
       )
       void loadModels()
 
-      let selectedThreadId: string | null = null
       const loaded = await api.listLoadedThreads({ limit: 20 })
       if (!guard.isCurrent()) {
         return
       }
-      if (loaded.data.length > 0) {
-        selectedThreadId = loaded.data[0]
+      const loadedThreadId = loaded.data[0] ?? null
+
+      const listed = await api.listThreads({ limit: 50 })
+      if (!guard.isCurrent()) {
+        return
+      }
+      dependencies.setThreadList(listed.data)
+
+      let selectedThreadId: string | null = null
+      if (bootstrapPolicy.autoSelectInitialThread) {
+        selectedThreadId = loadedThreadId ?? listed.data[0]?.id ?? null
       }
 
-      if (!selectedThreadId) {
-        const listed = await api.listThreads({ limit: 50 })
-        if (!guard.isCurrent()) {
-          return
-        }
-        dependencies.setThreadList(listed.data)
-        selectedThreadId = listed.data[0]?.id ?? null
-      }
+      const canMutateSelection = selectionIntent === bootstrapIntent
 
-      if (!selectedThreadId) {
+      if (
+        bootstrapPolicy.autoSelectInitialThread &&
+        bootstrapPolicy.autoCreateThreadWhenEmpty &&
+        !selectedThreadId &&
+        canMutateSelection
+      ) {
         const created = await api.startThread({ modelProvider: 'openai' })
         if (!guard.isCurrent()) {
           return
         }
         dependencies.upsertThread(created.thread)
-        dependencies.setThreadList([created.thread])
         selectedThreadId = created.thread.id
       }
 
-      if (selectedThreadId) {
+      if (bootstrapPolicy.autoSelectInitialThread && selectedThreadId && selectionIntent === bootstrapIntent) {
         await ensureThreadReady(selectedThreadId, {
-          isCurrent: guard.isCurrent,
+          isCurrent: () => guard.isCurrent() && selectionIntent === bootstrapIntent,
         })
-        if (!guard.isCurrent()) {
+        if (!guard.isCurrent() || selectionIntent !== bootstrapIntent) {
           return
         }
         dependencies.setActiveThreadId(selectedThreadId)

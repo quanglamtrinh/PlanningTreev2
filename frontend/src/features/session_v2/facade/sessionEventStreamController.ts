@@ -150,7 +150,17 @@ export function createSessionEventStreamController(
       activeThreadId = threadId
 
       const cursorEventId = dependencies.getLastEventId(threadId)
-      const stream = openEventSource(threadId, { cursorEventId })
+      let stream: EventSource
+      try {
+        stream = openEventSource(threadId, { cursorEventId })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        dependencies.markStreamDisconnected(threadId)
+        dependencies.markStreamReconnect(threadId)
+        dependencies.onRuntimeError?.(message)
+        scheduleReconnect(threadId, token)
+        return
+      }
       eventSource = stream
 
       const queuedEnvelopes: SessionEventEnvelope[] = []
@@ -340,6 +350,7 @@ export function createSessionEventStreamController(
         }
         dependencies.markStreamDisconnected(threadId)
         dependencies.markStreamReconnect(threadId)
+        dependencies.onRuntimeError?.('Session stream disconnected. Reconnecting...')
         clearQueuedEnvelopes()
         scheduleReconnect(threadId, token)
       }

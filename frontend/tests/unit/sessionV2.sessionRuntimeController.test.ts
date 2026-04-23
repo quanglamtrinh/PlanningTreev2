@@ -271,6 +271,43 @@ describe('sessionRuntimeController', () => {
     expect(harness.spies.setLastPendingPollAtMs).toHaveBeenCalledTimes(1)
   })
 
+  it('selectThread(null) clears active selection without clearing metadata', async () => {
+    harness.threadState.activeThreadId = 'thread-1'
+    harness.threadState.threadsById = {
+      'thread-1': makeThread({ id: 'thread-1' }),
+    }
+    harness.threadState.threadOrder = ['thread-1']
+
+    await harness.controller.selectThread(null)
+
+    expect(harness.spies.setActiveThreadId).toHaveBeenCalledWith(null)
+    expect(harness.threadState.threadOrder).toEqual(['thread-1'])
+    expect(harness.api.readThread).not.toHaveBeenCalled()
+    expect(harness.api.listThreadTurns).not.toHaveBeenCalled()
+    expect(harness.api.resumeThread).not.toHaveBeenCalled()
+  })
+
+  it('bootstrap keeps metadata but skips auto-select/create when policy disables it', async () => {
+    harness.api.listLoadedThreads.mockResolvedValue({ data: ['thread-1'], nextCursor: null })
+    harness.api.listThreads.mockResolvedValue({
+      data: [makeThread({ id: 'thread-1' }), makeThread({ id: 'thread-2' })],
+      nextCursor: null,
+    })
+
+    await harness.controller.bootstrap({
+      autoSelectInitialThread: false,
+      autoCreateThreadWhenEmpty: false,
+    })
+
+    expect(harness.spies.setThreadList).toHaveBeenCalledWith([
+      makeThread({ id: 'thread-1' }),
+      makeThread({ id: 'thread-2' }),
+    ])
+    expect(harness.threadState.threadOrder).toEqual(['thread-1', 'thread-2'])
+    expect(harness.spies.setActiveThreadId).not.toHaveBeenCalledWith('thread-1')
+    expect(harness.api.startThread).not.toHaveBeenCalled()
+  })
+
   it('interrupts running turn and resolves/rejects active request', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeRunningTurn = makeTurn({

@@ -2,6 +2,8 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const mockUseSessionFacadeV2 = vi.hoisted(() => vi.fn())
+
 vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
   ComposerPane: ({ disabled }: { disabled?: boolean }) => (
     <div data-testid="composer-pane" data-disabled={String(Boolean(disabled))}>
@@ -22,6 +24,14 @@ vi.mock('../../src/features/session_v2/components/RequestUserInputOverlay', () =
   RequestUserInputOverlay: () => <div data-testid="request-user-input-overlay">Overlay</div>,
 }))
 
+vi.mock('../../src/features/session_v2/components/McpElicitationOverlay', () => ({
+  McpElicitationOverlay: () => <div data-testid="mcp-elicitation-overlay">MCP</div>,
+}))
+
+vi.mock('../../src/features/session_v2/components/ApprovalOverlay', () => ({
+  ApprovalOverlay: () => <div data-testid="approval-overlay">Approval</div>,
+}))
+
 vi.mock('../../src/features/node/NodeDetailCard', () => ({
   NodeDetailCard: () => <div data-testid="node-detail-card">detail</div>,
 }))
@@ -30,9 +40,13 @@ vi.mock('../../src/features/conversation/state/workflowEventBridgeV3', () => ({
   useWorkflowEventBridgeV3: vi.fn(),
 }))
 
-import type { NodeWorkflowView, Snapshot, ThreadSnapshotV3 } from '../../src/api/types'
+vi.mock('../../src/features/session_v2/facade/useSessionFacadeV2', () => ({
+  useSessionFacadeV2: mockUseSessionFacadeV2,
+}))
+
+import type { NodeWorkflowView, Snapshot } from '../../src/api/types'
 import { BreadcrumbChatViewV2 } from '../../src/features/conversation/BreadcrumbChatViewV2'
-import { useThreadByIdStoreV3 } from '../../src/features/conversation/state/threadByIdStoreV3'
+import type { SessionFacadeV2, SessionFacadeState } from '../../src/features/session_v2/facade/useSessionFacadeV2'
 import { useWorkflowStateStoreV3 } from '../../src/features/conversation/state/workflowStateStoreV3'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useProjectStore } from '../../src/stores/project-store'
@@ -75,33 +89,6 @@ function makeProjectSnapshot(nodeKind: 'original' | 'review' = 'original'): Snap
       ],
     },
     updated_at: '2026-04-01T00:00:00Z',
-  }
-}
-
-function makeConversationSnapshotV3(
-  overrides: Partial<ThreadSnapshotV3> = {},
-): ThreadSnapshotV3 {
-  return {
-    projectId: 'project-1',
-    nodeId: 'root',
-    threadId: 'exec-thread-1',
-    threadRole: 'execution',
-    activeTurnId: null,
-    processingState: 'idle',
-    snapshotVersion: 1,
-    createdAt: '2026-04-01T00:00:00Z',
-    updatedAt: '2026-04-01T00:00:00Z',
-    items: [],
-    uiSignals: {
-      planReady: {
-        planItemId: null,
-        revision: null,
-        ready: false,
-        failed: false,
-      },
-      activeUserInputRequests: [],
-    },
-    ...overrides,
   }
 }
 
@@ -185,27 +172,69 @@ function seedBaseStores(workflowState: NodeWorkflowView, snapshot: Snapshot) {
   } as Partial<ReturnType<typeof useWorkflowStateStoreV3.getState>>)
 }
 
+function makeFacade(state: Partial<SessionFacadeState>): SessionFacadeV2 {
+  return {
+    state: {
+      connection: {
+        phase: 'initialized',
+        clientName: 'PlanningTree Session V2',
+        serverVersion: '1.0.0',
+        error: null,
+      },
+      threads: [],
+      activeThreadId: null,
+      activeThread: null,
+      activeTurns: [],
+      activeItemsByTurn: {},
+      activeRunningTurn: null,
+      activeRequest: null,
+      modelOptions: [],
+      selectedModel: null,
+      runtimeError: null,
+      isBootstrapping: false,
+      isSelectingThread: false,
+      isActiveThreadReady: false,
+      isModelLoading: false,
+      queueLength: 0,
+      gapDetected: false,
+      streamConnected: false,
+      reconnectCount: 0,
+      threadStatus: null,
+      tokenUsage: null,
+      lastPollAtMs: null,
+      ...state,
+    },
+    commands: {
+      bootstrap: vi.fn().mockResolvedValue(undefined),
+      selectThread: vi.fn().mockResolvedValue(undefined),
+      createThread: vi.fn().mockResolvedValue(undefined),
+      forkThread: vi.fn().mockResolvedValue(undefined),
+      refreshThreads: vi.fn().mockResolvedValue(undefined),
+      setModel: vi.fn(),
+      submit: vi.fn().mockResolvedValue(undefined),
+      interrupt: vi.fn().mockResolvedValue(undefined),
+      resolveRequest: vi.fn().mockResolvedValue(undefined),
+      rejectRequest: vi.fn().mockResolvedValue(undefined),
+    },
+  }
+}
+
 describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
     useWorkflowStateStoreV3.getState().reset()
-    useThreadByIdStoreV3.getState().disconnectThread()
+    mockUseSessionFacadeV2.mockReturnValue(makeFacade({}))
   })
 
-  it('renders execution lane with session-native transcript/composer pipeline', async () => {
+  it('renders execution lane using facade-native transcript/composer pipeline', async () => {
     seedBaseStores(makeWorkflowState(), makeProjectSnapshot('original'))
-    const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
-
-    useThreadByIdStoreV3.setState({
-      snapshot: makeConversationSnapshotV3(),
-      askFollowupQueueEnabled: true,
-      loadThread: loadThreadV3,
-      sendTurn: vi.fn().mockResolvedValue(undefined),
-      resolveUserInput: vi.fn().mockResolvedValue(undefined),
-      disconnectThread: vi.fn(),
-    } as Partial<ReturnType<typeof useThreadByIdStoreV3.getState>>)
+    const facade = makeFacade({
+      activeThreadId: 'exec-thread-1',
+      isActiveThreadReady: true,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
 
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
@@ -216,13 +245,13 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('transcript-panel')).toBeInTheDocument()
+      expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'exec-thread-1')
     })
-    expect(screen.getByTestId('composer-pane')).toBeInTheDocument()
-    expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'exec-thread-1', 'execution')
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
+    expect(facade.commands.selectThread).toHaveBeenCalledWith('exec-thread-1')
   })
 
-  it('renders audit lane with session-native transcript when review thread exists', async () => {
+  it('renders audit lane with transcript when review thread exists', async () => {
     seedBaseStores(
       makeWorkflowState({
         workflowPhase: 'audit_decision_pending',
@@ -231,16 +260,11 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
       }),
       makeProjectSnapshot('original'),
     )
-    const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
-
-    useThreadByIdStoreV3.setState({
-      snapshot: makeConversationSnapshotV3({ threadId: 'audit-thread-1', threadRole: 'audit' }),
-      askFollowupQueueEnabled: true,
-      loadThread: loadThreadV3,
-      sendTurn: vi.fn().mockResolvedValue(undefined),
-      resolveUserInput: vi.fn().mockResolvedValue(undefined),
-      disconnectThread: vi.fn(),
-    } as Partial<ReturnType<typeof useThreadByIdStoreV3.getState>>)
+    const facade = makeFacade({
+      activeThreadId: 'audit-thread-1',
+      isActiveThreadReady: true,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
 
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
@@ -251,25 +275,28 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('transcript-panel')).toBeInTheDocument()
+      expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'audit-thread-1')
     })
-    expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'audit-thread-1', 'audit')
+    expect(facade.commands.selectThread).toHaveBeenCalledWith('audit-thread-1')
   })
 
-  it('keeps ask lane on chat-v2 with session-native transcript/composer', async () => {
-    seedBaseStores(makeWorkflowState(), makeProjectSnapshot('original'))
-    const loadThreadV3 = vi.fn().mockResolvedValue(undefined)
-    useThreadByIdStoreV3.setState({
-      snapshot: makeConversationSnapshotV3({ threadId: 'ask-thread-1', threadRole: 'ask_planning' }),
-      askFollowupQueueEnabled: true,
-      loadThread: loadThreadV3,
-      sendTurn: vi.fn().mockResolvedValue(undefined),
-      resolveUserInput: vi.fn().mockResolvedValue(undefined),
-      disconnectThread: vi.fn(),
-    } as Partial<ReturnType<typeof useThreadByIdStoreV3.getState>>)
+  it('clears selection for audit lane when review thread is missing', async () => {
+    seedBaseStores(
+      makeWorkflowState({
+        workflowPhase: 'audit_decision_pending',
+        reviewThreadId: null,
+        canSendExecutionMessage: false,
+      }),
+      makeProjectSnapshot('original'),
+    )
+    const facade = makeFacade({
+      activeThreadId: 'stale-thread',
+      isActiveThreadReady: true,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
 
     render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
         <Routes>
           <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
         </Routes>
@@ -277,8 +304,9 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('transcript-panel')).toBeInTheDocument()
+      expect(facade.commands.selectThread).toHaveBeenCalledWith(null)
     })
-    expect(loadThreadV3).toHaveBeenCalledWith('project-1', 'root', 'ask-thread-1', 'ask_planning')
+    expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', '')
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
   })
 })

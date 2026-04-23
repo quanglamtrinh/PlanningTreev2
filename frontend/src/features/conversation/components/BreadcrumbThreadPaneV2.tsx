@@ -1,14 +1,13 @@
 import type { ReactNode } from 'react'
-import type { PendingServerRequest } from '../../session_v2/contracts'
+import { ApprovalOverlay } from '../../session_v2/components/ApprovalOverlay'
+import type { PendingServerRequest, SessionItem, SessionTurn } from '../../session_v2/contracts'
 import { ComposerPane } from '../../session_v2/components/ComposerPane'
+import { McpElicitationOverlay } from '../../session_v2/components/McpElicitationOverlay'
 import { RequestUserInputOverlay } from '../../session_v2/components/RequestUserInputOverlay'
 import { TranscriptPanel } from '../../session_v2/components/TranscriptPanel'
 import sessionShellStyles from '../../session_v2/shell/SessionConsoleV2.module.css'
 import type { NodeRecord } from '../../../api/types'
-import type {
-  BreadcrumbComposerAdapterModel,
-  BreadcrumbTranscriptAdapterModel,
-} from '../sessionV2AdapterContracts'
+import type { ComposerSubmitPayload } from '../../session_v2/components/ComposerPane'
 import { type ThreadTab } from '../surfaceRouting'
 import { BreadcrumbThreadTabsV2 } from './BreadcrumbThreadTabsV2'
 import { WorkflowActionStripV2 } from './WorkflowActionStripV2'
@@ -23,8 +22,23 @@ export type BreadcrumbThreadFrameContextProps = {
   specConfirmed: boolean
 }
 
-export type BreadcrumbThreadTranscriptProps = BreadcrumbTranscriptAdapterModel
-export type BreadcrumbThreadComposerProps = BreadcrumbComposerAdapterModel
+export type BreadcrumbThreadTranscriptProps = {
+  threadId: string | null
+  turns: SessionTurn[]
+  itemsByTurn: Record<string, SessionItem[]>
+}
+
+export type BreadcrumbThreadComposerProps = {
+  isTurnRunning: boolean
+  disabled?: boolean
+  onSubmit: (payload: ComposerSubmitPayload) => Promise<void>
+  onInterrupt: () => Promise<void>
+  currentCwd?: string | null
+  modelOptions?: Array<{ value: string; label: string }>
+  selectedModel?: string | null
+  onModelChange?: (model: string) => void
+  isModelLoading?: boolean
+}
 
 export type BreadcrumbThreadPendingRequestProps = {
   request: PendingServerRequest | null
@@ -111,8 +125,26 @@ export function BreadcrumbThreadPaneV2({
         </div>
       </div>
 
-      {pendingRequestProps.request ? (
+      {pendingRequestProps.request?.method === 'item/tool/requestUserInput' ? (
         <RequestUserInputOverlay
+          request={pendingRequestProps.request}
+          onResolve={pendingRequestProps.onResolve}
+          onReject={pendingRequestProps.onReject}
+        />
+      ) : null}
+
+      {pendingRequestProps.request?.method === 'mcpServer/elicitation/request' ? (
+        <McpElicitationOverlay
+          request={pendingRequestProps.request}
+          onResolve={pendingRequestProps.onResolve}
+          onReject={pendingRequestProps.onReject}
+        />
+      ) : null}
+
+      {pendingRequestProps.request &&
+      pendingRequestProps.request.method !== 'item/tool/requestUserInput' &&
+      pendingRequestProps.request.method !== 'mcpServer/elicitation/request' ? (
+        <ApprovalOverlay
           request={pendingRequestProps.request}
           onResolve={pendingRequestProps.onResolve}
           onReject={pendingRequestProps.onReject}

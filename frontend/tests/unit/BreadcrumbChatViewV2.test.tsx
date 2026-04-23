@@ -2,10 +2,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const mockUseSessionFacadeV2 = vi.hoisted(() => vi.fn())
+
 vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
   ComposerPane: ({
     disabled,
     onSubmit,
+    onInterrupt,
   }: {
     disabled?: boolean
     onSubmit: (payload: {
@@ -13,6 +16,7 @@ vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
       text: string
       accessMode: 'full-access' | 'default-permissions'
     }) => Promise<void>
+    onInterrupt: () => Promise<void>
   }) => (
     <div data-testid="composer-pane" data-disabled={String(Boolean(disabled))}>
       <button
@@ -28,6 +32,13 @@ vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
         }
       >
         Send
+      </button>
+      <button
+        type="button"
+        data-testid="composer-interrupt-mock"
+        onClick={() => void onInterrupt()}
+      >
+        Interrupt
       </button>
     </div>
   ),
@@ -74,6 +85,46 @@ vi.mock('../../src/features/session_v2/components/RequestUserInputOverlay', () =
   ),
 }))
 
+vi.mock('../../src/features/session_v2/components/McpElicitationOverlay', () => ({
+  McpElicitationOverlay: ({
+    request,
+    onResolve,
+  }: {
+    request: { requestId: string }
+    onResolve: (result: Record<string, unknown>) => Promise<void>
+  }) => (
+    <div data-testid="mcp-elicitation-overlay" data-request-id={request.requestId}>
+      <button
+        type="button"
+        data-testid="mcp-overlay-submit"
+        onClick={() => void onResolve({ response: { name: 'value' } })}
+      >
+        Submit
+      </button>
+    </div>
+  ),
+}))
+
+vi.mock('../../src/features/session_v2/components/ApprovalOverlay', () => ({
+  ApprovalOverlay: ({
+    request,
+    onResolve,
+  }: {
+    request: { requestId: string }
+    onResolve: (result: Record<string, unknown>) => Promise<void>
+  }) => (
+    <div data-testid="approval-overlay" data-request-id={request.requestId}>
+      <button
+        type="button"
+        data-testid="approval-overlay-accept"
+        onClick={() => void onResolve({ decision: 'accept' })}
+      >
+        Accept
+      </button>
+    </div>
+  ),
+}))
+
 vi.mock('../../src/features/node/NodeDetailCard', () => ({
   NodeDetailCard: ({ message }: { message?: string | null }) => (
     <div data-testid="node-detail-card">{message ?? 'detail card'}</div>
@@ -84,9 +135,14 @@ vi.mock('../../src/features/conversation/state/workflowEventBridgeV3', () => ({
   useWorkflowEventBridgeV3: vi.fn(),
 }))
 
-import type { NodeWorkflowView, Snapshot, ThreadSnapshotV3 } from '../../src/api/types'
+vi.mock('../../src/features/session_v2/facade/useSessionFacadeV2', () => ({
+  useSessionFacadeV2: mockUseSessionFacadeV2,
+}))
+
+import type { NodeWorkflowView, Snapshot } from '../../src/api/types'
 import { BreadcrumbChatViewV2 } from '../../src/features/conversation/BreadcrumbChatViewV2'
-import { useThreadByIdStoreV3 } from '../../src/features/conversation/state/threadByIdStoreV3'
+import type { PendingServerRequest, SessionThread, SessionTurn } from '../../src/features/session_v2/contracts'
+import type { SessionFacadeV2 } from '../../src/features/session_v2/facade/useSessionFacadeV2'
 import { useWorkflowStateStoreV3 } from '../../src/features/conversation/state/workflowStateStoreV3'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useProjectStore } from '../../src/stores/project-store'
@@ -133,33 +189,6 @@ function makeProjectSnapshot(nodeKind: 'original' | 'review' = 'original'): Snap
   }
 }
 
-function makeConversationSnapshot(
-  overrides: Partial<ThreadSnapshotV3> = {},
-): ThreadSnapshotV3 {
-  return {
-    projectId: 'project-1',
-    nodeId: 'root',
-    threadId: 'exec-thread-1',
-    threadRole: 'execution',
-    activeTurnId: null,
-    processingState: 'idle',
-    snapshotVersion: 1,
-    createdAt: '2026-03-28T00:00:00Z',
-    updatedAt: '2026-03-28T00:00:00Z',
-    items: [],
-    uiSignals: {
-      planReady: {
-        planItemId: null,
-        revision: null,
-        ready: false,
-        failed: false,
-      },
-      activeUserInputRequests: [],
-    },
-    ...overrides,
-  }
-}
-
 function makeWorkflowState(overrides: Partial<NodeWorkflowView> = {}): NodeWorkflowView {
   return {
     nodeId: 'root',
@@ -185,6 +214,92 @@ function makeWorkflowState(overrides: Partial<NodeWorkflowView> = {}): NodeWorkf
   }
 }
 
+function makeThread(id: string): SessionThread {
+  return {
+    id,
+    name: id,
+    modelProvider: 'openai',
+    cwd: 'C:/workspace/project-1',
+    ephemeral: false,
+    archived: false,
+    status: { type: 'idle' },
+    createdAt: 1,
+    updatedAt: 1,
+    turns: [],
+    model: 'gpt-5',
+  }
+}
+
+function makePendingRequest(partial: Partial<PendingServerRequest>): PendingServerRequest {
+  return {
+    requestId: partial.requestId ?? 'req-1',
+    method: partial.method ?? 'item/tool/requestUserInput',
+    threadId: partial.threadId ?? 'ask-thread-1',
+    turnId: partial.turnId ?? 'turn-1',
+    itemId: partial.itemId ?? 'item-1',
+    status: partial.status ?? 'pending',
+    createdAtMs: partial.createdAtMs ?? 1,
+    submittedAtMs: partial.submittedAtMs ?? null,
+    resolvedAtMs: partial.resolvedAtMs ?? null,
+    payload: partial.payload ?? {},
+  }
+}
+
+function makeFacadeState(
+  overrides: Partial<SessionFacadeV2['state']> = {},
+): SessionFacadeV2['state'] {
+  const activeTurns: SessionTurn[] = overrides.activeTurns ?? []
+  return {
+    connection: {
+      phase: 'initialized',
+      clientName: 'PlanningTree Session V2',
+      serverVersion: '1.0.0',
+      error: null,
+    },
+    threads: overrides.threads ?? [],
+    activeThreadId: overrides.activeThreadId ?? null,
+    activeThread: overrides.activeThread ?? null,
+    activeTurns,
+    activeItemsByTurn: overrides.activeItemsByTurn ?? {},
+    activeRunningTurn: overrides.activeRunningTurn ?? null,
+    activeRequest: overrides.activeRequest ?? null,
+    modelOptions: overrides.modelOptions ?? [],
+    selectedModel: overrides.selectedModel ?? null,
+    runtimeError: overrides.runtimeError ?? null,
+    isBootstrapping: overrides.isBootstrapping ?? false,
+    isSelectingThread: overrides.isSelectingThread ?? false,
+    isActiveThreadReady: overrides.isActiveThreadReady ?? false,
+    isModelLoading: overrides.isModelLoading ?? false,
+    queueLength: overrides.queueLength ?? 0,
+    gapDetected: overrides.gapDetected ?? false,
+    streamConnected: overrides.streamConnected ?? false,
+    reconnectCount: overrides.reconnectCount ?? 0,
+    threadStatus: overrides.threadStatus ?? null,
+    tokenUsage: overrides.tokenUsage ?? null,
+    lastPollAtMs: overrides.lastPollAtMs ?? null,
+  }
+}
+
+function makeFacade(
+  stateOverrides: Partial<SessionFacadeV2['state']> = {},
+): SessionFacadeV2 {
+  return {
+    state: makeFacadeState(stateOverrides),
+    commands: {
+      bootstrap: vi.fn().mockResolvedValue(undefined),
+      selectThread: vi.fn().mockResolvedValue(undefined),
+      createThread: vi.fn().mockResolvedValue(undefined),
+      forkThread: vi.fn().mockResolvedValue(undefined),
+      refreshThreads: vi.fn().mockResolvedValue(undefined),
+      setModel: vi.fn(),
+      submit: vi.fn().mockResolvedValue(undefined),
+      interrupt: vi.fn().mockResolvedValue(undefined),
+      resolveRequest: vi.fn().mockResolvedValue(undefined),
+      rejectRequest: vi.fn().mockResolvedValue(undefined),
+    },
+  }
+}
+
 function LocationProbe() {
   const location = useLocation()
   return <div data-testid="location-probe">{`${location.pathname}${location.search}`}</div>
@@ -193,12 +308,12 @@ function LocationProbe() {
 function seedStores(options: {
   nodeKind?: 'original' | 'review'
   workflowState?: NodeWorkflowView
-  threadSnapshot?: ThreadSnapshotV3 | null
+  workflowError?: string | null
 }) {
   const {
     nodeKind = 'original',
     workflowState = makeWorkflowState(),
-    threadSnapshot = makeConversationSnapshot(),
+    workflowError = null,
   } = options
 
   useProjectStore.setState({
@@ -244,6 +359,7 @@ function seedStores(options: {
   } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
   useWorkflowStateStoreV3.setState({
     entries: { 'project-1::root': workflowState },
+    errors: workflowError ? { 'project-1::root': workflowError } : {},
     loadWorkflowState: vi.fn().mockResolvedValue(undefined),
     finishTask: vi.fn().mockResolvedValue(undefined),
     markDoneFromExecution: vi.fn().mockResolvedValue(undefined),
@@ -251,15 +367,6 @@ function seedStores(options: {
     markDoneFromAudit: vi.fn().mockResolvedValue(undefined),
     improveInExecution: vi.fn().mockResolvedValue(undefined),
   } as Partial<ReturnType<typeof useWorkflowStateStoreV3.getState>>)
-  useThreadByIdStoreV3.setState({
-    snapshot: threadSnapshot,
-    askFollowupQueueEnabled: true,
-    loadThread: vi.fn().mockResolvedValue(undefined),
-    sendTurn: vi.fn().mockResolvedValue(undefined),
-    resolveUserInput: vi.fn().mockResolvedValue(undefined),
-    runPlanAction: vi.fn().mockResolvedValue(undefined),
-    disconnectThread: vi.fn(),
-  } as Partial<ReturnType<typeof useThreadByIdStoreV3.getState>>)
 }
 
 describe('BreadcrumbChatViewV2', () => {
@@ -268,21 +375,22 @@ describe('BreadcrumbChatViewV2', () => {
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
     useWorkflowStateStoreV3.getState().reset()
-    useThreadByIdStoreV3.getState().disconnectThread()
     useUIStore.setState(useUIStore.getInitialState())
+    mockUseSessionFacadeV2.mockReturnValue(makeFacade())
   })
 
-  it('defaults non-review /chat-v2 route to execution and loads execution thread by id', async () => {
-    const loadThread = vi.fn().mockResolvedValue(undefined)
+  it('uses facade with breadcrumb policy and maps execution lane to workflow thread id', async () => {
+    const facade = makeFacade({
+      activeThreadId: 'exec-thread-1',
+      activeThread: makeThread('exec-thread-1'),
+      isActiveThreadReady: true,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
     seedStores({
       workflowState: makeWorkflowState({
         workflowPhase: 'execution_decision_pending',
         canSendExecutionMessage: true,
       }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      loadThread,
     })
 
     render(
@@ -306,64 +414,144 @@ describe('BreadcrumbChatViewV2', () => {
         '/projects/project-1/nodes/root/chat-v2?thread=execution',
       )
     })
-    expect(screen.getByTestId('transcript-panel')).toBeInTheDocument()
-    expect(screen.getByTestId('composer-pane')).toBeInTheDocument()
-    expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'exec-thread-1', 'execution')
+    await waitFor(() => {
+      expect(facade.commands.selectThread).toHaveBeenCalledWith('exec-thread-1')
+    })
+    expect(mockUseSessionFacadeV2).toHaveBeenCalledWith({
+      bootstrapPolicy: {
+        autoBootstrapOnMount: true,
+        autoSelectInitialThread: false,
+        autoCreateThreadWhenEmpty: false,
+      },
+      pendingRequestScope: 'activeThread',
+    })
   })
 
-  it('keeps ask lane on /chat-v2 and loads ask thread by id', async () => {
-    const loadThread = vi.fn().mockResolvedValue(undefined)
+  it('maps ask lane to ask thread id', async () => {
+    const facade = makeFacade({
+      activeThreadId: 'ask-thread-1',
+      activeThread: makeThread('ask-thread-1'),
+      isActiveThreadReady: true,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
     seedStores({
       workflowState: makeWorkflowState({
         askThreadId: 'ask-thread-1',
       }),
-      threadSnapshot: makeConversationSnapshot({ threadId: 'ask-thread-1', threadRole: 'ask_planning' }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      loadThread,
     })
 
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
-          <Route
-            path="/projects/:projectId/nodes/:nodeId/chat-v2"
-            element={
-              <>
-                <BreadcrumbChatViewV2 />
-                <LocationProbe />
-              </>
-            }
-          />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-probe')).toHaveTextContent(
-        '/projects/project-1/nodes/root/chat-v2?thread=ask',
-      )
+      expect(facade.commands.selectThread).toHaveBeenCalledWith('ask-thread-1')
     })
-    expect(loadThread).toHaveBeenCalledWith('project-1', 'root', 'ask-thread-1', 'ask_planning')
     expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'ask-thread-1')
   })
 
-  it('routes execution submit directly through sendTurn', async () => {
-    const enqueueFollowup = vi.fn().mockResolvedValue(undefined)
-    const sendTurn = vi.fn().mockResolvedValue(undefined)
+  it('lane without thread id clears selection and keeps transcript empty/composer disabled', async () => {
+    const facade = makeFacade({
+      activeThreadId: 'exec-thread-1',
+      activeThread: makeThread('exec-thread-1'),
+      activeTurns: [
+        {
+          id: 'turn-old',
+          threadId: 'exec-thread-1',
+          status: 'completed',
+          lastCodexStatus: 'completed',
+          startedAtMs: 1,
+          completedAtMs: 2,
+          items: [],
+          error: null,
+        },
+      ],
+      isActiveThreadReady: true,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    seedStores({
+      workflowState: makeWorkflowState({
+        reviewThreadId: null,
+      }),
+    })
 
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(facade.commands.selectThread).toHaveBeenCalledWith(null)
+    })
+    expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', '')
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
+  })
+
+  it('disables composer while selecting/hydrating and enables when active thread is ready', async () => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        askThreadId: 'ask-thread-1',
+      }),
+    })
+
+    mockUseSessionFacadeV2.mockReturnValue(
+      makeFacade({
+        activeThreadId: 'ask-thread-1',
+        activeThread: makeThread('ask-thread-1'),
+        isSelectingThread: true,
+        isActiveThreadReady: false,
+      }),
+    )
+
+    const view = render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
+
+    mockUseSessionFacadeV2.mockReturnValue(
+      makeFacade({
+        activeThreadId: 'ask-thread-1',
+        activeThread: makeThread('ask-thread-1'),
+        isSelectingThread: false,
+        isActiveThreadReady: true,
+      }),
+    )
+
+    view.rerender(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
+  })
+
+  it('submits via facade command and refreshes workflow state', async () => {
+    const facade = makeFacade({
+      activeThreadId: 'exec-thread-1',
+      activeThread: makeThread('exec-thread-1'),
+      isActiveThreadReady: true,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
     seedStores({
       workflowState: makeWorkflowState({
         workflowPhase: 'execution_decision_pending',
         canSendExecutionMessage: true,
       }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      enqueueFollowup,
-      sendTurn,
-      activeThreadRole: 'execution',
     })
 
     render(
@@ -377,229 +565,151 @@ describe('BreadcrumbChatViewV2', () => {
     fireEvent.click(screen.getByTestId('composer-submit-mock'))
 
     await waitFor(() => {
-      expect(sendTurn).toHaveBeenCalledWith('queued from composer mock')
+      expect(facade.commands.submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: 'queued from composer mock',
+        }),
+      )
     })
-    expect(enqueueFollowup).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('execution-followup-queue-panel')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('ask-followup-queue-panel')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(useWorkflowStateStoreV3.getState().loadWorkflowState).toHaveBeenCalledWith('project-1', 'root')
+    })
   })
 
-  it('renders workflow actions in strip and runs review-in-audit action', async () => {
-    const reviewInAudit = vi.fn().mockResolvedValue(undefined)
+  it('shows overlay only when pending request belongs to active lane thread', async () => {
+    const offLaneFacade = makeFacade({
+      activeThreadId: 'ask-thread-1',
+      activeThread: makeThread('ask-thread-1'),
+      activeRequest: makePendingRequest({
+        requestId: 'req-off-lane',
+        threadId: 'execution-thread-1',
+        method: 'item/tool/requestUserInput',
+      }),
+      isActiveThreadReady: true,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(offLaneFacade)
     seedStores({
       workflowState: makeWorkflowState({
-        workflowPhase: 'execution_decision_pending',
-        canReviewInAudit: true,
-        currentExecutionDecision: {
-          status: 'current',
-          sourceExecutionRunId: 'exec-run-1',
-          executionTurnId: 'turn-1',
-          candidateWorkspaceHash: 'ws:abc',
-          summaryText: 'Execution summary',
-          createdAt: '2026-03-28T00:01:00Z',
-        },
+        askThreadId: 'ask-thread-1',
       }),
     })
-    useWorkflowStateStoreV3.setState({
-      ...useWorkflowStateStoreV3.getState(),
-      reviewInAudit,
-    })
 
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
+    const view = render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
-          <Route
-            path="/projects/:projectId/nodes/:nodeId/chat-v2"
-            element={
-              <>
-                <BreadcrumbChatViewV2 />
-                <LocationProbe />
-              </>
-            }
-          />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
 
-    expect(screen.getByTestId('workflow-action-strip')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('workflow-review-in-audit'))
+    expect(screen.queryByTestId('request-user-input-overlay')).not.toBeInTheDocument()
 
-    await waitFor(() => {
-      expect(reviewInAudit).toHaveBeenCalledWith('project-1', 'root', 'ws:abc')
+    const onLaneFacade = makeFacade({
+      activeThreadId: 'ask-thread-1',
+      activeThread: makeThread('ask-thread-1'),
+      activeRequest: makePendingRequest({
+        requestId: 'req-on-lane',
+        threadId: 'ask-thread-1',
+        method: 'item/tool/requestUserInput',
+      }),
+      isActiveThreadReady: true,
     })
+    mockUseSessionFacadeV2.mockReturnValue(onLaneFacade)
+
+    view.rerender(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('request-user-input-overlay')).toHaveAttribute(
+      'data-request-id',
+      'req-on-lane',
+    )
+    fireEvent.click(screen.getByTestId('overlay-submit'))
     await waitFor(() => {
-      expect(screen.getByTestId('location-probe')).toHaveTextContent(
-        '/projects/project-1/nodes/root/chat-v2?thread=audit',
+      expect(onLaneFacade.commands.resolveRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          answers: expect.any(Array),
+        }),
       )
     })
   })
 
-  it('uses transcript native empty state path for audit lane without review thread', async () => {
-    seedStores({
-      workflowState: makeWorkflowState({
-        workflowPhase: 'execution_decision_pending',
-        reviewThreadId: null,
-      }),
-      threadSnapshot: null,
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    expect(screen.getByTestId('transcript-panel')).toBeInTheDocument()
-    expect(screen.queryByTestId('audit-shell')).not.toBeInTheDocument()
-  })
-
-  it('renders pending request overlay and resolves user input with mapped answers', async () => {
-    const resolveUserInput = vi.fn().mockResolvedValue(undefined)
+  it('routes overlay renderer by request method (user input, mcp, approval)', () => {
     seedStores({
       workflowState: makeWorkflowState({
         askThreadId: 'ask-thread-1',
       }),
-      threadSnapshot: makeConversationSnapshot({
-        threadId: 'ask-thread-1',
-        threadRole: 'ask_planning',
-        items: [
-          {
-            id: 'item-user-input-1',
-            kind: 'userInput',
-            threadId: 'ask-thread-1',
-            turnId: 'turn-1',
-            sequence: 1,
-            createdAt: '2026-03-28T00:00:01Z',
-            updatedAt: '2026-03-28T00:00:01Z',
-            status: 'requested',
-            source: 'upstream',
-            tone: 'neutral',
-            metadata: {},
-            requestId: 'req-1',
-            title: 'Need confirmation',
-            questions: [
-              {
-                id: 'q-1',
-                header: 'Decision',
-                prompt: 'Choose an option',
-                inputType: 'single_select',
-                options: [{ label: 'Option A', description: 'Recommended' }],
-              },
-            ],
-            answers: [],
-            requestedAt: '2026-03-28T00:00:01Z',
-            resolvedAt: null,
-          },
-        ],
-        uiSignals: {
-          planReady: {
-            planItemId: null,
-            revision: null,
-            ready: false,
-            failed: false,
-          },
-          activeUserInputRequests: [
-            {
-              requestId: 'req-1',
-              itemId: 'item-user-input-1',
-              threadId: 'ask-thread-1',
-              turnId: 'turn-1',
-              status: 'requested',
-              createdAt: '2026-03-28T00:00:01Z',
-              submittedAt: null,
-              resolvedAt: null,
-              answers: [],
-            },
-          ],
-        },
+    })
+
+    const renderWithRequest = (request: PendingServerRequest) => {
+      mockUseSessionFacadeV2.mockReturnValue(
+        makeFacade({
+          activeThreadId: 'ask-thread-1',
+          activeThread: makeThread('ask-thread-1'),
+          activeRequest: request,
+          isActiveThreadReady: true,
+        }),
+      )
+      return render(
+        <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+          <Routes>
+            <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          </Routes>
+        </MemoryRouter>,
+      )
+    }
+
+    const first = renderWithRequest(
+      makePendingRequest({
+        requestId: 'req-user-input',
+        method: 'item/tool/requestUserInput',
       }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      resolveUserInput,
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
-        <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
-        </Routes>
-      </MemoryRouter>,
     )
-
     expect(screen.getByTestId('request-user-input-overlay')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('overlay-submit'))
+    first.unmount()
 
-    await waitFor(() => {
-      expect(resolveUserInput).toHaveBeenCalledWith('req-1', [
-        {
-          questionId: 'q-1',
-          value: 'Option A',
-          label: 'Option A',
-        },
-      ])
-    })
+    const second = renderWithRequest(
+      makePendingRequest({
+        requestId: 'req-mcp',
+        method: 'mcpServer/elicitation/request',
+      }),
+    )
+    expect(screen.getByTestId('mcp-elicitation-overlay')).toBeInTheDocument()
+    second.unmount()
+
+    renderWithRequest(
+      makePendingRequest({
+        requestId: 'req-approval',
+        method: 'item/commandExecution/requestApproval',
+      }),
+    )
+    expect(screen.getByTestId('approval-overlay')).toBeInTheDocument()
   })
 
-  it('rejects pending user input by resolving with empty answers', async () => {
-    const resolveUserInput = vi.fn().mockResolvedValue(undefined)
+  it('uses error precedence workflowError -> runtimeError -> connection.error', () => {
     seedStores({
       workflowState: makeWorkflowState({
         askThreadId: 'ask-thread-1',
       }),
-      threadSnapshot: makeConversationSnapshot({
-        threadId: 'ask-thread-1',
-        threadRole: 'ask_planning',
-        items: [
-          {
-            id: 'item-user-input-1',
-            kind: 'userInput',
-            threadId: 'ask-thread-1',
-            turnId: 'turn-1',
-            sequence: 1,
-            createdAt: '2026-03-28T00:00:01Z',
-            updatedAt: '2026-03-28T00:00:01Z',
-            status: 'requested',
-            source: 'upstream',
-            tone: 'neutral',
-            metadata: {},
-            requestId: 'req-1',
-            title: 'Need confirmation',
-            questions: [],
-            answers: [],
-            requestedAt: '2026-03-28T00:00:01Z',
-            resolvedAt: null,
-          },
-        ],
-        uiSignals: {
-          planReady: {
-            planItemId: null,
-            revision: null,
-            ready: false,
-            failed: false,
-          },
-          activeUserInputRequests: [
-            {
-              requestId: 'req-1',
-              itemId: 'item-user-input-1',
-              threadId: 'ask-thread-1',
-              turnId: 'turn-1',
-              status: 'requested',
-              createdAt: '2026-03-28T00:00:01Z',
-              submittedAt: null,
-              resolvedAt: null,
-              answers: [],
-            },
-          ],
+      workflowError: 'Workflow failed first',
+    })
+    mockUseSessionFacadeV2.mockReturnValue(
+      makeFacade({
+        activeThreadId: 'ask-thread-1',
+        activeThread: makeThread('ask-thread-1'),
+        runtimeError: 'Runtime failed second',
+        connection: {
+          phase: 'error',
+          clientName: 'PlanningTree Session V2',
+          serverVersion: '1.0.0',
+          error: { code: 'ERR_INTERNAL', message: 'Connection failed third' },
         },
       }),
-    })
-    useThreadByIdStoreV3.setState({
-      ...useThreadByIdStoreV3.getState(),
-      resolveUserInput,
-    })
+    )
 
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
@@ -609,10 +719,6 @@ describe('BreadcrumbChatViewV2', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByTestId('overlay-cancel'))
-
-    await waitFor(() => {
-      expect(resolveUserInput).toHaveBeenCalledWith('req-1', [])
-    })
+    expect(screen.getByRole('alert')).toHaveTextContent('Workflow failed first')
   })
 })

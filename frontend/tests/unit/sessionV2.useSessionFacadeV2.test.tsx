@@ -40,7 +40,10 @@ vi.mock('../../src/features/session_v2/api/client', () => ({
   openThreadEventsStreamV2: mockApi.openThreadEventsStreamV2,
 }))
 
-import type { SessionFacadeV2 } from '../../src/features/session_v2/facade/useSessionFacadeV2'
+import type {
+  SessionFacadeOptions,
+  SessionFacadeV2,
+} from '../../src/features/session_v2/facade/useSessionFacadeV2'
 import {
   getSessionFacadeRuntimeOwnershipSnapshot,
   resetSessionFacadeRuntimeOwnershipForTests,
@@ -92,10 +95,11 @@ function makeThread(overrides: Partial<SessionThread> & { id: string }): Session
 
 type HarnessProps = {
   onFacade: (facade: SessionFacadeV2) => void
+  options?: SessionFacadeOptions
 }
 
-function FacadeHarness({ onFacade }: HarnessProps) {
-  const facade = useSessionFacadeV2()
+function FacadeHarness({ onFacade, options }: HarnessProps) {
+  const facade = useSessionFacadeV2(options)
 
   useEffect(() => {
     onFacade(facade)
@@ -362,5 +366,174 @@ describe('useSessionFacadeV2', () => {
       await vi.advanceTimersByTimeAsync(400)
     })
     expect(mockApi.listPendingRequestsV2.mock.calls.length).toBeGreaterThanOrEqual(afterIdlePollCount + 1)
+  })
+
+  it('supports bootstrap policy without auto mount bootstrap/select/create', async () => {
+    render(
+      <FacadeHarness
+        options={{
+          bootstrapPolicy: {
+            autoBootstrapOnMount: false,
+            autoSelectInitialThread: false,
+            autoCreateThreadWhenEmpty: false,
+          },
+        }}
+        onFacade={() => {
+          // no-op
+        }}
+      />,
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(mockApi.initializeSessionV2).not.toHaveBeenCalled()
+    expect(useThreadSessionStore.getState().activeThreadId).toBeNull()
+  })
+
+  it('selectThread(null) clears active thread and stops stream/poll without clearing metadata', async () => {
+    vi.useFakeTimers()
+    let latestFacade: SessionFacadeV2 | null = null
+
+    render(
+      <FacadeHarness
+        options={{
+          bootstrapPolicy: { autoBootstrapOnMount: false },
+        }}
+        onFacade={(facade) => {
+          latestFacade = facade
+        }}
+      />,
+    )
+
+    await act(async () => {
+      await latestFacade?.commands.bootstrap()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mockApi.openThreadEventsStreamV2).toHaveBeenCalledTimes(1)
+    expect(useThreadSessionStore.getState().activeThreadId).toBe('thread-1')
+
+    await act(async () => {
+      await latestFacade?.commands.selectThread(null)
+      await Promise.resolve()
+    })
+
+    const pollCountAfterClear = mockApi.listPendingRequestsV2.mock.calls.length
+    expect(useThreadSessionStore.getState().activeThreadId).toBeNull()
+    expect(useThreadSessionStore.getState().threadOrder).toContain('thread-1')
+    expect(useConnectionStore.getState().connection.phase).toBe('initialized')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+
+    expect(mockApi.listPendingRequestsV2.mock.calls.length).toBe(pollCountAfterClear)
+    expect(mockApi.openThreadEventsStreamV2.mock.calls.length).toBe(1)
+  })
+
+  it('drops stale selectThread hydration when selectThread(null) happens mid-flight', async () => {
+    let latestFacade: SessionFacadeV2 | null = null
+    const readDeferred = deferred<{ thread: SessionThread }>()
+    const turnsDeferred = deferred<{ data: never[]; nextCursor: null }>()
+
+    mockApi.readThreadV2.mockImplementation((threadId: string) => {
+      if (threadId === 'thread-2') {
+        return readDeferred.promise
+      }
+      return Promise.resolve({ thread: makeThread({ id: threadId }) })
+    })
+    mockApi.listThreadTurnsV2.mockImplementation((threadId: string) => {
+      if (threadId === 'thread-2') {
+        return turnsDeferred.promise
+      }
+      return Promise.resolve({ data: [], nextCursor: null })
+    })
+
+    render(
+      <FacadeHarness
+        onFacade={(facade) => {
+          latestFacade = facade
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(mockApi.initializeSessionV2).toHaveBeenCalled()
+    })
+
+    act(() => {
+      useThreadSessionStore.getState().setThreadList([
+        makeThread({ id: 'thread-1' }),
+        makeThread({ id: 'thread-2' }),
+      ])
+      useThreadSessionStore.getState().setActiveThreadId('thread-1')
+    })
+
+    await act(async () => {
+      const switching = latestFacade?.commands.selectThread('thread-2')
+      const clearing = latestFacade?.commands.selectThread(null)
+      await clearing
+
+      readDeferred.resolve({ thread: makeThread({ id: 'thread-2' }) })
+      await Promise.resolve()
+      turnsDeferred.resolve({ data: [], nextCursor: null })
+      await switching
+    })
+
+    expect(useThreadSessionStore.getState().activeThreadId).toBeNull()
+  })
+
+  it('filters activeRequest by active thread when pendingRequestScope=activeThread', async () => {
+    let latestFacade: SessionFacadeV2 | null = null
+
+    render(
+      <FacadeHarness
+        options={{
+          bootstrapPolicy: { autoBootstrapOnMount: false },
+          pendingRequestScope: 'activeThread',
+        }}
+        onFacade={(facade) => {
+          latestFacade = facade
+        }}
+      />,
+    )
+
+    act(() => {
+      useThreadSessionStore.getState().setActiveThreadId('thread-2')
+      usePendingRequestsStore.getState().hydrateFromServer([
+        {
+          requestId: 'req-1',
+          method: 'item/tool/requestUserInput',
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          itemId: 'item-1',
+          status: 'pending',
+          createdAtMs: 1,
+          submittedAtMs: null,
+          resolvedAtMs: null,
+          payload: {},
+        },
+        {
+          requestId: 'req-2',
+          method: 'item/tool/requestUserInput',
+          threadId: 'thread-2',
+          turnId: 'turn-2',
+          itemId: 'item-2',
+          status: 'pending',
+          createdAtMs: 2,
+          submittedAtMs: null,
+          resolvedAtMs: null,
+          payload: {},
+        },
+      ])
+      usePendingRequestsStore.getState().setActiveRequest('req-1')
+    })
+
+    await waitFor(() => {
+      expect(latestFacade?.state.activeRequest?.requestId).toBe('req-2')
+    })
   })
 })

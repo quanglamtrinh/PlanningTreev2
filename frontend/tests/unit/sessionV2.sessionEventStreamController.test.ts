@@ -113,6 +113,7 @@ describe('sessionEventStreamController', () => {
   it('retries reconnect after stream error', async () => {
     const sources: FakeEventSource[] = []
     const markReconnect = vi.fn()
+    const runtimeError = vi.fn()
 
     const controller = createSessionEventStreamController({
       openEventSource: () => {
@@ -127,7 +128,7 @@ describe('sessionEventStreamController', () => {
       clearGapDetected: vi.fn(),
       getLastEventId: () => null,
       getGapDetected: () => false,
-      onRuntimeError: vi.fn(),
+      onRuntimeError: runtimeError,
     })
 
     controller.open('thread-1')
@@ -135,9 +136,39 @@ describe('sessionEventStreamController', () => {
 
     sources[0].emitError()
     expect(markReconnect).toHaveBeenCalledWith('thread-1')
+    expect(runtimeError).toHaveBeenCalledWith('Session stream disconnected. Reconnecting...')
 
     await vi.advanceTimersByTimeAsync(1000)
     expect(sources).toHaveLength(2)
+  })
+
+  it('handles openEventSource failure and schedules reconnect with runtime error', async () => {
+    const openEventSource = vi.fn()
+      .mockImplementationOnce(() => {
+        throw new Error('boom open')
+      })
+      .mockImplementation(() => new FakeEventSource() as unknown as EventSource)
+    const runtimeError = vi.fn()
+
+    const controller = createSessionEventStreamController({
+      openEventSource,
+      applyEventsBatch: vi.fn(),
+      markStreamConnected: vi.fn(),
+      markStreamDisconnected: vi.fn(),
+      markStreamReconnect: vi.fn(),
+      clearGapDetected: vi.fn(),
+      getLastEventId: () => null,
+      getGapDetected: () => false,
+      onRuntimeError: runtimeError,
+    })
+
+    controller.open('thread-1')
+
+    expect(runtimeError).toHaveBeenCalledWith('boom open')
+    expect(openEventSource).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(openEventSource).toHaveBeenCalledTimes(2)
   })
 
   it('batches delta events and flushes queue on fallback timer', async () => {
