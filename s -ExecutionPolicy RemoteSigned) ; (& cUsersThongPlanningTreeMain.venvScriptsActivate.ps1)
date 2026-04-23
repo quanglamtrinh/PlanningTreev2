@@ -1,0 +1,18 @@
+  breadcrumbrework[m 3c14c7c config graph
+  chat            [m 20b223c chat-phase-6.3
+  chatstream      [m d45d926 chatstream-docs-update
+  conversion      [m fc2f64c render-doc-2
+  editsplit       [m 516c1d3 config sidebar
+  gitconfig       [m 906d1d9 modify graph ui
+  main            [m 052af47 [[34morigin/main[m: behind 120] Merge pull request #11 from quanglamtrinh/chatstream
+  modelrework     [m bcfda2a modelrework-phase-4.4
+  node-detail     [m 5a3cebf update graph ui
+  promptconfig    [m dd93b1f config
+  render          [m 71c0cd6 renderask-finalize
+  sidebar         [m 354f33e add breadcrumb
+* [32mstreaming       [m b634424 [[34morigin/streaming[m: ahead 19, behind 4] create alternative breadcrumbview
+  threadconfig    [m f09f088 [[34morigin/threadconfig[m] update-git-ui
+  threadmodel     [m ac79466 finalize
+  threadrework    [m 45d5617 threadrework-phase-1.4
+  uirework        [m d0765da uirework-final
+  usagesnapshot   [m e088831 usagesnapshot-phase-6.1

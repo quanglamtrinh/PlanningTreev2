@@ -569,52 +569,72 @@ export function BreadcrumbChatViewV2() {
     [navigate, nodeId, projectId],
   )
 
+  const conversationProps = {
+    threadTab,
+    onThreadTabChange: handleThreadTabChange,
+    combinedError,
+    showAuditShell,
+    activeThreadId,
+    feedSnapshot: feedRenderStateV3.snapshot,
+    conversationLoading,
+    isSending,
+    hasOlderHistory,
+    isLoadingHistory,
+    loadMoreHistory,
+    resolveUserInput,
+    runPlanAction: runPlanActionV3,
+    lastCompletedAt,
+    lastDurationMs,
+    onRenderError: handleV3RenderError,
+  }
+
+  const frameContextProps = {
+    projectId,
+    nodeId,
+    nodeRegistry: snapshot?.tree_state.node_registry ?? null,
+    specConfirmed: nodeDetailState?.spec_confirmed === true,
+  }
+
+  const executionQueueProps = {
+    executionQueueState,
+    executionQueueActions: {
+      removeQueued: removeExecutionQueued,
+      reorderQueued,
+      sendQueuedNow,
+      confirmQueued: confirmExecutionQueued,
+      retryQueued,
+      setOperatorPause,
+    },
+  }
+
+  const askQueueProps = {
+    askQueueState,
+    askQueueActions: {
+      removeQueued: removeAskQueued,
+      reorderAskQueued,
+      sendAskQueuedNow,
+      confirmQueued: confirmAskQueued,
+      retryAskQueued,
+    },
+  }
+
+  const composerProps = {
+    composerWorkflowActions,
+    composerDisabled,
+    earlyResponsePhase: composerStateV3.earlyResponse.phase,
+    onSend: (content: string) => {
+      void handleSend(content)
+    },
+  }
+
   return (
     <div className={styles.root}>
       <BreadcrumbThreadPaneV2
-        threadTab={threadTab}
-        projectId={projectId}
-        nodeId={nodeId}
-        onThreadTabChange={handleThreadTabChange}
-        combinedError={combinedError}
-        showAuditShell={showAuditShell}
-        nodeRegistry={snapshot?.tree_state.node_registry ?? null}
-        specConfirmed={nodeDetailState?.spec_confirmed === true}
-        activeThreadId={activeThreadId}
-        feedSnapshot={feedRenderStateV3.snapshot}
-        conversationLoading={conversationLoading}
-        isSending={isSending}
-        hasOlderHistory={hasOlderHistory}
-        isLoadingHistory={isLoadingHistory}
-        loadMoreHistory={loadMoreHistory}
-        resolveUserInput={resolveUserInput}
-        runPlanAction={runPlanActionV3}
-        lastCompletedAt={lastCompletedAt}
-        lastDurationMs={lastDurationMs}
-        onRenderError={handleV3RenderError}
-        composerWorkflowActions={composerWorkflowActions}
-        composerDisabled={composerDisabled}
-        earlyResponsePhase={composerStateV3.earlyResponse.phase}
-        onSend={(content) => {
-          void handleSend(content)
-        }}
-        executionQueueState={executionQueueState}
-        askQueueState={askQueueState}
-        executionQueueActions={{
-          removeQueued: removeExecutionQueued,
-          reorderQueued,
-          sendQueuedNow,
-          confirmQueued: confirmExecutionQueued,
-          retryQueued,
-          setOperatorPause,
-        }}
-        askQueueActions={{
-          removeQueued: removeAskQueued,
-          reorderAskQueued,
-          sendAskQueuedNow,
-          confirmQueued: confirmAskQueued,
-          retryAskQueued,
-        }}
+        conversationProps={conversationProps}
+        frameContextProps={frameContextProps}
+        executionQueueProps={executionQueueProps}
+        askQueueProps={askQueueProps}
+        composerProps={composerProps}
       />
 
       <aside className={styles.detailPane} data-testid="breadcrumb-detail-pane">
