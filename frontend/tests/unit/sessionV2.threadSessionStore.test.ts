@@ -156,6 +156,87 @@ describe('threadSessionStore', () => {
     expect(afterState.threadsById['thread-1']).toBe(beforeThread)
   })
 
+  it('keeps state identity when hydrate returns equivalent nested metadata', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadList([
+      thread({
+        id: 'thread-1',
+        name: 'Thread 1',
+        updatedAt: 10,
+        metadata: {
+          workspace: { cwd: 'C:/repo', roots: ['C:/repo'] },
+          tags: ['a', 'b'],
+        },
+      }),
+    ])
+
+    const beforeState = useThreadSessionStore.getState()
+    const beforeThread = beforeState.threadsById['thread-1']
+
+    store.upsertThread(
+      thread({
+        id: 'thread-1',
+        name: 'Thread 1',
+        updatedAt: 999,
+        status: { type: 'idle' },
+        metadata: {
+          workspace: { cwd: 'C:/repo', roots: ['C:/repo'] },
+          tags: ['a', 'b'],
+        },
+      }),
+      { preserveUpdatedAt: true },
+    )
+
+    const afterState = useThreadSessionStore.getState()
+    expect(afterState).toBe(beforeState)
+    expect(afterState.threadsById['thread-1']).toBe(beforeThread)
+  })
+
+  it('ignores equivalent thread turns payload churn from hydrate', () => {
+    const store = useThreadSessionStore.getState()
+    const cachedTurns: SessionTurn[] = [
+      {
+        id: 'turn-1',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 10,
+        completedAtMs: 20,
+        items: [],
+        error: null,
+      },
+    ]
+
+    store.setThreadList([
+      thread({
+        id: 'thread-1',
+        name: 'Thread 1',
+        updatedAt: 10,
+        turns: cachedTurns,
+      }),
+    ])
+
+    const beforeState = useThreadSessionStore.getState()
+    const beforeThread = beforeState.threadsById['thread-1']
+    const serverTurns: SessionTurn[] = cachedTurns.map((turn) => ({ ...turn, items: [...turn.items] }))
+
+    store.upsertThread(
+      thread({
+        id: 'thread-1',
+        name: 'Thread 1',
+        updatedAt: 999,
+        status: { type: 'idle' },
+        turns: serverTurns,
+      }),
+      { preserveUpdatedAt: true },
+    )
+
+    const afterState = useThreadSessionStore.getState()
+    expect(afterState).toBe(beforeState)
+    expect(afterState.threadsById['thread-1']).toBe(beforeThread)
+    expect(afterState.threadsById['thread-1']?.turns).toBe(cachedTurns)
+  })
+
   it('bumps list activity timestamp only through explicit thread activity', () => {
     const store = useThreadSessionStore.getState()
     store.setThreadList([thread({ id: 'thread-1', updatedAt: 10 })])

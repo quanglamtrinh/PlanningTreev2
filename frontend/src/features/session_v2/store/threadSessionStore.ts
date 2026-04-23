@@ -405,7 +405,41 @@ function areThreadMetadataEqual(
     if (!Object.prototype.hasOwnProperty.call(right, key)) {
       return false
     }
-    if (!Object.is(left[key], right[key])) {
+    if (!areUnknownValuesEqual(left[key], right[key])) {
+      return false
+    }
+  }
+  return true
+}
+
+function areUnknownValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) {
+    return true
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false
+    }
+    for (let index = 0; index < left.length; index += 1) {
+      if (!areUnknownValuesEqual(left[index], right[index])) {
+        return false
+      }
+    }
+    return true
+  }
+  if (!isRecord(left) || !isRecord(right)) {
+    return false
+  }
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  if (leftKeys.length !== rightKeys.length) {
+    return false
+  }
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(right, key)) {
+      return false
+    }
+    if (!areUnknownValuesEqual(left[key], right[key])) {
       return false
     }
   }
@@ -449,7 +483,7 @@ function mergeThreadForStore(
   const status = existing && areThreadStatusEqual(existing.status, incoming.status) ? existing.status : incoming.status
   const metadata =
     existing && areThreadMetadataEqual(existing.metadata, incoming.metadata) ? existing.metadata : incoming.metadata
-  const turns = existing && areThreadTurnsEquivalent(existing.turns, incoming.turns) ? existing.turns : incoming.turns
+  const turns = existing ? existing.turns : incoming.turns
   return {
     ...incoming,
     updatedAt,

@@ -25,7 +25,7 @@ import { useConnectionStore } from '../store/connectionStore'
 import { usePendingRequestsStore } from '../store/pendingRequestsStore'
 import { useThreadSessionStore } from '../store/threadSessionStore'
 import { ApprovalOverlay } from '../components/ApprovalOverlay'
-import { ComposerPane } from '../components/ComposerPane'
+import { ComposerPane, type ComposerSubmitPayload } from '../components/ComposerPane'
 import { McpElicitationOverlay } from '../components/McpElicitationOverlay'
 import { RequestUserInputOverlay } from '../components/RequestUserInputOverlay'
 import { ThreadListPanel } from '../components/ThreadListPanel'
@@ -92,6 +92,9 @@ type ComposerModelOption = {
   label: string
   isDefault: boolean
 }
+
+const FULL_ACCESS_APPROVAL_POLICY = 'never'
+const FULL_ACCESS_SANDBOX_POLICY: Record<string, unknown> = { type: 'dangerFullAccess' }
 
 function parseTimestampMs(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -799,7 +802,7 @@ export function SessionConsoleV2() {
     }))
   }, [activeThreadId])
 
-  const handleSubmit = useCallback(async (payload: { input: Array<Record<string, unknown>>; text: string; model?: string | null }) => {
+  const handleSubmit = useCallback(async (payload: ComposerSubmitPayload) => {
     if (!activeThreadId) {
       return
     }
@@ -814,10 +817,14 @@ export function SessionConsoleV2() {
         setThreadTurns(activeThreadId, nextTurns)
         markThreadActivity(activeThreadId)
       } else {
+        const permissionOverrides = payload.accessMode === 'full-access'
+          ? { approvalPolicy: FULL_ACCESS_APPROVAL_POLICY, sandboxPolicy: FULL_ACCESS_SANDBOX_POLICY }
+          : {}
         const result = await startTurnV2(activeThreadId, {
           clientActionId: actionId(),
           input: payload.input,
           model: payload.model ?? selectedModel,
+          ...permissionOverrides,
         })
         const nextTurns = upsertTurnList(activeTurns, result.turn)
         setThreadTurns(activeThreadId, nextTurns)

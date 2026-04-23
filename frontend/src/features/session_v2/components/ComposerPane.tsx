@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipboardEvent, KeyboardEvent } from 'react'
 
-type ComposerSubmitPayload = {
+export type ComposerAccessMode = 'full-access' | 'default-permissions'
+
+export type ComposerSubmitPayload = {
   input: Array<Record<string, unknown>>
   text: string
   model?: string | null
+  accessMode: ComposerAccessMode
 }
 
 type ComposerModelOption = {
@@ -44,6 +47,10 @@ const FILE_MENTIONS = [
   { label: '@backend/', path: 'backend/' },
 ]
 const COMMAND_SUGGESTIONS = ['/plan', '/review', '/test', '/status']
+const ACCESS_MODE_LABELS: Record<ComposerAccessMode, string> = {
+  'full-access': 'Full access',
+  'default-permissions': 'Default permissions',
+}
 
 function loadPersistentHistory(): string[] {
   try {
@@ -107,7 +114,7 @@ export function ComposerPane({
   const [effortLevel, setEffortLevel] = useState<'Low' | 'Medium' | 'High' | 'Extra High'>('Extra High')
   const [workMode, setWorkMode] = useState<'locally' | 'remote'>('locally')
   const [streamMode, setStreamMode] = useState<'streaming' | 'batch'>('streaming')
-  const [accessLevel, setAccessLevel] = useState<'Full access' | 'Read only'>('Full access')
+  const [accessMode, setAccessMode] = useState<ComposerAccessMode>('full-access')
 
   useEffect(() => {
     savePersistentHistory(persistentHistory)
@@ -218,7 +225,7 @@ export function ComposerPane({
     }
     setIsSubmitting(true)
     try {
-      await onSubmit({ input, text: draft, model: selectedModel ?? null })
+      await onSubmit({ input, text: draft, model: selectedModel ?? null, accessMode })
       registerHistoryEntry(draft, localImages, remoteImages)
       setDraft('')
       setLocalImages([])
@@ -451,14 +458,14 @@ export function ComposerPane({
             <button
               type="button"
               className="sessionV2ComposerPill sessionV2ComposerPillAccess"
-              onClick={() => setAccessLevel((prev) => prev === 'Full access' ? 'Read only' : 'Full access')}
-              title="Toggle access level"
+              onClick={() => setAccessMode((prev) => prev === 'full-access' ? 'default-permissions' : 'full-access')}
+              title="Toggle access mode"
             >
               <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
                 <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
                 <path d="M8 4v4l2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
-              {accessLevel}
+              {ACCESS_MODE_LABELS[accessMode]}
               <svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true" fill="none">
                 <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
