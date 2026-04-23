@@ -928,6 +928,7 @@ export function SessionConsoleV2() {
           disabled={!activeThreadId || connection.phase === 'error'}
           onSubmit={handleSubmit}
           onInterrupt={handleInterrupt}
+          currentCwd={activeThread?.cwd ?? null}
           modelOptions={modelOptions}
           selectedModel={selectedModel}
           onModelChange={handleModelChange}

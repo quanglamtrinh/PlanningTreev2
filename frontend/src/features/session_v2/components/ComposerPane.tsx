@@ -20,6 +20,7 @@ type ComposerPaneProps = {
   disabled?: boolean
   onSubmit: (payload: ComposerSubmitPayload) => Promise<void>
   onInterrupt: () => Promise<void>
+  currentCwd?: string | null
   modelOptions?: ComposerModelOption[]
   selectedModel?: string | null
   onModelChange?: (model: string) => void
@@ -91,6 +92,7 @@ export function ComposerPane({
   disabled,
   onSubmit,
   onInterrupt,
+  currentCwd = null,
   modelOptions = [],
   selectedModel = null,
   onModelChange,
@@ -315,6 +317,8 @@ export function ComposerPane({
     const found = modelOptions.find((o) => o.value === selectedModel)
     return found?.label ?? selectedModel
   }, [isModelLoading, modelOptions, selectedModel])
+  const cwdLabel = (currentCwd ?? '').trim()
+  const hasCwdLabel = cwdLabel.length > 0
 
   const cycleEffort = () => {
     const levels: typeof effortLevel[] = ['Low', 'Medium', 'High', 'Extra High']
@@ -469,6 +473,17 @@ export function ComposerPane({
               <svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true" fill="none">
                 <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
+            </button>
+
+            <button
+              type="button"
+              className="sessionV2ComposerPill sessionV2ComposerPillCwd"
+              disabled={!hasCwdLabel}
+              title={hasCwdLabel ? `Current cwd: ${cwdLabel}` : 'Current cwd unavailable'}
+              aria-label={hasCwdLabel ? `Current cwd ${cwdLabel}` : 'Current cwd unavailable'}
+            >
+              <span className="sessionV2ComposerCwdPrefix">cwd</span>
+              <span className="sessionV2ComposerCwdPath">{hasCwdLabel ? cwdLabel : '-'}</span>
             </button>
           </div>
 

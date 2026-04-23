@@ -15,7 +15,7 @@ describe('ComposerPane', () => {
       />,
     )
 
-    const textarea = screen.getByPlaceholderText('Start new turn...') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Ask for follow-up changes') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: '/plan investigate' } })
     expect(screen.getByText('/plan')).toBeInTheDocument()
 
@@ -33,7 +33,7 @@ describe('ComposerPane', () => {
         onInterrupt={onInterrupt}
       />,
     )
-    const textarea = screen.getByPlaceholderText('Start new turn...') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Ask for follow-up changes') as HTMLTextAreaElement
     fireEvent.keyDown(textarea, { key: 'r', ctrlKey: true })
     expect(screen.getByPlaceholderText('Search history')).toBeInTheDocument()
   })
@@ -76,7 +76,7 @@ describe('ComposerPane', () => {
     fireEvent.change(modelSelect, { target: { value: 'gpt-5.2' } })
     expect(onModelChange).toHaveBeenCalledWith('gpt-5.2')
 
-    const textarea = screen.getByPlaceholderText('Start new turn...') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Ask for follow-up changes') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: 'Test model submit' } })
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
 
@@ -86,5 +86,20 @@ describe('ComposerPane', () => {
       text: 'Test model submit',
     })
   })
-})
 
+  it('renders current cwd pill beside full access pill', () => {
+    const onSubmit = vi.fn(async () => undefined)
+    const onInterrupt = vi.fn(async () => undefined)
+    render(
+      <ComposerPane
+        isTurnRunning={false}
+        onSubmit={onSubmit}
+        onInterrupt={onInterrupt}
+        currentCwd="C:/Users/Thong/PlanningTreeMain"
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /current cwd/i })).toBeInTheDocument()
+    expect(screen.getByText('C:/Users/Thong/PlanningTreeMain')).toBeInTheDocument()
+  })
+})
