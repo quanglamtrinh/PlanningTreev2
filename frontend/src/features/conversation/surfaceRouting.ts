@@ -3,6 +3,9 @@ import type { BootstrapStatus } from '../../api/types'
 export type ThreadTab = 'ask' | 'execution' | 'audit'
 
 export function parseThreadTab(rawValue: string | null): ThreadTab | null {
+  if (rawValue === 'review') {
+    return 'audit'
+  }
   if (rawValue === 'ask' || rawValue === 'execution' || rawValue === 'audit') {
     return rawValue
   }

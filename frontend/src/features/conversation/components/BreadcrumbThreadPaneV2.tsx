@@ -210,7 +210,7 @@ export function BreadcrumbThreadPaneV2({
               aria-selected={threadTab === 'audit'}
               onClick={() => onThreadTabChange('audit')}
             >
-              Audit
+              Review
             </button>
           </nav>
         </div>
@@ -241,7 +241,7 @@ export function BreadcrumbThreadPaneV2({
                   />
                 ) : null}
                 <div className={styles.auditShellBody}>
-                  <div className={styles.auditShellTitle}>Audit Review Not Started Yet</div>
+                  <div className={styles.auditShellTitle}>Review Thread Not Started Yet</div>
                   <div className={styles.auditShellText}>
                     Start review from the execution tab once the current execution decision is ready.
                   </div>
