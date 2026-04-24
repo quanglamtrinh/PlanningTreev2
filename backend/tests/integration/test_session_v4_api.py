@@ -480,6 +480,11 @@ def test_session_v4_request_lifecycle_resolve_reject_cleanup_and_ordering(client
     )
     pending_payload = client.get("/v4/session/requests/pending").json()
     resolve_request_id = pending_payload["data"]["data"][0]["requestId"]
+    journal_after_create = client.app.state.session_manager_v2._runtime_store.read_thread_journal("thread-1")  # noqa: SLF001
+    created_events = [event for event in journal_after_create if event["method"] == "serverRequest/created"]
+    assert len(created_events) == 1
+    assert created_events[0]["params"]["request"]["requestId"] == resolve_request_id
+    assert created_events[0]["params"]["request"]["status"] == "pending"
 
     resolve_response = client.post(
         f"/v4/session/requests/{resolve_request_id}/resolve",
@@ -487,6 +492,11 @@ def test_session_v4_request_lifecycle_resolve_reject_cleanup_and_ordering(client
     )
     assert resolve_response.status_code == 200
     assert fake_transport.server_request_responses[-1] == (101, {"decision": "accept"})
+    journal_after_submit = client.app.state.session_manager_v2._runtime_store.read_thread_journal("thread-1")  # noqa: SLF001
+    submitted_events = [event for event in journal_after_submit if event["method"] == "serverRequest/updated"]
+    assert len(submitted_events) == 1
+    assert submitted_events[0]["params"]["request"]["requestId"] == resolve_request_id
+    assert submitted_events[0]["params"]["request"]["status"] == "submitted"
 
     fake_transport.emit_notification("serverRequest/resolved", {"threadId": "thread-1", "requestId": 101})
     fake_transport.emit_notification(
@@ -499,6 +509,9 @@ def test_session_v4_request_lifecycle_resolve_reject_cleanup_and_ordering(client
     journal = client.app.state.session_manager_v2._runtime_store.read_thread_journal("thread-1")  # noqa: SLF001
     methods = [event["method"] for event in journal]
     assert methods.index("serverRequest/resolved") < methods.index("turn/completed")
+    resolved_event = next(event for event in journal if event["method"] == "serverRequest/resolved")
+    assert resolved_event["params"]["request"]["requestId"] == resolve_request_id
+    assert resolved_event["params"]["request"]["status"] == "resolved"
 
     fake_transport.emit_server_request(
         202,
@@ -516,6 +529,14 @@ def test_session_v4_request_lifecycle_resolve_reject_cleanup_and_ordering(client
     assert fake_transport.server_request_failures[-1][1]["message"] == "policy"
     fake_transport.emit_notification("serverRequest/resolved", {"threadId": "thread-1", "requestId": 202})
     assert client.get("/v4/session/requests/pending").json()["data"]["data"] == []
+    journal_after_reject = client.app.state.session_manager_v2._runtime_store.read_thread_journal("thread-1")  # noqa: SLF001
+    reject_resolved = [
+        event
+        for event in journal_after_reject
+        if event["method"] == "serverRequest/resolved"
+        and event.get("params", {}).get("request", {}).get("requestId") == reject_request_id
+    ]
+    assert reject_resolved[-1]["params"]["request"]["status"] == "rejected"
 
     fake_transport.emit_server_request(
         303,
@@ -531,6 +552,14 @@ def test_session_v4_request_lifecycle_resolve_reject_cleanup_and_ordering(client
     )
     assert stale_response.status_code == 409
     assert stale_response.json()["error"]["code"] == "ERR_REQUEST_STALE"
+    journal_after_expire = client.app.state.session_manager_v2._runtime_store.read_thread_journal("thread-1")  # noqa: SLF001
+    expired_resolved = [
+        event
+        for event in journal_after_expire
+        if event["method"] == "serverRequest/resolved"
+        and event.get("params", {}).get("request", {}).get("requestId") == cleanup_request_id
+    ]
+    assert expired_resolved[-1]["params"]["request"]["status"] == "expired"
 
 
 def test_session_v4_request_resolution_idempotency(client: TestClient) -> None:
@@ -699,6 +728,7 @@ def test_session_v4_contract_conformance_for_phase3_endpoints(client: TestClient
     ).json()
     status_payload = client.get("/v4/session/status").json()
     start_payload = client.post("/v4/session/threads/start", json={}).json()
+    assert ("thread/start", {}) in fake_transport.requests
     resume_payload = client.post("/v4/session/threads/thread-resume-1/resume", json={}).json()
     list_payload = client.get("/v4/session/threads/list").json()
     read_payload = client.get("/v4/session/threads/thread-read-1/read").json()

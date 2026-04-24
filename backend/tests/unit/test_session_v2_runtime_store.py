@@ -143,15 +143,73 @@ def test_runtime_store_pending_request_lifecycle_and_turn_wait_resume() -> None:
     )
     assert pending["status"] == "pending"
     assert store.get_turn(thread_id="thread-1", turn_id="turn-1")["status"] == "waitingUserInput"
+    created_events = [event for event in store.read_thread_journal("thread-1") if event["method"] == "serverRequest/created"]
+    assert len(created_events) == 1
+    assert created_events[0]["tier"] == "tier0"
+    assert created_events[0]["params"]["request"]["requestId"] == pending["requestId"]
+    assert created_events[0]["params"]["request"]["status"] == "pending"
 
     submitted = store.mark_pending_server_request_submitted(request_id=pending["requestId"], submission_kind="resolve")
     assert submitted["status"] == "submitted"
+    updated_events = [event for event in store.read_thread_journal("thread-1") if event["method"] == "serverRequest/updated"]
+    assert len(updated_events) == 1
+    assert updated_events[0]["tier"] == "tier0"
+    assert updated_events[0]["params"]["request"]["requestId"] == pending["requestId"]
+    assert updated_events[0]["params"]["request"]["status"] == "submitted"
 
     resolved = store.resolve_pending_server_request_from_notification(thread_id="thread-1", raw_request_id=123)
     assert resolved is not None
     assert resolved["status"] == "resolved"
     assert store.list_pending_server_requests() == []
     assert store.get_turn(thread_id="thread-1", turn_id="turn-1")["status"] == "inProgress"
+
+
+def test_runtime_store_pending_request_events_dedupe_and_enriched_resolved() -> None:
+    store = RuntimeStoreV2()
+    store.create_turn(thread_id="thread-1", turn_id="turn-1", status="inProgress")
+    first = store.register_pending_server_request(
+        raw_request_id=123,
+        method="item/tool/requestUserInput",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        item_id="item-1",
+        payload={"threadId": "thread-1", "turnId": "turn-1", "itemId": "item-1"},
+    )
+    duplicate_pending = store.register_pending_server_request(
+        raw_request_id=123,
+        method="item/tool/requestUserInput",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        item_id="item-1",
+        payload={"threadId": "thread-1", "turnId": "turn-1", "itemId": "item-1"},
+    )
+    assert duplicate_pending["requestId"] == first["requestId"]
+
+    submitted = store.mark_pending_server_request_submitted(request_id=first["requestId"], submission_kind="resolve")
+    assert submitted["status"] == "submitted"
+    duplicate_submitted = store.register_pending_server_request(
+        raw_request_id=123,
+        method="item/tool/requestUserInput",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        item_id="item-1",
+        payload={"threadId": "thread-1", "turnId": "turn-1", "itemId": "item-1"},
+    )
+    assert duplicate_submitted["requestId"] == first["requestId"]
+
+    journal = store.read_thread_journal("thread-1")
+    assert [event["method"] for event in journal].count("serverRequest/created") == 1
+    assert [event["method"] for event in journal].count("serverRequest/updated") == 1
+
+    resolved_event = store.append_notification(
+        method="serverRequest/resolved",
+        params={"threadId": "thread-1", "requestId": 123},
+    )
+    assert resolved_event["method"] == "serverRequest/resolved"
+    assert resolved_event["tier"] == "tier0"
+    assert resolved_event["params"]["request"]["requestId"] == first["requestId"]
+    assert resolved_event["params"]["request"]["status"] == "resolved"
+    assert store.list_pending_server_requests() == []
 
 
 def test_runtime_store_resolved_notification_without_submit_expires_request() -> None:
@@ -188,6 +246,10 @@ def test_runtime_store_expire_pending_on_reinit_allows_raw_request_id_reuse() ->
     expired_count = store.expire_pending_server_requests_for_new_session()
     assert expired_count == 1
     assert store.get_pending_server_request(request_id=first["requestId"])["status"] == "expired"
+    updated_events = [event for event in store.read_thread_journal("thread-1") if event["method"] == "serverRequest/updated"]
+    assert len(updated_events) == 1
+    assert updated_events[0]["params"]["request"]["requestId"] == first["requestId"]
+    assert updated_events[0]["params"]["request"]["status"] == "expired"
 
     second = store.register_pending_server_request(
         raw_request_id=7,

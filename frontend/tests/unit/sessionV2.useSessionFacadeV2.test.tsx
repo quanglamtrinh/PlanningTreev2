@@ -187,6 +187,32 @@ describe('useSessionFacadeV2', () => {
     })
   })
 
+  it('forwards threadCreationPolicy during auto bootstrap thread creation', async () => {
+    const threadCreationPolicy = {
+      modelProvider: 'custom-provider',
+      baseInstructions: 'Use the workflow defaults.',
+    }
+    mockApi.listLoadedThreadsV2.mockResolvedValue({ data: [], nextCursor: null })
+    mockApi.listThreadsV2.mockResolvedValue({ data: [], nextCursor: null })
+
+    render(
+      <FacadeHarness
+        options={{
+          bootstrapPolicy: {
+            threadCreationPolicy,
+          },
+        }}
+        onFacade={() => {
+          // no-op
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(mockApi.startThreadV2).toHaveBeenCalledWith(threadCreationPolicy)
+    })
+  })
+
   it('keeps stores alive until last owner releases and then clears on final unmount', async () => {
     let facadeA: SessionFacadeV2 | null = null
     let facadeB: SessionFacadeV2 | null = null
@@ -314,13 +340,18 @@ describe('useSessionFacadeV2', () => {
     expect(useConnectionStore.getState().connection.phase).toBe('disconnected')
   })
 
-  it('polls pending requests at 2000ms idle and 400ms while turn is running', async () => {
+  it('polls pending requests when the active thread opens without recurring polling', async () => {
     vi.useFakeTimers()
 
     let latestFacade: SessionFacadeV2 | null = null
 
     render(
       <FacadeHarness
+        options={{
+          bootstrapPolicy: {
+            autoBootstrapOnMount: false,
+          },
+        }}
         onFacade={(facade) => {
           latestFacade = facade
         }}
@@ -337,35 +368,9 @@ describe('useSessionFacadeV2', () => {
     expect(initialPollCount).toBeGreaterThan(0)
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(1999)
+      await vi.advanceTimersByTimeAsync(5000)
     })
     expect(mockApi.listPendingRequestsV2.mock.calls.length).toBe(initialPollCount)
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1)
-    })
-    const afterIdlePollCount = mockApi.listPendingRequestsV2.mock.calls.length
-    expect(afterIdlePollCount).toBeGreaterThanOrEqual(initialPollCount + 1)
-
-    act(() => {
-      useThreadSessionStore.getState().setThreadTurns('thread-1', [
-        {
-          id: 'turn-running',
-          threadId: 'thread-1',
-          status: 'inProgress',
-          lastCodexStatus: 'inProgress',
-          startedAtMs: 1,
-          completedAtMs: null,
-          items: [],
-          error: null,
-        },
-      ])
-    })
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(400)
-    })
-    expect(mockApi.listPendingRequestsV2.mock.calls.length).toBeGreaterThanOrEqual(afterIdlePollCount + 1)
   })
 
   it('supports bootstrap policy without auto mount bootstrap/select/create', async () => {
@@ -390,6 +395,93 @@ describe('useSessionFacadeV2', () => {
 
     expect(mockApi.initializeSessionV2).not.toHaveBeenCalled()
     expect(useThreadSessionStore.getState().activeThreadId).toBeNull()
+  })
+
+  it('forwards threadCreationPolicy during manual bootstrap thread creation', async () => {
+    let latestFacade: SessionFacadeV2 | null = null
+    const threadCreationPolicy = {
+      modelProvider: 'custom-provider',
+      developerInstructions: 'Stay scoped.',
+    }
+    mockApi.listLoadedThreadsV2.mockResolvedValue({ data: [], nextCursor: null })
+    mockApi.listThreadsV2.mockResolvedValue({ data: [], nextCursor: null })
+
+    render(
+      <FacadeHarness
+        options={{
+          bootstrapPolicy: { autoBootstrapOnMount: false },
+        }}
+        onFacade={(facade) => {
+          latestFacade = facade
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(latestFacade).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestFacade?.commands.bootstrap({ threadCreationPolicy })
+    })
+
+    expect(mockApi.startThreadV2).toHaveBeenCalledWith(threadCreationPolicy)
+  })
+
+  it('forwards createThread and submit policies', async () => {
+    let latestFacade: SessionFacadeV2 | null = null
+    const threadCreationPolicy = {
+      modelProvider: 'custom-provider',
+      ephemeral: true,
+    }
+    const turnExecutionPolicy = {
+      approvalPolicy: 'never',
+      sandboxPolicy: { type: 'dangerFullAccess' },
+      effort: 'high',
+    }
+
+    render(
+      <FacadeHarness
+        options={{
+          bootstrapPolicy: { autoBootstrapOnMount: false },
+        }}
+        onFacade={(facade) => {
+          latestFacade = facade
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(latestFacade).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestFacade?.commands.createThread(threadCreationPolicy)
+    })
+
+    expect(mockApi.startThreadV2).toHaveBeenCalledWith(threadCreationPolicy)
+
+    act(() => {
+      useThreadSessionStore.getState().setActiveThreadId('thread-new')
+      useThreadSessionStore.getState().upsertThread(makeThread({ id: 'thread-new' }))
+    })
+
+    await act(async () => {
+      await latestFacade?.commands.submit(
+        {
+          input: [{ type: 'text', text: 'run tests' }],
+          text: 'run tests',
+          accessMode: 'default-permissions',
+          model: null,
+        },
+        turnExecutionPolicy,
+      )
+    })
+
+    expect(mockApi.startTurnV2).toHaveBeenCalledWith(
+      'thread-new',
+      expect.objectContaining(turnExecutionPolicy),
+    )
   })
 
   it('selectThread(null) clears active thread and stops stream/poll without clearing metadata', async () => {

@@ -1,7 +1,11 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 import { createSessionEventStreamController } from '../../src/features/session_v2/facade/sessionEventStreamController'
-import type { SessionEventEnvelope, SessionNotificationMethod } from '../../src/features/session_v2/contracts'
+import type {
+  PendingServerRequest,
+  SessionEventEnvelope,
+  SessionNotificationMethod,
+} from '../../src/features/session_v2/contracts'
 
 class FakeEventSource {
   onopen: ((this: EventSource, event: Event) => unknown) | null = null
@@ -69,6 +73,21 @@ function envelope(partial: Partial<SessionEventEnvelope>): SessionEventEnvelope 
   }
 }
 
+function pendingRequest(overrides: Partial<PendingServerRequest> & { requestId: string }): PendingServerRequest {
+  return {
+    requestId: overrides.requestId,
+    method: overrides.method ?? 'item/tool/requestUserInput',
+    threadId: overrides.threadId ?? 'thread-1',
+    turnId: overrides.turnId ?? 'turn-1',
+    itemId: overrides.itemId ?? 'item-1',
+    status: overrides.status ?? 'pending',
+    createdAtMs: overrides.createdAtMs ?? 1,
+    submittedAtMs: overrides.submittedAtMs ?? null,
+    resolvedAtMs: overrides.resolvedAtMs ?? null,
+    payload: overrides.payload ?? {},
+  }
+}
+
 describe('sessionEventStreamController', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -82,6 +101,7 @@ describe('sessionEventStreamController', () => {
     const sources: FakeEventSource[] = []
     const markConnected = vi.fn()
     const markDisconnected = vi.fn()
+    const onStreamConnected = vi.fn()
 
     const controller = createSessionEventStreamController({
       openEventSource: () => {
@@ -96,6 +116,7 @@ describe('sessionEventStreamController', () => {
       clearGapDetected: vi.fn(),
       getLastEventId: () => null,
       getGapDetected: () => false,
+      onStreamConnected,
       onRuntimeError: vi.fn(),
     })
 
@@ -104,6 +125,7 @@ describe('sessionEventStreamController', () => {
 
     sources[0].emitOpen()
     expect(markConnected).toHaveBeenCalledWith('thread-1')
+    expect(onStreamConnected).toHaveBeenCalledWith('thread-1')
 
     controller.close('thread-1')
     expect(sources[0].isClosed()).toBe(true)
@@ -209,6 +231,46 @@ describe('sessionEventStreamController', () => {
     expect(batch).toHaveLength(2)
     expect(batch[0].eventId).toBe('thread-1:10')
     expect(batch[1].eventId).toBe('thread-1:11')
+  })
+
+  it('force flushes request events to thread and pending request stores in the same ordered batch', () => {
+    const sources: FakeEventSource[] = []
+    const applyEventsBatch = vi.fn()
+    const applyRequestEventsBatch = vi.fn()
+
+    const controller = createSessionEventStreamController({
+      openEventSource: () => {
+        const source = new FakeEventSource()
+        sources.push(source)
+        return source as unknown as EventSource
+      },
+      applyEventsBatch,
+      applyRequestEventsBatch,
+      markStreamConnected: vi.fn(),
+      markStreamDisconnected: vi.fn(),
+      markStreamReconnect: vi.fn(),
+      clearGapDetected: vi.fn(),
+      getLastEventId: () => null,
+      getGapDetected: () => false,
+      onRuntimeError: vi.fn(),
+    })
+
+    controller.open('thread-1')
+
+    const created = envelope({
+      method: 'serverRequest/created',
+      eventId: 'thread-1:30',
+      eventSeq: 30,
+      params: { request: pendingRequest({ requestId: 'req-1' }) },
+    })
+    sources[0].emit('serverRequest/created', created)
+
+    expect(applyEventsBatch).toHaveBeenCalledTimes(1)
+    expect(applyRequestEventsBatch).toHaveBeenCalledTimes(1)
+    expect(applyEventsBatch.mock.calls[0]?.[0]).toBe(applyRequestEventsBatch.mock.calls[0]?.[0])
+    expect(applyRequestEventsBatch.mock.calls[0]?.[0].map((event: SessionEventEnvelope) => event.method)).toEqual([
+      'serverRequest/created',
+    ])
   })
 
   it('force flushes terminal envelopes and restarts on gap detection', async () => {

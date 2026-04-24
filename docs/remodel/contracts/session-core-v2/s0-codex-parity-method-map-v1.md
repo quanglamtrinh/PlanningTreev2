@@ -47,9 +47,16 @@ Server-initiated JSON-RPC requests are emitted as pending requests and must be r
 2. `POST /v4/session/requests/{requestId}/resolve`
 3. `POST /v4/session/requests/{requestId}/reject`
 
-Authoritative completion remains event-driven:
+Authoritative request state is event-driven:
 
+- `serverRequest/created`
+- `serverRequest/updated`
 - `serverRequest/resolved`
+
+`serverRequest/created` is emitted once for a new pending request. `serverRequest/updated` carries status or metadata changes such as `submitted`, `expired`, and `rejected`. `serverRequest/resolved` is retained for compatibility with upstream notifications and should include the full request record when the registry can resolve it.
+
+Turn/item completion remains event-driven:
+
 - terminal `item/completed`
 - terminal `turn/completed`
 
@@ -60,8 +67,7 @@ Authoritative completion remains event-driven:
 - `thread/*`
 - `turn/*`
 - `item/*`
-- `serverRequest/resolved`
+- `serverRequest/*`
 - `error`
 
 No semantic remapping of method names is allowed in V2.
-

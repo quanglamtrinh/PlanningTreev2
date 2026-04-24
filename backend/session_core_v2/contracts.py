@@ -64,6 +64,8 @@ SessionNotificationMethod = Literal[
     "item/reasoning/textDelta",
     "item/commandExecution/outputDelta",
     "item/fileChange/outputDelta",
+    "serverRequest/created",
+    "serverRequest/updated",
     "serverRequest/resolved",
 ]
 

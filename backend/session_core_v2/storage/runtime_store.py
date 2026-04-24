@@ -28,6 +28,8 @@ _TIER0_METHODS: frozenset[str] = frozenset(
         "thread/status/changed",
         "thread/started",
         "thread/closed",
+        "serverRequest/created",
+        "serverRequest/updated",
         "serverRequest/resolved",
     }
 )
@@ -376,6 +378,7 @@ class RuntimeStoreV2:
                             exc_info=True,
                         )
 
+            self._append_pending_request_event_locked(method="serverRequest/created", record=record)
             return self._pending_request_public(record)
 
     def list_pending_server_requests(self) -> list[dict[str, Any]]:
@@ -449,6 +452,7 @@ class RuntimeStoreV2:
             record["submissionKind"] = normalized_kind
             record["submittedAtMs"] = now_ms
             self._persist_pending_request(record)
+            self._append_pending_request_event_locked(method="serverRequest/updated", record=record)
             return self._pending_request_public(record)
 
     def expire_pending_server_requests_for_new_session(self) -> int:
@@ -471,6 +475,7 @@ class RuntimeStoreV2:
                 thread_id = str(record.get("threadId") or "").strip()
                 if thread_id and raw_request_json:
                     self._pending_request_by_raw.pop((thread_id, raw_request_json), None)
+                self._append_pending_request_event_locked(method="serverRequest/updated", record=record)
                 turn_id = str(record.get("turnId") or "").strip()
                 if thread_id and turn_id:
                     touched_turns.add((thread_id, turn_id))
@@ -533,21 +538,33 @@ class RuntimeStoreV2:
         if not normalized_thread_id:
             return {}
         turn_id = self._extract_turn_id(params)
+        normalized_params = dict(params)
+        if normalized_method == "serverRequest/resolved":
+            raw_request_id = normalized_params.get("requestId")
+            if raw_request_id is not None:
+                request_record = self.resolve_pending_server_request_from_notification(
+                    thread_id=normalized_thread_id,
+                    raw_request_id=raw_request_id,
+                )
+                if request_record is not None:
+                    normalized_params["request"] = request_record
+                    if not turn_id:
+                        turn_id = self._optional_non_empty(request_record.get("turnId"))
         self._record_thread_state_from_notification(
             thread_id=normalized_thread_id,
             method=normalized_method,
-            params=params,
+            params=normalized_params,
         )
         self._apply_notification_to_runtime_state(
             thread_id=normalized_thread_id,
             turn_id=turn_id,
             method=normalized_method,
-            params=params,
+            params=normalized_params,
         )
         return self.append_event(
             thread_id=normalized_thread_id,
             method=normalized_method,
-            params=params,
+            params=normalized_params,
             turn_id=turn_id,
             source="journal",
             replayable=True,
@@ -1640,6 +1657,18 @@ class RuntimeStoreV2:
             "resolvedAtMs": int(record.get("resolvedAtMs") or 0) or None,
             "payload": dict(record.get("payload") or {}),
         }
+
+    def _append_pending_request_event_locked(self, *, method: str, record: dict[str, Any]) -> dict[str, Any]:
+        public_record = self._pending_request_public(record)
+        return self.append_event(
+            thread_id=public_record["threadId"],
+            method=method,
+            params={"request": public_record},
+            turn_id=public_record["turnId"],
+            source="journal",
+            replayable=True,
+            tier="tier0",
+        )
 
     def _resume_turn_if_no_unresolved_requests(self, *, thread_id: str, turn_id: str) -> None:
         unresolved = False

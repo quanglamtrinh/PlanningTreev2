@@ -1,8 +1,0 @@
-{
-  "candidate_metrics": {
-    "ask_false_positive_confirmation_rate_pct": 9.5,
-    "total_confirmation_events": 42,
-    "false_positive_events": 4,
-    "reviewed_sessions": 15
-  }
-}

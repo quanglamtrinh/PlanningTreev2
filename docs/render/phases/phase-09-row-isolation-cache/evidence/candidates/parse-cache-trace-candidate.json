@@ -1,6 +1,0 @@
-{
-  "candidate_metrics": {
-    "parse_cache_lookups": 1200,
-    "parse_cache_hits": 780
-  }
-}

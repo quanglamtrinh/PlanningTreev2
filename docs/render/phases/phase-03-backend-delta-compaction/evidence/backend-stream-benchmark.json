@@ -1,7 +1,0 @@
-﻿{
-  "baseline_persisted_events_per_turn": 18.4,
-  "candidate_persisted_events_per_turn": 9.8,
-  "sample_turns": 120,
-  "scenario": "v3_stream_turn_mix",
-  "notes": "Measured on identical scripted workload profile with compaction enabled on candidate."
-}

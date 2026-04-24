@@ -190,7 +190,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.initializeSession).toHaveBeenCalledTimes(1)
     expect(harness.api.listLoadedThreads).toHaveBeenCalledWith({ limit: 20 })
     expect(harness.api.listThreads).toHaveBeenCalledWith({ limit: 50 })
-    expect(harness.api.startThread).toHaveBeenCalledWith({ modelProvider: 'openai' })
+    expect(harness.api.startThread).toHaveBeenCalledWith({})
     expect(harness.threadState.activeThreadId).toBe('thread-new')
     expect(harness.spies.setConnectionInitialized).toHaveBeenCalledWith('PlanningTree Session V2', '1.0.0')
     expect(harness.spies.setIsBootstrapping).toHaveBeenNthCalledWith(1, true)
@@ -230,7 +230,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.spies.markThreadActivity).toHaveBeenCalledWith('thread-1')
   })
 
-  it('starts new turn with full-access overrides when no active turn exists', async () => {
+  it('starts new turn without deriving execution policy from access mode', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeTurns = []
     harness.runtimeSnapshot.activeRunningTurn = null
@@ -246,8 +246,96 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.startTurn).toHaveBeenCalledTimes(1)
     const [, request] = harness.api.startTurn.mock.calls[0]
     expect(request.model).toBe('gpt-5')
-    expect(request.approvalPolicy).toBe('never')
-    expect(request.sandboxPolicy).toEqual({ type: 'dangerFullAccess' })
+    expect(request.approvalPolicy).toBeUndefined()
+    expect(request.sandboxPolicy).toBeUndefined()
+  })
+
+  it('passes supplied turn execution policy through and gives policy model precedence', async () => {
+    harness.runtimeSnapshot.activeThreadId = 'thread-1'
+    harness.runtimeSnapshot.activeTurns = []
+    harness.runtimeSnapshot.activeRunningTurn = null
+    harness.runtimeSnapshot.selectedModel = 'gpt-5'
+
+    await harness.controller.submit(
+      {
+        input: [{ type: 'text', text: 'run tests' }],
+        text: 'run tests',
+        accessMode: 'default-permissions',
+        model: 'gpt-5.1',
+      },
+      {
+        model: 'gpt-5.2',
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'dangerFullAccess' },
+        effort: 'high',
+      },
+    )
+
+    expect(harness.api.startTurn).toHaveBeenCalledTimes(1)
+    const [, request] = harness.api.startTurn.mock.calls[0]
+    expect(request).toEqual(
+      expect.objectContaining({
+        input: [{ type: 'text', text: 'run tests' }],
+        model: 'gpt-5.2',
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'dangerFullAccess' },
+        effort: 'high',
+      }),
+    )
+  })
+
+  it('skips null, undefined, and blank model values before selected model fallback', async () => {
+    harness.runtimeSnapshot.activeThreadId = 'thread-1'
+    harness.runtimeSnapshot.activeTurns = []
+    harness.runtimeSnapshot.activeRunningTurn = null
+    harness.runtimeSnapshot.selectedModel = 'gpt-5'
+
+    await harness.controller.submit(
+      {
+        input: [{ type: 'text', text: 'run tests' }],
+        text: 'run tests',
+        accessMode: 'default-permissions',
+        model: '   ',
+      },
+      {
+        model: null,
+      },
+    )
+
+    const [, nullPolicyModelRequest] = harness.api.startTurn.mock.calls[0]
+    expect(nullPolicyModelRequest.model).toBe('gpt-5')
+
+    harness.api.startTurn.mockClear()
+
+    await harness.controller.submit({
+      input: [{ type: 'text', text: 'run tests again' }],
+      text: 'run tests again',
+      accessMode: 'default-permissions',
+    })
+
+    const [, undefinedPolicyModelRequest] = harness.api.startTurn.mock.calls[0]
+    expect(undefinedPolicyModelRequest.model).toBe('gpt-5')
+  })
+
+  it('creates thread without policy using backend defaults', async () => {
+    await harness.controller.createThread()
+
+    expect(harness.api.startThread).toHaveBeenCalledWith({})
+  })
+
+  it('passes createThread policy through unchanged', async () => {
+    const policy = {
+      model: 'gpt-5.2',
+      modelProvider: 'custom',
+      cwd: 'C:/repo',
+      approvalPolicy: 'onRequest',
+      sandbox: { type: 'workspaceWrite' },
+      ephemeral: true,
+    }
+
+    await harness.controller.createThread(policy)
+
+    expect(harness.api.startThread).toHaveBeenCalledWith(policy)
   })
 
   it('polls pending requests and updates poll timestamp', async () => {
@@ -306,6 +394,23 @@ describe('sessionRuntimeController', () => {
     expect(harness.threadState.threadOrder).toEqual(['thread-1', 'thread-2'])
     expect(harness.spies.setActiveThreadId).not.toHaveBeenCalledWith('thread-1')
     expect(harness.api.startThread).not.toHaveBeenCalled()
+  })
+
+  it('passes bootstrap threadCreationPolicy through when auto-creating a thread', async () => {
+    const threadCreationPolicy = {
+      modelProvider: 'custom-provider',
+      approvalsReviewer: 'reviewer-1',
+      developerInstructions: 'Stay within the task boundary.',
+      config: { profile: 'execution' },
+    }
+
+    await harness.controller.bootstrap({
+      autoSelectInitialThread: true,
+      autoCreateThreadWhenEmpty: true,
+      threadCreationPolicy,
+    })
+
+    expect(harness.api.startThread).toHaveBeenCalledWith(threadCreationPolicy)
   })
 
   it('interrupts running turn and resolves/rejects active request', async () => {

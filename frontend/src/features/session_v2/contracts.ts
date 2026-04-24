@@ -116,6 +116,8 @@ export interface PendingServerRequest {
   submittedAtMs: number | null
   resolvedAtMs: number | null
   payload: Record<string, unknown>
+  inactiveByReconcile?: boolean
+  reconciledAtMs?: number
 }
 
 export type SessionNotificationMethod =
@@ -138,6 +140,8 @@ export type SessionNotificationMethod =
   | 'item/reasoning/textDelta'
   | 'item/commandExecution/outputDelta'
   | 'item/fileChange/outputDelta'
+  | 'serverRequest/created'
+  | 'serverRequest/updated'
   | 'serverRequest/resolved'
 
 export interface SessionEventEnvelope {
@@ -162,7 +166,7 @@ export interface ServerRequestEnvelope {
   threadId: string
   turnId: string | null
   itemId: string | null
-  status: 'pending' | 'resolved' | 'rejected' | 'expired'
+  status: PendingRequestStatus
   occurredAtMs: number
   params: Record<string, unknown>
 }
@@ -181,6 +185,23 @@ export interface TurnStartRequestV4 {
   serviceTier?: string | null
   outputSchema?: Record<string, unknown> | null
 }
+
+export type ThreadCreationPolicy = Partial<{
+  model: string | null
+  modelProvider: string | null
+  cwd: string | null
+  approvalPolicy: string | Record<string, unknown>
+  approvalsReviewer: string | null
+  personality: string | null
+  sandbox: string | Record<string, unknown>
+  serviceTier: string | null
+  baseInstructions: string | null
+  developerInstructions: string | null
+  config: Record<string, unknown> | null
+  ephemeral: boolean | null
+}>
+
+export type TurnExecutionPolicy = Omit<TurnStartRequestV4, 'clientActionId' | 'input'>
 
 export interface TurnSteerRequestV4 {
   clientActionId: string

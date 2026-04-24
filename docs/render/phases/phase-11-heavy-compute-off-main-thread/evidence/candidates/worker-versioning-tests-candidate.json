@@ -1,7 +1,0 @@
-﻿{
-  "candidate_metrics": {
-    "stale_worker_result_applies": 0,
-    "stale_worker_results_dropped": 14,
-    "worker_apply_attempts": 128
-  }
-}

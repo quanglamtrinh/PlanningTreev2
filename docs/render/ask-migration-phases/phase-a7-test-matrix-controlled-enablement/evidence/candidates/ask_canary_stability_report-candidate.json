@@ -1,8 +1,0 @@
-{
-  "candidate_metrics": {
-    "ask_canary_blocker_incidents": 0,
-    "ask_canary_sessions_checked": 24,
-    "ask_canary_window_hours": 48,
-    "ask_canary_execution_regression_events": 0
-  }
-}

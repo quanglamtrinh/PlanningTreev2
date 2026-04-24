@@ -50,7 +50,7 @@ export type BreadcrumbThreadWorkflowStripProps = {
   actions: ReactNode | null
 }
 
-type BreadcrumbThreadPaneV2Props = {
+export type BreadcrumbThreadPaneV2Props = {
   transcriptProps: BreadcrumbThreadTranscriptProps
   frameContextProps: BreadcrumbThreadFrameContextProps
   pendingRequestProps: BreadcrumbThreadPendingRequestProps
