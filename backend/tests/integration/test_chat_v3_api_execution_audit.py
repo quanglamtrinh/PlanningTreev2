@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 import backend.conversation.services.thread_runtime_service_v3 as thread_runtime_service_v3_module
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
+from backend.errors.app_errors import AuditLineageUnavailable
 from backend.routes import workflow_v3 as workflow_v3_route_module
 from backend.streaming.sse_broker import ChatEventBroker, GlobalEventBroker
 
@@ -705,6 +706,22 @@ def test_v3_workflow_state_endpoint_calls_canonical_service(client: TestClient, 
     assert payload["ok"] is True
     assert payload["data"]["source"] == "canonical"
     assert calls == [(project_id, node_id)]
+
+
+def test_v3_workflow_state_endpoint_surfaces_app_error_with_status(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+
+    class _UnavailableWorkflowService:
+        def get_workflow_state(self, *_args, **_kwargs):  # pragma: no cover - assertion guard
+            raise AuditLineageUnavailable("Audit lineage bootstrap is temporarily unavailable.")
+
+    client.app.state.execution_audit_workflow_service = _UnavailableWorkflowService()
+
+    response = client.get(f"/v3/projects/{project_id}/nodes/{node_id}/workflow-state")
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "audit_lineage_unavailable"
 
 
 def test_v3_workflow_action_endpoints_dispatch_to_canonical_service(client: TestClient, workspace_root) -> None:

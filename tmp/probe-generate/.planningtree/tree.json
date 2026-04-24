@@ -1,0 +1,47 @@
+{
+  "schema_version": 6,
+  "project": {
+    "created_at": "2026-04-24T10:05:20.477093+00:00",
+    "updated_at": "2026-04-24T10:05:20.477093+00:00",
+    "id": "9cc6cb73ddbe4a6e8fb463805dfda487",
+    "root_goal": "probe-generate",
+    "name": "probe-generate"
+  },
+  "tree_state": {
+    "root_node_id": "07b7eae7476a4bddb8a4cedd1acae48c",
+    "active_node_id": "8a3d2d7202f6452abe735942b86219e2",
+    "node_index": {
+      "07b7eae7476a4bddb8a4cedd1acae48c": {
+        "node_id": "07b7eae7476a4bddb8a4cedd1acae48c",
+        "parent_id": null,
+        "child_ids": [
+          "8a3d2d7202f6452abe735942b86219e2"
+        ],
+        "title": "probe-generate",
+        "description": "",
+        "status": "draft",
+        "node_kind": "root",
+        "depth": 0,
+        "display_order": 0,
+        "hierarchical_number": "1",
+        "created_at": "2026-04-24T10:05:20.477093+00:00",
+        "review_node_id": null
+      },
+      "8a3d2d7202f6452abe735942b86219e2": {
+        "node_id": "8a3d2d7202f6452abe735942b86219e2",
+        "parent_id": "07b7eae7476a4bddb8a4cedd1acae48c",
+        "child_ids": [],
+        "title": "New Task",
+        "description": "probe task",
+        "status": "ready",
+        "node_kind": "original",
+        "depth": 1,
+        "display_order": 0,
+        "hierarchical_number": "1.1",
+        "created_at": "2026-04-24T10:05:21.249286+00:00",
+        "review_node_id": null
+      }
+    }
+  },
+  "updated_at": "2026-04-24T10:05:21.250012+00:00"
+}

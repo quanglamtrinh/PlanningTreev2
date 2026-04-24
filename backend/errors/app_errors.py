@@ -366,6 +366,11 @@ class ReviewNotAllowed(AppError):
         super().__init__("review_not_allowed", reason, 400)
 
 
+class AuditLineageUnavailable(AppError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("audit_lineage_unavailable", reason, 503)
+
+
 class SiblingActivationNotAllowed(AppError):
     def __init__(self, reason: str) -> None:
         super().__init__("sibling_activation_not_allowed", reason, 400)

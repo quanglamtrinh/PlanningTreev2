@@ -72,6 +72,37 @@ describe('TranscriptPanel', () => {
     expect(screen.getByText('Streaming delta text')).toBeInTheDocument()
   })
 
+  it('renders unknown native item as an explicit fallback card', () => {
+    const item: SessionItem = {
+      id: 'item-unknown',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'browserScreenshot',
+      normalizedKind: null,
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        imageUrl: 'https://example.test/screenshot.png',
+        width: 1280,
+      },
+    }
+
+    const { container } = render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn([item])]}
+        itemsByTurn={{ 'thread-1:turn-1': [item] }}
+      />,
+    )
+
+    expect(screen.getByText('Unknown Codex item')).toBeInTheDocument()
+    const text = container.textContent ?? ''
+    expect(text).toContain('kind: browserScreenshot')
+    expect(text).toContain('payload:')
+    expect(text).toContain('https://example.test/screenshot.png')
+  })
+
   it('summarizes tool items when turn is terminal', () => {
     const message: SessionItem = {
       id: 'item-msg',

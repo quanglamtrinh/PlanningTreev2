@@ -1,3 +1,4 @@
+import { isItemKind } from '../contracts'
 import type {
   ItemKind,
   ItemStatus,
@@ -78,25 +79,22 @@ function normalizeSessionErrorCode(value: unknown): SessionErrorCode {
   return 'ERR_INTERNAL'
 }
 
-function normalizeItemKind(value: unknown): ItemKind {
-  if (value === 'userMessage') {
-    return 'userMessage'
-  }
-  if (
-    value === 'agentMessage' ||
-    value === 'reasoning' ||
-    value === 'plan' ||
-    value === 'commandExecution' ||
-    value === 'fileChange' ||
-    value === 'userInput' ||
-    value === 'error'
-  ) {
+function normalizeKnownItemKind(value: unknown): ItemKind | null {
+  if (isItemKind(value)) {
     return value
   }
   if (value === 'hookPrompt') {
     return 'userMessage'
   }
-  return 'agentMessage'
+  return null
+}
+
+function normalizeRawKind(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const text = value.trim()
+  return text.length > 0 ? text : null
 }
 
 function normalizeItemStatus(value: unknown): ItemStatus {
@@ -254,6 +252,7 @@ function extractContentText(content: unknown): string {
 function payloadSignature(item: SessionItem): string {
   const payload = item.payload && typeof item.payload === 'object' ? (item.payload as Record<string, unknown>) : {}
   const type = normalizeText(payload.type)
+  const kind = type || item.normalizedKind || item.kind
   const directText = normalizeText(payload.text)
   const contentText = extractContentText(payload.content)
   const outputText = normalizeText(payload.aggregatedOutput ?? payload.output)
@@ -262,7 +261,7 @@ function payloadSignature(item: SessionItem): string {
   if (!primary) {
     return ''
   }
-  return `${type || item.kind}|${primary}`
+  return `${kind}|${primary}`
 }
 
 function isHydratedFallbackItemId(turnId: string, itemId: string): boolean {
@@ -282,7 +281,7 @@ function findHydratedFallbackMatchIndex(
     if (!isHydratedFallbackItemId(turnId, entry.id)) {
       return false
     }
-    if (entry.kind !== item.kind) {
+    if ((entry.normalizedKind || entry.kind) !== (item.normalizedKind || item.kind)) {
       return false
     }
     return payloadSignature(entry) === incomingSignature
@@ -423,23 +422,32 @@ function normalizeTurnFromEvent(
   }
 }
 
-function resolveItemKindFromMethod(method: string): ItemKind {
-  if (method.includes('/plan/')) {
-    return 'plan'
+function resolveItemKindFromMethod(method: string): { kind: string; normalizedKind: ItemKind | null } {
+  const segments = method.split('/')
+  const rawKind =
+    segments[0] === 'item' &&
+    segments[1] &&
+    segments[1] !== 'started' &&
+    segments[1] !== 'completed'
+      ? segments[1]
+      : 'unknown'
+  return {
+    kind: rawKind,
+    normalizedKind: normalizeKnownItemKind(rawKind),
   }
-  if (method.includes('/reasoning/')) {
-    return 'reasoning'
+}
+
+function resolveItemKindFromRecord(itemRecord: Record<string, unknown>): { kind: string; normalizedKind: ItemKind | null } {
+  const rawKind =
+    normalizeRawKind(itemRecord.kind) ??
+    normalizeRawKind(itemRecord.type) ??
+    'unknown'
+  return {
+    kind: rawKind,
+    normalizedKind:
+      normalizeKnownItemKind(itemRecord.kind) ??
+      normalizeKnownItemKind(itemRecord.type),
   }
-  if (method.includes('/commandExecution/')) {
-    return 'commandExecution'
-  }
-  if (method.includes('/fileChange/')) {
-    return 'fileChange'
-  }
-  if (method.includes('userInput')) {
-    return 'userInput'
-  }
-  return 'agentMessage'
 }
 
 function normalizeItemFromParams(
@@ -456,32 +464,44 @@ function normalizeItemFromParams(
     if (!itemId) {
       return null
     }
-    return {
+    const { kind, normalizedKind } = resolveItemKindFromRecord(itemRecord)
+    const item: SessionItem = {
       id: itemId,
       threadId,
       turnId: typeof itemRecord.turnId === 'string' ? itemRecord.turnId : turnId,
-      kind: normalizeItemKind(itemRecord.kind ?? itemRecord.type),
+      kind,
+      normalizedKind,
       status: statusOverride ?? normalizeItemStatus(itemRecord.status),
       createdAtMs: typeof itemRecord.createdAtMs === 'number' ? itemRecord.createdAtMs : Date.now(),
       updatedAtMs: Date.now(),
       payload: itemRecord,
     }
+    if (normalizedKind === null) {
+      item.rawItem = itemRecord
+    }
+    return item
   }
 
   const itemId = String(params.itemId ?? '').trim()
   if (!itemId) {
     return null
   }
-  return {
+  const { kind, normalizedKind } = resolveItemKindFromMethod(method)
+  const item: SessionItem = {
     id: itemId,
     threadId,
     turnId,
-    kind: resolveItemKindFromMethod(method),
+    kind,
+    normalizedKind,
     status: statusOverride ?? 'inProgress',
     createdAtMs: Date.now(),
     updatedAtMs: Date.now(),
     payload: { ...params },
   }
+  if (normalizedKind === null) {
+    item.rawParams = { ...params }
+  }
+  return item
 }
 
 export function applySessionEvent(
@@ -680,6 +700,7 @@ export function applySessionEvent(
           threadId,
           turnId: resolvedTurnId,
           kind: 'error',
+          normalizedKind: 'error',
           status: 'failed',
           createdAtMs: occurredAtMs,
           updatedAtMs: occurredAtMs,

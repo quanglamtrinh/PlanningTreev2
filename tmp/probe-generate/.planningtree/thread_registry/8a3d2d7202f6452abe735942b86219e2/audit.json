@@ -1,0 +1,16 @@
+{
+  "projectId": "9cc6cb73ddbe4a6e8fb463805dfda487",
+  "nodeId": "8a3d2d7202f6452abe735942b86219e2",
+  "threadRole": "audit",
+  "threadId": "019dbef3-a6ed-74d1-9fd3-b5594e5fd29f",
+  "forkedFromThreadId": null,
+  "forkedFromNodeId": null,
+  "forkedFromRole": null,
+  "forkReason": "audit_lazy_bootstrap",
+  "lineageRootThreadId": "019dbef3-85f9-7622-94cf-495af3b9cd12",
+  "eventCursorThreadId": null,
+  "lastEventSequence": 0,
+  "lastEventId": null,
+  "createdAt": "2026-04-24T10:05:40.032471+00:00",
+  "updatedAt": "2026-04-24T10:05:40.035889+00:00"
+}

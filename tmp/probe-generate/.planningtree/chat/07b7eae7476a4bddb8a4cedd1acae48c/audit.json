@@ -1,0 +1,13 @@
+{
+  "thread_id": "019dbef3-85f9-7622-94cf-495af3b9cd12",
+  "thread_role": "audit",
+  "active_turn_id": null,
+  "forked_from_thread_id": null,
+  "forked_from_node_id": null,
+  "forked_from_role": null,
+  "fork_reason": "root_bootstrap",
+  "lineage_root_thread_id": "019dbef3-85f9-7622-94cf-495af3b9cd12",
+  "messages": [],
+  "created_at": "2026-04-24T10:05:22.278208+00:00",
+  "updated_at": "2026-04-24T10:05:32.099537+00:00"
+}

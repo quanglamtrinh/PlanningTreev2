@@ -380,6 +380,39 @@ describe('threadSessionStore', () => {
     expect(items[0].payload.text).toBe('Hello from Codex')
   })
 
+  it('keeps unknown hydrated item kind as raw protocol data', () => {
+    const store = useThreadSessionStore.getState()
+    const turns = [
+      {
+        id: 'turn-native',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 10,
+        completedAtMs: 20,
+        error: null,
+        items: [
+          {
+            id: 'item-native',
+            kind: 'browserScreenshot',
+            status: 'completed',
+            imageUrl: 'https://example.test/screenshot.png',
+          },
+        ],
+      },
+    ] as unknown as SessionTurn[]
+
+    store.setThreadTurns('thread-1', turns)
+
+    const snapshot = useThreadSessionStore.getState()
+    const items = snapshot.itemsByTurn['thread-1:turn-native']
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe('browserScreenshot')
+    expect(items[0].normalizedKind).toBeNull()
+    expect(items[0].rawItem?.kind).toBe('browserScreenshot')
+    expect(items[0].payload.imageUrl).toBe('https://example.test/screenshot.png')
+  })
+
   it('infers failed item status from terminal turn when hydrate payload omits status', () => {
     const store = useThreadSessionStore.getState()
     const turns = [

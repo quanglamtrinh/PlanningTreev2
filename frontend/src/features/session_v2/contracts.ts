@@ -10,15 +10,22 @@ export type TurnRuntimeStatus =
 
 export type TurnCodexStatus = 'inProgress' | 'completed' | 'failed' | 'interrupted'
 
-export type ItemKind =
-  | 'userMessage'
-  | 'agentMessage'
-  | 'reasoning'
-  | 'plan'
-  | 'commandExecution'
-  | 'fileChange'
-  | 'userInput'
-  | 'error'
+export const ITEM_KINDS = [
+  'userMessage',
+  'agentMessage',
+  'reasoning',
+  'plan',
+  'commandExecution',
+  'fileChange',
+  'userInput',
+  'error',
+] as const
+
+export type ItemKind = typeof ITEM_KINDS[number]
+
+export function isItemKind(value: unknown): value is ItemKind {
+  return typeof value === 'string' && (ITEM_KINDS as readonly string[]).includes(value)
+}
 
 export type ItemStatus = 'inProgress' | 'completed' | 'failed'
 
@@ -63,11 +70,14 @@ export interface SessionItem {
   id: string
   threadId: string
   turnId: string | null
-  kind: ItemKind
+  kind: string
+  normalizedKind?: ItemKind | null
   status: ItemStatus
   createdAtMs: number
   updatedAtMs: number
   payload: Record<string, unknown>
+  rawItem?: Record<string, unknown>
+  rawParams?: Record<string, unknown>
 }
 
 export interface SessionTurn {

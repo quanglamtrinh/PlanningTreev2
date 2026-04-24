@@ -269,6 +269,61 @@ def test_generate_frame_marks_failed_when_ask_thread_bootstrap_fails(
     assert status["error"] is not None
 
 
+def test_generate_frame_recovers_when_ask_thread_requires_instructions(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+
+    expected_content = "# Task Title\nRecovered frame content"
+    codex_mock = _make_codex_mock(expected_content)
+
+    fork_count = {"value": 0}
+
+    def fork_thread(_source_thread_id: str, **_kwargs: Any) -> dict[str, str]:
+        fork_count["value"] += 1
+        if fork_count["value"] == 1:
+            return {"thread_id": "ask-thread-old"}
+        return {"thread_id": "ask-thread-new"}
+
+    def run_turn_streaming(_prompt: str, **kwargs: Any) -> dict[str, Any]:
+        thread_id = str(kwargs.get("thread_id") or "")
+        if kwargs.get("output_schema") is not None and thread_id == "ask-thread-old":
+            raise CodexTransportError(
+                '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"Instructions are required"}}',
+                "rpc_error",
+            )
+        if kwargs.get("output_schema") is not None:
+            return {
+                "tool_calls": [
+                    {
+                        "tool_name": "emit_frame_content",
+                        "arguments": {"content": expected_content},
+                    }
+                ],
+                "stdout": "",
+            }
+        return {"tool_calls": [], "stdout": "READY"}
+
+    codex_mock.fork_thread.side_effect = fork_thread
+    codex_mock.run_turn_streaming.side_effect = run_turn_streaming
+    service = _make_service(storage, tree_service, codex_mock)
+
+    result = service.generate_frame(project_id, root_id)
+    assert result["status"] == "accepted"
+
+    time.sleep(1)
+
+    status = service.get_generation_status(project_id, root_id)
+    assert status["status"] == "idle"
+    assert fork_count["value"] >= 2
+
+    doc_service = NodeDocumentService(storage)
+    doc = doc_service.get_document(project_id, root_id, "frame")
+    assert doc["content"] == expected_content
+
+
 def test_generate_frame_rejects_double_start(
     storage: Storage, workspace_root: Path, tree_service: TreeService
 ) -> None:

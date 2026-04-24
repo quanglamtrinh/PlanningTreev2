@@ -9,13 +9,19 @@ import time
 from pathlib import Path
 from typing import Any, TypedDict
 
+from backend.ai.codex_client import CodexTransportError
 from backend.ai.execution_prompt_builder import build_execution_prompt
 from backend.ai.split_context_builder import build_split_context
 from backend.conversation.projector.thread_event_projector import upsert_item as upsert_item_v2
 from backend.conversation.projector.thread_event_projector_runtime_v3 import upsert_item_v3
 from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
-from backend.errors.app_errors import FinishTaskNotAllowed, NodeNotFound, ReviewNotAllowed
+from backend.errors.app_errors import (
+    AuditLineageUnavailable,
+    FinishTaskNotAllowed,
+    NodeNotFound,
+    ReviewNotAllowed,
+)
 from backend.services.execution_file_change_hydrator import (
     ExecutionFileChangeDiffSource,
     ExecutionFileChangeHydrator,
@@ -1928,16 +1934,21 @@ class ExecutionAuditWorkflowService:
         return legacy_thread_id
 
     def _ensure_audit_lineage_thread_id(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
-        entry = self._finish_task_service._thread_lineage_service.ensure_thread_binding_v2(
-            project_id,
-            node_id,
-            "audit",
-            workspace_root,
-            writable_roots=None,
-        )
+        try:
+            entry = self._finish_task_service._thread_lineage_service.ensure_thread_binding_v2(
+                project_id,
+                node_id,
+                "audit",
+                workspace_root,
+                writable_roots=None,
+            )
+        except CodexTransportError as exc:
+            raise AuditLineageUnavailable(str(exc)) from exc
+        except ValueError as exc:
+            raise AuditLineageUnavailable(str(exc)) from exc
         thread_id = str(entry.get("threadId") or "").strip()
         if not thread_id:
-            raise ReviewNotAllowed("Audit lineage bootstrap did not return a thread id.")
+            raise AuditLineageUnavailable("Audit lineage bootstrap did not return a thread id.")
         return thread_id
 
     def _bind_audit_thread_to_review_thread(self, project_id: str, node_id: str, review_thread_id: str) -> None:

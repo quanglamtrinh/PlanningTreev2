@@ -1,0 +1,10 @@
+{
+  "active_job": null,
+  "last_error": {
+    "job_id": "fgen_90abc86bfc",
+    "started_at": "2026-04-24T10:05:22.170746+00:00",
+    "completed_at": "2026-04-24T10:05:46.855065+00:00",
+    "error": "{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Instructions are required\"}}"
+  },
+  "last_completed_at": null
+}

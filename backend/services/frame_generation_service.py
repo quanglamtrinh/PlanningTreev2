@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 FRAME_GEN_STATE_FILE = "frame_gen.json"
 
 _STALE_JOB_MESSAGE = "Frame generation was interrupted because the server restarted before it completed."
+_INSTRUCTIONS_REQUIRED_MESSAGE = "instructions are required"
 
 
 def _default_gen_state() -> dict[str, Any]:
@@ -198,14 +199,12 @@ class FrameGenerationService:
         prompt = build_frame_generation_prompt(
             chat_messages, task_context, role_prefix=role_prefix
         )
-        result = self._codex_client.run_turn_streaming(
-            prompt,
+        result = self._run_frame_turn_with_recovery(
+            project_id=project_id,
+            node_id=node_id,
             thread_id=thread_id,
-            timeout_sec=self._timeout,
-            cwd=workspace_root,
-            writable_roots=None,
-            sandbox_profile="read_only",
-            output_schema=build_frame_output_schema(),
+            prompt=prompt,
+            workspace_root=workspace_root,
         )
 
         stdout = str(result.get("stdout", "") or "").strip()
@@ -287,6 +286,69 @@ class FrameGenerationService:
                 "Ask thread bootstrap did not return a thread id."
             )
         return thread_id
+
+    def _run_frame_turn_with_recovery(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        thread_id: str,
+        prompt: str,
+        workspace_root: str | None,
+    ) -> dict[str, Any]:
+        try:
+            return self._codex_client.run_turn_streaming(
+                prompt,
+                thread_id=thread_id,
+                timeout_sec=self._timeout,
+                cwd=workspace_root,
+                writable_roots=None,
+                sandbox_profile="read_only",
+                output_schema=build_frame_output_schema(),
+            )
+        except CodexTransportError as exc:
+            if not self._is_instructions_required_error(exc):
+                raise
+            logger.warning(
+                "Ask thread requires explicit instructions; rebuilding ask thread for %s/%s.",
+                project_id,
+                node_id,
+            )
+            rebuilt_thread_id = self._rebuild_ask_thread(project_id, node_id, workspace_root)
+            return self._codex_client.run_turn_streaming(
+                prompt,
+                thread_id=rebuilt_thread_id,
+                timeout_sec=self._timeout,
+                cwd=workspace_root,
+                writable_roots=None,
+                sandbox_profile="read_only",
+                output_schema=build_frame_output_schema(),
+            )
+
+    def _rebuild_ask_thread(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
+        base_instructions, dynamic_tools = build_ask_planning_thread_config()
+        try:
+            session = self._thread_lineage_service.rebuild_from_ancestor(
+                project_id,
+                node_id,
+                "ask_planning",
+                workspace_root,
+                base_instructions=base_instructions,
+                dynamic_tools=dynamic_tools,
+                writable_roots=None,
+            )
+        except CodexTransportError as exc:
+            raise FrameGenerationBackendUnavailable(str(exc)) from exc
+        thread_id = str(session.get("thread_id") or "").strip()
+        if not thread_id:
+            raise FrameGenerationBackendUnavailable(
+                "Ask thread rebuild did not return a thread id."
+            )
+        return thread_id
+
+    @staticmethod
+    def _is_instructions_required_error(exc: Exception) -> bool:
+        return _INSTRUCTIONS_REQUIRED_MESSAGE in str(exc).lower()
 
     # ── State persistence ──────────────────────────────────────────
 

@@ -190,6 +190,33 @@ describe('applySessionEvent', () => {
     expect(list[0].payload.text).toBe('final')
   })
 
+  it('preserves unknown native item kind without coercing to agent message', () => {
+    const next = applySessionEvent(
+      baseState(),
+      event({
+        eventId: 'thread-1:12',
+        eventSeq: 12,
+        method: 'item/started',
+        turnId: 'turn-1',
+        params: {
+          item: {
+            id: 'item-native-unknown',
+            kind: 'browserScreenshot',
+            status: 'completed',
+            imageUrl: 'https://example.test/screenshot.png',
+          },
+        },
+      }),
+    )
+
+    const list = next.itemsByTurn['thread-1:turn-1']
+    expect(list).toHaveLength(1)
+    expect(list[0].kind).toBe('browserScreenshot')
+    expect(list[0].normalizedKind).toBeNull()
+    expect(list[0].rawItem?.kind).toBe('browserScreenshot')
+    expect(list[0].payload.imageUrl).toBe('https://example.test/screenshot.png')
+  })
+
   it('ignores replayed delta for already completed item', () => {
     const completed = applySessionEvent(
       baseState(),
