@@ -250,6 +250,54 @@ describe('sessionRuntimeController', () => {
     expect(request.sandboxPolicy).toBeUndefined()
   })
 
+  it('dispatches explicit turn start actions through the unified input pipeline', async () => {
+    await harness.controller.submitSessionAction({
+      type: 'turn.start',
+      threadId: 'thread-1',
+      input: [{ type: 'text', text: 'run tests' }],
+      clientActionId: 'action-1',
+      policy: {
+        model: 'gpt-5.2',
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'dangerFullAccess' },
+      },
+    })
+
+    expect(harness.api.startTurn).toHaveBeenCalledWith(
+      'thread-1',
+      expect.objectContaining({
+        clientActionId: 'action-1',
+        input: [{ type: 'text', text: 'run tests' }],
+        model: 'gpt-5.2',
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'dangerFullAccess' },
+      }),
+    )
+    expect(harness.spies.setThreadTurns).toHaveBeenCalledWith(
+      'thread-1',
+      [expect.objectContaining({ id: 'turn-started', threadId: 'thread-1' })],
+    )
+    expect(harness.spies.markThreadActivity).toHaveBeenCalledWith('thread-1')
+  })
+
+  it('dispatches explicit request resolution actions through the unified input pipeline', async () => {
+    await harness.controller.submitSessionAction({
+      type: 'request.resolve',
+      requestId: 'request-1',
+      result: { approved: true },
+      resolutionKey: 'resolution-1',
+    })
+
+    expect(harness.api.resolvePendingRequest).toHaveBeenCalledWith(
+      'request-1',
+      {
+        resolutionKey: 'resolution-1',
+        result: { approved: true },
+      },
+    )
+    expect(harness.spies.markPendingRequestSubmitted).toHaveBeenCalledWith('request-1')
+  })
+
   it('passes supplied turn execution policy through and gives policy model precedence', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeTurns = []

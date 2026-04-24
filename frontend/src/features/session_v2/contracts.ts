@@ -203,6 +203,40 @@ export type ThreadCreationPolicy = Partial<{
 
 export type TurnExecutionPolicy = Omit<TurnStartRequestV4, 'clientActionId' | 'input'>
 
+export type SessionInputAction =
+  | {
+      type: 'turn.start'
+      threadId: string
+      input: Array<Record<string, unknown>>
+      policy?: TurnExecutionPolicy
+      clientActionId: string
+    }
+  | {
+      type: 'turn.steer'
+      threadId: string
+      turnId: string
+      input: Array<Record<string, unknown>>
+      clientActionId: string
+    }
+  | {
+      type: 'turn.interrupt'
+      threadId: string
+      turnId: string
+      clientActionId: string
+    }
+  | {
+      type: 'request.resolve'
+      requestId: string
+      result: Record<string, unknown>
+      resolutionKey: string
+    }
+  | {
+      type: 'request.reject'
+      requestId: string
+      reason?: string | null
+      resolutionKey: string
+    }
+
 export type SessionConfig = {
   model?: string | null
   modelProvider?: string | null
