@@ -22,6 +22,7 @@ from backend.business.workflow_v2.models import (
 )
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.state_machine import derive_allowed_actions
+from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 
 _ROLE_THREAD_ATTR: dict[str, str] = {
     "ask_planning": "ask_thread_id",
@@ -39,10 +40,12 @@ class ThreadBindingServiceV2:
         repository: WorkflowStateRepositoryV2,
         context_builder: WorkflowContextBuilderV2,
         session_manager: Any,
+        event_publisher: WorkflowEventPublisherV2 | None = None,
     ) -> None:
         self._repository = repository
         self._context_builder = context_builder
         self._session_manager = session_manager
+        self._event_publisher = event_publisher
 
     def ensure_thread(
         self,
@@ -113,6 +116,10 @@ class ThreadBindingServiceV2:
                 payload_hash=payload_hash,
                 record_key=record_key,
             )
+            self._publish_state_changed(
+                persisted,
+                details={"reason": "binding_reused", "role": role},
+            )
             persisted_binding = persisted.thread_bindings[role]
             return _response(persisted, persisted_binding)
 
@@ -125,7 +132,12 @@ class ThreadBindingServiceV2:
                         "context_stale_reason": f"{role} context packet changed.",
                     },
                 )
-                self._repository.write_state(project_id, node_id, stale_state)
+                persisted_stale_state = self._repository.write_state(project_id, node_id, stale_state)
+                self._publish_context_stale(
+                    persisted_stale_state,
+                    reason=f"{role} context packet changed.",
+                    details={"role": role},
+                )
                 raise WorkflowContextStaleError(
                     project_id,
                     node_id,
@@ -158,6 +170,10 @@ class ThreadBindingServiceV2:
                 payload_hash=payload_hash,
                 record_key=record_key,
             )
+            self._publish_state_changed(
+                next_state,
+                details={"reason": "context_rebased", "role": role},
+            )
             return _response(next_state, next_binding)
 
         if legacy_thread_id:
@@ -183,6 +199,10 @@ class ThreadBindingServiceV2:
                 thread_attr=thread_attr,
                 payload_hash=payload_hash,
                 record_key=record_key,
+            )
+            self._publish_state_changed(
+                next_state,
+                details={"reason": "legacy_adopted", "role": role},
             )
             return _response(next_state, next_binding)
 
@@ -214,7 +234,30 @@ class ThreadBindingServiceV2:
             payload_hash=payload_hash,
             record_key=record_key,
         )
+        self._publish_state_changed(
+            next_state,
+            details={"reason": "new_thread", "role": role},
+        )
         return _response(next_state, next_binding)
+
+    def _publish_state_changed(
+        self,
+        state: NodeWorkflowStateV2,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        if self._event_publisher is not None:
+            self._event_publisher.publish_state_changed(state, details=details)
+
+    def _publish_context_stale(
+        self,
+        state: NodeWorkflowStateV2,
+        *,
+        reason: str | None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        if self._event_publisher is not None:
+            self._event_publisher.publish_context_stale(state, reason=reason, details=details)
 
     def _start_thread(
         self,

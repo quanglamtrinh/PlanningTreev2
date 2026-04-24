@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
 from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
+from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
@@ -289,10 +290,12 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     )
     workflow_state_repository_v2 = WorkflowStateRepositoryV2(storage)
     workflow_context_builder_v2 = WorkflowContextBuilderV2(storage)
+    workflow_event_publisher_v2 = WorkflowEventPublisherV2(workflow_event_broker)
     workflow_thread_binding_service_v2 = ThreadBindingServiceV2(
         repository=workflow_state_repository_v2,
         context_builder=workflow_context_builder_v2,
         session_manager=session_manager_v2,
+        event_publisher=workflow_event_publisher_v2,
     )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service
@@ -384,6 +387,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.session_manager_v2 = session_manager_v2
     app.state.workflow_state_repository_v2 = workflow_state_repository_v2
     app.state.workflow_context_builder_v2 = workflow_context_builder_v2
+    app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2
     app.state.workflow_thread_binding_service_v2 = workflow_thread_binding_service_v2
     app.state.session_runtime_store_v2 = session_runtime_store_v2
     app.state.session_connection_state_v2 = session_connection_state_v2

@@ -95,9 +95,12 @@ def main() -> int:
                 errors.append(f"{relative_path} is missing Phase 3 token: {token}")
 
     workflow_v4 = _read("backend/routes/workflow_v4.py")
-    route_count = len(re.findall(r"@router\.(get|post|put|patch|delete)\(", workflow_v4))
-    if route_count != 1:
-        errors.append(f"workflow_v4.py must expose only the Phase 3 ensure route; found {route_count} routes.")
+    post_route_count = len(re.findall(r"@router\.post\(", workflow_v4))
+    if post_route_count != 1:
+        errors.append(
+            "workflow_v4.py must expose exactly one Phase 3 workflow mutation route; "
+            f"found {post_route_count} POST routes."
+        )
 
     session_v4 = _read("backend/routes/session_v4.py")
     for token in (

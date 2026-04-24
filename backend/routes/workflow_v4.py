@@ -1,18 +1,30 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.business.workflow_v2.events import WorkflowEventV2
 from backend.business.workflow_v2.errors import WorkflowV2Error
-from backend.business.workflow_v2.models import ThreadRole
+from backend.business.workflow_v2.models import ThreadRole, workflow_state_to_response
+from backend.business.workflow_v2.state_machine import derive_allowed_actions
 from backend.session_core_v2.errors import SessionCoreError
 
 router = APIRouter(tags=["workflow-v4"])
 logger = logging.getLogger(__name__)
+SSE_HEARTBEAT_INTERVAL_SEC = 15
+
+_V2_EVENT_TYPES = {
+    "workflow/state_changed",
+    "workflow/context_stale",
+    "workflow/action_completed",
+    "workflow/action_failed",
+}
 
 
 class EnsureThreadRequest(BaseModel):
@@ -26,6 +38,14 @@ class EnsureThreadRequest(BaseModel):
 
 def _service(request: Request) -> Any:
     return request.app.state.workflow_thread_binding_service_v2
+
+
+def _repository(request: Request) -> Any:
+    return request.app.state.workflow_state_repository_v2
+
+
+def _workflow_event_broker(request: Request) -> Any:
+    return request.app.state.workflow_event_broker
 
 
 def _workflow_error_response(error: WorkflowV2Error) -> JSONResponse:
@@ -50,6 +70,117 @@ def _unexpected_error_response() -> JSONResponse:
             "code": "ERR_INTERNAL",
             "message": "Unexpected internal error.",
             "details": {},
+        },
+    )
+
+
+def _sse_frame(envelope: dict[str, Any]) -> str:
+    event_id = str(envelope.get("eventId") or envelope.get("event_id") or "")
+    data = json.dumps(envelope, ensure_ascii=True)
+    if event_id:
+        return f"id: {event_id}\ndata: {data}\n\n"
+    return f"data: {data}\n\n"
+
+
+def _state_response(repository: Any, project_id: str, node_id: str) -> dict[str, Any]:
+    state = repository.read_state(project_id, node_id)
+    return workflow_state_to_response(
+        state,
+        allowed_actions=derive_allowed_actions(state),
+    ).to_public_dict()
+
+
+def _adapt_event_for_v4(repository: Any, event: dict[str, Any], project_id: str) -> dict[str, Any] | None:
+    if str(event.get("projectId") or "") != project_id:
+        return None
+
+    event_type = str(event.get("type") or "")
+    if event_type in _V2_EVENT_TYPES:
+        return event
+
+    if event_type != "node.workflow.updated":
+        return None
+
+    node_id = str(event.get("nodeId") or "")
+    if not node_id:
+        return None
+
+    state = repository.read_state(project_id, node_id)
+    event_payload: dict[str, Any] = {
+        "type": "workflow/state_changed",
+        "projectId": project_id,
+        "nodeId": node_id,
+        "phase": state.phase,
+        "version": state.state_version,
+        "details": {
+            "legacyType": event_type,
+            "legacyEventId": event.get("eventId"),
+        },
+    }
+    event_id = str(event.get("eventId") or "").strip()
+    if event_id:
+        event_payload["eventId"] = event_id
+    occurred_at = str(event.get("occurredAt") or "").strip()
+    if occurred_at:
+        event_payload["occurredAt"] = occurred_at
+    return WorkflowEventV2(**event_payload).to_public_dict()
+
+
+@router.get("/v4/projects/{projectId}/nodes/{nodeId}/workflow-state")
+def get_workflow_state_v4(projectId: str, nodeId: str, request: Request) -> JSONResponse:
+    try:
+        return JSONResponse(status_code=200, content=_state_response(_repository(request), projectId, nodeId))
+    except WorkflowV2Error as exc:
+        return _workflow_error_response(exc)
+    except Exception:
+        logger.exception("get_workflow_state_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.get("/v4/projects/{projectId}/events")
+async def workflow_events_v4(request: Request, projectId: str) -> StreamingResponse:
+    broker = _workflow_event_broker(request)
+    repository = _repository(request)
+    queue = broker.subscribe()
+
+    async def event_generator():
+        heartbeat_ticks = 0
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    heartbeat_ticks = 0
+                    if broker.consume_lagged_disconnect(queue):
+                        logger.warning(
+                            "Closing Workflow V2 SSE stream for lagged subscriber (project=%s).",
+                            projectId,
+                        )
+                        break
+                    adapted = _adapt_event_for_v4(repository, event, projectId)
+                    if adapted is not None:
+                        yield _sse_frame(adapted)
+                except asyncio.TimeoutError:
+                    heartbeat_ticks += 1
+                    if broker.consume_lagged_disconnect(queue):
+                        logger.warning(
+                            "Closing Workflow V2 SSE stream for lagged subscriber (project=%s).",
+                            projectId,
+                        )
+                        break
+                    if heartbeat_ticks >= SSE_HEARTBEAT_INTERVAL_SEC:
+                        heartbeat_ticks = 0
+                        yield ": heartbeat\n\n"
+                if await request.is_disconnected():
+                    break
+        finally:
+            broker.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
         },
     )
 
