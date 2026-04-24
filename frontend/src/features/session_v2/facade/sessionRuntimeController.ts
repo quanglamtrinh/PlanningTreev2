@@ -172,7 +172,7 @@ function resolveTurnModel(
 ): string | null {
   return (
     nonEmptyString(policy?.model) ??
-    nonEmptyString(payload.model) ??
+    nonEmptyString(payload.requestedPolicy?.model) ??
     nonEmptyString(selectedModel)
   )
 }

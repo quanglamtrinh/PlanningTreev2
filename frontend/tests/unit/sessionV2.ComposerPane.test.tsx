@@ -82,19 +82,57 @@ describe('ComposerPane', () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
     expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
-      model: 'gpt-5.4',
       text: 'Test model submit',
-      sessionConfig: {
-        model: 'gpt-5.4',
-        reasoning: {
-          effort: 'xhigh',
-          summary: null,
+      input: [
+        {
+          type: 'text',
+          text: 'Test model submit',
+          text_elements: [],
         },
-        config: {
-          composer: {
-            workMode: 'locally',
-            streamMode: 'streaming',
-          },
+      ],
+      requestedPolicy: {
+        model: 'gpt-5.4',
+        accessMode: 'full-access',
+        effort: 'extra-high',
+        workMode: 'local',
+        streamMode: 'streaming',
+      },
+    })
+  })
+
+  it('submits mention text as native text elements with PlanningTree metadata off the input item top level', async () => {
+    const onSubmit = vi.fn(async () => undefined)
+    const onInterrupt = vi.fn(async () => undefined)
+    render(
+      <ComposerPane
+        isTurnRunning={false}
+        onSubmit={onSubmit}
+        onInterrupt={onInterrupt}
+      />,
+    )
+
+    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'Check @' } })
+    fireEvent.click(screen.getByText('@README.md'))
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    const payload = onSubmit.mock.calls[0]?.[0]
+    expect(payload?.input[0]).toMatchObject({
+      type: 'text',
+      text: 'Check @ @README.md',
+      text_elements: [
+        {
+          byteRange: { start: 8, end: 18 },
+          placeholder: '@README.md',
+        },
+      ],
+    })
+    expect(payload?.input[0]).not.toHaveProperty('mentionBindings')
+    expect(payload?.metadata).toEqual({
+      planningTree: {
+        mentionBindings: {
+          '@README.md': 'README.md',
         },
       },
     })

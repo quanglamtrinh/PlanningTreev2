@@ -1,18 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipboardEvent, KeyboardEvent } from 'react'
-import type { SessionConfig } from '../contracts'
 
 export type ComposerAccessMode = 'full-access' | 'default-permissions'
 export type ComposerEffortLevel = 'Low' | 'Medium' | 'High' | 'Extra High'
-export type ComposerWorkMode = 'locally' | 'remote'
+export type ComposerEffortIntent = 'low' | 'medium' | 'high' | 'extra-high'
+export type ComposerWorkMode = 'local' | 'remote'
 export type ComposerStreamMode = 'streaming' | 'batch'
+
+export type ComposerRequestedPolicy = {
+  model?: string | null
+  accessMode?: ComposerAccessMode
+  effort?: ComposerEffortIntent
+  workMode?: ComposerWorkMode
+  streamMode?: ComposerStreamMode
+}
+
+export type ComposerSubmitMetadata = {
+  planningTree?: {
+    mentionBindings?: Record<string, string>
+  }
+}
 
 export type ComposerSubmitPayload = {
   input: Array<Record<string, unknown>>
   text: string
-  model?: string | null
-  accessMode: ComposerAccessMode
-  sessionConfig?: SessionConfig
+  requestedPolicy?: ComposerRequestedPolicy
+  metadata?: ComposerSubmitMetadata
 }
 
 type ComposerModelOption = {
@@ -57,11 +70,15 @@ const ACCESS_MODE_LABELS: Record<ComposerAccessMode, string> = {
   'full-access': 'Full access',
   'default-permissions': 'Default permissions',
 }
-const EFFORT_LEVEL_VALUES: Record<ComposerEffortLevel, string> = {
+const EFFORT_LEVEL_VALUES: Record<ComposerEffortLevel, ComposerEffortIntent> = {
   Low: 'low',
   Medium: 'medium',
   High: 'high',
-  'Extra High': 'xhigh',
+  'Extra High': 'extra-high',
+}
+const WORK_MODE_LABELS: Record<ComposerWorkMode, string> = {
+  local: 'locally',
+  remote: 'remote',
 }
 
 function loadPersistentHistory(): string[] {
@@ -98,6 +115,65 @@ function normalizeImageRows(localImages: string[], remoteImages: string[]): { la
   return rows
 }
 
+function utf8ByteLength(value: string): number {
+  let bytes = 0
+  for (const char of value) {
+    const codePoint = char.codePointAt(0) ?? 0
+    if (codePoint <= 0x7f) {
+      bytes += 1
+    } else if (codePoint <= 0x7ff) {
+      bytes += 2
+    } else if (codePoint <= 0xffff) {
+      bytes += 3
+    } else {
+      bytes += 4
+    }
+  }
+  return bytes
+}
+
+function buildTextElements(
+  text: string,
+  bindings: Record<string, string>,
+): Array<{ byteRange: { start: number; end: number }; placeholder: string }> {
+  const spans: Array<{ startChar: number; endChar: number; label: string }> = []
+  const labels = Object.keys(bindings)
+    .filter((label) => label.length > 0 && text.includes(label))
+    .sort((left, right) => right.length - left.length || left.localeCompare(right))
+
+  for (const label of labels) {
+    let cursor = 0
+    while (cursor < text.length) {
+      const startChar = text.indexOf(label, cursor)
+      if (startChar < 0) {
+        break
+      }
+      const endChar = startChar + label.length
+      spans.push({ startChar, endChar, label })
+      cursor = endChar
+    }
+  }
+
+  let lastEndChar = -1
+  return spans
+    .sort((left, right) => left.startChar - right.startChar || right.endChar - left.endChar)
+    .filter((span) => {
+      if (span.startChar < lastEndChar) {
+        return false
+      }
+      lastEndChar = span.endChar
+      return true
+    })
+    .map((span) => {
+      const start = utf8ByteLength(text.slice(0, span.startChar))
+      const end = start + utf8ByteLength(text.slice(span.startChar, span.endChar))
+      return {
+        byteRange: { start, end },
+        placeholder: span.label,
+      }
+    })
+}
+
 export function ComposerPane({
   isTurnRunning,
   disabled,
@@ -125,7 +201,7 @@ export function ComposerPane({
   const [pasteBurstUntilMs, setPasteBurstUntilMs] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [effortLevel, setEffortLevel] = useState<ComposerEffortLevel>('Extra High')
-  const [workMode, setWorkMode] = useState<ComposerWorkMode>('locally')
+  const [workMode, setWorkMode] = useState<ComposerWorkMode>('local')
   const [streamMode, setStreamMode] = useState<ComposerStreamMode>('streaming')
   const [accessMode, setAccessMode] = useState<ComposerAccessMode>('full-access')
 
@@ -210,13 +286,13 @@ export function ComposerPane({
       input.push({
         type: 'text',
         text: normalizedText,
-        mentionBindings,
+        text_elements: buildTextElements(normalizedText, mentionBindings),
       })
     }
     for (const remote of remoteImages) {
       input.push({
         type: 'image',
-        imageUrl: remote,
+        url: remote,
       })
     }
     for (const localPath of localImages) {
@@ -241,22 +317,16 @@ export function ComposerPane({
       await onSubmit({
         input,
         text: draft,
-        model: selectedModel ?? null,
-        accessMode,
-        sessionConfig: {
+        requestedPolicy: {
           model: selectedModel ?? null,
-          cwd: currentCwd ?? null,
-          reasoning: {
-            effort: EFFORT_LEVEL_VALUES[effortLevel],
-            summary: null,
-          },
-          config: {
-            composer: {
-              workMode,
-              streamMode,
-            },
-          },
+          accessMode,
+          effort: EFFORT_LEVEL_VALUES[effortLevel],
+          workMode,
+          streamMode,
         },
+        metadata: Object.keys(mentionBindings).length > 0
+          ? { planningTree: { mentionBindings } }
+          : undefined,
       })
       registerHistoryEntry(draft, localImages, remoteImages)
       setDraft('')
@@ -623,14 +693,14 @@ export function ComposerPane({
           <button
             type="button"
             className="sessionV2ComposerEnvPill"
-            onClick={() => setWorkMode((prev) => prev === 'locally' ? 'remote' : 'locally')}
+            onClick={() => setWorkMode((prev) => prev === 'local' ? 'remote' : 'local')}
             title="Work environment"
           >
             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
               <rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.4" />
               <path d="M5 13v1M11 13v1M3 15h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
             </svg>
-            Work {workMode}
+            Work {WORK_MODE_LABELS[workMode]}
             <svg viewBox="0 0 10 6" width="9" height="9" aria-hidden="true" fill="none">
               <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
             </svg>

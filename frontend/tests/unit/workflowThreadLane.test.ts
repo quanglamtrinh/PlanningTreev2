@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { NodeWorkflowView } from '../../src/api/types'
 import {
   mergeSessionConfig,
-  resolveWorkflowSubmitSessionConfig,
+  resolveWorkflowSubmitTurnPolicy,
   resolveWorkflowThreadLane,
 } from '../../src/features/conversation/workflowThreadLane'
 
@@ -133,7 +133,7 @@ describe('workflowThreadLane', () => {
     ])
   })
 
-  it('merges lane config, composer config, and full-access policy overlay', () => {
+  it('maps composer intent through lane config into a full-access turn policy', () => {
     const lane = resolveWorkflowThreadLane({
       workflowState: makeWorkflowState({ canSendExecutionMessage: true }),
       threadTab: 'execution',
@@ -143,32 +143,56 @@ describe('workflowThreadLane', () => {
     })
 
     expect(
-      resolveWorkflowSubmitSessionConfig({
+      resolveWorkflowSubmitTurnPolicy({
         lane,
-        accessMode: 'full-access',
-        sessionConfig: {
-          reasoning: { effort: 'xhigh', summary: null },
-          config: {
-            composer: {
-              workMode: 'locally',
-              streamMode: 'streaming',
-            },
-          },
+        requestedPolicy: {
+          accessMode: 'full-access',
+          effort: 'extra-high',
+          workMode: 'local',
+          streamMode: 'streaming',
         },
       }),
     ).toEqual({
       model: 'gpt-5.4',
-      modelProvider: 'openai',
       cwd: 'C:/repo',
-      reasoning: { effort: 'xhigh', summary: null },
-      config: {
-        composer: {
-          workMode: 'locally',
-          streamMode: 'streaming',
-        },
-      },
       approvalPolicy: 'never',
+      approvalsReviewer: undefined,
       sandboxPolicy: { type: 'dangerFullAccess' },
+      personality: undefined,
+      effort: 'xhigh',
+      summary: null,
+      serviceTier: undefined,
+      outputSchema: undefined,
+    })
+  })
+
+  it('maps default-permissions composer intent to workspace-write turn policy', () => {
+    const lane = resolveWorkflowThreadLane({
+      workflowState: makeWorkflowState({ canSendExecutionMessage: true }),
+      threadTab: 'execution',
+      selectedModel: 'gpt-5.4',
+      projectPath: 'C:/repo',
+    })
+
+    expect(
+      resolveWorkflowSubmitTurnPolicy({
+        lane,
+        requestedPolicy: {
+          accessMode: 'default-permissions',
+          effort: 'high',
+        },
+      }),
+    ).toEqual({
+      model: 'gpt-5.4',
+      cwd: 'C:/repo',
+      approvalPolicy: 'on-request',
+      approvalsReviewer: undefined,
+      sandboxPolicy: { type: 'workspaceWrite' },
+      personality: undefined,
+      effort: 'high',
+      summary: null,
+      serviceTier: undefined,
+      outputSchema: undefined,
     })
   })
 

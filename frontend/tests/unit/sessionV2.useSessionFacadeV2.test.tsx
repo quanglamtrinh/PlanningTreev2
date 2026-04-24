@@ -471,8 +471,10 @@ describe('useSessionFacadeV2', () => {
         {
           input: [{ type: 'text', text: 'run tests' }],
           text: 'run tests',
-          accessMode: 'default-permissions',
-          model: null,
+          requestedPolicy: {
+            accessMode: 'default-permissions',
+            model: null,
+          },
         },
         turnExecutionPolicy,
       )

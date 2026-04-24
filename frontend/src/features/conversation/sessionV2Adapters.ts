@@ -408,7 +408,7 @@ function serializeComposerInput(input: Array<Record<string, unknown>>, fallbackT
       continue
     }
     if (type === 'image') {
-      const imageUrl = normalizeText(record.imageUrl)
+      const imageUrl = normalizeText(record.url ?? record.imageUrl)
       if (imageUrl) {
         rows.push(`[Image] ${imageUrl}`)
       }

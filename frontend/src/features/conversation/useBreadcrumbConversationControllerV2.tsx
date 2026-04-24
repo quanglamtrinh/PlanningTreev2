@@ -5,7 +5,6 @@ import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
-import { toTurnExecutionPolicy } from '../session_v2/contracts'
 import { useSessionFacadeV2 } from '../session_v2/facade/useSessionFacadeV2'
 import type { BreadcrumbDetailPaneProps } from './BreadcrumbChatViewV2'
 import type { BreadcrumbThreadPaneV2Props } from './components/BreadcrumbThreadPaneV2'
@@ -18,7 +17,7 @@ import {
 import { useWorkflowEventBridgeV3 } from './state/workflowEventBridgeV3'
 import { useWorkflowStateStoreV3 } from './state/workflowStateStoreV3'
 import {
-  resolveWorkflowSubmitSessionConfig,
+  resolveWorkflowSubmitTurnPolicy,
   resolveWorkflowThreadLane,
   type WorkflowLaneAction,
 } from './workflowThreadLane'
@@ -305,12 +304,11 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       if (!workflowLane.policy.canSubmit) {
         return
       }
-      const sessionConfig = resolveWorkflowSubmitSessionConfig({
+      const turnPolicy = resolveWorkflowSubmitTurnPolicy({
         lane: workflowLane,
-        accessMode: payload.accessMode,
-        ...(payload.sessionConfig === undefined ? {} : { sessionConfig: payload.sessionConfig }),
+        requestedPolicy: payload.requestedPolicy,
       })
-      await sessionCommands.submit(payload, toTurnExecutionPolicy(sessionConfig))
+      await sessionCommands.submit(payload, turnPolicy)
       if (!projectId || !nodeId) {
         return
       }

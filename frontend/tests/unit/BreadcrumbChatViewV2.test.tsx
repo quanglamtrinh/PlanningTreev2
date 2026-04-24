@@ -14,8 +14,12 @@ vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
     onSubmit: (payload: {
       input: Array<Record<string, unknown>>
       text: string
-      accessMode: 'full-access' | 'default-permissions'
-      sessionConfig?: Record<string, unknown>
+      requestedPolicy?: {
+        accessMode?: 'full-access' | 'default-permissions'
+        effort?: 'low' | 'medium' | 'high' | 'extra-high'
+        workMode?: 'local' | 'remote'
+        streamMode?: 'streaming' | 'batch'
+      }
     }) => Promise<void>
     onInterrupt: () => Promise<void>
   }) => (
@@ -28,15 +32,11 @@ vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
           void onSubmit({
             input: [{ type: 'text', text: 'queued from composer mock' }],
             text: 'queued from composer mock',
-            accessMode: 'full-access',
-            sessionConfig: {
-              reasoning: { effort: 'xhigh', summary: null },
-              config: {
-                composer: {
-                  workMode: 'locally',
-                  streamMode: 'streaming',
-                },
-              },
+            requestedPolicy: {
+              accessMode: 'full-access',
+              effort: 'extra-high',
+              workMode: 'local',
+              streamMode: 'streaming',
             },
           })
         }

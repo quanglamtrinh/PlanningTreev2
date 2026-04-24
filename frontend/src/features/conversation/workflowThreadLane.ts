@@ -1,6 +1,6 @@
 import type { NodeWorkflowView } from '../../api/types'
-import type { SessionConfig } from '../session_v2/contracts'
-import type { ComposerAccessMode } from '../session_v2/components/ComposerPane'
+import { toTurnExecutionPolicy, type SessionConfig, type TurnExecutionPolicy } from '../session_v2/contracts'
+import type { ComposerRequestedPolicy } from '../session_v2/components/ComposerPane'
 import type { ThreadTab } from './surfaceRouting'
 
 export type WorkflowPolicyKind =
@@ -49,10 +49,9 @@ export type ResolveWorkflowThreadLaneInput = {
   isReviewNode?: boolean
 }
 
-export type ResolveWorkflowSubmitSessionConfigInput = {
+export type ResolveWorkflowSubmitTurnPolicyInput = {
   lane: WorkflowThreadLane
-  accessMode: ComposerAccessMode
-  sessionConfig?: SessionConfig | null
+  requestedPolicy?: ComposerRequestedPolicy | null
 }
 
 function resolveWorkflowThreadId(
@@ -236,16 +235,50 @@ export function resolveWorkflowThreadLane(
   }
 }
 
-export function resolveWorkflowSubmitSessionConfig(
-  input: ResolveWorkflowSubmitSessionConfigInput,
+function sessionConfigFromRequestedPolicy(
+  requestedPolicy: ComposerRequestedPolicy | null | undefined,
 ): SessionConfig {
-  const merged = mergeSessionConfig(input.lane.sessionConfig, input.sessionConfig)
-  if (input.accessMode !== 'full-access') {
-    return merged
+  if (!requestedPolicy) {
+    return {}
   }
   return {
-    ...merged,
-    approvalPolicy: 'never',
-    sandboxPolicy: { type: 'dangerFullAccess' },
+    ...(requestedPolicy.model === undefined ? {} : { model: requestedPolicy.model }),
+    ...(requestedPolicy.effort === undefined
+      ? {}
+      : {
+          reasoning: {
+            effort: requestedPolicy.effort === 'extra-high' ? 'xhigh' : requestedPolicy.effort,
+            summary: null,
+          },
+        }),
   }
+}
+
+function withAccessPolicy(
+  basePolicy: TurnExecutionPolicy,
+  requestedPolicy: ComposerRequestedPolicy | null | undefined,
+): TurnExecutionPolicy {
+  if (requestedPolicy?.accessMode === 'full-access') {
+    return {
+      ...basePolicy,
+      approvalPolicy: 'never',
+      sandboxPolicy: { type: 'dangerFullAccess' },
+    }
+  }
+  if (requestedPolicy?.accessMode === 'default-permissions') {
+    return {
+      ...basePolicy,
+      approvalPolicy: 'on-request',
+      sandboxPolicy: { type: 'workspaceWrite' },
+    }
+  }
+  return basePolicy
+}
+
+export function resolveWorkflowSubmitTurnPolicy(
+  input: ResolveWorkflowSubmitTurnPolicyInput,
+): TurnExecutionPolicy {
+  const requestedConfig = sessionConfigFromRequestedPolicy(input.requestedPolicy)
+  const merged = mergeSessionConfig(input.lane.sessionConfig, requestedConfig)
+  return withAccessPolicy(toTurnExecutionPolicy(merged), input.requestedPolicy)
 }

@@ -221,8 +221,10 @@ describe('sessionRuntimeController', () => {
     await harness.controller.submit({
       input: [{ type: 'text', text: 'continue' }],
       text: 'continue',
-      accessMode: 'default-permissions',
-      model: null,
+      requestedPolicy: {
+        accessMode: 'default-permissions',
+        model: null,
+      },
     })
 
     expect(harness.api.steerTurn).toHaveBeenCalledTimes(1)
@@ -239,8 +241,10 @@ describe('sessionRuntimeController', () => {
     await harness.controller.submit({
       input: [{ type: 'text', text: 'run tests' }],
       text: 'run tests',
-      accessMode: 'full-access',
-      model: null,
+      requestedPolicy: {
+        accessMode: 'full-access',
+        model: null,
+      },
     })
 
     expect(harness.api.startTurn).toHaveBeenCalledTimes(1)
@@ -308,8 +312,10 @@ describe('sessionRuntimeController', () => {
       {
         input: [{ type: 'text', text: 'run tests' }],
         text: 'run tests',
-        accessMode: 'default-permissions',
-        model: 'gpt-5.1',
+        requestedPolicy: {
+          accessMode: 'default-permissions',
+          model: 'gpt-5.1',
+        },
       },
       {
         model: 'gpt-5.2',
@@ -342,8 +348,10 @@ describe('sessionRuntimeController', () => {
       {
         input: [{ type: 'text', text: 'run tests' }],
         text: 'run tests',
-        accessMode: 'default-permissions',
-        model: '   ',
+        requestedPolicy: {
+          accessMode: 'default-permissions',
+          model: '   ',
+        },
       },
       {
         model: null,
@@ -358,7 +366,9 @@ describe('sessionRuntimeController', () => {
     await harness.controller.submit({
       input: [{ type: 'text', text: 'run tests again' }],
       text: 'run tests again',
-      accessMode: 'default-permissions',
+      requestedPolicy: {
+        accessMode: 'default-permissions',
+      },
     })
 
     const [, undefinedPolicyModelRequest] = harness.api.startTurn.mock.calls[0]
