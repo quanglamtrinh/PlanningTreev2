@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import type { MutableRefObject } from 'react'
 
-import type { PendingServerRequest, SessionTurn } from '../contracts'
+import type { PendingServerRequest } from '../contracts'
 import { usePendingRequestsStore } from '../store/pendingRequestsStore'
 import type { SessionEventStreamController } from './sessionEventStreamController'
 import type { SessionRuntimeController } from './sessionRuntimeController'
@@ -12,8 +12,6 @@ type PendingRequestsStoreState = ReturnType<typeof usePendingRequestsStore.getSt
 
 type UsePendingRequestLoopOptions = {
   activeThreadId: string | null
-  activeRunningTurn: SessionTurn | null
-  queueLength: number
   pendingRequestsStoreState: PendingRequestsStoreState
   pendingRequestScope: PendingRequestScope
   runtimeControllerRef: MutableRefObject<SessionRuntimeController | null>
@@ -43,8 +41,6 @@ function resolveActiveRequestId(options: {
 
 export function usePendingRequestLoop({
   activeThreadId,
-  activeRunningTurn,
-  queueLength,
   pendingRequestsStoreState,
   pendingRequestScope,
   runtimeControllerRef,
@@ -52,9 +48,6 @@ export function usePendingRequestLoop({
   isCurrentLifecycle,
   isPrimaryLifecycleOwner,
 }: UsePendingRequestLoopOptions) {
-  const pollTimerRef = useRef<number | null>(null)
-  const pollGenerationRef = useRef(0)
-
   const activeRequest = useMemo(() => {
     const requestId = resolveActiveRequestId({
       activeRequestId: pendingRequestsStoreState.activeRequestId,
@@ -75,17 +68,9 @@ export function usePendingRequestLoop({
     pendingRequestsStoreState.queue,
   ])
 
-  const clearPendingPollTimer = useCallback(() => {
-    if (pollTimerRef.current !== null) {
-      window.clearTimeout(pollTimerRef.current)
-      pollTimerRef.current = null
-    }
-  }, [])
-
   const stopPendingRequestLoop = useCallback(() => {
-    pollGenerationRef.current += 1
-    clearPendingPollTimer()
-  }, [clearPendingPollTimer])
+    // Polling is event-first now; selection cleanup only closes the stream.
+  }, [])
 
   const pollPendingRequests = useCallback(async () => {
     if (!isCurrentLifecycle()) {
@@ -98,34 +83,6 @@ export function usePendingRequestLoop({
     await runtimeController.pollPendingRequests()
   }, [isCurrentLifecycle, runtimeControllerRef])
 
-  const schedulePendingPoll = useCallback(() => {
-    if (!isCurrentLifecycle()) {
-      return
-    }
-
-    pollGenerationRef.current += 1
-    const generation = pollGenerationRef.current
-
-    clearPendingPollTimer()
-    const intervalMs = activeRunningTurn || queueLength > 0 ? 400 : 2000
-    pollTimerRef.current = window.setTimeout(async () => {
-      if (!isCurrentLifecycle() || pollGenerationRef.current !== generation) {
-        return
-      }
-      await pollPendingRequests()
-      if (!isCurrentLifecycle() || pollGenerationRef.current !== generation) {
-        return
-      }
-      schedulePendingPoll()
-    }, intervalMs)
-  }, [activeRunningTurn, clearPendingPollTimer, isCurrentLifecycle, pollPendingRequests, queueLength])
-
-  useEffect(() => {
-    return () => {
-      stopPendingRequestLoop()
-    }
-  }, [stopPendingRequestLoop])
-
   useEffect(() => {
     if (!activeThreadId || !isPrimaryLifecycleOwner()) {
       return
@@ -133,7 +90,6 @@ export function usePendingRequestLoop({
 
     streamControllerRef.current?.open(activeThreadId)
     void pollPendingRequests()
-    schedulePendingPoll()
 
     return () => {
       stopPendingRequestLoop()
@@ -143,7 +99,6 @@ export function usePendingRequestLoop({
     activeThreadId,
     isPrimaryLifecycleOwner,
     pollPendingRequests,
-    schedulePendingPoll,
     stopPendingRequestLoop,
     streamControllerRef,
   ])

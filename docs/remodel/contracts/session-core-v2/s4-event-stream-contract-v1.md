@@ -37,7 +37,15 @@ Tier 0 (lossless via journal + replay):
 - `thread/status/changed`
 - `thread/started`
 - `thread/closed`
+- `serverRequest/created`
+- `serverRequest/updated`
 - `serverRequest/resolved`
+
+Server request lifecycle events use `params.request` with the full server request record:
+
+1. `serverRequest/created`: request first appeared; actionable only when `request.status == "pending"`.
+2. `serverRequest/updated`: request status or metadata changed, including `submitted`, `expired`, and `rejected`.
+3. `serverRequest/resolved`: compatibility terminal notification; when a request record is known, `params.request` is populated and consumers should project it through the same terminal path as `serverRequest/updated`.
 
 Tier 1 (merge-safe):
 

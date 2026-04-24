@@ -340,13 +340,18 @@ describe('useSessionFacadeV2', () => {
     expect(useConnectionStore.getState().connection.phase).toBe('disconnected')
   })
 
-  it('polls pending requests at 2000ms idle and 400ms while turn is running', async () => {
+  it('polls pending requests when the active thread opens without recurring polling', async () => {
     vi.useFakeTimers()
 
     let latestFacade: SessionFacadeV2 | null = null
 
     render(
       <FacadeHarness
+        options={{
+          bootstrapPolicy: {
+            autoBootstrapOnMount: false,
+          },
+        }}
         onFacade={(facade) => {
           latestFacade = facade
         }}
@@ -363,35 +368,9 @@ describe('useSessionFacadeV2', () => {
     expect(initialPollCount).toBeGreaterThan(0)
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(1999)
+      await vi.advanceTimersByTimeAsync(5000)
     })
     expect(mockApi.listPendingRequestsV2.mock.calls.length).toBe(initialPollCount)
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1)
-    })
-    const afterIdlePollCount = mockApi.listPendingRequestsV2.mock.calls.length
-    expect(afterIdlePollCount).toBeGreaterThanOrEqual(initialPollCount + 1)
-
-    act(() => {
-      useThreadSessionStore.getState().setThreadTurns('thread-1', [
-        {
-          id: 'turn-running',
-          threadId: 'thread-1',
-          status: 'inProgress',
-          lastCodexStatus: 'inProgress',
-          startedAtMs: 1,
-          completedAtMs: null,
-          items: [],
-          error: null,
-        },
-      ])
-    })
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(400)
-    })
-    expect(mockApi.listPendingRequestsV2.mock.calls.length).toBeGreaterThanOrEqual(afterIdlePollCount + 1)
   })
 
   it('supports bootstrap policy without auto mount bootstrap/select/create', async () => {

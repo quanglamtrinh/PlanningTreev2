@@ -116,6 +116,8 @@ export interface PendingServerRequest {
   submittedAtMs: number | null
   resolvedAtMs: number | null
   payload: Record<string, unknown>
+  inactiveByReconcile?: boolean
+  reconciledAtMs?: number
 }
 
 export type SessionNotificationMethod =
@@ -138,6 +140,8 @@ export type SessionNotificationMethod =
   | 'item/reasoning/textDelta'
   | 'item/commandExecution/outputDelta'
   | 'item/fileChange/outputDelta'
+  | 'serverRequest/created'
+  | 'serverRequest/updated'
   | 'serverRequest/resolved'
 
 export interface SessionEventEnvelope {
@@ -162,7 +166,7 @@ export interface ServerRequestEnvelope {
   threadId: string
   turnId: string | null
   itemId: string | null
-  status: 'pending' | 'resolved' | 'rejected' | 'expired'
+  status: PendingRequestStatus
   occurredAtMs: number
   params: Record<string, unknown>
 }

@@ -616,6 +616,8 @@ export function applySessionEvent(
       }
       break
     }
+    case 'serverRequest/created':
+    case 'serverRequest/updated':
     case 'serverRequest/resolved': {
       markThreadActivityAt(state, threadId, envelope.occurredAtMs)
       break

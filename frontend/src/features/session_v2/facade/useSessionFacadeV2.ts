@@ -214,20 +214,22 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
   if (!streamControllerRef.current) {
     streamControllerRef.current = createSessionEventStreamController({
       applyEventsBatch: (envelopes) => useThreadSessionStore.getState().applyEventsBatch(envelopes),
+      applyRequestEventsBatch: (envelopes) => usePendingRequestsStore.getState().applyRequestEventsBatch(envelopes),
       markStreamConnected: (threadId) => useThreadSessionStore.getState().markStreamConnected(threadId),
       markStreamDisconnected: (threadId) => useThreadSessionStore.getState().markStreamDisconnected(threadId),
       markStreamReconnect: (threadId) => useThreadSessionStore.getState().markStreamReconnect(threadId),
       clearGapDetected: (threadId) => useThreadSessionStore.getState().clearGapDetected(threadId),
       getLastEventId: (threadId) => useThreadSessionStore.getState().lastEventIdByThread[threadId] ?? null,
       getGapDetected: (threadId) => Boolean(useThreadSessionStore.getState().gapDetectedByThread[threadId]),
+      onStreamConnected: () => {
+        void runtimeControllerRef.current?.pollPendingRequests()
+      },
       onRuntimeError: setRuntimeError,
     })
   }
 
   const { activeRequest, stopPendingRequestLoop } = usePendingRequestLoop({
     activeThreadId: threadStoreState.activeThreadId,
-    activeRunningTurn,
-    queueLength,
     pendingRequestsStoreState,
     pendingRequestScope,
     runtimeControllerRef,

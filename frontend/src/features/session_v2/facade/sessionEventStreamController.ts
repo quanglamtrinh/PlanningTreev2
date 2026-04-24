@@ -1,3 +1,4 @@
+import { unstable_batchedUpdates } from 'react-dom'
 import { openThreadEventsStreamV2 } from '../api/client'
 import type { SessionEventEnvelope, SessionNotificationMethod } from '../contracts'
 import { parseSessionEvent } from '../state/sessionEventParser'
@@ -21,6 +22,8 @@ const EVENT_METHODS: SessionNotificationMethod[] = [
   'item/reasoning/textDelta',
   'item/commandExecution/outputDelta',
   'item/fileChange/outputDelta',
+  'serverRequest/created',
+  'serverRequest/updated',
   'serverRequest/resolved',
   'error',
 ]
@@ -44,6 +47,8 @@ const STREAM_FORCE_FLUSH_METHODS = new Set<string>([
   'item/completed',
   'error',
   'thread/closed',
+  'serverRequest/created',
+  'serverRequest/updated',
   'serverRequest/resolved',
 ])
 
@@ -63,12 +68,14 @@ type StreamChunkingMode = 'smooth' | 'catch_up'
 export type StreamControllerDependencies = {
   openEventSource?: (threadId: string, options?: { cursorEventId?: string | null }) => EventSource
   applyEventsBatch: (envelopes: SessionEventEnvelope[]) => void
+  applyRequestEventsBatch?: (envelopes: SessionEventEnvelope[]) => void
   markStreamConnected: (threadId: string) => void
   markStreamDisconnected: (threadId: string) => void
   markStreamReconnect: (threadId: string) => void
   clearGapDetected: (threadId: string) => void
   getLastEventId: (threadId: string) => string | null
   getGapDetected: (threadId: string) => boolean
+  onStreamConnected?: (threadId: string) => void
   onRuntimeError?: (message: string | null) => void
 }
 
@@ -304,7 +311,10 @@ export function createSessionEventStreamController(
           resetStreamChunkingMode()
         }
 
-        dependencies.applyEventsBatch(envelopes)
+        unstable_batchedUpdates(() => {
+          dependencies.applyEventsBatch(envelopes)
+          dependencies.applyRequestEventsBatch?.(envelopes)
+        })
         if (dependencies.getGapDetected(threadId)) {
           dependencies.clearGapDetected(threadId)
           clearQueuedEnvelopes()
@@ -342,6 +352,7 @@ export function createSessionEventStreamController(
         }
         dependencies.markStreamConnected(threadId)
         dependencies.onRuntimeError?.(null)
+        dependencies.onStreamConnected?.(threadId)
       }
 
       stream.onerror = () => {
