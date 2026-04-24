@@ -1,6 +1,12 @@
 import type { NodeWorkflowView } from '../../api/types'
 import type { ComposerAccessMode } from '../session_v2/components/ComposerPane'
-import type { ThreadCreationPolicy, TurnRuntimePolicy } from '../session_v2/contracts'
+import {
+  toThreadCreationPolicy,
+  toTurnExecutionPolicy,
+  type SessionConfig,
+  type ThreadCreationPolicy,
+  type TurnExecutionPolicy,
+} from '../session_v2/contracts'
 import type { ThreadTab } from './surfaceRouting'
 
 type ConversationPolicyContext = {
@@ -12,26 +18,37 @@ type ConversationPolicyContext = {
 
 export type ResolveTurnExecutionPolicyInput = ConversationPolicyContext & {
   accessMode: ComposerAccessMode
+  sessionConfig?: SessionConfig | null
 }
 
-export type ResolveThreadCreationPolicyInput = ConversationPolicyContext
+export type ResolveThreadCreationPolicyInput = ConversationPolicyContext & {
+  sessionConfig?: SessionConfig | null
+}
 
-export function resolveTurnExecutionPolicy(
+export function resolveTurnSessionConfig(
   input: ResolveTurnExecutionPolicyInput,
-): TurnRuntimePolicy | undefined {
+): SessionConfig | undefined {
+  const baseConfig = input.sessionConfig ? { ...input.sessionConfig } : null
   if (input.accessMode !== 'full-access') {
-    return undefined
+    return baseConfig ?? undefined
   }
 
   return {
+    ...(baseConfig ?? {}),
     approvalPolicy: 'never',
     sandboxPolicy: { type: 'dangerFullAccess' },
   }
 }
 
+export function resolveTurnExecutionPolicy(
+  input: ResolveTurnExecutionPolicyInput,
+): TurnExecutionPolicy | undefined {
+  const config = resolveTurnSessionConfig(input)
+  return config ? toTurnExecutionPolicy(config) : undefined
+}
+
 export function resolveThreadCreationPolicy(
   input: ResolveThreadCreationPolicyInput,
 ): ThreadCreationPolicy | undefined {
-  void input
-  return undefined
+  return input.sessionConfig ? toThreadCreationPolicy(input.sessionConfig) : undefined
 }

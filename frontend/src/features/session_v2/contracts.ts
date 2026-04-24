@@ -176,12 +176,12 @@ export interface TurnStartRequestV4 {
   input: Array<Record<string, unknown>>
   model?: string | null
   cwd?: string | null
-  approvalPolicy?: string | Record<string, unknown>
+  approvalPolicy?: string | Record<string, unknown> | null
   approvalsReviewer?: string | null
-  sandboxPolicy?: string | Record<string, unknown>
+  sandboxPolicy?: string | Record<string, unknown> | null
   personality?: string | null
   effort?: string | null
-  summary?: string | Record<string, unknown>
+  summary?: string | Record<string, unknown> | null
   serviceTier?: string | null
   outputSchema?: Record<string, unknown> | null
 }
@@ -190,10 +190,10 @@ export type ThreadCreationPolicy = Partial<{
   model: string | null
   modelProvider: string | null
   cwd: string | null
-  approvalPolicy: string | Record<string, unknown>
+  approvalPolicy: string | Record<string, unknown> | null
   approvalsReviewer: string | null
   personality: string | null
-  sandbox: string | Record<string, unknown>
+  sandbox: string | Record<string, unknown> | null
   serviceTier: string | null
   baseInstructions: string | null
   developerInstructions: string | null
@@ -201,7 +201,60 @@ export type ThreadCreationPolicy = Partial<{
   ephemeral: boolean | null
 }>
 
-export type TurnRuntimePolicy = Omit<TurnStartRequestV4, 'clientActionId' | 'input'>
+export type TurnExecutionPolicy = Omit<TurnStartRequestV4, 'clientActionId' | 'input'>
+
+export type SessionConfig = {
+  model?: string | null
+  modelProvider?: string | null
+  cwd?: string | null
+  approvalPolicy?: string | Record<string, unknown> | null
+  approvalsReviewer?: string | null
+  sandbox?: string | Record<string, unknown> | null
+  sandboxPolicy?: string | Record<string, unknown> | null
+  reasoning?: {
+    effort?: string | null
+    summary?: string | Record<string, unknown> | null
+  } | null
+  personality?: string | null
+  serviceTier?: string | null
+  outputSchema?: Record<string, unknown> | null
+  baseInstructions?: string | null
+  developerInstructions?: string | null
+  config?: Record<string, unknown> | null
+  ephemeral?: boolean | null
+}
+
+export function toThreadCreationPolicy(config: SessionConfig): ThreadCreationPolicy {
+  return {
+    model: config.model,
+    modelProvider: config.modelProvider,
+    cwd: config.cwd,
+    approvalPolicy: config.approvalPolicy,
+    approvalsReviewer: config.approvalsReviewer,
+    sandbox: config.sandbox,
+    personality: config.personality,
+    serviceTier: config.serviceTier,
+    baseInstructions: config.baseInstructions,
+    developerInstructions: config.developerInstructions,
+    config: config.config,
+    ephemeral: config.ephemeral,
+  }
+}
+
+export function toTurnExecutionPolicy(config: SessionConfig): TurnExecutionPolicy {
+  return {
+    model: config.model,
+    cwd: config.cwd,
+    approvalPolicy: config.approvalPolicy,
+    approvalsReviewer: config.approvalsReviewer,
+    sandboxPolicy: config.sandboxPolicy,
+    personality: config.personality,
+    effort: config.reasoning?.effort ?? null,
+    summary: config.reasoning?.summary ?? null,
+    serviceTier: config.serviceTier,
+    outputSchema: config.outputSchema,
+  }
+}
 
 export interface TurnSteerRequestV4 {
   clientActionId: string

@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipboardEvent, KeyboardEvent } from 'react'
+import type { SessionConfig } from '../contracts'
 
 export type ComposerAccessMode = 'full-access' | 'default-permissions'
+export type ComposerEffortLevel = 'Low' | 'Medium' | 'High' | 'Extra High'
+export type ComposerWorkMode = 'locally' | 'remote'
+export type ComposerStreamMode = 'streaming' | 'batch'
 
 export type ComposerSubmitPayload = {
   input: Array<Record<string, unknown>>
   text: string
   model?: string | null
   accessMode: ComposerAccessMode
+  sessionConfig?: SessionConfig
 }
 
 type ComposerModelOption = {
@@ -51,6 +56,12 @@ const COMMAND_SUGGESTIONS = ['/plan', '/review', '/test', '/status']
 const ACCESS_MODE_LABELS: Record<ComposerAccessMode, string> = {
   'full-access': 'Full access',
   'default-permissions': 'Default permissions',
+}
+const EFFORT_LEVEL_VALUES: Record<ComposerEffortLevel, string> = {
+  Low: 'low',
+  Medium: 'medium',
+  High: 'high',
+  'Extra High': 'xhigh',
 }
 
 function loadPersistentHistory(): string[] {
@@ -113,9 +124,9 @@ export function ComposerPane({
   const [mentionBindings, setMentionBindings] = useState<Record<string, string>>({})
   const [pasteBurstUntilMs, setPasteBurstUntilMs] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [effortLevel, setEffortLevel] = useState<'Low' | 'Medium' | 'High' | 'Extra High'>('Extra High')
-  const [workMode, setWorkMode] = useState<'locally' | 'remote'>('locally')
-  const [streamMode, setStreamMode] = useState<'streaming' | 'batch'>('streaming')
+  const [effortLevel, setEffortLevel] = useState<ComposerEffortLevel>('Extra High')
+  const [workMode, setWorkMode] = useState<ComposerWorkMode>('locally')
+  const [streamMode, setStreamMode] = useState<ComposerStreamMode>('streaming')
   const [accessMode, setAccessMode] = useState<ComposerAccessMode>('full-access')
 
   useEffect(() => {
@@ -227,7 +238,26 @@ export function ComposerPane({
     }
     setIsSubmitting(true)
     try {
-      await onSubmit({ input, text: draft, model: selectedModel ?? null, accessMode })
+      await onSubmit({
+        input,
+        text: draft,
+        model: selectedModel ?? null,
+        accessMode,
+        sessionConfig: {
+          model: selectedModel ?? null,
+          cwd: currentCwd ?? null,
+          reasoning: {
+            effort: EFFORT_LEVEL_VALUES[effortLevel],
+            summary: null,
+          },
+          config: {
+            composer: {
+              workMode,
+              streamMode,
+            },
+          },
+        },
+      })
       registerHistoryEntry(draft, localImages, remoteImages)
       setDraft('')
       setLocalImages([])

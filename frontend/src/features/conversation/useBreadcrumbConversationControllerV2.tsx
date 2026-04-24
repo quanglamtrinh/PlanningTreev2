@@ -295,6 +295,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         workflowState,
         projectId,
         nodeId,
+        ...(payload.sessionConfig === undefined ? {} : { sessionConfig: payload.sessionConfig }),
       })
       await sessionCommands.submit(payload, policy)
       if (!projectId || !nodeId) {

@@ -51,6 +51,8 @@ LANE_TOKEN_PATTERNS = [
 ]
 
 ALLOWED_TOKEN_CONTEXTS = {
+    "TurnExecutionPolicy",
+    "toTurnExecutionPolicy",
     "commandExecution",
     "item/commandExecution/requestApproval",
     "item/commandExecution/outputDelta",

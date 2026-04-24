@@ -84,6 +84,19 @@ describe('ComposerPane', () => {
     expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
       model: 'gpt-5.4',
       text: 'Test model submit',
+      sessionConfig: {
+        model: 'gpt-5.4',
+        reasoning: {
+          effort: 'xhigh',
+          summary: null,
+        },
+        config: {
+          composer: {
+            workMode: 'locally',
+            streamMode: 'streaming',
+          },
+        },
+      },
     })
   })
 
