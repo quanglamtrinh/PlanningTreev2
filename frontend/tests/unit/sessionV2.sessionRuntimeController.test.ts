@@ -55,7 +55,6 @@ function createHarness() {
     activeTurns: [] as SessionTurn[],
     activeRunningTurn: null as SessionTurn | null,
     selectedModel: null as string | null,
-    activeRequest: null as PendingServerRequest | null,
   }
 
   const setThreadList = vi.fn((rows: SessionThread[]) => {
@@ -302,6 +301,24 @@ describe('sessionRuntimeController', () => {
     expect(harness.spies.markPendingRequestSubmitted).toHaveBeenCalledWith('request-1')
   })
 
+  it('dispatches explicit request rejection actions through the unified input pipeline', async () => {
+    await harness.controller.submitSessionAction({
+      type: 'request.reject',
+      requestId: 'request-1',
+      reason: 'denied',
+      resolutionKey: 'resolution-2',
+    })
+
+    expect(harness.api.rejectPendingRequest).toHaveBeenCalledWith(
+      'request-1',
+      {
+        resolutionKey: 'resolution-2',
+        reason: 'denied',
+      },
+    )
+    expect(harness.spies.markPendingRequestSubmitted).toHaveBeenCalledWith('request-1')
+  })
+
   it('passes supplied turn execution policy through and gives policy model precedence', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeTurns = []
@@ -471,7 +488,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.startThread).toHaveBeenCalledWith(threadCreationPolicy)
   })
 
-  it('interrupts running turn and resolves/rejects active request', async () => {
+  it('interrupts running turn through the unified input pipeline', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeRunningTurn = makeTurn({
       id: 'turn-1',
@@ -485,31 +502,5 @@ describe('sessionRuntimeController', () => {
       'turn-1',
       expect.objectContaining({ clientActionId: expect.any(String) }),
     )
-
-    harness.runtimeSnapshot.activeRequest = {
-      requestId: 'request-2',
-      method: 'item/tool/requestUserInput',
-      threadId: 'thread-1',
-      turnId: 'turn-1',
-      itemId: 'item-2',
-      status: 'pending',
-      createdAtMs: 2,
-      submittedAtMs: null,
-      resolvedAtMs: null,
-      payload: {},
-    }
-
-    await harness.controller.resolveRequest({ approved: true })
-    expect(harness.api.resolvePendingRequest).toHaveBeenCalledWith(
-      'request-2',
-      expect.objectContaining({ resolutionKey: expect.any(String), result: { approved: true } }),
-    )
-
-    await harness.controller.rejectRequest('denied')
-    expect(harness.api.rejectPendingRequest).toHaveBeenCalledWith(
-      'request-2',
-      expect.objectContaining({ resolutionKey: expect.any(String), reason: 'denied' }),
-    )
-    expect(harness.spies.markPendingRequestSubmitted).toHaveBeenCalledWith('request-2')
   })
 })

@@ -3,8 +3,8 @@ import type { PendingServerRequest } from '../contracts'
 
 type RequestUserInputOverlayProps = {
   request: PendingServerRequest
-  onResolve: (result: Record<string, unknown>) => Promise<void>
-  onReject: (reason?: string | null) => Promise<void>
+  onResolve: (requestId: string, result: Record<string, unknown>) => Promise<void>
+  onReject: (requestId: string, reason?: string | null) => Promise<void>
 }
 
 type InputQuestionOption = {
@@ -83,7 +83,7 @@ export function RequestUserInputOverlay({
           status: selectedOption || notes.length > 0 ? 'answered' : 'skipped',
         }
       })
-      await onResolve({ answers })
+      await onResolve(request.requestId, { answers })
     } finally {
       setIsSubmitting(false)
     }
@@ -146,7 +146,7 @@ export function RequestUserInputOverlay({
             </button>
           </div>
           <div className="sessionV2OverlayActions">
-            <button type="button" disabled={isSubmitting} onClick={() => void onReject('cancel')}>
+            <button type="button" disabled={isSubmitting} onClick={() => void onReject(request.requestId, 'cancel')}>
               Cancel
             </button>
             <button type="button" disabled={isSubmitting} onClick={() => void handleSubmit()}>
@@ -158,4 +158,3 @@ export function RequestUserInputOverlay({
     </div>
   )
 }
-

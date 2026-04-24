@@ -55,7 +55,6 @@ export type RuntimeSnapshot = {
   activeTurns: SessionTurn[]
   activeRunningTurn: SessionTurn | null
   selectedModel: string | null
-  activeRequest: PendingServerRequest | null
 }
 
 type RuntimeApi = {
@@ -113,7 +112,7 @@ export type SessionRuntimeController = {
   hydrateThreadState: (threadId: string, options?: HydrateOptions) => Promise<void>
   ensureThreadReady: (threadId: string, options?: EnsureThreadReadyOptions) => Promise<void>
   loadModels: () => Promise<void>
-  pollPendingRequests: () => Promise<void>
+  pollPendingRequests: (options?: { surfaceErrors?: boolean }) => Promise<void>
   selectThread: (threadId: string | null) => Promise<void>
   createThread: (policy?: ThreadCreationPolicy) => Promise<void>
   forkThread: (threadId: string) => Promise<void>
@@ -121,13 +120,11 @@ export type SessionRuntimeController = {
   submitSessionAction: (action: SessionInputAction) => Promise<void>
   submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => Promise<void>
   interrupt: () => Promise<void>
-  resolveRequest: (result: Record<string, unknown>) => Promise<void>
-  rejectRequest: (reason?: string | null) => Promise<void>
   resetHydratedState: () => void
   dispose: () => void
 }
 
-function actionId(): string {
+export function createSessionActionId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
   }
@@ -373,7 +370,7 @@ export function createSessionRuntimeController(
     }
   }
 
-  const pollPendingRequests = async (): Promise<void> => {
+  const pollPendingRequests = async (options?: { surfaceErrors?: boolean }): Promise<void> => {
     const guard = buildGuard('pollPending')
     try {
       const pending = await api.listPendingRequests()
@@ -386,8 +383,10 @@ export function createSessionRuntimeController(
       if (!guard.isCurrent()) {
         return
       }
-      const message = error instanceof Error ? error.message : String(error)
-      dependencies.setRuntimeError(message)
+      if (options?.surfaceErrors !== false) {
+        const message = error instanceof Error ? error.message : String(error)
+        dependencies.setRuntimeError(message)
+      }
     }
   }
 
@@ -535,7 +534,7 @@ export function createSessionRuntimeController(
         threadId: activeThreadId,
         turnId: runtime.activeRunningTurn.id,
         input: payload.input,
-        clientActionId: actionId(),
+        clientActionId: createSessionActionId(),
       }
     }
 
@@ -544,7 +543,7 @@ export function createSessionRuntimeController(
       threadId: activeThreadId,
       input: payload.input,
       policy: resolveTurnStartPolicy(policy, payload, runtime.selectedModel),
-      clientActionId: actionId(),
+      clientActionId: createSessionActionId(),
     }
   }
 
@@ -559,41 +558,7 @@ export function createSessionRuntimeController(
       type: 'turn.interrupt',
       threadId: activeThreadId,
       turnId: activeRunningTurn.id,
-      clientActionId: actionId(),
-    }
-  }
-
-  const actionFromRequestResolve = (
-    runtime: RuntimeSnapshot,
-    result: Record<string, unknown>,
-  ): SessionInputAction | null => {
-    const activeRequest = runtime.activeRequest
-    if (!activeRequest) {
-      return null
-    }
-
-    return {
-      type: 'request.resolve',
-      requestId: activeRequest.requestId,
-      result,
-      resolutionKey: actionId(),
-    }
-  }
-
-  const actionFromRequestReject = (
-    runtime: RuntimeSnapshot,
-    reason?: string | null,
-  ): SessionInputAction | null => {
-    const activeRequest = runtime.activeRequest
-    if (!activeRequest) {
-      return null
-    }
-
-    return {
-      type: 'request.reject',
-      requestId: activeRequest.requestId,
-      reason: reason ?? null,
-      resolutionKey: actionId(),
+      clientActionId: createSessionActionId(),
     }
   }
 
@@ -728,26 +693,6 @@ export function createSessionRuntimeController(
     await submitSessionAction(action)
   }
 
-  const resolveRequest = async (result: Record<string, unknown>): Promise<void> => {
-    const runtime = dependencies.getRuntimeSnapshot()
-    const action = actionFromRequestResolve(runtime, result)
-    if (!action) {
-      return
-    }
-
-    await submitSessionAction(action)
-  }
-
-  const rejectRequest = async (reason?: string | null): Promise<void> => {
-    const runtime = dependencies.getRuntimeSnapshot()
-    const action = actionFromRequestReject(runtime, reason)
-    if (!action) {
-      return
-    }
-
-    await submitSessionAction(action)
-  }
-
   const bootstrap = async (policy?: Partial<SessionBootstrapPolicy>): Promise<void> => {
     const guard = buildGuard('bootstrap')
     if (!guard.isCurrent()) {
@@ -842,8 +787,6 @@ export function createSessionRuntimeController(
     submitSessionAction,
     submit,
     interrupt,
-    resolveRequest,
-    rejectRequest,
     resetHydratedState() {
       hydratedThreadIds.clear()
       selectionIntent = 0

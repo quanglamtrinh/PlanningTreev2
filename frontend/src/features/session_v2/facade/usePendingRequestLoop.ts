@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { MutableRefObject } from 'react'
 
 import type { PendingServerRequest } from '../contracts'
@@ -12,6 +12,7 @@ type PendingRequestsStoreState = ReturnType<typeof usePendingRequestsStore.getSt
 
 type UsePendingRequestLoopOptions = {
   activeThreadId: string | null
+  streamConnected: boolean
   pendingRequestsStoreState: PendingRequestsStoreState
   pendingRequestScope: PendingRequestScope
   runtimeControllerRef: MutableRefObject<SessionRuntimeController | null>
@@ -19,6 +20,9 @@ type UsePendingRequestLoopOptions = {
   isCurrentLifecycle: () => boolean
   isPrimaryLifecycleOwner: () => boolean
 }
+
+const CONNECTED_RECONCILE_POLL_MS = 30_000
+const DISCONNECTED_FALLBACK_POLL_MS = 1_500
 
 function resolveActiveRequestId(options: {
   activeRequestId: string | null
@@ -41,6 +45,7 @@ function resolveActiveRequestId(options: {
 
 export function usePendingRequestLoop({
   activeThreadId,
+  streamConnected,
   pendingRequestsStoreState,
   pendingRequestScope,
   runtimeControllerRef,
@@ -48,6 +53,8 @@ export function usePendingRequestLoop({
   isCurrentLifecycle,
   isPrimaryLifecycleOwner,
 }: UsePendingRequestLoopOptions) {
+  const pollTimerRef = useRef<number | null>(null)
+
   const activeRequest = useMemo(() => {
     const requestId = resolveActiveRequestId({
       activeRequestId: pendingRequestsStoreState.activeRequestId,
@@ -69,10 +76,13 @@ export function usePendingRequestLoop({
   ])
 
   const stopPendingRequestLoop = useCallback(() => {
-    // Polling is event-first now; selection cleanup only closes the stream.
+    if (pollTimerRef.current !== null) {
+      window.clearTimeout(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
   }, [])
 
-  const pollPendingRequests = useCallback(async () => {
+  const pollPendingRequests = useCallback(async (options?: { surfaceErrors?: boolean }) => {
     if (!isCurrentLifecycle()) {
       return
     }
@@ -80,7 +90,7 @@ export function usePendingRequestLoop({
     if (!runtimeController) {
       return
     }
-    await runtimeController.pollPendingRequests()
+    await runtimeController.pollPendingRequests(options)
   }, [isCurrentLifecycle, runtimeControllerRef])
 
   useEffect(() => {
@@ -89,7 +99,7 @@ export function usePendingRequestLoop({
     }
 
     streamControllerRef.current?.open(activeThreadId)
-    void pollPendingRequests()
+    void pollPendingRequests({ surfaceErrors: false })
 
     return () => {
       stopPendingRequestLoop()
@@ -101,6 +111,45 @@ export function usePendingRequestLoop({
     pollPendingRequests,
     stopPendingRequestLoop,
     streamControllerRef,
+  ])
+
+  useEffect(() => {
+    if (!activeThreadId || !isPrimaryLifecycleOwner()) {
+      stopPendingRequestLoop()
+      return
+    }
+
+    let cancelled = false
+    const intervalMs = streamConnected ? CONNECTED_RECONCILE_POLL_MS : DISCONNECTED_FALLBACK_POLL_MS
+
+    const scheduleNextPoll = () => {
+      stopPendingRequestLoop()
+      pollTimerRef.current = window.setTimeout(async () => {
+        if (cancelled || !isCurrentLifecycle()) {
+          return
+        }
+
+        await pollPendingRequests({ surfaceErrors: !streamConnected })
+        if (cancelled || !isCurrentLifecycle()) {
+          return
+        }
+        scheduleNextPoll()
+      }, intervalMs)
+    }
+
+    scheduleNextPoll()
+
+    return () => {
+      cancelled = true
+      stopPendingRequestLoop()
+    }
+  }, [
+    activeThreadId,
+    isCurrentLifecycle,
+    isPrimaryLifecycleOwner,
+    pollPendingRequests,
+    stopPendingRequestLoop,
+    streamConnected,
   ])
 
   useEffect(() => {

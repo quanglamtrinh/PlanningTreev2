@@ -54,6 +54,7 @@ lane rules.
 - `createThread`
 - `forkThread`
 - `refreshThreads`
+- `submitSessionAction`
 - `setModel`
 - `submit`
 - `interrupt`
@@ -65,3 +66,5 @@ example, a breadcrumb container may decide that the active `audit` lane maps to 
 review thread id, then call `selectThread(threadId)`. The session facade only
 selects that thread; it does not know why the thread was chosen.
 
+`resolveRequest` and `rejectRequest` are facade conveniences that submit
+`request.resolve` / `request.reject` actions through `submitSessionAction`.

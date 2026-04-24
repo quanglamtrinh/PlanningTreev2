@@ -69,15 +69,15 @@ vi.mock('../../src/features/session_v2/components/RequestUserInputOverlay', () =
     onReject,
   }: {
     request: { requestId: string }
-    onResolve: (result: Record<string, unknown>) => Promise<void>
-    onReject: (reason?: string | null) => Promise<void>
+    onResolve: (requestId: string, result: Record<string, unknown>) => Promise<void>
+    onReject: (requestId: string, reason?: string | null) => Promise<void>
   }) => (
     <div data-testid="request-user-input-overlay" data-request-id={request.requestId}>
       <button
         type="button"
         data-testid="overlay-submit"
         onClick={() =>
-          void onResolve({
+          void onResolve(request.requestId, {
             answers: [{ id: 'q-1', selectedOption: 'Option A', notes: '', status: 'answered' }],
           })
         }
@@ -87,7 +87,7 @@ vi.mock('../../src/features/session_v2/components/RequestUserInputOverlay', () =
       <button
         type="button"
         data-testid="overlay-cancel"
-        onClick={() => void onReject('cancel')}
+        onClick={() => void onReject(request.requestId, 'cancel')}
       >
         Cancel
       </button>
@@ -101,13 +101,13 @@ vi.mock('../../src/features/session_v2/components/McpElicitationOverlay', () => 
     onResolve,
   }: {
     request: { requestId: string }
-    onResolve: (result: Record<string, unknown>) => Promise<void>
+    onResolve: (requestId: string, result: Record<string, unknown>) => Promise<void>
   }) => (
     <div data-testid="mcp-elicitation-overlay" data-request-id={request.requestId}>
       <button
         type="button"
         data-testid="mcp-overlay-submit"
-        onClick={() => void onResolve({ response: { name: 'value' } })}
+        onClick={() => void onResolve(request.requestId, { response: { name: 'value' } })}
       >
         Submit
       </button>
@@ -121,13 +121,13 @@ vi.mock('../../src/features/session_v2/components/ApprovalOverlay', () => ({
     onResolve,
   }: {
     request: { requestId: string }
-    onResolve: (result: Record<string, unknown>) => Promise<void>
+    onResolve: (requestId: string, result: Record<string, unknown>) => Promise<void>
   }) => (
     <div data-testid="approval-overlay" data-request-id={request.requestId}>
       <button
         type="button"
         data-testid="approval-overlay-accept"
-        onClick={() => void onResolve({ decision: 'accept' })}
+        onClick={() => void onResolve(request.requestId, { decision: 'accept' })}
       >
         Accept
       </button>
@@ -301,6 +301,7 @@ function makeFacade(
       createThread: vi.fn().mockResolvedValue(undefined),
       forkThread: vi.fn().mockResolvedValue(undefined),
       refreshThreads: vi.fn().mockResolvedValue(undefined),
+      submitSessionAction: vi.fn().mockResolvedValue(undefined),
       setModel: vi.fn(),
       submit: vi.fn().mockResolvedValue(undefined),
       interrupt: vi.fn().mockResolvedValue(undefined),
@@ -649,6 +650,7 @@ describe('BreadcrumbViewV2', () => {
     fireEvent.click(screen.getByTestId('overlay-submit'))
     await waitFor(() => {
       expect(onLaneFacade.commands.resolveRequest).toHaveBeenCalledWith(
+        'req-on-lane',
         expect.objectContaining({
           answers: expect.any(Array),
         }),
