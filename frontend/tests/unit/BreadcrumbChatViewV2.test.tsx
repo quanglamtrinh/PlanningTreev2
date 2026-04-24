@@ -3,7 +3,6 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockUseSessionFacadeV2 = vi.hoisted(() => vi.fn())
-const mockResolveTurnExecutionPolicy = vi.hoisted(() => vi.fn())
 
 vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
   ComposerPane: ({
@@ -16,6 +15,7 @@ vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
       input: Array<Record<string, unknown>>
       text: string
       accessMode: 'full-access' | 'default-permissions'
+      sessionConfig?: Record<string, unknown>
     }) => Promise<void>
     onInterrupt: () => Promise<void>
   }) => (
@@ -29,6 +29,15 @@ vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
             input: [{ type: 'text', text: 'queued from composer mock' }],
             text: 'queued from composer mock',
             accessMode: 'full-access',
+            sessionConfig: {
+              reasoning: { effort: 'xhigh', summary: null },
+              config: {
+                composer: {
+                  workMode: 'locally',
+                  streamMode: 'streaming',
+                },
+              },
+            },
           })
         }
       >
@@ -138,10 +147,6 @@ vi.mock('../../src/features/conversation/state/workflowEventBridgeV3', () => ({
 
 vi.mock('../../src/features/session_v2/facade/useSessionFacadeV2', () => ({
   useSessionFacadeV2: mockUseSessionFacadeV2,
-}))
-
-vi.mock('../../src/features/conversation/conversationPolicyResolver', () => ({
-  resolveTurnExecutionPolicy: mockResolveTurnExecutionPolicy,
 }))
 
 import type { NodeWorkflowView, Snapshot } from '../../src/api/types'
@@ -382,7 +387,6 @@ describe('BreadcrumbViewV2', () => {
     useWorkflowStateStoreV3.getState().reset()
     useUIStore.setState(useUIStore.getInitialState())
     mockUseSessionFacadeV2.mockReturnValue(makeFacade())
-    mockResolveTurnExecutionPolicy.mockReturnValue(undefined)
   })
 
   it('uses facade with breadcrumb policy and maps execution lane to workflow thread id', async () => {
@@ -547,13 +551,12 @@ describe('BreadcrumbViewV2', () => {
   })
 
   it('submits via facade command and refreshes workflow state', async () => {
-    const resolvedPolicy = { approvalPolicy: 'resolver-policy' }
     const facade = makeFacade({
       activeThreadId: 'exec-thread-1',
       activeThread: makeThread('exec-thread-1'),
       isActiveThreadReady: true,
+      selectedModel: 'gpt-5.4',
     })
-    mockResolveTurnExecutionPolicy.mockReturnValue(resolvedPolicy)
     mockUseSessionFacadeV2.mockReturnValue(facade)
     const workflowState = makeWorkflowState({
       workflowPhase: 'execution_decision_pending',
@@ -572,18 +575,18 @@ describe('BreadcrumbViewV2', () => {
     fireEvent.click(screen.getByTestId('composer-submit-mock'))
 
     await waitFor(() => {
-      expect(mockResolveTurnExecutionPolicy).toHaveBeenCalledWith({
-        threadTab: 'execution',
-        accessMode: 'full-access',
-        workflowState,
-        projectId: 'project-1',
-        nodeId: 'root',
-      })
       expect(facade.commands.submit).toHaveBeenCalledWith(
         expect.objectContaining({
           text: 'queued from composer mock',
         }),
-        resolvedPolicy,
+        expect.objectContaining({
+          model: 'gpt-5.4',
+          cwd: 'C:/workspace/project-1',
+          approvalPolicy: 'never',
+          sandboxPolicy: { type: 'dangerFullAccess' },
+          effort: 'xhigh',
+          summary: null,
+        }),
       )
     })
     await waitFor(() => {
