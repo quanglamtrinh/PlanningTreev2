@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { NodeWorkflowView } from '../../src/api/types'
 import {
   mergeSessionConfig,
+  resolveWorkflowProjection,
   resolveWorkflowSubmitTurnPolicy,
   resolveWorkflowThreadLane,
 } from '../../src/features/conversation/workflowThreadLane'
@@ -56,6 +57,48 @@ describe('workflowThreadLane', () => {
         cwd: 'C:/repo',
       },
       actions: [],
+    })
+  })
+
+  it('resolves a unified projection for ask, execution, and audit lanes', () => {
+    const projection = resolveWorkflowProjection({
+      workflowState: makeWorkflowState({
+        canSendExecutionMessage: true,
+        reviewThreadId: 'audit-thread-2',
+      }),
+      activeLane: 'audit',
+      selectedModel: 'gpt-5.4',
+      selectedModelProvider: 'openai',
+      projectPath: 'C:/repo',
+    })
+
+    expect(projection.isLoaded).toBe(true)
+    expect(projection.activeLane).toBe('audit')
+    expect(projection.active).toBe(projection.lanes.audit)
+    expect(projection.lanes.ask.threadId).toBe('ask-thread-1')
+    expect(projection.lanes.execution.threadId).toBe('exec-thread-1')
+    expect(projection.lanes.audit.threadId).toBe('audit-thread-2')
+    expect(projection.lanes.execution.policy.canSubmit).toBe(true)
+    expect(projection.lanes.audit.sessionConfig).toEqual({
+      model: 'gpt-5.4',
+      modelProvider: 'openai',
+      cwd: 'C:/repo',
+    })
+  })
+
+  it('marks projection as unloaded before workflow state arrives', () => {
+    const projection = resolveWorkflowProjection({
+      workflowState: undefined,
+      activeLane: 'execution',
+    })
+
+    expect(projection.isLoaded).toBe(false)
+    expect(projection.active).toBe(projection.lanes.execution)
+    expect(projection.active.threadId).toBeNull()
+    expect(projection.active.policy).toEqual({
+      kind: 'default',
+      canSubmit: false,
+      disabledReason: 'Workflow state is not loaded.',
     })
   })
 

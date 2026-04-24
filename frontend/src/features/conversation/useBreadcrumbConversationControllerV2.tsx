@@ -17,8 +17,8 @@ import {
 import { useWorkflowEventBridgeV3 } from './state/workflowEventBridgeV3'
 import { useWorkflowStateStoreV3 } from './state/workflowStateStoreV3'
 import {
+  resolveWorkflowProjection,
   resolveWorkflowSubmitTurnPolicy,
-  resolveWorkflowThreadLane,
   type WorkflowLaneAction,
 } from './workflowThreadLane'
 
@@ -187,11 +187,11 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     void loadWorkflowState(projectId, nodeId).catch(() => undefined)
   }, [detailNode, loadWorkflowState, nodeId, projectId, shouldCanonicalizeV2, snapshot])
 
-  const workflowLane = useMemo(
+  const workflowProjection = useMemo(
     () =>
-      resolveWorkflowThreadLane({
+      resolveWorkflowProjection({
         workflowState,
-        threadTab,
+        activeLane: threadTab,
         selectedModel: sessionState.selectedModel,
         selectedModelProvider: sessionState.activeThread?.modelProvider ?? null,
         projectPath: snapshot?.project.project_path ?? sessionState.activeThread?.cwd ?? null,
@@ -207,6 +207,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       workflowState,
     ],
   )
+  const workflowLane = workflowProjection.lanes[threadTab]
   const activeThreadId = workflowLane.threadId
 
   useEffect(() => {
@@ -216,19 +217,21 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       !detailNode ||
       !snapshot ||
       snapshot.project.id !== projectId ||
-      shouldCanonicalizeV2
+      shouldCanonicalizeV2 ||
+      !workflowProjection.isLoaded
     ) {
       return
     }
-    void sessionCommands.selectThread(activeThreadId ?? null).catch(() => undefined)
+    void sessionCommands.selectThread(workflowLane.threadId).catch(() => undefined)
   }, [
-    activeThreadId,
     detailNode,
     nodeId,
     projectId,
     sessionCommands.selectThread,
     shouldCanonicalizeV2,
     snapshot,
+    workflowLane.threadId,
+    workflowProjection.isLoaded,
   ])
 
   const detailCardState = useMemo(() => {

@@ -40,6 +40,13 @@ export type WorkflowThreadLane = {
   actions: WorkflowLaneAction[]
 }
 
+export type WorkflowProjection = {
+  lanes: Record<ThreadTab, WorkflowThreadLane>
+  activeLane: ThreadTab
+  active: WorkflowThreadLane
+  isLoaded: boolean
+}
+
 export type ResolveWorkflowThreadLaneInput = {
   workflowState: NodeWorkflowView | null | undefined
   threadTab: ThreadTab
@@ -47,6 +54,10 @@ export type ResolveWorkflowThreadLaneInput = {
   selectedModelProvider?: string | null
   projectPath?: string | null
   isReviewNode?: boolean
+}
+
+export type ResolveWorkflowProjectionInput = Omit<ResolveWorkflowThreadLaneInput, 'threadTab'> & {
+  activeLane: ThreadTab
 }
 
 export type ResolveWorkflowSubmitTurnPolicyInput = {
@@ -232,6 +243,29 @@ export function resolveWorkflowThreadLane(
       cwd: input.projectPath ?? null,
     },
     actions: resolveWorkflowActions(input.workflowState, input.threadTab),
+  }
+}
+
+export function resolveWorkflowProjection(
+  input: ResolveWorkflowProjectionInput,
+): WorkflowProjection {
+  const { activeLane, ...laneInput } = input
+  const resolveLane = (threadTab: ThreadTab): WorkflowThreadLane =>
+    resolveWorkflowThreadLane({
+      ...laneInput,
+      threadTab,
+    })
+  const lanes: Record<ThreadTab, WorkflowThreadLane> = {
+    ask: resolveLane('ask'),
+    execution: resolveLane('execution'),
+    audit: resolveLane('audit'),
+  }
+
+  return {
+    lanes,
+    activeLane,
+    active: lanes[activeLane],
+    isLoaded: Boolean(input.workflowState),
   }
 }
 
