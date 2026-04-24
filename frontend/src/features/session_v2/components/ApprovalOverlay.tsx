@@ -3,8 +3,8 @@ import type { PendingServerRequest } from '../contracts'
 
 type ApprovalOverlayProps = {
   request: PendingServerRequest
-  onResolve: (result: Record<string, unknown>) => Promise<void>
-  onReject: (reason?: string | null) => Promise<void>
+  onResolve: (requestId: string, result: Record<string, unknown>) => Promise<void>
+  onReject: (requestId: string, reason?: string | null) => Promise<void>
 }
 
 type ApprovalChoice = {
@@ -40,12 +40,12 @@ export function ApprovalOverlay({ request, onResolve, onReject }: ApprovalOverla
     setIsSubmitting(true)
     try {
       if (choice.result) {
-        await onResolve({
+        await onResolve(request.requestId, {
           ...choice.result,
           reason: customReason.trim().length > 0 ? customReason.trim() : null,
         })
       } else {
-        await onReject(choice.rejectReason ?? 'cancel')
+        await onReject(request.requestId, choice.rejectReason ?? 'cancel')
       }
     } finally {
       setIsSubmitting(false)
@@ -82,4 +82,3 @@ export function ApprovalOverlay({ request, onResolve, onReject }: ApprovalOverla
     </div>
   )
 }
-

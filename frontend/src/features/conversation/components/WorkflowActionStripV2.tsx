@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import styles from '../../session_v2/shell/SessionConsoleV2.module.css'
+import styles from '../../breadcrumb/BreadcrumbChatView.module.css'
 
 type WorkflowActionStripV2Props = {
   actions: ReactNode | null

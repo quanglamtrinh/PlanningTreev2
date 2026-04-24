@@ -3,8 +3,8 @@ import type { PendingServerRequest } from '../contracts'
 
 type McpElicitationOverlayProps = {
   request: PendingServerRequest
-  onResolve: (result: Record<string, unknown>) => Promise<void>
-  onReject: (reason?: string | null) => Promise<void>
+  onResolve: (requestId: string, result: Record<string, unknown>) => Promise<void>
+  onReject: (requestId: string, reason?: string | null) => Promise<void>
 }
 
 type FormField = {
@@ -54,7 +54,7 @@ export function McpElicitationOverlay({ request, onResolve, onReject }: McpElici
           formData[field.id] = value
         }
       }
-      await onResolve({ response: formData })
+      await onResolve(request.requestId, { response: formData })
     } finally {
       setIsSubmitting(false)
     }
@@ -90,7 +90,7 @@ export function McpElicitationOverlay({ request, onResolve, onReject }: McpElici
         </div>
         <footer className="sessionV2OverlayFooter">
           <div className="sessionV2OverlayActions">
-            <button type="button" disabled={isSubmitting} onClick={() => void onReject('cancel')}>
+            <button type="button" disabled={isSubmitting} onClick={() => void onReject(request.requestId, 'cancel')}>
               Cancel
             </button>
             <button type="button" disabled={isSubmitting} onClick={() => void submit()}>
@@ -102,4 +102,3 @@ export function McpElicitationOverlay({ request, onResolve, onReject }: McpElici
     </div>
   )
 }
-

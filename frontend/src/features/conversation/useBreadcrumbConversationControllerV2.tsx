@@ -8,7 +8,6 @@ import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { useSessionFacadeV2 } from '../session_v2/facade/useSessionFacadeV2'
 import type { BreadcrumbDetailPaneProps } from './BreadcrumbChatViewV2'
 import type { BreadcrumbThreadPaneV2Props } from './components/BreadcrumbThreadPaneV2'
-import { resolveTurnExecutionPolicy } from './conversationPolicyResolver'
 import {
   buildChatV2Url,
   parseThreadTab,
@@ -17,6 +16,11 @@ import {
 } from './surfaceRouting'
 import { useWorkflowEventBridgeV3 } from './state/workflowEventBridgeV3'
 import { useWorkflowStateStoreV3 } from './state/workflowStateStoreV3'
+import {
+  resolveWorkflowProjection,
+  resolveWorkflowSubmitTurnPolicy,
+  type WorkflowLaneAction,
+} from './workflowThreadLane'
 
 export type BreadcrumbConversationControllerV2 = {
   threadPaneProps: BreadcrumbThreadPaneV2Props
@@ -183,21 +187,28 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     void loadWorkflowState(projectId, nodeId).catch(() => undefined)
   }, [detailNode, loadWorkflowState, nodeId, projectId, shouldCanonicalizeV2, snapshot])
 
-  const activeThreadId = useMemo(() => {
-    if (!workflowState) {
-      return null
-    }
-    if (threadTab === 'ask') {
-      return workflowState.askThreadId ?? null
-    }
-    if (threadTab === 'execution') {
-      return workflowState.executionThreadId
-    }
-    if (threadTab === 'audit') {
-      return workflowState.reviewThreadId
-    }
-    return null
-  }, [threadTab, workflowState])
+  const workflowProjection = useMemo(
+    () =>
+      resolveWorkflowProjection({
+        workflowState,
+        activeLane: threadTab,
+        selectedModel: sessionState.selectedModel,
+        selectedModelProvider: sessionState.activeThread?.modelProvider ?? null,
+        projectPath: snapshot?.project.project_path ?? sessionState.activeThread?.cwd ?? null,
+        isReviewNode,
+      }),
+    [
+      isReviewNode,
+      sessionState.activeThread?.cwd,
+      sessionState.activeThread?.modelProvider,
+      sessionState.selectedModel,
+      snapshot?.project.project_path,
+      threadTab,
+      workflowState,
+    ],
+  )
+  const workflowLane = workflowProjection.lanes[threadTab]
+  const activeThreadId = workflowLane.threadId
 
   useEffect(() => {
     if (
@@ -206,19 +217,21 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       !detailNode ||
       !snapshot ||
       snapshot.project.id !== projectId ||
-      shouldCanonicalizeV2
+      shouldCanonicalizeV2 ||
+      !workflowProjection.isLoaded
     ) {
       return
     }
-    void sessionCommands.selectThread(activeThreadId ?? null).catch(() => undefined)
+    void sessionCommands.selectThread(workflowLane.threadId).catch(() => undefined)
   }, [
-    activeThreadId,
     detailNode,
     nodeId,
     projectId,
     sessionCommands.selectThread,
     shouldCanonicalizeV2,
     snapshot,
+    workflowLane.threadId,
+    workflowProjection.isLoaded,
   ])
 
   const detailCardState = useMemo(() => {
@@ -258,14 +271,15 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     sessionState.runtimeError ??
     sessionState.connection.error?.message ??
     null
-  const currentExecutionDecision = workflowState?.currentExecutionDecision ?? null
-  const currentAuditDecision = workflowState?.currentAuditDecision ?? null
 
   const isLaneThreadSelected = useMemo(() => {
     return Boolean(activeThreadId) && sessionState.activeThreadId === activeThreadId
   }, [activeThreadId, sessionState.activeThreadId])
 
   const composerDisabled = useMemo(() => {
+    if (!workflowLane.policy.canSubmit) {
+      return true
+    }
     if (!activeThreadId) {
       return true
     }
@@ -285,153 +299,101 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     sessionState.connection.phase,
     sessionState.isActiveThreadReady,
     sessionState.isSelectingThread,
+    workflowLane.policy.canSubmit,
   ])
 
   const handleSubmit = useCallback(
     async (payload: Parameters<typeof sessionCommands.submit>[0]) => {
-      const policy = resolveTurnExecutionPolicy({
-        threadTab,
-        accessMode: payload.accessMode,
-        workflowState,
-        projectId,
-        nodeId,
+      if (!workflowLane.policy.canSubmit) {
+        return
+      }
+      const turnPolicy = resolveWorkflowSubmitTurnPolicy({
+        lane: workflowLane,
+        requestedPolicy: payload.requestedPolicy,
       })
-      await sessionCommands.submit(payload, policy)
+      await sessionCommands.submit(payload, turnPolicy)
       if (!projectId || !nodeId) {
         return
       }
       void loadWorkflowState(projectId, nodeId).catch(() => undefined)
     },
-    [loadWorkflowState, nodeId, projectId, sessionCommands.submit, threadTab, workflowState],
+    [loadWorkflowState, nodeId, projectId, sessionCommands.submit, workflowLane],
   )
 
-  const handleMarkDoneFromExecution = useCallback(async () => {
-    if (!projectId || !nodeId || !currentExecutionDecision?.candidateWorkspaceHash) {
-      return
-    }
-    await markDoneFromExecution(projectId, nodeId, currentExecutionDecision.candidateWorkspaceHash)
-    setActiveSurface('graph')
-    void navigate('/')
-  }, [
-    currentExecutionDecision?.candidateWorkspaceHash,
-    markDoneFromExecution,
-    navigate,
-    nodeId,
-    projectId,
-    setActiveSurface,
-  ])
-
-  const handleReviewInAudit = useCallback(async () => {
-    if (!projectId || !nodeId || !currentExecutionDecision?.candidateWorkspaceHash) {
-      return
-    }
-    await reviewInAudit(projectId, nodeId, currentExecutionDecision.candidateWorkspaceHash)
-    void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
-  }, [currentExecutionDecision?.candidateWorkspaceHash, navigate, nodeId, projectId, reviewInAudit])
-
-  const handleMarkDoneFromAudit = useCallback(async () => {
-    if (!projectId || !nodeId || !currentAuditDecision?.reviewCommitSha) {
-      return
-    }
-    await markDoneFromAudit(projectId, nodeId, currentAuditDecision.reviewCommitSha)
-    setActiveSurface('graph')
-    void navigate('/')
-  }, [
-    currentAuditDecision?.reviewCommitSha,
-    markDoneFromAudit,
-    navigate,
-    nodeId,
-    projectId,
-    setActiveSurface,
-  ])
-
-  const handleImproveInExecution = useCallback(async () => {
-    if (!projectId || !nodeId || !currentAuditDecision?.reviewCommitSha) {
-      return
-    }
-    await improveInExecution(projectId, nodeId, currentAuditDecision.reviewCommitSha)
-    void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
-  }, [currentAuditDecision?.reviewCommitSha, improveInExecution, navigate, nodeId, projectId])
+  const handleWorkflowLaneAction = useCallback(
+    async (action: WorkflowLaneAction) => {
+      if (!projectId || !nodeId) {
+        return
+      }
+      if (action.kind === 'reviewInAudit') {
+        if (!action.candidateWorkspaceHash) {
+          return
+        }
+        await reviewInAudit(projectId, nodeId, action.candidateWorkspaceHash)
+        void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
+        return
+      }
+      if (action.kind === 'markDoneFromExecution') {
+        if (!action.candidateWorkspaceHash) {
+          return
+        }
+        await markDoneFromExecution(projectId, nodeId, action.candidateWorkspaceHash)
+        setActiveSurface('graph')
+        void navigate('/')
+        return
+      }
+      if (action.kind === 'improveInExecution') {
+        if (!action.reviewCommitSha) {
+          return
+        }
+        await improveInExecution(projectId, nodeId, action.reviewCommitSha)
+        void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
+        return
+      }
+      if (action.kind === 'markDoneFromAudit') {
+        if (!action.reviewCommitSha) {
+          return
+        }
+        await markDoneFromAudit(projectId, nodeId, action.reviewCommitSha)
+        setActiveSurface('graph')
+        void navigate('/')
+      }
+    },
+    [
+      improveInExecution,
+      markDoneFromAudit,
+      markDoneFromExecution,
+      navigate,
+      nodeId,
+      projectId,
+      reviewInAudit,
+      setActiveSurface,
+    ],
+  )
 
   const composerWorkflowActions = useMemo(() => {
-    if (!workflowState) {
+    if (workflowLane.actions.length === 0) {
       return null
     }
-
-    if (threadTab === 'execution') {
-      if (!workflowState.canReviewInAudit && !workflowState.canMarkDoneFromExecution) {
-        return null
-      }
-      return (
-        <>
-          {workflowState.canReviewInAudit ? (
-            <button
-              type="button"
-              className={styles.threadHeaderAction}
-              disabled={activeMutation !== null}
-              onClick={() => void handleReviewInAudit()}
-              data-testid="workflow-review-in-audit"
-            >
-              {renderActionLabel(activeMutation, 'Review in Audit', 'Starting Review...')}
-            </button>
-          ) : null}
-          {workflowState.canMarkDoneFromExecution ? (
-            <button
-              type="button"
-              className={`${styles.threadHeaderAction} ${styles.threadHeaderActionPrimary}`}
-              disabled={activeMutation !== null}
-              onClick={() => void handleMarkDoneFromExecution()}
-              data-testid="workflow-mark-done-execution"
-            >
-              {renderActionLabel(activeMutation, 'Mark Done', 'Marking Done...')}
-            </button>
-          ) : null}
-        </>
-      )
-    }
-
-    if (threadTab === 'audit') {
-      if (!workflowState.canImproveInExecution && !workflowState.canMarkDoneFromAudit) {
-        return null
-      }
-      return (
-        <>
-          {workflowState.canImproveInExecution ? (
-            <button
-              type="button"
-              className={styles.threadHeaderAction}
-              disabled={activeMutation !== null}
-              onClick={() => void handleImproveInExecution()}
-              data-testid="workflow-improve-in-execution"
-            >
-              {renderActionLabel(activeMutation, 'Improve in Execution', 'Starting Improve...')}
-            </button>
-          ) : null}
-          {workflowState.canMarkDoneFromAudit ? (
-            <button
-              type="button"
-              className={`${styles.threadHeaderAction} ${styles.threadHeaderActionPrimary}`}
-              disabled={activeMutation !== null}
-              onClick={() => void handleMarkDoneFromAudit()}
-              data-testid="workflow-mark-done-audit"
-            >
-              {renderActionLabel(activeMutation, 'Mark Done', 'Marking Done...')}
-            </button>
-          ) : null}
-        </>
-      )
-    }
-
-    return null
-  }, [
-    activeMutation,
-    handleImproveInExecution,
-    handleMarkDoneFromAudit,
-    handleMarkDoneFromExecution,
-    handleReviewInAudit,
-    threadTab,
-    workflowState,
-  ])
+    return (
+      <>
+        {workflowLane.actions.map((action) => (
+          <button
+            key={action.kind}
+            type="button"
+            className={`${styles.threadHeaderAction}${
+              action.variant === 'primary' ? ` ${styles.threadHeaderActionPrimary}` : ''
+            }`}
+            disabled={activeMutation !== null}
+            onClick={() => void handleWorkflowLaneAction(action)}
+            data-testid={action.testId}
+          >
+            {renderActionLabel(activeMutation, action.idleLabel, action.busyLabel)}
+          </button>
+        ))}
+      </>
+    )
+  }, [activeMutation, handleWorkflowLaneAction, workflowLane.actions])
 
   const handleThreadTabChange = useCallback(
     (nextThreadTab: ThreadTab) => {

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { SharedMarkdownRenderer } from '../../markdown/SharedMarkdownRenderer'
-import type { SessionItem, SessionTurn } from '../contracts'
+import { isItemKind } from '../contracts'
+import type { ItemKind, SessionItem, SessionTurn } from '../contracts'
 
 type TranscriptPanelProps = {
   threadId: string | null
@@ -33,6 +34,8 @@ type TranscriptRow =
       type: 'agentWorkSummary'
       entries: AgentWorkSummaryEntry[]
     }
+
+type RowVariant = 'user' | 'assistant' | 'tool' | 'unknown'
 
 type AgentWorkSummaryEntry =
   | {
@@ -140,6 +143,17 @@ function normalizeText(value: unknown): string {
 function payloadTypeOf(item: SessionItem): string {
   const payload = isRecord(item.payload) ? item.payload : {}
   return normalizeText(payload.type)
+}
+
+function normalizedKindOf(item: SessionItem): ItemKind | null {
+  if (isItemKind(item.normalizedKind)) {
+    return item.normalizedKind
+  }
+  if (isItemKind(item.kind)) {
+    return item.kind
+  }
+  const payloadType = payloadTypeOf(item)
+  return isItemKind(payloadType) ? payloadType : null
 }
 
 function pluralize(count: number, singular: string, plural: string): string {
@@ -489,26 +503,26 @@ function formatPayloadFallback(payload: Record<string, unknown>): string {
 
 function renderItemText(item: SessionItem): string {
   const payload = isRecord(item.payload) ? item.payload : {}
-  const itemType = normalizeText(payload.type)
+  const itemKind = normalizedKindOf(item)
 
-  if (itemType === 'userMessage') {
+  if (itemKind === 'userMessage') {
     const text = extractUserContent(payload.content)
     return text || normalizeText(payload.text)
   }
-  if (itemType === 'agentMessage' || itemType === 'plan') {
+  if (itemKind === 'agentMessage' || itemKind === 'plan') {
     return normalizeText(payload.text) || normalizeText(payload.delta)
   }
-  if (itemType === 'reasoning') {
+  if (itemKind === 'reasoning') {
     return extractReasoningContent(payload)
   }
-  if (itemType === 'commandExecution') {
+  if (itemKind === 'commandExecution') {
     const aggregated = normalizeText(payload.aggregatedOutput || payload.output)
     if (aggregated) {
       return aggregated
     }
     return normalizeText(payload.command)
   }
-  if (itemType === 'fileChange') {
+  if (itemKind === 'fileChange') {
     const output = normalizeText(payload.output)
     if (output) {
       return output
@@ -537,13 +551,7 @@ function renderItemText(item: SessionItem): string {
   if (typeof payload.delta === 'string') {
     return payload.delta
   }
-  if (item.kind === 'reasoning') {
-    const reasoning = extractReasoningContent(payload)
-    if (reasoning) {
-      return reasoning
-    }
-  }
-  if (item.kind === 'fileChange') {
+  if (itemKind === 'fileChange') {
     const changes = extractFileChanges(payload)
     if (changes) {
       return changes
@@ -553,20 +561,20 @@ function renderItemText(item: SessionItem): string {
   return formatPayloadFallback(payload)
 }
 
-function resolveRowVariant(item: SessionItem): 'user' | 'assistant' | 'tool' {
-  const itemType = payloadTypeOf(item)
-  if (item.kind === 'userMessage' || itemType === 'userMessage') {
+function resolveRowVariant(item: SessionItem): RowVariant {
+  const itemKind = normalizedKindOf(item)
+  if (itemKind === 'userMessage') {
     return 'user'
   }
   if (
-    item.kind === 'agentMessage' ||
-    item.kind === 'plan' ||
-    item.kind === 'reasoning' ||
-    itemType === 'agentMessage' ||
-    itemType === 'plan' ||
-    itemType === 'reasoning'
+    itemKind === 'agentMessage' ||
+    itemKind === 'plan' ||
+    itemKind === 'reasoning'
   ) {
     return 'assistant'
+  }
+  if (itemKind === null) {
+    return 'unknown'
   }
   return 'tool'
 }
@@ -580,12 +588,11 @@ function isToolItem(item: SessionItem): boolean {
 }
 
 function isAgentMessageItem(item: SessionItem): boolean {
-  const itemType = payloadTypeOf(item)
-  return item.kind === 'agentMessage' || itemType === 'agentMessage'
+  return normalizedKindOf(item) === 'agentMessage'
 }
 
 function isFileChangeItem(item: SessionItem): boolean {
-  return payloadTypeOf(item) === 'fileChange' || item.kind === 'fileChange'
+  return normalizedKindOf(item) === 'fileChange'
 }
 
 function parseFileChangeEntriesFromPayload(payload: Record<string, unknown>): TurnFileChangeEntry[] {
@@ -807,7 +814,29 @@ function renderToolTitle(item: SessionItem): string {
   if (itemType) {
     return itemType
   }
+  const itemKind = normalizedKindOf(item)
+  if (itemKind) {
+    return itemKind
+  }
   return item.kind
+}
+
+function formatUnknownItemDetails(item: SessionItem): string {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  const payloadText = formatPayloadFallback(payload) || '{}'
+  return `kind: ${item.kind || 'unknown'}\npayload:\n${payloadText}`
+}
+
+function UnknownItemCard({ item }: { item: SessionItem }) {
+  return (
+    <article className="sessionV2ToolCard sessionV2UnknownItemCard">
+      <header className="sessionV2ToolCardHeader">
+        <span>Unknown Codex item</span>
+        <small>{item.status}</small>
+      </header>
+      <pre className="sessionV2ToolCardText">{formatUnknownItemDetails(item)}</pre>
+    </article>
+  )
 }
 
 function shouldCollapseUserMessage(text: string): boolean {
@@ -1277,6 +1306,9 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
 
                     const variant = resolveRowVariant(entry.item)
                     const text = renderItemText(entry.item)
+                    if (variant === 'unknown') {
+                      return <UnknownItemCard key={`${row.key}:${entry.key}`} item={entry.item} />
+                    }
                     const rowClassName =
                       variant === 'assistant'
                         ? 'sessionV2MessageRow sessionV2MessageRowAssistant'
@@ -1409,6 +1441,9 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
 
         const variant = resolveRowVariant(row.item)
         const text = renderItemText(row.item)
+        if (variant === 'unknown') {
+          return <UnknownItemCard key={row.key} item={row.item} />
+        }
         if (variant === 'tool') {
           return (
             <article key={row.key} className="sessionV2ToolCard">

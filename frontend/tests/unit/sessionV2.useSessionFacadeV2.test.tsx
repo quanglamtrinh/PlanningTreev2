@@ -340,7 +340,7 @@ describe('useSessionFacadeV2', () => {
     expect(useConnectionStore.getState().connection.phase).toBe('disconnected')
   })
 
-  it('polls pending requests when the active thread opens without recurring polling', async () => {
+  it('polls pending requests as fallback when stream is disconnected and slows after connect', async () => {
     vi.useFakeTimers()
 
     let latestFacade: SessionFacadeV2 | null = null
@@ -368,9 +368,70 @@ describe('useSessionFacadeV2', () => {
     expect(initialPollCount).toBeGreaterThan(0)
 
     await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500)
+    })
+    expect(mockApi.listPendingRequestsV2.mock.calls.length).toBe(initialPollCount + 1)
+
+    const source = mockApi.openThreadEventsStreamV2.mock.results[0]?.value as MockEventSource
+    await act(async () => {
+      source.onopen?.call(source as unknown as EventSource, new Event('open'))
+      await Promise.resolve()
+    })
+
+    expect(useThreadSessionStore.getState().streamState.connectedByThread['thread-1']).toBe(true)
+
+    const connectedPollCount = mockApi.listPendingRequestsV2.mock.calls.length
+
+    await act(async () => {
       await vi.advanceTimersByTimeAsync(5000)
     })
-    expect(mockApi.listPendingRequestsV2.mock.calls.length).toBe(initialPollCount)
+    expect(mockApi.listPendingRequestsV2.mock.calls.length).toBe(connectedPollCount)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(25000)
+    })
+    expect(mockApi.listPendingRequestsV2.mock.calls.length).toBe(connectedPollCount + 1)
+  })
+
+  it('routes request resolve/reject commands through explicit session actions', async () => {
+    let latestFacade: SessionFacadeV2 | null = null
+
+    render(
+      <FacadeHarness
+        options={{
+          bootstrapPolicy: {
+            autoBootstrapOnMount: false,
+          },
+        }}
+        onFacade={(facade) => {
+          latestFacade = facade
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(latestFacade).not.toBeNull()
+    })
+
+    await act(async () => {
+      await latestFacade?.commands.resolveRequest(' request-1 ', { approved: true })
+      await latestFacade?.commands.rejectRequest('request-2', 'denied')
+    })
+
+    expect(mockApi.resolvePendingRequestV2).toHaveBeenCalledWith(
+      'request-1',
+      expect.objectContaining({
+        resolutionKey: expect.any(String),
+        result: { approved: true },
+      }),
+    )
+    expect(mockApi.rejectPendingRequestV2).toHaveBeenCalledWith(
+      'request-2',
+      expect.objectContaining({
+        resolutionKey: expect.any(String),
+        reason: 'denied',
+      }),
+    )
   })
 
   it('supports bootstrap policy without auto mount bootstrap/select/create', async () => {
@@ -471,8 +532,10 @@ describe('useSessionFacadeV2', () => {
         {
           input: [{ type: 'text', text: 'run tests' }],
           text: 'run tests',
-          accessMode: 'default-permissions',
-          model: null,
+          requestedPolicy: {
+            accessMode: 'default-permissions',
+            model: null,
+          },
         },
         turnExecutionPolicy,
       )

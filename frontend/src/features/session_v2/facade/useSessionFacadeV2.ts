@@ -4,6 +4,7 @@ import type { ComposerSubmitPayload } from '../components/ComposerPane'
 import type {
   PendingServerRequest,
   SessionItem,
+  SessionInputAction,
   SessionThread,
   SessionTurn,
   ThreadCreationPolicy,
@@ -12,6 +13,7 @@ import type {
 } from '../contracts'
 import { createSessionEventStreamController, type SessionEventStreamController } from './sessionEventStreamController'
 import {
+  createSessionActionId,
   createSessionRuntimeController,
   type ComposerModelOption,
   type RuntimeSnapshot,
@@ -69,11 +71,12 @@ export type SessionFacadeCommands = {
   createThread: (policy?: ThreadCreationPolicy) => Promise<void>
   forkThread: (threadId: string) => Promise<void>
   refreshThreads: () => Promise<void>
+  submitSessionAction: (action: SessionInputAction) => Promise<void>
   setModel: (model: string) => void
   submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => Promise<void>
   interrupt: () => Promise<void>
-  resolveRequest: (result: Record<string, unknown>) => Promise<void>
-  rejectRequest: (reason?: string | null) => Promise<void>
+  resolveRequest: (requestId: string, result: Record<string, unknown>) => Promise<void>
+  rejectRequest: (requestId: string, reason?: string | null) => Promise<void>
 }
 
 export type SessionFacadeV2 = {
@@ -136,7 +139,6 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     activeTurns: [],
     activeRunningTurn: null,
     selectedModel: null,
-    activeRequest: null,
   })
 
   const threads = useMemo(() => selectThreadsSorted(threadStoreState), [threadStoreState])
@@ -222,7 +224,7 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
       getLastEventId: (threadId) => useThreadSessionStore.getState().lastEventIdByThread[threadId] ?? null,
       getGapDetected: (threadId) => Boolean(useThreadSessionStore.getState().gapDetectedByThread[threadId]),
       onStreamConnected: () => {
-        void runtimeControllerRef.current?.pollPendingRequests()
+        void runtimeControllerRef.current?.pollPendingRequests({ surfaceErrors: false })
       },
       onRuntimeError: setRuntimeError,
     })
@@ -230,6 +232,7 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
 
   const { activeRequest, stopPendingRequestLoop } = usePendingRequestLoop({
     activeThreadId: threadStoreState.activeThreadId,
+    streamConnected,
     pendingRequestsStoreState,
     pendingRequestScope,
     runtimeControllerRef,
@@ -267,7 +270,6 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     activeTurns,
     activeRunningTurn,
     selectedModel,
-    activeRequest,
   }
 
   const bootstrap = useCallback(async (policy?: Partial<SessionFacadeBootstrapPolicy>) => {
@@ -294,12 +296,34 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     await runtimeControllerRef.current?.interrupt()
   }, [])
 
-  const resolveRequest = useCallback(async (result: Record<string, unknown>) => {
-    await runtimeControllerRef.current?.resolveRequest(result)
+  const submitSessionAction = useCallback(async (action: SessionInputAction) => {
+    await runtimeControllerRef.current?.submitSessionAction(action)
   }, [])
 
-  const rejectRequest = useCallback(async (reason?: string | null) => {
-    await runtimeControllerRef.current?.rejectRequest(reason)
+  const resolveRequest = useCallback(async (requestId: string, result: Record<string, unknown>) => {
+    const normalizedRequestId = requestId.trim()
+    if (!normalizedRequestId) {
+      return
+    }
+    await runtimeControllerRef.current?.submitSessionAction({
+      type: 'request.resolve',
+      requestId: normalizedRequestId,
+      result,
+      resolutionKey: createSessionActionId(),
+    })
+  }, [])
+
+  const rejectRequest = useCallback(async (requestId: string, reason?: string | null) => {
+    const normalizedRequestId = requestId.trim()
+    if (!normalizedRequestId) {
+      return
+    }
+    await runtimeControllerRef.current?.submitSessionAction({
+      type: 'request.reject',
+      requestId: normalizedRequestId,
+      reason: reason ?? null,
+      resolutionKey: createSessionActionId(),
+    })
   }, [])
 
   const state: SessionFacadeState = {
@@ -333,6 +357,7 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     createThread,
     forkThread,
     refreshThreads,
+    submitSessionAction,
     setModel,
     submit,
     interrupt,

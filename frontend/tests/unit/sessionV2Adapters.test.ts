@@ -237,11 +237,11 @@ describe('sessionV2Adapters composer adapter', () => {
     await model.onSubmit({
       input: [
         { type: 'text', text: 'fix bug' },
-        { type: 'image', imageUrl: 'https://example.com/img.png' },
+        { type: 'image', url: 'https://example.com/img.png' },
         { type: 'localImage', path: 'C:/tmp/a.png' },
       ],
       text: 'fallback text',
-      accessMode: 'full-access',
+      requestedPolicy: { accessMode: 'full-access' },
     })
 
     expect(model.isTurnRunning).toBe(false)

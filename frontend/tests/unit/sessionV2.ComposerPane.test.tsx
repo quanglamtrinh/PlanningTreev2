@@ -15,7 +15,7 @@ describe('ComposerPane', () => {
       />,
     )
 
-    const textarea = screen.getByPlaceholderText('Ask for follow-up changes') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: '/plan investigate' } })
     expect(screen.getByText('/plan')).toBeInTheDocument()
 
@@ -33,7 +33,7 @@ describe('ComposerPane', () => {
         onInterrupt={onInterrupt}
       />,
     )
-    const textarea = screen.getByPlaceholderText('Ask for follow-up changes') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
     fireEvent.keyDown(textarea, { key: 'r', ctrlKey: true })
     expect(screen.getByPlaceholderText('Search history')).toBeInTheDocument()
   })
@@ -76,14 +76,65 @@ describe('ComposerPane', () => {
     fireEvent.change(modelSelect, { target: { value: 'gpt-5.2' } })
     expect(onModelChange).toHaveBeenCalledWith('gpt-5.2')
 
-    const textarea = screen.getByPlaceholderText('Ask for follow-up changes') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: 'Test model submit' } })
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
     expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
-      model: 'gpt-5.4',
       text: 'Test model submit',
+      input: [
+        {
+          type: 'text',
+          text: 'Test model submit',
+          text_elements: [],
+        },
+      ],
+      requestedPolicy: {
+        model: 'gpt-5.4',
+        accessMode: 'full-access',
+        effort: 'extra-high',
+        workMode: 'local',
+        streamMode: 'streaming',
+      },
+    })
+  })
+
+  it('submits mention text as native text elements with PlanningTree metadata off the input item top level', async () => {
+    const onSubmit = vi.fn(async () => undefined)
+    const onInterrupt = vi.fn(async () => undefined)
+    render(
+      <ComposerPane
+        isTurnRunning={false}
+        onSubmit={onSubmit}
+        onInterrupt={onInterrupt}
+      />,
+    )
+
+    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'Check @' } })
+    fireEvent.click(screen.getByText('@README.md'))
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    const payload = onSubmit.mock.calls[0]?.[0]
+    expect(payload?.input[0]).toMatchObject({
+      type: 'text',
+      text: 'Check @ @README.md',
+      text_elements: [
+        {
+          byteRange: { start: 8, end: 18 },
+          placeholder: '@README.md',
+        },
+      ],
+    })
+    expect(payload?.input[0]).not.toHaveProperty('mentionBindings')
+    expect(payload?.metadata).toEqual({
+      planningTree: {
+        mentionBindings: {
+          '@README.md': 'README.md',
+        },
+      },
     })
   })
 

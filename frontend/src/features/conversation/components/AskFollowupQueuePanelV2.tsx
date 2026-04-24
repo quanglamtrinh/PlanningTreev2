@@ -7,7 +7,7 @@ import {
   renderAskQueuePauseReasonLabel,
   renderQueueStatusLabel,
 } from './BreadcrumbThreadPaneV2.design'
-import styles from '../../session_v2/shell/SessionConsoleV2.module.css'
+import styles from '../../breadcrumb/BreadcrumbChatView.module.css'
 
 type AskFollowupQueuePanelV2Props = {
   askQueueState: ThreadAskFollowupQueueState

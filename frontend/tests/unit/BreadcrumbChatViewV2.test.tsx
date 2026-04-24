@@ -3,7 +3,6 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockUseSessionFacadeV2 = vi.hoisted(() => vi.fn())
-const mockResolveTurnExecutionPolicy = vi.hoisted(() => vi.fn())
 
 vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
   ComposerPane: ({
@@ -15,7 +14,12 @@ vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
     onSubmit: (payload: {
       input: Array<Record<string, unknown>>
       text: string
-      accessMode: 'full-access' | 'default-permissions'
+      requestedPolicy?: {
+        accessMode?: 'full-access' | 'default-permissions'
+        effort?: 'low' | 'medium' | 'high' | 'extra-high'
+        workMode?: 'local' | 'remote'
+        streamMode?: 'streaming' | 'batch'
+      }
     }) => Promise<void>
     onInterrupt: () => Promise<void>
   }) => (
@@ -28,7 +32,12 @@ vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
           void onSubmit({
             input: [{ type: 'text', text: 'queued from composer mock' }],
             text: 'queued from composer mock',
-            accessMode: 'full-access',
+            requestedPolicy: {
+              accessMode: 'full-access',
+              effort: 'extra-high',
+              workMode: 'local',
+              streamMode: 'streaming',
+            },
           })
         }
       >
@@ -60,15 +69,15 @@ vi.mock('../../src/features/session_v2/components/RequestUserInputOverlay', () =
     onReject,
   }: {
     request: { requestId: string }
-    onResolve: (result: Record<string, unknown>) => Promise<void>
-    onReject: (reason?: string | null) => Promise<void>
+    onResolve: (requestId: string, result: Record<string, unknown>) => Promise<void>
+    onReject: (requestId: string, reason?: string | null) => Promise<void>
   }) => (
     <div data-testid="request-user-input-overlay" data-request-id={request.requestId}>
       <button
         type="button"
         data-testid="overlay-submit"
         onClick={() =>
-          void onResolve({
+          void onResolve(request.requestId, {
             answers: [{ id: 'q-1', selectedOption: 'Option A', notes: '', status: 'answered' }],
           })
         }
@@ -78,7 +87,7 @@ vi.mock('../../src/features/session_v2/components/RequestUserInputOverlay', () =
       <button
         type="button"
         data-testid="overlay-cancel"
-        onClick={() => void onReject('cancel')}
+        onClick={() => void onReject(request.requestId, 'cancel')}
       >
         Cancel
       </button>
@@ -92,13 +101,13 @@ vi.mock('../../src/features/session_v2/components/McpElicitationOverlay', () => 
     onResolve,
   }: {
     request: { requestId: string }
-    onResolve: (result: Record<string, unknown>) => Promise<void>
+    onResolve: (requestId: string, result: Record<string, unknown>) => Promise<void>
   }) => (
     <div data-testid="mcp-elicitation-overlay" data-request-id={request.requestId}>
       <button
         type="button"
         data-testid="mcp-overlay-submit"
-        onClick={() => void onResolve({ response: { name: 'value' } })}
+        onClick={() => void onResolve(request.requestId, { response: { name: 'value' } })}
       >
         Submit
       </button>
@@ -112,13 +121,13 @@ vi.mock('../../src/features/session_v2/components/ApprovalOverlay', () => ({
     onResolve,
   }: {
     request: { requestId: string }
-    onResolve: (result: Record<string, unknown>) => Promise<void>
+    onResolve: (requestId: string, result: Record<string, unknown>) => Promise<void>
   }) => (
     <div data-testid="approval-overlay" data-request-id={request.requestId}>
       <button
         type="button"
         data-testid="approval-overlay-accept"
-        onClick={() => void onResolve({ decision: 'accept' })}
+        onClick={() => void onResolve(request.requestId, { decision: 'accept' })}
       >
         Accept
       </button>
@@ -138,10 +147,6 @@ vi.mock('../../src/features/conversation/state/workflowEventBridgeV3', () => ({
 
 vi.mock('../../src/features/session_v2/facade/useSessionFacadeV2', () => ({
   useSessionFacadeV2: mockUseSessionFacadeV2,
-}))
-
-vi.mock('../../src/features/conversation/conversationPolicyResolver', () => ({
-  resolveTurnExecutionPolicy: mockResolveTurnExecutionPolicy,
 }))
 
 import type { NodeWorkflowView, Snapshot } from '../../src/api/types'
@@ -296,6 +301,7 @@ function makeFacade(
       createThread: vi.fn().mockResolvedValue(undefined),
       forkThread: vi.fn().mockResolvedValue(undefined),
       refreshThreads: vi.fn().mockResolvedValue(undefined),
+      submitSessionAction: vi.fn().mockResolvedValue(undefined),
       setModel: vi.fn(),
       submit: vi.fn().mockResolvedValue(undefined),
       interrupt: vi.fn().mockResolvedValue(undefined),
@@ -382,7 +388,6 @@ describe('BreadcrumbViewV2', () => {
     useWorkflowStateStoreV3.getState().reset()
     useUIStore.setState(useUIStore.getInitialState())
     mockUseSessionFacadeV2.mockReturnValue(makeFacade())
-    mockResolveTurnExecutionPolicy.mockReturnValue(undefined)
   })
 
   it('uses facade with breadcrumb policy and maps execution lane to workflow thread id', async () => {
@@ -547,13 +552,12 @@ describe('BreadcrumbViewV2', () => {
   })
 
   it('submits via facade command and refreshes workflow state', async () => {
-    const resolvedPolicy = { approvalPolicy: 'resolver-policy' }
     const facade = makeFacade({
       activeThreadId: 'exec-thread-1',
       activeThread: makeThread('exec-thread-1'),
       isActiveThreadReady: true,
+      selectedModel: 'gpt-5.4',
     })
-    mockResolveTurnExecutionPolicy.mockReturnValue(resolvedPolicy)
     mockUseSessionFacadeV2.mockReturnValue(facade)
     const workflowState = makeWorkflowState({
       workflowPhase: 'execution_decision_pending',
@@ -572,18 +576,18 @@ describe('BreadcrumbViewV2', () => {
     fireEvent.click(screen.getByTestId('composer-submit-mock'))
 
     await waitFor(() => {
-      expect(mockResolveTurnExecutionPolicy).toHaveBeenCalledWith({
-        threadTab: 'execution',
-        accessMode: 'full-access',
-        workflowState,
-        projectId: 'project-1',
-        nodeId: 'root',
-      })
       expect(facade.commands.submit).toHaveBeenCalledWith(
         expect.objectContaining({
           text: 'queued from composer mock',
         }),
-        resolvedPolicy,
+        expect.objectContaining({
+          model: 'gpt-5.4',
+          cwd: 'C:/workspace/project-1',
+          approvalPolicy: 'never',
+          sandboxPolicy: { type: 'dangerFullAccess' },
+          effort: 'xhigh',
+          summary: null,
+        }),
       )
     })
     await waitFor(() => {
@@ -646,6 +650,7 @@ describe('BreadcrumbViewV2', () => {
     fireEvent.click(screen.getByTestId('overlay-submit'))
     await waitFor(() => {
       expect(onLaneFacade.commands.resolveRequest).toHaveBeenCalledWith(
+        'req-on-lane',
         expect.objectContaining({
           answers: expect.any(Array),
         }),

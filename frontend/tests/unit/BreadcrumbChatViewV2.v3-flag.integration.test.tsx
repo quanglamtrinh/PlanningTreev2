@@ -210,6 +210,7 @@ function makeFacade(state: Partial<SessionFacadeState>): SessionFacadeV2 {
       createThread: vi.fn().mockResolvedValue(undefined),
       forkThread: vi.fn().mockResolvedValue(undefined),
       refreshThreads: vi.fn().mockResolvedValue(undefined),
+      submitSessionAction: vi.fn().mockResolvedValue(undefined),
       setModel: vi.fn(),
       submit: vi.fn().mockResolvedValue(undefined),
       interrupt: vi.fn().mockResolvedValue(undefined),

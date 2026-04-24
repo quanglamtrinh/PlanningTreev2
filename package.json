@@ -42,8 +42,9 @@
     "check:phase6_3_cleanup": "python scripts/check_phase6_3_cleanup.py",
     "check:gitcommit_phase6_smoke": "python scripts/gitcommit_phase6_smoke.py --repeat 1",
     "check:gitcommit_phase7_cleanup": "python scripts/check_gitcommit_phase7_cleanup.py",
+    "check:session_v2_boundary": "python scripts/check_session_v2_boundary.py",
     "typecheck": "npm run typecheck --prefix frontend",
-    "test": "npm run test:unit --prefix frontend && python -m pytest backend/tests/unit"
+    "test": "npm run check:session_v2_boundary && npm run test:unit --prefix frontend && python -m pytest backend/tests/unit"
   },
   "devDependencies": {
     "electron": "^33.4.11",

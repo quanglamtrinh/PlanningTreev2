@@ -55,7 +55,6 @@ function createHarness() {
     activeTurns: [] as SessionTurn[],
     activeRunningTurn: null as SessionTurn | null,
     selectedModel: null as string | null,
-    activeRequest: null as PendingServerRequest | null,
   }
 
   const setThreadList = vi.fn((rows: SessionThread[]) => {
@@ -221,8 +220,10 @@ describe('sessionRuntimeController', () => {
     await harness.controller.submit({
       input: [{ type: 'text', text: 'continue' }],
       text: 'continue',
-      accessMode: 'default-permissions',
-      model: null,
+      requestedPolicy: {
+        accessMode: 'default-permissions',
+        model: null,
+      },
     })
 
     expect(harness.api.steerTurn).toHaveBeenCalledTimes(1)
@@ -239,8 +240,10 @@ describe('sessionRuntimeController', () => {
     await harness.controller.submit({
       input: [{ type: 'text', text: 'run tests' }],
       text: 'run tests',
-      accessMode: 'full-access',
-      model: null,
+      requestedPolicy: {
+        accessMode: 'full-access',
+        model: null,
+      },
     })
 
     expect(harness.api.startTurn).toHaveBeenCalledTimes(1)
@@ -248,6 +251,72 @@ describe('sessionRuntimeController', () => {
     expect(request.model).toBe('gpt-5')
     expect(request.approvalPolicy).toBeUndefined()
     expect(request.sandboxPolicy).toBeUndefined()
+  })
+
+  it('dispatches explicit turn start actions through the unified input pipeline', async () => {
+    await harness.controller.submitSessionAction({
+      type: 'turn.start',
+      threadId: 'thread-1',
+      input: [{ type: 'text', text: 'run tests' }],
+      clientActionId: 'action-1',
+      policy: {
+        model: 'gpt-5.2',
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'dangerFullAccess' },
+      },
+    })
+
+    expect(harness.api.startTurn).toHaveBeenCalledWith(
+      'thread-1',
+      expect.objectContaining({
+        clientActionId: 'action-1',
+        input: [{ type: 'text', text: 'run tests' }],
+        model: 'gpt-5.2',
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'dangerFullAccess' },
+      }),
+    )
+    expect(harness.spies.setThreadTurns).toHaveBeenCalledWith(
+      'thread-1',
+      [expect.objectContaining({ id: 'turn-started', threadId: 'thread-1' })],
+    )
+    expect(harness.spies.markThreadActivity).toHaveBeenCalledWith('thread-1')
+  })
+
+  it('dispatches explicit request resolution actions through the unified input pipeline', async () => {
+    await harness.controller.submitSessionAction({
+      type: 'request.resolve',
+      requestId: 'request-1',
+      result: { approved: true },
+      resolutionKey: 'resolution-1',
+    })
+
+    expect(harness.api.resolvePendingRequest).toHaveBeenCalledWith(
+      'request-1',
+      {
+        resolutionKey: 'resolution-1',
+        result: { approved: true },
+      },
+    )
+    expect(harness.spies.markPendingRequestSubmitted).toHaveBeenCalledWith('request-1')
+  })
+
+  it('dispatches explicit request rejection actions through the unified input pipeline', async () => {
+    await harness.controller.submitSessionAction({
+      type: 'request.reject',
+      requestId: 'request-1',
+      reason: 'denied',
+      resolutionKey: 'resolution-2',
+    })
+
+    expect(harness.api.rejectPendingRequest).toHaveBeenCalledWith(
+      'request-1',
+      {
+        resolutionKey: 'resolution-2',
+        reason: 'denied',
+      },
+    )
+    expect(harness.spies.markPendingRequestSubmitted).toHaveBeenCalledWith('request-1')
   })
 
   it('passes supplied turn execution policy through and gives policy model precedence', async () => {
@@ -260,8 +329,10 @@ describe('sessionRuntimeController', () => {
       {
         input: [{ type: 'text', text: 'run tests' }],
         text: 'run tests',
-        accessMode: 'default-permissions',
-        model: 'gpt-5.1',
+        requestedPolicy: {
+          accessMode: 'default-permissions',
+          model: 'gpt-5.1',
+        },
       },
       {
         model: 'gpt-5.2',
@@ -294,8 +365,10 @@ describe('sessionRuntimeController', () => {
       {
         input: [{ type: 'text', text: 'run tests' }],
         text: 'run tests',
-        accessMode: 'default-permissions',
-        model: '   ',
+        requestedPolicy: {
+          accessMode: 'default-permissions',
+          model: '   ',
+        },
       },
       {
         model: null,
@@ -310,7 +383,9 @@ describe('sessionRuntimeController', () => {
     await harness.controller.submit({
       input: [{ type: 'text', text: 'run tests again' }],
       text: 'run tests again',
-      accessMode: 'default-permissions',
+      requestedPolicy: {
+        accessMode: 'default-permissions',
+      },
     })
 
     const [, undefinedPolicyModelRequest] = harness.api.startTurn.mock.calls[0]
@@ -413,7 +488,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.startThread).toHaveBeenCalledWith(threadCreationPolicy)
   })
 
-  it('interrupts running turn and resolves/rejects active request', async () => {
+  it('interrupts running turn through the unified input pipeline', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeRunningTurn = makeTurn({
       id: 'turn-1',
@@ -427,31 +502,5 @@ describe('sessionRuntimeController', () => {
       'turn-1',
       expect.objectContaining({ clientActionId: expect.any(String) }),
     )
-
-    harness.runtimeSnapshot.activeRequest = {
-      requestId: 'request-2',
-      method: 'item/tool/requestUserInput',
-      threadId: 'thread-1',
-      turnId: 'turn-1',
-      itemId: 'item-2',
-      status: 'pending',
-      createdAtMs: 2,
-      submittedAtMs: null,
-      resolvedAtMs: null,
-      payload: {},
-    }
-
-    await harness.controller.resolveRequest({ approved: true })
-    expect(harness.api.resolvePendingRequest).toHaveBeenCalledWith(
-      'request-2',
-      expect.objectContaining({ resolutionKey: expect.any(String), result: { approved: true } }),
-    )
-
-    await harness.controller.rejectRequest('denied')
-    expect(harness.api.rejectPendingRequest).toHaveBeenCalledWith(
-      'request-2',
-      expect.objectContaining({ resolutionKey: expect.any(String), reason: 'denied' }),
-    )
-    expect(harness.spies.markPendingRequestSubmitted).toHaveBeenCalledWith('request-2')
   })
 })

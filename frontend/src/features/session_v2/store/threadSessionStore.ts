@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { SessionEventEnvelope, SessionItem, SessionThread, SessionTurn } from '../contracts'
+import { isItemKind } from '../contracts'
+import type { ItemKind, SessionEventEnvelope, SessionItem, SessionThread, SessionTurn } from '../contracts'
 import {
   applySessionEvent,
   applySessionEventsBatch,
@@ -46,63 +47,34 @@ const initialStreamState: StreamState = {
   reconnectCountByThread: {},
 }
 
-const VALID_ITEM_KINDS: ReadonlyArray<SessionItem['kind']> = [
-  'userMessage',
-  'agentMessage',
-  'reasoning',
-  'plan',
-  'commandExecution',
-  'fileChange',
-  'userInput',
-  'error',
-]
-
 const VALID_ITEM_STATUS: ReadonlyArray<SessionItem['status']> = ['inProgress', 'completed', 'failed']
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object'
 }
 
-function kindFromType(type: unknown): SessionItem['kind'] | null {
-  if (type === 'userMessage') {
-    return 'userMessage'
+function toNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null
   }
-  if (type === 'agentMessage') {
-    return 'agentMessage'
-  }
-  if (type === 'reasoning') {
-    return 'reasoning'
-  }
-  if (type === 'plan') {
-    return 'plan'
-  }
-  if (type === 'commandExecution') {
-    return 'commandExecution'
-  }
-  if (type === 'fileChange') {
-    return 'fileChange'
-  }
-  if (type === 'userInput') {
-    return 'userInput'
-  }
-  if (type === 'error') {
-    return 'error'
-  }
-  return null
+  const text = value.trim()
+  return text.length > 0 ? text : null
 }
 
 function normalizeItemKindValue(
   explicitKind: unknown,
   payload: Record<string, unknown>,
-): SessionItem['kind'] {
-  if (VALID_ITEM_KINDS.includes(explicitKind as SessionItem['kind'])) {
-    return explicitKind as SessionItem['kind']
-  }
-  const payloadKind = payload.kind
-  if (VALID_ITEM_KINDS.includes(payloadKind as SessionItem['kind'])) {
-    return payloadKind as SessionItem['kind']
-  }
-  return kindFromType(payload.type) ?? 'agentMessage'
+): { kind: string; normalizedKind: ItemKind | null } {
+  const rawKind =
+    toNonEmptyString(explicitKind) ??
+    toNonEmptyString(payload.kind) ??
+    toNonEmptyString(payload.type) ??
+    'unknown'
+  const normalizedKind =
+    (isItemKind(explicitKind) ? explicitKind : null) ??
+    (isItemKind(payload.kind) ? payload.kind : null) ??
+    (isItemKind(payload.type) ? payload.type : null)
+  return { kind: rawKind, normalizedKind }
 }
 
 function normalizeItemStatusValue(
@@ -158,10 +130,13 @@ function normalizeItemPayload(item: Partial<SessionItem>): Record<string, unknow
   delete fallback.threadId
   delete fallback.turnId
   delete fallback.kind
+  delete fallback.normalizedKind
   delete fallback.status
   delete fallback.createdAtMs
   delete fallback.updatedAtMs
   delete fallback.payload
+  delete fallback.rawItem
+  delete fallback.rawParams
   return fallback
 }
 
@@ -209,7 +184,7 @@ function normalizeItemForStore(
   const item = value && typeof value === 'object' ? (value as Partial<SessionItem>) : {}
   const itemRecord = item as unknown as Record<string, unknown>
   const payload = normalizeItemPayload(item)
-  const kind = normalizeItemKindValue(item.kind, payload)
+  const { kind, normalizedKind } = normalizeItemKindValue(item.kind, payload)
   const status = normalizeItemStatusValue(item.status, payload, fallbackStatus)
   const now = Date.now()
   const createdAtMs = resolveItemTimestampMs(
@@ -220,16 +195,26 @@ function normalizeItemForStore(
     [item.updatedAtMs, itemRecord.updatedAt, payload.updatedAtMs, payload.updatedAt, createdAtMs],
     createdAtMs,
   )
-  return {
+  const normalized: SessionItem = {
     id: typeof item.id === 'string' && item.id.trim() ? item.id : fallbackId,
     threadId: typeof item.threadId === 'string' && item.threadId.trim() ? item.threadId : threadId,
     turnId: typeof item.turnId === 'string' && item.turnId.trim() ? item.turnId : turnId,
     kind,
+    normalizedKind,
     status,
     createdAtMs,
     updatedAtMs,
     payload,
   }
+  if (isRecord(item.rawItem)) {
+    normalized.rawItem = { ...item.rawItem }
+  } else if (normalizedKind === null && isRecord(itemRecord)) {
+    normalized.rawItem = { ...itemRecord }
+  }
+  if (isRecord(item.rawParams)) {
+    normalized.rawParams = { ...item.rawParams }
+  }
+  return normalized
 }
 
 function normalizeItemsForTurnByStatus(

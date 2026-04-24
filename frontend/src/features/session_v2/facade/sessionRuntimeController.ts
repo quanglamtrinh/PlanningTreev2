@@ -20,6 +20,7 @@ import { type ComposerSubmitPayload } from '../components/ComposerPane'
 import type {
   PendingServerRequest,
   SessionError,
+  SessionInputAction,
   SessionThread,
   SessionTurn,
   ThreadCreationPolicy,
@@ -54,7 +55,6 @@ export type RuntimeSnapshot = {
   activeTurns: SessionTurn[]
   activeRunningTurn: SessionTurn | null
   selectedModel: string | null
-  activeRequest: PendingServerRequest | null
 }
 
 type RuntimeApi = {
@@ -112,20 +112,19 @@ export type SessionRuntimeController = {
   hydrateThreadState: (threadId: string, options?: HydrateOptions) => Promise<void>
   ensureThreadReady: (threadId: string, options?: EnsureThreadReadyOptions) => Promise<void>
   loadModels: () => Promise<void>
-  pollPendingRequests: () => Promise<void>
+  pollPendingRequests: (options?: { surfaceErrors?: boolean }) => Promise<void>
   selectThread: (threadId: string | null) => Promise<void>
   createThread: (policy?: ThreadCreationPolicy) => Promise<void>
   forkThread: (threadId: string) => Promise<void>
   refreshThreads: () => Promise<void>
+  submitSessionAction: (action: SessionInputAction) => Promise<void>
   submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => Promise<void>
   interrupt: () => Promise<void>
-  resolveRequest: (result: Record<string, unknown>) => Promise<void>
-  rejectRequest: (reason?: string | null) => Promise<void>
   resetHydratedState: () => void
   dispose: () => void
 }
 
-function actionId(): string {
+export function createSessionActionId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
   }
@@ -170,9 +169,27 @@ function resolveTurnModel(
 ): string | null {
   return (
     nonEmptyString(policy?.model) ??
-    nonEmptyString(payload.model) ??
+    nonEmptyString(payload.requestedPolicy?.model) ??
     nonEmptyString(selectedModel)
   )
+}
+
+function resolveTurnStartPolicy(
+  policy: TurnExecutionPolicy | undefined,
+  payload: ComposerSubmitPayload,
+  selectedModel: string | null,
+): TurnExecutionPolicy | undefined {
+  const nextPolicy: TurnExecutionPolicy = { ...(policy ?? {}) }
+  delete nextPolicy.model
+  const model = resolveTurnModel(policy, payload, selectedModel)
+  if (model) {
+    nextPolicy.model = model
+  }
+  return Object.keys(nextPolicy).length > 0 ? nextPolicy : undefined
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled session input action: ${JSON.stringify(value)}`)
 }
 
 function defaultApi(): RuntimeApi {
@@ -353,7 +370,7 @@ export function createSessionRuntimeController(
     }
   }
 
-  const pollPendingRequests = async (): Promise<void> => {
+  const pollPendingRequests = async (options?: { surfaceErrors?: boolean }): Promise<void> => {
     const guard = buildGuard('pollPending')
     try {
       const pending = await api.listPendingRequests()
@@ -366,8 +383,10 @@ export function createSessionRuntimeController(
       if (!guard.isCurrent()) {
         return
       }
-      const message = error instanceof Error ? error.message : String(error)
-      dependencies.setRuntimeError(message)
+      if (options?.surfaceErrors !== false) {
+        const message = error instanceof Error ? error.message : String(error)
+        dependencies.setRuntimeError(message)
+      }
     }
   }
 
@@ -499,45 +518,150 @@ export function createSessionRuntimeController(
     }
   }
 
-  const submit = async (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy): Promise<void> => {
-    const runtime = dependencies.getRuntimeSnapshot()
+  const actionFromSubmit = (
+    runtime: RuntimeSnapshot,
+    payload: ComposerSubmitPayload,
+    policy?: TurnExecutionPolicy,
+  ): SessionInputAction | null => {
     const activeThreadId = runtime.activeThreadId
     if (!activeThreadId) {
-      return
+      return null
     }
 
+    if (runtime.activeRunningTurn) {
+      return {
+        type: 'turn.steer',
+        threadId: activeThreadId,
+        turnId: runtime.activeRunningTurn.id,
+        input: payload.input,
+        clientActionId: createSessionActionId(),
+      }
+    }
+
+    return {
+      type: 'turn.start',
+      threadId: activeThreadId,
+      input: payload.input,
+      policy: resolveTurnStartPolicy(policy, payload, runtime.selectedModel),
+      clientActionId: createSessionActionId(),
+    }
+  }
+
+  const actionFromInterrupt = (runtime: RuntimeSnapshot): SessionInputAction | null => {
+    const activeThreadId = runtime.activeThreadId
+    const activeRunningTurn = runtime.activeRunningTurn
+    if (!activeThreadId || !activeRunningTurn) {
+      return null
+    }
+
+    return {
+      type: 'turn.interrupt',
+      threadId: activeThreadId,
+      turnId: activeRunningTurn.id,
+      clientActionId: createSessionActionId(),
+    }
+  }
+
+  const updateTurnFromResponse = (threadId: string, turn: SessionTurn): void => {
+    const existingTurns = dependencies.getThreadState().turnsByThread[threadId] ?? []
+    const nextTurns = upsertTurnList(existingTurns, turn)
+    dependencies.setThreadTurns(threadId, nextTurns)
+    dependencies.markThreadActivity(threadId)
+  }
+
+  const startTurnFromAction = async (
+    action: Extract<SessionInputAction, { type: 'turn.start' }>,
+  ): Promise<void> => {
+    const policyWithoutModel: TurnExecutionPolicy = { ...(action.policy ?? {}) }
+    const model = nonEmptyString(policyWithoutModel.model)
+    delete policyWithoutModel.model
+    const request: TurnStartRequestV4 = {
+      ...policyWithoutModel,
+      clientActionId: action.clientActionId,
+      input: action.input,
+    }
+    if (model) {
+      request.model = model
+    }
+
+    const result = await api.startTurn(action.threadId, request)
+    if (!isControllerAlive()) {
+      return
+    }
+    updateTurnFromResponse(action.threadId, result.turn)
+  }
+
+  const steerTurnFromAction = async (
+    action: Extract<SessionInputAction, { type: 'turn.steer' }>,
+  ): Promise<void> => {
+    const result = await api.steerTurn(action.threadId, action.turnId, {
+      clientActionId: action.clientActionId,
+      expectedTurnId: action.turnId,
+      input: action.input,
+    })
+    if (!isControllerAlive()) {
+      return
+    }
+    updateTurnFromResponse(action.threadId, result.turn)
+  }
+
+  const interruptTurnFromAction = async (
+    action: Extract<SessionInputAction, { type: 'turn.interrupt' }>,
+  ): Promise<void> => {
+    await api.interruptTurn(action.threadId, action.turnId, {
+      clientActionId: action.clientActionId,
+    })
+  }
+
+  const resolveRequestFromAction = async (
+    action: Extract<SessionInputAction, { type: 'request.resolve' }>,
+  ): Promise<void> => {
+    await api.resolvePendingRequest(action.requestId, {
+      resolutionKey: action.resolutionKey,
+      result: action.result,
+    })
+    if (!isControllerAlive()) {
+      return
+    }
+    dependencies.markPendingRequestSubmitted(action.requestId)
+  }
+
+  const rejectRequestFromAction = async (
+    action: Extract<SessionInputAction, { type: 'request.reject' }>,
+  ): Promise<void> => {
+    await api.rejectPendingRequest(action.requestId, {
+      resolutionKey: action.resolutionKey,
+      reason: action.reason ?? null,
+    })
+    if (!isControllerAlive()) {
+      return
+    }
+    dependencies.markPendingRequestSubmitted(action.requestId)
+  }
+
+  const submitSessionAction = async (action: SessionInputAction): Promise<void> => {
     try {
-      if (runtime.activeRunningTurn) {
-        const result = await api.steerTurn(activeThreadId, runtime.activeRunningTurn.id, {
-          clientActionId: actionId(),
-          expectedTurnId: runtime.activeRunningTurn.id,
-          input: payload.input,
-        })
-        if (!isControllerAlive()) {
-          return
-        }
-        const nextTurns = upsertTurnList(runtime.activeTurns, result.turn)
-        dependencies.setThreadTurns(activeThreadId, nextTurns)
-        dependencies.markThreadActivity(activeThreadId)
-      } else {
-        const policyWithoutModel: TurnExecutionPolicy = { ...(policy ?? {}) }
-        delete policyWithoutModel.model
-        const model = resolveTurnModel(policy, payload, runtime.selectedModel)
-        const request: TurnStartRequestV4 = {
-          ...policyWithoutModel,
-          clientActionId: actionId(),
-          input: payload.input,
-        }
-        if (model) {
-          request.model = model
-        }
-        const result = await api.startTurn(activeThreadId, request)
-        if (!isControllerAlive()) {
-          return
-        }
-        const nextTurns = upsertTurnList(runtime.activeTurns, result.turn)
-        dependencies.setThreadTurns(activeThreadId, nextTurns)
-        dependencies.markThreadActivity(activeThreadId)
+      switch (action.type) {
+        case 'turn.start':
+          await startTurnFromAction(action)
+          break
+        case 'turn.steer':
+          await steerTurnFromAction(action)
+          break
+        case 'turn.interrupt':
+          await interruptTurnFromAction(action)
+          break
+        case 'request.resolve':
+          await resolveRequestFromAction(action)
+          break
+        case 'request.reject':
+          await rejectRequestFromAction(action)
+          break
+        default:
+          assertNever(action)
+      }
+      if (!isControllerAlive()) {
+        return
       }
       dependencies.setRuntimeError(null)
     } catch (error) {
@@ -547,82 +671,26 @@ export function createSessionRuntimeController(
       const message = error instanceof Error ? error.message : String(error)
       dependencies.setRuntimeError(message)
     }
+  }
+
+  const submit = async (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy): Promise<void> => {
+    const runtime = dependencies.getRuntimeSnapshot()
+    const action = actionFromSubmit(runtime, payload, policy)
+    if (!action) {
+      return
+    }
+
+    await submitSessionAction(action)
   }
 
   const interrupt = async (): Promise<void> => {
     const runtime = dependencies.getRuntimeSnapshot()
-    const activeThreadId = runtime.activeThreadId
-    if (!activeThreadId || !runtime.activeRunningTurn) {
+    const action = actionFromInterrupt(runtime)
+    if (!action) {
       return
     }
 
-    try {
-      await api.interruptTurn(activeThreadId, runtime.activeRunningTurn.id, {
-        clientActionId: actionId(),
-      })
-      if (!isControllerAlive()) {
-        return
-      }
-      dependencies.setRuntimeError(null)
-    } catch (error) {
-      if (!isControllerAlive()) {
-        return
-      }
-      const message = error instanceof Error ? error.message : String(error)
-      dependencies.setRuntimeError(message)
-    }
-  }
-
-  const resolveRequest = async (result: Record<string, unknown>): Promise<void> => {
-    const runtime = dependencies.getRuntimeSnapshot()
-    const activeRequest = runtime.activeRequest
-    if (!activeRequest) {
-      return
-    }
-
-    try {
-      await api.resolvePendingRequest(activeRequest.requestId, {
-        resolutionKey: actionId(),
-        result,
-      })
-      if (!isControllerAlive()) {
-        return
-      }
-      dependencies.markPendingRequestSubmitted(activeRequest.requestId)
-      dependencies.setRuntimeError(null)
-    } catch (error) {
-      if (!isControllerAlive()) {
-        return
-      }
-      const message = error instanceof Error ? error.message : String(error)
-      dependencies.setRuntimeError(message)
-    }
-  }
-
-  const rejectRequest = async (reason?: string | null): Promise<void> => {
-    const runtime = dependencies.getRuntimeSnapshot()
-    const activeRequest = runtime.activeRequest
-    if (!activeRequest) {
-      return
-    }
-
-    try {
-      await api.rejectPendingRequest(activeRequest.requestId, {
-        resolutionKey: actionId(),
-        reason: reason ?? null,
-      })
-      if (!isControllerAlive()) {
-        return
-      }
-      dependencies.markPendingRequestSubmitted(activeRequest.requestId)
-      dependencies.setRuntimeError(null)
-    } catch (error) {
-      if (!isControllerAlive()) {
-        return
-      }
-      const message = error instanceof Error ? error.message : String(error)
-      dependencies.setRuntimeError(message)
-    }
+    await submitSessionAction(action)
   }
 
   const bootstrap = async (policy?: Partial<SessionBootstrapPolicy>): Promise<void> => {
@@ -716,10 +784,9 @@ export function createSessionRuntimeController(
     createThread,
     forkThread,
     refreshThreads,
+    submitSessionAction,
     submit,
     interrupt,
-    resolveRequest,
-    rejectRequest,
     resetHydratedState() {
       hydratedThreadIds.clear()
       selectionIntent = 0

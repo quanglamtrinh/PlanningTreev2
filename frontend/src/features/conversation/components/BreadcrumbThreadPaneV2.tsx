@@ -42,8 +42,8 @@ export type BreadcrumbThreadComposerProps = {
 
 export type BreadcrumbThreadPendingRequestProps = {
   request: PendingServerRequest | null
-  onResolve: (result: Record<string, unknown>) => Promise<void>
-  onReject: (reason?: string | null) => Promise<void>
+  onResolve: (requestId: string, result: Record<string, unknown>) => Promise<void>
+  onReject: (requestId: string, reason?: string | null) => Promise<void>
 }
 
 export type BreadcrumbThreadWorkflowStripProps = {
@@ -91,7 +91,7 @@ export function BreadcrumbThreadPaneV2({
 
             <div
               className={`${sessionShellStyles.threadBodyMain}${
-                isExecutionTab ? ` ${sessionShellStyles.threadExecutionWhiteCanvas}` : ''
+                isExecutionTab ? ` ${sessionShellStyles.threadWhiteCanvas}` : ''
               }`}
             >
               <TranscriptPanel
@@ -105,7 +105,7 @@ export function BreadcrumbThreadPaneV2({
 
             <div
               className={`${sessionShellStyles.threadBodyComposer}${
-                isExecutionTab ? ` ${sessionShellStyles.threadExecutionWhiteCanvas}` : ''
+                isExecutionTab ? ` ${sessionShellStyles.threadWhiteCanvas}` : ''
               }`}
               data-testid="breadcrumb-thread-composer"
             >
