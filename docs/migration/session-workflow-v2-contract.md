@@ -59,6 +59,34 @@ routes to UI code. Route family: `/v4/projects/{projectId}/nodes/{nodeId}/...`.
   `POST /v4/projects/{projectId}/nodes/{nodeId}/context/rebase`
   with `{ idempotencyKey, expectedWorkflowVersion? }`.
 
+Canonical V2 wire naming:
+
+- Public V4 workflow responses use camelCase field names.
+- The state envelope uses `phase` and `version`.
+- Internal Python models may use snake_case and `state_version`.
+- V3 compatibility views may continue exposing legacy names such as
+  `workflowPhase`, `executionThreadId`, `reviewThreadId`, and
+  `currentExecutionDecision`.
+
+V3-to-V2 phase mapping:
+
+| Legacy V3 `workflowPhase` | Canonical V2 `phase` |
+| --- | --- |
+| `idle` | `ready_for_execution` |
+| `execution_running` | `executing` |
+| `execution_decision_pending` | `execution_completed` |
+| `audit_running` | `audit_running` |
+| `audit_decision_pending` | `review_pending` |
+| `done` | `done` |
+| `failed` | `blocked` |
+
+Action mapping:
+
+- Current V3 `improve-in-execution` maps to V4 `execution/improve`.
+- V4 `audit/request-changes` records or exposes the audit decision that enables
+  improvement. It is not the first replacement for the current Breadcrumb
+  "Improve in Execution" button.
+
 Required target semantics:
 
 - The server owns all business prompts.

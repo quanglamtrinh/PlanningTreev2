@@ -14,12 +14,14 @@ function readFrontendSource(relativePath: string): string {
 
 describe('phase 5 active-path V3 guardrails', () => {
   it('keeps chat-v2 active path wired to V3 workflow store + bridge', () => {
-    const breadcrumbChat = readFrontendSource('features/conversation/BreadcrumbChatViewV2.tsx')
+    const breadcrumbController = readFrontendSource('features/conversation/useBreadcrumbConversationControllerV2.tsx')
 
-    expect(breadcrumbChat).toContain("useWorkflowStateStoreV3")
-    expect(breadcrumbChat).toContain("useWorkflowEventBridgeV3")
-    expect(breadcrumbChat).not.toContain("useWorkflowStateStoreV2")
-    expect(breadcrumbChat).not.toContain("useWorkflowEventBridge(")
+    expect(breadcrumbController).toContain("useSessionFacadeV2")
+    expect(breadcrumbController).toContain("useWorkflowStateStoreV3")
+    expect(breadcrumbController).toContain("useWorkflowEventBridgeV3")
+    expect(breadcrumbController).toContain("resolveWorkflowProjection")
+    expect(breadcrumbController).not.toContain("useWorkflowStateStoreV2")
+    expect(breadcrumbController).not.toContain("useWorkflowEventBridgeV2")
   })
 
   it('keeps NodeDocumentEditor finish-task flow on V3 workflow store', () => {

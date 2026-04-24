@@ -19,6 +19,7 @@ Response:
 
 ```json
 {
+  "schemaVersion": 1,
   "projectId": "p1",
   "nodeId": "n1",
   "phase": "review_pending",
@@ -50,6 +51,23 @@ Response:
   ]
 }
 ```
+
+Wire naming is canonical for V4: responses use camelCase, `phase`, and
+`version`. Backend internals may use snake_case and `state_version`; V3
+compatibility adapters may continue returning legacy names such as
+`workflowPhase`.
+
+Legacy phase conversion:
+
+| Legacy V3 `workflowPhase` | V4 `phase` |
+| --- | --- |
+| `idle` | `ready_for_execution` |
+| `execution_running` | `executing` |
+| `execution_decision_pending` | `execution_completed` |
+| `audit_running` | `audit_running` |
+| `audit_decision_pending` | `review_pending` |
+| `done` | `done` |
+| `failed` | `blocked` |
 
 ## Ensure Thread
 
@@ -191,6 +209,12 @@ Request:
 This endpoint records the audit decision and enables
 `improve_in_execution`. If the implementation immediately starts the improvement
 turn, it should return the execution `threadId` and `turnId`.
+
+The current V3 `improve-in-execution` action maps directly to
+`POST /v4/projects/{projectId}/nodes/{nodeId}/execution/improve`.
+`audit/request-changes` is a separate audit-side action and should not replace
+the current Breadcrumb "Improve in Execution" button until the UI explicitly
+adds that audit decision step.
 
 ## Package Review
 

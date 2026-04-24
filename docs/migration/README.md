@@ -28,6 +28,9 @@ Documents:
 - [Workflow V2 Cutover Checklist](./workflow-v2-cutover-checklist.md) gives the
   execution checklist, grep gates, test gates, rollback guidance, and risk
   register.
+- [Phase 0 Gate Report](./phase-0-gate-report-v1.md) records the current hybrid
+  audit, frozen contract decisions, blockers, and verification command for the
+  contract-alignment phase.
 
 Migration rules:
 
@@ -40,3 +43,5 @@ Migration rules:
   imports V3 workflow code.
 - Treat `thread/inject_items` support in Session Core V2 as an early blocker for
   thread binding and context packet delivery.
+- Run `python scripts/check_workflow_v2_phase0.py` after changing these docs to
+  keep the Phase 0 contract freeze coherent.

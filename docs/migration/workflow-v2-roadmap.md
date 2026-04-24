@@ -26,6 +26,24 @@ Deliverables:
   `/v4/projects/{projectId}/nodes/{nodeId}/...`.
 - Freeze the V2 workflow state envelope, workflow event envelope, idempotency
   rules, and error codes.
+- Freeze public/internal naming:
+  - Public V4 workflow responses use camelCase and `phase`/`version`.
+  - Internal Python models use snake_case and `state_version`.
+  - Legacy V3 compatibility views may continue returning `workflowPhase` and
+    legacy thread id field names.
+- Freeze the V3-to-V2 phase mapping used by read-through converters:
+  - `idle` -> `ready_for_execution`
+  - `execution_running` -> `executing`
+  - `execution_decision_pending` -> `execution_completed`
+  - `audit_running` -> `audit_running`
+  - `audit_decision_pending` -> `review_pending`
+  - `done` -> `done`
+  - `failed` -> `blocked`
+- Freeze action semantics:
+  - Existing V3 `improve-in-execution` maps to V4
+    `POST /v4/projects/{projectId}/nodes/{nodeId}/execution/improve`.
+  - V4 `audit/request-changes` is a separate audit decision action and is not
+    the direct replacement for the current Breadcrumb improve button.
 - Add or update docs in this directory when contract changes are needed.
 - Identify repo path corrections before implementation:
   - Session manager is `backend/session_core_v2/connection/manager.py`.
@@ -38,6 +56,9 @@ Done when:
 - API, event, state, and storage ownership are documented.
 - The implementation team agrees that `/v4/session/*` remains session-only.
 - `thread/inject_items` is marked as a prerequisite for thread binding.
+- `docs/migration/phase-0-gate-report-v1.md` records the current hybrid audit
+  and Phase 0 decisions.
+- `python scripts/check_workflow_v2_phase0.py` passes.
 
 ## Phase 1 - Workflow Core V2 Skeleton
 

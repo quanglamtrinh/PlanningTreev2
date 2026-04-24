@@ -4,6 +4,14 @@ Use this checklist to keep the migration incremental and reversible.
 
 ## Backend Gates
 
+Phase 0 contract gate:
+
+- `docs/migration/phase-0-gate-report-v1.md` exists.
+- `python scripts/check_workflow_v2_phase0.py` passes.
+- Public V4 workflow wire naming, V3-to-V2 phase mapping, route ownership, and
+  `thread/inject_items` prerequisite are documented.
+- No runtime, route, or frontend behavior changes are required for Phase 0.
+
 Phase 1 skeleton:
 
 - `backend/business/workflow_v2/models.py` exists.

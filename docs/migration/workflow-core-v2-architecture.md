@@ -6,7 +6,8 @@ execution, audit, package review, context binding, and workflow events.
 It sits beside Session Core V2:
 
 - Session Core V2 owns Codex-native runtime primitives: session connection,
-  threads, turns, items, pending requests, and session event streams.
+  threads, turns, items, pending requests, and session event streams under
+  `/v4/session/*`.
 - Workflow Core V2 owns PlanningTree business state and decides which session
   thread should be used for each workflow role.
 
@@ -172,6 +173,11 @@ class ExecutionAuditOrchestratorV2:
     def start_package_review(...): ...
 ```
 
+Current V3 `improve-in-execution` maps to the V2
+`request_improvements`/execution-improve flow. V4 `audit/request-changes` is a
+separate audit decision endpoint and should not be collapsed into that existing
+Breadcrumb action without a deliberate UI change.
+
 The orchestrator may depend on:
 
 - `state_machine.py`
@@ -290,6 +296,23 @@ class NodeWorkflowStateV2(BaseModel):
 ```
 
 `allowed_actions` is returned by API views and computed from the state machine.
+
+Public API adapters convert this internal shape to camelCase. The V4 state
+response uses `phase` and `version`; `version` maps from internal
+`state_version`. Legacy V3 adapters may continue returning `workflowPhase`,
+`executionThreadId`, `reviewThreadId`, and other existing field names.
+
+Legacy phase conversion:
+
+| Legacy V3 `workflowPhase` | Canonical V2 `phase` |
+| --- | --- |
+| `idle` | `ready_for_execution` |
+| `execution_running` | `executing` |
+| `execution_decision_pending` | `execution_completed` |
+| `audit_running` | `audit_running` |
+| `audit_decision_pending` | `review_pending` |
+| `done` | `done` |
+| `failed` | `blocked` |
 
 ## V3 Compatibility Strategy
 
