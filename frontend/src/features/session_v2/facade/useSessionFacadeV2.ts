@@ -8,7 +8,7 @@ import type {
   SessionTurn,
   ThreadCreationPolicy,
   ThreadStatus,
-  TurnExecutionPolicy,
+  TurnRuntimePolicy,
 } from '../contracts'
 import { createSessionEventStreamController, type SessionEventStreamController } from './sessionEventStreamController'
 import {
@@ -70,7 +70,7 @@ export type SessionFacadeCommands = {
   forkThread: (threadId: string) => Promise<void>
   refreshThreads: () => Promise<void>
   setModel: (model: string) => void
-  submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => Promise<void>
+  submit: (payload: ComposerSubmitPayload, policy?: TurnRuntimePolicy) => Promise<void>
   interrupt: () => Promise<void>
   resolveRequest: (result: Record<string, unknown>) => Promise<void>
   rejectRequest: (reason?: string | null) => Promise<void>
@@ -286,7 +286,7 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     await runtimeControllerRef.current?.refreshThreads()
   }, [])
 
-  const submit = useCallback(async (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => {
+  const submit = useCallback(async (payload: ComposerSubmitPayload, policy?: TurnRuntimePolicy) => {
     await runtimeControllerRef.current?.submit(payload, policy)
   }, [])
 

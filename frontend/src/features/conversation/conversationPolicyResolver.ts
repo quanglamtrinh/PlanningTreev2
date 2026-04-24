@@ -1,6 +1,6 @@
 import type { NodeWorkflowView } from '../../api/types'
 import type { ComposerAccessMode } from '../session_v2/components/ComposerPane'
-import type { ThreadCreationPolicy, TurnExecutionPolicy } from '../session_v2/contracts'
+import type { ThreadCreationPolicy, TurnRuntimePolicy } from '../session_v2/contracts'
 import type { ThreadTab } from './surfaceRouting'
 
 type ConversationPolicyContext = {
@@ -18,7 +18,7 @@ export type ResolveThreadCreationPolicyInput = ConversationPolicyContext
 
 export function resolveTurnExecutionPolicy(
   input: ResolveTurnExecutionPolicyInput,
-): TurnExecutionPolicy | undefined {
+): TurnRuntimePolicy | undefined {
   if (input.accessMode !== 'full-access') {
     return undefined
   }

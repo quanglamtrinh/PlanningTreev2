@@ -201,7 +201,7 @@ export type ThreadCreationPolicy = Partial<{
   ephemeral: boolean | null
 }>
 
-export type TurnExecutionPolicy = Omit<TurnStartRequestV4, 'clientActionId' | 'input'>
+export type TurnRuntimePolicy = Omit<TurnStartRequestV4, 'clientActionId' | 'input'>
 
 export interface TurnSteerRequestV4 {
   clientActionId: string

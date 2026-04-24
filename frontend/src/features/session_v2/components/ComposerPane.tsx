@@ -427,7 +427,7 @@ export function ComposerPane({
             }}
             onPaste={handlePaste}
             onKeyDown={handleKeyDown}
-            placeholder={isTurnRunning ? 'Steer active turn...' : 'Ask for follow-up changes'}
+            placeholder={isTurnRunning ? 'Steer active turn...' : 'Send a follow-up message'}
             rows={2}
             disabled={disabled || isSubmitting}
           />

@@ -23,7 +23,7 @@ import type {
   SessionThread,
   SessionTurn,
   ThreadCreationPolicy,
-  TurnExecutionPolicy,
+  TurnRuntimePolicy,
   TurnStartRequestV4,
 } from '../contracts'
 import type { ThreadSessionStoreState } from '../store/threadSessionStore'
@@ -117,7 +117,7 @@ export type SessionRuntimeController = {
   createThread: (policy?: ThreadCreationPolicy) => Promise<void>
   forkThread: (threadId: string) => Promise<void>
   refreshThreads: () => Promise<void>
-  submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => Promise<void>
+  submit: (payload: ComposerSubmitPayload, policy?: TurnRuntimePolicy) => Promise<void>
   interrupt: () => Promise<void>
   resolveRequest: (result: Record<string, unknown>) => Promise<void>
   rejectRequest: (reason?: string | null) => Promise<void>
@@ -164,7 +164,7 @@ function nonEmptyString(value: unknown): string | null {
 }
 
 function resolveTurnModel(
-  policy: TurnExecutionPolicy | undefined,
+  policy: TurnRuntimePolicy | undefined,
   payload: ComposerSubmitPayload,
   selectedModel: string | null,
 ): string | null {
@@ -499,7 +499,7 @@ export function createSessionRuntimeController(
     }
   }
 
-  const submit = async (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy): Promise<void> => {
+  const submit = async (payload: ComposerSubmitPayload, policy?: TurnRuntimePolicy): Promise<void> => {
     const runtime = dependencies.getRuntimeSnapshot()
     const activeThreadId = runtime.activeThreadId
     if (!activeThreadId) {
@@ -520,7 +520,7 @@ export function createSessionRuntimeController(
         dependencies.setThreadTurns(activeThreadId, nextTurns)
         dependencies.markThreadActivity(activeThreadId)
       } else {
-        const policyWithoutModel: TurnExecutionPolicy = { ...(policy ?? {}) }
+        const policyWithoutModel: TurnRuntimePolicy = { ...(policy ?? {}) }
         delete policyWithoutModel.model
         const model = resolveTurnModel(policy, payload, runtime.selectedModel)
         const request: TurnStartRequestV4 = {

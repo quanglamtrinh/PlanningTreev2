@@ -91,7 +91,7 @@ export function BreadcrumbThreadPaneV2({
 
             <div
               className={`${sessionShellStyles.threadBodyMain}${
-                isExecutionTab ? ` ${sessionShellStyles.threadExecutionWhiteCanvas}` : ''
+                isExecutionTab ? ` ${sessionShellStyles.threadWhiteCanvas}` : ''
               }`}
             >
               <TranscriptPanel
@@ -105,7 +105,7 @@ export function BreadcrumbThreadPaneV2({
 
             <div
               className={`${sessionShellStyles.threadBodyComposer}${
-                isExecutionTab ? ` ${sessionShellStyles.threadExecutionWhiteCanvas}` : ''
+                isExecutionTab ? ` ${sessionShellStyles.threadWhiteCanvas}` : ''
               }`}
               data-testid="breadcrumb-thread-composer"
             >
