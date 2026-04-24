@@ -12,6 +12,9 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
+from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
+from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
+from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
 from backend.conversation.services.thread_actor_runtime_v3 import ThreadActorRuntimeV3
 from backend.conversation.services.thread_checkpoint_policy_v3 import ThreadCheckpointPolicyV3
@@ -54,7 +57,7 @@ from backend.config.app_config import (
 from backend.config.api_version import API_PREFIX
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
-from backend.routes import bootstrap, chat, codex, nodes, projects, session_v4, split, workflow_v3
+from backend.routes import bootstrap, chat, codex, nodes, projects, session_v4, split, workflow_v3, workflow_v4
 from backend.session_core_v2.connection import ConnectionStateMachine, SessionManagerV2
 from backend.session_core_v2.protocol import (
     SessionProtocolClientV2,
@@ -284,6 +287,13 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         runtime_store=session_runtime_store_v2,
         connection_state_machine=session_connection_state_v2,
     )
+    workflow_state_repository_v2 = WorkflowStateRepositoryV2(storage)
+    workflow_context_builder_v2 = WorkflowContextBuilderV2(storage)
+    workflow_thread_binding_service_v2 = ThreadBindingServiceV2(
+        repository=workflow_state_repository_v2,
+        context_builder=workflow_context_builder_v2,
+        session_manager=session_manager_v2,
+    )
     project_service._chat_service = chat_service
     chat_service._review_service = review_service
     thread_lineage_service.set_thread_registry_service(thread_registry_service_v2)
@@ -372,6 +382,9 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.ask_v3_frontend_enabled = ask_v3_frontend_enabled
     app.state.ask_rollout_metrics_service = ask_rollout_metrics_service
     app.state.session_manager_v2 = session_manager_v2
+    app.state.workflow_state_repository_v2 = workflow_state_repository_v2
+    app.state.workflow_context_builder_v2 = workflow_context_builder_v2
+    app.state.workflow_thread_binding_service_v2 = workflow_thread_binding_service_v2
     app.state.session_runtime_store_v2 = session_runtime_store_v2
     app.state.session_connection_state_v2 = session_connection_state_v2
     app.state.session_core_v2_enable_turns = session_core_v2_enable_turns
@@ -408,6 +421,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.include_router(chat.router, prefix=API_PREFIX)
     app.include_router(workflow_v3.router, prefix=API_PREFIX)
     app.include_router(session_v4.router)
+    app.include_router(workflow_v4.router)
 
     if getattr(sys, "frozen", False):
         dist = Path(sys._MEIPASS) / "frontend" / "dist"  # type: ignore[attr-defined]

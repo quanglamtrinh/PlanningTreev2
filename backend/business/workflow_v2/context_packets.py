@@ -26,19 +26,21 @@ class PlanningTreeContextPacket(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     source_versions: dict[str, Any] = Field(default_factory=dict, alias="sourceVersions")
 
-    def packet_hash(self) -> str:
-        canonical = json.dumps(
+    def canonical_json(self) -> str:
+        return json.dumps(
             self.model_dump(by_alias=True, mode="json"),
             sort_keys=True,
             separators=(",", ":"),
         )
+
+    def packet_hash(self) -> str:
+        canonical = self.canonical_json()
         return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
     def render_model_visible_message(self) -> str:
-        body = json.dumps(self.model_dump(by_alias=True, mode="json"), ensure_ascii=True, sort_keys=True)
+        body = self.canonical_json()
         return (
             f'<planning_tree_context kind="{self.kind}" schema_version="{self.schema_version}">\n'
             f"{body}\n"
             "</planning_tree_context>"
         )
-

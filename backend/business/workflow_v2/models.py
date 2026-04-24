@@ -137,6 +137,7 @@ class NodeWorkflowStateV2(BaseModel):
     blocked_reason: str | None = None
     last_error: dict[str, Any] | None = None
     idempotency_records: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    thread_bindings: dict[str, ThreadBinding] = Field(default_factory=dict)
 
     created_at: str | None = None
     updated_at: str | None = None
@@ -218,4 +219,3 @@ def workflow_state_to_response(
         ),
         allowedActions=allowed_actions,
     )
-

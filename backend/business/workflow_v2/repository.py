@@ -82,7 +82,12 @@ class WorkflowStateRepositoryV2:
                 },
             )
             ensure_dir(target.parent)
-            atomic_write_json(target, next_state.model_dump(mode="json", exclude_none=False))
+            payload = next_state.model_dump(mode="json", exclude_none=False)
+            payload["thread_bindings"] = {
+                role: binding.model_dump(by_alias=True, mode="json", exclude_none=False)
+                for role, binding in next_state.thread_bindings.items()
+            }
+            atomic_write_json(target, payload)
             return next_state.model_copy(deep=True)
 
     def convert_legacy_state(
@@ -209,4 +214,3 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
-
