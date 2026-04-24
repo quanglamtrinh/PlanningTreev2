@@ -17,11 +17,16 @@ import {
   type SessionModelEntryV2,
 } from '../api/client'
 import { type ComposerSubmitPayload } from '../components/ComposerPane'
-import type { PendingServerRequest, SessionError, SessionThread, SessionTurn } from '../contracts'
+import type {
+  PendingServerRequest,
+  SessionError,
+  SessionThread,
+  SessionTurn,
+  ThreadCreationPolicy,
+  TurnExecutionPolicy,
+  TurnStartRequestV4,
+} from '../contracts'
 import type { ThreadSessionStoreState } from '../store/threadSessionStore'
-
-const FULL_ACCESS_APPROVAL_POLICY = 'never'
-const FULL_ACCESS_SANDBOX_POLICY: Record<string, unknown> = { type: 'dangerFullAccess' }
 
 type AsyncScope = 'bootstrap' | 'selectThread' | 'hydrateThread' | 'loadModels' | 'pollPending'
 
@@ -36,6 +41,7 @@ export type ComposerModelOption = {
 export type SessionBootstrapPolicy = {
   autoSelectInitialThread: boolean
   autoCreateThreadWhenEmpty: boolean
+  threadCreationPolicy?: ThreadCreationPolicy
 }
 
 const DEFAULT_BOOTSTRAP_POLICY: SessionBootstrapPolicy = {
@@ -108,10 +114,10 @@ export type SessionRuntimeController = {
   loadModels: () => Promise<void>
   pollPendingRequests: () => Promise<void>
   selectThread: (threadId: string | null) => Promise<void>
-  createThread: () => Promise<void>
+  createThread: (policy?: ThreadCreationPolicy) => Promise<void>
   forkThread: (threadId: string) => Promise<void>
   refreshThreads: () => Promise<void>
-  submit: (payload: ComposerSubmitPayload) => Promise<void>
+  submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => Promise<void>
   interrupt: () => Promise<void>
   resolveRequest: (result: Record<string, unknown>) => Promise<void>
   rejectRequest: (reason?: string | null) => Promise<void>
@@ -149,6 +155,26 @@ function normalizeModelOption(entry: SessionModelEntryV2): ComposerModelOption |
   }
 }
 
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const normalized = value.trim()
+  return normalized.length > 0 ? normalized : null
+}
+
+function resolveTurnModel(
+  policy: TurnExecutionPolicy | undefined,
+  payload: ComposerSubmitPayload,
+  selectedModel: string | null,
+): string | null {
+  return (
+    nonEmptyString(policy?.model) ??
+    nonEmptyString(payload.model) ??
+    nonEmptyString(selectedModel)
+  )
+}
+
 function defaultApi(): RuntimeApi {
   return {
     forkThread: forkThreadV2,
@@ -177,6 +203,7 @@ function resolveBootstrapPolicy(
       policy?.autoSelectInitialThread ?? DEFAULT_BOOTSTRAP_POLICY.autoSelectInitialThread,
     autoCreateThreadWhenEmpty:
       policy?.autoCreateThreadWhenEmpty ?? DEFAULT_BOOTSTRAP_POLICY.autoCreateThreadWhenEmpty,
+    threadCreationPolicy: policy?.threadCreationPolicy,
   }
 }
 
@@ -390,14 +417,14 @@ export function createSessionRuntimeController(
     }
   }
 
-  const createThread = async (): Promise<void> => {
+  const createThread = async (policy?: ThreadCreationPolicy): Promise<void> => {
     const scope = buildGuard('selectThread')
     const intent = selectionIntent + 1
     selectionIntent = intent
     const isCurrent = () => scope.isCurrent() && selectionIntent === intent
 
     try {
-      const created = await api.startThread({ modelProvider: 'openai' })
+      const created = await api.startThread(policy ?? {})
       if (!isCurrent()) {
         return
       }
@@ -472,7 +499,7 @@ export function createSessionRuntimeController(
     }
   }
 
-  const submit = async (payload: ComposerSubmitPayload): Promise<void> => {
+  const submit = async (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy): Promise<void> => {
     const runtime = dependencies.getRuntimeSnapshot()
     const activeThreadId = runtime.activeThreadId
     if (!activeThreadId) {
@@ -493,15 +520,18 @@ export function createSessionRuntimeController(
         dependencies.setThreadTurns(activeThreadId, nextTurns)
         dependencies.markThreadActivity(activeThreadId)
       } else {
-        const permissionOverrides = payload.accessMode === 'full-access'
-          ? { approvalPolicy: FULL_ACCESS_APPROVAL_POLICY, sandboxPolicy: FULL_ACCESS_SANDBOX_POLICY }
-          : {}
-        const result = await api.startTurn(activeThreadId, {
+        const policyWithoutModel: TurnExecutionPolicy = { ...(policy ?? {}) }
+        delete policyWithoutModel.model
+        const model = resolveTurnModel(policy, payload, runtime.selectedModel)
+        const request: TurnStartRequestV4 = {
+          ...policyWithoutModel,
           clientActionId: actionId(),
           input: payload.input,
-          model: payload.model ?? runtime.selectedModel,
-          ...permissionOverrides,
-        })
+        }
+        if (model) {
+          request.model = model
+        }
+        const result = await api.startTurn(activeThreadId, request)
         if (!isControllerAlive()) {
           return
         }
@@ -641,7 +671,7 @@ export function createSessionRuntimeController(
         !selectedThreadId &&
         canMutateSelection
       ) {
-        const created = await api.startThread({ modelProvider: 'openai' })
+        const created = await api.startThread(bootstrapPolicy.threadCreationPolicy ?? {})
         if (!guard.isCurrent()) {
           return
         }

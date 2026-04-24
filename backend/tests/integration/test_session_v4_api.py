@@ -699,6 +699,7 @@ def test_session_v4_contract_conformance_for_phase3_endpoints(client: TestClient
     ).json()
     status_payload = client.get("/v4/session/status").json()
     start_payload = client.post("/v4/session/threads/start", json={}).json()
+    assert ("thread/start", {}) in fake_transport.requests
     resume_payload = client.post("/v4/session/threads/thread-resume-1/resume", json={}).json()
     list_payload = client.get("/v4/session/threads/list").json()
     read_payload = client.get("/v4/session/threads/thread-read-1/read").json()

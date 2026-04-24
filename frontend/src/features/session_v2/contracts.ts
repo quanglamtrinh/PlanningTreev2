@@ -182,6 +182,23 @@ export interface TurnStartRequestV4 {
   outputSchema?: Record<string, unknown> | null
 }
 
+export type ThreadCreationPolicy = Partial<{
+  model: string | null
+  modelProvider: string | null
+  cwd: string | null
+  approvalPolicy: string | Record<string, unknown>
+  approvalsReviewer: string | null
+  personality: string | null
+  sandbox: string | Record<string, unknown>
+  serviceTier: string | null
+  baseInstructions: string | null
+  developerInstructions: string | null
+  config: Record<string, unknown> | null
+  ephemeral: boolean | null
+}>
+
+export type TurnExecutionPolicy = Omit<TurnStartRequestV4, 'clientActionId' | 'input'>
+
 export interface TurnSteerRequestV4 {
   clientActionId: string
   expectedTurnId: string

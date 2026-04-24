@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockUseSessionFacadeV2 = vi.hoisted(() => vi.fn())
+const mockResolveTurnExecutionPolicy = vi.hoisted(() => vi.fn())
 
 vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
   ComposerPane: ({
@@ -139,8 +140,12 @@ vi.mock('../../src/features/session_v2/facade/useSessionFacadeV2', () => ({
   useSessionFacadeV2: mockUseSessionFacadeV2,
 }))
 
+vi.mock('../../src/features/conversation/conversationPolicyResolver', () => ({
+  resolveTurnExecutionPolicy: mockResolveTurnExecutionPolicy,
+}))
+
 import type { NodeWorkflowView, Snapshot } from '../../src/api/types'
-import { BreadcrumbChatViewV2 } from '../../src/features/conversation/BreadcrumbChatViewV2'
+import { BreadcrumbViewV2 } from '../../src/features/conversation/BreadcrumbViewV2'
 import type { PendingServerRequest, SessionThread, SessionTurn } from '../../src/features/session_v2/contracts'
 import type { SessionFacadeV2 } from '../../src/features/session_v2/facade/useSessionFacadeV2'
 import { useWorkflowStateStoreV3 } from '../../src/features/conversation/state/workflowStateStoreV3'
@@ -369,7 +374,7 @@ function seedStores(options: {
   } as Partial<ReturnType<typeof useWorkflowStateStoreV3.getState>>)
 }
 
-describe('BreadcrumbChatViewV2', () => {
+describe('BreadcrumbViewV2', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useProjectStore.setState(useProjectStore.getInitialState())
@@ -377,6 +382,7 @@ describe('BreadcrumbChatViewV2', () => {
     useWorkflowStateStoreV3.getState().reset()
     useUIStore.setState(useUIStore.getInitialState())
     mockUseSessionFacadeV2.mockReturnValue(makeFacade())
+    mockResolveTurnExecutionPolicy.mockReturnValue(undefined)
   })
 
   it('uses facade with breadcrumb policy and maps execution lane to workflow thread id', async () => {
@@ -400,7 +406,7 @@ describe('BreadcrumbChatViewV2', () => {
             path="/projects/:projectId/nodes/:nodeId/chat-v2"
             element={
               <>
-                <BreadcrumbChatViewV2 />
+                <BreadcrumbViewV2 />
                 <LocationProbe />
               </>
             }
@@ -443,7 +449,7 @@ describe('BreadcrumbChatViewV2', () => {
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -482,7 +488,7 @@ describe('BreadcrumbChatViewV2', () => {
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -513,7 +519,7 @@ describe('BreadcrumbChatViewV2', () => {
     const view = render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -532,7 +538,7 @@ describe('BreadcrumbChatViewV2', () => {
     view.rerender(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -541,23 +547,24 @@ describe('BreadcrumbChatViewV2', () => {
   })
 
   it('submits via facade command and refreshes workflow state', async () => {
+    const resolvedPolicy = { approvalPolicy: 'resolver-policy' }
     const facade = makeFacade({
       activeThreadId: 'exec-thread-1',
       activeThread: makeThread('exec-thread-1'),
       isActiveThreadReady: true,
     })
+    mockResolveTurnExecutionPolicy.mockReturnValue(resolvedPolicy)
     mockUseSessionFacadeV2.mockReturnValue(facade)
-    seedStores({
-      workflowState: makeWorkflowState({
-        workflowPhase: 'execution_decision_pending',
-        canSendExecutionMessage: true,
-      }),
+    const workflowState = makeWorkflowState({
+      workflowPhase: 'execution_decision_pending',
+      canSendExecutionMessage: true,
     })
+    seedStores({ workflowState })
 
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -565,10 +572,18 @@ describe('BreadcrumbChatViewV2', () => {
     fireEvent.click(screen.getByTestId('composer-submit-mock'))
 
     await waitFor(() => {
+      expect(mockResolveTurnExecutionPolicy).toHaveBeenCalledWith({
+        threadTab: 'execution',
+        accessMode: 'full-access',
+        workflowState,
+        projectId: 'project-1',
+        nodeId: 'root',
+      })
       expect(facade.commands.submit).toHaveBeenCalledWith(
         expect.objectContaining({
           text: 'queued from composer mock',
         }),
+        resolvedPolicy,
       )
     })
     await waitFor(() => {
@@ -597,7 +612,7 @@ describe('BreadcrumbChatViewV2', () => {
     const view = render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -619,7 +634,7 @@ describe('BreadcrumbChatViewV2', () => {
     view.rerender(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -657,7 +672,7 @@ describe('BreadcrumbChatViewV2', () => {
       return render(
         <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
           <Routes>
-            <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+            <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
           </Routes>
         </MemoryRouter>,
       )
@@ -714,7 +729,7 @@ describe('BreadcrumbChatViewV2', () => {
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
