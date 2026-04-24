@@ -11,6 +11,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from backend.business.workflow_v2.errors import WorkflowV2Error
 from backend.config.app_config import is_conversation_v3_bridge_allowed_for_project
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_stream_open_envelope, build_thread_envelope
@@ -41,6 +42,20 @@ def _error_response(exc: AppError) -> JSONResponse:
                 "code": exc.code,
                 "message": exc.message,
                 "details": {},
+            },
+        },
+    )
+
+
+def _workflow_v2_error_response(exc: WorkflowV2Error) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "ok": False,
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "details": exc.details,
             },
         },
     )
@@ -361,6 +376,8 @@ async def get_workflow_state_v3(request: Request, project_id: str, node_id: str)
     try:
         payload = _workflow_service(request).get_workflow_state(project_id, node_id)
         return _ok(payload)
+    except WorkflowV2Error as exc:
+        return _workflow_v2_error_response(exc)
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -381,6 +398,8 @@ async def finish_task_v3(
             idempotency_key=body.idempotencyKey,
         )
         return _ok(payload)
+    except WorkflowV2Error as exc:
+        return _workflow_v2_error_response(exc)
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -402,6 +421,8 @@ async def mark_done_from_execution_v3(
             expected_workspace_hash=body.expectedWorkspaceHash,
         )
         return _ok(payload)
+    except WorkflowV2Error as exc:
+        return _workflow_v2_error_response(exc)
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -423,6 +444,8 @@ async def review_in_audit_v3(
             expected_workspace_hash=body.expectedWorkspaceHash,
         )
         return _ok(payload)
+    except WorkflowV2Error as exc:
+        return _workflow_v2_error_response(exc)
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -444,6 +467,8 @@ async def mark_done_from_audit_v3(
             expected_review_commit_sha=body.expectedReviewCommitSha,
         )
         return _ok(payload)
+    except WorkflowV2Error as exc:
+        return _workflow_v2_error_response(exc)
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -465,6 +490,8 @@ async def improve_in_execution_v3(
             expected_review_commit_sha=body.expectedReviewCommitSha,
         )
         return _ok(payload)
+    except WorkflowV2Error as exc:
+        return _workflow_v2_error_response(exc)
     except AppError as exc:
         return _error_response(exc)
     except Exception:

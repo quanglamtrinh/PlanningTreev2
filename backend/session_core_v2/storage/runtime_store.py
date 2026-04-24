@@ -11,10 +11,12 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from backend.session_core_v2.contracts import ALLOWED_TURN_TRANSITIONS, TERMINAL_TURN_STATES
 from backend.session_core_v2.errors import SessionCoreError
+
+EventObserver = Callable[[dict[str, Any]], None]
 
 _TIER0_METHODS: frozenset[str] = frozenset(
     {
@@ -100,6 +102,7 @@ class RuntimeStoreV2:
         self._pending_requests: dict[str, dict[str, Any]] = {}
         self._pending_request_by_raw: dict[tuple[str, str], str] = {}
         self._idempotency_mem: dict[tuple[str, str], dict[str, Any]] = {}
+        self._event_observers: list[EventObserver] = []
 
         self._lagged_reset_count = 0
         self._cursor_expired_count = 0
@@ -616,7 +619,24 @@ class RuntimeStoreV2:
                 self._trim_memory_journal(normalized_thread_id, now_ms=occurred_at_ms)
             self._persist_event(event)
             self._fanout_event(event)
-            return dict(event)
+            event_copy = dict(event)
+        self._notify_event_observers(event_copy)
+        return event_copy
+
+    def add_event_observer(self, observer: EventObserver) -> None:
+        if observer is None:
+            return
+        with self._lock:
+            self._event_observers.append(observer)
+
+    def _notify_event_observers(self, event: dict[str, Any]) -> None:
+        with self._lock:
+            observers = list(self._event_observers)
+        for observer in observers:
+            try:
+                observer(dict(event))
+            except Exception:
+                logger.exception("session_core_v2 event observer failed")
 
     def parse_cursor(self, *, thread_id: str, cursor: str | None) -> int:
         normalized_thread_id = self._normalize_non_empty(thread_id, "threadId")

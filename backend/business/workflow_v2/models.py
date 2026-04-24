@@ -91,6 +91,39 @@ class AuditDecisionV2(WorkflowModel):
     created_at: str | None = Field(default=None, alias="createdAt")
 
 
+class ExecutionRunV2(WorkflowModel):
+    run_id: str = Field(alias="runId")
+    thread_id: str | None = Field(default=None, alias="threadId")
+    turn_id: str | None = Field(default=None, alias="turnId")
+    client_request_id: str | None = Field(default=None, alias="clientRequestId")
+    trigger_kind: str | None = Field(default=None, alias="triggerKind")
+    start_sha: str | None = Field(default=None, alias="startSha")
+    status: str = "running"
+    decision: str | None = None
+    candidate_workspace_hash: str | None = Field(default=None, alias="candidateWorkspaceHash")
+    committed_head_sha: str | None = Field(default=None, alias="committedHeadSha")
+    summary_text: str | None = Field(default=None, alias="summaryText")
+    error_message: str | None = Field(default=None, alias="errorMessage")
+    started_at: str | None = Field(default=None, alias="startedAt")
+    completed_at: str | None = Field(default=None, alias="completedAt")
+    decided_at: str | None = Field(default=None, alias="decidedAt")
+
+
+class AuditRunV2(WorkflowModel):
+    run_id: str = Field(alias="runId")
+    thread_id: str | None = Field(default=None, alias="threadId")
+    turn_id: str | None = Field(default=None, alias="turnId")
+    source_execution_run_id: str | None = Field(default=None, alias="sourceExecutionRunId")
+    client_request_id: str | None = Field(default=None, alias="clientRequestId")
+    review_commit_sha: str | None = Field(default=None, alias="reviewCommitSha")
+    status: str = "running"
+    review_disposition: str | None = Field(default=None, alias="reviewDisposition")
+    final_review_text: str | None = Field(default=None, alias="finalReviewText")
+    error_message: str | None = Field(default=None, alias="errorMessage")
+    started_at: str | None = Field(default=None, alias="startedAt")
+    completed_at: str | None = Field(default=None, alias="completedAt")
+
+
 class ThreadBinding(WorkflowModel):
     project_id: str = Field(alias="projectId")
     node_id: str = Field(alias="nodeId")
@@ -122,6 +155,8 @@ class NodeWorkflowStateV2(BaseModel):
 
     current_execution_decision: ExecutionDecisionV2 | None = None
     current_audit_decision: AuditDecisionV2 | None = None
+    execution_runs: dict[str, ExecutionRunV2] = Field(default_factory=dict)
+    audit_runs: dict[str, AuditRunV2] = Field(default_factory=dict)
 
     workspace_hash: str | None = None
     base_commit_sha: str | None = None

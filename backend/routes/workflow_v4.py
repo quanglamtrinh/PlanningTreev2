@@ -13,6 +13,7 @@ from backend.business.workflow_v2.events import WorkflowEventV2
 from backend.business.workflow_v2.errors import WorkflowV2Error
 from backend.business.workflow_v2.models import ThreadRole, workflow_state_to_response
 from backend.business.workflow_v2.state_machine import derive_allowed_actions
+from backend.errors.app_errors import AppError
 from backend.session_core_v2.errors import SessionCoreError
 
 router = APIRouter(tags=["workflow-v4"])
@@ -36,8 +37,38 @@ class EnsureThreadRequest(BaseModel):
     forceRebase: bool = False
 
 
+class ExecutionStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=1)
+    model: str | None = None
+    modelProvider: str | None = None
+
+
+class WorkspaceGuardMutationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=1)
+    expectedWorkspaceHash: str = Field(min_length=1)
+    model: str | None = None
+    modelProvider: str | None = None
+
+
+class ReviewGuardMutationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=1)
+    expectedReviewCommitSha: str = Field(min_length=1)
+    model: str | None = None
+    modelProvider: str | None = None
+
+
 def _service(request: Request) -> Any:
     return request.app.state.workflow_thread_binding_service_v2
+
+
+def _orchestrator(request: Request) -> Any:
+    return request.app.state.execution_audit_orchestrator_v2
 
 
 def _repository(request: Request) -> Any:
@@ -59,6 +90,17 @@ def _session_error_response(error: SessionCoreError) -> JSONResponse:
             "code": error.code,
             "message": error.message,
             "details": error.details if isinstance(error.details, dict) else {},
+        },
+    )
+
+
+def _app_error_response(error: AppError) -> JSONResponse:
+    return JSONResponse(
+        status_code=error.status_code,
+        content={
+            "code": error.code,
+            "message": error.message,
+            "details": {},
         },
     )
 
@@ -210,4 +252,139 @@ def ensure_workflow_thread_v4(
         return _session_error_response(exc)
     except Exception:
         logger.exception("ensure_workflow_thread_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/projects/{projectId}/nodes/{nodeId}/execution/start")
+def start_execution_v4(
+    projectId: str,
+    nodeId: str,
+    payload: ExecutionStartRequest,
+    request: Request,
+) -> JSONResponse:
+    try:
+        response = _orchestrator(request).start_execution(
+            projectId,
+            nodeId,
+            idempotency_key=payload.idempotencyKey,
+            model=payload.model,
+            model_provider=payload.modelProvider,
+        )
+        return JSONResponse(status_code=200, content=response)
+    except WorkflowV2Error as exc:
+        return _workflow_error_response(exc)
+    except SessionCoreError as exc:
+        return _session_error_response(exc)
+    except AppError as exc:
+        return _app_error_response(exc)
+    except Exception:
+        logger.exception("start_execution_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/projects/{projectId}/nodes/{nodeId}/execution/mark-done")
+def mark_done_from_execution_v4(
+    projectId: str,
+    nodeId: str,
+    payload: WorkspaceGuardMutationRequest,
+    request: Request,
+) -> JSONResponse:
+    try:
+        response = _orchestrator(request).mark_done_from_execution(
+            projectId,
+            nodeId,
+            idempotency_key=payload.idempotencyKey,
+            expected_workspace_hash=payload.expectedWorkspaceHash,
+        )
+        return JSONResponse(status_code=200, content=response)
+    except WorkflowV2Error as exc:
+        return _workflow_error_response(exc)
+    except SessionCoreError as exc:
+        return _session_error_response(exc)
+    except AppError as exc:
+        return _app_error_response(exc)
+    except Exception:
+        logger.exception("mark_done_from_execution_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/projects/{projectId}/nodes/{nodeId}/execution/improve")
+def improve_execution_v4(
+    projectId: str,
+    nodeId: str,
+    payload: ReviewGuardMutationRequest,
+    request: Request,
+) -> JSONResponse:
+    try:
+        response = _orchestrator(request).request_improvements(
+            projectId,
+            nodeId,
+            idempotency_key=payload.idempotencyKey,
+            expected_review_commit_sha=payload.expectedReviewCommitSha,
+            model=payload.model,
+            model_provider=payload.modelProvider,
+        )
+        return JSONResponse(status_code=200, content=response)
+    except WorkflowV2Error as exc:
+        return _workflow_error_response(exc)
+    except SessionCoreError as exc:
+        return _session_error_response(exc)
+    except AppError as exc:
+        return _app_error_response(exc)
+    except Exception:
+        logger.exception("improve_execution_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/projects/{projectId}/nodes/{nodeId}/audit/start")
+def start_audit_v4(
+    projectId: str,
+    nodeId: str,
+    payload: WorkspaceGuardMutationRequest,
+    request: Request,
+) -> JSONResponse:
+    try:
+        response = _orchestrator(request).start_audit(
+            projectId,
+            nodeId,
+            idempotency_key=payload.idempotencyKey,
+            expected_workspace_hash=payload.expectedWorkspaceHash,
+            model=payload.model,
+            model_provider=payload.modelProvider,
+        )
+        return JSONResponse(status_code=200, content=response)
+    except WorkflowV2Error as exc:
+        return _workflow_error_response(exc)
+    except SessionCoreError as exc:
+        return _session_error_response(exc)
+    except AppError as exc:
+        return _app_error_response(exc)
+    except Exception:
+        logger.exception("start_audit_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/projects/{projectId}/nodes/{nodeId}/audit/accept")
+def accept_audit_v4(
+    projectId: str,
+    nodeId: str,
+    payload: ReviewGuardMutationRequest,
+    request: Request,
+) -> JSONResponse:
+    try:
+        response = _orchestrator(request).accept_audit(
+            projectId,
+            nodeId,
+            idempotency_key=payload.idempotencyKey,
+            expected_review_commit_sha=payload.expectedReviewCommitSha,
+        )
+        return JSONResponse(status_code=200, content=response)
+    except WorkflowV2Error as exc:
+        return _workflow_error_response(exc)
+    except SessionCoreError as exc:
+        return _session_error_response(exc)
+    except AppError as exc:
+        return _app_error_response(exc)
+    except Exception:
+        logger.exception("accept_audit_v4 failed")
         return _unexpected_error_response()

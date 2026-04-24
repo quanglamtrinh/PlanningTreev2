@@ -95,11 +95,16 @@ def main() -> int:
                 errors.append(f"{relative_path} is missing Phase 3 token: {token}")
 
     workflow_v4 = _read("backend/routes/workflow_v4.py")
-    post_route_count = len(re.findall(r"@router\.post\(", workflow_v4))
-    if post_route_count != 1:
+    ensure_route_count = len(
+        re.findall(
+            r"@router\.post\(\"/v4/projects/\{projectId\}/nodes/\{nodeId\}/threads/\{role\}/ensure\"\)",
+            workflow_v4,
+        )
+    )
+    if ensure_route_count != 1:
         errors.append(
-            "workflow_v4.py must expose exactly one Phase 3 workflow mutation route; "
-            f"found {post_route_count} POST routes."
+            "workflow_v4.py must expose the Phase 3 ensure-thread mutation route exactly once; "
+            f"found {ensure_route_count} matches."
         )
 
     session_v4 = _read("backend/routes/session_v4.py")
