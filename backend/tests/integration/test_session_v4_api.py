@@ -361,6 +361,71 @@ def test_session_v4_turn_runtime_and_idempotency(client: TestClient) -> None:
     assert interrupt_response.status_code == 200
 
 
+def test_session_v4_inject_items_idempotent_without_starting_turn(client: TestClient) -> None:
+    injected_item = {"id": "context-item-1", "type": "systemMessage", "text": "Workflow context"}
+    thread_with_context = _fake_thread("thread-1")
+    thread_with_context["turns"] = [
+        {"id": "context-turn-1", "status": "completed", "items": [injected_item]},
+    ]
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+            "thread/inject_items": {"status": "accepted"},
+            "thread/read": {"thread": thread_with_context},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    payload = {"clientActionId": "inject-1", "items": [injected_item]}
+    pre_init_response = client.post("/v4/session/threads/thread-1/inject-items", json=payload)
+    assert pre_init_response.status_code == 409
+    assert pre_init_response.json()["error"]["code"] == "ERR_SESSION_NOT_INITIALIZED"
+
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+
+    invalid_response = client.post(
+        "/v4/session/threads/thread-1/inject-items",
+        json={"clientActionId": "inject-invalid", "items": []},
+    )
+    assert invalid_response.status_code == 422
+
+    first_response = client.post("/v4/session/threads/thread-1/inject-items", json=payload)
+    duplicate_response = client.post("/v4/session/threads/thread-1/inject-items", json=payload)
+    assert first_response.status_code == 200
+    assert duplicate_response.status_code == 200
+    assert first_response.json()["data"]["status"] == "accepted"
+    assert duplicate_response.json()["data"]["status"] == "accepted"
+
+    request_methods = [method for method, _ in fake_transport.requests]
+    assert request_methods.count("thread/inject_items") == 1
+    assert "turn/start" not in request_methods
+    assert (
+        "thread/inject_items",
+        {"threadId": "thread-1", "clientActionId": "inject-1", "items": [injected_item]},
+    ) in fake_transport.requests
+    runtime_store = client.app.state.session_manager_v2._runtime_store  # noqa: SLF001
+    active_turn = runtime_store.get_active_turn(thread_id="thread-1")
+    assert active_turn is None
+
+    read_response = client.get("/v4/session/threads/thread-1/read?includeTurns=true")
+    assert read_response.status_code == 200
+    assert read_response.json()["data"]["thread"]["turns"][0]["items"] == [injected_item]
+
+    mismatch_response = client.post(
+        "/v4/session/threads/thread-1/inject-items",
+        json={
+            "clientActionId": "inject-1",
+            "items": [{"id": "context-item-2", "type": "systemMessage"}],
+        },
+    )
+    assert mismatch_response.status_code == 409
+    assert mismatch_response.json()["error"]["code"] == "ERR_IDEMPOTENCY_PAYLOAD_MISMATCH"
+    assert [method for method, _ in fake_transport.requests].count("thread/inject_items") == 1
+
+
 def test_session_v4_pending_requests_lists_all_phase3_methods(client: TestClient) -> None:
     fake_transport = _FakeTransport(
         responses={
@@ -667,6 +732,16 @@ def test_session_v4_feature_flags_gate_turns_and_events(client: TestClient) -> N
         assert turn_response.status_code == 501
         assert turn_response.json()["error"]["code"] == "ERR_PHASE_NOT_ENABLED"
 
+        inject_response = client.post(
+            "/v4/session/threads/thread-1/inject-items",
+            json={
+                "clientActionId": "inject-1",
+                "items": [{"type": "systemMessage", "text": "context"}],
+            },
+        )
+        assert inject_response.status_code == 501
+        assert inject_response.json()["error"]["code"] == "ERR_PHASE_NOT_ENABLED"
+
         events_response = client.get("/v4/session/threads/thread-1/events")
         assert events_response.status_code == 501
         assert events_response.json()["error"]["code"] == "ERR_PHASE_NOT_ENABLED"
@@ -718,6 +793,7 @@ def test_session_v4_contract_conformance_for_phase3_endpoints(client: TestClient
             "turn/start": {"turnId": "turn-start-1"},
             "turn/steer": {"turnId": "turn-start-1"},
             "turn/interrupt": {},
+            "thread/inject_items": {"status": "accepted"},
         }
     )
     _install_fake_manager(client, fake_transport)
@@ -747,6 +823,13 @@ def test_session_v4_contract_conformance_for_phase3_endpoints(client: TestClient
     turn_interrupt_payload = client.post(
         "/v4/session/threads/thread-1/turns/turn-start-1/interrupt",
         json={"clientActionId": "interrupt-1"},
+    ).json()
+    inject_payload = client.post(
+        "/v4/session/threads/thread-1/inject-items",
+        json={
+            "clientActionId": "inject-contract-1",
+            "items": [{"type": "systemMessage", "text": "context"}],
+        },
     ).json()
     fake_transport.emit_server_request(
         900,
@@ -780,6 +863,7 @@ def test_session_v4_contract_conformance_for_phase3_endpoints(client: TestClient
     _assert_component(turn_start_payload, "TurnEnvelope", schema_doc)
     _assert_component(turn_steer_payload, "TurnEnvelope", schema_doc)
     _assert_component(turn_interrupt_payload, "BasicOkEnvelope", schema_doc)
+    _assert_component(inject_payload, "BasicOkEnvelope", schema_doc)
     _assert_component(pending_payload, "PendingRequestsEnvelope", schema_doc)
     _assert_component(resolve_payload, "BasicOkEnvelope", schema_doc)
     _assert_component(reject_payload, "BasicOkEnvelope", schema_doc)
