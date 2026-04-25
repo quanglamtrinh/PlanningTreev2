@@ -365,14 +365,14 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     }
     const laneThreadId = workflowLane.threadId
     const shouldHoldCurrentSelection = isWorkflowLoading || activeMutation !== null
+    if (shouldHoldCurrentSelection) {
+      return
+    }
     if (laneThreadId) {
       if (sessionState.activeThreadId === laneThreadId) {
         return
       }
       void sessionCommands.selectThread(laneThreadId).catch(() => undefined)
-      return
-    }
-    if (shouldHoldCurrentSelection) {
       return
     }
     if (sessionState.activeThreadId !== null) {
@@ -512,6 +512,13 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       if (!projectId || !nodeId) {
         return
       }
+      const navigateAndSelectThread = async (targetTab: ThreadTab, targetThreadId: string | null) => {
+        void navigate(buildChatV2Url(projectId, nodeId, targetTab))
+        if (!targetThreadId) {
+          return
+        }
+        await sessionCommands.selectThread(targetThreadId)
+      }
       if (action.kind === 'start_execution') {
         const result = await startExecution(projectId, nodeId, workflowModelPolicy)
         const threadId = resolveThreadFromMutationResult(result, {
@@ -529,10 +536,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        if (threadId) {
-          await sessionCommands.selectThread(threadId)
-        }
-        void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
+        await navigateAndSelectThread('execution', threadId)
         return
       }
       if (action.kind === 'review_in_audit') {
@@ -555,10 +559,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        if (threadId) {
-          await sessionCommands.selectThread(threadId)
-        }
-        void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
+        await navigateAndSelectThread('audit', threadId)
         return
       }
       if (action.kind === 'mark_done_from_execution') {
@@ -590,10 +591,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        if (threadId) {
-          await sessionCommands.selectThread(threadId)
-        }
-        void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
+        await navigateAndSelectThread('execution', threadId)
         return
       }
       if (action.kind === 'mark_done_from_audit') {
@@ -622,10 +620,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        if (threadId) {
-          await sessionCommands.selectThread(threadId)
-        }
-        void navigate(buildChatV2Url(projectId, nodeId, 'package'))
+        await navigateAndSelectThread('package', threadId)
       }
     },
     [

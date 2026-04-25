@@ -201,6 +201,13 @@ def get_session_core_v2_protocol_gate_timeout_sec() -> int:
     return max(3, min(60, value))
 
 
+def get_session_core_v2_legacy_migration_mode() -> str:
+    raw = str(os.environ.get("SESSION_CORE_V2_LEGACY_MIGRATION_MODE", "") or "").strip().lower()
+    if raw in {"off", "warn", "enforce"}:
+        return raw
+    return "warn"
+
+
 def get_session_core_v2_retention_max_events() -> int:
     raw = os.environ.get("SESSION_CORE_V2_RETENTION_MAX_EVENTS", "200000")
     try:

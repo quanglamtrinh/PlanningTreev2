@@ -27,7 +27,7 @@ import type {
   TurnExecutionPolicy,
   TurnStartRequestV4,
 } from '../contracts'
-import type { ThreadSessionStoreState } from '../store/threadSessionStore'
+import type { SetThreadTurnsOptions, ThreadSessionStoreState } from '../store/threadSessionStore'
 
 type AsyncScope = 'bootstrap' | 'selectThread' | 'hydrateThread' | 'loadModels' | 'pollPending'
 
@@ -82,7 +82,7 @@ export type SessionRuntimeControllerDependencies = {
   upsertThread: (thread: SessionThread, options?: { preserveUpdatedAt?: boolean }) => void
   markThreadActivity: (threadId: string, updatedAt?: number) => void
   setActiveThreadId: (threadId: string | null) => void
-  setThreadTurns: (threadId: string, turns: SessionTurn[]) => void
+  setThreadTurns: (threadId: string, turns: SessionTurn[], options?: SetThreadTurnsOptions) => void
   hydratePendingRequests: (rows: PendingServerRequest[]) => void
   markPendingRequestSubmitted: (requestId: string) => void
   setConnectionPhase: (phase: 'disconnected' | 'connecting' | 'initialized' | 'error') => void
@@ -99,6 +99,7 @@ export type SessionRuntimeControllerDependencies = {
 
 export type HydrateOptions = {
   force?: boolean
+  replaceProjection?: boolean
   isCurrent?: () => boolean
 }
 
@@ -286,7 +287,9 @@ export function createSessionRuntimeController(
     if (!isCurrent()) {
       return
     }
-    dependencies.setThreadTurns(threadId, turns.data)
+    dependencies.setThreadTurns(threadId, turns.data, {
+      mode: options?.replaceProjection ? 'replace' : 'merge',
+    })
     hydratedThreadIds.add(threadId)
   }
 

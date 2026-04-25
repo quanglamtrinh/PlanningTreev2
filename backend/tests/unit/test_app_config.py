@@ -3,6 +3,7 @@ from __future__ import annotations
 from backend.config.app_config import (
     get_conversation_v3_bridge_allowlist,
     get_conversation_v3_bridge_mode,
+    get_session_core_v2_legacy_migration_mode,
     get_session_core_v2_protocol_gate_timeout_sec,
     get_thread_raw_event_coalesce_ms,
     get_thread_stream_cadence_profile,
@@ -111,3 +112,24 @@ def test_session_core_v2_protocol_gate_timeout_defaults_and_bounds(monkeypatch) 
 
     monkeypatch.setenv("SESSION_CORE_V2_PROTOCOL_GATE_TIMEOUT_SEC", "200")
     assert get_session_core_v2_protocol_gate_timeout_sec() == 60
+
+
+def test_session_core_v2_legacy_migration_mode_defaults_to_warn(monkeypatch) -> None:
+    monkeypatch.delenv("SESSION_CORE_V2_LEGACY_MIGRATION_MODE", raising=False)
+    assert get_session_core_v2_legacy_migration_mode() == "warn"
+
+
+def test_session_core_v2_legacy_migration_mode_parses_supported_values(monkeypatch) -> None:
+    monkeypatch.setenv("SESSION_CORE_V2_LEGACY_MIGRATION_MODE", "OFF")
+    assert get_session_core_v2_legacy_migration_mode() == "off"
+
+    monkeypatch.setenv("SESSION_CORE_V2_LEGACY_MIGRATION_MODE", "warn")
+    assert get_session_core_v2_legacy_migration_mode() == "warn"
+
+    monkeypatch.setenv("SESSION_CORE_V2_LEGACY_MIGRATION_MODE", "enforce")
+    assert get_session_core_v2_legacy_migration_mode() == "enforce"
+
+
+def test_session_core_v2_legacy_migration_mode_invalid_falls_back_to_warn(monkeypatch) -> None:
+    monkeypatch.setenv("SESSION_CORE_V2_LEGACY_MIGRATION_MODE", "legacy")
+    assert get_session_core_v2_legacy_migration_mode() == "warn"

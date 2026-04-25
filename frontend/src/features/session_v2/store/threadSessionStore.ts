@@ -12,6 +12,10 @@ export type StreamState = {
   reconnectCountByThread: Record<string, number>
 }
 
+export type SetThreadTurnsOptions = {
+  mode?: 'merge' | 'replace'
+}
+
 export type ThreadSessionStoreState = SessionProjectionState & {
   activeThreadId: string | null
   streamState: StreamState
@@ -19,7 +23,7 @@ export type ThreadSessionStoreState = SessionProjectionState & {
   upsertThread: (thread: SessionThread, options?: { preserveUpdatedAt?: boolean }) => void
   markThreadActivity: (threadId: string, updatedAt?: number) => void
   setActiveThreadId: (threadId: string | null) => void
-  setThreadTurns: (threadId: string, turns: SessionTurn[]) => void
+  setThreadTurns: (threadId: string, turns: SessionTurn[], options?: SetThreadTurnsOptions) => void
   setItemsForTurn: (threadId: string, turnId: string, items: SessionItem[]) => void
   applyEvent: (envelope: SessionEventEnvelope) => void
   applyEventsBatch: (envelopes: SessionEventEnvelope[]) => void
@@ -732,40 +736,60 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
   setActiveThreadId(threadId) {
     set({ activeThreadId: threadId })
   },
-  setThreadTurns(threadId, turns) {
+  setThreadTurns(threadId, turns, options) {
     const normalizedTurns = normalizeTurnsForThread(threadId, turns)
+    const mode = options?.mode === 'replace' ? 'replace' : 'merge'
     set((state) => {
-      const existingTurns = state.turnsByThread[threadId] ?? []
-      const mergedById = new Map<string, SessionTurn>()
-      const order: string[] = []
+      let nextTurns: SessionTurn[]
+      let nextItemsByTurn: Record<string, SessionItem[]>
 
-      for (const turn of existingTurns) {
-        mergedById.set(turn.id, turn)
-        order.push(turn.id)
-      }
-      for (const turn of normalizedTurns) {
-        const merged = mergeTurnForStore(mergedById.get(turn.id), turn)
-        mergedById.set(turn.id, merged)
-        if (!order.includes(turn.id)) {
+      if (mode === 'replace') {
+        nextTurns = normalizedTurns
+        const prefix = `${threadId}:`
+        nextItemsByTurn = {}
+        for (const [key, items] of Object.entries(state.itemsByTurn)) {
+          if (key.startsWith(prefix)) {
+            continue
+          }
+          nextItemsByTurn[key] = items
+        }
+        for (const turn of nextTurns) {
+          const key = `${threadId}:${turn.id}`
+          nextItemsByTurn[key] = normalizeItemsForTurnByStatus(threadId, turn.id, turn.items, turn.status)
+        }
+      } else {
+        const existingTurns = state.turnsByThread[threadId] ?? []
+        const mergedById = new Map<string, SessionTurn>()
+        const order: string[] = []
+
+        for (const turn of existingTurns) {
+          mergedById.set(turn.id, turn)
           order.push(turn.id)
         }
-      }
+        for (const turn of normalizedTurns) {
+          const merged = mergeTurnForStore(mergedById.get(turn.id), turn)
+          mergedById.set(turn.id, merged)
+          if (!order.includes(turn.id)) {
+            order.push(turn.id)
+          }
+        }
 
-      const mergedTurns = order
-        .map((turnId) => mergedById.get(turnId))
-        .filter((turn): turn is SessionTurn => Boolean(turn))
-        .sort(compareTurnsChronologically)
+        nextTurns = order
+          .map((turnId) => mergedById.get(turnId))
+          .filter((turn): turn is SessionTurn => Boolean(turn))
+          .sort(compareTurnsChronologically)
 
-      const nextItemsByTurn: Record<string, SessionItem[]> = { ...state.itemsByTurn }
-      for (const turn of mergedTurns) {
-        const key = `${threadId}:${turn.id}`
-        const hydratedItems = normalizeItemsForTurnByStatus(threadId, turn.id, turn.items, turn.status)
-        nextItemsByTurn[key] = mergeItemsForTurn(state.itemsByTurn[key], hydratedItems)
+        nextItemsByTurn = { ...state.itemsByTurn }
+        for (const turn of nextTurns) {
+          const key = `${threadId}:${turn.id}`
+          const hydratedItems = normalizeItemsForTurnByStatus(threadId, turn.id, turn.items, turn.status)
+          nextItemsByTurn[key] = mergeItemsForTurn(state.itemsByTurn[key], hydratedItems)
+        }
       }
 
       return {
         ...state,
-        turnsByThread: { ...state.turnsByThread, [threadId]: mergedTurns },
+        turnsByThread: { ...state.turnsByThread, [threadId]: nextTurns },
         itemsByTurn: nextItemsByTurn,
       }
     })
