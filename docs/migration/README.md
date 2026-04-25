@@ -36,6 +36,10 @@ Documents:
 - [Phase 6 Breadcrumb Cutover Plan](./phase-6-breadcrumb-v2-cutover-plan-v1.md)
   records the completed frontend cutover from V3 workflow state/mutations to
   Workflow V2 while keeping Session Core V2 as the runtime surface.
+- [Phase 7 End-to-End Workflow Actions Plan](./phase-7-end-to-end-workflow-actions-plan-v1.md)
+  records the completed vertical slices and gates for proving ask, execution,
+  audit, and package review actions end to end through Workflow V2 and Session
+  Core V2.
 
 Migration rules:
 

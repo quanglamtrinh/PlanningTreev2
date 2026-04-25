@@ -8,6 +8,7 @@ import {
   markDoneFromExecutionV2,
   startAuditV2,
   startExecutionV2,
+  startPackageReviewV2,
   type WorkflowModelPolicyV2,
   type WorkflowMutationResponseV2,
 } from '../api/client'
@@ -20,6 +21,7 @@ export type WorkflowMutationActionV2 =
   | 'start_audit'
   | 'improve_execution'
   | 'accept_audit'
+  | 'start_package_review'
 
 export type WorkflowStateStoreV2State = {
   entries: Record<string, WorkflowStateV2>
@@ -59,6 +61,11 @@ export type WorkflowStateStoreV2State = {
     projectId: string,
     nodeId: string,
     expectedReviewCommitSha: string,
+  ) => Promise<WorkflowStateV2>
+  startPackageReview: (
+    projectId: string,
+    nodeId: string,
+    options?: WorkflowModelPolicyV2,
   ) => Promise<WorkflowStateV2>
   reset: () => void
 }
@@ -349,6 +356,23 @@ export const useWorkflowStateStoreV2 = create<WorkflowStateStoreV2State>((set) =
           acceptAuditV2(projectId, nodeId, {
             idempotencyKey: newIdempotencyKey('accept_audit'),
             expectedReviewCommitSha,
+          }),
+      },
+      set,
+    )
+  },
+
+  startPackageReview(projectId, nodeId, options) {
+    return runWorkflowMutation(
+      {
+        projectId,
+        nodeId,
+        action: 'start_package_review',
+        mutate: () =>
+          startPackageReviewV2(projectId, nodeId, {
+            idempotencyKey: newIdempotencyKey('start_package_review'),
+            model: options?.model ?? null,
+            modelProvider: options?.modelProvider ?? null,
           }),
       },
       set,

@@ -312,4 +312,38 @@ describe('BreadcrumbChatViewV2 Workflow V2 cutover integration', () => {
     expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', '')
     expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
   })
+
+  it('renders package lane from Workflow V2 package review thread binding', async () => {
+    seedBaseStores(
+      makeWorkflowState({
+        phase: 'done',
+        threads: {
+          askPlanning: 'ask-thread-1',
+          execution: 'exec-thread-1',
+          audit: 'audit-thread-1',
+          packageReview: 'package-thread-1',
+        },
+      }),
+      makeProjectSnapshot('original'),
+    )
+    const facade = makeFacade({
+      activeThreadId: 'package-thread-1',
+      isActiveThreadReady: true,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=package']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'package-thread-1')
+    })
+    expect(facade.commands.selectThread).toHaveBeenCalledWith('package-thread-1')
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
+  })
 })

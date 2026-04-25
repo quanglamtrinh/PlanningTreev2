@@ -405,6 +405,7 @@ function seedStores(options: {
     startAudit: vi.fn().mockResolvedValue(workflowState),
     improveExecution: vi.fn().mockResolvedValue(workflowState),
     acceptAudit: vi.fn().mockResolvedValue(workflowState),
+    startPackageReview: vi.fn().mockResolvedValue(workflowState),
   } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
 }
 
@@ -490,6 +491,48 @@ describe('BreadcrumbViewV2', () => {
       expect(facade.commands.selectThread).toHaveBeenCalledWith('ask-thread-1')
     })
     expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'ask-thread-1')
+  })
+
+  it('ensures ask planning thread from Workflow V2 when ask lane is unbound', async () => {
+    const facade = makeFacade({
+      selectedModel: 'gpt-5.4',
+      activeThread: makeThread('model-source-thread'),
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    const workflowState = makeWorkflowState({
+      threads: { askPlanning: null },
+    })
+    seedStores({ workflowState })
+    const ensureThread = vi.fn().mockResolvedValue(
+      makeWorkflowState({
+        threads: { askPlanning: 'ask-thread-2' },
+      }),
+    )
+    useWorkflowStateStoreV2.setState({
+      ensureThread,
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByTestId('workflow-ensure-ask-thread'))
+
+    await waitFor(() => {
+      expect(ensureThread).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        'ask_planning',
+        expect.objectContaining({
+          model: 'gpt-5.4',
+          modelProvider: 'openai',
+        }),
+      )
+    })
   })
 
   it('lane without thread id clears selection and keeps transcript empty/composer disabled', async () => {
@@ -766,5 +809,53 @@ describe('BreadcrumbViewV2', () => {
     )
 
     expect(screen.getByRole('alert')).toHaveTextContent('Workflow failed first')
+  })
+
+  it('starts package review through Workflow V2 action path', async () => {
+    const workflowState = makeWorkflowState({
+      phase: 'done',
+      threads: {
+        packageReview: null,
+      },
+      allowedActions: ['start_package_review'],
+    })
+    seedStores({ workflowState })
+    const startPackageReview = vi.fn().mockResolvedValue(
+      makeWorkflowState({
+        phase: 'done',
+        threads: { packageReview: 'package-thread-1' },
+        allowedActions: [],
+      }),
+    )
+    useWorkflowStateStoreV2.setState({
+      startPackageReview,
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+    mockUseSessionFacadeV2.mockReturnValue(
+      makeFacade({
+        selectedModel: 'gpt-5.4',
+        activeThread: makeThread('model-source-thread'),
+      }),
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=package']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByTestId('workflow-start-package-review'))
+
+    await waitFor(() => {
+      expect(startPackageReview).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.objectContaining({
+          model: 'gpt-5.4',
+          modelProvider: 'openai',
+        }),
+      )
+    })
   })
 })

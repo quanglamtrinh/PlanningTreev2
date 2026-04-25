@@ -84,6 +84,44 @@ class WorkflowEventPublisherV2:
             )
         )
 
+    def publish_action_completed(
+        self,
+        state: NodeWorkflowStateV2,
+        *,
+        action: WorkflowAction,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._publish(
+            WorkflowEventV2(
+                type="workflow/action_completed",
+                projectId=state.project_id,
+                nodeId=state.node_id,
+                phase=state.phase,
+                version=state.state_version,
+                action=action,
+                details=details or {},
+            )
+        )
+
+    def publish_action_failed(
+        self,
+        state: NodeWorkflowStateV2,
+        *,
+        action: WorkflowAction,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._publish(
+            WorkflowEventV2(
+                type="workflow/action_failed",
+                projectId=state.project_id,
+                nodeId=state.node_id,
+                phase=state.phase,
+                version=state.state_version,
+                action=action,
+                details=details or {},
+            )
+        )
+
     def _publish(self, event: WorkflowEventV2) -> dict[str, Any]:
         payload = event.to_public_dict()
         self._broker.publish(payload)

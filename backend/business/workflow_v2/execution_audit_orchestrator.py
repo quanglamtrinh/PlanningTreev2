@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from backend.ai.execution_prompt_builder import build_execution_prompt
+from backend.ai.chat_prompt_builder import build_package_review_prompt
 from backend.business.workflow_v2.errors import (
     WorkflowActionNotAllowedError,
     WorkflowArtifactVersionConflictError,
     WorkflowIdempotencyConflictError,
-    WorkflowV2NotImplementedError,
 )
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.models import (
@@ -34,6 +34,7 @@ from backend.business.workflow_v2.state_machine import (
     mark_done_from_execution as transition_mark_done_from_execution,
     start_audit as transition_start_audit,
     start_execution as transition_start_execution,
+    start_package_review as transition_start_package_review,
 )
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.errors.app_errors import AppError, NodeNotFound
@@ -513,8 +514,76 @@ class ExecutionAuditOrchestratorV2:
             execution_run_id=execution_run_id,
         )
 
-    def start_package_review(self, *args: object, **kwargs: object) -> None:
-        raise WorkflowV2NotImplementedError("execution_audit_orchestrator.start_package_review")
+    def start_package_review(
+        self,
+        project_id: str,
+        node_id: str,
+        *,
+        idempotency_key: str,
+        model: str | None = None,
+        model_provider: str | None = None,
+    ) -> dict[str, Any]:
+        key = _require_key(idempotency_key)
+        payload_hash = _payload_hash(
+            {
+                "action": "start_package_review",
+                "projectId": project_id,
+                "nodeId": node_id,
+                "model": model,
+                "modelProvider": model_provider,
+            }
+        )
+        state = self._repository.read_state(project_id, node_id)
+        replay = self._resolve_idempotent(state, "start_package_review", key, payload_hash)
+        if replay is not None:
+            return replay
+        transition_start_package_review(
+            state,
+            package_review_thread_id=None,
+        )
+
+        binding = self._thread_binding_service.ensure_thread(
+            project_id=project_id,
+            node_id=node_id,
+            role="package_review",
+            idempotency_key=f"{key}:package-review-thread",
+            model=model,
+            model_provider=model_provider,
+        )
+        thread_id = _binding_thread_id(binding)
+        latest_state = self._repository.read_state(project_id, node_id)
+        next_state = transition_start_package_review(
+            latest_state,
+            package_review_thread_id=thread_id,
+        )
+        metadata = self._metadata_service.load_execution_metadata(project_id, node_id)
+        prompt = build_package_review_prompt(
+            self._storage,
+            project_id,
+            node_id,
+            "Review this completed package. Summarize readiness, blockers, and follow-up actions.",
+        )
+        turn_id = self._start_session_turn(
+            thread_id=thread_id,
+            client_action_id=f"{key}:package-review-turn",
+            text=prompt,
+            cwd=metadata["workspaceRoot"],
+            model=model,
+        )
+        return self._write_action_state(
+            project_id,
+            node_id,
+            next_state,
+            action="start_package_review",
+            idempotency_key=key,
+            payload_hash=payload_hash,
+            response_builder=lambda projected: {
+                "accepted": True,
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "workflowState": _public_state(projected),
+            },
+        )
 
     def handle_session_event(self, event: dict[str, Any]) -> None:
         if str(event.get("method") or "") != "turn/completed":
@@ -797,7 +866,9 @@ class ExecutionAuditOrchestratorV2:
             node_id,
             next_state.model_copy(deep=True, update={"idempotency_records": records}),
         )
-        self._publish_state_changed(persisted, action=_public_action(action), reason=action)
+        public_action = _public_action(action)
+        self._publish_action_completed(persisted, action=public_action, reason=action)
+        self._publish_state_changed(persisted, action=public_action, reason=action)
         return response_builder(persisted)
 
     def _publish_state_changed(
@@ -811,6 +882,20 @@ class ExecutionAuditOrchestratorV2:
             self._event_publisher.publish_state_changed(
                 state,
                 details={"reason": reason, **({"action": action} if action else {})},
+            )
+
+    def _publish_action_completed(
+        self,
+        state: NodeWorkflowStateV2,
+        *,
+        action: WorkflowAction | None,
+        reason: str,
+    ) -> None:
+        if self._event_publisher is not None and action is not None:
+            self._event_publisher.publish_action_completed(
+                state,
+                action=action,
+                details={"reason": reason},
             )
 
     def _resolve_execution_summary_text(self, state: NodeWorkflowStateV2, run_id: str | None) -> str:
@@ -993,6 +1078,7 @@ def _public_action(action: str) -> WorkflowAction | None:
         "start_audit": "review_in_audit",
         "accept_audit": "mark_done_from_audit",
         "request_improvements": "improve_in_execution",
+        "start_package_review": "start_package_review",
     }
     return mapping.get(action)
 

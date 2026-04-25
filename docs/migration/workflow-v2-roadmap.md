@@ -248,12 +248,20 @@ Done when:
 
 ## Phase 7 - End-to-End Workflow Actions
 
+Status: complete.
+
+Detailed plan:
+
+- `docs/migration/phase-7-end-to-end-workflow-actions-plan-v1.md`
+
 Complete and verify action flows:
 
 - Ensure ask planning thread.
 - Start execution.
+- Complete execution from Session V2 turn completion.
 - Mark done from execution.
 - Start audit.
+- Complete audit from Session V2 review/audit completion.
 - Request changes / improve in execution.
 - Accept audit / mark done.
 - Start package review.
@@ -263,6 +271,8 @@ Done when:
 - New UI path does not call V3 workflow state or mutation endpoints.
 - Execution and audit transcripts render through Session Core V2 events.
 - Workflow state changes arrive through the V2 workflow event bridge.
+- Package review has a V4 start route and verified Workflow V2 thread binding.
+- `python scripts/check_workflow_v2_phase7.py` passes.
 
 ## Phase 8 - Context Stale and Rebase
 

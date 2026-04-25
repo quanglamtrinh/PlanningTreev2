@@ -28,6 +28,7 @@ def main() -> int:
         "workflow-v2-cutover-checklist.md",
         "phase-0-gate-report-v1.md",
         "phase-6-breadcrumb-v2-cutover-plan-v1.md",
+        "phase-7-end-to-end-workflow-actions-plan-v1.md",
     ]
     for rel in required_docs:
         if not (MIGRATION / rel).exists():

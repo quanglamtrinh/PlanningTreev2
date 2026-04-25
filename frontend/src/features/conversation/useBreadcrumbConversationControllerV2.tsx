@@ -78,11 +78,13 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     error: workflowError,
     activeMutation,
     loadWorkflowState,
+    ensureThread,
     startExecution,
     completeExecution,
     startAudit,
     improveExecution,
     acceptAudit,
+    startPackageReview,
   } = useWorkflowStateV2(projectId, nodeId)
 
   const isReviewNode = useMemo(() => {
@@ -322,6 +324,11 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       if (!projectId || !nodeId) {
         return
       }
+      if (action.kind === 'ensure_ask_thread') {
+        await ensureThread(projectId, nodeId, 'ask_planning', workflowModelPolicy)
+        void navigate(buildChatV2Url(projectId, nodeId, 'ask'))
+        return
+      }
       if (action.kind === 'start_execution') {
         await startExecution(projectId, nodeId, workflowModelPolicy)
         void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
@@ -359,11 +366,17 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         await acceptAudit(projectId, nodeId, action.reviewCommitSha)
         setActiveSurface('graph')
         void navigate('/')
+        return
+      }
+      if (action.kind === 'start_package_review') {
+        await startPackageReview(projectId, nodeId, workflowModelPolicy)
+        void navigate(buildChatV2Url(projectId, nodeId, 'package'))
       }
     },
     [
       acceptAudit,
       completeExecution,
+      ensureThread,
       improveExecution,
       navigate,
       nodeId,
@@ -371,6 +384,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       setActiveSurface,
       startAudit,
       startExecution,
+      startPackageReview,
       workflowModelPolicy,
     ],
   )

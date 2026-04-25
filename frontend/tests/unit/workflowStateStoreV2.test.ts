@@ -9,6 +9,7 @@ const { apiMock } = vi.hoisted(() => ({
     startAuditV2: vi.fn(),
     improveExecutionV2: vi.fn(),
     acceptAuditV2: vi.fn(),
+    startPackageReviewV2: vi.fn(),
   },
 }))
 
@@ -20,6 +21,7 @@ vi.mock('../../src/features/workflow_v2/api/client', () => ({
   startAuditV2: apiMock.startAuditV2,
   improveExecutionV2: apiMock.improveExecutionV2,
   acceptAuditV2: apiMock.acceptAuditV2,
+  startPackageReviewV2: apiMock.startPackageReviewV2,
 }))
 
 import { useWorkflowStateStoreV2 } from '../../src/features/workflow_v2/store/workflowStateStoreV2'
@@ -177,5 +179,42 @@ describe('workflowStateStoreV2', () => {
 
     expect(useWorkflowStateStoreV2.getState().errors['project-1::node-1']).toBe('audit failed')
     expect(useWorkflowStateStoreV2.getState().activeMutations['project-1::node-1']).toBeNull()
+  })
+
+  it('starts package review through the V4 package review route', async () => {
+    const after = makeWorkflowState({
+      phase: 'done',
+      version: 4,
+      threads: {
+        askPlanning: null,
+        execution: 'exec-thread-1',
+        audit: 'audit-thread-1',
+        packageReview: 'package-thread-1',
+      },
+      allowedActions: [],
+    })
+    apiMock.startPackageReviewV2.mockResolvedValue({
+      accepted: true,
+      threadId: 'package-thread-1',
+      turnId: 'turn-package-1',
+      workflowState: after,
+    })
+
+    await expect(
+      useWorkflowStateStoreV2
+        .getState()
+        .startPackageReview('project-1', 'node-1', { model: 'gpt-5.4', modelProvider: 'openai' }),
+    ).resolves.toEqual(after)
+
+    expect(apiMock.startPackageReviewV2).toHaveBeenCalledWith(
+      'project-1',
+      'node-1',
+      expect.objectContaining({
+        idempotencyKey: expect.stringMatching(/^start_package_review:/),
+        model: 'gpt-5.4',
+        modelProvider: 'openai',
+      }),
+    )
+    expect(useWorkflowStateStoreV2.getState().entries['project-1::node-1']).toEqual(after)
   })
 })

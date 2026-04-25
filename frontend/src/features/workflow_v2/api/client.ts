@@ -201,6 +201,22 @@ export async function acceptAuditV2(
   )
 }
 
+export async function startPackageReviewV2(
+  projectId: string,
+  nodeId: string,
+  payload: WorkflowModelPolicyV2 & { idempotencyKey: string },
+): Promise<WorkflowMutationResponseV2> {
+  await initAuthToken()
+  return jsonPostDirect<WorkflowMutationResponseV2>(
+    `${workflowNodePath(projectId, nodeId)}/package-review/start`,
+    {
+      idempotencyKey: payload.idempotencyKey,
+      model: payload.model ?? null,
+      modelProvider: payload.modelProvider ?? null,
+    },
+  )
+}
+
 export function buildProjectEventsUrlV2(projectId: string): string {
   return `/v4/projects/${encodeURIComponent(projectId)}/events`
 }

@@ -21,6 +21,7 @@ from backend.business.workflow_v2.state_machine import (
     rebase_context,
     start_audit,
     start_execution,
+    start_package_review,
 )
 
 
@@ -105,6 +106,12 @@ def test_mark_done_from_audit_validates_review_commit() -> None:
     done = mark_done_from_audit(state, expected_review_commit_sha="review-sha")
     assert done.phase == "done"
     assert done.accepted_sha == "review-sha"
+    assert derive_allowed_actions(done) == ["start_package_review"]
+
+    package_reviewing = start_package_review(done, package_review_thread_id="thread-package")
+    assert package_reviewing.phase == "done"
+    assert package_reviewing.package_review_thread_id == "thread-package"
+    assert derive_allowed_actions(package_reviewing) == []
 
 
 def test_stale_context_blocks_mutations_until_rebase() -> None:
@@ -148,4 +155,3 @@ def test_state_machine_has_no_forbidden_runtime_imports() -> None:
     ]
 
     assert [token for token in forbidden if token in source] == []
-

@@ -45,6 +45,14 @@ class ExecutionStartRequest(BaseModel):
     modelProvider: str | None = None
 
 
+class PackageReviewStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=1)
+    model: str | None = None
+    modelProvider: str | None = None
+
+
 class WorkspaceGuardMutationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -387,4 +395,31 @@ def accept_audit_v4(
         return _app_error_response(exc)
     except Exception:
         logger.exception("accept_audit_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/projects/{projectId}/nodes/{nodeId}/package-review/start")
+def start_package_review_v4(
+    projectId: str,
+    nodeId: str,
+    payload: PackageReviewStartRequest,
+    request: Request,
+) -> JSONResponse:
+    try:
+        response = _orchestrator(request).start_package_review(
+            projectId,
+            nodeId,
+            idempotency_key=payload.idempotencyKey,
+            model=payload.model,
+            model_provider=payload.modelProvider,
+        )
+        return JSONResponse(status_code=200, content=response)
+    except WorkflowV2Error as exc:
+        return _workflow_error_response(exc)
+    except SessionCoreError as exc:
+        return _session_error_response(exc)
+    except AppError as exc:
+        return _app_error_response(exc)
+    except Exception:
+        logger.exception("start_package_review_v4 failed")
         return _unexpected_error_response()

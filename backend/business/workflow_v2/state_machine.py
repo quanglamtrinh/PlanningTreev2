@@ -26,6 +26,8 @@ def derive_allowed_actions(state: NodeWorkflowStateV2) -> list[WorkflowAction]:
         return ["review_in_audit", "mark_done_from_execution"]
     if state.phase in {"review_pending", "audit_needs_changes"} and state.current_audit_decision is not None:
         return ["improve_in_execution", "mark_done_from_audit"]
+    if state.phase == "done" and state.package_review_thread_id is None:
+        return ["start_package_review"]
     return []
 
 
@@ -224,6 +226,26 @@ def mark_done_from_audit(
     )
 
 
+def start_package_review(
+    state: NodeWorkflowStateV2,
+    *,
+    package_review_thread_id: str | None = None,
+) -> NodeWorkflowStateV2:
+    if (
+        state.phase == "done"
+        and state.package_review_thread_id is not None
+        and state.package_review_thread_id == package_review_thread_id
+    ):
+        return state.model_copy(deep=True)
+    _require_action(state, "start_package_review")
+    return state.model_copy(
+        deep=True,
+        update={
+            "package_review_thread_id": package_review_thread_id or state.package_review_thread_id,
+        },
+    )
+
+
 def mark_context_stale(state: NodeWorkflowStateV2, *, reason: str | None = None) -> NodeWorkflowStateV2:
     if state.phase in {"done", "blocked"}:
         return state.model_copy(deep=True)
@@ -289,4 +311,3 @@ def _require_action(state: NodeWorkflowStateV2, action: WorkflowAction) -> None:
             reason=state.context_stale_reason,
         )
     raise WorkflowActionNotAllowedError(action, state.phase, allowed_actions=allowed_actions)
-

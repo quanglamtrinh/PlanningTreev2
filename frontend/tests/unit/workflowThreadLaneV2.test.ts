@@ -115,7 +115,7 @@ describe('workflowThreadLaneV2', () => {
     expect(projection.lanes.execution.policy).toEqual({
       kind: 'execution',
       canSubmit: false,
-      disabledReason: 'Workflow V2 execution and audit lanes are controlled by workflow actions.',
+      disabledReason: 'Workflow V2 business lanes are controlled by workflow actions.',
     })
   })
 
@@ -160,6 +160,25 @@ describe('workflowThreadLaneV2', () => {
     ])
   })
 
+  it('returns an ask thread ensure action when ask planning is unbound', () => {
+    const lane = resolveWorkflowThreadLaneV2({
+      workflowState: makeWorkflowState({
+        threads: {
+          askPlanning: null,
+        },
+      }),
+      threadTab: 'ask',
+    })
+
+    expect(lane.threadId).toBeNull()
+    expect(lane.actions).toEqual([
+      expect.objectContaining({
+        kind: 'ensure_ask_thread',
+        testId: 'workflow-ensure-ask-thread',
+      }),
+    ])
+  })
+
   it('returns audit action intents with review commit guard payloads', () => {
     const lane = resolveWorkflowThreadLaneV2({
       workflowState: makeWorkflowState({
@@ -179,6 +198,32 @@ describe('workflowThreadLaneV2', () => {
         kind: 'mark_done_from_audit',
         testId: 'workflow-mark-done-audit',
         reviewCommitSha: 'review-sha',
+      }),
+    ])
+  })
+
+  it('resolves package review lane and start action from V2 state', () => {
+    const lane = resolveWorkflowThreadLaneV2({
+      workflowState: makeWorkflowState({
+        phase: 'done',
+        threads: {
+          packageReview: null,
+        },
+        allowedActions: ['start_package_review'],
+      }),
+      threadTab: 'package',
+    })
+
+    expect(lane.threadId).toBeNull()
+    expect(lane.policy).toEqual({
+      kind: 'package',
+      canSubmit: false,
+      disabledReason: 'No workflow thread is available for this lane.',
+    })
+    expect(lane.actions).toEqual([
+      expect.objectContaining({
+        kind: 'start_package_review',
+        testId: 'workflow-start-package-review',
       }),
     ])
   })

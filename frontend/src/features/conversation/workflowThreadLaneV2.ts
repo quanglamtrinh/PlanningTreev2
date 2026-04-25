@@ -7,6 +7,7 @@ export type WorkflowPolicyKindV2 =
   | 'ask'
   | 'execution'
   | 'audit'
+  | 'package'
   | 'review-readonly'
   | 'default'
 
@@ -16,8 +17,10 @@ export type WorkflowPolicyV2 = {
   disabledReason?: string | null
 }
 
+export type WorkflowLaneActionKindV2 = WorkflowActionV2 | 'ensure_ask_thread'
+
 export type WorkflowLaneActionV2 = {
-  kind: WorkflowActionV2
+  kind: WorkflowLaneActionKindV2
   variant: 'default' | 'primary'
   testId: string
   idleLabel: string
@@ -76,7 +79,10 @@ function resolveWorkflowThreadId(
   if (lane === 'execution') {
     return workflowState.threads.execution ?? null
   }
-  return workflowState.threads.audit ?? null
+  if (lane === 'audit') {
+    return workflowState.threads.audit ?? null
+  }
+  return workflowState.threads.packageReview ?? null
 }
 
 function resolveWorkflowPolicy(input: {
@@ -117,7 +123,7 @@ function resolveWorkflowPolicy(input: {
   return {
     kind: lane,
     canSubmit: false,
-    disabledReason: 'Workflow V2 execution and audit lanes are controlled by workflow actions.',
+    disabledReason: 'Workflow V2 business lanes are controlled by workflow actions.',
   }
 }
 
@@ -126,6 +132,20 @@ function resolveWorkflowActions(
   lane: ThreadTab,
 ): WorkflowLaneActionV2[] {
   if (!workflowState) {
+    return []
+  }
+  if (lane === 'ask') {
+    if (!workflowState.threads.askPlanning) {
+      return [
+        {
+          kind: 'ensure_ask_thread',
+          variant: 'primary',
+          testId: 'workflow-ensure-ask-thread',
+          idleLabel: 'Start Ask Thread',
+          busyLabel: 'Starting Ask Thread...',
+        },
+      ]
+    }
     return []
   }
   if (lane === 'execution') {
@@ -181,6 +201,19 @@ function resolveWorkflowActions(
         idleLabel: 'Mark Done',
         busyLabel: 'Marking Done...',
         reviewCommitSha: workflowState.decisions.audit?.reviewCommitSha ?? null,
+      })
+    }
+    return actions
+  }
+  if (lane === 'package') {
+    const actions: WorkflowLaneActionV2[] = []
+    if (hasAction(workflowState, 'start_package_review')) {
+      actions.push({
+        kind: 'start_package_review',
+        variant: 'primary',
+        testId: 'workflow-start-package-review',
+        idleLabel: 'Start Package Review',
+        busyLabel: 'Starting Package Review...',
       })
     }
     return actions
@@ -266,6 +299,7 @@ export function buildWorkflowProjectionV2(
     ask: resolveLane('ask'),
     execution: resolveLane('execution'),
     audit: resolveLane('audit'),
+    package: resolveLane('package'),
   }
 
   return {
