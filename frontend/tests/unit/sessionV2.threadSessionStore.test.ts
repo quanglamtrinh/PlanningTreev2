@@ -522,6 +522,79 @@ describe('threadSessionStore', () => {
     ])
   })
 
+  it('replaces thread projection on full resync and drops stale turn items', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadTurns('thread-1', [
+      {
+        id: 'turn-stale',
+        threadId: 'thread-1',
+        status: 'inProgress',
+        lastCodexStatus: 'inProgress',
+        startedAtMs: 10,
+        completedAtMs: null,
+        error: null,
+        items: [
+          {
+            id: 'item-stale',
+            threadId: 'thread-1',
+            turnId: 'turn-stale',
+            kind: 'agentMessage',
+            status: 'inProgress',
+            createdAtMs: 10,
+            updatedAtMs: 10,
+            payload: { type: 'agentMessage', text: 'stale' },
+          } as SessionItem,
+        ],
+      },
+    ])
+    store.setItemsForTurn('thread-2', 'turn-other', [
+      {
+        id: 'item-other',
+        threadId: 'thread-2',
+        turnId: 'turn-other',
+        kind: 'agentMessage',
+        status: 'completed',
+        createdAtMs: 1,
+        updatedAtMs: 1,
+        payload: { type: 'agentMessage', text: 'keep' },
+      },
+    ])
+
+    store.setThreadTurns(
+      'thread-1',
+      [
+        {
+          id: 'turn-fresh',
+          threadId: 'thread-1',
+          status: 'completed',
+          lastCodexStatus: 'completed',
+          startedAtMs: 20,
+          completedAtMs: 30,
+          error: null,
+          items: [
+            {
+              id: 'item-fresh',
+              threadId: 'thread-1',
+              turnId: 'turn-fresh',
+              kind: 'agentMessage',
+              status: 'completed',
+              createdAtMs: 20,
+              updatedAtMs: 30,
+              payload: { type: 'agentMessage', text: 'fresh' },
+            } as SessionItem,
+          ],
+        },
+      ],
+      { mode: 'replace' },
+    )
+
+    const snapshot = useThreadSessionStore.getState()
+    expect(snapshot.turnsByThread['thread-1'].map((turn) => turn.id)).toEqual(['turn-fresh'])
+    expect(snapshot.itemsByTurn['thread-1:turn-stale']).toBeUndefined()
+    expect(snapshot.itemsByTurn['thread-1:turn-fresh']?.map((item) => item.id)).toEqual(['item-fresh'])
+    expect(snapshot.itemsByTurn['thread-2:turn-other']?.map((item) => item.id)).toEqual(['item-other'])
+  })
+
   it('applies batched stream envelopes in order for delta-heavy updates', () => {
     const store = useThreadSessionStore.getState()
     const envelopes: SessionEventEnvelope[] = [

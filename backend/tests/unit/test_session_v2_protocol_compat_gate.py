@@ -47,6 +47,9 @@ def test_protocol_gate_raises_protocol_mismatch_for_missing_turns_list(monkeypat
         def thread_loaded_list(self, _: dict[str, object]) -> dict[str, object]:
             return {"data": []}
 
+        def thread_start(self, _: dict[str, object]) -> dict[str, object]:
+            return {"thread": {"id": "thread-probe"}}
+
         def thread_turns_list(self, _thread_id: str, _params: dict[str, object]) -> dict[str, object]:
             raise SessionCoreError(
                 code="ERR_PROVIDER_UNAVAILABLE",
@@ -64,3 +67,41 @@ def test_protocol_gate_raises_protocol_mismatch_for_missing_turns_list(monkeypat
     assert exc_info.value.code == "ERR_SESSION_PROTOCOL_MISMATCH"
     assert transport_created
     assert getattr(transport_created[0], "stopped") is True
+
+
+def test_protocol_gate_raises_protocol_mismatch_when_turn_start_missing_turn_id(monkeypatch) -> None:
+    class FakeTransport:
+        def __init__(self, **_: object) -> None:
+            self.stopped = False
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    class FakeProtocol:
+        def __init__(self, _: object) -> None:
+            pass
+
+        def initialize(self, _: dict[str, object]) -> dict[str, object]:
+            return {}
+
+        def thread_loaded_list(self, _: dict[str, object]) -> dict[str, object]:
+            return {"data": []}
+
+        def thread_start(self, _: dict[str, object]) -> dict[str, object]:
+            return {"thread": {"id": "thread-probe"}}
+
+        def thread_turns_list(self, _thread_id: str, _params: dict[str, object]) -> dict[str, object]:
+            return {"data": [], "nextCursor": None}
+
+        def turn_start(self, _thread_id: str, _params: dict[str, object]) -> dict[str, object]:
+            return {"accepted": True}
+
+    monkeypatch.setattr(compat_gate, "StdioJsonRpcTransportV2", FakeTransport)
+    monkeypatch.setattr(compat_gate, "SessionProtocolClientV2", FakeProtocol)
+
+    with pytest.raises(SessionCoreError) as exc_info:
+        compat_gate.ensure_session_core_v2_protocol_compatible(codex_cmd="codex", timeout_sec=5)
+
+    assert exc_info.value.code == "ERR_SESSION_PROTOCOL_MISMATCH"
+    assert exc_info.value.details.get("requiredMethod") == "turn/start"
+    assert exc_info.value.details.get("requiredField") == "turnId"

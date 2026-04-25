@@ -206,7 +206,16 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.resumeThread).toHaveBeenCalledWith('thread-1', {})
     expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', false)
     expect(harness.api.listThreadTurns).toHaveBeenCalledWith('thread-1', { limit: 200 })
-    expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [])
+    expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [], { mode: 'merge' })
+  })
+
+  it('hydrates thread state with replace mode during full resync recovery', async () => {
+    await harness.controller.hydrateThreadState('thread-1', {
+      force: true,
+      replaceProjection: true,
+    })
+
+    expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [], { mode: 'replace' })
   })
 
   it('submits steer request when active turn is running', async () => {

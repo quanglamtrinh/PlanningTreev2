@@ -132,6 +132,34 @@ describe('sessionEventStreamController', () => {
     expect(markDisconnected).toHaveBeenCalledWith('thread-1')
   })
 
+  it('marks prior active thread disconnected when switching streams', () => {
+    const sources: FakeEventSource[] = []
+    const markDisconnected = vi.fn()
+
+    const controller = createSessionEventStreamController({
+      openEventSource: () => {
+        const source = new FakeEventSource()
+        sources.push(source)
+        return source as unknown as EventSource
+      },
+      applyEventsBatch: vi.fn(),
+      markStreamConnected: vi.fn(),
+      markStreamDisconnected: markDisconnected,
+      markStreamReconnect: vi.fn(),
+      clearGapDetected: vi.fn(),
+      getLastEventId: () => null,
+      getGapDetected: () => false,
+      onRuntimeError: vi.fn(),
+    })
+
+    controller.open('thread-1')
+    controller.open('thread-2')
+
+    expect(sources).toHaveLength(2)
+    expect(markDisconnected).toHaveBeenCalledWith('thread-1')
+    expect(markDisconnected).not.toHaveBeenCalledWith('thread-2')
+  })
+
   it('retries reconnect after stream error', async () => {
     const sources: FakeEventSource[] = []
     const markReconnect = vi.fn()

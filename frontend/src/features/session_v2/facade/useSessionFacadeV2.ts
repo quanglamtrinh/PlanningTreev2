@@ -192,7 +192,7 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
       upsertThread: (thread, options) => useThreadSessionStore.getState().upsertThread(thread, options),
       markThreadActivity: (threadId, updatedAt) => useThreadSessionStore.getState().markThreadActivity(threadId, updatedAt),
       setActiveThreadId: (threadId) => useThreadSessionStore.getState().setActiveThreadId(threadId),
-      setThreadTurns: (threadId, turns) => useThreadSessionStore.getState().setThreadTurns(threadId, turns),
+      setThreadTurns: (threadId, turns, options) => useThreadSessionStore.getState().setThreadTurns(threadId, turns, options),
       hydratePendingRequests: (rows) => usePendingRequestsStore.getState().hydrateFromServer(rows),
       markPendingRequestSubmitted: (requestId) => usePendingRequestsStore.getState().markSubmitted(requestId),
       setConnectionPhase: (phase) => useConnectionStore.getState().setPhase(phase),
@@ -223,8 +223,11 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
       clearGapDetected: (threadId) => useThreadSessionStore.getState().clearGapDetected(threadId),
       getLastEventId: (threadId) => useThreadSessionStore.getState().lastEventIdByThread[threadId] ?? null,
       getGapDetected: (threadId) => Boolean(useThreadSessionStore.getState().gapDetectedByThread[threadId]),
-      recoverFromGap: async (threadId) => {
-        await runtimeControllerRef.current?.hydrateThreadState(threadId, { force: true })
+      recoverFromGap: async (threadId, options) => {
+        await runtimeControllerRef.current?.hydrateThreadState(threadId, {
+          force: true,
+          replaceProjection: options.fullResync,
+        })
       },
       resetReplayCursor: (threadId) => useThreadSessionStore.getState().resetReplayCursor(threadId),
       reportGapMetric: (payload) => {

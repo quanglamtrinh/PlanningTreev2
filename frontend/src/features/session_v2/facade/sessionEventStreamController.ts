@@ -164,7 +164,7 @@ export function createSessionEventStreamController(
         return
       }
 
-      closeInternal({ threadId, bumpGeneration: false })
+      closeInternal({ bumpGeneration: false })
       dependencies.clearGapDetected(threadId)
 
       generation += 1
