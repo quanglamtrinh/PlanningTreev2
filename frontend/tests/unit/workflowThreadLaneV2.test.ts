@@ -49,8 +49,6 @@ function makeWorkflowState(overrides: WorkflowStateOverrides = {}): WorkflowStat
       frameVersion: null,
       specVersion: null,
       splitManifestVersion: null,
-      stale: false,
-      staleReason: null,
     },
     allowedActions: ['review_in_audit', 'mark_done_from_execution'],
   }
@@ -160,7 +158,7 @@ describe('workflowThreadLaneV2', () => {
     ])
   })
 
-  it('returns an ask thread ensure action when ask planning is unbound', () => {
+  it('returns no ask lane action when ask planning thread is unbound', () => {
     const lane = resolveWorkflowThreadLaneV2({
       workflowState: makeWorkflowState({
         threads: {
@@ -171,12 +169,7 @@ describe('workflowThreadLaneV2', () => {
     })
 
     expect(lane.threadId).toBeNull()
-    expect(lane.actions).toEqual([
-      expect.objectContaining({
-        kind: 'ensure_ask_thread',
-        testId: 'workflow-ensure-ask-thread',
-      }),
-    ])
+    expect(lane.actions).toEqual([])
   })
 
   it('returns audit action intents with review commit guard payloads', () => {
@@ -224,27 +217,6 @@ describe('workflowThreadLaneV2', () => {
       expect.objectContaining({
         kind: 'start_package_review',
         testId: 'workflow-start-package-review',
-      }),
-    ])
-  })
-
-  it('returns only the rebase action while context is stale', () => {
-    const lane = resolveWorkflowThreadLaneV2({
-      workflowState: makeWorkflowState({
-        context: {
-          stale: true,
-          staleReason: 'execution context packet changed.',
-        },
-        allowedActions: ['rebase_context'],
-      }),
-      threadTab: 'execution',
-    })
-
-    expect(lane.actions).toEqual([
-      expect.objectContaining({
-        kind: 'rebase_context',
-        testId: 'workflow-rebase-context',
-        idleLabel: 'Rebase Context',
       }),
     ])
   })

@@ -6,7 +6,6 @@ import {
   getWorkflowStateV2,
   improveExecutionV2,
   markDoneFromExecutionV2,
-  rebaseContextV2,
   startAuditV2,
   startExecutionV2,
   startPackageReviewV2,
@@ -23,7 +22,6 @@ export type WorkflowMutationActionV2 =
   | 'improve_execution'
   | 'accept_audit'
   | 'start_package_review'
-  | 'rebase_context'
 
 export type WorkflowStateStoreV2State = {
   entries: Record<string, WorkflowStateV2>
@@ -35,7 +33,7 @@ export type WorkflowStateStoreV2State = {
     projectId: string,
     nodeId: string,
     role: WorkflowThreadRoleV2,
-    options?: WorkflowModelPolicyV2 & { forceRebase?: boolean },
+    options?: WorkflowModelPolicyV2,
   ) => Promise<WorkflowStateV2>
   startExecution: (
     projectId: string,
@@ -68,14 +66,6 @@ export type WorkflowStateStoreV2State = {
     projectId: string,
     nodeId: string,
     options?: WorkflowModelPolicyV2,
-  ) => Promise<WorkflowStateV2>
-  rebaseContext: (
-    projectId: string,
-    nodeId: string,
-    options?: {
-      expectedWorkflowVersion?: number | null
-      roles?: WorkflowThreadRoleV2[] | null
-    },
   ) => Promise<WorkflowStateV2>
   reset: () => void
 }
@@ -280,7 +270,6 @@ export const useWorkflowStateStoreV2 = create<WorkflowStateStoreV2State>((set) =
             idempotencyKey: newIdempotencyKey(`ensure_thread:${role}`),
             model: options?.model ?? null,
             modelProvider: options?.modelProvider ?? null,
-            forceRebase: options?.forceRebase ?? false,
           }),
       },
       set,
@@ -383,23 +372,6 @@ export const useWorkflowStateStoreV2 = create<WorkflowStateStoreV2State>((set) =
             idempotencyKey: newIdempotencyKey('start_package_review'),
             model: options?.model ?? null,
             modelProvider: options?.modelProvider ?? null,
-          }),
-      },
-      set,
-    )
-  },
-
-  rebaseContext(projectId, nodeId, options) {
-    return runWorkflowMutation(
-      {
-        projectId,
-        nodeId,
-        action: 'rebase_context',
-        mutate: () =>
-          rebaseContextV2(projectId, nodeId, {
-            idempotencyKey: newIdempotencyKey('context_rebase'),
-            expectedWorkflowVersion: options?.expectedWorkflowVersion ?? null,
-            roles: options?.roles ?? null,
           }),
       },
       set,

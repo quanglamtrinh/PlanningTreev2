@@ -165,7 +165,7 @@ class LegacyWorkflowV3CompatibilityAdapter:
 
     def project_legacy_workflow_event(self, event: dict[str, Any]) -> dict[str, Any] | None:
         event_type = str(event.get("type") or event.get("eventType") or "").strip()
-        if event_type not in {"workflow/state_changed", "workflow/context_stale", "workflow/action_completed"}:
+        if event_type not in {"workflow/state_changed", "workflow/action_completed"}:
             return None
         details = event.get("details") if isinstance(event.get("details"), dict) else {}
         return {

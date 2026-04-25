@@ -61,9 +61,6 @@ def test_public_response_uses_v4_camel_case_shape() -> None:
         "frameVersion": 2,
         "specVersion": 3,
         "splitManifestVersion": 4,
-        "stale": False,
-        "staleReason": None,
-        "staleBindings": [],
     }
     assert payload["allowedActions"] == ["review_in_audit", "mark_done_from_execution"]
     assert "workflowPhase" not in payload
@@ -94,3 +91,4 @@ def test_thread_binding_serializes_camel_case_public_fields() -> None:
         "createdAt": None,
         "updatedAt": None,
     }
+

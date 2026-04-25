@@ -10,7 +10,6 @@ const { apiMock } = vi.hoisted(() => ({
     improveExecutionV2: vi.fn(),
     acceptAuditV2: vi.fn(),
     startPackageReviewV2: vi.fn(),
-    rebaseContextV2: vi.fn(),
   },
 }))
 
@@ -23,7 +22,6 @@ vi.mock('../../src/features/workflow_v2/api/client', () => ({
   improveExecutionV2: apiMock.improveExecutionV2,
   acceptAuditV2: apiMock.acceptAuditV2,
   startPackageReviewV2: apiMock.startPackageReviewV2,
-  rebaseContextV2: apiMock.rebaseContextV2,
 }))
 
 import { useWorkflowStateStoreV2 } from '../../src/features/workflow_v2/store/workflowStateStoreV2'
@@ -50,8 +48,6 @@ function makeWorkflowState(overrides: Partial<WorkflowStateV2> = {}): WorkflowSt
       frameVersion: null,
       specVersion: null,
       splitManifestVersion: null,
-      stale: false,
-      staleReason: null,
     },
     allowedActions: ['start_execution'],
     ...overrides,
@@ -218,48 +214,5 @@ describe('workflowStateStoreV2', () => {
       }),
     )
     expect(useWorkflowStateStoreV2.getState().entries['project-1::node-1']).toEqual(after)
-  })
-
-  it('rebases stale context through the V4 context route', async () => {
-    const after = makeWorkflowState({
-      version: 6,
-      context: {
-        frameVersion: 3,
-        specVersion: 3,
-        splitManifestVersion: null,
-        stale: false,
-        staleReason: null,
-      },
-      allowedActions: ['start_execution'],
-    })
-    apiMock.rebaseContextV2.mockResolvedValue({
-      rebased: true,
-      updatedBindings: [
-        {
-          role: 'execution',
-          threadId: 'exec-thread-1',
-          contextPacketHash: 'sha256:new',
-        },
-      ],
-      workflowState: after,
-    })
-
-    await expect(
-      useWorkflowStateStoreV2
-        .getState()
-        .rebaseContext('project-1', 'node-1', { expectedWorkflowVersion: 5 }),
-    ).resolves.toEqual(after)
-
-    expect(apiMock.rebaseContextV2).toHaveBeenCalledWith(
-      'project-1',
-      'node-1',
-      expect.objectContaining({
-        idempotencyKey: expect.stringMatching(/^context_rebase:/),
-        expectedWorkflowVersion: 5,
-        roles: null,
-      }),
-    )
-    expect(useWorkflowStateStoreV2.getState().entries['project-1::node-1']).toEqual(after)
-    expect(useWorkflowStateStoreV2.getState().activeMutations['project-1::node-1']).toBeNull()
   })
 })

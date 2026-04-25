@@ -32,6 +32,6 @@ describe('phase 7 end-to-end workflow action guardrails', () => {
     expect(client).toContain('/package-review/start')
     expect(store).toContain('startPackageReview')
     expect(projection).toContain('workflow-start-package-review')
-    expect(projection).toContain('workflow-ensure-ask-thread')
+    expect(projection).not.toContain('workflow-ensure-ask-thread')
   })
 })

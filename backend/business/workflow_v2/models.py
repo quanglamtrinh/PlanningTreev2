@@ -28,7 +28,6 @@ WorkflowAction = Literal[
     "improve_in_execution",
     "mark_done_from_audit",
     "start_package_review",
-    "rebase_context",
 ]
 
 WORKFLOW_SCHEMA_VERSION = 1
@@ -55,7 +54,6 @@ WORKFLOW_ACTIONS: tuple[str, ...] = (
     "improve_in_execution",
     "mark_done_from_audit",
     "start_package_review",
-    "rebase_context",
 )
 
 
@@ -136,15 +134,6 @@ class ThreadBinding(WorkflowModel):
     updated_at: str | None = Field(default=None, alias="updatedAt")
 
 
-class ContextStaleBindingV2(WorkflowModel):
-    role: ThreadRole
-    thread_id: str = Field(alias="threadId")
-    current_context_packet_hash: str | None = Field(default=None, alias="currentContextPacketHash")
-    next_context_packet_hash: str | None = Field(default=None, alias="nextContextPacketHash")
-    current_source_versions: SourceVersions = Field(default_factory=SourceVersions, alias="currentSourceVersions")
-    next_source_versions: SourceVersions = Field(default_factory=SourceVersions, alias="nextSourceVersions")
-
-
 class NodeWorkflowStateV2(BaseModel):
     schema_version: int = WORKFLOW_SCHEMA_VERSION
     state_version: int = 0
@@ -176,9 +165,6 @@ class NodeWorkflowStateV2(BaseModel):
     spec_version: int | None = None
     split_manifest_version: int | None = None
 
-    context_stale: bool = False
-    context_stale_reason: str | None = None
-    context_stale_details: list[ContextStaleBindingV2] = Field(default_factory=list)
     blocked_reason: str | None = None
     last_error: dict[str, Any] | None = None
     idempotency_records: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -204,9 +190,6 @@ class WorkflowContextResponseV2(WorkflowModel):
     frame_version: int | None = Field(default=None, alias="frameVersion")
     spec_version: int | None = Field(default=None, alias="specVersion")
     split_manifest_version: int | None = Field(default=None, alias="splitManifestVersion")
-    stale: bool = False
-    stale_reason: str | None = Field(default=None, alias="staleReason")
-    stale_bindings: list[ContextStaleBindingV2] = Field(default_factory=list, alias="staleBindings")
 
 
 class WorkflowStateResponseV2(WorkflowModel):
@@ -260,9 +243,6 @@ def workflow_state_to_response(
             frameVersion=state.frame_version,
             specVersion=state.spec_version,
             splitManifestVersion=state.split_manifest_version,
-            stale=state.context_stale,
-            staleReason=state.context_stale_reason,
-            staleBindings=copy.deepcopy(state.context_stale_details),
         ),
         allowedActions=allowed_actions,
     )

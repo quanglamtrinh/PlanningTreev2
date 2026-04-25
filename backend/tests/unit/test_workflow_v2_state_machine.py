@@ -7,7 +7,6 @@ import pytest
 from backend.business.workflow_v2.errors import (
     WorkflowActionNotAllowedError,
     WorkflowArtifactVersionConflictError,
-    WorkflowContextStaleError,
 )
 from backend.business.workflow_v2.models import default_workflow_state
 from backend.business.workflow_v2.state_machine import (
@@ -15,10 +14,8 @@ from backend.business.workflow_v2.state_machine import (
     complete_execution,
     derive_allowed_actions,
     improve_execution,
-    mark_context_stale,
     mark_done_from_audit,
     mark_done_from_execution,
-    rebase_context,
     start_audit,
     start_execution,
     start_package_review,
@@ -112,23 +109,6 @@ def test_mark_done_from_audit_validates_review_commit() -> None:
     assert package_reviewing.phase == "done"
     assert package_reviewing.package_review_thread_id == "thread-package"
     assert derive_allowed_actions(package_reviewing) == []
-
-
-def test_stale_context_blocks_mutations_until_rebase() -> None:
-    state = mark_context_stale(
-        default_workflow_state("project-1", "node-1"),
-        reason="spec changed",
-    )
-
-    assert derive_allowed_actions(state) == ["rebase_context"]
-    with pytest.raises(WorkflowContextStaleError) as exc:
-        start_execution(state, execution_run_id="exec-run-1")
-    assert exc.value.code == "ERR_WORKFLOW_CONTEXT_STALE"
-
-    rebased = rebase_context(state, frame_version=2, spec_version=3, split_manifest_version=4)
-    assert rebased.context_stale is False
-    assert rebased.frame_version == 2
-    assert derive_allowed_actions(rebased) == ["start_execution"]
 
 
 def test_invalid_transition_raises_stable_action_error() -> None:

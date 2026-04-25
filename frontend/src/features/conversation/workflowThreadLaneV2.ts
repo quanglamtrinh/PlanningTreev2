@@ -17,7 +17,7 @@ export type WorkflowPolicyV2 = {
   disabledReason?: string | null
 }
 
-export type WorkflowLaneActionKindV2 = WorkflowActionV2 | 'ensure_ask_thread'
+export type WorkflowLaneActionKindV2 = WorkflowActionV2
 
 export type WorkflowLaneActionV2 = {
   kind: WorkflowLaneActionKindV2
@@ -134,29 +134,7 @@ function resolveWorkflowActions(
   if (!workflowState) {
     return []
   }
-  if (hasAction(workflowState, 'rebase_context')) {
-    return [
-      {
-        kind: 'rebase_context',
-        variant: 'primary',
-        testId: 'workflow-rebase-context',
-        idleLabel: 'Rebase Context',
-        busyLabel: 'Rebasing Context...',
-      },
-    ]
-  }
   if (lane === 'ask') {
-    if (!workflowState.threads.askPlanning) {
-      return [
-        {
-          kind: 'ensure_ask_thread',
-          variant: 'primary',
-          testId: 'workflow-ensure-ask-thread',
-          idleLabel: 'Start Ask Thread',
-          busyLabel: 'Starting Ask Thread...',
-        },
-      ]
-    }
     return []
   }
   if (lane === 'execution') {
@@ -166,8 +144,8 @@ function resolveWorkflowActions(
         kind: 'start_execution',
         variant: 'primary',
         testId: 'workflow-start-execution',
-        idleLabel: 'Start Execution',
-        busyLabel: 'Starting Execution...',
+        idleLabel: 'Start Execution Run',
+        busyLabel: 'Starting Execution Run...',
       })
     }
     if (hasAction(workflowState, 'review_in_audit')) {

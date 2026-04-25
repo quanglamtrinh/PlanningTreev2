@@ -9,7 +9,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
-from backend.business.workflow_v2.errors import WorkflowContextStaleError
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.routes import workflow_v4 as workflow_v4_route_module
@@ -134,7 +133,6 @@ def test_v4_workflow_state_returns_direct_canonical_default(client, workspace_ro
         "packageReview": None,
     }
     assert payload["decisions"] == {"execution": None, "audit": None}
-    assert payload["context"]["stale"] is False
     assert payload["allowedActions"] == ["start_execution"]
 
 
@@ -228,7 +226,7 @@ async def test_v4_workflow_events_pass_native_v2_events(client, workspace_root) 
                 "projectId": project_id,
                 "nodeId": node_id,
                 "occurredAt": "2026-04-24T00:00:00Z",
-                "type": "workflow/context_stale",
+                "type": "workflow/action_completed",
                 "phase": "ready_for_execution",
                 "version": 1,
                 "details": {"reason": "test"},
@@ -236,7 +234,7 @@ async def test_v4_workflow_events_pass_native_v2_events(client, workspace_root) 
         )
 
         payload = await _read_sse_payload(response)
-        assert payload["type"] == "workflow/context_stale"
+        assert payload["type"] == "workflow/action_completed"
         assert payload["eventId"] == "workflow-evt-1"
         assert payload["details"] == {"reason": "test"}
     finally:
@@ -278,7 +276,7 @@ def test_ensure_thread_publishes_state_changed_and_replay_does_not_republish(cli
     assert published[0]["version"] == response.json()["workflowState"]["version"]
 
 
-def test_ensure_thread_context_stale_publishes_context_stale(client, workspace_root) -> None:
+def test_ensure_thread_when_context_changes_publishes_state_changed_only(client, workspace_root) -> None:
     _install_binding_service_with_publisher(client, FakeSessionManager())
     project_id, node_id, node_dir = _project_with_confirmed_docs(client, workspace_root)
     published: list[dict[str, Any]] = []
@@ -299,19 +297,17 @@ def test_ensure_thread_context_stale_publishes_context_stale(client, workspace_r
         assert response.status_code == 200
         _write_confirmed_docs(node_dir, revision=3, frame_text="Frame v3", spec_text="Spec v3")
 
-        with pytest.raises(WorkflowContextStaleError):
-            client.app.state.workflow_thread_binding_service_v2.ensure_thread(
-                project_id=project_id,
-                node_id=node_id,
-                role="execution",
-                idempotency_key="ensure-thread:stale",
-            )
+        updated = client.app.state.workflow_thread_binding_service_v2.ensure_thread(
+            project_id=project_id,
+            node_id=node_id,
+            role="execution",
+            idempotency_key="ensure-thread:update",
+        )
+        assert updated["binding"]["threadId"] == "thread-1"
     finally:
         broker.publish = original_publish
 
     assert [event["type"] for event in published] == [
         "workflow/state_changed",
-        "workflow/context_stale",
+        "workflow/state_changed",
     ]
-    assert published[1]["details"]["role"] == "execution"
-    assert "context packet changed" in published[1]["details"]["reason"]

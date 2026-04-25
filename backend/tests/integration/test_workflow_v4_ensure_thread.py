@@ -84,7 +84,6 @@ def test_v4_ensure_thread_returns_direct_contract_shape(client, workspace_root) 
             "idempotencyKey": "ensure-thread:route",
             "model": "gpt-5.4",
             "modelProvider": "openai",
-            "forceRebase": False,
         },
     )
 

@@ -11,7 +11,6 @@ from backend.streaming.sse_broker import GlobalEventBroker
 
 WorkflowEventType = Literal[
     "workflow/state_changed",
-    "workflow/context_stale",
     "workflow/action_completed",
     "workflow/action_failed",
     "workflow/artifact_job_started",
@@ -65,27 +64,6 @@ class WorkflowEventPublisherV2:
                 phase=state.phase,
                 version=state.state_version,
                 details=details or {},
-            )
-        )
-
-    def publish_context_stale(
-        self,
-        state: NodeWorkflowStateV2,
-        *,
-        reason: str | None = None,
-        details: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        event_details = dict(details or {})
-        if reason:
-            event_details["reason"] = reason
-        return self._publish(
-            WorkflowEventV2(
-                type="workflow/context_stale",
-                projectId=state.project_id,
-                nodeId=state.node_id,
-                phase=state.phase,
-                version=state.state_version,
-                details=event_details,
             )
         )
 

@@ -271,8 +271,7 @@ class ArtifactOrchestratorV2:
                         "sourceVersions": versions.model_dump(by_alias=True, mode="json"),
                     },
                 )
-
-        return self._thread_binding_service.refresh_context_freshness(project_id, node_id)
+        return persisted
 
     def _start_generation(
         self,

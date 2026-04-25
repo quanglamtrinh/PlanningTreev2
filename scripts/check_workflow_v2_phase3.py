@@ -36,7 +36,6 @@ REQUIRED_IMPLEMENTATION = {
         "thread_inject_items",
         '"legacy_adopted"',
         '"new_thread"',
-        "WorkflowContextStaleError",
         "WorkflowIdempotencyConflictError",
     ],
     "backend/routes/workflow_v4.py": [
@@ -62,8 +61,7 @@ REQUIRED_TESTS = {
         "test_new_thread_starts_injects_context_and_persists_binding",
         "test_matching_existing_binding_reuses_thread_without_inject",
         "test_legacy_thread_id_is_adopted_and_receives_initial_context",
-        "test_changed_context_without_force_rebase_marks_stale_and_raises",
-        "test_changed_context_with_force_rebase_injects_context_update",
+        "test_changed_context_auto_updates_binding",
         "test_idempotency_replay_and_conflict",
     ],
     "backend/tests/integration/test_workflow_v4_ensure_thread.py": [

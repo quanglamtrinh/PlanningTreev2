@@ -19,13 +19,11 @@ REQUIRED_IMPLEMENTATION = {
     "backend/business/workflow_v2/events.py": [
         "class WorkflowEventPublisherV2",
         "publish_state_changed",
-        "publish_context_stale",
         "WorkflowEventV2",
     ],
     "backend/business/workflow_v2/thread_binding.py": [
         "event_publisher",
         "publish_state_changed",
-        "publish_context_stale",
     ],
     "backend/main.py": [
         "WorkflowEventPublisherV2",
@@ -56,7 +54,6 @@ REQUIRED_IMPLEMENTATION = {
         "useWorkflowEventBridgeV2",
         "openWorkflowEventsStreamV2",
         "workflow/state_changed",
-        "workflow/context_stale",
     ],
 }
 
@@ -66,7 +63,7 @@ REQUIRED_TESTS = {
         "test_v4_workflow_state_read_through_converts_legacy_v3_phase",
         "test_v4_workflow_events_filter_and_adapt_legacy_updates",
         "test_ensure_thread_publishes_state_changed_and_replay_does_not_republish",
-        "test_ensure_thread_context_stale_publishes_context_stale",
+        "test_ensure_thread_when_context_changes_publishes_state_changed_only",
     ],
     "frontend/tests/unit/workflowStateStoreV2.test.ts": [
         "dedupes concurrent workflow-state loads",

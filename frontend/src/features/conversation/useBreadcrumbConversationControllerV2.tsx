@@ -37,6 +37,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   const [searchParams] = useSearchParams()
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
+  const autoEnsureAttemptedRef = useRef<Set<string>>(new Set())
   const sessionFacade = useSessionFacadeV2({
     bootstrapPolicy: {
       autoBootstrapOnMount: true,
@@ -85,7 +86,6 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     improveExecution,
     acceptAudit,
     startPackageReview,
-    rebaseContext,
   } = useWorkflowStateV2(projectId, nodeId)
 
   const isReviewNode = useMemo(() => {
@@ -201,6 +201,25 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   )
   const workflowLane = workflowProjection.lanes[threadTab]
   const activeThreadId = workflowLane.threadId
+  const autoEnsureRole =
+    !isReviewNode && workflowProjection.isLoaded
+      ? threadTab === 'ask'
+        ? workflowProjection.lanes.ask.threadId
+          ? null
+          : ('ask_planning' as const)
+        : threadTab === 'execution'
+          ? workflowProjection.lanes.execution.threadId
+            ? null
+            : ('execution' as const)
+          : null
+      : null
+  const workflowModelPolicy = useMemo(
+    () => ({
+      model: sessionState.selectedModel,
+      modelProvider: sessionState.activeThread?.modelProvider ?? null,
+    }),
+    [sessionState.activeThread?.modelProvider, sessionState.selectedModel],
+  )
 
   useEffect(() => {
     if (
@@ -224,6 +243,35 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     snapshot,
     workflowLane.threadId,
     workflowProjection.isLoaded,
+  ])
+
+  useEffect(() => {
+    if (
+      !projectId ||
+      !nodeId ||
+      !detailNode ||
+      !snapshot ||
+      snapshot.project.id !== projectId ||
+      shouldCanonicalizeV2 ||
+      !autoEnsureRole
+    ) {
+      return
+    }
+    const key = `${projectId}::${nodeId}::${autoEnsureRole}`
+    if (autoEnsureAttemptedRef.current.has(key)) {
+      return
+    }
+    autoEnsureAttemptedRef.current.add(key)
+    void ensureThread(projectId, nodeId, autoEnsureRole, workflowModelPolicy).catch(() => undefined)
+  }, [
+    autoEnsureRole,
+    detailNode,
+    ensureThread,
+    nodeId,
+    projectId,
+    shouldCanonicalizeV2,
+    snapshot,
+    workflowModelPolicy,
   ])
 
   const detailCardState = useMemo(() => {
@@ -312,22 +360,9 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     [loadWorkflowState, nodeId, projectId, sessionCommands.submit, workflowLane],
   )
 
-  const workflowModelPolicy = useMemo(
-    () => ({
-      model: sessionState.selectedModel,
-      modelProvider: sessionState.activeThread?.modelProvider ?? null,
-    }),
-    [sessionState.activeThread?.modelProvider, sessionState.selectedModel],
-  )
-
   const handleWorkflowLaneAction = useCallback(
     async (action: WorkflowLaneActionV2) => {
       if (!projectId || !nodeId) {
-        return
-      }
-      if (action.kind === 'ensure_ask_thread') {
-        await ensureThread(projectId, nodeId, 'ask_planning', workflowModelPolicy)
-        void navigate(buildChatV2Url(projectId, nodeId, 'ask'))
         return
       }
       if (action.kind === 'start_execution') {
@@ -372,28 +407,19 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       if (action.kind === 'start_package_review') {
         await startPackageReview(projectId, nodeId, workflowModelPolicy)
         void navigate(buildChatV2Url(projectId, nodeId, 'package'))
-        return
-      }
-      if (action.kind === 'rebase_context') {
-        await rebaseContext(projectId, nodeId, {
-          expectedWorkflowVersion: workflowState?.version ?? null,
-        })
       }
     },
     [
       acceptAudit,
       completeExecution,
-      ensureThread,
       improveExecution,
       navigate,
       nodeId,
       projectId,
-      rebaseContext,
       setActiveSurface,
       startAudit,
       startExecution,
       startPackageReview,
-      workflowState?.version,
       workflowModelPolicy,
     ],
   )

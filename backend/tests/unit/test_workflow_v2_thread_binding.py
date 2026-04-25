@@ -8,7 +8,6 @@ import pytest
 
 from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
 from backend.business.workflow_v2.errors import (
-    WorkflowContextStaleError,
     WorkflowIdempotencyConflictError,
 )
 from backend.business.workflow_v2.models import default_workflow_state
@@ -161,35 +160,7 @@ def test_legacy_thread_id_is_adopted_and_receives_initial_context(storage, works
     assert repository.read_state(project_id, node_id).thread_bindings["execution"].thread_id == "legacy-exec"
 
 
-def test_changed_context_without_force_rebase_marks_stale_and_raises(storage, workspace_root) -> None:
-    project_id, node_id, node_dir = _project_with_confirmed_docs(storage, workspace_root)
-    fake_session = FakeSessionManager()
-    repository, service = _service(storage, fake_session)
-    service.ensure_thread(
-        project_id=project_id,
-        node_id=node_id,
-        role="execution",
-        idempotency_key="ensure-thread:first",
-    )
-    fake_session.clear()
-    _write_confirmed_docs(node_dir, revision=3, frame_text="Frame v3", spec_text="Spec v3")
-
-    with pytest.raises(WorkflowContextStaleError) as exc_info:
-        service.ensure_thread(
-            project_id=project_id,
-            node_id=node_id,
-            role="execution",
-            idempotency_key="ensure-thread:stale",
-        )
-
-    assert exc_info.value.code == "ERR_WORKFLOW_CONTEXT_STALE"
-    state = repository.read_state(project_id, node_id)
-    assert state.context_stale is True
-    assert fake_session.starts == []
-    assert fake_session.injects == []
-
-
-def test_changed_context_with_force_rebase_injects_context_update(storage, workspace_root) -> None:
+def test_changed_context_auto_updates_binding(storage, workspace_root) -> None:
     project_id, node_id, node_dir = _project_with_confirmed_docs(storage, workspace_root)
     fake_session = FakeSessionManager()
     repository, service = _service(storage, fake_session)
@@ -206,8 +177,7 @@ def test_changed_context_with_force_rebase_injects_context_update(storage, works
         project_id=project_id,
         node_id=node_id,
         role="execution",
-        idempotency_key="ensure-thread:rebase",
-        force_rebase=True,
+        idempotency_key="ensure-thread:update",
     )
 
     assert fake_session.starts == []
@@ -218,7 +188,6 @@ def test_changed_context_with_force_rebase_injects_context_update(storage, works
     assert response["binding"]["threadId"] == "thread-1"
     assert response["binding"]["contextPacketHash"] != first["binding"]["contextPacketHash"]
     state = repository.read_state(project_id, node_id)
-    assert state.context_stale is False
     assert state.thread_bindings["execution"].context_packet_hash == response["binding"]["contextPacketHash"]
 
 

@@ -17,7 +17,6 @@ export type WorkflowActionV2 =
   | 'improve_in_execution'
   | 'mark_done_from_audit'
   | 'start_package_review'
-  | 'rebase_context'
 
 export type WorkflowThreadRoleV2 = 'ask_planning' | 'execution' | 'audit' | 'package_review'
 
@@ -55,16 +54,6 @@ export type WorkflowStateContextV2 = {
   frameVersion: number | null
   specVersion: number | null
   splitManifestVersion: number | null
-  stale: boolean
-  staleReason: string | null
-  staleBindings?: Array<{
-    role: WorkflowThreadRoleV2
-    threadId: string
-    currentContextPacketHash?: string | null
-    nextContextPacketHash?: string | null
-    currentSourceVersions?: Record<string, unknown>
-    nextSourceVersions?: Record<string, unknown>
-  }>
 }
 
 export type WorkflowStateV2 = {
@@ -81,7 +70,6 @@ export type WorkflowStateV2 = {
 
 export type WorkflowEventTypeV2 =
   | 'workflow/state_changed'
-  | 'workflow/context_stale'
   | 'workflow/action_completed'
   | 'workflow/action_failed'
   | 'workflow/artifact_job_started'

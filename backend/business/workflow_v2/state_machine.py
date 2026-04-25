@@ -6,7 +6,6 @@ from typing import Any
 from backend.business.workflow_v2.errors import (
     WorkflowActionNotAllowedError,
     WorkflowArtifactVersionConflictError,
-    WorkflowContextStaleError,
 )
 from backend.business.workflow_v2.models import (
     AuditDecisionV2,
@@ -18,8 +17,6 @@ from backend.business.workflow_v2.models import (
 
 
 def derive_allowed_actions(state: NodeWorkflowStateV2) -> list[WorkflowAction]:
-    if state.context_stale and state.phase not in {"done", "blocked"}:
-        return ["rebase_context"]
     if state.phase == "ready_for_execution":
         return ["start_execution"]
     if state.phase == "execution_completed" and state.current_execution_decision is not None:
@@ -246,42 +243,6 @@ def start_package_review(
     )
 
 
-def mark_context_stale(state: NodeWorkflowStateV2, *, reason: str | None = None) -> NodeWorkflowStateV2:
-    if state.phase in {"done", "blocked"}:
-        return state.model_copy(deep=True)
-    return state.model_copy(
-        deep=True,
-        update={
-            "context_stale": True,
-            "context_stale_reason": reason,
-        },
-    )
-
-
-def rebase_context(
-    state: NodeWorkflowStateV2,
-    *,
-    frame_version: int | None = None,
-    spec_version: int | None = None,
-    split_manifest_version: int | None = None,
-) -> NodeWorkflowStateV2:
-    _require_action(state, "rebase_context")
-    return state.model_copy(
-        deep=True,
-        update={
-            "frame_version": frame_version if frame_version is not None else state.frame_version,
-            "spec_version": spec_version if spec_version is not None else state.spec_version,
-            "split_manifest_version": (
-                split_manifest_version
-                if split_manifest_version is not None
-                else state.split_manifest_version
-            ),
-            "context_stale": False,
-            "context_stale_reason": None,
-        },
-    )
-
-
 def block(
     state: NodeWorkflowStateV2,
     *,
@@ -304,10 +265,4 @@ def _require_action(state: NodeWorkflowStateV2, action: WorkflowAction) -> None:
     allowed_actions = derive_allowed_actions(state)
     if action in allowed_actions:
         return
-    if state.context_stale and action != "rebase_context":
-        raise WorkflowContextStaleError(
-            state.project_id,
-            state.node_id,
-            reason=state.context_stale_reason,
-        )
     raise WorkflowActionNotAllowedError(action, state.phase, allowed_actions=allowed_actions)

@@ -58,7 +58,6 @@ export function useWorkflowEventBridgeV2(
           }
           if (
             event.type === 'workflow/state_changed' ||
-            event.type === 'workflow/context_stale' ||
             event.type === 'workflow/action_completed' ||
             event.type === 'workflow/action_failed' ||
             event.type === 'workflow/artifact_job_started' ||

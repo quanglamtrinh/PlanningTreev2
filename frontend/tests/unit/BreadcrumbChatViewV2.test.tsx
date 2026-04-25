@@ -227,8 +227,6 @@ function makeWorkflowState(overrides: WorkflowStateOverrides = {}): WorkflowStat
       frameVersion: null,
       specVersion: null,
       splitManifestVersion: null,
-      stale: false,
-      staleReason: null,
     },
     allowedActions: [],
   }
@@ -493,7 +491,7 @@ describe('BreadcrumbViewV2', () => {
     expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'ask-thread-1')
   })
 
-  it('ensures ask planning thread from Workflow V2 when ask lane is unbound', async () => {
+  it('auto-ensures ask planning thread from Workflow V2 when ask lane is unbound', async () => {
     const facade = makeFacade({
       selectedModel: 'gpt-5.4',
       activeThread: makeThread('model-source-thread'),
@@ -519,8 +517,7 @@ describe('BreadcrumbViewV2', () => {
         </Routes>
       </MemoryRouter>,
     )
-
-    fireEvent.click(screen.getByTestId('workflow-ensure-ask-thread'))
+    expect(screen.queryByTestId('workflow-ensure-ask-thread')).not.toBeInTheDocument()
 
     await waitFor(() => {
       expect(ensureThread).toHaveBeenCalledWith(

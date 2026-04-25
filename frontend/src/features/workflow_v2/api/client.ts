@@ -72,7 +72,6 @@ export type WorkflowModelPolicyV2 = {
 export type WorkflowMutationResponseV2 = {
   workflowState?: WorkflowStateV2
   accepted?: boolean
-  rebased?: boolean
   threadId?: string | null
   turnId?: string | null
   executionRunId?: string | null
@@ -80,11 +79,6 @@ export type WorkflowMutationResponseV2 = {
   reviewCycleId?: string | null
   reviewThreadId?: string | null
   reviewCommitSha?: string | null
-  updatedBindings?: Array<{
-    role: WorkflowThreadRoleV2
-    threadId: string
-    contextPacketHash?: string | null
-  }>
 }
 
 export type EnsureWorkflowThreadResponseV2 = WorkflowMutationResponseV2 & {
@@ -112,7 +106,6 @@ export async function ensureWorkflowThreadV2(
   role: WorkflowThreadRoleV2,
   payload: WorkflowModelPolicyV2 & {
     idempotencyKey: string
-    forceRebase?: boolean
   },
 ): Promise<EnsureWorkflowThreadResponseV2> {
   await initAuthToken()
@@ -122,7 +115,6 @@ export async function ensureWorkflowThreadV2(
       idempotencyKey: payload.idempotencyKey,
       model: payload.model ?? null,
       modelProvider: payload.modelProvider ?? null,
-      forceRebase: payload.forceRebase ?? false,
     },
   )
 }
@@ -223,26 +215,6 @@ export async function startPackageReviewV2(
   )
 }
 
-export async function rebaseContextV2(
-  projectId: string,
-  nodeId: string,
-  payload: {
-    idempotencyKey: string
-    expectedWorkflowVersion?: number | null
-    roles?: WorkflowThreadRoleV2[] | null
-  },
-): Promise<WorkflowMutationResponseV2> {
-  await initAuthToken()
-  return jsonPostDirect<WorkflowMutationResponseV2>(
-    `${workflowNodePath(projectId, nodeId)}/context/rebase`,
-    {
-      idempotencyKey: payload.idempotencyKey,
-      expectedWorkflowVersion: payload.expectedWorkflowVersion ?? null,
-      roles: payload.roles ?? null,
-    },
-  )
-}
-
 export function buildProjectEventsUrlV2(projectId: string): string {
   return `/v4/projects/${encodeURIComponent(projectId)}/events`
 }
@@ -268,9 +240,13 @@ export function parseWorkflowEventV2(raw: string): WorkflowEventV2 {
   }
   if (
     event.type !== 'workflow/state_changed' &&
-    event.type !== 'workflow/context_stale' &&
     event.type !== 'workflow/action_completed' &&
-    event.type !== 'workflow/action_failed'
+    event.type !== 'workflow/action_failed' &&
+    event.type !== 'workflow/artifact_job_started' &&
+    event.type !== 'workflow/artifact_job_completed' &&
+    event.type !== 'workflow/artifact_job_failed' &&
+    event.type !== 'workflow/artifact_confirmed' &&
+    event.type !== 'workflow/artifact_state_changed'
   ) {
     throw new Error(`Unsupported Workflow V2 event type: ${event.type}`)
   }

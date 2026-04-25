@@ -16,7 +16,6 @@ export function useWorkflowStateV2(projectId: string | null | undefined, nodeId:
   const improveExecution = useWorkflowStateStoreV2((state) => state.improveExecution)
   const acceptAudit = useWorkflowStateStoreV2((state) => state.acceptAudit)
   const startPackageReview = useWorkflowStateStoreV2((state) => state.startPackageReview)
-  const rebaseContext = useWorkflowStateStoreV2((state) => state.rebaseContext)
 
   return {
     workflowState,
@@ -31,6 +30,5 @@ export function useWorkflowStateV2(projectId: string | null | undefined, nodeId:
     improveExecution,
     acceptAudit,
     startPackageReview,
-    rebaseContext,
   }
 }

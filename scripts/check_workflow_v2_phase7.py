@@ -35,6 +35,7 @@ def main() -> int:
     for token in (
         "ensureThread",
         "'ask_planning'",
+        "autoEnsureRole",
         "startPackageReview",
         "'start_package_review'",
         "buildChatV2Url(projectId, nodeId, 'package')",
@@ -42,8 +43,6 @@ def main() -> int:
         _require(errors, controller, token, "Breadcrumb controller")
 
     for token in (
-        "ensure_ask_thread",
-        "workflow-ensure-ask-thread",
         "start_package_review",
         "workflow-start-package-review",
         "threads.packageReview",

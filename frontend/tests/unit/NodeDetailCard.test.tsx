@@ -111,7 +111,6 @@ const { apiMock, workflowV2ApiMock, MockApiError, navigateMock } = vi.hoisted(()
     improveExecutionV2: vi.fn(),
     acceptAuditV2: vi.fn(),
     startPackageReviewV2: vi.fn(),
-    rebaseContextV2: vi.fn(),
   },
   navigateMock: vi.fn(),
 }))
@@ -151,7 +150,6 @@ vi.mock('../../src/features/workflow_v2/api/client', () => ({
   improveExecutionV2: workflowV2ApiMock.improveExecutionV2,
   acceptAuditV2: workflowV2ApiMock.acceptAuditV2,
   startPackageReviewV2: workflowV2ApiMock.startPackageReviewV2,
-  rebaseContextV2: workflowV2ApiMock.rebaseContextV2,
 }))
 
 vi.mock('react-router-dom', async () => {
@@ -245,8 +243,6 @@ function makeWorkflowStateV2(overrides: Record<string, unknown> = {}) {
       frameVersion: 1,
       specVersion: 1,
       splitManifestVersion: null,
-      stale: false,
-      staleReason: null,
     },
     allowedActions: [],
     ...overrides,

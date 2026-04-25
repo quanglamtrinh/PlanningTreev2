@@ -43,7 +43,6 @@ def main() -> int:
         "start_frame_generation",
         "confirm_frame",
         "start_split",
-        "refresh_context_freshness",
         "workflow/artifact_confirmed",
     ):
         _require(errors, orchestrator, token, "ArtifactOrchestratorV2")
@@ -126,7 +125,6 @@ def main() -> int:
 
     for token in (
         "syncs_source_versions",
-        "context_stale",
         "workflow/artifact_confirmed",
         "artifacts/frame/confirm",
     ):

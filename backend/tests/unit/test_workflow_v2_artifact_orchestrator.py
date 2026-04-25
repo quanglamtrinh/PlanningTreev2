@@ -165,7 +165,7 @@ def test_start_frame_generation_is_idempotent(storage, workspace_root) -> None:
     assert [event["type"] for event in broker.events] == ["workflow/artifact_job_started"]
 
 
-def test_confirm_frame_syncs_source_versions_and_marks_existing_bindings_stale(
+def test_confirm_frame_syncs_source_versions_without_context_rebase_side_effects(
     storage,
     workspace_root,
 ) -> None:
@@ -193,11 +193,6 @@ def test_confirm_frame_syncs_source_versions_and_marks_existing_bindings_stale(
     state = repository.read_state(project_id, node_id)
     assert response["confirmed"] is True
     assert response["artifact"]["frameVersion"] == 2
-    assert response["workflowState"]["context"]["stale"] is True
-    assert response["workflowState"]["allowedActions"] == ["rebase_context"]
     assert state.frame_version == 2
-    assert state.context_stale is True
-    assert [detail.role for detail in state.context_stale_details] == ["execution"]
     assert "workflow/state_changed" in [event["type"] for event in broker.events]
-    assert "workflow/context_stale" in [event["type"] for event in broker.events]
     assert "workflow/artifact_confirmed" in [event["type"] for event in broker.events]
