@@ -7,6 +7,7 @@ export type WorkflowPolicyKind =
   | 'ask'
   | 'execution'
   | 'audit'
+  | 'package'
   | 'review-readonly'
   | 'default'
 
@@ -78,7 +79,10 @@ function resolveWorkflowThreadId(
   if (lane === 'execution') {
     return workflowState.executionThreadId
   }
-  return workflowState.reviewThreadId
+  if (lane === 'audit') {
+    return workflowState.reviewThreadId
+  }
+  return null
 }
 
 function resolveWorkflowPolicy(input: {
@@ -259,6 +263,7 @@ export function resolveWorkflowProjection(
     ask: resolveLane('ask'),
     execution: resolveLane('execution'),
     audit: resolveLane('audit'),
+    package: resolveLane('package'),
   }
 
   return {

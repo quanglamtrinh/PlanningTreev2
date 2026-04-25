@@ -401,6 +401,18 @@ class SplitService:
                 "error": last_error.get("error"),
             }
 
+        last_completed = split_state.get("last_completed")
+        if isinstance(last_completed, dict):
+            return {
+                "status": "idle",
+                "job_id": last_completed.get("job_id"),
+                "node_id": last_completed.get("node_id"),
+                "mode": last_completed.get("mode"),
+                "started_at": last_completed.get("started_at"),
+                "completed_at": last_completed.get("completed_at"),
+                "error": None,
+            }
+
         return {
             "status": "idle",
             "job_id": None,
@@ -441,6 +453,13 @@ class SplitService:
                 if isinstance(active_job, dict) and active_job.get("job_id") == job_id:
                     split_state["active_job"] = None
                     split_state["last_error"] = None
+                    split_state["last_completed"] = {
+                        "job_id": job_id,
+                        "node_id": active_job.get("node_id"),
+                        "mode": active_job.get("mode"),
+                        "started_at": active_job.get("started_at"),
+                        "completed_at": iso_now(),
+                    }
                     self._storage.split_state_store.write_state(project_id, split_state)
         finally:
             self._clear_live_job(project_id, job_id)

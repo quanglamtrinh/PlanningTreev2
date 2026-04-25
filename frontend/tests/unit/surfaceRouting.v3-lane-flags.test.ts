@@ -63,4 +63,13 @@ describe('surfaceRouting hard cutover defaults', () => {
       }),
     ).toEqual({ surface: 'v2', threadTab: 'ask' })
   })
+
+  it('routes package review lane to chat-v2 for non-review nodes', () => {
+    expect(
+      resolveV2RouteTarget({
+        requestedThreadTab: 'package',
+        isReviewNode: false,
+      }),
+    ).toEqual({ surface: 'v2', threadTab: 'package' })
+  })
 })

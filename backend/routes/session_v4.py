@@ -161,6 +161,12 @@ class TurnInterruptRequest(BaseModel):
     clientActionId: str = Field(min_length=1)
 
 
+class InjectItemsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    clientActionId: str = Field(min_length=1)
+    items: list[dict[str, Any]] = Field(min_length=1)
+
+
 class ResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     resolutionKey: str = Field(min_length=1)
@@ -476,9 +482,24 @@ def session_turn_interrupt_v4(
 
 
 @router.post("/v4/session/threads/{threadId}/inject-items")
-def session_inject_items_not_enabled(threadId: str) -> JSONResponse:
-    del threadId
-    return _phase_not_enabled("thread/inject_items", phase="Phase 2")
+def session_inject_items_v4(
+    threadId: str,
+    payload: InjectItemsRequest,
+    request: Request,
+) -> JSONResponse:
+    if not _turns_enabled(request):
+        return _phase_not_enabled("thread/inject_items", phase="Phase 2")
+    try:
+        response = _manager(request).thread_inject_items(
+            thread_id=threadId,
+            payload=payload.model_dump(exclude_none=True),
+        )
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_inject_items_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.get("/v4/session/requests/pending")

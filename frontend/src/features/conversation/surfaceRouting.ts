@@ -1,12 +1,20 @@
 import type { BootstrapStatus } from '../../api/types'
 
-export type ThreadTab = 'ask' | 'execution' | 'audit'
+export type ThreadTab = 'ask' | 'execution' | 'audit' | 'package'
 
 export function parseThreadTab(rawValue: string | null): ThreadTab | null {
   if (rawValue === 'review') {
     return 'audit'
   }
-  if (rawValue === 'ask' || rawValue === 'execution' || rawValue === 'audit') {
+  if (rawValue === 'package-review') {
+    return 'package'
+  }
+  if (
+    rawValue === 'ask' ||
+    rawValue === 'execution' ||
+    rawValue === 'audit' ||
+    rawValue === 'package'
+  ) {
     return rawValue
   }
   return null
@@ -73,7 +81,11 @@ export function resolveV2RouteTarget(options: {
   if (requestedThreadTab === 'ask') {
     return { surface: 'v2', threadTab: 'ask' }
   }
-  if (requestedThreadTab === 'execution' || requestedThreadTab === 'audit') {
+  if (
+    requestedThreadTab === 'execution' ||
+    requestedThreadTab === 'audit' ||
+    requestedThreadTab === 'package'
+  ) {
     return { surface: 'v2', threadTab: requestedThreadTab }
   }
   return { surface: 'v2', threadTab: 'execution' }

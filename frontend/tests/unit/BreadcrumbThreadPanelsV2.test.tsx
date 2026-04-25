@@ -72,12 +72,15 @@ describe('BreadcrumbThreadTabsV2', () => {
     expect(screen.getByTestId('breadcrumb-thread-tab-execution')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByTestId('breadcrumb-thread-tab-audit')).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByTestId('breadcrumb-thread-tab-package')).toHaveAttribute('aria-selected', 'false')
 
     fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-ask'))
     fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
+    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-package'))
 
     expect(onThreadTabChange).toHaveBeenNthCalledWith(1, 'ask')
     expect(onThreadTabChange).toHaveBeenNthCalledWith(2, 'audit')
+    expect(onThreadTabChange).toHaveBeenNthCalledWith(3, 'package')
   })
 })
 

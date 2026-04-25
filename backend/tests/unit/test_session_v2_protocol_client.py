@@ -114,6 +114,30 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     assert transport.server_failures == [(124, {"code": -32000, "message": "rejected"})]
 
 
+def test_protocol_client_maps_thread_inject_items() -> None:
+    transport = _FakeTransport()
+    client = SessionProtocolClientV2(transport)  # type: ignore[arg-type]
+
+    client.thread_inject_items(
+        "thread-1",
+        {
+            "clientActionId": "inject-1",
+            "items": [{"id": "context-1", "type": "systemMessage", "text": "context"}],
+        },
+    )
+
+    assert transport.requests == [
+        (
+            "thread/inject_items",
+            {
+                "threadId": "thread-1",
+                "clientActionId": "inject-1",
+                "items": [{"id": "context-1", "type": "systemMessage", "text": "context"}],
+            },
+        )
+    ]
+
+
 def test_protocol_client_wires_server_request_handler() -> None:
     transport = _FakeTransport()
     client = SessionProtocolClientV2(transport)  # type: ignore[arg-type]

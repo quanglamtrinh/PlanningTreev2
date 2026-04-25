@@ -138,6 +138,67 @@ class SessionManagerV2:
         self._ensure_initialized()
         return self._thread_service.thread_unsubscribe(thread_id=thread_id)
 
+    def thread_inject_items(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_initialized()
+        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
+        items = payload.get("items")
+        if not isinstance(items, list) or not items:
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message="thread/inject_items requires non-empty items list.",
+                status_code=400,
+                details={"field": "items"},
+            )
+        if any(not isinstance(item, dict) for item in items):
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message="thread/inject_items items must be objects.",
+                status_code=400,
+                details={"field": "items"},
+            )
+
+        idempotency_payload = {"threadId": thread_id, **payload}
+        idempotent = self._runtime_store.resolve_idempotent_result(
+            action_type="thread/inject_items",
+            key=client_action_id,
+            payload=idempotency_payload,
+        )
+        if idempotent is not None:
+            logger.info(
+                "session_core_v2 thread/inject_items idempotent replay",
+                extra={
+                    "threadId": thread_id,
+                    "turnId": None,
+                    "clientActionId": client_action_id,
+                    "eventSeq": None,
+                    "errorCode": None,
+                },
+            )
+            return idempotent
+
+        accepted_payload = self._thread_service.thread_inject_items(
+            thread_id=thread_id,
+            params=dict(payload),
+        )
+        self._runtime_store.record_idempotent_result(
+            action_type="thread/inject_items",
+            key=client_action_id,
+            payload=idempotency_payload,
+            response=accepted_payload,
+            thread_id=thread_id,
+        )
+        logger.info(
+            "session_core_v2 thread/inject_items accepted",
+            extra={
+                "threadId": thread_id,
+                "turnId": None,
+                "clientActionId": client_action_id,
+                "eventSeq": None,
+                "errorCode": None,
+            },
+        )
+        return accepted_payload
+
     def model_list(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
         response = self._protocol_client.model_list(payload or {})

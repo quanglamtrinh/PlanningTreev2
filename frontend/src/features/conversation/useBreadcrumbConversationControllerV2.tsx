@@ -6,6 +6,8 @@ import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { useSessionFacadeV2 } from '../session_v2/facade/useSessionFacadeV2'
+import { useWorkflowEventBridgeV2 } from '../workflow_v2/hooks/useWorkflowEventBridgeV2'
+import { useWorkflowStateV2 } from '../workflow_v2/hooks/useWorkflowStateV2'
 import type { BreadcrumbDetailPaneProps } from './BreadcrumbChatViewV2'
 import type { BreadcrumbThreadPaneV2Props } from './components/BreadcrumbThreadPaneV2'
 import {
@@ -14,13 +16,11 @@ import {
   resolveV2RouteTarget,
   type ThreadTab,
 } from './surfaceRouting'
-import { useWorkflowEventBridgeV3 } from './state/workflowEventBridgeV3'
-import { useWorkflowStateStoreV3 } from './state/workflowStateStoreV3'
 import {
-  resolveWorkflowProjection,
-  resolveWorkflowSubmitTurnPolicy,
-  type WorkflowLaneAction,
-} from './workflowThreadLane'
+  buildWorkflowProjectionV2,
+  resolveWorkflowSubmitTurnPolicyV2,
+  type WorkflowLaneActionV2,
+} from './workflowThreadLaneV2'
 
 export type BreadcrumbConversationControllerV2 = {
   threadPaneProps: BreadcrumbThreadPaneV2Props
@@ -37,6 +37,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   const [searchParams] = useSearchParams()
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
+  const autoEnsureAttemptedRef = useRef<Set<string>>(new Set())
   const sessionFacade = useSessionFacadeV2({
     bootstrapPolicy: {
       autoBootstrapOnMount: true,
@@ -75,26 +76,17 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
 
   const {
     workflowState,
-    workflowError,
+    error: workflowError,
     activeMutation,
     loadWorkflowState,
-    markDoneFromExecution,
-    reviewInAudit,
-    markDoneFromAudit,
-    improveInExecution,
-  } = useWorkflowStateStoreV3(
-    useShallow((state) => ({
-      workflowState: detailStateKey ? state.entries[detailStateKey] : undefined,
-      workflowError:
-        detailStateKey && state.errors[detailStateKey] ? state.errors[detailStateKey] : null,
-      activeMutation: detailStateKey ? state.activeMutations[detailStateKey] ?? null : null,
-      loadWorkflowState: state.loadWorkflowState,
-      markDoneFromExecution: state.markDoneFromExecution,
-      reviewInAudit: state.reviewInAudit,
-      markDoneFromAudit: state.markDoneFromAudit,
-      improveInExecution: state.improveInExecution,
-    })),
-  )
+    ensureThread,
+    startExecution,
+    completeExecution,
+    startAudit,
+    improveExecution,
+    acceptAudit,
+    startPackageReview,
+  } = useWorkflowStateV2(projectId, nodeId)
 
   const isReviewNode = useMemo(() => {
     if (!projectId || !nodeId || !snapshot || snapshot.project.id !== projectId) {
@@ -113,7 +105,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   const shouldCanonicalizeV2 =
     routeTarget.surface !== 'v2' || requestedThreadTab !== routeTarget.threadTab
 
-  useWorkflowEventBridgeV3(projectId, nodeId, Boolean(projectId && nodeId && !shouldCanonicalizeV2))
+  useWorkflowEventBridgeV2(projectId, nodeId, Boolean(projectId && nodeId && !shouldCanonicalizeV2))
 
   useEffect(() => {
     if (!projectId || !nodeId) {
@@ -189,7 +181,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
 
   const workflowProjection = useMemo(
     () =>
-      resolveWorkflowProjection({
+      buildWorkflowProjectionV2({
         workflowState,
         activeLane: threadTab,
         selectedModel: sessionState.selectedModel,
@@ -209,6 +201,25 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   )
   const workflowLane = workflowProjection.lanes[threadTab]
   const activeThreadId = workflowLane.threadId
+  const autoEnsureRole =
+    !isReviewNode && workflowProjection.isLoaded
+      ? threadTab === 'ask'
+        ? workflowProjection.lanes.ask.threadId
+          ? null
+          : ('ask_planning' as const)
+        : threadTab === 'execution'
+          ? workflowProjection.lanes.execution.threadId
+            ? null
+            : ('execution' as const)
+          : null
+      : null
+  const workflowModelPolicy = useMemo(
+    () => ({
+      model: sessionState.selectedModel,
+      modelProvider: sessionState.activeThread?.modelProvider ?? null,
+    }),
+    [sessionState.activeThread?.modelProvider, sessionState.selectedModel],
+  )
 
   useEffect(() => {
     if (
@@ -232,6 +243,35 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     snapshot,
     workflowLane.threadId,
     workflowProjection.isLoaded,
+  ])
+
+  useEffect(() => {
+    if (
+      !projectId ||
+      !nodeId ||
+      !detailNode ||
+      !snapshot ||
+      snapshot.project.id !== projectId ||
+      shouldCanonicalizeV2 ||
+      !autoEnsureRole
+    ) {
+      return
+    }
+    const key = `${projectId}::${nodeId}::${autoEnsureRole}`
+    if (autoEnsureAttemptedRef.current.has(key)) {
+      return
+    }
+    autoEnsureAttemptedRef.current.add(key)
+    void ensureThread(projectId, nodeId, autoEnsureRole, workflowModelPolicy).catch(() => undefined)
+  }, [
+    autoEnsureRole,
+    detailNode,
+    ensureThread,
+    nodeId,
+    projectId,
+    shouldCanonicalizeV2,
+    snapshot,
+    workflowModelPolicy,
   ])
 
   const detailCardState = useMemo(() => {
@@ -307,7 +347,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       if (!workflowLane.policy.canSubmit) {
         return
       }
-      const turnPolicy = resolveWorkflowSubmitTurnPolicy({
+      const turnPolicy = resolveWorkflowSubmitTurnPolicyV2({
         lane: workflowLane,
         requestedPolicy: payload.requestedPolicy,
       })
@@ -321,53 +361,66 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   )
 
   const handleWorkflowLaneAction = useCallback(
-    async (action: WorkflowLaneAction) => {
+    async (action: WorkflowLaneActionV2) => {
       if (!projectId || !nodeId) {
         return
       }
-      if (action.kind === 'reviewInAudit') {
-        if (!action.candidateWorkspaceHash) {
-          return
-        }
-        await reviewInAudit(projectId, nodeId, action.candidateWorkspaceHash)
-        void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
-        return
-      }
-      if (action.kind === 'markDoneFromExecution') {
-        if (!action.candidateWorkspaceHash) {
-          return
-        }
-        await markDoneFromExecution(projectId, nodeId, action.candidateWorkspaceHash)
-        setActiveSurface('graph')
-        void navigate('/')
-        return
-      }
-      if (action.kind === 'improveInExecution') {
-        if (!action.reviewCommitSha) {
-          return
-        }
-        await improveInExecution(projectId, nodeId, action.reviewCommitSha)
+      if (action.kind === 'start_execution') {
+        await startExecution(projectId, nodeId, workflowModelPolicy)
         void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
         return
       }
-      if (action.kind === 'markDoneFromAudit') {
+      if (action.kind === 'review_in_audit') {
+        if (!action.candidateWorkspaceHash) {
+          return
+        }
+        await startAudit(projectId, nodeId, action.candidateWorkspaceHash, workflowModelPolicy)
+        void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
+        return
+      }
+      if (action.kind === 'mark_done_from_execution') {
+        if (!action.candidateWorkspaceHash) {
+          return
+        }
+        await completeExecution(projectId, nodeId, action.candidateWorkspaceHash)
+        setActiveSurface('graph')
+        void navigate('/')
+        return
+      }
+      if (action.kind === 'improve_in_execution') {
         if (!action.reviewCommitSha) {
           return
         }
-        await markDoneFromAudit(projectId, nodeId, action.reviewCommitSha)
+        await improveExecution(projectId, nodeId, action.reviewCommitSha, workflowModelPolicy)
+        void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
+        return
+      }
+      if (action.kind === 'mark_done_from_audit') {
+        if (!action.reviewCommitSha) {
+          return
+        }
+        await acceptAudit(projectId, nodeId, action.reviewCommitSha)
         setActiveSurface('graph')
         void navigate('/')
+        return
+      }
+      if (action.kind === 'start_package_review') {
+        await startPackageReview(projectId, nodeId, workflowModelPolicy)
+        void navigate(buildChatV2Url(projectId, nodeId, 'package'))
       }
     },
     [
-      improveInExecution,
-      markDoneFromAudit,
-      markDoneFromExecution,
+      acceptAudit,
+      completeExecution,
+      improveExecution,
       navigate,
       nodeId,
       projectId,
-      reviewInAudit,
       setActiveSurface,
+      startAudit,
+      startExecution,
+      startPackageReview,
+      workflowModelPolicy,
     ],
   )
 

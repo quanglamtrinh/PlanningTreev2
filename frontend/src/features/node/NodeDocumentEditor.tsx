@@ -12,7 +12,7 @@ import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { useProjectStore } from '../../stores/project-store'
 import { useAskShellActionStore } from '../../stores/ask-shell-action-store'
 import { buildChatV2Url } from '../conversation/surfaceRouting'
-import { useWorkflowStateStoreV3 } from '../conversation/state/workflowStateStoreV3'
+import { useWorkflowStateV2 } from '../workflow_v2/hooks/useWorkflowStateV2'
 import { SharedMarkdownRenderer } from '../markdown/SharedMarkdownRenderer'
 import type { WorkflowTab } from './WorkflowStepper'
 import { vscodeMarkdownSyntaxHighlighting } from './codemirror/vscodeMarkdownHighlight'
@@ -83,10 +83,10 @@ export function NodeDocumentEditor({
   const markActionSucceeded = useAskShellActionStore((state) => state.markSucceeded)
   const markActionFailed = useAskShellActionStore((state) => state.markFailed)
   const invalidateClarify = useClarifyStore((state) => state.invalidateEntry)
-  const finishTaskWorkflowV3 = useWorkflowStateStoreV3((state) => state.finishTask)
-  const activeWorkflowMutation = useWorkflowStateStoreV3(
-    (state) => state.activeMutations[detailStateKey] ?? null,
-  )
+  const {
+    startExecution,
+    activeMutation: activeWorkflowMutation,
+  } = useWorkflowStateV2(projectId, node.node_id)
   const projectRootPath = useProjectStore((state) =>
     state.snapshot?.project.id === projectId
       ? state.snapshot.project.project_path
@@ -100,7 +100,7 @@ export function NodeDocumentEditor({
   const [viewMode, setViewMode] = useState<'edit' | 'rich'>('edit')
   const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
   const editorSurfaceRef = useRef<HTMLDivElement>(null)
-  const isFinishingTask = activeWorkflowMutation === 'finish_task'
+  const isFinishingTask = activeWorkflowMutation === 'start_execution'
   const isFinishActionPending = pendingAction === 'finish' || isFinishingTask
 
   const handleCopyDocument = useCallback(async () => {
@@ -432,7 +432,7 @@ export function NodeDocumentEditor({
         throw error
       }
       await refreshSnapshot()
-      await finishTaskWorkflowV3(projectId, node.node_id)
+      await startExecution(projectId, node.node_id)
       navigate(buildChatV2Url(projectId, node.node_id, 'execution'))
     } catch (error) {
       setConfirmError(error instanceof Error ? error.message : 'Finish task failed')
@@ -442,7 +442,6 @@ export function NodeDocumentEditor({
     }
   }, [
     confirmSpec,
-    finishTaskWorkflowV3,
     flushDocument,
     isFinishingTask,
     markActionFailed,
@@ -453,6 +452,7 @@ export function NodeDocumentEditor({
     pendingAction,
     projectId,
     refreshSnapshot,
+    startExecution,
   ])
 
   const handleConfirm = useCallback(async () => {

@@ -21,12 +21,18 @@ def test_workflow_v3_control_plane_routes_exist() -> None:
         assert route in content, f"Missing Phase-4 control-plane route in workflow_v3 router: {route}"
 
 
-def test_workflow_v3_prefers_canonical_workflow_service_state() -> None:
+def test_workflow_v3_state_mutation_routes_use_phase10_compat_adapter() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     workflow_v3_path = repo_root / "backend" / "routes" / "workflow_v3.py"
     content = workflow_v3_path.read_text(encoding="utf-8")
 
-    assert "def _workflow_service(request: Request)" in content
-    assert "execution_audit_workflow_service" in content
-    # Phase-8 hard cutover removes legacy v2 workflow alias references.
+    assert "def _workflow_v3_adapter(request: Request)" in content
+    assert "workflow_v3_compat_adapter" in content
+    assert "WORKFLOW_V3_DEPRECATION_HEADERS" in content
     assert "execution_audit_workflow_service_v2" not in content
+
+    workflow_segment = content.split('@router.get("/projects/{project_id}/nodes/{node_id}/workflow-state")', 1)[1]
+    workflow_segment = workflow_segment.split('@router.get("/projects/{project_id}/events")', 1)[0]
+    assert "_workflow_v3_adapter(request)" in workflow_segment
+    assert "_workflow_service(request)" not in workflow_segment
+    assert "execution_audit_workflow_service" not in workflow_segment

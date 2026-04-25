@@ -129,6 +129,18 @@ class ThreadServiceV2:
             status = "unsubscribed"
         return {"status": status}
 
+    def thread_inject_items(self, *, thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
+        response = self._protocol_client.thread_inject_items(thread_id, params)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        self._logger.info("session_core_v2 thread/inject_items", extra={"latency_ms": elapsed_ms})
+        status = str(response.get("status") or "").strip() or "accepted"
+        if status not in {"accepted", "ok"}:
+            status = "accepted"
+        if status == "ok":
+            status = "accepted"
+        return {"status": status}
+
     def _normalize_thread_config_response(
         self,
         response: dict[str, Any],
