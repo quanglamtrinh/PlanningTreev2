@@ -20,6 +20,7 @@ EventObserver = Callable[[dict[str, Any]], None]
 
 _TIER0_METHODS: frozenset[str] = frozenset(
     {
+        "turn/started",
         "item/started",
         "item/agentMessage/delta",
         "item/plan/delta",
@@ -102,6 +103,7 @@ class RuntimeStoreV2:
         self._pending_requests: dict[str, dict[str, Any]] = {}
         self._pending_request_by_raw: dict[tuple[str, str], str] = {}
         self._idempotency_mem: dict[tuple[str, str], dict[str, Any]] = {}
+        self._legacy_migration_markers: dict[str, dict[str, Any]] = {}
         self._event_observers: list[EventObserver] = []
 
         self._lagged_reset_count = 0
@@ -253,6 +255,24 @@ class RuntimeStoreV2:
                 return None
             return self._copy_turn(turn)
 
+    def list_turns(self, *, thread_id: str) -> list[dict[str, Any]]:
+        normalized_thread_id = str(thread_id or "").strip()
+        if not normalized_thread_id:
+            return []
+        with self._lock:
+            turns = [
+                self._copy_turn(turn)
+                for turn in self._turns.get(normalized_thread_id, {}).values()
+                if isinstance(turn, dict)
+            ]
+        return sorted(
+            turns,
+            key=lambda turn: (
+                int(turn.get("startedAtMs") or 0),
+                str(turn.get("id") or ""),
+            ),
+        )
+
     # ------------------------------------------------------------------
     # Idempotency
     # ------------------------------------------------------------------
@@ -308,6 +328,76 @@ class RuntimeStoreV2:
         with self._lock:
             self._idempotency_mem[(normalized_action, normalized_key)] = record
             self._persist_idempotency_record(normalized_action, normalized_key, record)
+
+    # ------------------------------------------------------------------
+    # Legacy migration markers
+    # ------------------------------------------------------------------
+    def has_legacy_migration_marker(self, *, thread_id: str) -> bool:
+        normalized_thread_id = str(thread_id or "").strip()
+        if not normalized_thread_id:
+            return False
+        with self._lock:
+            if normalized_thread_id in self._legacy_migration_markers:
+                return True
+            record = self._load_legacy_migration_marker_from_db(normalized_thread_id)
+            if record is not None:
+                self._legacy_migration_markers[normalized_thread_id] = record
+                return True
+            return False
+
+    def read_legacy_migration_marker(self, *, thread_id: str) -> dict[str, Any] | None:
+        normalized_thread_id = str(thread_id or "").strip()
+        if not normalized_thread_id:
+            return None
+        with self._lock:
+            record = self._legacy_migration_markers.get(normalized_thread_id)
+            if record is not None:
+                return dict(record)
+            loaded = self._load_legacy_migration_marker_from_db(normalized_thread_id)
+            if loaded is None:
+                return None
+            self._legacy_migration_markers[normalized_thread_id] = loaded
+            return dict(loaded)
+
+    def mark_legacy_thread_migrated(
+        self,
+        *,
+        thread_id: str,
+        source_project_id: str | None = None,
+        source_node_id: str | None = None,
+        source_role: str | None = None,
+        source_snapshot_version: int | None = None,
+        source_item_count: int | None = None,
+        source_pending_request_count: int | None = None,
+        source_hash: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_thread_id = self._normalize_non_empty(thread_id, "threadId")
+        record = {
+            "threadId": normalized_thread_id,
+            "migratedAtMs": self._now_ms(),
+            "sourceProjectId": str(source_project_id or "").strip() or None,
+            "sourceNodeId": str(source_node_id or "").strip() or None,
+            "sourceRole": str(source_role or "").strip() or None,
+            "sourceSnapshotVersion": int(source_snapshot_version) if source_snapshot_version is not None else None,
+            "sourceItemCount": int(source_item_count) if source_item_count is not None else None,
+            "sourcePendingRequestCount": (
+                int(source_pending_request_count)
+                if source_pending_request_count is not None
+                else None
+            ),
+            "sourceHash": str(source_hash or "").strip() or None,
+        }
+        with self._lock:
+            existing = self._legacy_migration_markers.get(normalized_thread_id)
+            if existing is not None:
+                return dict(existing)
+            from_db = self._load_legacy_migration_marker_from_db(normalized_thread_id)
+            if from_db is not None:
+                self._legacy_migration_markers[normalized_thread_id] = from_db
+                return dict(from_db)
+            self._legacy_migration_markers[normalized_thread_id] = record
+            self._persist_legacy_migration_marker(record)
+            return dict(record)
 
     # ------------------------------------------------------------------
     # Pending server requests
@@ -564,6 +654,20 @@ class RuntimeStoreV2:
             method=normalized_method,
             params=normalized_params,
         )
+        if normalized_method == "turn/started":
+            resolved_turn_id = (
+                turn_id
+                or self._extract_turn_id(normalized_params)
+                or ""
+            )
+            if resolved_turn_id:
+                turn_payload = normalized_params.get("turn")
+                return self.append_turn_started_if_absent(
+                    thread_id=normalized_thread_id,
+                    turn_id=resolved_turn_id,
+                    turn=turn_payload if isinstance(turn_payload, dict) else None,
+                    params=normalized_params,
+                )
         return self.append_event(
             thread_id=normalized_thread_id,
             method=normalized_method,
@@ -571,6 +675,46 @@ class RuntimeStoreV2:
             turn_id=turn_id,
             source="journal",
             replayable=True,
+        )
+
+    def append_turn_started_if_absent(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str,
+        turn: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        normalized_thread_id = self._normalize_non_empty(thread_id, "threadId")
+        normalized_turn_id = self._normalize_non_empty(turn_id, "turnId")
+        payload_params = dict(params or {})
+        payload_turn: dict[str, Any]
+        if isinstance(payload_params.get("turn"), dict):
+            payload_turn = dict(payload_params["turn"])
+        elif isinstance(turn, dict):
+            payload_turn = dict(turn)
+        else:
+            payload_turn = {"id": normalized_turn_id}
+        if not str(payload_turn.get("id") or "").strip():
+            payload_turn["id"] = normalized_turn_id
+        payload_params["turn"] = payload_turn
+
+        with self._lock:
+            existing = self._find_event_by_method_and_turn_locked(
+                thread_id=normalized_thread_id,
+                method="turn/started",
+                turn_id=normalized_turn_id,
+            )
+            if existing is not None:
+                return dict(existing)
+        return self.append_event(
+            thread_id=normalized_thread_id,
+            method="turn/started",
+            params=payload_params,
+            turn_id=normalized_turn_id,
+            source="journal",
+            replayable=True,
+            tier="tier0",
         )
 
     def append_event(
@@ -908,6 +1052,18 @@ class RuntimeStoreV2:
                 updated_at_ms INTEGER NOT NULL,
                 snapshot_json TEXT NOT NULL DEFAULT '{}'
             );
+
+            CREATE TABLE IF NOT EXISTS session_v2_legacy_migrations (
+                thread_id TEXT PRIMARY KEY,
+                migrated_at_ms INTEGER NOT NULL,
+                source_project_id TEXT,
+                source_node_id TEXT,
+                source_role TEXT,
+                source_snapshot_version INTEGER,
+                source_item_count INTEGER,
+                source_pending_request_count INTEGER,
+                source_hash TEXT
+            );
             """
         )
         self._ensure_pending_requests_turn_id_nullable(connection)
@@ -1085,6 +1241,49 @@ class RuntimeStoreV2:
                 thread_payload = payload.get("thread")
                 if isinstance(thread_payload, dict):
                     self._thread_state[thread_id] = dict(thread_payload)
+
+        legacy_migration_rows = self._db.execute(
+            """
+            SELECT
+                thread_id,
+                migrated_at_ms,
+                source_project_id,
+                source_node_id,
+                source_role,
+                source_snapshot_version,
+                source_item_count,
+                source_pending_request_count,
+                source_hash
+            FROM session_v2_legacy_migrations
+            """
+        ).fetchall()
+        for row in legacy_migration_rows:
+            thread_id = str(row["thread_id"] or "").strip()
+            if not thread_id:
+                continue
+            self._legacy_migration_markers[thread_id] = {
+                "threadId": thread_id,
+                "migratedAtMs": int(row["migrated_at_ms"] or 0),
+                "sourceProjectId": str(row["source_project_id"] or "").strip() or None,
+                "sourceNodeId": str(row["source_node_id"] or "").strip() or None,
+                "sourceRole": str(row["source_role"] or "").strip() or None,
+                "sourceSnapshotVersion": (
+                    int(row["source_snapshot_version"])
+                    if row["source_snapshot_version"] is not None
+                    else None
+                ),
+                "sourceItemCount": (
+                    int(row["source_item_count"])
+                    if row["source_item_count"] is not None
+                    else None
+                ),
+                "sourcePendingRequestCount": (
+                    int(row["source_pending_request_count"])
+                    if row["source_pending_request_count"] is not None
+                    else None
+                ),
+                "sourceHash": str(row["source_hash"] or "").strip() or None,
+            }
 
         turn_rows = self._db.execute(
             "SELECT thread_id, turn_id, turn_json, is_active FROM session_v2_turns"
@@ -1268,6 +1467,37 @@ class RuntimeStoreV2:
         )
         self._db.commit()
 
+    def _persist_legacy_migration_marker(self, record: dict[str, Any]) -> None:
+        if self._db is None:
+            return
+        self._db.execute(
+            """
+            INSERT OR REPLACE INTO session_v2_legacy_migrations(
+                thread_id,
+                migrated_at_ms,
+                source_project_id,
+                source_node_id,
+                source_role,
+                source_snapshot_version,
+                source_item_count,
+                source_pending_request_count,
+                source_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(record.get("threadId") or ""),
+                int(record.get("migratedAtMs") or self._now_ms()),
+                record.get("sourceProjectId"),
+                record.get("sourceNodeId"),
+                record.get("sourceRole"),
+                record.get("sourceSnapshotVersion"),
+                record.get("sourceItemCount"),
+                record.get("sourcePendingRequestCount"),
+                record.get("sourceHash"),
+            ),
+        )
+        self._db.commit()
+
     def _load_idempotency_from_db(self, action_type: str, key: str) -> dict[str, Any] | None:
         if self._db is None:
             return None
@@ -1290,6 +1520,52 @@ class RuntimeStoreV2:
             "request_id": str(row["request_id"] or ""),
             "accepted_at_ms": int(row["accepted_at_ms"] or 0),
             "journal_event_seq": row["journal_event_seq"],
+        }
+
+    def _load_legacy_migration_marker_from_db(self, thread_id: str) -> dict[str, Any] | None:
+        if self._db is None:
+            return None
+        row = self._db.execute(
+            """
+            SELECT
+                thread_id,
+                migrated_at_ms,
+                source_project_id,
+                source_node_id,
+                source_role,
+                source_snapshot_version,
+                source_item_count,
+                source_pending_request_count,
+                source_hash
+            FROM session_v2_legacy_migrations
+            WHERE thread_id = ?
+            """,
+            (thread_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "threadId": str(row["thread_id"] or ""),
+            "migratedAtMs": int(row["migrated_at_ms"] or 0),
+            "sourceProjectId": str(row["source_project_id"] or "").strip() or None,
+            "sourceNodeId": str(row["source_node_id"] or "").strip() or None,
+            "sourceRole": str(row["source_role"] or "").strip() or None,
+            "sourceSnapshotVersion": (
+                int(row["source_snapshot_version"])
+                if row["source_snapshot_version"] is not None
+                else None
+            ),
+            "sourceItemCount": (
+                int(row["source_item_count"])
+                if row["source_item_count"] is not None
+                else None
+            ),
+            "sourcePendingRequestCount": (
+                int(row["source_pending_request_count"])
+                if row["source_pending_request_count"] is not None
+                else None
+            ),
+            "sourceHash": str(row["source_hash"] or "").strip() or None,
         }
 
     def _trim_memory_journal(self, thread_id: str, *, now_ms: int) -> None:
@@ -1355,6 +1631,27 @@ class RuntimeStoreV2:
             if isinstance(payload, dict):
                 events.append(payload)
         return events
+
+    def _find_event_by_method_and_turn_locked(
+        self,
+        *,
+        thread_id: str,
+        method: str,
+        turn_id: str,
+    ) -> dict[str, Any] | None:
+        events = self._read_journal_events_locked(thread_id, after_event_seq=0)
+        for event in reversed(events):
+            if str(event.get("method") or "") != method:
+                continue
+            event_turn_id = str(event.get("turnId") or "").strip()
+            if event_turn_id == turn_id:
+                return event
+            params = event.get("params")
+            nested_turn = params.get("turn") if isinstance(params, dict) else None
+            nested_turn_id = str(nested_turn.get("id") or "").strip() if isinstance(nested_turn, dict) else ""
+            if nested_turn_id == turn_id:
+                return event
+        return None
 
     def _assert_cursor_available(self, *, thread_id: str, cursor_value: int) -> None:
         first_seq, last_seq = self._read_first_last_seq(thread_id)

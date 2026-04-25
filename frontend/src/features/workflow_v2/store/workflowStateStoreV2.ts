@@ -28,46 +28,58 @@ export type WorkflowStateStoreV2State = {
   loading: Record<string, boolean>
   errors: Record<string, string>
   activeMutations: Record<string, WorkflowMutationActionV2 | null>
+  mutationResultByKey: Record<string, WorkflowMutationResultV2 | null>
   loadWorkflowState: (projectId: string, nodeId: string) => Promise<WorkflowStateV2>
   ensureThread: (
     projectId: string,
     nodeId: string,
     role: WorkflowThreadRoleV2,
     options?: WorkflowModelPolicyV2,
-  ) => Promise<WorkflowStateV2>
+  ) => Promise<WorkflowMutationResultV2>
   startExecution: (
     projectId: string,
     nodeId: string,
     options?: WorkflowModelPolicyV2,
-  ) => Promise<WorkflowStateV2>
+  ) => Promise<WorkflowMutationResultV2>
   completeExecution: (
     projectId: string,
     nodeId: string,
     expectedWorkspaceHash: string,
-  ) => Promise<WorkflowStateV2>
+  ) => Promise<WorkflowMutationResultV2>
   startAudit: (
     projectId: string,
     nodeId: string,
     expectedWorkspaceHash: string,
     options?: WorkflowModelPolicyV2,
-  ) => Promise<WorkflowStateV2>
+  ) => Promise<WorkflowMutationResultV2>
   improveExecution: (
     projectId: string,
     nodeId: string,
     expectedReviewCommitSha: string,
     options?: WorkflowModelPolicyV2,
-  ) => Promise<WorkflowStateV2>
+  ) => Promise<WorkflowMutationResultV2>
   acceptAudit: (
     projectId: string,
     nodeId: string,
     expectedReviewCommitSha: string,
-  ) => Promise<WorkflowStateV2>
+  ) => Promise<WorkflowMutationResultV2>
   startPackageReview: (
     projectId: string,
     nodeId: string,
     options?: WorkflowModelPolicyV2,
-  ) => Promise<WorkflowStateV2>
+  ) => Promise<WorkflowMutationResultV2>
   reset: () => void
+}
+
+export type WorkflowMutationResultV2 = {
+  workflowState: WorkflowStateV2
+  threadId: string | null
+  turnId: string | null
+  executionRunId: string | null
+  auditRunId: string | null
+  reviewCycleId: string | null
+  reviewThreadId: string | null
+  reviewCommitSha: string | null
 }
 
 const workflowStateInFlight = new Map<string, Promise<WorkflowStateV2>>()
@@ -172,6 +184,22 @@ async function workflowStateFromMutationResponse(
   return await requestWorkflowState(projectId, nodeId, set)
 }
 
+function mutationResultFromResponse(
+  workflowState: WorkflowStateV2,
+  response: WorkflowMutationResponseV2,
+): WorkflowMutationResultV2 {
+  return {
+    workflowState,
+    threadId: response.threadId ?? null,
+    turnId: response.turnId ?? null,
+    executionRunId: response.executionRunId ?? null,
+    auditRunId: response.auditRunId ?? null,
+    reviewCycleId: response.reviewCycleId ?? null,
+    reviewThreadId: response.reviewThreadId ?? null,
+    reviewCommitSha: response.reviewCommitSha ?? null,
+  }
+}
+
 async function runWorkflowMutation(
   params: {
     projectId: string
@@ -184,7 +212,7 @@ async function runWorkflowMutation(
       | Partial<WorkflowStateStoreV2State>
       | ((state: WorkflowStateStoreV2State) => Partial<WorkflowStateStoreV2State>),
   ) => void,
-): Promise<WorkflowStateV2> {
+): Promise<WorkflowMutationResultV2> {
   const { projectId, nodeId, action, mutate } = params
   const key = stateKey(projectId, nodeId)
   set((state) => ({
@@ -200,12 +228,24 @@ async function runWorkflowMutation(
 
   try {
     const response = await mutate()
-    return await workflowStateFromMutationResponse(projectId, nodeId, response, set)
+    const workflowState = await workflowStateFromMutationResponse(projectId, nodeId, response, set)
+    const result = mutationResultFromResponse(workflowState, response)
+    set((state) => ({
+      mutationResultByKey: {
+        ...state.mutationResultByKey,
+        [key]: result,
+      },
+    }))
+    return result
   } catch (error) {
     set((state) => ({
       errors: {
         ...state.errors,
         [key]: toErrorMessage(error),
+      },
+      mutationResultByKey: {
+        ...state.mutationResultByKey,
+        [key]: null,
       },
     }))
     throw error
@@ -224,6 +264,7 @@ export const useWorkflowStateStoreV2 = create<WorkflowStateStoreV2State>((set) =
   loading: {},
   errors: {},
   activeMutations: {},
+  mutationResultByKey: {},
 
   async loadWorkflowState(projectId: string, nodeId: string) {
     const key = stateKey(projectId, nodeId)
@@ -385,6 +426,7 @@ export const useWorkflowStateStoreV2 = create<WorkflowStateStoreV2State>((set) =
       loading: {},
       errors: {},
       activeMutations: {},
+      mutationResultByKey: {},
     })
   },
 }))

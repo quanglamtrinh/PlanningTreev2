@@ -75,6 +75,19 @@ export type StreamControllerDependencies = {
   clearGapDetected: (threadId: string) => void
   getLastEventId: (threadId: string) => string | null
   getGapDetected: (threadId: string) => boolean
+  recoverFromGap?: (threadId: string, options: { fullResync: boolean }) => Promise<void> | void
+  resetReplayCursor?: (threadId: string) => void
+  reportGapMetric?: (payload: {
+    threadId: string
+    type: 'gap_detected' | 'gap_recovery' | 'gap_repeated'
+    count: number
+  }) => void
+  reportCorrelation?: (payload: {
+    type: 'stream_open' | 'stream_connected' | 'stream_error' | 'gap_recovery'
+    threadId: string
+    cursorEventId?: string | null
+    attempt?: number
+  }) => void
   onStreamConnected?: (threadId: string) => void
   onRuntimeError?: (message: string | null) => void
 }
@@ -104,6 +117,8 @@ export function createSessionEventStreamController(
   let clearBuffer: (() => void) | null = null
   let generation = 0
   let disposed = false
+  const gapRecoveryAttemptsByThread = new Map<string, number>()
+  const gapRecoveryInFlightByThread = new Set<string>()
 
   const closeInternal = (options?: { threadId?: string | null; bumpGeneration?: boolean }) => {
     if (options?.bumpGeneration !== false) {
@@ -157,6 +172,11 @@ export function createSessionEventStreamController(
       activeThreadId = threadId
 
       const cursorEventId = dependencies.getLastEventId(threadId)
+      dependencies.reportCorrelation?.({
+        type: 'stream_open',
+        threadId,
+        cursorEventId,
+      })
       let stream: EventSource
       try {
         stream = openEventSource(threadId, { cursorEventId })
@@ -316,10 +336,63 @@ export function createSessionEventStreamController(
           dependencies.applyRequestEventsBatch?.(envelopes)
         })
         if (dependencies.getGapDetected(threadId)) {
-          dependencies.clearGapDetected(threadId)
+          const attempt = (gapRecoveryAttemptsByThread.get(threadId) ?? 0) + 1
+          gapRecoveryAttemptsByThread.set(threadId, attempt)
+          dependencies.reportGapMetric?.({
+            threadId,
+            type: 'gap_detected',
+            count: attempt,
+          })
+          if (attempt > 1) {
+            dependencies.reportGapMetric?.({
+              threadId,
+              type: 'gap_repeated',
+              count: attempt,
+            })
+          }
           clearQueuedEnvelopes()
-          controller.close(threadId)
-          controller.open(threadId)
+          if (gapRecoveryInFlightByThread.has(threadId)) {
+            return
+          }
+          gapRecoveryInFlightByThread.add(threadId)
+          const shouldFullResync = attempt > 1
+          void (async () => {
+            controller.close(threadId)
+            const reopenGeneration = generation
+            let recoveryFailed = false
+            try {
+              if (shouldFullResync) {
+                dependencies.resetReplayCursor?.(threadId)
+              }
+              dependencies.reportGapMetric?.({
+                threadId,
+                type: 'gap_recovery',
+                count: attempt,
+              })
+              dependencies.reportCorrelation?.({
+                type: 'gap_recovery',
+                threadId,
+                cursorEventId: dependencies.getLastEventId(threadId),
+                attempt,
+              })
+              await dependencies.recoverFromGap?.(threadId, { fullResync: shouldFullResync })
+            } catch (error) {
+              recoveryFailed = true
+              const message = error instanceof Error ? error.message : String(error)
+              dependencies.onRuntimeError?.(`Session stream gap recovery failed: ${message}`)
+            } finally {
+              gapRecoveryInFlightByThread.delete(threadId)
+            }
+            if (disposed || reopenGeneration !== generation) {
+              return
+            }
+            dependencies.clearGapDetected(threadId)
+            gapRecoveryAttemptsByThread.set(threadId, 0)
+            controller.open(threadId)
+            if (!recoveryFailed) {
+              dependencies.onRuntimeError?.(null)
+            }
+          })()
           return
         }
 
@@ -350,6 +423,11 @@ export function createSessionEventStreamController(
         if (token !== generation || disposed) {
           return
         }
+        dependencies.reportCorrelation?.({
+          type: 'stream_connected',
+          threadId,
+          cursorEventId,
+        })
         dependencies.markStreamConnected(threadId)
         dependencies.onRuntimeError?.(null)
         dependencies.onStreamConnected?.(threadId)
@@ -359,6 +437,11 @@ export function createSessionEventStreamController(
         if (token !== generation || disposed) {
           return
         }
+        dependencies.reportCorrelation?.({
+          type: 'stream_error',
+          threadId,
+          cursorEventId,
+        })
         dependencies.markStreamDisconnected(threadId)
         dependencies.markStreamReconnect(threadId)
         dependencies.onRuntimeError?.('Session stream disconnected. Reconnecting...')

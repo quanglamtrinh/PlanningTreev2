@@ -130,7 +130,9 @@ describe('workflowStateStoreV2', () => {
       .getState()
       .startExecution('project-1', 'node-1', { model: 'gpt-5.4', modelProvider: 'openai' })
 
-    expect(result).toEqual(after)
+    expect(result.workflowState).toEqual(after)
+    expect(result.threadId).toBe('exec-thread-1')
+    expect(result.turnId).toBe('turn-1')
     expect(apiMock.startExecutionV2).toHaveBeenCalledWith(
       'project-1',
       'node-1',
@@ -153,7 +155,13 @@ describe('workflowStateStoreV2', () => {
       useWorkflowStateStoreV2
         .getState()
         .completeExecution('project-1', 'node-1', 'sha256:workspace'),
-    ).resolves.toEqual(after)
+    ).resolves.toEqual(
+      expect.objectContaining({
+        workflowState: after,
+        threadId: null,
+        turnId: null,
+      }),
+    )
 
     expect(apiMock.markDoneFromExecutionV2).toHaveBeenCalledWith(
       'project-1',
@@ -202,7 +210,13 @@ describe('workflowStateStoreV2', () => {
       useWorkflowStateStoreV2
         .getState()
         .startPackageReview('project-1', 'node-1', { model: 'gpt-5.4', modelProvider: 'openai' }),
-    ).resolves.toEqual(after)
+    ).resolves.toEqual(
+      expect.objectContaining({
+        workflowState: after,
+        threadId: 'package-thread-1',
+        turnId: 'turn-package-1',
+      }),
+    )
 
     expect(apiMock.startPackageReviewV2).toHaveBeenCalledWith(
       'project-1',

@@ -14,6 +14,17 @@ from backend.session_core_v2.errors import SessionCoreError, error_envelope
 
 router = APIRouter(tags=["session-v4"])
 logger = logging.getLogger(__name__)
+_SESSION_EVENT_PREFIXES: tuple[str, ...] = ("thread/", "turn/", "item/", "serverRequest/")
+_SESSION_EVENT_EXPLICIT_METHODS: frozenset[str] = frozenset({"error"})
+
+
+def _is_allowed_session_event_method(method: str) -> bool:
+    normalized = str(method or "").strip()
+    if not normalized:
+        return False
+    if normalized in _SESSION_EVENT_EXPLICIT_METHODS:
+        return True
+    return normalized.startswith(_SESSION_EVENT_PREFIXES)
 
 
 def _ok(data: dict[str, Any]) -> dict[str, Any]:
@@ -558,16 +569,43 @@ def session_thread_events_v4(
         stream_state = _manager(request).open_event_stream(thread_id=threadId, cursor=effective_cursor)
         replay_events = stream_state["replayEvents"]
         subscriber_id = stream_state["subscriberId"]
+        logger.info(
+            "session_thread_events_v4 opened",
+            extra={
+                "threadId": threadId,
+                "cursorEventId": effective_cursor,
+                "replayEventCount": len(replay_events),
+            },
+        )
 
         def _encode_sse(event: dict[str, Any]) -> str:
             event_seq = event.get("eventSeq")
             event_name = str(event.get("method") or "message")
+            if not _is_allowed_session_event_method(event_name):
+                raise SessionCoreError(
+                    code="ERR_INTERNAL",
+                    message=f"Session stream received unsupported event method: {event_name}",
+                    status_code=500,
+                    details={"threadId": threadId, "method": event_name, "eventSeq": event_seq},
+                )
             data = json.dumps(event, ensure_ascii=True)
             return f"id: {event_seq}\nevent: {event_name}\ndata: {data}\n\n"
 
         def _iter_sse() -> Iterator[str]:
             try:
                 for replay_event in replay_events:
+                    method = str(replay_event.get("method") or "")
+                    if not _is_allowed_session_event_method(method):
+                        logger.warning(
+                            "session_thread_events_v4 dropped non-session replay event",
+                            extra={
+                                "threadId": threadId,
+                                "eventSeq": replay_event.get("eventSeq"),
+                                "method": method,
+                                "errorCode": "ERR_INTERNAL",
+                            },
+                        )
+                        continue
                     yield _encode_sse(replay_event)
                 while True:
                     item = _manager(request).read_stream_event(subscriber_id=subscriber_id, timeout_sec=15.0)
@@ -578,6 +616,18 @@ def session_thread_events_v4(
                         continue
                     if item.get("__control") == "lagged":
                         break
+                    method = str(item.get("method") or "")
+                    if not _is_allowed_session_event_method(method):
+                        logger.warning(
+                            "session_thread_events_v4 dropped non-session live event",
+                            extra={
+                                "threadId": threadId,
+                                "eventSeq": item.get("eventSeq"),
+                                "method": method,
+                                "errorCode": "ERR_INTERNAL",
+                            },
+                        )
+                        continue
                     yield _encode_sse(item)
             finally:
                 _manager(request).close_event_stream(subscriber_id=subscriber_id)

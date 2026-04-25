@@ -13,7 +13,8 @@
     "test:unit:watch": "vitest tests/unit",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
-    "test:e2e:debug": "playwright test --debug"
+    "test:e2e:debug": "playwright test --debug",
+    "check:stream-boundary": "node scripts/check-stream-boundaries.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.3.4",

@@ -494,4 +494,61 @@ describe('TranscriptPanel', () => {
     expect(screen.getByLabelText('User message details')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Copy message' })).toBeInTheDocument()
   })
+
+  it('hides workflow context items by default and renders them when debug flag is enabled', () => {
+    const contextItem: SessionItem = {
+      id: 'item-context',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'agentMessage',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'agentMessage',
+        text: 'Context packet that should be hidden',
+        metadata: {
+          workflowContext: true,
+          role: 'execution',
+        },
+      },
+    }
+    const normalItem: SessionItem = {
+      id: 'item-visible',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'agentMessage',
+      status: 'completed',
+      createdAtMs: 2,
+      updatedAtMs: 2,
+      payload: {
+        type: 'agentMessage',
+        text: 'Visible assistant message',
+      },
+    }
+
+    const items = [contextItem, normalItem]
+    const hidden = render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn(items, 'completed')]}
+        itemsByTurn={{ 'thread-1:turn-1': items }}
+      />,
+    )
+    expect(hidden.queryByText('Context packet that should be hidden')).not.toBeInTheDocument()
+    expect(hidden.getByText('Visible assistant message')).toBeInTheDocument()
+    hidden.unmount()
+
+    render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn(items, 'completed')]}
+        itemsByTurn={{ 'thread-1:turn-1': items }}
+        showWorkflowContext
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Reasoning summary/i }))
+    expect(screen.getByText('Context packet that should be hidden')).toBeInTheDocument()
+    expect(screen.getByText('Visible assistant message')).toBeInTheDocument()
+  })
 })

@@ -408,14 +408,12 @@ export function createSessionRuntimeController(
     }
 
     const snapshot = dependencies.getThreadState()
-    if (snapshot.activeThreadId === threadId) {
-      dependencies.setRuntimeError(null)
-      return
+    if (snapshot.activeThreadId !== threadId) {
+      dependencies.setActiveThreadId(threadId)
     }
 
     const cachedThread = snapshot.threadsById[threadId]
     if (hydratedThreadIds.has(threadId) && cachedThread?.status?.type !== 'notLoaded') {
-      dependencies.setActiveThreadId(threadId)
       dependencies.setRuntimeError(null)
       return
     }
@@ -425,7 +423,6 @@ export function createSessionRuntimeController(
       if (!isCurrent()) {
         return
       }
-      dependencies.setActiveThreadId(threadId)
       dependencies.setRuntimeError(null)
     } catch (error) {
       if (!isCurrent()) {

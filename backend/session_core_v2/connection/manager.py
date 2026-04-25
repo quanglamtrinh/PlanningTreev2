@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import threading
 import time
-import uuid
 from typing import Any
 
 from backend.session_core_v2.connection.state_machine import ConnectionStateMachine
@@ -128,7 +127,22 @@ class SessionManagerV2:
 
     def thread_turns_list(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
-        return self._thread_service.thread_turns_list(thread_id=thread_id, params=payload)
+        provider_response = self._thread_service.thread_turns_list(thread_id=thread_id, params=payload)
+        provider_turns_raw = provider_response.get("data")
+        provider_turns = (
+            [turn for turn in provider_turns_raw if isinstance(turn, dict)]
+            if isinstance(provider_turns_raw, list)
+            else []
+        )
+        runtime_turns = [
+            self._to_api_turn(turn)
+            for turn in self._runtime_store.list_turns(thread_id=thread_id)
+        ]
+        merged_turns = self._merge_turns_for_api(provider_turns=provider_turns, runtime_turns=runtime_turns)
+        return {
+            "data": merged_turns,
+            "nextCursor": provider_response.get("nextCursor"),
+        }
 
     def thread_loaded_list(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
@@ -180,6 +194,45 @@ class SessionManagerV2:
             thread_id=thread_id,
             params=dict(payload),
         )
+        replayable_context_items = 0
+        for index, raw_item in enumerate(items):
+            if not isinstance(raw_item, dict):
+                continue
+            metadata = self._extract_item_metadata(raw_item)
+            if metadata.get("workflowContext") is not True:
+                continue
+            replayable_context_items += 1
+            context_turn_id = self._resolve_context_turn_id(
+                thread_id=thread_id,
+                client_action_id=client_action_id,
+                item=raw_item,
+                index=index,
+            )
+            turn = self._runtime_store.create_turn(
+                thread_id=thread_id,
+                turn_id=context_turn_id,
+                status="completed",
+            )
+            api_turn = self._to_api_turn(turn)
+            self._runtime_store.append_turn_started_if_absent(
+                thread_id=thread_id,
+                turn_id=context_turn_id,
+                turn=api_turn,
+            )
+            item_payload = dict(raw_item)
+            item_payload["turnId"] = context_turn_id
+            item_payload["status"] = "completed"
+            item_payload["metadata"] = {**metadata, "workflowContext": True}
+            self._runtime_store.append_notification(
+                method="item/completed",
+                params={"item": item_payload},
+                thread_id_override=thread_id,
+            )
+            self._runtime_store.append_notification(
+                method="turn/completed",
+                params={"turn": api_turn},
+                thread_id_override=thread_id,
+            )
         self._runtime_store.record_idempotent_result(
             action_type="thread/inject_items",
             key=client_action_id,
@@ -194,6 +247,7 @@ class SessionManagerV2:
                 "turnId": None,
                 "clientActionId": client_action_id,
                 "eventSeq": None,
+                "contextItemsAppended": replayable_context_items,
                 "errorCode": None,
             },
         )
@@ -261,7 +315,16 @@ class SessionManagerV2:
         response = self._turn_service.turn_start(thread_id=thread_id, params=rpc_payload)
         turn_id = self._extract_turn_id_from_response(response)
         if not turn_id:
-            turn_id = str(uuid.uuid4())
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message="turn/start response missing turnId (provider contract violation).",
+                status_code=502,
+                details={
+                    "threadId": thread_id,
+                    "clientActionId": client_action_id,
+                    "providerMethod": "turn/start",
+                },
+            )
 
         self._runtime_store.create_turn(thread_id=thread_id, turn_id=turn_id, status="idle")
         turn = self._runtime_store.transition_turn(
@@ -272,6 +335,11 @@ class SessionManagerV2:
             last_codex_status="inProgress",
         )
         turn_payload = {"turn": self._to_api_turn(turn)}
+        self._runtime_store.append_turn_started_if_absent(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            turn=turn_payload["turn"],
+        )
         self._runtime_store.record_idempotent_result(
             action_type="turn/start",
             key=client_action_id,
@@ -717,6 +785,47 @@ class SessionManagerV2:
         return ""
 
     @staticmethod
+    def _merge_turns_for_api(
+        *,
+        provider_turns: list[dict[str, Any]],
+        runtime_turns: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        merged: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+
+        for turn in provider_turns:
+            turn_id = str(turn.get("id") or "").strip()
+            if not turn_id:
+                continue
+            normalized = dict(turn)
+            if "items" not in normalized or not isinstance(normalized.get("items"), list):
+                normalized["items"] = []
+            merged[turn_id] = normalized
+            order.append(turn_id)
+
+        for turn in runtime_turns:
+            turn_id = str(turn.get("id") or "").strip()
+            if not turn_id:
+                continue
+            existing = merged.get(turn_id)
+            if existing is None:
+                merged[turn_id] = dict(turn)
+                order.append(turn_id)
+                continue
+            provider_items = existing.get("items")
+            runtime_items = turn.get("items")
+            merged_turn = {**existing, **turn}
+            if isinstance(runtime_items, list) and runtime_items:
+                merged_turn["items"] = runtime_items
+            elif isinstance(provider_items, list):
+                merged_turn["items"] = provider_items
+            else:
+                merged_turn["items"] = []
+            merged[turn_id] = merged_turn
+
+        return [merged[turn_id] for turn_id in order if turn_id in merged]
+
+    @staticmethod
     def _to_api_turn(turn: dict[str, Any]) -> dict[str, Any]:
         status = str(turn.get("status") or "inProgress")
         if status == "waitingUserInput":
@@ -729,6 +838,9 @@ class SessionManagerV2:
             "id": str(turn.get("id") or ""),
             "status": status,
             "items": list(turn.get("items") or []),
+            "startedAtMs": turn.get("startedAtMs"),
+            "completedAtMs": turn.get("completedAtMs"),
+            "lastCodexStatus": turn.get("lastCodexStatus"),
         }
         error = turn.get("error")
         if isinstance(error, dict):
@@ -755,3 +867,25 @@ class SessionManagerV2:
         if normalized:
             return normalized
         return None
+
+    @staticmethod
+    def _extract_item_metadata(item: dict[str, Any]) -> dict[str, Any]:
+        metadata = item.get("metadata")
+        if isinstance(metadata, dict):
+            return dict(metadata)
+        return {}
+
+    @staticmethod
+    def _resolve_context_turn_id(
+        *,
+        thread_id: str,
+        client_action_id: str,
+        item: dict[str, Any],
+        index: int,
+    ) -> str:
+        explicit_turn_id = str(item.get("turnId") or "").strip()
+        if explicit_turn_id:
+            return explicit_turn_id
+        item_id = str(item.get("id") or "").strip() or f"ctx-item-{index + 1}"
+        # Keep turn ids deterministic to preserve replay/idempotency behavior.
+        return f"ctx-{thread_id}-{client_action_id}-{item_id}"

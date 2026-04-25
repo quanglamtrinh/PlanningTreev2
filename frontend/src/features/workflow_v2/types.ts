@@ -66,6 +66,20 @@ export type WorkflowStateV2 = {
   decisions: WorkflowStateDecisionsV2
   context: WorkflowStateContextV2
   allowedActions: WorkflowActionV2[]
+  activeExecutionRunId?: string | null
+  activeAuditRunId?: string | null
+  activeExecutionRun?: {
+    runId?: string | null
+    threadId?: string | null
+    turnId?: string | null
+    status?: string | null
+  } | null
+  activeAuditRun?: {
+    runId?: string | null
+    threadId?: string | null
+    turnId?: string | null
+    status?: string | null
+  } | null
 }
 
 export type WorkflowEventTypeV2 =

@@ -50,12 +50,20 @@ export type BreadcrumbThreadWorkflowStripProps = {
   actions: ReactNode | null
 }
 
+export type BreadcrumbThreadDebugPanelProps = {
+  enabled: boolean
+  payload: Record<string, unknown> | null
+  showWorkflowContextItems: boolean
+  onToggleShowWorkflowContextItems: () => void
+}
+
 export type BreadcrumbThreadPaneV2Props = {
   transcriptProps: BreadcrumbThreadTranscriptProps
   frameContextProps: BreadcrumbThreadFrameContextProps
   pendingRequestProps: BreadcrumbThreadPendingRequestProps
   workflowStripProps: BreadcrumbThreadWorkflowStripProps
   composerProps: BreadcrumbThreadComposerProps
+  debugPanelProps?: BreadcrumbThreadDebugPanelProps
 }
 
 export function BreadcrumbThreadPaneV2({
@@ -64,9 +72,13 @@ export function BreadcrumbThreadPaneV2({
   pendingRequestProps,
   workflowStripProps,
   composerProps,
+  debugPanelProps,
 }: BreadcrumbThreadPaneV2Props) {
   const { threadTab, onThreadTabChange, combinedError } = frameContextProps
   const isExecutionTab = threadTab === 'execution'
+  const debugPayloadText = debugPanelProps?.payload
+    ? JSON.stringify(debugPanelProps.payload, null, 2)
+    : ''
 
   return (
     <>
@@ -87,6 +99,53 @@ export function BreadcrumbThreadPaneV2({
                   {combinedError}
                 </div>
               ) : null}
+              {debugPanelProps?.enabled ? (
+                <section className={sessionShellStyles.threadDebugPanel} data-testid="session-debug-panel">
+                  <div className={sessionShellStyles.threadDebugPanelHeader}>
+                    <strong>Session Debug</strong>
+                    <div className={sessionShellStyles.threadDebugPanelActions}>
+                      <button
+                        type="button"
+                        className={sessionShellStyles.threadDebugButton}
+                        onClick={() => {
+                          if (!debugPayloadText) {
+                            return
+                          }
+                          if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+                            void navigator.clipboard.writeText(debugPayloadText)
+                            return
+                          }
+                          if (typeof document === 'undefined') {
+                            return
+                          }
+                          const textarea = document.createElement('textarea')
+                          textarea.value = debugPayloadText
+                          textarea.setAttribute('readonly', 'true')
+                          textarea.style.position = 'fixed'
+                          textarea.style.left = '-9999px'
+                          document.body.appendChild(textarea)
+                          textarea.select()
+                          try {
+                            document.execCommand('copy')
+                          } finally {
+                            document.body.removeChild(textarea)
+                          }
+                        }}
+                      >
+                        Copy trace payload
+                      </button>
+                      <button
+                        type="button"
+                        className={sessionShellStyles.threadDebugButton}
+                        onClick={debugPanelProps.onToggleShowWorkflowContextItems}
+                      >
+                        {debugPanelProps.showWorkflowContextItems ? 'Hide context items' : 'Show context items'}
+                      </button>
+                    </div>
+                  </div>
+                  <pre className={sessionShellStyles.threadDebugPanelBody}>{debugPayloadText || '{}'}</pre>
+                </section>
+              ) : null}
             </div>
 
             <div
@@ -98,6 +157,7 @@ export function BreadcrumbThreadPaneV2({
                 threadId={transcriptProps.threadId}
                 turns={transcriptProps.turns}
                 itemsByTurn={transcriptProps.itemsByTurn}
+                showWorkflowContext={Boolean(debugPanelProps?.enabled && debugPanelProps.showWorkflowContextItems)}
               />
             </div>
 

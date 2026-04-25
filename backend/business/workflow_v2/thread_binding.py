@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import logging
 from typing import Any
 
 from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
@@ -31,6 +32,7 @@ _ROLE_THREAD_ATTR: dict[str, str] = {
 }
 
 _IDEMPOTENCY_ACTION = "ensure_thread"
+logger = logging.getLogger(__name__)
 
 
 class ThreadBindingServiceV2:
@@ -117,6 +119,17 @@ class ThreadBindingServiceV2:
                 persisted,
                 details={"reason": "binding_reused", "role": role},
             )
+            logger.info(
+                "workflow_v2 thread binding reused",
+                extra={
+                    "idempotencyKey": key,
+                    "projectId": project_id,
+                    "nodeId": node_id,
+                    "role": role,
+                    "threadId": binding.thread_id,
+                    "contextPacketHash": packet_hash,
+                },
+            )
             persisted_binding = persisted.thread_bindings[role]
             return _response(persisted, persisted_binding)
 
@@ -152,6 +165,17 @@ class ThreadBindingServiceV2:
                 next_state,
                 details={"reason": "context_updated", "role": role},
             )
+            logger.info(
+                "workflow_v2 thread context updated",
+                extra={
+                    "idempotencyKey": key,
+                    "projectId": project_id,
+                    "nodeId": node_id,
+                    "role": role,
+                    "threadId": binding.thread_id,
+                    "contextPacketHash": packet_hash,
+                },
+            )
             return _response(next_state, next_binding)
 
         if legacy_thread_id:
@@ -181,6 +205,17 @@ class ThreadBindingServiceV2:
             self._publish_state_changed(
                 next_state,
                 details={"reason": "legacy_adopted", "role": role},
+            )
+            logger.info(
+                "workflow_v2 thread binding adopted legacy thread",
+                extra={
+                    "idempotencyKey": key,
+                    "projectId": project_id,
+                    "nodeId": node_id,
+                    "role": role,
+                    "threadId": legacy_thread_id,
+                    "contextPacketHash": packet_hash,
+                },
             )
             return _response(next_state, next_binding)
 
@@ -215,6 +250,17 @@ class ThreadBindingServiceV2:
         self._publish_state_changed(
             next_state,
             details={"reason": "new_thread", "role": role},
+        )
+        logger.info(
+            "workflow_v2 thread binding created new thread",
+            extra={
+                "idempotencyKey": key,
+                "projectId": project_id,
+                "nodeId": node_id,
+                "role": role,
+                "threadId": thread_id,
+                "contextPacketHash": packet_hash,
+            },
         )
         return _response(next_state, next_binding)
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { useDetailStateStore } from '../../stores/detail-state-store'
@@ -6,6 +6,7 @@ import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { useSessionFacadeV2 } from '../session_v2/facade/useSessionFacadeV2'
+import { useThreadSessionStore } from '../session_v2/store/threadSessionStore'
 import { useWorkflowEventBridgeV2 } from '../workflow_v2/hooks/useWorkflowEventBridgeV2'
 import { useWorkflowStateV2 } from '../workflow_v2/hooks/useWorkflowStateV2'
 import type { BreadcrumbDetailPaneProps } from './BreadcrumbChatViewV2'
@@ -27,14 +28,44 @@ export type BreadcrumbConversationControllerV2 = {
   detailPaneProps: BreadcrumbDetailPaneProps
 }
 
+type WorkflowThreadKeyV2 = 'askPlanning' | 'execution' | 'audit' | 'packageReview'
+
 function renderActionLabel(action: string | null, idleLabel: string, busyLabel: string): string {
   return action ? busyLabel : idleLabel
+}
+
+function resolveThreadFromMutationResult(
+  result: { threadId?: string | null; workflowState?: { threads?: Record<string, string | null> } } | null | undefined,
+  options: {
+    workflowThreadKey: WorkflowThreadKeyV2
+    laneFallbackThreadId: string | null
+  },
+): string | null {
+  const direct = typeof result?.threadId === 'string' && result.threadId.trim().length > 0
+    ? result.threadId
+    : null
+  if (direct) {
+    return direct
+  }
+  const fromWorkflow = result?.workflowState?.threads?.[options.workflowThreadKey]
+  if (typeof fromWorkflow === 'string' && fromWorkflow.trim().length > 0) {
+    return fromWorkflow
+  }
+  return options.laneFallbackThreadId
+}
+
+function emitSessionCorrelation(payload: Record<string, unknown>): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.dispatchEvent(new CustomEvent('session-v2-correlation', { detail: payload }))
 }
 
 export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationControllerV2 {
   const navigate = useNavigate()
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
   const [searchParams] = useSearchParams()
+  const [showWorkflowContextItems, setShowWorkflowContextItems] = useState(false)
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
   const autoEnsureAttemptedRef = useRef<Set<string>>(new Set())
@@ -76,8 +107,10 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
 
   const {
     workflowState,
+    isLoading: isWorkflowLoading,
     error: workflowError,
     activeMutation,
+    mutationResult,
     loadWorkflowState,
     ensureThread,
     startExecution,
@@ -87,6 +120,13 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     acceptAudit,
     startPackageReview,
   } = useWorkflowStateV2(projectId, nodeId)
+  const sessionProjectionState = useThreadSessionStore(
+    useShallow((state) => ({
+      turnsByThread: state.turnsByThread,
+      lastEventSeqByThread: state.lastEventSeqByThread,
+      streamConnectedByThread: state.streamState.connectedByThread,
+    })),
+  )
 
   const isReviewNode = useMemo(() => {
     if (!projectId || !nodeId || !snapshot || snapshot.project.id !== projectId) {
@@ -97,6 +137,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   }, [nodeId, projectId, snapshot])
 
   const requestedThreadTab = parseThreadTab(searchParams.get('thread'))
+  const isSessionDebugMode = searchParams.get('debugSession') === '1'
   const routeTarget = resolveV2RouteTarget({
     requestedThreadTab,
     isReviewNode,
@@ -201,6 +242,95 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   )
   const workflowLane = workflowProjection.lanes[threadTab]
   const activeThreadId = workflowLane.threadId
+  const workflowDebugStateRecord =
+    workflowState && typeof workflowState === 'object'
+      ? (workflowState as unknown as Record<string, unknown>)
+      : {}
+  const activeExecutionRunId =
+    typeof workflowDebugStateRecord.activeExecutionRunId === 'string'
+      ? workflowDebugStateRecord.activeExecutionRunId
+      : null
+  const activeAuditRunId =
+    typeof workflowDebugStateRecord.activeAuditRunId === 'string'
+      ? workflowDebugStateRecord.activeAuditRunId
+      : null
+  const activeExecutionRun =
+    workflowDebugStateRecord.activeExecutionRun && typeof workflowDebugStateRecord.activeExecutionRun === 'object'
+      ? (workflowDebugStateRecord.activeExecutionRun as Record<string, unknown>)
+      : null
+  const activeAuditRun =
+    workflowDebugStateRecord.activeAuditRun && typeof workflowDebugStateRecord.activeAuditRun === 'object'
+      ? (workflowDebugStateRecord.activeAuditRun as Record<string, unknown>)
+      : null
+  const laneTurns = activeThreadId ? sessionProjectionState.turnsByThread[activeThreadId] ?? [] : []
+  const laneLastEventSeq = activeThreadId
+    ? (sessionProjectionState.lastEventSeqByThread[activeThreadId] ?? null)
+    : null
+  const laneStreamConnected = activeThreadId
+    ? Boolean(sessionProjectionState.streamConnectedByThread[activeThreadId])
+    : false
+  const sessionDebugPayload = useMemo(
+    () => ({
+      projectId: projectId ?? null,
+      nodeId: nodeId ?? null,
+      lane: threadTab,
+      phase: workflowState?.phase ?? null,
+      workflowLaneThreadId: activeThreadId,
+      sessionActiveThreadId: sessionState.activeThreadId,
+      streamConnectedByThread: laneStreamConnected,
+      turnsLength: laneTurns.length,
+      lastEventSeqByThread: laneLastEventSeq,
+      gapDetected: sessionState.gapDetected,
+      reconnectCount: sessionState.reconnectCount,
+      activeMutation,
+      activeExecutionRunId,
+      activeAuditRunId,
+      activeExecutionRun: activeExecutionRun
+        ? {
+            runId: activeExecutionRun.runId ?? null,
+            threadId: activeExecutionRun.threadId ?? null,
+            turnId: activeExecutionRun.turnId ?? null,
+            status: activeExecutionRun.status ?? null,
+          }
+        : null,
+      activeAuditRun: activeAuditRun
+        ? {
+            runId: activeAuditRun.runId ?? null,
+            threadId: activeAuditRun.threadId ?? null,
+            turnId: activeAuditRun.turnId ?? null,
+            status: activeAuditRun.status ?? null,
+          }
+        : null,
+      mutationResult: mutationResult
+        ? {
+            threadId: mutationResult.threadId,
+            turnId: mutationResult.turnId,
+            executionRunId: mutationResult.executionRunId,
+            auditRunId: mutationResult.auditRunId,
+            reviewCycleId: mutationResult.reviewCycleId,
+          }
+        : null,
+    }),
+    [
+      activeAuditRun,
+      activeAuditRunId,
+      activeExecutionRun,
+      activeExecutionRunId,
+      activeMutation,
+      activeThreadId,
+      laneLastEventSeq,
+      laneStreamConnected,
+      laneTurns.length,
+      mutationResult,
+      nodeId,
+      projectId,
+      sessionState.activeThreadId,
+      sessionState.gapDetected,
+      sessionState.reconnectCount,
+      threadTab,
+      workflowState?.phase,
+    ],
+  )
   const autoEnsureRole =
     !isReviewNode && workflowProjection.isLoaded
       ? threadTab === 'ask'
@@ -233,11 +363,28 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     ) {
       return
     }
-    void sessionCommands.selectThread(workflowLane.threadId).catch(() => undefined)
+    const laneThreadId = workflowLane.threadId
+    const shouldHoldCurrentSelection = isWorkflowLoading || activeMutation !== null
+    if (laneThreadId) {
+      if (sessionState.activeThreadId === laneThreadId) {
+        return
+      }
+      void sessionCommands.selectThread(laneThreadId).catch(() => undefined)
+      return
+    }
+    if (shouldHoldCurrentSelection) {
+      return
+    }
+    if (sessionState.activeThreadId !== null) {
+      void sessionCommands.selectThread(null).catch(() => undefined)
+    }
   }, [
+    activeMutation,
     detailNode,
+    isWorkflowLoading,
     nodeId,
     projectId,
+    sessionState.activeThreadId,
     sessionCommands.selectThread,
     shouldCanonicalizeV2,
     snapshot,
@@ -366,7 +513,25 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         return
       }
       if (action.kind === 'start_execution') {
-        await startExecution(projectId, nodeId, workflowModelPolicy)
+        const result = await startExecution(projectId, nodeId, workflowModelPolicy)
+        const threadId = resolveThreadFromMutationResult(result, {
+          workflowThreadKey: 'execution',
+          laneFallbackThreadId: workflowProjection.lanes.execution.threadId,
+        })
+        emitSessionCorrelation({
+          type: 'workflow_action',
+          action: action.kind,
+          projectId,
+          nodeId,
+          role: 'execution',
+          threadId: threadId ?? null,
+          turnId: result.turnId ?? null,
+          executionRunId: result.executionRunId ?? null,
+          auditRunId: result.auditRunId ?? null,
+        })
+        if (threadId) {
+          await sessionCommands.selectThread(threadId)
+        }
         void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
         return
       }
@@ -374,7 +539,25 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         if (!action.candidateWorkspaceHash) {
           return
         }
-        await startAudit(projectId, nodeId, action.candidateWorkspaceHash, workflowModelPolicy)
+        const result = await startAudit(projectId, nodeId, action.candidateWorkspaceHash, workflowModelPolicy)
+        const threadId = resolveThreadFromMutationResult(result, {
+          workflowThreadKey: 'audit',
+          laneFallbackThreadId: workflowProjection.lanes.audit.threadId,
+        })
+        emitSessionCorrelation({
+          type: 'workflow_action',
+          action: action.kind,
+          projectId,
+          nodeId,
+          role: 'audit',
+          threadId: threadId ?? null,
+          turnId: result.turnId ?? null,
+          executionRunId: result.executionRunId ?? null,
+          auditRunId: result.auditRunId ?? null,
+        })
+        if (threadId) {
+          await sessionCommands.selectThread(threadId)
+        }
         void navigate(buildChatV2Url(projectId, nodeId, 'audit'))
         return
       }
@@ -391,7 +574,25 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         if (!action.reviewCommitSha) {
           return
         }
-        await improveExecution(projectId, nodeId, action.reviewCommitSha, workflowModelPolicy)
+        const result = await improveExecution(projectId, nodeId, action.reviewCommitSha, workflowModelPolicy)
+        const threadId = resolveThreadFromMutationResult(result, {
+          workflowThreadKey: 'execution',
+          laneFallbackThreadId: workflowProjection.lanes.execution.threadId,
+        })
+        emitSessionCorrelation({
+          type: 'workflow_action',
+          action: action.kind,
+          projectId,
+          nodeId,
+          role: 'execution',
+          threadId: threadId ?? null,
+          turnId: result.turnId ?? null,
+          executionRunId: result.executionRunId ?? null,
+          auditRunId: result.auditRunId ?? null,
+        })
+        if (threadId) {
+          await sessionCommands.selectThread(threadId)
+        }
         void navigate(buildChatV2Url(projectId, nodeId, 'execution'))
         return
       }
@@ -405,7 +606,25 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         return
       }
       if (action.kind === 'start_package_review') {
-        await startPackageReview(projectId, nodeId, workflowModelPolicy)
+        const result = await startPackageReview(projectId, nodeId, workflowModelPolicy)
+        const threadId = resolveThreadFromMutationResult(result, {
+          workflowThreadKey: 'packageReview',
+          laneFallbackThreadId: workflowProjection.lanes.package.threadId,
+        })
+        emitSessionCorrelation({
+          type: 'workflow_action',
+          action: action.kind,
+          projectId,
+          nodeId,
+          role: 'package_review',
+          threadId: threadId ?? null,
+          turnId: result.turnId ?? null,
+          executionRunId: result.executionRunId ?? null,
+          auditRunId: result.auditRunId ?? null,
+        })
+        if (threadId) {
+          await sessionCommands.selectThread(threadId)
+        }
         void navigate(buildChatV2Url(projectId, nodeId, 'package'))
       }
     },
@@ -416,10 +635,14 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       navigate,
       nodeId,
       projectId,
+      sessionCommands.selectThread,
       setActiveSurface,
       startAudit,
       startExecution,
       startPackageReview,
+      workflowProjection.lanes.audit.threadId,
+      workflowProjection.lanes.execution.threadId,
+      workflowProjection.lanes.package.threadId,
       workflowModelPolicy,
     ],
   )
@@ -560,8 +783,25 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       pendingRequestProps,
       workflowStripProps,
       composerProps,
+      debugPanelProps: {
+        enabled: isSessionDebugMode,
+        payload: sessionDebugPayload,
+        showWorkflowContextItems,
+        onToggleShowWorkflowContextItems: () => {
+          setShowWorkflowContextItems((previous) => !previous)
+        },
+      },
     }),
-    [composerProps, frameContextProps, pendingRequestProps, transcriptProps, workflowStripProps],
+    [
+      composerProps,
+      frameContextProps,
+      isSessionDebugMode,
+      pendingRequestProps,
+      sessionDebugPayload,
+      showWorkflowContextItems,
+      transcriptProps,
+      workflowStripProps,
+    ],
   )
 
   const detailPaneProps = useMemo(

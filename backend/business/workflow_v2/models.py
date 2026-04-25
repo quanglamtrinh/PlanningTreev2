@@ -202,6 +202,10 @@ class WorkflowStateResponseV2(WorkflowModel):
     decisions: WorkflowDecisionsResponseV2
     context: WorkflowContextResponseV2
     allowed_actions: list[WorkflowAction] = Field(alias="allowedActions")
+    active_execution_run_id: str | None = Field(default=None, alias="activeExecutionRunId")
+    active_audit_run_id: str | None = Field(default=None, alias="activeAuditRunId")
+    active_execution_run: ExecutionRunV2 | None = Field(default=None, alias="activeExecutionRun")
+    active_audit_run: AuditRunV2 | None = Field(default=None, alias="activeAuditRun")
 
     def to_public_dict(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, mode="json")
@@ -223,6 +227,8 @@ def workflow_state_to_response(
     *,
     allowed_actions: list[WorkflowAction],
 ) -> WorkflowStateResponseV2:
+    active_execution_run = state.execution_runs.get(str(state.active_execution_run_id or ""))
+    active_audit_run = state.audit_runs.get(str(state.active_audit_run_id or ""))
     return WorkflowStateResponseV2(
         schemaVersion=state.schema_version,
         projectId=state.project_id,
@@ -245,4 +251,8 @@ def workflow_state_to_response(
             splitManifestVersion=state.split_manifest_version,
         ),
         allowedActions=allowed_actions,
+        activeExecutionRunId=state.active_execution_run_id,
+        activeAuditRunId=state.active_audit_run_id,
+        activeExecutionRun=copy.deepcopy(active_execution_run),
+        activeAuditRun=copy.deepcopy(active_audit_run),
     )
