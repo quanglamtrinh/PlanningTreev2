@@ -595,6 +595,232 @@ function isWorkflowContextItem(item: SessionItem): boolean {
   return rawMetadata.workflowContext === true
 }
 
+function workflowContextMetadata(item: SessionItem): Record<string, unknown> {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  const metadata = isRecord(payload.metadata) ? payload.metadata : {}
+  if (metadata.workflowContext === true) {
+    return metadata
+  }
+  const rawItem = isRecord(item.rawItem) ? item.rawItem : {}
+  const rawMetadata = isRecord(rawItem.metadata) ? rawItem.metadata : {}
+  return rawMetadata
+}
+
+function workflowContextPayload(item: SessionItem): Record<string, unknown> | null {
+  const metadata = workflowContextMetadata(item)
+  const contextPayload = metadata.contextPayload
+  if (isRecord(contextPayload) && isRecord(contextPayload.artifactContext)) {
+    return contextPayload
+  }
+  if (isRecord(contextPayload)) {
+    const nextContext = contextPayload.nextContext
+    if (isRecord(nextContext) && isRecord(nextContext.payload)) {
+      return nextContext.payload
+    }
+    return contextPayload
+  }
+  const packet = metadata.nextContext
+  if (isRecord(packet) && isRecord(packet.payload)) {
+    return packet.payload
+  }
+  return planningContextPayloadFromText(item)
+}
+
+function planningContextPayloadFromText(item: SessionItem): Record<string, unknown> | null {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  const rawItem = isRecord(item.rawItem) ? item.rawItem : {}
+  const text = normalizeText(payload.text) || normalizeText(rawItem.text)
+  if (!text) {
+    return null
+  }
+  const match = text.match(/<planning_tree_context\b[^>]*>\s*([\s\S]*?)\s*<\/planning_tree_context>/)
+  if (!match) {
+    return null
+  }
+  try {
+    const packet = JSON.parse(match[1]) as unknown
+    if (!isRecord(packet)) {
+      return null
+    }
+    if (packet.kind === 'context_update') {
+      const updatePayload = packet.payload
+      const nextContext = isRecord(updatePayload) ? updatePayload.nextContext : null
+      if (isRecord(nextContext) && isRecord(nextContext.payload)) {
+        return nextContext.payload
+      }
+    }
+    return isRecord(packet.payload) ? packet.payload : null
+  } catch {
+    return null
+  }
+}
+
+function nodeTitle(node: unknown): string {
+  if (!isRecord(node)) {
+    return 'Untitled node'
+  }
+  const number = normalizeText(node.hierarchical_number)
+  const title = normalizeText(node.title)
+  if (number && title) {
+    return `${number} ${title}`
+  }
+  return title || number || normalizeText(node.node_id) || 'Untitled node'
+}
+
+function documentContent(document: unknown): string {
+  if (!isRecord(document)) {
+    return ''
+  }
+  return typeof document.content === 'string' ? document.content.trim() : ''
+}
+
+function clarifyQuestions(clarify: unknown): Record<string, unknown>[] {
+  if (!isRecord(clarify) || !Array.isArray(clarify.questions)) {
+    return []
+  }
+  return clarify.questions.filter((question): question is Record<string, unknown> => isRecord(question))
+}
+
+function splitChildren(split: unknown): Record<string, unknown>[] {
+  if (!isRecord(split) || !Array.isArray(split.children)) {
+    return []
+  }
+  return split.children.filter((child): child is Record<string, unknown> => isRecord(child))
+}
+
+function artifactContextFromPayload(contextPayload: Record<string, unknown>): Record<string, unknown> {
+  if (isRecord(contextPayload.artifactContext)) {
+    return contextPayload.artifactContext
+  }
+  const taskContext = isRecord(contextPayload.taskContext) ? contextPayload.taskContext : null
+  const parentPrompts = Array.isArray(taskContext?.parent_chain_prompts)
+    ? taskContext.parent_chain_prompts.filter((prompt): prompt is string => typeof prompt === 'string' && prompt.trim().length > 0)
+    : []
+  const parentNode = isRecord(contextPayload.parentNode) ? contextPayload.parentNode : null
+  const currentFrame = isRecord(contextPayload.frame) ? contextPayload.frame : null
+  const currentSpec = isRecord(contextPayload.spec) ? contextPayload.spec : null
+  const currentNode = isRecord(contextPayload.node) ? contextPayload.node : null
+  if (parentPrompts.length > 0 || currentFrame || currentSpec || currentNode) {
+    return {
+      ancestorContext: parentPrompts.map((prompt, index) => ({
+        node: index === parentPrompts.length - 1 && parentNode ? parentNode : { title: `Parent ${index + 1}` },
+        summary: prompt,
+        frame: { content: prompt },
+        clarify: { questions: [] },
+        split: { children: [] },
+      })),
+      currentContext: {
+        node: currentNode,
+        frame: currentFrame
+          ? {
+              ...currentFrame,
+              content: normalizeText(currentFrame.confirmedContent) || normalizeText(currentFrame.content),
+            }
+          : null,
+        spec: currentSpec
+          ? {
+              ...currentSpec,
+              content: normalizeText(currentSpec.confirmedContent) || normalizeText(currentSpec.content),
+            }
+          : null,
+      },
+    }
+  }
+  return {}
+}
+
+function ArtifactDocumentSection({ title, content }: { title: string; content: string }) {
+  return (
+    <section className="sessionV2WorkflowContextSection">
+      <h5>{title}</h5>
+      {content ? (
+        <SharedMarkdownRenderer content={content} variant="document" />
+      ) : (
+        <p className="sessionV2WorkflowContextEmpty">No content.</p>
+      )}
+    </section>
+  )
+}
+
+function WorkflowContextCard({ item }: { item: SessionItem }) {
+  const contextPayload = workflowContextPayload(item)
+  const artifactContext = contextPayload ? artifactContextFromPayload(contextPayload) : {}
+  const ancestorContext = Array.isArray(artifactContext.ancestorContext)
+    ? artifactContext.ancestorContext.filter(isRecord)
+    : []
+  const currentContext = isRecord(artifactContext.currentContext)
+    ? artifactContext.currentContext
+    : null
+  const metadata = workflowContextMetadata(item)
+  const packetKind = normalizeText(metadata.packetKind)
+
+  if (!contextPayload) {
+    return null
+  }
+
+  return (
+    <article className="sessionV2ToolCard sessionV2WorkflowContextCard" data-testid="workflow-context-card">
+      <header className="sessionV2ToolCardHeader">
+        <span>Context</span>
+        <small>{packetKind || 'workflow'}</small>
+      </header>
+      <div className="sessionV2WorkflowContextBody">
+        {ancestorContext.length === 0 && currentContext === null ? (
+          <p className="sessionV2WorkflowContextEmpty">No renderable context payload.</p>
+        ) : null}
+        {ancestorContext.map((entry, index) => {
+          const frameText = documentContent(entry.frame)
+          const questions = clarifyQuestions(entry.clarify)
+          const children = splitChildren(entry.split)
+          return (
+            <section key={`ancestor-${index}`} className="sessionV2WorkflowContextNode">
+              <h4>{nodeTitle(entry.node)}</h4>
+              <ArtifactDocumentSection title="frame.md" content={frameText} />
+              <section className="sessionV2WorkflowContextSection">
+                <h5>Clarify</h5>
+                {questions.length > 0 ? (
+                  <ol>
+                    {questions.map((question, questionIndex) => (
+                      <li key={`clarify-${questionIndex}`}>
+                        <strong>{normalizeText(question.question) || normalizeText(question.field_name) || 'Question'}</strong>
+                        <span>{normalizeText(question.answer) || normalizeText(question.custom_answer) || 'Not answered'}</span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="sessionV2WorkflowContextEmpty">No clarify questions.</p>
+                )}
+              </section>
+              <section className="sessionV2WorkflowContextSection">
+                <h5>Split</h5>
+                {children.length > 0 ? (
+                  <ul>
+                    {children.map((child, childIndex) => (
+                      <li key={`split-${childIndex}`}>
+                        {nodeTitle(child)}
+                        {child.isCurrentPath === true ? ' (current path)' : ''}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="sessionV2WorkflowContextEmpty">No subtasks.</p>
+                )}
+              </section>
+            </section>
+          )
+        })}
+        {currentContext ? (
+          <section className="sessionV2WorkflowContextNode">
+            <h4>{nodeTitle(currentContext.node)} (current task)</h4>
+            <ArtifactDocumentSection title="frame.md" content={documentContent(currentContext.frame)} />
+            <ArtifactDocumentSection title="spec.md" content={documentContent(currentContext.spec)} />
+          </section>
+        ) : null}
+      </div>
+    </article>
+  )
+}
+
 function isToolItem(item: SessionItem): boolean {
   return !isContextCompactionItem(item) && resolveRowVariant(item) === 'tool'
 }
@@ -956,14 +1182,11 @@ function buildTranscriptRows(
   threadId: string,
   turns: SessionTurn[],
   itemsByTurn: Record<string, SessionItem[]>,
-  showWorkflowContext: boolean,
 ): TranscriptRow[] {
   const rows: TranscriptRow[] = []
   for (const turn of turns) {
     const key = `${threadId}:${turn.id}`
-    const items = dedupeTurnItems(itemsByTurn[key] ?? []).filter(
-      (item) => showWorkflowContext || !isWorkflowContextItem(item),
-    )
+    const items = dedupeTurnItems(itemsByTurn[key] ?? [])
     if (!isTerminalTurn(turn)) {
       let liveToolCluster: SessionItem[] = []
       let liveToolSummaryIndex = 0
@@ -1045,6 +1268,15 @@ function buildTranscriptRows(
 
     for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
       const item = items[itemIndex]
+      if (isWorkflowContextItem(item)) {
+        flushToolCluster()
+        rows.push({
+          key: `${turn.id}:${item.id}`,
+          type: 'item',
+          item,
+        })
+        continue
+      }
       if (summaryAgentIndex >= 0 && itemIndex < summaryAgentIndex) {
         if (isContextCompactionItem(item)) {
           flushHiddenToolCluster()
@@ -1118,7 +1350,6 @@ export function TranscriptPanel({
   threadId,
   turns,
   itemsByTurn,
-  showWorkflowContext = false,
 }: TranscriptPanelProps) {
   const [expandedUserRows, setExpandedUserRows] = useState<Record<string, boolean>>({})
   const [copiedUserRow, setCopiedUserRow] = useState<string | null>(null)
@@ -1161,7 +1392,7 @@ export function TranscriptPanel({
     }, SCROLL_SNAPSHOT_DEBOUNCE_MS)
   }
 
-  const rows = threadId ? buildTranscriptRows(threadId, turns, itemsByTurn, showWorkflowContext) : []
+  const rows = threadId ? buildTranscriptRows(threadId, turns, itemsByTurn) : []
   const activeAgentStreamToken = threadId ? getActiveAgentStreamToken(threadId, turns, itemsByTurn) : null
   const hasActiveAgentStream = Boolean(activeAgentStreamToken)
   activeThreadIdRef.current = threadId
@@ -1324,6 +1555,10 @@ export function TranscriptPanel({
                       )
                     }
 
+                    if (isWorkflowContextItem(entry.item)) {
+                      return <WorkflowContextCard key={`${row.key}:${entry.key}`} item={entry.item} />
+                    }
+
                     const variant = resolveRowVariant(entry.item)
                     const text = renderItemText(entry.item)
                     if (variant === 'unknown') {
@@ -1457,6 +1692,10 @@ export function TranscriptPanel({
               <div className="sessionV2ToolSummary">{row.summary}</div>
             </div>
           )
+        }
+
+        if (isWorkflowContextItem(row.item)) {
+          return <WorkflowContextCard key={row.key} item={row.item} />
         }
 
         const variant = resolveRowVariant(row.item)

@@ -46,6 +46,208 @@ describe('TranscriptPanel', () => {
     expect(screen.queryByRole('button', { name: /Reasoning summary/i })).not.toBeInTheDocument()
   })
 
+  it('renders injected workflow context as a visible context card', () => {
+    const item: SessionItem = {
+      id: 'workflow-context-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'systemMessage',
+      normalizedKind: null,
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'systemMessage',
+        text: '<planning_tree_context>{"hidden":true}</planning_tree_context>',
+        metadata: {
+          workflowContext: true,
+          packetKind: 'ask_planning_context',
+          contextPayload: {
+            artifactContext: {
+              ancestorContext: [
+                {
+                  node: { node_id: 'root', hierarchical_number: '1', title: 'Parent Task' },
+                  frame: { content: 'Parent frame content' },
+                  clarify: {
+                    questions: [{ question: 'Which path?', custom_answer: 'Use the selected child.' }],
+                  },
+                  split: {
+                    children: [
+                      { node_id: 'child', hierarchical_number: '1.1', title: 'Current Child', isCurrentPath: true },
+                      { node_id: 'sibling', hierarchical_number: '1.2', title: 'Sibling Child', isCurrentPath: false },
+                    ],
+                  },
+                },
+              ],
+              currentContext: {
+                node: { node_id: 'child', hierarchical_number: '1.1', title: 'Current Child' },
+                frame: { content: 'Current frame content' },
+                spec: { content: 'Current spec content' },
+              },
+            },
+          },
+        },
+      },
+    }
+
+    const { container } = render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn([item])]}
+        itemsByTurn={{ 'thread-1:turn-1': [item] }}
+      />,
+    )
+
+    expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
+    expect(screen.getByText('Context')).toBeInTheDocument()
+    expect(screen.getByText('1 Parent Task')).toBeInTheDocument()
+    expect(screen.getByText('Parent frame content')).toBeInTheDocument()
+    expect(screen.getByText('Use the selected child.')).toBeInTheDocument()
+    expect(screen.getByText('1.1 Current Child (current task)')).toBeInTheDocument()
+    expect(screen.getByText('Current spec content')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('<planning_tree_context>')
+    expect(screen.queryByText('Unknown Codex item')).not.toBeInTheDocument()
+  })
+
+  it('renders legacy workflow context from injected XML text', () => {
+    const packet = {
+      kind: 'ask_planning_context',
+      payload: {
+        artifactContext: {
+          ancestorContext: [],
+          currentContext: {
+            node: { node_id: 'child', hierarchical_number: '1.1', title: 'Legacy Child' },
+            frame: { content: 'Legacy frame content' },
+            spec: { content: 'Legacy spec content' },
+          },
+        },
+      },
+    }
+    const item: SessionItem = {
+      id: 'workflow-context-legacy',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'systemMessage',
+      normalizedKind: null,
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'systemMessage',
+        text: `<planning_tree_context kind="ask_planning_context">\n${JSON.stringify(packet)}\n</planning_tree_context>`,
+        metadata: {
+          workflowContext: true,
+          packetKind: 'ask_planning_context',
+        },
+      },
+    }
+
+    const { container } = render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn([item])]}
+        itemsByTurn={{ 'thread-1:turn-1': [item] }}
+      />,
+    )
+
+    expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
+    expect(screen.getByText('1.1 Legacy Child (current task)')).toBeInTheDocument()
+    expect(screen.getByText('Legacy spec content')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('<planning_tree_context')
+  })
+
+  it('renders workflow context update payloads from nextContext wrappers', () => {
+    const item: SessionItem = {
+      id: 'workflow-context-update',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'systemMessage',
+      normalizedKind: null,
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'systemMessage',
+        text: '<planning_tree_context>{"kind":"context_update"}</planning_tree_context>',
+        metadata: {
+          workflowContext: true,
+          packetKind: 'context_update',
+          contextPayload: {
+            nextContext: {
+              payload: {
+                artifactContext: {
+                  ancestorContext: [],
+                  currentContext: {
+                    node: { node_id: 'child', hierarchical_number: '1.1', title: 'Updated Child' },
+                    frame: { content: 'Updated frame content' },
+                    spec: { content: 'Updated spec content' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }
+
+    render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn([item])]}
+        itemsByTurn={{ 'thread-1:turn-1': [item] }}
+      />,
+    )
+
+    expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
+    expect(screen.getByText('1.1 Updated Child (current task)')).toBeInTheDocument()
+    expect(screen.getByText('Updated spec content')).toBeInTheDocument()
+  })
+
+  it('renders current frame and spec from compact workflow context payloads', () => {
+    const item: SessionItem = {
+      id: 'workflow-context-compact',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'systemMessage',
+      normalizedKind: null,
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'systemMessage',
+        text: '<planning_tree_context>{"kind":"child_activation_context"}</planning_tree_context>',
+        metadata: {
+          workflowContext: true,
+          packetKind: 'child_activation_context',
+          contextPayload: {
+            parentNode: { node_id: 'parent', hierarchical_number: '1', title: 'Parent Task' },
+            taskContext: {
+              parent_chain_prompts: ['Parent task frame fallback'],
+            },
+            node: { node_id: 'child', hierarchical_number: '1.1', title: 'Compact Child' },
+            frame: { confirmedContent: 'Compact frame content' },
+            spec: { confirmedContent: 'Compact spec content' },
+          },
+        },
+      },
+    }
+
+    render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn([item])]}
+        itemsByTurn={{ 'thread-1:turn-1': [item] }}
+      />,
+    )
+
+    expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
+    expect(screen.getByText('1 Parent Task')).toBeInTheDocument()
+    expect(screen.getByText('Parent task frame fallback')).toBeInTheDocument()
+    expect(screen.getByText('1.1 Compact Child (current task)')).toBeInTheDocument()
+    expect(screen.getByText('Compact frame content')).toBeInTheDocument()
+    expect(screen.getByText('Compact spec content')).toBeInTheDocument()
+  })
+
   it('renders delta-only payload while streaming', () => {
     const item: SessionItem = {
       id: 'item-2',
@@ -495,7 +697,7 @@ describe('TranscriptPanel', () => {
     expect(screen.getByRole('button', { name: 'Copy message' })).toBeInTheDocument()
   })
 
-  it('hides workflow context items by default and renders them when debug flag is enabled', () => {
+  it('does not render raw workflow context text when structured payload is unavailable', () => {
     const contextItem: SessionItem = {
       id: 'item-context',
       threadId: 'thread-1',
@@ -528,27 +730,15 @@ describe('TranscriptPanel', () => {
     }
 
     const items = [contextItem, normalItem]
-    const hidden = render(
+    const { queryByText, getByText } = render(
       <TranscriptPanel
         threadId="thread-1"
         turns={[baseTurn(items, 'completed')]}
         itemsByTurn={{ 'thread-1:turn-1': items }}
       />,
     )
-    expect(hidden.queryByText('Context packet that should be hidden')).not.toBeInTheDocument()
-    expect(hidden.getByText('Visible assistant message')).toBeInTheDocument()
-    hidden.unmount()
-
-    render(
-      <TranscriptPanel
-        threadId="thread-1"
-        turns={[baseTurn(items, 'completed')]}
-        itemsByTurn={{ 'thread-1:turn-1': items }}
-        showWorkflowContext
-      />,
-    )
-    fireEvent.click(screen.getByRole('button', { name: /Reasoning summary/i }))
-    expect(screen.getByText('Context packet that should be hidden')).toBeInTheDocument()
-    expect(screen.getByText('Visible assistant message')).toBeInTheDocument()
+    expect(queryByText('Context packet that should be hidden')).not.toBeInTheDocument()
+    expect(getByText('Visible assistant message')).toBeInTheDocument()
+    expect(queryByText('Unknown Codex item')).not.toBeInTheDocument()
   })
 })

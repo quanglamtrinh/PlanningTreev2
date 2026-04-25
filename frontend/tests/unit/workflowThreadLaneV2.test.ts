@@ -158,7 +158,7 @@ describe('workflowThreadLaneV2', () => {
     ])
   })
 
-  it('returns no ask lane action when ask planning thread is unbound', () => {
+  it('keeps ask lane writable when ask planning thread is unbound', () => {
     const lane = resolveWorkflowThreadLaneV2({
       workflowState: makeWorkflowState({
         threads: {
@@ -169,6 +169,11 @@ describe('workflowThreadLaneV2', () => {
     })
 
     expect(lane.threadId).toBeNull()
+    expect(lane.policy).toEqual({
+      kind: 'ask',
+      canSubmit: true,
+      disabledReason: null,
+    })
     expect(lane.actions).toEqual([])
   })
 

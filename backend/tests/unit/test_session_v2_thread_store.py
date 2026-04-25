@@ -53,14 +53,9 @@ class _AssertingRuntimeStore(RuntimeStoreV2):
         super().__init__()
         self._recorder = recorder
 
-    def append_notification(
-        self,
-        *,
-        method: str,
-        params: dict[str, Any],
-        thread_id_override: str | None = None,
-    ) -> dict[str, Any]:
-        thread_id = str(thread_id_override or params.get("threadId") or "")
+    def _fanout_event(self, event: dict[str, Any]) -> None:  # noqa: SLF001
+        method = str(event.get("method") or "")
+        thread_id = str(event.get("threadId") or "")
         items = self._recorder.load_items(thread_id)
         assert any(
             item.get("type") == "event_msg"
@@ -68,7 +63,7 @@ class _AssertingRuntimeStore(RuntimeStoreV2):
             and item["event"].get("method") == method
             for item in items
         )
-        return super().append_notification(method=method, params=params, thread_id_override=thread_id_override)
+        super()._fanout_event(event)  # noqa: SLF001
 
 
 def _stores(tmp_path: Path) -> tuple[ThreadMetadataStore, ThreadRolloutRecorder]:
@@ -139,6 +134,10 @@ def test_persist_pipeline_appends_before_runtime_broadcast(tmp_path: Path) -> No
     manager._on_notification("turn/started", {"threadId": "thread-1", "turnId": "turn-1"})  # noqa: SLF001
 
     assert runtime.get_turn(thread_id="thread-1", turn_id="turn-1") is not None
+    rollout_items = recorder.load_items("thread-1")
+    assert [item.get("type") for item in rollout_items[:2]] == ["turn_context", "event_msg"]
+    assert rollout_items[0]["turnId"] == "turn-1"
+    assert rollout_items[1]["event"]["method"] == "turn/started"
 
 
 def test_finish_task_writes_task_completed_and_turn_completed(tmp_path: Path) -> None:
@@ -262,6 +261,59 @@ def test_build_turns_from_rollout_items_unknown_event_is_ignored() -> None:
 
     assert len(turns) == 1
     assert turns[0]["id"] == "turn-1"
+
+
+def test_build_turns_from_rollout_items_replays_item_deltas() -> None:
+    turns = build_turns_from_rollout_items(
+        [
+            {"type": "session_meta", "threadId": "thread-1"},
+            {"type": "turn_context", "threadId": "thread-1", "turnId": "turn-1"},
+            {"type": "event_msg", "event": {"method": "turn/started", "threadId": "thread-1", "turnId": "turn-1", "params": {"turnId": "turn-1"}}},
+            {
+                "type": "event_msg",
+                "event": {
+                    "method": "item/started",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"item": {"id": "msg-1", "type": "agentMessage", "turnId": "turn-1"}},
+                },
+            },
+            {"type": "event_msg", "event": {"method": "item/agentMessage/delta", "threadId": "thread-1", "turnId": "turn-1", "params": {"itemId": "msg-1", "delta": "Hel"}}},
+            {"type": "event_msg", "event": {"method": "item/agentMessage/delta", "threadId": "thread-1", "turnId": "turn-1", "params": {"itemId": "msg-1", "delta": "lo"}}},
+            {
+                "type": "event_msg",
+                "event": {
+                    "method": "turn/completed",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"turn": {"id": "turn-1", "status": "completed"}},
+                },
+            },
+        ]
+    )
+
+    assert turns[0]["items"][0]["id"] == "msg-1"
+    assert turns[0]["items"][0]["text"] == "Hello"
+
+
+def test_build_turns_from_rollout_items_missing_turn_id_is_write_path_bug() -> None:
+    try:
+        build_turns_from_rollout_items(
+            [
+                {
+                    "type": "event_msg",
+                    "event": {
+                        "method": "item/completed",
+                        "threadId": "thread-1",
+                        "params": {"item": {"id": "msg-1", "type": "agentMessage", "text": "orphan"}},
+                    },
+                }
+            ]
+        )
+    except ValueError as exc:
+        assert "missing turnId" in str(exc)
+    else:
+        raise AssertionError("expected missing turnId to fail rebuild")
 
 
 def test_paginate_turns_desc_and_cursor() -> None:

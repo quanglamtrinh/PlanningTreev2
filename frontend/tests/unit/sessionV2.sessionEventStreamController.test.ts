@@ -261,6 +261,46 @@ describe('sessionEventStreamController', () => {
     expect(batch[1].eventId).toBe('thread-1:11')
   })
 
+  it('listens for command terminal interaction events', async () => {
+    const sources: FakeEventSource[] = []
+    const applyEventsBatch = vi.fn()
+
+    const controller = createSessionEventStreamController({
+      openEventSource: () => {
+        const source = new FakeEventSource()
+        sources.push(source)
+        return source as unknown as EventSource
+      },
+      applyEventsBatch,
+      markStreamConnected: vi.fn(),
+      markStreamDisconnected: vi.fn(),
+      markStreamReconnect: vi.fn(),
+      clearGapDetected: vi.fn(),
+      getLastEventId: () => null,
+      getGapDetected: () => false,
+      onRuntimeError: vi.fn(),
+    })
+
+    controller.open('thread-1')
+
+    sources[0].emit(
+      'item/commandExecution/terminalInteraction',
+      envelope({
+        method: 'item/commandExecution/terminalInteraction',
+        eventId: 'thread-1:12',
+        eventSeq: 12,
+        params: { itemId: 'item-1', stdin: 'y\n' },
+      }),
+    )
+
+    await vi.advanceTimersByTimeAsync(20)
+
+    expect(applyEventsBatch).toHaveBeenCalledTimes(1)
+    expect(applyEventsBatch.mock.calls[0]?.[0].map((event: SessionEventEnvelope) => event.method)).toEqual([
+      'item/commandExecution/terminalInteraction',
+    ])
+  })
+
   it('force flushes request events to thread and pending request stores in the same ordered batch', () => {
     const sources: FakeEventSource[] = []
     const applyEventsBatch = vi.fn()

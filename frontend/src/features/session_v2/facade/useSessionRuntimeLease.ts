@@ -104,6 +104,11 @@ export function useSessionRuntimeLease({
       streamControllerRef.current?.close(activeThreadId)
       streamControllerRef.current?.dispose()
       runtimeControllerRef.current?.dispose()
+      // `dispose()` marks the in-memory controller as dead; the ref must be nulled
+      // so the next mount recreates a controller. Otherwise `selectThread` and other
+      // no-ops forever (e.g. React StrictMode remount) while `isCurrentLifecycle` is true.
+      streamControllerRef.current = null
+      runtimeControllerRef.current = null
       const remainingOwners = releaseRuntimeLease(lease)
       leaseRef.current = null
 

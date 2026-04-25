@@ -63,6 +63,8 @@ class SessionManagerV2:
         self._turn_service = TurnServiceV2(protocol_client, logger=logger)
         # Serialize initialize to avoid concurrent connecting->connecting races.
         self._initialize_lock = threading.Lock()
+        if self._thread_rollout_recorder is not None:
+            self._runtime_store.add_pre_event_observer(self._persist_runtime_event_to_rollout)
         self._protocol_client.set_notification_handler(self._on_notification)
         self._protocol_client.set_server_request_handler(self._on_server_request)
 
@@ -126,6 +128,16 @@ class SessionManagerV2:
 
     def status(self) -> dict[str, Any]:
         return {"connection": self._connection_state_machine.snapshot()}
+
+    def native_rollout_metadata_exists(self, thread_id: str) -> bool:
+        """True if the native thread metadata/rollout store has this thread id."""
+        normalized = str(thread_id or "").strip()
+        if not normalized:
+            return False
+        recorder = self._thread_rollout_recorder
+        if recorder is None:
+            return False
+        return recorder.metadata_store.get(normalized) is not None
 
     def thread_start(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
@@ -782,6 +794,10 @@ class SessionManagerV2:
             "subscriberId": subscriber_id,
         }
 
+    def get_thread_journal_head(self, *, thread_id: str) -> dict[str, Any]:
+        self._ensure_initialized()
+        return self._runtime_store.get_journal_head(thread_id)
+
     def read_stream_event(self, *, subscriber_id: str, timeout_sec: float) -> dict[str, Any] | None:
         return self._runtime_store.read_subscriber_event(subscriber_id=subscriber_id, timeout_sec=timeout_sec)
 
@@ -975,12 +991,20 @@ class SessionManagerV2:
         params: dict[str, Any],
         thread_id_override: str | None = None,
     ) -> dict[str, Any]:
-        self._persist_rollout_event(method=method, params=params, thread_id_override=thread_id_override)
-        return self._runtime_store.append_notification(
+        self._require_thread_rollout_recorder()
+        envelope = self._runtime_store.append_notification(
             method=method,
             params=params,
             thread_id_override=thread_id_override,
         )
+        if not envelope:
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message=f"Renderable event {method!r} was not accepted for rollout-backed stream.",
+                status_code=500,
+                details={"method": method, "threadId": thread_id_override or params.get("threadId")},
+            )
+        return envelope
 
     def _append_turn_started_if_absent_persisted(
         self,
@@ -995,17 +1019,60 @@ class SessionManagerV2:
             payload_params["turn"] = dict(turn)
         if "turnId" not in payload_params:
             payload_params["turnId"] = turn_id
-        self._persist_rollout_event(
-            method="turn/started",
-            params=payload_params,
-            thread_id_override=thread_id,
-        )
+        self._require_thread_rollout_recorder()
         return self._runtime_store.append_turn_started_if_absent(
             thread_id=thread_id,
             turn_id=turn_id,
             turn=turn,
             params=params,
         )
+
+    def _persist_runtime_event_to_rollout(self, event: dict[str, Any]) -> None:
+        recorder = self._require_thread_rollout_recorder()
+        method = str(event.get("method") or "").strip()
+        thread_id = str(event.get("threadId") or "").strip()
+        if not method or not thread_id:
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message="Cannot stream event without method and threadId in rollout-backed mode.",
+                status_code=500,
+                details={"method": method, "threadId": thread_id},
+            )
+        params = event.get("params") if isinstance(event.get("params"), dict) else {}
+        turn_id = self._optional_non_empty_str(event.get("turnId")) or self._turn_id_from_params(params)
+        status = self._status_for_rollout_event(method, params)
+        recorder.ensure_thread(thread_id=thread_id, status=status)
+
+        rollout_items: list[dict[str, Any]] = []
+        if method == "turn/started" and turn_id:
+            rollout_items.append(
+                {
+                    "type": "turn_context",
+                    "eventId": f"turn_context:{thread_id}:{turn_id}",
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "turn": {
+                        "id": turn_id,
+                        "threadId": thread_id,
+                    },
+                }
+            )
+        rollout_items.append(
+            {
+                "type": "event_msg",
+                "event": {
+                    "schemaVersion": event.get("schemaVersion"),
+                    "eventId": event.get("eventId"),
+                    "eventSeq": event.get("eventSeq"),
+                    "method": method,
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "occurredAtMs": event.get("occurredAtMs"),
+                    "params": dict(params),
+                },
+            }
+        )
+        recorder.append_items(thread_id, rollout_items)
 
     def _persist_rollout_event(
         self,
@@ -1014,19 +1081,23 @@ class SessionManagerV2:
         params: dict[str, Any],
         thread_id_override: str | None = None,
     ) -> None:
-        recorder = self._thread_rollout_recorder
-        if recorder is None:
-            return
+        recorder = self._require_thread_rollout_recorder()
         normalized_method = str(method or "").strip()
         if not normalized_method:
-            return
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message="Cannot persist rollout event without method.",
+                status_code=500,
+                details={"method": method},
+            )
         thread_id = str(thread_id_override or "").strip() or self._thread_id_from_params(params)
         if not thread_id:
-            logger.debug(
-                "session_core_v2 rollout persist skipped: missing thread id",
-                extra={"method": normalized_method},
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message="Cannot persist rollout event without threadId.",
+                status_code=500,
+                details={"method": normalized_method},
             )
-            return
         turn_id = self._turn_id_from_params(params)
         status = self._status_for_rollout_event(normalized_method, params)
         recorder.ensure_thread(thread_id=thread_id, status=status)
@@ -1161,6 +1232,7 @@ class SessionManagerV2:
                     {"code": -32601, "message": f"Unsupported server request method: {method}"},
                 )
                 return
+            self._require_thread_rollout_recorder()
             thread_id = str(params.get("threadId") or "").strip()
             if not thread_id:
                 self._protocol_client.fail_server_request(

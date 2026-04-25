@@ -87,6 +87,23 @@ function createHarness() {
     }
   })
 
+  const setReplayCursor = vi.fn((threadId: string, lastEventSeq: number, lastEventId: string | null) => {
+    if (lastEventSeq <= 0 && (lastEventId == null || String(lastEventId).trim() === '')) {
+      const nextSeq = { ...threadState.lastEventSeqByThread } as Record<string, number>
+      const nextId = { ...threadState.lastEventIdByThread } as Record<string, string>
+      delete nextSeq[threadId]
+      delete nextId[threadId]
+      threadState.lastEventSeqByThread = nextSeq
+      threadState.lastEventIdByThread = nextId
+    } else {
+      const seq = Math.max(0, lastEventSeq)
+      threadState.lastEventSeqByThread = { ...threadState.lastEventSeqByThread, [threadId]: seq }
+      const nextId = lastEventId != null && String(lastEventId).trim() !== '' ? String(lastEventId).trim() : `${threadId}:${seq}`
+      threadState.lastEventIdByThread = { ...threadState.lastEventIdByThread, [threadId]: nextId }
+    }
+    threadState.gapDetectedByThread = { ...threadState.gapDetectedByThread, [threadId]: false }
+  })
+
   const hydratePendingRequests = vi.fn()
   const markPendingRequestSubmitted = vi.fn()
   const setConnectionPhase = vi.fn()
@@ -127,12 +144,19 @@ function createHarness() {
     forkThread: vi.fn(async (threadId: string) => ({
       thread: makeThread({ id: `${threadId}-fork` }),
     })),
+    getThreadJournalHead: vi.fn(async (threadId: string) => ({
+      threadId,
+      firstEventSeq: null,
+      lastEventSeq: null,
+      lastEventId: null,
+    })),
   }
 
   const controller = createSessionRuntimeController({
     getThreadState: () => threadState,
     getRuntimeSnapshot: () => runtimeSnapshot,
     setThreadList,
+    setReplayCursor,
     upsertThread,
     markThreadActivity,
     setActiveThreadId,
@@ -158,6 +182,7 @@ function createHarness() {
     api,
     spies: {
       setThreadList,
+      setReplayCursor,
       upsertThread,
       setActiveThreadId,
       setThreadTurns,
@@ -234,6 +259,18 @@ describe('sessionRuntimeController', () => {
     })
 
     expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [], { mode: 'replace' })
+  })
+
+  it('aligns replay cursor from journal head after hydrate', async () => {
+    harness.api.getThreadJournalHead.mockResolvedValue({
+      threadId: 'thread-1',
+      firstEventSeq: 1,
+      lastEventSeq: 42,
+      lastEventId: 'thread-1:42',
+    })
+    await harness.controller.hydrateThreadState('thread-1', { force: true })
+    expect(harness.api.getThreadJournalHead).toHaveBeenCalledWith('thread-1')
+    expect(harness.spies.setReplayCursor).toHaveBeenCalledWith('thread-1', 42, 'thread-1:42')
   })
 
   it('submits steer request when active turn is running', async () => {
@@ -459,6 +496,51 @@ describe('sessionRuntimeController', () => {
 
     expect(harness.spies.hydratePendingRequests).toHaveBeenCalledWith([pendingRow])
     expect(harness.spies.setLastPendingPollAtMs).toHaveBeenCalledTimes(1)
+  })
+
+  it('selectThread re-fetches from server when cache says hydrated but transcript is empty in store', async () => {
+    const turn = makeTurn({
+      id: 'turn-from-read',
+      threadId: 'thread-1',
+      status: 'completed',
+      completedAtMs: 2,
+    })
+    harness.api.readThread.mockResolvedValue({
+      thread: makeThread({ id: 'thread-1', turns: [turn] }),
+    })
+    harness.threadState.threadsById = {
+      'thread-1': makeThread({ id: 'thread-1', status: { type: 'idle' } }),
+    }
+    await harness.controller.selectThread('thread-1')
+    expect(harness.api.readThread).toHaveBeenCalledTimes(1)
+    expect((harness.threadState.turnsByThread as Record<string, SessionTurn[]>)['thread-1']).toEqual([turn])
+    harness.api.readThread.mockClear()
+
+    harness.threadState.turnsByThread = { 'thread-1': [] } as unknown as typeof harness.threadState.turnsByThread
+
+    await harness.controller.selectThread('thread-1')
+    expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
+  })
+
+  it('selectThread skips re-read from server when transcript is still present in store', async () => {
+    const turn = makeTurn({
+      id: 'turn-from-read',
+      threadId: 'thread-1',
+      status: 'completed',
+      completedAtMs: 2,
+    })
+    harness.api.readThread.mockResolvedValue({
+      thread: makeThread({ id: 'thread-1', turns: [turn] }),
+    })
+    harness.threadState.threadsById = {
+      'thread-1': makeThread({ id: 'thread-1', status: { type: 'idle' } }),
+    }
+    await harness.controller.selectThread('thread-1')
+    expect(harness.api.readThread).toHaveBeenCalledTimes(1)
+    harness.api.readThread.mockClear()
+
+    await harness.controller.selectThread('thread-1')
+    expect(harness.api.readThread).not.toHaveBeenCalled()
   })
 
   it('selectThread(null) clears active selection without clearing metadata', async () => {

@@ -257,6 +257,56 @@ describe('applySessionEvent', () => {
     expect(list[0].payload.text).toBe('final answer')
   })
 
+  it('appends command terminal interactions to command output', () => {
+    const started = applySessionEvent(
+      baseState(),
+      event({
+        eventId: 'thread-1:1',
+        eventSeq: 1,
+        method: 'item/started',
+        turnId: 'turn-1',
+        params: {
+          item: {
+            id: 'cmd-1',
+            kind: 'commandExecution',
+            status: 'inProgress',
+          },
+        },
+      }),
+    )
+    const withOutput = applySessionEvent(
+      started,
+      event({
+        eventId: 'thread-1:2',
+        eventSeq: 2,
+        method: 'item/commandExecution/outputDelta',
+        turnId: 'turn-1',
+        params: {
+          itemId: 'cmd-1',
+          delta: 'npm test\n',
+        },
+      }),
+    )
+    const withStdin = applySessionEvent(
+      withOutput,
+      event({
+        eventId: 'thread-1:3',
+        eventSeq: 3,
+        method: 'item/commandExecution/terminalInteraction',
+        turnId: 'turn-1',
+        params: {
+          itemId: 'cmd-1',
+          stdin: 'y\r\n',
+        },
+      }),
+    )
+
+    const list = withStdin.itemsByTurn['thread-1:turn-1']
+    expect(list).toHaveLength(1)
+    expect(list[0].payload.output).toBe('npm test\n[stdin]\ny\n')
+    expect(list[0].payload.aggregatedOutput).toBe('npm test\n[stdin]\ny\n')
+  })
+
   it('reconciles hydrated fallback item with replayed real item id', () => {
     const preloaded = baseState()
     preloaded.itemsByTurn['thread-1:turn-1'] = [
@@ -501,6 +551,56 @@ describe('applySessionEvent', () => {
 
     expect(next.itemsByTurn['thread-1:turn-1']).toBeUndefined()
     expect(next.threadsById['thread-1']?.updatedAt).toBe(95)
+  })
+
+  it('applies task/completed and marks an in-progress turn completed (terminal task without turn/completed replay)', () => {
+    const initial = baseState()
+    initial.threadsById['thread-1'] = {
+      id: 'thread-1',
+      name: 'Thread',
+      modelProvider: 'openai',
+      cwd: 'C:/repo',
+      ephemeral: false,
+      archived: false,
+      status: { type: 'idle' },
+      createdAt: 1,
+      updatedAt: 10,
+      turns: [],
+    }
+    initial.threadOrder = ['thread-1']
+    initial.turnsByThread['thread-1'] = [
+      {
+        id: 'turn-1',
+        threadId: 'thread-1',
+        status: 'inProgress',
+        lastCodexStatus: 'inProgress',
+        startedAtMs: 1,
+        completedAtMs: null,
+        items: [],
+        error: null,
+      },
+    ]
+
+    const next = applySessionEvent(
+      initial,
+      event({
+        eventId: 'thread-1:2',
+        eventSeq: 2,
+        method: 'task/completed',
+        turnId: 'turn-1',
+        occurredAtMs: 99,
+        params: {
+          id: 'task-turn-1',
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          status: 'completed',
+        },
+      }),
+    )
+
+    expect(next.turnsByThread['thread-1']?.[0]?.status).toBe('completed')
+    expect(next.turnsByThread['thread-1']?.[0]?.completedAtMs).toBe(99)
+    expect(next.itemsByTurn['thread-1:turn-1']?.[0]?.status).toBe('completed')
   })
 })
 

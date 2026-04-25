@@ -40,6 +40,7 @@ _TIER1_METHODS: frozenset[str] = frozenset(
     {
         "item/reasoning/summaryPartAdded",
         "item/commandExecution/outputDelta",
+        "item/commandExecution/terminalInteraction",
         "item/fileChange/outputDelta",
     }
 )
@@ -120,6 +121,7 @@ class RuntimeStoreV2:
         self._idempotency_mem: dict[tuple[str, str], dict[str, Any]] = {}
         self._legacy_migration_markers: dict[str, dict[str, Any]] = {}
         self._event_observers: list[EventObserver] = []
+        self._pre_event_observers: list[EventObserver] = []
 
         self._lagged_reset_count = 0
         self._cursor_expired_count = 0
@@ -773,6 +775,7 @@ class RuntimeStoreV2:
                 "source": normalized_source,
                 "params": dict(params),
             }
+            self._notify_pre_event_observers_locked(event)
             if self._db is None:
                 self._journal[normalized_thread_id].append(event)
                 self._trim_memory_journal(normalized_thread_id, now_ms=occurred_at_ms)
@@ -801,6 +804,19 @@ class RuntimeStoreV2:
             return
         with self._lock:
             self._event_observers.append(observer)
+
+    def add_pre_event_observer(self, observer: EventObserver) -> None:
+        """Register a synchronous write-through hook that must succeed before fanout."""
+
+        if observer is None:
+            return
+        with self._lock:
+            self._pre_event_observers.append(observer)
+
+    def _notify_pre_event_observers_locked(self, event: dict[str, Any]) -> None:
+        observers = list(self._pre_event_observers)
+        for observer in observers:
+            observer(dict(event))
 
     def _notify_event_observers(self, event: dict[str, Any]) -> None:
         with self._lock:
@@ -848,6 +864,26 @@ class RuntimeStoreV2:
             copied["source"] = "replay"
             replayed.append(copied)
         return replayed
+
+    def get_journal_head(self, thread_id: str) -> dict[str, Any]:
+        """Return first/last event sequence for the thread's durable journal, if any."""
+        normalized = self._normalize_non_empty(thread_id, "threadId")
+        with self._lock:
+            first_seq, last_seq = self._read_first_last_seq(normalized)
+        if last_seq is None:
+            return {
+                "threadId": normalized,
+                "firstEventSeq": None,
+                "lastEventSeq": None,
+                "lastEventId": None,
+            }
+        last_id = f"{normalized}:{last_seq}"
+        return {
+            "threadId": normalized,
+            "firstEventSeq": int(first_seq) if first_seq is not None else None,
+            "lastEventSeq": int(last_seq) if last_seq is not None else None,
+            "lastEventId": last_id,
+        }
 
     def read_thread_journal(self, thread_id: str) -> list[dict[str, Any]]:
         normalized_thread_id = str(thread_id or "").strip()

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { ComposerSubmitPayload } from '../components/ComposerPane'
 import type {
@@ -77,6 +77,8 @@ export type SessionFacadeCommands = {
   interrupt: () => Promise<void>
   resolveRequest: (requestId: string, result: Record<string, unknown>) => Promise<void>
   rejectRequest: (requestId: string, reason?: string | null) => Promise<void>
+  /** Force `readThread` + replace turns (e.g. after tab switch / stream drift). Reopens the event stream if this thread is active. */
+  resyncThreadTranscript: (threadId: string) => Promise<void>
 }
 
 export type SessionFacadeV2 = {
@@ -189,6 +191,8 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
       getThreadState: () => useThreadSessionStore.getState(),
       getRuntimeSnapshot: () => runtimeSnapshotRef.current,
       setThreadList: (rows) => useThreadSessionStore.getState().setThreadList(rows),
+      setReplayCursor: (threadId, lastEventSeq, lastEventId) =>
+        useThreadSessionStore.getState().setReplayCursor(threadId, lastEventSeq, lastEventId),
       upsertThread: (thread, options) => useThreadSessionStore.getState().upsertThread(thread, options),
       markThreadActivity: (threadId, updatedAt) => useThreadSessionStore.getState().markThreadActivity(threadId, updatedAt),
       setActiveThreadId: (threadId) => useThreadSessionStore.getState().setActiveThreadId(threadId),
@@ -255,7 +259,6 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     pendingRequestsStoreState,
     pendingRequestScope,
     runtimeControllerRef,
-    streamControllerRef,
     isCurrentLifecycle,
     isPrimaryLifecycleOwner,
   })
@@ -265,6 +268,19 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     streamControllerRef,
     stopPendingRequestLoop,
   })
+
+  useEffect(() => {
+    const activeThreadId = threadStoreState.activeThreadId
+    if (!activeThreadId) {
+      return
+    }
+
+    streamControllerRef.current?.open(activeThreadId)
+
+    return () => {
+      streamControllerRef.current?.close(activeThreadId)
+    }
+  }, [threadStoreState.activeThreadId])
 
   const threadStatus = useMemo(() => {
     const activeThreadId = threadStoreState.activeThreadId
@@ -305,6 +321,19 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
 
   const refreshThreads = useCallback(async () => {
     await runtimeControllerRef.current?.refreshThreads()
+  }, [])
+
+  const resyncThreadTranscript = useCallback(async (threadId: string) => {
+    const normalized = threadId.trim()
+    if (!normalized) {
+      return
+    }
+    await runtimeControllerRef.current?.hydrateThreadState(normalized, { force: true })
+    useThreadSessionStore.getState().clearGapDetected(normalized)
+    if (useThreadSessionStore.getState().activeThreadId === normalized) {
+      streamControllerRef.current?.close(normalized)
+      streamControllerRef.current?.open(normalized)
+    }
   }, [])
 
   const submit = useCallback(async (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => {
@@ -382,6 +411,7 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     interrupt,
     resolveRequest,
     rejectRequest,
+    resyncThreadTranscript,
   }
 
   return {

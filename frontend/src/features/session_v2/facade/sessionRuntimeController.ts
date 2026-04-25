@@ -7,6 +7,7 @@ import {
   listPendingRequestsV2,
   listThreadsV2,
   listThreadTurnsV2,
+  getThreadJournalHeadV2,
   readThreadV2,
   rejectPendingRequestV2,
   resolvePendingRequestV2,
@@ -28,6 +29,22 @@ import type {
   TurnStartRequestV4,
 } from '../contracts'
 import type { SetThreadTurnsOptions, ThreadSessionStoreState } from '../store/threadSessionStore'
+
+function threadStoreHasTranscriptData(state: ThreadSessionStoreState, threadId: string): boolean {
+  if ((state.turnsByThread[threadId] ?? []).length > 0) {
+    return true
+  }
+  const prefix = `${threadId}:`
+  for (const key of Object.keys(state.itemsByTurn)) {
+    if (key.startsWith(prefix)) {
+      const items = state.itemsByTurn[key]
+      if (Array.isArray(items) && items.length > 0) {
+        return true
+      }
+    }
+  }
+  return false
+}
 
 type AsyncScope = 'bootstrap' | 'selectThread' | 'hydrateThread' | 'loadModels' | 'pollPending'
 
@@ -66,6 +83,7 @@ type RuntimeApi = {
   listPendingRequests: typeof listPendingRequestsV2
   listThreads: typeof listThreadsV2
   listThreadTurns: typeof listThreadTurnsV2
+  getThreadJournalHead: typeof getThreadJournalHeadV2
   readThread: typeof readThreadV2
   rejectPendingRequest: typeof rejectPendingRequestV2
   resolvePendingRequest: typeof resolvePendingRequestV2
@@ -79,6 +97,7 @@ export type SessionRuntimeControllerDependencies = {
   getThreadState: () => ThreadSessionStoreState
   getRuntimeSnapshot: () => RuntimeSnapshot
   setThreadList: (threads: SessionThread[]) => void
+  setReplayCursor: (threadId: string, lastEventSeq: number, lastEventId: string | null) => void
   upsertThread: (thread: SessionThread, options?: { preserveUpdatedAt?: boolean }) => void
   markThreadActivity: (threadId: string, updatedAt?: number) => void
   setActiveThreadId: (threadId: string | null) => void
@@ -203,6 +222,7 @@ function defaultApi(): RuntimeApi {
     listPendingRequests: listPendingRequestsV2,
     listThreads: listThreadsV2,
     listThreadTurns: listThreadTurnsV2,
+    getThreadJournalHead: getThreadJournalHeadV2,
     readThread: readThreadV2,
     rejectPendingRequest: rejectPendingRequestV2,
     resolvePendingRequest: resolvePendingRequestV2,
@@ -320,6 +340,36 @@ export function createSessionRuntimeController(
     dependencies.upsertThread(read.thread, { preserveUpdatedAt: true })
     const readTurns = Array.isArray(read.thread.turns) ? read.thread.turns : []
     dependencies.setThreadTurns(threadId, readTurns, { mode: 'replace' })
+
+    try {
+      const head = await api.getThreadJournalHead(threadId)
+      if (!isCurrent()) {
+        traceSessionRuntime('hydrate aborted after journal head: stale scope', {
+          threadId,
+        })
+        return
+      }
+      if (head && typeof head === 'object') {
+        const rawSeq = head.lastEventSeq
+        if (rawSeq === null || rawSeq === undefined) {
+          dependencies.setReplayCursor(threadId, 0, null)
+          traceSessionRuntime('hydrate replay cursor cleared (empty journal)', { threadId })
+        } else if (typeof rawSeq === 'number' && Number.isFinite(rawSeq) && rawSeq >= 0) {
+          const lastId =
+            typeof head.lastEventId === 'string' && head.lastEventId.trim() !== '' ? head.lastEventId.trim() : null
+          dependencies.setReplayCursor(threadId, rawSeq, lastId)
+          traceSessionRuntime('hydrate replay cursor aligned from journal', {
+            threadId,
+            lastEventSeq: rawSeq,
+            lastEventId: lastId,
+          })
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      traceSessionRuntime('hydrate journal head skipped', { threadId, message })
+    }
+
     hydratedThreadIds.add(threadId)
     traceSessionRuntime('hydrate applied', {
       threadId,
@@ -468,8 +518,15 @@ export function createSessionRuntimeController(
       })
     }
 
-    const cachedThread = snapshot.threadsById[threadId]
-    if (hydratedThreadIds.has(threadId) && cachedThread?.status?.type !== 'notLoaded') {
+    const afterActive = dependencies.getThreadState()
+    const cachedThread = afterActive.threadsById[threadId]
+    const canSkipHydrateFromCache =
+      hydratedThreadIds.has(threadId) &&
+      Boolean(cachedThread) &&
+      cachedThread?.status?.type !== 'notLoaded' &&
+      threadStoreHasTranscriptData(afterActive, threadId)
+
+    if (canSkipHydrateFromCache) {
       dependencies.setRuntimeError(null)
       traceSessionRuntime('select thread ready from cache', {
         threadId,
@@ -479,7 +536,10 @@ export function createSessionRuntimeController(
     }
 
     try {
-      await ensureThreadReady(threadId, { isCurrent })
+      await ensureThreadReady(threadId, {
+        isCurrent,
+        forceHydrate: !threadStoreHasTranscriptData(afterActive, threadId),
+      })
       if (!isCurrent()) {
         traceSessionRuntime('select thread aborted after ensure: stale scope', {
           threadId,

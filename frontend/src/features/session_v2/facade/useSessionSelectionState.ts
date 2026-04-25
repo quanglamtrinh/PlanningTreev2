@@ -94,7 +94,6 @@ export function useSessionSelectionState({
           })
           return
         }
-        streamControllerRef.current?.open(threadId)
         emitSelectionCorrelation({
           type: 'select_thread_snapshot',
           targetThreadId: threadId,

@@ -109,6 +109,17 @@ def test_runtime_store_snapshot_payload_and_tier0_cadence() -> None:
     assert isinstance(payload["pendingRequestIndex"], dict)
 
 
+def test_runtime_store_classifies_terminal_interaction_as_tier1() -> None:
+    store = RuntimeStoreV2()
+
+    event = store.append_notification(
+        method="item/commandExecution/terminalInteraction",
+        params={"threadId": "thread-1", "turnId": "turn-1", "itemId": "cmd-1", "stdin": "y\n"},
+    )
+
+    assert event["tier"] == "tier1"
+
+
 def test_runtime_store_dual_floor_retention_prunes_only_when_old_and_overflow() -> None:
     store = RuntimeStoreV2(retention_max_events=2, retention_days=7)
 

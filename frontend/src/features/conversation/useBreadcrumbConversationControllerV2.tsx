@@ -71,6 +71,10 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
   const lastThreadSnapshotTraceKeyRef = useRef<string | null>(null)
+  const latestLaneThreadIdForResyncRef = useRef<string | null>(null)
+  const isSelectingForResyncRef = useRef(false)
+  const prevBreadcrumbThreadTabForResyncRef = useRef<ThreadTab | null>(null)
+  const pendingLaneResyncAfterTabChangeRef = useRef(false)
   const sessionFacade = useSessionFacadeV2({
     bootstrapPolicy: {
       autoBootstrapOnMount: true,
@@ -282,6 +286,8 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   )
   const workflowLane = workflowProjection.lanes[threadTab]
   const activeThreadId = workflowLane.threadId
+  latestLaneThreadIdForResyncRef.current = activeThreadId
+  isSelectingForResyncRef.current = sessionState.isSelectingThread
   const workflowDebugStateRecord =
     workflowState && typeof workflowState === 'object'
       ? (workflowState as unknown as Record<string, unknown>)
@@ -458,8 +464,108 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     workflowProjection.isLoaded,
   ])
 
+  // After switching thread tabs, session selection can settle after this lane effect; mark pending so
+  // we resync when active thread matches the lane (or after a short fallback timeout / tab focus).
   useEffect(() => {
-    if (!projectId || !nodeId || !workflowProjection.isLoaded) {
+    const previous = prevBreadcrumbThreadTabForResyncRef.current
+    prevBreadcrumbThreadTabForResyncRef.current = threadTab
+    if (previous === null) {
+      return
+    }
+    if (previous === threadTab) {
+      return
+    }
+    pendingLaneResyncAfterTabChangeRef.current = true
+  }, [threadTab])
+
+  useEffect(() => {
+    if (!pendingLaneResyncAfterTabChangeRef.current) {
+      return
+    }
+    if (!workflowProjection.isLoaded || sessionState.connection.phase !== 'initialized') {
+      return
+    }
+    if (isSelectingForResyncRef.current) {
+      return
+    }
+    const laneTid = latestLaneThreadIdForResyncRef.current
+    if (!laneTid) {
+      return
+    }
+    if (useThreadSessionStore.getState().activeThreadId !== laneTid) {
+      return
+    }
+    pendingLaneResyncAfterTabChangeRef.current = false
+    void sessionCommands.resyncThreadTranscript(laneTid).catch(() => undefined)
+  }, [
+    sessionState.isSelectingThread,
+    sessionState.activeThreadId,
+    workflowLane.threadId,
+    workflowProjection.isLoaded,
+    sessionState.connection.phase,
+    sessionCommands.resyncThreadTranscript,
+  ])
+
+  useEffect(() => {
+    if (!pendingLaneResyncAfterTabChangeRef.current) {
+      return
+    }
+    if (!workflowProjection.isLoaded || sessionState.connection.phase !== 'initialized') {
+      return
+    }
+    const t = window.setTimeout(() => {
+      if (!pendingLaneResyncAfterTabChangeRef.current) {
+        return
+      }
+      if (isSelectingForResyncRef.current) {
+        return
+      }
+      const laneTid = latestLaneThreadIdForResyncRef.current
+      if (!laneTid) {
+        return
+      }
+      if (useThreadSessionStore.getState().activeThreadId !== laneTid) {
+        return
+      }
+      pendingLaneResyncAfterTabChangeRef.current = false
+      void sessionCommands.resyncThreadTranscript(laneTid).catch(() => undefined)
+    }, 400)
+    return () => {
+      window.clearTimeout(t)
+    }
+  }, [threadTab, sessionCommands.resyncThreadTranscript, sessionState.connection.phase, workflowProjection.isLoaded])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return
+    }
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+      if (!workflowProjection.isLoaded || sessionState.connection.phase !== 'initialized') {
+        return
+      }
+      if (isSelectingForResyncRef.current) {
+        return
+      }
+      const laneTid = latestLaneThreadIdForResyncRef.current
+      if (!laneTid) {
+        return
+      }
+      if (useThreadSessionStore.getState().activeThreadId !== laneTid) {
+        return
+      }
+      void sessionCommands.resyncThreadTranscript(laneTid).catch(() => undefined)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [sessionCommands.resyncThreadTranscript, sessionState.connection.phase, workflowProjection.isLoaded])
+
+  useEffect(() => {
+    if (!isSessionDebugMode || !projectId || !nodeId || !workflowProjection.isLoaded) {
       return
     }
 
@@ -515,6 +621,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         : null,
     })
   }, [
+    isSessionDebugMode,
     nodeId,
     projectId,
     sessionState.activeThreadId,
@@ -601,13 +708,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       return true
     }
     if (workflowLane.lane === 'ask') {
-      if (sessionState.connection.phase !== 'initialized') {
-        return true
-      }
-      if (sessionState.isSelectingThread) {
-        return true
-      }
-      return false
+      return sessionState.connection.phase === 'error'
     }
     if (!activeThreadId) {
       return true

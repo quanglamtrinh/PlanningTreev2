@@ -336,6 +336,20 @@ export async function rejectPendingRequestV2(requestId: string, payload: RejectR
   )
 }
 
+export type ThreadJournalHeadResponseV2 = {
+  threadId: string
+  firstEventSeq: number | null
+  lastEventSeq: number | null
+  lastEventId: string | null
+}
+
+export async function getThreadJournalHeadV2(threadId: string): Promise<ThreadJournalHeadResponseV2> {
+  await initAuthToken()
+  return jsonFetch<ThreadJournalHeadResponseV2>(
+    `/v4/session/threads/${encodeURIComponent(threadId)}/events/journal-head`,
+  )
+}
+
 export function openThreadEventsStreamV2(
   threadId: string,
   options?: {

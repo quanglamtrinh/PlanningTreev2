@@ -3,6 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 TERMINAL_STATUSES = {"completed", "failed", "interrupted"}
+DELTA_METHODS = {
+    "item/agentMessage/delta",
+    "item/plan/delta",
+    "item/commandExecution/outputDelta",
+    "item/commandExecution/terminalInteraction",
+    "item/fileChange/outputDelta",
+    "item/reasoning/summaryTextDelta",
+    "item/reasoning/textDelta",
+}
 
 
 class ThreadHistoryBuilder:
@@ -69,6 +78,17 @@ class ThreadHistoryBuilder:
             )
             return
 
+        if method == "item/started":
+            item = self._item_from_params(method=method, params=params, thread_id=thread_id, turn_id=turn_id, status="inProgress", timestamp_ms=occurred_at_ms)
+            if item is not None:
+                self._upsert_item(
+                    turn_id=turn_id or self._extract_turn_id(item),
+                    item=item,
+                    thread_id=thread_id or self._extract_thread_id(item),
+                    timestamp_ms=occurred_at_ms,
+                )
+            return
+
         if method == "item/completed":
             item = params.get("item")
             if isinstance(item, dict):
@@ -78,6 +98,38 @@ class ThreadHistoryBuilder:
                     thread_id=thread_id or self._extract_thread_id(item),
                     timestamp_ms=occurred_at_ms,
                 )
+            return
+
+        if method in DELTA_METHODS:
+            item = self._item_from_params(method=method, params=params, thread_id=thread_id, turn_id=turn_id, status="inProgress", timestamp_ms=occurred_at_ms)
+            if item is not None:
+                self._merge_delta_item(
+                    turn_id=turn_id or self._extract_turn_id(item),
+                    item=item,
+                    method=method,
+                    thread_id=thread_id or self._extract_thread_id(item),
+                    timestamp_ms=occurred_at_ms,
+                )
+            return
+
+        if method in {"serverRequest/created", "serverRequest/updated", "serverRequest/resolved"}:
+            request = params.get("request")
+            if isinstance(request, dict):
+                request_turn_id = turn_id or self._extract_turn_id(request)
+                if request_turn_id:
+                    self._upsert_item(
+                        turn_id=request_turn_id,
+                        item={
+                            "id": str(request.get("requestId") or f"{method}:{self.current_rollout_index}"),
+                            "type": "serverRequest",
+                            "method": str(request.get("method") or method),
+                            "status": str(request.get("status") or "pending"),
+                            "request": dict(request),
+                            "occurredAtMs": occurred_at_ms,
+                        },
+                        thread_id=thread_id or self._extract_thread_id(request),
+                        timestamp_ms=occurred_at_ms,
+                    )
             return
 
         if method in {"task/started", "task/completed", "task/failed"}:
@@ -136,6 +188,8 @@ class ThreadHistoryBuilder:
         timestamp_ms: int | None = None,
     ) -> dict[str, Any]:
         normalized_turn_id = str(turn_id or "").strip() or f"synthetic-turn-{len(self.turns) + 1}"
+        if not str(turn_id or "").strip():
+            raise ValueError("rollout event is missing turnId; write path must persist canonical turn ids")
         existing = self._turn_by_id.get(normalized_turn_id)
         if existing is not None:
             if str(existing.get("status") or "") not in TERMINAL_STATUSES:
@@ -217,6 +271,125 @@ class ThreadHistoryBuilder:
             turn["updatedAtMs"] = timestamp_ms
         if error:
             turn["error"] = error
+
+    def _merge_delta_item(
+        self,
+        *,
+        turn_id: str | None,
+        item: dict[str, Any],
+        method: str,
+        thread_id: str | None = None,
+        timestamp_ms: int | None = None,
+    ) -> None:
+        turn = self._ensure_turn(turn_id or self._active_turn_id(), thread_id=thread_id, timestamp_ms=timestamp_ms)
+        item_id = str(item.get("id") or "").strip()
+        if not item_id:
+            return
+        for index, existing in enumerate(turn["items"]):
+            if not isinstance(existing, dict) or str(existing.get("id") or "").strip() != item_id:
+                continue
+            merged = {**existing, **item}
+            if method == "item/commandExecution/terminalInteraction":
+                output = str(existing.get("aggregatedOutput") or existing.get("output") or "")
+                output += self._format_terminal_interaction_block(current_output=output, payload=item)
+                merged["aggregatedOutput"] = output
+                merged["output"] = output
+                turn["items"][index] = merged
+                return
+            delta = str(item.get("delta") or "")
+            if delta:
+                if method in {"item/agentMessage/delta", "item/plan/delta"}:
+                    merged["text"] = str(existing.get("text") or "") + delta
+                elif method == "item/commandExecution/outputDelta":
+                    output = str(existing.get("aggregatedOutput") or existing.get("output") or "") + delta
+                    merged["aggregatedOutput"] = output
+                    merged["output"] = output
+                elif method == "item/fileChange/outputDelta":
+                    merged["output"] = str(existing.get("output") or "") + delta
+                elif method in {"item/reasoning/summaryTextDelta", "item/reasoning/textDelta"}:
+                    merged["text"] = str(existing.get("text") or "") + delta
+            turn["items"][index] = merged
+            return
+        self._append_item(turn_id=str(turn["id"]), item=item, thread_id=thread_id, timestamp_ms=timestamp_ms)
+
+    def _item_from_params(
+        self,
+        *,
+        method: str,
+        params: dict[str, Any],
+        thread_id: str | None,
+        turn_id: str | None,
+        status: str,
+        timestamp_ms: int | None,
+    ) -> dict[str, Any] | None:
+        raw_item = params.get("item")
+        if isinstance(raw_item, dict):
+            item = dict(raw_item)
+            if status and not str(item.get("status") or "").strip():
+                item["status"] = status
+            if turn_id and not self._extract_turn_id(item):
+                item["turnId"] = turn_id
+            if thread_id and not self._extract_thread_id(item):
+                item["threadId"] = thread_id
+            return item
+        item_id = str(params.get("itemId") or params.get("item_id") or "").strip()
+        if not item_id:
+            return None
+        item_type = self._item_type_for_method(method)
+        item = {
+            "id": item_id,
+            "type": item_type,
+            "status": status,
+            "turnId": turn_id,
+            "threadId": thread_id,
+            **dict(params),
+        }
+        if method in {"item/agentMessage/delta", "item/plan/delta"}:
+            item["text"] = str(params.get("delta") or "")
+        if method == "item/commandExecution/terminalInteraction":
+            item["output"] = self._format_terminal_interaction_block(current_output="", payload=params)
+            item["aggregatedOutput"] = item["output"]
+        if timestamp_ms is not None:
+            item.setdefault("createdAtMs", timestamp_ms)
+            item.setdefault("updatedAtMs", timestamp_ms)
+        return item
+
+    @staticmethod
+    def _item_type_for_method(method: str) -> str:
+        if method == "item/agentMessage/delta":
+            return "agentMessage"
+        if method == "item/plan/delta":
+            return "plan"
+        if method.startswith("item/commandExecution/"):
+            return "commandExecution"
+        if method.startswith("item/fileChange/"):
+            return "fileChange"
+        if method.startswith("item/reasoning/"):
+            return "reasoning"
+        return "unknown"
+
+    @staticmethod
+    def _extract_terminal_interaction_text(payload: dict[str, Any]) -> str:
+        for key in ("stdin", "input", "text", "delta", "content"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                return value
+        interaction = payload.get("interaction")
+        if isinstance(interaction, dict):
+            for key in ("stdin", "input", "text", "delta", "content"):
+                value = interaction.get(key)
+                if isinstance(value, str):
+                    return value
+        return ""
+
+    @classmethod
+    def _format_terminal_interaction_block(cls, *, current_output: str, payload: dict[str, Any]) -> str:
+        raw_text = cls._extract_terminal_interaction_text(payload)
+        normalized = raw_text.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+        prefix = "" if not current_output or current_output.endswith("\n") else "\n"
+        if not normalized:
+            return f"{prefix}[stdin]\n"
+        return f"{prefix}[stdin]\n{normalized}\n"
 
     def _active_turn_id(self) -> str | None:
         if self.current_turn is None:

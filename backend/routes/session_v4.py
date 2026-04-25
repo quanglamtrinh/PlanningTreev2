@@ -570,6 +570,21 @@ def session_requests_reject_v4(requestId: str, payload: RejectRequest, request: 
         return _unexpected_error_response()
 
 
+@router.get("/v4/session/threads/{threadId}/events/journal-head")
+def session_thread_events_journal_head_v4(threadId: str, request: Request) -> JSONResponse:
+    """Latest journal sequence for a thread. Used to align the client replay cursor after hydrate (gap recovery)."""
+    if not _events_enabled(request):
+        return _phase_not_enabled("events/journal-head", phase="Phase 2")
+    try:
+        response = _manager(request).get_thread_journal_head(thread_id=threadId)
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_thread_events_journal_head_v4 failed")
+        return _unexpected_error_response()
+
+
 @router.get("/v4/session/threads/{threadId}/events")
 def session_thread_events_v4(
     threadId: str,

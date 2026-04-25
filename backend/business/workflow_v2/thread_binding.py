@@ -4,6 +4,8 @@ import copy
 import hashlib
 import json
 import logging
+import re
+import uuid
 from typing import Any
 
 from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
@@ -33,6 +35,21 @@ _ROLE_THREAD_ATTR: dict[str, str] = {
 
 _IDEMPOTENCY_ACTION = "ensure_thread"
 logger = logging.getLogger(__name__)
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _thread_id_looks_like_native_session_uuid(thread_id: str) -> bool:
+    t = str(thread_id or "").strip()
+    if not t or not _UUID_RE.match(t):
+        return False
+    try:
+        uuid.UUID(t)
+    except ValueError:
+        return False
+    return True
 
 
 class ThreadBindingServiceV2:
@@ -47,6 +64,81 @@ class ThreadBindingServiceV2:
         self._context_builder = context_builder
         self._session_manager = session_manager
         self._event_publisher = event_publisher
+
+    def reconcile_stale_native_thread_refs(self, project_id: str, node_id: str) -> NodeWorkflowStateV2:
+        """
+        Drop workflow thread ids that have no row in the native session rollout store
+        (e.g. after DB wipe / dev reset). Safe to call on read paths.
+        """
+        state = self._repository.read_state(project_id, node_id)
+        for role in ("ask_planning", "execution", "audit", "package_review"):
+            state = self._persist_if_cleared_stale_thread_refs(project_id, node_id, state, role)
+        return state
+
+    def _native_rollout_metadata_exists(self, thread_id: str) -> bool:
+        tid = str(thread_id or "").strip()
+        if not tid:
+            return False
+        check = getattr(self._session_manager, "native_rollout_metadata_exists", None)
+        if callable(check):
+            return bool(check(tid))
+        return True
+
+    def _idempotency_cached_response_stale(self, cached_response: dict[str, Any]) -> bool:
+        """True if the idempotency cache references a thread id with no native rollout row."""
+        binding = cached_response.get("binding")
+        if not isinstance(binding, dict):
+            return False
+        tid = _optional_str(binding.get("threadId"))
+        if not tid or not _thread_id_looks_like_native_session_uuid(tid):
+            return False
+        return not self._native_rollout_metadata_exists(tid)
+
+    def _persist_if_cleared_stale_thread_refs(
+        self,
+        project_id: str,
+        node_id: str,
+        state: NodeWorkflowStateV2,
+        role: ThreadRole,
+    ) -> NodeWorkflowStateV2:
+        thread_attr = _ROLE_THREAD_ATTR[str(role)]
+        binding = state.thread_bindings.get(role)
+        legacy = _optional_str(getattr(state, thread_attr, None))
+        stale_binding = binding is not None and not self._native_rollout_metadata_exists(binding.thread_id)
+        # Only auto-clear *legacy* column ids that look like native session UUIDs (v2 rollout store).
+        # v3 string ids like "review-thread-1" are kept so GET workflow-state can still return them.
+        stale_legacy = (
+            legacy is not None
+            and not self._native_rollout_metadata_exists(legacy)
+            and _thread_id_looks_like_native_session_uuid(legacy)
+        )
+        if not stale_binding and not stale_legacy:
+            return state
+
+        if stale_binding and binding is not None:
+            logger.warning(
+                "workflow_v2: clearing %s role binding; native session rollout is missing for thread %s",
+                str(role),
+                binding.thread_id,
+            )
+        if stale_legacy and legacy is not None:
+            logger.warning(
+                "workflow_v2: clearing %s; native session rollout is missing for thread %s",
+                thread_attr,
+                legacy,
+            )
+        if stale_binding:
+            new_bindings: dict[str, ThreadBinding] = {k: v for k, v in state.thread_bindings.items() if k != role}
+        else:
+            new_bindings = dict(state.thread_bindings)
+        return self._repository.write_state(
+            project_id,
+            node_id,
+            state.model_copy(
+                deep=True,
+                update={"thread_bindings": new_bindings, thread_attr: None},
+            ),
+        )
 
     def ensure_thread(
         self,
@@ -66,6 +158,7 @@ class ThreadBindingServiceV2:
             )
 
         state = self._repository.read_state(project_id, node_id)
+        state = self._persist_if_cleared_stale_thread_refs(project_id, node_id, state, role)
         packet = self._context_builder.build_context_packet(
             project_id=project_id,
             node_id=node_id,
@@ -91,15 +184,23 @@ class ThreadBindingServiceV2:
                 raise WorkflowIdempotencyConflictError(key)
             cached_response = existing_record.get("response")
             if isinstance(cached_response, dict):
-                return copy.deepcopy(cached_response)
-            replay_state = self._repository.read_state(project_id, node_id)
-            replay_binding = replay_state.thread_bindings.get(role)
-            if replay_binding is None:
-                raise WorkflowThreadBindingFailedError(
-                    "Idempotency record exists but thread binding is missing.",
-                    details={"projectId": project_id, "nodeId": node_id, "role": role},
+                if not self._idempotency_cached_response_stale(cached_response):
+                    return copy.deepcopy(cached_response)
+                new_records = {k: v for k, v in state.idempotency_records.items() if k != record_key}
+                state = self._repository.write_state(
+                    project_id,
+                    node_id,
+                    state.model_copy(deep=True, update={"idempotency_records": new_records}),
                 )
-            return _response(replay_state, replay_binding)
+            else:
+                replay_state = self._repository.read_state(project_id, node_id)
+                replay_binding = replay_state.thread_bindings.get(role)
+                if replay_binding is None:
+                    raise WorkflowThreadBindingFailedError(
+                        "Idempotency record exists but thread binding is missing.",
+                        details={"projectId": project_id, "nodeId": node_id, "role": role},
+                    )
+                return _response(replay_state, replay_binding)
 
         binding = state.thread_bindings.get(role)
         thread_attr = _ROLE_THREAD_ATTR[str(role)]
@@ -313,6 +414,8 @@ class ThreadBindingServiceV2:
             "role": role,
             "packetKind": packet.kind,
             "contextPacketHash": action_context_hash,
+            "contextPayload": packet.ui_context_payload(),
+            "sourceVersions": copy.deepcopy(packet.source_versions),
         }
         if injected_packet_hash != action_context_hash:
             metadata["injectedPacketHash"] = injected_packet_hash
@@ -326,6 +429,7 @@ class ThreadBindingServiceV2:
                         "type": "systemMessage",
                         "text": packet.render_model_visible_message(),
                         "metadata": metadata,
+                        "workflowContext": copy.deepcopy(metadata),
                     }
                 ],
             },

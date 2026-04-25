@@ -136,3 +136,93 @@ def test_ask_planning_child_activation_packet_kind(storage, workspace_root) -> N
     )
 
     assert packet.kind == "child_activation_context"
+
+
+def test_builder_includes_parent_and_current_artifact_context(storage, workspace_root) -> None:
+    project_id, root_id, snapshot, root_dir = _project_with_confirmed_docs(storage, workspace_root)
+    child_id = "child-context"
+    sibling_id = "sibling-context"
+    node_index = snapshot["tree_state"]["node_index"]
+    node_index[root_id]["child_ids"] = [child_id, sibling_id]
+    node_index[child_id] = {
+        "node_id": child_id,
+        "parent_id": root_id,
+        "child_ids": [],
+        "title": "Child Context",
+        "description": "",
+        "status": "ready",
+        "node_kind": "original",
+        "depth": 1,
+        "display_order": 0,
+        "hierarchical_number": "1.1",
+    }
+    node_index[sibling_id] = {
+        "node_id": sibling_id,
+        "parent_id": root_id,
+        "child_ids": [],
+        "title": "Sibling Context",
+        "description": "",
+        "status": "ready",
+        "node_kind": "original",
+        "depth": 1,
+        "display_order": 1,
+        "hierarchical_number": "1.2",
+    }
+    (root_dir / "clarify.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "confirmed_revision": 2,
+                "confirmed_at": "2026-04-24T00:00:00Z",
+                "questions": [
+                    {
+                        "question": "Which scope?",
+                        "custom_answer": "Only the selected child.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    storage.project_store.save_snapshot(project_id, snapshot)
+    child_dir = planningtree_workspace.resolve_node_dir(workspace_root, snapshot, child_id)
+    assert child_dir is not None
+    (child_dir / "frame.md").write_text("Child frame", encoding="utf-8")
+    (child_dir / "frame.meta.json").write_text(
+        json.dumps(
+            {
+                "revision": 1,
+                "confirmed_revision": 1,
+                "confirmed_at": "2026-04-24T00:00:00Z",
+                "confirmed_content": "Child frame",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (child_dir / "spec.md").write_text("Child spec", encoding="utf-8")
+    (child_dir / "spec.meta.json").write_text(
+        json.dumps(
+            {
+                "source_frame_revision": 1,
+                "confirmed_at": "2026-04-24T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    packet = WorkflowContextBuilderV2(storage).build_context_packet(
+        project_id=project_id,
+        node_id=child_id,
+        role="ask_planning",
+    )
+
+    artifact_context = packet.payload["artifactContext"]
+    ancestor = artifact_context["ancestorContext"][0]
+    assert ancestor["node"]["node_id"] == root_id
+    assert ancestor["frame"]["content"] == "Confirmed frame"
+    assert ancestor["clarify"]["questions"][0]["custom_answer"] == "Only the selected child."
+    assert ancestor["split"]["children"][0]["node_id"] == child_id
+    assert ancestor["split"]["children"][0]["isCurrentPath"] is True
+    assert ancestor["split"]["children"][1]["isCurrentPath"] is False
+    assert artifact_context["currentContext"]["frame"]["content"] == "Child frame"
+    assert artifact_context["currentContext"]["spec"]["content"] == "Child spec"

@@ -189,6 +189,7 @@ function isDeltaMethod(method: string): boolean {
     method === 'item/reasoning/summaryPartAdded' ||
     method === 'item/reasoning/textDelta' ||
     method === 'item/commandExecution/outputDelta' ||
+    method === 'item/commandExecution/terminalInteraction' ||
     method === 'item/fileChange/outputDelta'
   )
 }
@@ -201,6 +202,37 @@ function appendDelta(base: unknown, delta: unknown): string {
 
 function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function extractTerminalInteractionText(payload: Record<string, unknown>): string {
+  for (const key of ['stdin', 'input', 'text', 'delta', 'content']) {
+    const value = payload[key]
+    if (typeof value === 'string') {
+      return value
+    }
+  }
+  const interaction = payload.interaction
+  if (interaction && typeof interaction === 'object') {
+    const record = interaction as Record<string, unknown>
+    for (const key of ['stdin', 'input', 'text', 'delta', 'content']) {
+      const value = record[key]
+      if (typeof value === 'string') {
+        return value
+      }
+    }
+  }
+  return ''
+}
+
+function formatTerminalInteractionBlock(previousOutput: unknown, payload: Record<string, unknown>): string {
+  const currentOutput = typeof previousOutput === 'string' ? previousOutput : ''
+  const rawText = extractTerminalInteractionText(payload)
+  const normalized = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/^\n+|\n+$/g, '')
+  const prefix = !currentOutput || currentOutput.endsWith('\n') ? '' : '\n'
+  if (!normalized) {
+    return `${prefix}[stdin]\n`
+  }
+  return `${prefix}[stdin]\n${normalized}\n`
 }
 
 function parseBoolean(value: unknown, fallback = false): boolean {
@@ -301,6 +333,14 @@ function mergeDeltaPayload(
   method: string,
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...previousPayload, ...incomingPayload }
+  if (method === 'item/commandExecution/terminalInteraction') {
+    const previousOutput = previousPayload.aggregatedOutput ?? previousPayload.output
+    const nextOutput = appendDelta(previousOutput, formatTerminalInteractionBlock(previousOutput, incomingPayload))
+    merged.aggregatedOutput = nextOutput
+    merged.output = nextOutput
+    return merged
+  }
+
   const delta = incomingPayload.delta
   if (typeof delta !== 'string' || delta.length === 0) {
     return merged
@@ -616,6 +656,66 @@ export function applySessionEvent(
       }
       break
     }
+    case 'turn/failed': {
+      const turnPayload = params.turn && typeof params.turn === 'object' ? (params.turn as Record<string, unknown>) : {}
+      const resolvedTurnId = String(turnPayload.id ?? envelope.turnId ?? '').trim()
+      if (resolvedTurnId) {
+        const normalizedTurn = normalizeTurnFromEvent(threadId, resolvedTurnId, {
+          ...turnPayload,
+          status: 'failed',
+        })
+        upsertTurn(state, threadId, normalizedTurn)
+        markThreadActivityAt(state, threadId, envelope.occurredAtMs)
+      }
+      break
+    }
+    case 'task/started':
+    case 'task/completed':
+    case 'task/failed': {
+      const resolvedTurnId = String(envelope.turnId ?? params.turnId ?? '').trim()
+      if (!resolvedTurnId) {
+        markThreadActivityAt(state, threadId, envelope.occurredAtMs)
+        break
+      }
+      const taskId = String((params as { id?: unknown }).id ?? `task-${resolvedTurnId}`).trim() || `task-${resolvedTurnId}`
+      const itemStatus: ItemStatus =
+        envelope.method === 'task/failed' ? 'failed' : envelope.method === 'task/completed' ? 'completed' : 'inProgress'
+      const taskType = String((params as { type?: unknown }).type ?? 'task')
+      const mergeMethod =
+        envelope.method === 'task/completed' || envelope.method === 'task/failed' ? 'item/completed' : 'item/started'
+      const item: SessionItem = {
+        id: taskId,
+        threadId,
+        turnId: resolvedTurnId,
+        kind: taskType,
+        normalizedKind: 'commandExecution',
+        status: itemStatus,
+        createdAtMs:
+          typeof (params as { occurredAtMs?: unknown }).occurredAtMs === 'number'
+            ? ((params as { occurredAtMs: number }).occurredAtMs)
+            : Date.now(),
+        updatedAtMs: Date.now(),
+        payload: { ...params },
+      }
+      upsertItem(state, threadId, resolvedTurnId, item, mergeMethod)
+      if (envelope.method === 'task/completed' || envelope.method === 'task/failed') {
+        const existing = (state.turnsByThread[threadId] ?? []).find((turn) => turn.id === resolvedTurnId) ?? null
+        if (existing) {
+          const turnStatus: TurnRuntimeStatus = envelope.method === 'task/failed' ? 'failed' : 'completed'
+          const codex: TurnCodexStatus = envelope.method === 'task/failed' ? 'failed' : 'completed'
+          const occurredAtMs = Number.isFinite(envelope.occurredAtMs) && envelope.occurredAtMs > 0 ? envelope.occurredAtMs : Date.now()
+          const nextTurn: SessionTurn = {
+            ...existing,
+            status: turnStatus,
+            lastCodexStatus: codex,
+            completedAtMs: existing.completedAtMs ?? occurredAtMs,
+          }
+          upsertTurn(state, threadId, nextTurn)
+        }
+      }
+      markThreadActivityAt(state, threadId, envelope.occurredAtMs)
+      break
+    }
     case 'item/started':
     case 'item/completed':
     case 'item/agentMessage/delta':
@@ -624,6 +724,7 @@ export function applySessionEvent(
     case 'item/reasoning/summaryPartAdded':
     case 'item/reasoning/textDelta':
     case 'item/commandExecution/outputDelta':
+    case 'item/commandExecution/terminalInteraction':
     case 'item/fileChange/outputDelta': {
       const item = normalizeItemFromParams(
         threadId,

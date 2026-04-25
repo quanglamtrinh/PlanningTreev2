@@ -31,6 +31,8 @@ export type ThreadSessionStoreState = SessionProjectionState & {
   markStreamDisconnected: (threadId: string) => void
   markStreamReconnect: (threadId: string) => void
   clearGapDetected: (threadId: string) => void
+  /** Align last event seq/id with server journal after hydrate (avoids stream gap-detect loops). */
+  setReplayCursor: (threadId: string, lastEventSeq: number, lastEventId: string | null) => void
   resetReplayCursor: (threadId: string) => void
   clear: () => void
 }
@@ -848,6 +850,36 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
     set((state) => ({
       gapDetectedByThread: { ...state.gapDetectedByThread, [threadId]: false },
     }))
+  },
+  setReplayCursor(threadId, lastEventSeq, lastEventId) {
+    const tid = String(threadId ?? '').trim()
+    if (!tid) {
+      return
+    }
+    set((state) => {
+      const nextSeq = { ...state.lastEventSeqByThread }
+      const nextId = { ...state.lastEventIdByThread }
+      const nextGap = { ...state.gapDetectedByThread }
+      if (lastEventSeq <= 0 && (lastEventId == null || String(lastEventId).trim() === '')) {
+        delete nextSeq[tid]
+        delete nextId[tid]
+      } else {
+        const seq = Math.max(0, lastEventSeq)
+        nextSeq[tid] = seq
+        if (lastEventId != null && String(lastEventId).trim() !== '') {
+          nextId[tid] = String(lastEventId).trim()
+        } else {
+          nextId[tid] = `${tid}:${seq}`
+        }
+      }
+      nextGap[tid] = false
+      return {
+        ...state,
+        lastEventSeqByThread: nextSeq,
+        lastEventIdByThread: nextId,
+        gapDetectedByThread: nextGap,
+      }
+    })
   },
   resetReplayCursor(threadId) {
     set((state) => {

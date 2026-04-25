@@ -324,16 +324,9 @@ describe('useSessionFacadeV2', () => {
     let latestFacade: SessionFacadeV2 | null = null
 
     const readDeferredByThread: Record<string, ReturnType<typeof deferred<{ thread: SessionThread }>>> = {}
-    const turnsDeferredByThread: Record<string, ReturnType<typeof deferred<{ data: never[]; nextCursor: null }>>> = {}
-
     mockApi.readThreadV2.mockImplementation((threadId: string) => {
       const def = deferred<{ thread: SessionThread }>()
       readDeferredByThread[threadId] = def
-      return def.promise
-    })
-    mockApi.listThreadTurnsV2.mockImplementation((threadId: string) => {
-      const def = deferred<{ data: never[]; nextCursor: null }>()
-      turnsDeferredByThread[threadId] = def
       return def.promise
     })
 
@@ -364,12 +357,10 @@ describe('useSessionFacadeV2', () => {
 
       readDeferredByThread['thread-1'].resolve({ thread: makeThread({ id: 'thread-1' }) })
       await Promise.resolve()
-      turnsDeferredByThread['thread-1']?.resolve({ data: [], nextCursor: null })
       await first
 
       readDeferredByThread['thread-2'].resolve({ thread: makeThread({ id: 'thread-2' }) })
       await Promise.resolve()
-      turnsDeferredByThread['thread-2'].resolve({ data: [], nextCursor: null })
       await second
     })
 
@@ -701,19 +692,12 @@ describe('useSessionFacadeV2', () => {
   it('drops stale selectThread hydration when selectThread(null) happens mid-flight', async () => {
     let latestFacade: SessionFacadeV2 | null = null
     const readDeferred = deferred<{ thread: SessionThread }>()
-    const turnsDeferred = deferred<{ data: never[]; nextCursor: null }>()
 
     mockApi.readThreadV2.mockImplementation((threadId: string) => {
       if (threadId === 'thread-2') {
         return readDeferred.promise
       }
       return Promise.resolve({ thread: makeThread({ id: threadId }) })
-    })
-    mockApi.listThreadTurnsV2.mockImplementation((threadId: string) => {
-      if (threadId === 'thread-2') {
-        return turnsDeferred.promise
-      }
-      return Promise.resolve({ data: [], nextCursor: null })
     })
 
     render(
@@ -743,7 +727,6 @@ describe('useSessionFacadeV2', () => {
 
       readDeferred.resolve({ thread: makeThread({ id: 'thread-2' }) })
       await Promise.resolve()
-      turnsDeferred.resolve({ data: [], nextCursor: null })
       await switching
     })
 
