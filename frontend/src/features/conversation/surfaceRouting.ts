@@ -62,8 +62,11 @@ export function resolveLegacyRouteTarget(options: {
   requestedThreadTab: ThreadTab | null
   isReviewNode: boolean
 }): { surface: 'legacy' | 'v2'; threadTab: ThreadTab } {
-  const { isReviewNode } = options
+  const { requestedThreadTab, isReviewNode } = options
   if (isReviewNode) {
+    if (requestedThreadTab === 'ask') {
+      return { surface: 'v2', threadTab: 'ask' }
+    }
     return { surface: 'v2', threadTab: 'audit' }
   }
   return { surface: 'v2', threadTab: 'ask' }
@@ -76,6 +79,9 @@ export function resolveV2RouteTarget(options: {
   const { requestedThreadTab, isReviewNode } = options
 
   if (isReviewNode) {
+    if (requestedThreadTab === 'ask') {
+      return { surface: 'v2', threadTab: 'ask' }
+    }
     return { surface: 'v2', threadTab: 'audit' }
   }
   if (requestedThreadTab === 'ask') {

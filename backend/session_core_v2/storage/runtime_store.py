@@ -43,6 +43,21 @@ _TIER1_METHODS: frozenset[str] = frozenset(
         "item/fileChange/outputDelta",
     }
 )
+_STREAM_TRACE_METHODS: frozenset[str] = frozenset(
+    {
+        "thread/started",
+        "thread/status/changed",
+        "thread/closed",
+        "turn/started",
+        "turn/completed",
+        "item/started",
+        "item/completed",
+        "serverRequest/created",
+        "serverRequest/updated",
+        "serverRequest/resolved",
+        "error",
+    }
+)
 _SERVER_REQUEST_METHODS: frozenset[str] = frozenset(
     {
         "item/tool/requestUserInput",
@@ -763,7 +778,21 @@ class RuntimeStoreV2:
                 self._trim_memory_journal(normalized_thread_id, now_ms=occurred_at_ms)
             self._persist_event(event)
             self._fanout_event(event)
+            thread_subscriber_count = self._subscriber_count_for_thread_locked(normalized_thread_id)
             event_copy = dict(event)
+        if normalized_method in _STREAM_TRACE_METHODS:
+            logger.info(
+                "session_core_v2 journal append",
+                extra={
+                    "threadId": normalized_thread_id,
+                    "turnId": normalized_turn_id,
+                    "eventSeq": next_seq,
+                    "method": normalized_method,
+                    "tier": normalized_tier,
+                    "replayable": bool(replayable),
+                    "threadSubscriberCount": thread_subscriber_count,
+                },
+            )
         self._notify_event_observers(event_copy)
         return event_copy
 
@@ -827,6 +856,38 @@ class RuntimeStoreV2:
         with self._lock:
             return self._read_journal_events_locked(normalized_thread_id, after_event_seq=0)
 
+    def list_thread_ids_with_history(self) -> list[str]:
+        with self._lock:
+            thread_ids: set[str] = set()
+            thread_ids.update(thread_id for thread_id in self._journal if str(thread_id or "").strip())
+            thread_ids.update(thread_id for thread_id in self._turns if str(thread_id or "").strip())
+            thread_ids.update(thread_id for thread_id in self._snapshot_payloads if str(thread_id or "").strip())
+            if self._db is not None:
+                rows = self._db.execute(
+                    """
+                    SELECT thread_id, MAX(last_seen_ms) AS last_seen_ms
+                    FROM (
+                        SELECT thread_id, MAX(occurred_at_ms) AS last_seen_ms FROM session_v2_journal GROUP BY thread_id
+                        UNION ALL
+                        SELECT thread_id, MAX(last_updated_ms) AS last_seen_ms FROM session_v2_turns GROUP BY thread_id
+                        UNION ALL
+                        SELECT thread_id, MAX(updated_at_ms) AS last_seen_ms FROM session_v2_snapshots GROUP BY thread_id
+                    )
+                    WHERE thread_id IS NOT NULL AND thread_id != ''
+                    GROUP BY thread_id
+                    ORDER BY last_seen_ms DESC
+                    """
+                ).fetchall()
+                ordered: list[str] = []
+                for row in rows:
+                    thread_id = str(row["thread_id"] or "").strip()
+                    if thread_id:
+                        ordered.append(thread_id)
+                        thread_ids.discard(thread_id)
+                ordered.extend(sorted(thread_ids))
+                return ordered
+        return []
+
     # ------------------------------------------------------------------
     # Event streaming subscribers
     # ------------------------------------------------------------------
@@ -839,21 +900,74 @@ class RuntimeStoreV2:
                 thread_id=normalized_thread_id,
                 events=queue.Queue(maxsize=self._subscriber_queue_capacity),
             )
+            thread_subscriber_count = self._subscriber_count_for_thread_locked(normalized_thread_id)
+            total_subscriber_count = len(self._subscribers)
+        logger.info(
+            "session_core_v2 stream subscriber opened",
+            extra={
+                "threadId": normalized_thread_id,
+                "subscriberId": subscriber_id,
+                "threadSubscriberCount": thread_subscriber_count,
+                "totalSubscriberCount": total_subscriber_count,
+            },
+        )
         return subscriber_id
 
     def read_subscriber_event(self, *, subscriber_id: str, timeout_sec: float) -> dict[str, Any] | None:
         with self._lock:
             subscriber = self._subscribers.get(subscriber_id)
         if subscriber is None:
+            logger.info(
+                "session_core_v2 stream subscriber missing",
+                extra={"subscriberId": subscriber_id},
+            )
             return None
         try:
-            return subscriber.events.get(timeout=max(0.1, float(timeout_sec)))
+            event = subscriber.events.get(timeout=max(0.1, float(timeout_sec)))
         except queue.Empty:
             return {}
+        if isinstance(event, dict) and event.get("__control") == "lagged":
+            logger.warning(
+                "session_core_v2 stream lagged control dequeued",
+                extra={
+                    "threadId": subscriber.thread_id,
+                    "subscriberId": subscriber_id,
+                    "skipped": event.get("skipped"),
+                },
+            )
+            return event
+        method = str(event.get("method") or "") if isinstance(event, dict) else ""
+        if method in _STREAM_TRACE_METHODS:
+            logger.info(
+                "session_core_v2 stream dequeue",
+                extra={
+                    "threadId": subscriber.thread_id,
+                    "subscriberId": subscriber_id,
+                    "eventSeq": event.get("eventSeq") if isinstance(event, dict) else None,
+                    "method": method,
+                },
+            )
+        return event
 
     def unsubscribe(self, *, subscriber_id: str) -> None:
         with self._lock:
-            self._subscribers.pop(subscriber_id, None)
+            subscriber = self._subscribers.pop(subscriber_id, None)
+            total_subscriber_count = len(self._subscribers)
+            thread_subscriber_count = (
+                self._subscriber_count_for_thread_locked(subscriber.thread_id)
+                if subscriber is not None
+                else 0
+            )
+        if subscriber is not None:
+            logger.info(
+                "session_core_v2 stream subscriber closed",
+                extra={
+                    "threadId": subscriber.thread_id,
+                    "subscriberId": subscriber_id,
+                    "threadSubscriberCount": thread_subscriber_count,
+                    "totalSubscriberCount": total_subscriber_count,
+                },
+            )
 
     def metrics_snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -914,7 +1028,8 @@ class RuntimeStoreV2:
             if completed_status not in {"inProgress", "completed", "failed", "interrupted"}:
                 completed_status = "failed"
             if self.get_turn(thread_id=thread_id, turn_id=completed_turn_id) is None:
-                self.create_turn(thread_id=thread_id, turn_id=completed_turn_id, status="idle")
+                initial_status = "inProgress" if completed_status == "inProgress" else completed_status
+                self.create_turn(thread_id=thread_id, turn_id=completed_turn_id, status=initial_status)
             terminal_error = payload_turn.get("error")
             if completed_status == "inProgress":
                 self.transition_turn(
@@ -1738,11 +1853,15 @@ class RuntimeStoreV2:
         thread_id = str(event.get("threadId") or "")
         tier = str(event.get("tier") or "tier2")
         to_remove: list[str] = []
+        matched_subscriber_count = 0
+        max_queue_depth = 0
         for subscriber_id, subscriber in self._subscribers.items():
             if subscriber.thread_id != thread_id:
                 continue
+            matched_subscriber_count += 1
             try:
                 subscriber.events.put_nowait(dict(event))
+                max_queue_depth = max(max_queue_depth, subscriber.events.qsize())
             except queue.Full:
                 self._lagged_reset_count += 1
                 if tier == "tier2":
@@ -1773,6 +1892,29 @@ class RuntimeStoreV2:
                 to_remove.append(subscriber_id)
         for subscriber_id in to_remove:
             self._subscribers.pop(subscriber_id, None)
+        method = str(event.get("method") or "")
+        if method in _STREAM_TRACE_METHODS:
+            logger.info(
+                "session_core_v2 stream fanout",
+                extra={
+                    "threadId": thread_id,
+                    "eventSeq": event.get("eventSeq"),
+                    "method": method,
+                    "matchedSubscriberCount": matched_subscriber_count,
+                    "subscriberQueueDepthMax": max_queue_depth,
+                    "laggedSubscriberRemoved": len(to_remove),
+                },
+            )
+
+    def _subscriber_count_for_thread_locked(self, thread_id: str) -> int:
+        normalized_thread_id = str(thread_id or "").strip()
+        if not normalized_thread_id:
+            return 0
+        count = 0
+        for subscriber in self._subscribers.values():
+            if subscriber.thread_id == normalized_thread_id:
+                count += 1
+        return count
 
     @staticmethod
     def _drain_queue(event_queue: queue.Queue[dict[str, Any]]) -> int:

@@ -225,6 +225,31 @@ function resolveBootstrapPolicy(
   }
 }
 
+function isSessionRuntimeTraceEnabled(): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+  try {
+    if (window.location.search.includes('debugSession=1')) {
+      return true
+    }
+    return window.localStorage.getItem('sessionV2Trace') === '1'
+  } catch {
+    return false
+  }
+}
+
+function traceSessionRuntime(message: string, payload?: Record<string, unknown>): void {
+  if (!isSessionRuntimeTraceEnabled()) {
+    return
+  }
+  if (payload) {
+    console.info(`[session-v2-runtime] ${message}`, payload)
+    return
+  }
+  console.info(`[session-v2-runtime] ${message}`)
+}
+
 export function createSessionRuntimeController(
   dependencies: SessionRuntimeControllerDependencies,
 ): SessionRuntimeController {
@@ -271,26 +296,36 @@ export function createSessionRuntimeController(
 
   const hydrateThreadState = async (threadId: string, options?: HydrateOptions): Promise<void> => {
     if (!options?.force && hydratedThreadIds.has(threadId)) {
+      traceSessionRuntime('hydrate skipped: already hydrated', {
+        threadId,
+      })
       return
     }
 
+    traceSessionRuntime('hydrate start', {
+      threadId,
+      force: Boolean(options?.force),
+      replaceProjection: Boolean(options?.replaceProjection),
+    })
     const guard = buildGuard('hydrateThread')
     const isCurrent = () => guard.isCurrent() && ensureStillCurrent(options?.isCurrent)
 
-    const read = await api.readThread(threadId, false)
+    const read = await api.readThread(threadId, true)
     if (!isCurrent()) {
+      traceSessionRuntime('hydrate aborted after read: stale scope', {
+        threadId,
+      })
       return
     }
     dependencies.upsertThread(read.thread, { preserveUpdatedAt: true })
-
-    const turns = await api.listThreadTurns(threadId, { limit: 200 })
-    if (!isCurrent()) {
-      return
-    }
-    dependencies.setThreadTurns(threadId, turns.data, {
-      mode: options?.replaceProjection ? 'replace' : 'merge',
-    })
+    const readTurns = Array.isArray(read.thread.turns) ? read.thread.turns : []
+    dependencies.setThreadTurns(threadId, readTurns, { mode: 'replace' })
     hydratedThreadIds.add(threadId)
+    traceSessionRuntime('hydrate applied', {
+      threadId,
+      turns: readTurns.length,
+      mode: 'replace',
+    })
   }
 
   const ensureThreadReady = async (threadId: string, options?: EnsureThreadReadyOptions): Promise<void> => {
@@ -302,11 +337,21 @@ export function createSessionRuntimeController(
     const cachedThread = snapshot.threadsById[threadId]
     const needsResume = !cachedThread || cachedThread.status?.type === 'notLoaded'
     if (needsResume) {
+      traceSessionRuntime('ensure thread resume requested', {
+        threadId,
+      })
       const resumed = await api.resumeThread(threadId, {})
       if (!ensureStillCurrent(options?.isCurrent)) {
+        traceSessionRuntime('ensure thread resume aborted: stale scope', {
+          threadId,
+        })
         return
       }
       dependencies.upsertThread(resumed.thread, { preserveUpdatedAt: true })
+      traceSessionRuntime('ensure thread resume accepted', {
+        threadId,
+        status: resumed.thread.status?.type ?? null,
+      })
     }
 
     await hydrateThreadState(threadId, {
@@ -399,6 +444,10 @@ export function createSessionRuntimeController(
       return
     }
 
+    traceSessionRuntime('select thread requested', {
+      threadId,
+    })
+
     const intent = selectionIntent + 1
     selectionIntent = intent
     scopeTokens.hydrateThread += 1
@@ -407,32 +456,50 @@ export function createSessionRuntimeController(
     if (threadId === null) {
       dependencies.setActiveThreadId(null)
       dependencies.setRuntimeError(null)
+      traceSessionRuntime('select thread cleared', {})
       return
     }
 
     const snapshot = dependencies.getThreadState()
     if (snapshot.activeThreadId !== threadId) {
       dependencies.setActiveThreadId(threadId)
+      traceSessionRuntime('select thread active set', {
+        threadId,
+      })
     }
 
     const cachedThread = snapshot.threadsById[threadId]
     if (hydratedThreadIds.has(threadId) && cachedThread?.status?.type !== 'notLoaded') {
       dependencies.setRuntimeError(null)
+      traceSessionRuntime('select thread ready from cache', {
+        threadId,
+        status: cachedThread?.status?.type ?? null,
+      })
       return
     }
 
     try {
       await ensureThreadReady(threadId, { isCurrent })
       if (!isCurrent()) {
+        traceSessionRuntime('select thread aborted after ensure: stale scope', {
+          threadId,
+        })
         return
       }
       dependencies.setRuntimeError(null)
+      traceSessionRuntime('select thread ready', {
+        threadId,
+      })
     } catch (error) {
       if (!isCurrent()) {
         return
       }
       const message = error instanceof Error ? error.message : String(error)
       dependencies.setRuntimeError(message)
+      traceSessionRuntime('select thread failed', {
+        threadId,
+        message,
+      })
     }
   }
 

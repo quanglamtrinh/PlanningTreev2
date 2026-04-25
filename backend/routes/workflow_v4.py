@@ -91,10 +91,26 @@ def _workflow_event_broker(request: Request) -> Any:
 
 
 def _workflow_error_response(error: WorkflowV2Error) -> JSONResponse:
+    logger.warning(
+        "workflow_v4 request failed",
+        extra={
+            "errorCode": error.code,
+            "statusCode": error.status_code,
+            "details": error.details if isinstance(error.details, dict) else {},
+        },
+    )
     return JSONResponse(status_code=error.status_code, content=error.to_envelope())
 
 
 def _session_error_response(error: SessionCoreError) -> JSONResponse:
+    logger.warning(
+        "workflow_v4 session request failed",
+        extra={
+            "errorCode": error.code,
+            "statusCode": error.status_code,
+            "details": error.details if isinstance(error.details, dict) else {},
+        },
+    )
     return JSONResponse(
         status_code=error.status_code,
         content={
@@ -247,6 +263,15 @@ def ensure_workflow_thread_v4(
     request: Request,
 ) -> JSONResponse:
     try:
+        logger.info(
+            "workflow_v4 ensure_thread requested",
+            extra={
+                "projectId": projectId,
+                "nodeId": nodeId,
+                "role": role,
+                "idempotencyKey": payload.idempotencyKey,
+            },
+        )
         response = _service(request).ensure_thread(
             project_id=projectId,
             node_id=nodeId,
@@ -254,6 +279,16 @@ def ensure_workflow_thread_v4(
             idempotency_key=payload.idempotencyKey,
             model=payload.model,
             model_provider=payload.modelProvider,
+        )
+        logger.info(
+            "workflow_v4 ensure_thread accepted",
+            extra={
+                "projectId": projectId,
+                "nodeId": nodeId,
+                "role": role,
+                "idempotencyKey": payload.idempotencyKey,
+                "threadId": response.get("threadId") if isinstance(response, dict) else None,
+            },
         )
         return JSONResponse(status_code=200, content=response)
     except WorkflowV2Error as exc:
@@ -273,12 +308,33 @@ def start_execution_v4(
     request: Request,
 ) -> JSONResponse:
     try:
+        logger.info(
+            "workflow_v4 start_execution requested",
+            extra={
+                "projectId": projectId,
+                "nodeId": nodeId,
+                "role": "execution",
+                "idempotencyKey": payload.idempotencyKey,
+            },
+        )
         response = _orchestrator(request).start_execution(
             projectId,
             nodeId,
             idempotency_key=payload.idempotencyKey,
             model=payload.model,
             model_provider=payload.modelProvider,
+        )
+        logger.info(
+            "workflow_v4 start_execution accepted",
+            extra={
+                "projectId": projectId,
+                "nodeId": nodeId,
+                "role": "execution",
+                "idempotencyKey": payload.idempotencyKey,
+                "threadId": response.get("threadId") if isinstance(response, dict) else None,
+                "turnId": response.get("turnId") if isinstance(response, dict) else None,
+                "executionRunId": response.get("executionRunId") if isinstance(response, dict) else None,
+            },
         )
         return JSONResponse(status_code=200, content=response)
     except WorkflowV2Error as exc:
@@ -326,6 +382,16 @@ def improve_execution_v4(
     request: Request,
 ) -> JSONResponse:
     try:
+        logger.info(
+            "workflow_v4 improve_execution requested",
+            extra={
+                "projectId": projectId,
+                "nodeId": nodeId,
+                "role": "execution",
+                "idempotencyKey": payload.idempotencyKey,
+                "expectedReviewCommitSha": payload.expectedReviewCommitSha,
+            },
+        )
         response = _orchestrator(request).request_improvements(
             projectId,
             nodeId,
@@ -333,6 +399,18 @@ def improve_execution_v4(
             expected_review_commit_sha=payload.expectedReviewCommitSha,
             model=payload.model,
             model_provider=payload.modelProvider,
+        )
+        logger.info(
+            "workflow_v4 improve_execution accepted",
+            extra={
+                "projectId": projectId,
+                "nodeId": nodeId,
+                "role": "execution",
+                "idempotencyKey": payload.idempotencyKey,
+                "threadId": response.get("threadId") if isinstance(response, dict) else None,
+                "turnId": response.get("turnId") if isinstance(response, dict) else None,
+                "executionRunId": response.get("executionRunId") if isinstance(response, dict) else None,
+            },
         )
         return JSONResponse(status_code=200, content=response)
     except WorkflowV2Error as exc:
@@ -354,6 +432,16 @@ def start_audit_v4(
     request: Request,
 ) -> JSONResponse:
     try:
+        logger.info(
+            "workflow_v4 start_audit requested",
+            extra={
+                "projectId": projectId,
+                "nodeId": nodeId,
+                "role": "audit",
+                "idempotencyKey": payload.idempotencyKey,
+                "expectedWorkspaceHash": payload.expectedWorkspaceHash,
+            },
+        )
         response = _orchestrator(request).start_audit(
             projectId,
             nodeId,
@@ -361,6 +449,18 @@ def start_audit_v4(
             expected_workspace_hash=payload.expectedWorkspaceHash,
             model=payload.model,
             model_provider=payload.modelProvider,
+        )
+        logger.info(
+            "workflow_v4 start_audit accepted",
+            extra={
+                "projectId": projectId,
+                "nodeId": nodeId,
+                "role": "audit",
+                "idempotencyKey": payload.idempotencyKey,
+                "threadId": response.get("threadId") if isinstance(response, dict) else None,
+                "turnId": response.get("turnId") if isinstance(response, dict) else None,
+                "auditRunId": response.get("auditRunId") if isinstance(response, dict) else None,
+            },
         )
         return JSONResponse(status_code=200, content=response)
     except WorkflowV2Error as exc:
@@ -408,12 +508,32 @@ def start_package_review_v4(
     request: Request,
 ) -> JSONResponse:
     try:
+        logger.info(
+            "workflow_v4 start_package_review requested",
+            extra={
+                "projectId": projectId,
+                "nodeId": nodeId,
+                "role": "package_review",
+                "idempotencyKey": payload.idempotencyKey,
+            },
+        )
         response = _orchestrator(request).start_package_review(
             projectId,
             nodeId,
             idempotency_key=payload.idempotencyKey,
             model=payload.model,
             model_provider=payload.modelProvider,
+        )
+        logger.info(
+            "workflow_v4 start_package_review accepted",
+            extra={
+                "projectId": projectId,
+                "nodeId": nodeId,
+                "role": "package_review",
+                "idempotencyKey": payload.idempotencyKey,
+                "threadId": response.get("threadId") if isinstance(response, dict) else None,
+                "turnId": response.get("turnId") if isinstance(response, dict) else None,
+            },
         )
         return JSONResponse(status_code=200, content=response)
     except WorkflowV2Error as exc:

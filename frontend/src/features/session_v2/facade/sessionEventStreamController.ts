@@ -62,8 +62,47 @@ const STREAM_DELTA_METHODS = new Set<string>([
   'item/fileChange/outputDelta',
 ])
 
+const STREAM_TRACE_METHODS = new Set<string>([
+  'thread/started',
+  'thread/status/changed',
+  'thread/closed',
+  'turn/started',
+  'turn/completed',
+  'item/started',
+  'item/completed',
+  'serverRequest/created',
+  'serverRequest/updated',
+  'serverRequest/resolved',
+  'error',
+])
+
 type FlushReason = 'raf' | 'fallback' | 'forced' | 'max_age'
 type StreamChunkingMode = 'smooth' | 'catch_up'
+
+function isStreamTraceEnabled(): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+  try {
+    if (window.location.search.includes('debugSession=1')) {
+      return true
+    }
+    return window.localStorage.getItem('sessionV2Trace') === '1'
+  } catch {
+    return false
+  }
+}
+
+function traceStream(message: string, payload?: Record<string, unknown>): void {
+  if (!isStreamTraceEnabled()) {
+    return
+  }
+  if (payload) {
+    console.info(`[session-v2-stream] ${message}`, payload)
+    return
+  }
+  console.info(`[session-v2-stream] ${message}`)
+}
 
 export type StreamControllerDependencies = {
   openEventSource?: (threadId: string, options?: { cursorEventId?: string | null }) => EventSource
@@ -132,6 +171,10 @@ export function createSessionEventStreamController(
     }
     if (disconnectThreadId) {
       dependencies.markStreamDisconnected(disconnectThreadId)
+      traceStream('stream closed', {
+        threadId: disconnectThreadId,
+        reason: options?.bumpGeneration === false ? 'switch' : 'explicit',
+      })
     }
     if (eventSource) {
       eventSource.close()
@@ -166,12 +209,19 @@ export function createSessionEventStreamController(
 
       closeInternal({ bumpGeneration: false })
       dependencies.clearGapDetected(threadId)
+      traceStream('stream open requested', {
+        threadId,
+      })
 
       generation += 1
       const token = generation
       activeThreadId = threadId
 
       const cursorEventId = dependencies.getLastEventId(threadId)
+      traceStream('stream opening', {
+        threadId,
+        cursorEventId,
+      })
       dependencies.reportCorrelation?.({
         type: 'stream_open',
         threadId,
@@ -185,6 +235,10 @@ export function createSessionEventStreamController(
         dependencies.markStreamDisconnected(threadId)
         dependencies.markStreamReconnect(threadId)
         dependencies.onRuntimeError?.(message)
+        traceStream('stream open failed', {
+          threadId,
+          message,
+        })
         scheduleReconnect(threadId, token)
         return
       }
@@ -335,6 +389,22 @@ export function createSessionEventStreamController(
           dependencies.applyEventsBatch(envelopes)
           dependencies.applyRequestEventsBatch?.(envelopes)
         })
+        const first = envelopes[0]
+        const last = envelopes[envelopes.length - 1]
+        if (
+          first &&
+          last &&
+          (STREAM_TRACE_METHODS.has(first.method) || STREAM_TRACE_METHODS.has(last.method) || envelopes.length > 1)
+        ) {
+          traceStream('stream batch applied', {
+            threadId,
+            count: envelopes.length,
+            firstMethod: first.method,
+            firstEventSeq: first.eventSeq,
+            lastMethod: last.method,
+            lastEventSeq: last.eventSeq,
+          })
+        }
         if (dependencies.getGapDetected(threadId)) {
           const attempt = (gapRecoveryAttemptsByThread.get(threadId) ?? 0) + 1
           gapRecoveryAttemptsByThread.set(threadId, attempt)
@@ -342,6 +412,10 @@ export function createSessionEventStreamController(
             threadId,
             type: 'gap_detected',
             count: attempt,
+          })
+          traceStream('gap detected', {
+            threadId,
+            attempt,
           })
           if (attempt > 1) {
             dependencies.reportGapMetric?.({
@@ -375,11 +449,21 @@ export function createSessionEventStreamController(
                 cursorEventId: dependencies.getLastEventId(threadId),
                 attempt,
               })
+              traceStream('gap recovery requested', {
+                threadId,
+                attempt,
+                fullResync: shouldFullResync,
+              })
               await dependencies.recoverFromGap?.(threadId, { fullResync: shouldFullResync })
             } catch (error) {
               recoveryFailed = true
               const message = error instanceof Error ? error.message : String(error)
               dependencies.onRuntimeError?.(`Session stream gap recovery failed: ${message}`)
+              traceStream('gap recovery failed', {
+                threadId,
+                attempt,
+                message,
+              })
             } finally {
               gapRecoveryInFlightByThread.delete(threadId)
             }
@@ -391,6 +475,11 @@ export function createSessionEventStreamController(
             controller.open(threadId)
             if (!recoveryFailed) {
               dependencies.onRuntimeError?.(null)
+              traceStream('gap recovery completed', {
+                threadId,
+                attempt,
+                fullResync: shouldFullResync,
+              })
             }
           })()
           return
@@ -431,6 +520,10 @@ export function createSessionEventStreamController(
         dependencies.markStreamConnected(threadId)
         dependencies.onRuntimeError?.(null)
         dependencies.onStreamConnected?.(threadId)
+        traceStream('stream connected', {
+          threadId,
+          cursorEventId,
+        })
       }
 
       stream.onerror = () => {
@@ -446,6 +539,10 @@ export function createSessionEventStreamController(
         dependencies.markStreamReconnect(threadId)
         dependencies.onRuntimeError?.('Session stream disconnected. Reconnecting...')
         clearQueuedEnvelopes()
+        traceStream('stream disconnected', {
+          threadId,
+          cursorEventId,
+        })
         scheduleReconnect(threadId, token)
       }
 
@@ -453,9 +550,25 @@ export function createSessionEventStreamController(
         if (token !== generation || disposed) {
           return
         }
-        const parsed = parseSessionEvent(event.data)
+        const rawData = typeof event.data === 'string' ? event.data : String(event.data ?? '')
+        const parsed = parseSessionEvent(rawData)
         if (!parsed) {
+          const rawPreview = rawData.length > 240 ? `${rawData.slice(0, 240)}...` : rawData
+          traceStream('stream event dropped: parse failed', {
+            threadId,
+            eventType: event.type,
+            lastEventId: event.lastEventId ?? null,
+            dataLength: rawData.length,
+            rawPreview,
+          })
           return
+        }
+        if (STREAM_TRACE_METHODS.has(parsed.method)) {
+          traceStream('stream event received', {
+            threadId,
+            method: parsed.method,
+            eventSeq: parsed.eventSeq,
+          })
         }
         enqueueEnvelope(parsed)
       }

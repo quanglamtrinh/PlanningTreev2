@@ -376,7 +376,7 @@ class ExecutionAuditOrchestratorV2:
                 "executionRunId": source_execution_run_id,
             },
         )
-        return self._write_action_state(
+        response = self._write_action_state(
             project_id,
             node_id,
             next_state,
@@ -393,6 +393,11 @@ class ExecutionAuditOrchestratorV2:
                 "reviewCommitSha": review_commit_sha,
                 "workflowState": _public_state(projected),
             },
+        )
+        return self._settle_if_turn_already_terminal(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            response=response,
         )
 
     def complete_audit(
@@ -812,7 +817,7 @@ class ExecutionAuditOrchestratorV2:
                 "executionRunId": run_id,
             },
         )
-        return self._write_action_state(
+        response = self._write_action_state(
             project_id,
             node_id,
             next_state,
@@ -826,6 +831,11 @@ class ExecutionAuditOrchestratorV2:
                 "executionRunId": run_id,
                 "workflowState": _public_state(projected),
             },
+        )
+        return self._settle_if_turn_already_terminal(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            response=response,
         )
 
     def _find_active_run_by_turn(
@@ -867,6 +877,40 @@ class ExecutionAuditOrchestratorV2:
                     return ("audit", project_id, node_id, state)
         return None
 
+    def _settle_if_turn_already_terminal(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str,
+        response: dict[str, Any],
+    ) -> dict[str, Any]:
+        runtime_turn_getter = getattr(self._session_manager, "get_runtime_turn", None)
+        if not callable(runtime_turn_getter):
+            return response
+        try:
+            turn = runtime_turn_getter(thread_id=thread_id, turn_id=turn_id)
+        except Exception:
+            logger.debug(
+                "workflow_v2 post-start runtime turn lookup failed",
+                exc_info=True,
+                extra={"threadId": thread_id, "turnId": turn_id},
+            )
+            return response
+        if not isinstance(turn, dict):
+            return response
+        status = str(turn.get("status") or "").strip()
+        if status not in {"completed", "failed", "interrupted"}:
+            return response
+        settled = self.settle_terminal_turn(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            status=status,
+            turn=turn,
+        )
+        if isinstance(settled, dict) and isinstance(settled.get("workflowState"), dict):
+            return {**response, "workflowState": settled["workflowState"]}
+        return response
+
     def _require_workspace_hash(self, workspace_root: str | None, expected_workspace_hash: str) -> str:
         try:
             return self._artifact_service.require_workspace_hash(workspace_root, expected_workspace_hash)
@@ -902,6 +946,15 @@ class ExecutionAuditOrchestratorV2:
             payload["cwd"] = cwd
         if model:
             payload["model"] = model
+        logger.info(
+            "workflow_v2 session turn/start requested",
+            extra={
+                "threadId": thread_id,
+                "clientActionId": client_action_id,
+                "model": model,
+                "cwd": cwd,
+            },
+        )
         response = self._session_manager.turn_start(thread_id=thread_id, payload=payload)
         turn = response.get("turn") if isinstance(response, dict) else None
         turn_id = str(turn.get("id") or "" if isinstance(turn, dict) else "").strip()
@@ -916,6 +969,14 @@ class ExecutionAuditOrchestratorV2:
                     "providerMethod": "turn/start",
                 },
             )
+        logger.info(
+            "workflow_v2 session turn/start accepted",
+            extra={
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "clientActionId": client_action_id,
+            },
+        )
         return turn_id
 
     def _resolve_idempotent(

@@ -9,6 +9,11 @@ from backend.session_core_v2.connection.state_machine import ConnectionStateMach
 from backend.session_core_v2.errors import SessionCoreError
 from backend.session_core_v2.protocol.client import SessionProtocolClientV2
 from backend.session_core_v2.storage.runtime_store import RuntimeStoreV2
+from backend.session_core_v2.thread_store import (
+    ThreadRolloutRecorder,
+    paginate_turns,
+    read_native_thread,
+)
 from backend.session_core_v2.threads.service import ThreadServiceV2
 from backend.session_core_v2.turns.service import TurnServiceV2
 
@@ -24,6 +29,21 @@ _SERVER_REQUEST_METHODS: frozenset[str] = frozenset(
         "mcpServer/elicitation/request",
     }
 )
+_STREAM_TRACE_METHODS: frozenset[str] = frozenset(
+    {
+        "thread/started",
+        "thread/status/changed",
+        "thread/closed",
+        "turn/started",
+        "turn/completed",
+        "item/started",
+        "item/completed",
+        "serverRequest/created",
+        "serverRequest/updated",
+        "serverRequest/resolved",
+        "error",
+    }
+)
 
 
 class SessionManagerV2:
@@ -33,9 +53,11 @@ class SessionManagerV2:
         protocol_client: SessionProtocolClientV2,
         runtime_store: RuntimeStoreV2,
         connection_state_machine: ConnectionStateMachine,
+        thread_rollout_recorder: ThreadRolloutRecorder | None = None,
     ) -> None:
         self._protocol_client = protocol_client
         self._runtime_store = runtime_store
+        self._thread_rollout_recorder = thread_rollout_recorder
         self._connection_state_machine = connection_state_machine
         self._thread_service = ThreadServiceV2(protocol_client, logger=logger)
         self._turn_service = TurnServiceV2(protocol_client, logger=logger)
@@ -107,7 +129,9 @@ class SessionManagerV2:
 
     def thread_start(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
-        return self._thread_service.thread_start(payload)
+        response = self._thread_service.thread_start(payload)
+        self._record_thread_created_from_response(response)
+        return response
 
     def thread_resume(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
@@ -123,26 +147,55 @@ class SessionManagerV2:
 
     def thread_read(self, *, thread_id: str, include_turns: bool) -> dict[str, Any]:
         self._ensure_initialized()
-        return self._thread_service.thread_read(thread_id=thread_id, include_turns=include_turns)
+        recorder = self._require_thread_rollout_recorder()
+        try:
+            return read_native_thread(
+                metadata_store=recorder.metadata_store,
+                rollout_recorder=recorder,
+                thread_id=thread_id,
+                include_history=include_turns,
+            )
+        except FileNotFoundError as exc:
+            raise self._native_thread_not_found(thread_id=thread_id) from exc
+        except SessionCoreError:
+            raise
+        except Exception as exc:
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message=f"failed to read native rollout for thread {thread_id}: {exc}",
+                status_code=500,
+                details={"threadId": thread_id},
+            ) from exc
 
     def thread_turns_list(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
-        provider_response = self._thread_service.thread_turns_list(thread_id=thread_id, params=payload)
-        provider_turns_raw = provider_response.get("data")
-        provider_turns = (
-            [turn for turn in provider_turns_raw if isinstance(turn, dict)]
-            if isinstance(provider_turns_raw, list)
-            else []
+        recorder = self._require_thread_rollout_recorder()
+        try:
+            read_response = read_native_thread(
+                metadata_store=recorder.metadata_store,
+                rollout_recorder=recorder,
+                thread_id=thread_id,
+                include_history=True,
+            )
+        except FileNotFoundError as exc:
+            raise self._native_thread_not_found(thread_id=thread_id) from exc
+        except SessionCoreError:
+            raise
+        except Exception as exc:
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message=f"failed to list native rollout turns for thread {thread_id}: {exc}",
+                status_code=500,
+                details={"threadId": thread_id},
+            ) from exc
+        thread = read_response.get("thread")
+        turns = thread.get("turns") if isinstance(thread, dict) else []
+        return paginate_turns(
+            [turn for turn in turns if isinstance(turn, dict)] if isinstance(turns, list) else [],
+            cursor=str((payload or {}).get("cursor") or "").strip() or None,
+            limit=(payload or {}).get("limit"),
+            sort_direction=str((payload or {}).get("sortDirection") or "desc"),
         )
-        runtime_turns = [
-            self._to_api_turn(turn)
-            for turn in self._runtime_store.list_turns(thread_id=thread_id)
-        ]
-        merged_turns = self._merge_turns_for_api(provider_turns=provider_turns, runtime_turns=runtime_turns)
-        return {
-            "data": merged_turns,
-            "nextCursor": provider_response.get("nextCursor"),
-        }
 
     def thread_loaded_list(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
@@ -214,7 +267,7 @@ class SessionManagerV2:
                 status="completed",
             )
             api_turn = self._to_api_turn(turn)
-            self._runtime_store.append_turn_started_if_absent(
+            self._append_turn_started_if_absent_persisted(
                 thread_id=thread_id,
                 turn_id=context_turn_id,
                 turn=api_turn,
@@ -223,12 +276,12 @@ class SessionManagerV2:
             item_payload["turnId"] = context_turn_id
             item_payload["status"] = "completed"
             item_payload["metadata"] = {**metadata, "workflowContext": True}
-            self._runtime_store.append_notification(
+            self._append_notification_persisted(
                 method="item/completed",
                 params={"item": item_payload},
                 thread_id_override=thread_id,
             )
-            self._runtime_store.append_notification(
+            self._append_notification_persisted(
                 method="turn/completed",
                 params={"turn": api_turn},
                 thread_id_override=thread_id,
@@ -326,7 +379,32 @@ class SessionManagerV2:
                 },
             )
 
-        self._runtime_store.create_turn(thread_id=thread_id, turn_id=turn_id, status="idle")
+        existing_turn = self._runtime_store.get_turn(thread_id=thread_id, turn_id=turn_id)
+        if existing_turn is not None and str(existing_turn.get("status") or "") in _TERMINAL_TURN_STATUSES:
+            turn_payload = {"turn": self._to_api_turn(existing_turn)}
+            self._runtime_store.record_idempotent_result(
+                action_type="turn/start",
+                key=client_action_id,
+                payload={"threadId": thread_id, **payload},
+                response=turn_payload,
+                thread_id=thread_id,
+                turn_id=turn_id,
+            )
+            logger.info(
+                "session_core_v2 turn/start observed terminal turn before response",
+                extra={
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "clientActionId": client_action_id,
+                    "eventSeq": None,
+                    "eventId": None,
+                    "errorCode": None,
+                },
+            )
+            return turn_payload
+
+        if existing_turn is None:
+            self._runtime_store.create_turn(thread_id=thread_id, turn_id=turn_id, status="idle")
         turn = self._runtime_store.transition_turn(
             thread_id=thread_id,
             turn_id=turn_id,
@@ -335,7 +413,7 @@ class SessionManagerV2:
             last_codex_status="inProgress",
         )
         turn_payload = {"turn": self._to_api_turn(turn)}
-        self._runtime_store.append_turn_started_if_absent(
+        turn_started_event = self._append_turn_started_if_absent_persisted(
             thread_id=thread_id,
             turn_id=turn_id,
             turn=turn_payload["turn"],
@@ -354,7 +432,8 @@ class SessionManagerV2:
                 "threadId": thread_id,
                 "turnId": turn_id,
                 "clientActionId": client_action_id,
-                "eventSeq": None,
+                "eventSeq": turn_started_event.get("eventSeq"),
+                "eventId": turn_started_event.get("eventId"),
                 "errorCode": None,
             },
         )
@@ -683,6 +762,20 @@ class SessionManagerV2:
         cursor_value = self._runtime_store.parse_cursor(thread_id=thread_id, cursor=cursor)
         replay_events = self._runtime_store.replay_events(thread_id=thread_id, cursor_value=cursor_value)
         subscriber_id = self._runtime_store.subscribe_thread_events(thread_id=thread_id)
+        first_replay_seq = replay_events[0].get("eventSeq") if replay_events else None
+        last_replay_seq = replay_events[-1].get("eventSeq") if replay_events else None
+        logger.info(
+            "session_core_v2 stream open",
+            extra={
+                "threadId": thread_id,
+                "subscriberId": subscriber_id,
+                "cursorEventId": cursor,
+                "cursorValue": cursor_value,
+                "replayEventCount": len(replay_events),
+                "firstReplayEventSeq": first_replay_seq,
+                "lastReplayEventSeq": last_replay_seq,
+            },
+        )
         return {
             "cursorValue": cursor_value,
             "replayEvents": replay_events,
@@ -694,6 +787,150 @@ class SessionManagerV2:
 
     def close_event_stream(self, *, subscriber_id: str) -> None:
         self._runtime_store.unsubscribe(subscriber_id=subscriber_id)
+        logger.info(
+            "session_core_v2 stream close",
+            extra={"subscriberId": subscriber_id},
+        )
+
+    def get_runtime_turn(self, *, thread_id: str, turn_id: str) -> dict[str, Any] | None:
+        turn = self._runtime_store.get_turn(thread_id=thread_id, turn_id=turn_id)
+        if turn is None:
+            return None
+        return self._to_api_turn(turn)
+
+    def settle_native_terminal_event(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str,
+        task: dict[str, Any] | None = None,
+        status: str = "completed",
+        publish: bool = False,
+    ) -> dict[str, Any]:
+        recorder = self._require_thread_rollout_recorder()
+        normalized_thread_id = self._require_non_empty(thread_id, "threadId")
+        normalized_turn_id = self._require_non_empty(turn_id, "turnId")
+        normalized_status = str(status or "completed").strip()
+        if normalized_status not in {"completed", "failed", "interrupted"}:
+            normalized_status = "failed"
+
+        metadata_status = "failed" if normalized_status == "failed" else "closed"
+        recorder.ensure_thread(thread_id=normalized_thread_id, status=metadata_status)
+        existing_items = recorder.load_items(normalized_thread_id)
+        terminal_exists = self._rollout_has_terminal_turn(
+            existing_items,
+            thread_id=normalized_thread_id,
+            turn_id=normalized_turn_id,
+        )
+        task_method = "task/failed" if normalized_status == "failed" else "task/completed"
+        items_to_append: list[dict[str, Any]] = []
+        task_params: dict[str, Any] | None = None
+        if isinstance(task, dict):
+            task_payload = dict(task)
+            task_payload.setdefault("id", f"task-{normalized_turn_id}")
+            task_payload["threadId"] = normalized_thread_id
+            task_payload["turnId"] = normalized_turn_id
+            task_payload["status"] = "failed" if normalized_status == "failed" else "completed"
+            task_params = task_payload
+            items_to_append.append(
+                {
+                    "type": "event_msg",
+                    "event": {
+                        "eventId": f"terminal:{normalized_thread_id}:{normalized_turn_id}:task:{task_payload['id']}:{task_method}",
+                        "method": task_method,
+                        "threadId": normalized_thread_id,
+                        "turnId": normalized_turn_id,
+                        "params": task_params,
+                    },
+                }
+            )
+        if not terminal_exists:
+            turn_payload = {
+                "id": normalized_turn_id,
+                "threadId": normalized_thread_id,
+                "status": normalized_status,
+                "items": [],
+            }
+            items_to_append.append(
+                {
+                    "type": "event_msg",
+                    "event": {
+                        "eventId": f"terminal:{normalized_thread_id}:{normalized_turn_id}:turn:{normalized_status}",
+                        "method": "turn/completed",
+                        "threadId": normalized_thread_id,
+                        "turnId": normalized_turn_id,
+                        "params": {
+                            "threadId": normalized_thread_id,
+                            "turnId": normalized_turn_id,
+                            "turn": turn_payload,
+                        },
+                    },
+                }
+            )
+
+        appended = recorder.append_items(normalized_thread_id, items_to_append)
+        recorder.metadata_store.update_status(normalized_thread_id, metadata_status)
+
+        if publish:
+            for item in appended:
+                event = item.get("event") if isinstance(item.get("event"), dict) else {}
+                method = str(event.get("method") or "")
+                params = event.get("params") if isinstance(event.get("params"), dict) else {}
+                if method:
+                    self._runtime_store.append_notification(
+                        method=method,
+                        params=params,
+                        thread_id_override=normalized_thread_id,
+                    )
+
+        return {
+            "threadId": normalized_thread_id,
+            "turnId": normalized_turn_id,
+            "status": normalized_status,
+            "appended": len(appended),
+            "terminalAlreadyPersisted": terminal_exists,
+        }
+
+    def _require_thread_rollout_recorder(self) -> ThreadRolloutRecorder:
+        if self._thread_rollout_recorder is None:
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message="Native thread rollout recorder is not configured.",
+                status_code=500,
+                details={},
+            )
+        return self._thread_rollout_recorder
+
+    @staticmethod
+    def _native_thread_not_found(*, thread_id: str) -> SessionCoreError:
+        return SessionCoreError(
+            code="ERR_THREAD_NOT_FOUND",
+            message=f"no rollout found for thread id {thread_id}",
+            status_code=404,
+            details={"threadId": thread_id},
+        )
+
+    @staticmethod
+    def _rollout_has_terminal_turn(items: list[dict[str, Any]], *, thread_id: str, turn_id: str) -> bool:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            event = item.get("event")
+            if not isinstance(event, dict):
+                continue
+            method = str(event.get("method") or "")
+            if method not in {"turn/completed", "turn/failed"}:
+                continue
+            event_thread_id = str(event.get("threadId") or "").strip()
+            event_turn_id = str(event.get("turnId") or "").strip()
+            params = event.get("params") if isinstance(event.get("params"), dict) else {}
+            if not event_thread_id:
+                event_thread_id = SessionManagerV2._thread_id_from_params(params)
+            if not event_turn_id:
+                event_turn_id = SessionManagerV2._turn_id_from_params(params) or ""
+            if event_thread_id == thread_id and event_turn_id == turn_id:
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -709,9 +946,206 @@ class SessionManagerV2:
 
     def _on_notification(self, method: str, params: dict[str, Any]) -> None:
         try:
-            self._runtime_store.append_notification(method=method, params=params)
+            envelope = self._append_notification_persisted(method=method, params=params)
+            if method in _STREAM_TRACE_METHODS:
+                params_thread_id = self._optional_non_empty_str(params.get("threadId"))
+                params_turn_id = self._optional_non_empty_str(params.get("turnId"))
+                if not params_turn_id:
+                    turn_payload = params.get("turn")
+                    if isinstance(turn_payload, dict):
+                        params_turn_id = self._optional_non_empty_str(turn_payload.get("id"))
+                logger.info(
+                    "session_core_v2 notification ingest",
+                    extra={
+                        "threadId": envelope.get("threadId") if isinstance(envelope, dict) else params_thread_id,
+                        "turnId": envelope.get("turnId") if isinstance(envelope, dict) else params_turn_id,
+                        "method": method,
+                        "eventSeq": envelope.get("eventSeq") if isinstance(envelope, dict) else None,
+                        "eventId": envelope.get("eventId") if isinstance(envelope, dict) else None,
+                        "ingestAccepted": bool(envelope),
+                    },
+                )
         except Exception:
             logger.debug("session_core_v2 notification ingest failed", exc_info=True)
+
+    def _append_notification_persisted(
+        self,
+        *,
+        method: str,
+        params: dict[str, Any],
+        thread_id_override: str | None = None,
+    ) -> dict[str, Any]:
+        self._persist_rollout_event(method=method, params=params, thread_id_override=thread_id_override)
+        return self._runtime_store.append_notification(
+            method=method,
+            params=params,
+            thread_id_override=thread_id_override,
+        )
+
+    def _append_turn_started_if_absent_persisted(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str,
+        turn: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload_params = dict(params or {})
+        if isinstance(turn, dict) and not isinstance(payload_params.get("turn"), dict):
+            payload_params["turn"] = dict(turn)
+        if "turnId" not in payload_params:
+            payload_params["turnId"] = turn_id
+        self._persist_rollout_event(
+            method="turn/started",
+            params=payload_params,
+            thread_id_override=thread_id,
+        )
+        return self._runtime_store.append_turn_started_if_absent(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            turn=turn,
+            params=params,
+        )
+
+    def _persist_rollout_event(
+        self,
+        *,
+        method: str,
+        params: dict[str, Any],
+        thread_id_override: str | None = None,
+    ) -> None:
+        recorder = self._thread_rollout_recorder
+        if recorder is None:
+            return
+        normalized_method = str(method or "").strip()
+        if not normalized_method:
+            return
+        thread_id = str(thread_id_override or "").strip() or self._thread_id_from_params(params)
+        if not thread_id:
+            logger.debug(
+                "session_core_v2 rollout persist skipped: missing thread id",
+                extra={"method": normalized_method},
+            )
+            return
+        turn_id = self._turn_id_from_params(params)
+        status = self._status_for_rollout_event(normalized_method, params)
+        recorder.ensure_thread(thread_id=thread_id, status=status)
+        recorder.append_items(
+            thread_id,
+            [
+                {
+                    "type": "event_msg",
+                    "event": {
+                        "method": normalized_method,
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "eventId": self._event_id_from_params(params),
+                        "params": dict(params),
+                    },
+                }
+            ],
+        )
+
+    def _record_thread_created_from_response(self, response: dict[str, Any]) -> None:
+        recorder = self._thread_rollout_recorder
+        if recorder is None or not isinstance(response, dict):
+            return
+        thread = response.get("thread")
+        thread_id = None
+        if isinstance(thread, dict):
+            thread_id = self._optional_non_empty_str(thread.get("id") or thread.get("threadId"))
+        thread_id = thread_id or self._optional_non_empty_str(response.get("threadId"))
+        if not thread_id:
+            return
+        title = None
+        if isinstance(thread, dict):
+            title = self._optional_non_empty_str(thread.get("name") or thread.get("title"))
+        recorder.ensure_thread(thread_id=thread_id, title=title, status="idle")
+        recorder.append_items(
+            thread_id,
+            [
+                {
+                    "type": "session_meta",
+                    "threadId": thread_id,
+                    "thread": dict(thread) if isinstance(thread, dict) else dict(response),
+                },
+                {
+                    "type": "event_msg",
+                    "event": {
+                        "method": "thread/created",
+                        "threadId": thread_id,
+                        "turnId": None,
+                        "eventId": self._event_id_from_params(response),
+                        "params": dict(response),
+                    },
+                },
+            ],
+        )
+
+    @staticmethod
+    def _thread_id_from_params(params: dict[str, Any]) -> str:
+        for key in ("threadId", "thread_id"):
+            value = params.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        thread = params.get("thread")
+        if isinstance(thread, dict):
+            for key in ("id", "threadId", "thread_id"):
+                value = thread.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        turn = params.get("turn")
+        if isinstance(turn, dict):
+            value = turn.get("threadId") or turn.get("thread_id")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        item = params.get("item")
+        if isinstance(item, dict):
+            value = item.get("threadId") or item.get("thread_id")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    @staticmethod
+    def _turn_id_from_params(params: dict[str, Any]) -> str | None:
+        for key in ("turnId", "turn_id"):
+            value = params.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        turn = params.get("turn")
+        if isinstance(turn, dict):
+            value = turn.get("id") or turn.get("turnId") or turn.get("turn_id")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        item = params.get("item")
+        if isinstance(item, dict):
+            value = item.get("turnId") or item.get("turn_id")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @staticmethod
+    def _event_id_from_params(params: dict[str, Any]) -> str | None:
+        for key in ("eventId", "event_id", "id"):
+            value = params.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @staticmethod
+    def _status_for_rollout_event(method: str, params: dict[str, Any]) -> str:
+        if method in {"thread/closed"}:
+            return "closed"
+        if method in {"turn/started", "item/started", "task/started"}:
+            return "running"
+        if method in {"error", "turn/failed", "task/failed"}:
+            return "failed"
+        if method == "turn/completed":
+            turn = params.get("turn")
+            if isinstance(turn, dict) and str(turn.get("status") or "") == "failed":
+                return "failed"
+            return "closed"
+        return "running"
 
     def _on_server_request(self, raw_request_id: Any, method: str, params: dict[str, Any]) -> None:
         try:

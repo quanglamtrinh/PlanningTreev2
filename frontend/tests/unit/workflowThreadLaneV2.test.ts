@@ -236,6 +236,21 @@ describe('workflowThreadLaneV2', () => {
     })
   })
 
+  it('keeps ask lane writable on review nodes when ask thread exists', () => {
+    const lane = resolveWorkflowThreadLaneV2({
+      workflowState: makeWorkflowState(),
+      threadTab: 'ask',
+      isReviewNode: true,
+    })
+
+    expect(lane.threadId).toBe('ask-thread-1')
+    expect(lane.policy).toEqual({
+      kind: 'ask',
+      canSubmit: true,
+      disabledReason: null,
+    })
+  })
+
   it('maps composer intent through ask lane config into a full-access turn policy', () => {
     const lane = resolveWorkflowThreadLaneV2({
       workflowState: makeWorkflowState(),

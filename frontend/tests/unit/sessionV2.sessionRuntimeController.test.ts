@@ -204,9 +204,27 @@ describe('sessionRuntimeController', () => {
     await harness.controller.ensureThreadReady('thread-1')
 
     expect(harness.api.resumeThread).toHaveBeenCalledWith('thread-1', {})
-    expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', false)
-    expect(harness.api.listThreadTurns).toHaveBeenCalledWith('thread-1', { limit: 200 })
-    expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [], { mode: 'merge' })
+    expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
+    expect(harness.api.listThreadTurns).not.toHaveBeenCalled()
+    expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [], { mode: 'replace' })
+  })
+
+  it('hydrates by replacing from thread/read turns without listing turns', async () => {
+    const turn = makeTurn({
+      id: 'turn-from-read',
+      threadId: 'thread-1',
+      status: 'completed',
+      completedAtMs: 2,
+    })
+    harness.api.readThread.mockResolvedValue({
+      thread: makeThread({ id: 'thread-1', turns: [turn] }),
+    })
+
+    await harness.controller.hydrateThreadState('thread-1', { force: true })
+
+    expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
+    expect(harness.api.listThreadTurns).not.toHaveBeenCalled()
+    expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [turn], { mode: 'replace' })
   })
 
   it('hydrates thread state with replace mode during full resync recovery', async () => {

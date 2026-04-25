@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from backend.session_core_v2.errors import SessionCoreError
 from backend.session_core_v2.protocol.client import SessionProtocolClientV2
 
 
@@ -64,12 +63,7 @@ class ThreadServiceV2:
     def thread_turns_list(self, *, thread_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         started = time.perf_counter()
         normalized_params = params or {}
-        try:
-            response = self._protocol_client.thread_turns_list(thread_id, normalized_params)
-        except SessionCoreError as exc:
-            if not self._is_turns_list_unsupported(exc):
-                raise
-            response = self._thread_turns_list_fallback(thread_id=thread_id, params=normalized_params)
+        response = self._protocol_client.thread_turns_list(thread_id, normalized_params)
         elapsed_ms = (time.perf_counter() - started) * 1000
         self._logger.info("session_core_v2 thread/turns/list", extra={"latency_ms": elapsed_ms})
         data = response.get("data")
@@ -79,30 +73,6 @@ class ThreadServiceV2:
         return {
             "data": normalized,
             "nextCursor": response.get("nextCursor"),
-        }
-
-    def _thread_turns_list_fallback(self, *, thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
-        read_response = self._protocol_client.thread_read(thread_id, include_turns=True)
-        thread = read_response.get("thread")
-        turns = thread.get("turns") if isinstance(thread, dict) else None
-        if not isinstance(turns, list):
-            turns = []
-        cursor_value = self._parse_cursor(params.get("cursor"))
-        limit = self._parse_limit(params.get("limit"), default=200)
-        if cursor_value >= len(turns):
-            page: list[dict[str, Any]] = []
-            next_cursor: str | None = None
-        else:
-            page = [entry for entry in turns[cursor_value : cursor_value + limit] if isinstance(entry, dict)]
-            next_offset = cursor_value + len(page)
-            next_cursor = str(next_offset) if next_offset < len(turns) else None
-        self._logger.info(
-            "session_core_v2 thread/turns/list fallback via thread/read",
-            extra={"threadId": thread_id, "cursor": cursor_value, "limit": limit},
-        )
-        return {
-            "data": page,
-            "nextCursor": next_cursor,
         }
 
     def thread_loaded_list(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -188,42 +158,6 @@ class ThreadServiceV2:
         normalized.setdefault("createdAt", _now_ms())
         normalized.setdefault("updatedAt", _now_ms())
         return normalized
-
-    @staticmethod
-    def _parse_cursor(raw_value: Any) -> int:
-        if raw_value is None:
-            return 0
-        try:
-            parsed = int(str(raw_value).strip())
-        except Exception:
-            return 0
-        if parsed < 0:
-            return 0
-        return parsed
-
-    @staticmethod
-    def _parse_limit(raw_value: Any, *, default: int) -> int:
-        if raw_value is None:
-            return default
-        try:
-            parsed = int(str(raw_value).strip())
-        except Exception:
-            return default
-        if parsed <= 0:
-            return default
-        return parsed
-
-    @staticmethod
-    def _is_turns_list_unsupported(error: SessionCoreError) -> bool:
-        if error.code != "ERR_PROVIDER_UNAVAILABLE":
-            return False
-        rpc_code = error.details.get("rpcCode") if isinstance(error.details, dict) else None
-        if rpc_code not in {-32600, -32601}:
-            return False
-        message = str(error.message or "").lower()
-        return "thread/turns/list" in message and (
-            "unknown variant" in message or "method not found" in message
-        )
 
     @staticmethod
     def _normalize_turn(value: dict[str, Any]) -> dict[str, Any]:

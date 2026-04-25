@@ -263,6 +263,63 @@ describe('useSessionFacadeV2', () => {
     expect(facadeB).not.toBeNull()
   })
 
+  it('opens stream from selectThread even when caller is not primary lifecycle owner', async () => {
+    let facadeA: SessionFacadeV2 | null = null
+    let facadeB: SessionFacadeV2 | null = null
+    const options: SessionFacadeOptions = {
+      bootstrapPolicy: {
+        autoBootstrapOnMount: false,
+      },
+    }
+
+    function MultiHarness({ showA, showB }: { showA: boolean; showB: boolean }) {
+      return (
+        <>
+          {showA ? (
+            <FacadeHarness
+              options={options}
+              onFacade={(facade) => {
+                facadeA = facade
+              }}
+            />
+          ) : null}
+          {showB ? (
+            <FacadeHarness
+              options={options}
+              onFacade={(facade) => {
+                facadeB = facade
+              }}
+            />
+          ) : null}
+        </>
+      )
+    }
+
+    const view = render(<MultiHarness showA showB />)
+
+    await waitFor(() => {
+      expect(getSessionFacadeRuntimeOwnershipSnapshot().ownerCount).toBe(2)
+      expect(facadeB).not.toBeNull()
+    })
+
+    view.rerender(<MultiHarness showA={false} showB />)
+
+    await waitFor(() => {
+      expect(getSessionFacadeRuntimeOwnershipSnapshot().ownerCount).toBe(1)
+    })
+
+    mockApi.openThreadEventsStreamV2.mockClear()
+
+    await act(async () => {
+      await facadeB?.commands.selectThread('thread-2')
+    })
+
+    expect(useThreadSessionStore.getState().activeThreadId).toBe('thread-2')
+    expect(mockApi.openThreadEventsStreamV2).toHaveBeenCalledTimes(1)
+    expect(mockApi.openThreadEventsStreamV2.mock.calls[0]?.[0]).toBe('thread-2')
+    expect(facadeA).not.toBeNull()
+  })
+
   it('drops stale selectThread async results when user switches quickly', async () => {
     let latestFacade: SessionFacadeV2 | null = null
 
@@ -456,6 +513,58 @@ describe('useSessionFacadeV2', () => {
 
     expect(mockApi.initializeSessionV2).not.toHaveBeenCalled()
     expect(useThreadSessionStore.getState().activeThreadId).toBeNull()
+  })
+
+  it('emits select_thread_snapshot correlation with selected thread data', async () => {
+    let latestFacade: SessionFacadeV2 | null = null
+    const correlationEvents: Record<string, unknown>[] = []
+    const onCorrelation = (event: Event) => {
+      const custom = event as CustomEvent<Record<string, unknown> | undefined>
+      if (custom.detail && typeof custom.detail === 'object') {
+        correlationEvents.push(custom.detail)
+      }
+    }
+
+    window.addEventListener('session-v2-correlation', onCorrelation as EventListener)
+    try {
+      render(
+        <FacadeHarness
+          options={{
+            bootstrapPolicy: { autoBootstrapOnMount: false },
+          }}
+          onFacade={(facade) => {
+            latestFacade = facade
+          }}
+        />,
+      )
+
+      await waitFor(() => {
+        expect(latestFacade).not.toBeNull()
+      })
+
+      act(() => {
+        useThreadSessionStore.getState().setThreadList([makeThread({ id: 'thread-2' })])
+      })
+
+      await act(async () => {
+        await latestFacade?.commands.selectThread('thread-2')
+      })
+
+      const snapshotEvent = correlationEvents.find(
+        (entry) =>
+          entry.type === 'select_thread_snapshot' &&
+          entry.targetThreadId === 'thread-2',
+      ) as {
+        snapshot?: { requestedThreadId?: string | null; resolvedThreadId?: string | null; threadExists?: boolean }
+      } | undefined
+
+      expect(snapshotEvent).toBeDefined()
+      expect(snapshotEvent?.snapshot?.requestedThreadId).toBe('thread-2')
+      expect(snapshotEvent?.snapshot?.resolvedThreadId).toBe('thread-2')
+      expect(snapshotEvent?.snapshot?.threadExists).toBe(true)
+    } finally {
+      window.removeEventListener('session-v2-correlation', onCorrelation as EventListener)
+    }
   })
 
   it('forwards threadCreationPolicy during manual bootstrap thread creation', async () => {
