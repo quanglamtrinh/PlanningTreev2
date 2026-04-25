@@ -7,6 +7,7 @@ type TranscriptPanelProps = {
   threadId: string | null
   turns: SessionTurn[]
   itemsByTurn: Record<string, SessionItem[]>
+  showWorkflowContext?: boolean
 }
 
 type TranscriptRow =
@@ -583,6 +584,17 @@ function isContextCompactionItem(item: SessionItem): boolean {
   return payloadTypeOf(item) === 'contextCompaction'
 }
 
+function isWorkflowContextItem(item: SessionItem): boolean {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  const metadata = isRecord(payload.metadata) ? payload.metadata : {}
+  if (metadata.workflowContext === true) {
+    return true
+  }
+  const rawItem = isRecord(item.rawItem) ? item.rawItem : {}
+  const rawMetadata = isRecord(rawItem.metadata) ? rawItem.metadata : {}
+  return rawMetadata.workflowContext === true
+}
+
 function isToolItem(item: SessionItem): boolean {
   return !isContextCompactionItem(item) && resolveRowVariant(item) === 'tool'
 }
@@ -944,11 +956,14 @@ function buildTranscriptRows(
   threadId: string,
   turns: SessionTurn[],
   itemsByTurn: Record<string, SessionItem[]>,
+  showWorkflowContext: boolean,
 ): TranscriptRow[] {
   const rows: TranscriptRow[] = []
   for (const turn of turns) {
     const key = `${threadId}:${turn.id}`
-    const items = dedupeTurnItems(itemsByTurn[key] ?? [])
+    const items = dedupeTurnItems(itemsByTurn[key] ?? []).filter(
+      (item) => showWorkflowContext || !isWorkflowContextItem(item),
+    )
     if (!isTerminalTurn(turn)) {
       let liveToolCluster: SessionItem[] = []
       let liveToolSummaryIndex = 0
@@ -1099,7 +1114,12 @@ function buildTranscriptRows(
   return rows
 }
 
-export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPanelProps) {
+export function TranscriptPanel({
+  threadId,
+  turns,
+  itemsByTurn,
+  showWorkflowContext = false,
+}: TranscriptPanelProps) {
   const [expandedUserRows, setExpandedUserRows] = useState<Record<string, boolean>>({})
   const [copiedUserRow, setCopiedUserRow] = useState<string | null>(null)
   const [expandedFileRowsBySummary, setExpandedFileRowsBySummary] = useState<Record<string, string | null>>({})
@@ -1141,7 +1161,7 @@ export function TranscriptPanel({ threadId, turns, itemsByTurn }: TranscriptPane
     }, SCROLL_SNAPSHOT_DEBOUNCE_MS)
   }
 
-  const rows = threadId ? buildTranscriptRows(threadId, turns, itemsByTurn) : []
+  const rows = threadId ? buildTranscriptRows(threadId, turns, itemsByTurn, showWorkflowContext) : []
   const activeAgentStreamToken = threadId ? getActiveAgentStreamToken(threadId, turns, itemsByTurn) : null
   const hasActiveAgentStream = Boolean(activeAgentStreamToken)
   activeThreadIdRef.current = threadId

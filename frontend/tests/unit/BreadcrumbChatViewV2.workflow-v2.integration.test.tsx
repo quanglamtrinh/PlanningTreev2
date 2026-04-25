@@ -252,7 +252,7 @@ describe('BreadcrumbChatViewV2 Workflow V2 cutover integration', () => {
       expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'exec-thread-1')
     })
     expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
-    expect(facade.commands.selectThread).toHaveBeenCalledWith('exec-thread-1')
+    expect(facade.commands.selectThread).not.toHaveBeenCalled()
   })
 
   it('renders audit lane with transcript when Workflow V2 audit thread exists', async () => {
@@ -274,7 +274,7 @@ describe('BreadcrumbChatViewV2 Workflow V2 cutover integration', () => {
     await waitFor(() => {
       expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'audit-thread-1')
     })
-    expect(facade.commands.selectThread).toHaveBeenCalledWith('audit-thread-1')
+    expect(facade.commands.selectThread).not.toHaveBeenCalled()
   })
 
   it('clears selection for audit lane when Workflow V2 audit thread is missing', async () => {
@@ -341,7 +341,7 @@ describe('BreadcrumbChatViewV2 Workflow V2 cutover integration', () => {
     await waitFor(() => {
       expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'package-thread-1')
     })
-    expect(facade.commands.selectThread).toHaveBeenCalledWith('package-thread-1')
+    expect(facade.commands.selectThread).not.toHaveBeenCalled()
     expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
   })
 })

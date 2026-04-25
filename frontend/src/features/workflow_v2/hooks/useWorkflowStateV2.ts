@@ -8,6 +8,9 @@ export function useWorkflowStateV2(projectId: string | null | undefined, nodeId:
   const activeMutation = useWorkflowStateStoreV2((state) =>
     key ? state.activeMutations[key] ?? null : null,
   )
+  const mutationResult = useWorkflowStateStoreV2((state) =>
+    key ? state.mutationResultByKey[key] ?? null : null,
+  )
   const loadWorkflowState = useWorkflowStateStoreV2((state) => state.loadWorkflowState)
   const ensureThread = useWorkflowStateStoreV2((state) => state.ensureThread)
   const startExecution = useWorkflowStateStoreV2((state) => state.startExecution)
@@ -22,6 +25,7 @@ export function useWorkflowStateV2(projectId: string | null | undefined, nodeId:
     isLoading,
     error,
     activeMutation,
+    mutationResult,
     loadWorkflowState,
     ensureThread,
     startExecution,

@@ -234,6 +234,55 @@
   line-height: 1.45;
 }
 
+.threadDebugPanel {
+  max-width: 860px;
+  width: calc(100% - 40px);
+  margin: 10px auto 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--thread-pane-info) 26%, var(--thread-pane-border-default));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--thread-pane-info) 8%, var(--thread-pane-bg-surface));
+}
+
+.threadDebugPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.threadDebugPanelActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.threadDebugButton {
+  border: 1px solid color-mix(in srgb, var(--thread-pane-border-strong) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--thread-pane-bg-surface) 92%, #fff);
+  color: var(--thread-pane-text-primary);
+  font-size: 11px;
+  line-height: 1.2;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.threadDebugButton:hover {
+  border-color: color-mix(in srgb, var(--thread-pane-accent) 55%, transparent);
+}
+
+.threadDebugPanelBody {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @media (max-width: 960px) {
   .threadPane {
     border-right: none;

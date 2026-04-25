@@ -393,17 +393,81 @@ function seedStores(options: {
     loadDetailState: vi.fn().mockResolvedValue(undefined),
   } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
   useWorkflowStateStoreV2.setState({
+    mutationResultByKey: {},
     entries: { 'project-1::root': workflowState },
     errors: workflowError ? { 'project-1::root': workflowError } : {},
     activeMutations: { 'project-1::root': null },
     loadWorkflowState: vi.fn().mockResolvedValue(undefined),
-    ensureThread: vi.fn().mockResolvedValue(workflowState),
-    startExecution: vi.fn().mockResolvedValue(workflowState),
-    completeExecution: vi.fn().mockResolvedValue(workflowState),
-    startAudit: vi.fn().mockResolvedValue(workflowState),
-    improveExecution: vi.fn().mockResolvedValue(workflowState),
-    acceptAudit: vi.fn().mockResolvedValue(workflowState),
-    startPackageReview: vi.fn().mockResolvedValue(workflowState),
+    ensureThread: vi.fn().mockResolvedValue({
+      workflowState,
+      threadId: workflowState.threads.askPlanning,
+      turnId: null,
+      executionRunId: null,
+      auditRunId: null,
+      reviewCycleId: null,
+      reviewThreadId: null,
+      reviewCommitSha: null,
+    }),
+    startExecution: vi.fn().mockResolvedValue({
+      workflowState,
+      threadId: workflowState.threads.execution,
+      turnId: null,
+      executionRunId: null,
+      auditRunId: null,
+      reviewCycleId: null,
+      reviewThreadId: null,
+      reviewCommitSha: null,
+    }),
+    completeExecution: vi.fn().mockResolvedValue({
+      workflowState,
+      threadId: null,
+      turnId: null,
+      executionRunId: null,
+      auditRunId: null,
+      reviewCycleId: null,
+      reviewThreadId: null,
+      reviewCommitSha: null,
+    }),
+    startAudit: vi.fn().mockResolvedValue({
+      workflowState,
+      threadId: workflowState.threads.audit,
+      turnId: null,
+      executionRunId: null,
+      auditRunId: null,
+      reviewCycleId: null,
+      reviewThreadId: null,
+      reviewCommitSha: null,
+    }),
+    improveExecution: vi.fn().mockResolvedValue({
+      workflowState,
+      threadId: workflowState.threads.execution,
+      turnId: null,
+      executionRunId: null,
+      auditRunId: null,
+      reviewCycleId: null,
+      reviewThreadId: null,
+      reviewCommitSha: null,
+    }),
+    acceptAudit: vi.fn().mockResolvedValue({
+      workflowState,
+      threadId: null,
+      turnId: null,
+      executionRunId: null,
+      auditRunId: null,
+      reviewCycleId: null,
+      reviewThreadId: null,
+      reviewCommitSha: null,
+    }),
+    startPackageReview: vi.fn().mockResolvedValue({
+      workflowState,
+      threadId: workflowState.threads.packageReview,
+      turnId: null,
+      executionRunId: null,
+      auditRunId: null,
+      reviewCycleId: null,
+      reviewThreadId: null,
+      reviewCommitSha: null,
+    }),
   } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
 }
 
@@ -451,9 +515,7 @@ describe('BreadcrumbViewV2', () => {
         '/projects/project-1/nodes/root/chat-v2?thread=execution',
       )
     })
-    await waitFor(() => {
-      expect(facade.commands.selectThread).toHaveBeenCalledWith('exec-thread-1')
-    })
+    expect(facade.commands.selectThread).not.toHaveBeenCalled()
     expect(mockUseSessionFacadeV2).toHaveBeenCalledWith({
       bootstrapPolicy: {
         autoBootstrapOnMount: true,
@@ -485,9 +547,7 @@ describe('BreadcrumbViewV2', () => {
       </MemoryRouter>,
     )
 
-    await waitFor(() => {
-      expect(facade.commands.selectThread).toHaveBeenCalledWith('ask-thread-1')
-    })
+    expect(facade.commands.selectThread).not.toHaveBeenCalled()
     expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'ask-thread-1')
   })
 
@@ -818,11 +878,20 @@ describe('BreadcrumbViewV2', () => {
     })
     seedStores({ workflowState })
     const startPackageReview = vi.fn().mockResolvedValue(
-      makeWorkflowState({
-        phase: 'done',
-        threads: { packageReview: 'package-thread-1' },
-        allowedActions: [],
-      }),
+      {
+        workflowState: makeWorkflowState({
+          phase: 'done',
+          threads: { packageReview: 'package-thread-1' },
+          allowedActions: [],
+        }),
+        threadId: 'package-thread-1',
+        turnId: null,
+        executionRunId: null,
+        auditRunId: null,
+        reviewCycleId: null,
+        reviewThreadId: null,
+        reviewCommitSha: null,
+      },
     )
     useWorkflowStateStoreV2.setState({
       startPackageReview,
@@ -854,5 +923,39 @@ describe('BreadcrumbViewV2', () => {
         }),
       )
     })
+  })
+
+  it('shows debug panel when debugSession query flag is enabled', async () => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        phase: 'executing',
+        threads: {
+          execution: 'exec-thread-1',
+        },
+      }),
+    })
+    mockUseSessionFacadeV2.mockReturnValue(
+      makeFacade({
+        activeThreadId: 'exec-thread-1',
+        activeThread: makeThread('exec-thread-1'),
+        isActiveThreadReady: true,
+      }),
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution&debugSession=1']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const panel = await screen.findByTestId('session-debug-panel')
+    expect(panel).toBeInTheDocument()
+    expect(panel.textContent ?? '').toContain('workflowLaneThreadId')
+    expect(screen.getByRole('button', { name: 'Copy trace payload' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show context items' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Show context items' }))
+    expect(screen.getByRole('button', { name: 'Hide context items' })).toBeInTheDocument()
   })
 })

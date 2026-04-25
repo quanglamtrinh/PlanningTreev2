@@ -16,6 +16,7 @@ from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.execution_audit_orchestrator import ExecutionAuditOrchestratorV2
 from backend.business.workflow_v2.artifact_orchestrator import ArtifactOrchestratorV2
+from backend.business.workflow_v2.legacy_transcript_migrator import LegacyTranscriptMigratorV2
 from backend.business.workflow_v2.legacy_v3_adapter import LegacyWorkflowV3CompatibilityAdapter
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
@@ -327,6 +328,32 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         spec_generation_service=spec_generation_service,
         split_service=split_service,
     )
+    legacy_transcript_migrator_v2 = LegacyTranscriptMigratorV2(
+        storage=storage,
+        workflow_repository=workflow_state_repository_v2,
+        snapshot_store=storage.thread_snapshot_store_v2,
+        runtime_store=session_runtime_store_v2,
+    )
+    legacy_migration_summary = legacy_transcript_migrator_v2.migrate_all()
+    if int(legacy_migration_summary.get("failed") or 0) > 0:
+        raise RuntimeError(
+            f"Legacy transcript migration failed for {legacy_migration_summary.get('failed')} thread(s). "
+            "Session Core V2 full rollout requires all legacy threads to migrate successfully."
+        )
+    pending_legacy = legacy_transcript_migrator_v2.find_unmigrated_candidates()
+    if pending_legacy:
+        raise RuntimeError(
+            f"Legacy transcript migration incomplete: {len(pending_legacy)} legacy thread(s) remain unmigrated."
+        )
+    logger.info(
+        "Workflow V2 legacy transcript migration completed",
+        extra={
+            "legacyMigrationCandidates": legacy_migration_summary.get("candidates"),
+            "legacyMigrationMigrated": legacy_migration_summary.get("migrated"),
+            "legacyMigrationSkipped": legacy_migration_summary.get("skipped"),
+            "legacyMigrationFailed": legacy_migration_summary.get("failed"),
+        },
+    )
     session_runtime_store_v2.add_event_observer(execution_audit_orchestrator_v2.handle_session_event)
     execution_audit_workflow_service._workflow_orchestrator_v2 = execution_audit_orchestrator_v2
     project_service._chat_service = chat_service
@@ -424,6 +451,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.execution_audit_orchestrator_v2 = execution_audit_orchestrator_v2
     app.state.workflow_v3_compat_adapter = workflow_v3_compat_adapter
     app.state.artifact_orchestrator_v2 = artifact_orchestrator_v2
+    app.state.legacy_transcript_migrator_v2 = legacy_transcript_migrator_v2
     app.state.session_runtime_store_v2 = session_runtime_store_v2
     app.state.session_connection_state_v2 = session_connection_state_v2
     app.state.session_core_v2_enable_turns = session_core_v2_enable_turns

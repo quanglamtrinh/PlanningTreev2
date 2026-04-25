@@ -223,6 +223,22 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
       clearGapDetected: (threadId) => useThreadSessionStore.getState().clearGapDetected(threadId),
       getLastEventId: (threadId) => useThreadSessionStore.getState().lastEventIdByThread[threadId] ?? null,
       getGapDetected: (threadId) => Boolean(useThreadSessionStore.getState().gapDetectedByThread[threadId]),
+      recoverFromGap: async (threadId) => {
+        await runtimeControllerRef.current?.hydrateThreadState(threadId, { force: true })
+      },
+      resetReplayCursor: (threadId) => useThreadSessionStore.getState().resetReplayCursor(threadId),
+      reportGapMetric: (payload) => {
+        if (typeof window === 'undefined') {
+          return
+        }
+        window.dispatchEvent(new CustomEvent('session-v2-gap-metric', { detail: payload }))
+      },
+      reportCorrelation: (payload) => {
+        if (typeof window === 'undefined') {
+          return
+        }
+        window.dispatchEvent(new CustomEvent('session-v2-correlation', { detail: payload }))
+      },
       onStreamConnected: () => {
         void runtimeControllerRef.current?.pollPendingRequests({ surfaceErrors: false })
       },

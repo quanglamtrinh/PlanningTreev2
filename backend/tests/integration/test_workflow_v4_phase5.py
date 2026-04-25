@@ -15,10 +15,15 @@ from backend.tests.conftest import init_git_repo
 
 
 class FakeSessionManager:
-    def __init__(self) -> None:
+    def __init__(self, *, turn_start_response: dict[str, Any] | None = None) -> None:
         self.starts: list[dict[str, Any]] = []
         self.injects: list[dict[str, Any]] = []
         self.turns: list[dict[str, Any]] = []
+        self.turn_start_response = (
+            dict(turn_start_response)
+            if isinstance(turn_start_response, dict)
+            else None
+        )
 
     def thread_start(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self.starts.append(dict(payload or {}))
@@ -30,6 +35,8 @@ class FakeSessionManager:
 
     def turn_start(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self.turns.append({"threadId": thread_id, "payload": dict(payload)})
+        if self.turn_start_response is not None:
+            return dict(self.turn_start_response)
         return {"turn": {"id": f"turn-{len(self.turns)}", "status": "inProgress"}}
 
 
@@ -202,6 +209,33 @@ def test_v2_orchestrator_direct_settlement_is_idempotent_when_no_active_run(
         turn_id=start_payload["turnId"],
         status="completed",
     ) is None
+
+
+def test_v4_execution_start_fails_when_session_turn_start_missing_turn_id(
+    client: TestClient,
+    workspace_root: Path,
+) -> None:
+    project_id, node_id = _project_with_confirmed_docs(client, workspace_root)
+    manager = FakeSessionManager(turn_start_response={"status": "accepted"})
+    _install_phase5_orchestrator(client, manager)
+
+    response = client.post(
+        f"/v4/projects/{project_id}/nodes/{node_id}/execution/start",
+        json={"idempotencyKey": "exec-start-missing-turn-id"},
+    )
+
+    assert response.status_code == 502, response.json()
+    payload = response.json()
+    assert payload["code"] == "ERR_INTERNAL"
+    assert "missing turnId" in payload["message"]
+    assert len(manager.turns) == 1
+
+    workflow_state_response = client.get(
+        f"/v4/projects/{project_id}/nodes/{node_id}/workflow-state"
+    )
+    assert workflow_state_response.status_code == 200
+    workflow_state_payload = workflow_state_response.json()
+    assert workflow_state_payload["phase"] == "ready_for_execution"
 
 
 def test_v3_finish_task_delegates_to_attached_v2_orchestrator(client: TestClient, workspace_root: Path) -> None:

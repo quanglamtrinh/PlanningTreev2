@@ -516,6 +516,12 @@ export function applySessionEvent(
   if (envelope.eventSeq <= previousSeq) {
     return previous
   }
+  if (previousSeq > 0 && envelope.eventSeq > previousSeq + 1) {
+    return {
+      ...previous,
+      gapDetectedByThread: { ...previous.gapDetectedByThread, [threadId]: true },
+    }
+  }
 
   let state: SessionProjectionState = {
     ...previous,
@@ -527,10 +533,6 @@ export function applySessionEvent(
     gapDetectedByThread: { ...previous.gapDetectedByThread },
     threadStatus: { ...previous.threadStatus },
     tokenUsageByThread: { ...previous.tokenUsageByThread },
-  }
-
-  if (previousSeq > 0 && envelope.eventSeq > previousSeq + 1) {
-    state.gapDetectedByThread[threadId] = true
   }
 
   const params = envelope.params ?? {}

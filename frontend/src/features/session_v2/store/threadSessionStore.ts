@@ -27,6 +27,7 @@ export type ThreadSessionStoreState = SessionProjectionState & {
   markStreamDisconnected: (threadId: string) => void
   markStreamReconnect: (threadId: string) => void
   clearGapDetected: (threadId: string) => void
+  resetReplayCursor: (threadId: string) => void
   clear: () => void
 }
 
@@ -338,6 +339,73 @@ function normalizeTurnsForThread(threadId: string, turns: SessionTurn[]): Sessio
     }
   })
   return [...normalized].sort(compareTurnsChronologically)
+}
+
+function isTerminalTurnStatus(status: SessionTurn['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'interrupted'
+}
+
+function mergeTurnForStore(existing: SessionTurn | undefined, incoming: SessionTurn): SessionTurn {
+  if (!existing) {
+    return incoming
+  }
+  const preserveExistingTerminal = isTerminalTurnStatus(existing.status) && !isTerminalTurnStatus(incoming.status)
+  const nextStatus = preserveExistingTerminal ? existing.status : incoming.status
+  const nextLastCodexStatus = preserveExistingTerminal
+    ? existing.lastCodexStatus
+    : incoming.lastCodexStatus
+  const nextCompletedAtMs = preserveExistingTerminal
+    ? existing.completedAtMs ?? incoming.completedAtMs
+    : incoming.completedAtMs ?? existing.completedAtMs
+  const nextError = preserveExistingTerminal
+    ? existing.error ?? incoming.error
+    : incoming.error ?? existing.error
+  const incomingItems = Array.isArray(incoming.items) ? incoming.items : []
+  const existingItems = Array.isArray(existing.items) ? existing.items : []
+  return {
+    ...existing,
+    ...incoming,
+    status: nextStatus,
+    lastCodexStatus: nextLastCodexStatus,
+    completedAtMs: nextCompletedAtMs,
+    items: incomingItems.length > 0 ? incomingItems : existingItems,
+    error: nextError,
+  }
+}
+
+function mergeItemsForTurn(existing: SessionItem[] | undefined, incoming: SessionItem[]): SessionItem[] {
+  if (!Array.isArray(existing) || existing.length === 0) {
+    return incoming
+  }
+  if (incoming.length === 0) {
+    return existing
+  }
+  const byId = new Map<string, SessionItem>()
+  const order: string[] = []
+  for (const item of existing) {
+    byId.set(item.id, item)
+    order.push(item.id)
+  }
+  for (const item of incoming) {
+    const previous = byId.get(item.id)
+    if (!previous) {
+      byId.set(item.id, item)
+      order.push(item.id)
+      continue
+    }
+    const shouldPreserveCompleted = previous.status === 'completed' && item.status !== 'completed'
+    byId.set(
+      item.id,
+      shouldPreserveCompleted
+        ? previous
+        : {
+            ...previous,
+            ...item,
+            createdAtMs: previous.createdAtMs,
+          },
+    )
+  }
+  return order.map((itemId) => byId.get(itemId)).filter((item): item is SessionItem => Boolean(item))
 }
 
 function areStringArraysEqual(left: string[] | undefined, right: string[] | undefined): boolean {
@@ -666,17 +734,41 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
   },
   setThreadTurns(threadId, turns) {
     const normalizedTurns = normalizeTurnsForThread(threadId, turns)
-    const turnsByThread = { [threadId]: normalizedTurns }
-    const nextItemsByTurn: Record<string, SessionItem[]> = {}
-    for (const turn of normalizedTurns) {
-      const key = `${threadId}:${turn.id}`
-      nextItemsByTurn[key] = normalizeItemsForTurnByStatus(threadId, turn.id, turn.items, turn.status)
-    }
-    set((state) => ({
-      ...state,
-      turnsByThread: { ...state.turnsByThread, ...turnsByThread },
-      itemsByTurn: { ...state.itemsByTurn, ...nextItemsByTurn },
-    }))
+    set((state) => {
+      const existingTurns = state.turnsByThread[threadId] ?? []
+      const mergedById = new Map<string, SessionTurn>()
+      const order: string[] = []
+
+      for (const turn of existingTurns) {
+        mergedById.set(turn.id, turn)
+        order.push(turn.id)
+      }
+      for (const turn of normalizedTurns) {
+        const merged = mergeTurnForStore(mergedById.get(turn.id), turn)
+        mergedById.set(turn.id, merged)
+        if (!order.includes(turn.id)) {
+          order.push(turn.id)
+        }
+      }
+
+      const mergedTurns = order
+        .map((turnId) => mergedById.get(turnId))
+        .filter((turn): turn is SessionTurn => Boolean(turn))
+        .sort(compareTurnsChronologically)
+
+      const nextItemsByTurn: Record<string, SessionItem[]> = { ...state.itemsByTurn }
+      for (const turn of mergedTurns) {
+        const key = `${threadId}:${turn.id}`
+        const hydratedItems = normalizeItemsForTurnByStatus(threadId, turn.id, turn.items, turn.status)
+        nextItemsByTurn[key] = mergeItemsForTurn(state.itemsByTurn[key], hydratedItems)
+      }
+
+      return {
+        ...state,
+        turnsByThread: { ...state.turnsByThread, [threadId]: mergedTurns },
+        itemsByTurn: nextItemsByTurn,
+      }
+    })
   },
   setItemsForTurn(threadId, turnId, items) {
     set((state) => ({
@@ -732,6 +824,21 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
     set((state) => ({
       gapDetectedByThread: { ...state.gapDetectedByThread, [threadId]: false },
     }))
+  },
+  resetReplayCursor(threadId) {
+    set((state) => {
+      const nextLastEventSeqByThread = { ...state.lastEventSeqByThread }
+      const nextLastEventIdByThread = { ...state.lastEventIdByThread }
+      const nextGapDetectedByThread = { ...state.gapDetectedByThread, [threadId]: false }
+      delete nextLastEventSeqByThread[threadId]
+      delete nextLastEventIdByThread[threadId]
+      return {
+        ...state,
+        lastEventSeqByThread: nextLastEventSeqByThread,
+        lastEventIdByThread: nextLastEventIdByThread,
+        gapDetectedByThread: nextGapDetectedByThread,
+      }
+    })
   },
   clear() {
     set({

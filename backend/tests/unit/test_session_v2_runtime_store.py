@@ -164,6 +164,44 @@ def test_runtime_store_pending_request_lifecycle_and_turn_wait_resume() -> None:
     assert store.get_turn(thread_id="thread-1", turn_id="turn-1")["status"] == "inProgress"
 
 
+def test_runtime_store_append_turn_started_if_absent_is_idempotent() -> None:
+    store = RuntimeStoreV2()
+    store.create_turn(thread_id="thread-1", turn_id="turn-1", status="inProgress")
+
+    first = store.append_turn_started_if_absent(
+        thread_id="thread-1",
+        turn_id="turn-1",
+        turn={"id": "turn-1", "status": "inProgress", "items": []},
+    )
+    second = store.append_turn_started_if_absent(
+        thread_id="thread-1",
+        turn_id="turn-1",
+        turn={"id": "turn-1", "status": "inProgress", "items": []},
+    )
+
+    assert first["eventSeq"] == second["eventSeq"]
+    journal = store.read_thread_journal("thread-1")
+    assert [event.get("method") for event in journal].count("turn/started") == 1
+
+
+def test_runtime_store_turn_started_notification_dedupes_existing_turn_started_event() -> None:
+    store = RuntimeStoreV2()
+    store.create_turn(thread_id="thread-1", turn_id="turn-1", status="inProgress")
+    store.append_turn_started_if_absent(
+        thread_id="thread-1",
+        turn_id="turn-1",
+        turn={"id": "turn-1", "status": "inProgress", "items": []},
+    )
+
+    store.append_notification(
+        method="turn/started",
+        params={"threadId": "thread-1", "turn": {"id": "turn-1", "status": "inProgress", "items": []}},
+    )
+
+    journal = store.read_thread_journal("thread-1")
+    assert [event.get("method") for event in journal].count("turn/started") == 1
+
+
 def test_runtime_store_pending_request_events_dedupe_and_enriched_resolved() -> None:
     store = RuntimeStoreV2()
     store.create_turn(thread_id="thread-1", turn_id="turn-1", status="inProgress")
@@ -377,3 +415,37 @@ def test_runtime_store_migrates_legacy_pending_requests_turn_id_to_nullable() ->
             assert restored["turnId"] is None
         finally:
             store.close()
+
+
+def test_runtime_store_legacy_migration_marker_is_idempotent_and_persisted() -> None:
+    with _workspace_temp_dir() as tmp:
+        db_path = tmp / "session_v2.sqlite3"
+        store = RuntimeStoreV2(db_path=db_path)
+        marker = store.mark_legacy_thread_migrated(
+            thread_id="thread-legacy-1",
+            source_project_id="project-1",
+            source_node_id="node-1",
+            source_role="execution",
+            source_snapshot_version=7,
+            source_item_count=12,
+            source_pending_request_count=1,
+            source_hash="sha256:test",
+        )
+        assert marker["threadId"] == "thread-legacy-1"
+        assert store.has_legacy_migration_marker(thread_id="thread-legacy-1") is True
+
+        duplicate = store.mark_legacy_thread_migrated(thread_id="thread-legacy-1")
+        assert duplicate == marker
+        store.close()
+
+        reopened = RuntimeStoreV2(db_path=db_path)
+        try:
+            assert reopened.has_legacy_migration_marker(thread_id="thread-legacy-1") is True
+            restored = reopened.read_legacy_migration_marker(thread_id="thread-legacy-1")
+            assert restored is not None
+            assert restored["sourceProjectId"] == "project-1"
+            assert restored["sourceNodeId"] == "node-1"
+            assert restored["sourceRole"] == "execution"
+            assert restored["sourceItemCount"] == 12
+        finally:
+            reopened.close()

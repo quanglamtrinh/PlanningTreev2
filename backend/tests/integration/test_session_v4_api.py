@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import uuid
 from pathlib import Path
@@ -361,6 +362,128 @@ def test_session_v4_turn_runtime_and_idempotency(client: TestClient) -> None:
     assert interrupt_response.status_code == 200
 
 
+def test_session_v4_turn_start_missing_turn_id_fails_deterministically_without_idempotent_commit(
+    client: TestClient,
+) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+            "turn/start": {},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+
+    payload = {
+        "clientActionId": "start-missing-turn-id",
+        "input": [{"type": "text", "text": "hello"}],
+    }
+    first = client.post("/v4/session/threads/thread-1/turns/start", json=payload)
+    assert first.status_code == 502
+    assert first.json()["error"]["code"] == "ERR_INTERNAL"
+    assert "missing turnId" in first.json()["error"]["message"]
+
+    second = client.post("/v4/session/threads/thread-1/turns/start", json=payload)
+    assert second.status_code == 502
+    assert second.json()["error"]["code"] == "ERR_INTERNAL"
+    assert [method for method, _ in fake_transport.requests].count("turn/start") == 2
+
+    runtime_store = client.app.state.session_manager_v2._runtime_store  # noqa: SLF001
+    assert runtime_store.get_active_turn(thread_id="thread-1") is None
+
+
+def test_session_v4_turn_start_invariants_runtime_journal_turns_and_replay(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+            "turn/start": {"turnId": "turn-start-1"},
+            "thread/turns/list": {"data": [], "nextCursor": None},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+
+    start_payload = {
+        "clientActionId": "start-invariants-1",
+        "input": [{"type": "text", "text": "hello"}],
+    }
+    start_response = client.post("/v4/session/threads/thread-1/turns/start", json=start_payload)
+    assert start_response.status_code == 200
+    assert start_response.json()["data"]["turn"]["id"] == "turn-start-1"
+
+    runtime_store = client.app.state.session_manager_v2._runtime_store  # noqa: SLF001
+    active_turn = runtime_store.get_active_turn(thread_id="thread-1")
+    assert active_turn is not None
+    assert active_turn["id"] == "turn-start-1"
+    assert active_turn["status"] == "inProgress"
+
+    turns_response = client.get("/v4/session/threads/thread-1/turns")
+    assert turns_response.status_code == 200
+    turns = turns_response.json()["data"]["data"]
+    assert any(str(turn.get("id")) == "turn-start-1" for turn in turns)
+
+    journal = runtime_store.read_thread_journal("thread-1")
+    started_events = [event for event in journal if event.get("method") == "turn/started"]
+    assert len(started_events) == 1
+    assert started_events[0]["turnId"] == "turn-start-1"
+
+    manager = client.app.state.session_manager_v2
+    original_read_stream_event = manager.read_stream_event
+    manager.read_stream_event = lambda **_: None
+    try:
+        stream_response = client.get("/v4/session/threads/thread-1/events?cursor=0")
+    finally:
+        manager.read_stream_event = original_read_stream_event
+    assert stream_response.status_code == 200
+    data_lines = [line[len("data: ") :] for line in stream_response.text.splitlines() if line.startswith("data: ")]
+    payloads = [json.loads(line) for line in data_lines]
+    assert any(
+        str(payload.get("method") or "") == "turn/started"
+        and str(payload.get("turnId") or "") == "turn-start-1"
+        for payload in payloads
+    )
+
+
+def test_session_v4_turn_started_notification_dedupes_against_synthetic_event(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+            "turn/start": {"turnId": "turn-start-1"},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+
+    assert client.post(
+        "/v4/session/threads/thread-1/turns/start",
+        json={"clientActionId": "start-dedupe-1", "input": [{"type": "text", "text": "hello"}]},
+    ).status_code == 200
+
+    fake_transport.emit_notification(
+        "turn/started",
+        {
+            "threadId": "thread-1",
+            "turn": {"id": "turn-start-1", "status": "inProgress", "items": []},
+        },
+    )
+
+    runtime_store = client.app.state.session_manager_v2._runtime_store  # noqa: SLF001
+    journal = runtime_store.read_thread_journal("thread-1")
+    assert [event.get("method") for event in journal].count("turn/started") == 1
+
+
 def test_session_v4_inject_items_idempotent_without_starting_turn(client: TestClient) -> None:
     injected_item = {"id": "context-item-1", "type": "systemMessage", "text": "Workflow context"}
     thread_with_context = _fake_thread("thread-1")
@@ -424,6 +547,58 @@ def test_session_v4_inject_items_idempotent_without_starting_turn(client: TestCl
     assert mismatch_response.status_code == 409
     assert mismatch_response.json()["error"]["code"] == "ERR_IDEMPOTENCY_PAYLOAD_MISMATCH"
     assert [method for method, _ in fake_transport.requests].count("thread/inject_items") == 1
+
+
+def test_session_v4_inject_items_workflow_context_is_replayable_and_marked_hidden_metadata(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+            "thread/inject_items": {"status": "accepted"},
+            "thread/turns/list": {"data": [], "nextCursor": None},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+
+    payload = {
+        "clientActionId": "inject-context-1",
+        "items": [
+            {
+                "id": "workflow-context-1",
+                "type": "systemMessage",
+                "text": "context payload",
+                "metadata": {
+                    "workflowContext": True,
+                    "role": "execution",
+                    "contextPacketHash": "sha256:packet",
+                },
+            }
+        ],
+    }
+    response = client.post("/v4/session/threads/thread-1/inject-items", json=payload)
+    assert response.status_code == 200
+
+    runtime_store = client.app.state.session_manager_v2._runtime_store  # noqa: SLF001
+    journal = runtime_store.read_thread_journal("thread-1")
+    methods = [str(event.get("method") or "") for event in journal]
+    assert "turn/started" in methods
+    assert "item/completed" in methods
+    assert "turn/completed" in methods
+    context_item_events = [event for event in journal if str(event.get("method") or "") == "item/completed"]
+    assert context_item_events
+    context_item = context_item_events[-1]["params"]["item"]
+    assert context_item["metadata"]["workflowContext"] is True
+    assert context_item["metadata"]["role"] == "execution"
+    assert context_item["metadata"]["contextPacketHash"] == "sha256:packet"
+
+    turns_response = client.get("/v4/session/threads/thread-1/turns")
+    assert turns_response.status_code == 200
+    turns = turns_response.json()["data"]["data"]
+    assert any(str(turn.get("status") or "") == "completed" for turn in turns)
 
 
 def test_session_v4_pending_requests_lists_all_phase3_methods(client: TestClient) -> None:
@@ -867,6 +1042,40 @@ def test_session_v4_contract_conformance_for_phase3_endpoints(client: TestClient
     _assert_component(pending_payload, "PendingRequestsEnvelope", schema_doc)
     _assert_component(resolve_payload, "BasicOkEnvelope", schema_doc)
     _assert_component(reject_payload, "BasicOkEnvelope", schema_doc)
+
+
+def test_session_v4_events_stream_drops_non_session_namespace_events(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+
+    manager = client.app.state.session_manager_v2
+    runtime_store = manager._runtime_store  # noqa: SLF001
+    runtime_store.append_event(
+        thread_id="thread-1",
+        method="workflow/state_changed",
+        params={"projectId": "project-1"},
+        turn_id=None,
+        source="journal",
+        replayable=True,
+    )
+
+    original_read_stream_event = manager.read_stream_event
+    manager.read_stream_event = lambda **_: None
+    try:
+        stream_response = client.get("/v4/session/threads/thread-1/events?cursor=0")
+    finally:
+        manager.read_stream_event = original_read_stream_event
+    assert stream_response.status_code == 200
+    data_lines = [line for line in stream_response.text.splitlines() if line.startswith("data: ")]
+    assert data_lines == []
 
 
 def test_session_v4_remaining_phase_gated_route_returns_deterministic_501(client: TestClient) -> None:

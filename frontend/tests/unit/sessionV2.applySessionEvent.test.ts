@@ -75,7 +75,8 @@ describe('applySessionEvent', () => {
     )
 
     expect(withGap.gapDetectedByThread['thread-1']).toBe(true)
-    expect(withGap.lastEventSeqByThread['thread-1']).toBe(4)
+    expect(withGap.lastEventSeqByThread['thread-1']).toBe(1)
+    expect(withGap.itemsByTurn['thread-1:turn-1']).toBeUndefined()
   })
 
   it('does not bump thread ordering timestamp for status-only events', () => {

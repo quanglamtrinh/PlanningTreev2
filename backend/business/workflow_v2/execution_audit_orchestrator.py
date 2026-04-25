@@ -39,6 +39,7 @@ from backend.business.workflow_v2.state_machine import (
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.business.workflow_v2.execution_audit_helpers import GitArtifactService, WorkflowMetadataService
 from backend.errors.app_errors import AppError, NodeNotFound
+from backend.session_core_v2.errors import SessionCoreError
 from backend.storage.file_utils import iso_now, new_id
 
 _HANDOFF_SUMMARY_PLACEHOLDER = "Implementation completed. No execution summary was captured."
@@ -69,6 +70,7 @@ class ExecutionAuditOrchestratorV2:
         self._review_service = review_service
         self._metadata_service = WorkflowMetadataService(tree_service, finish_task_service)
         self._artifact_service = GitArtifactService(git_checkpoint_service)
+        self._settlement_mismatch_count = 0
 
     def get_workflow_state(self, project_id: str, node_id: str) -> dict[str, Any]:
         return _public_state(self._repository.read_state(project_id, node_id))
@@ -361,6 +363,19 @@ class ExecutionAuditOrchestratorV2:
                 ),
             },
         )
+        logger.info(
+            "workflow_v2 start audit turn accepted",
+            extra={
+                "idempotencyKey": key,
+                "projectId": project_id,
+                "nodeId": node_id,
+                "role": "audit",
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "auditRunId": audit_run_id,
+                "executionRunId": source_execution_run_id,
+            },
+        )
         return self._write_action_state(
             project_id,
             node_id,
@@ -584,6 +599,17 @@ class ExecutionAuditOrchestratorV2:
             cwd=metadata["workspaceRoot"],
             model=model,
         )
+        logger.info(
+            "workflow_v2 start package review turn accepted",
+            extra={
+                "idempotencyKey": key,
+                "projectId": project_id,
+                "nodeId": node_id,
+                "role": "package_review",
+                "threadId": thread_id,
+                "turnId": turn_id,
+            },
+        )
         return self._write_action_state(
             project_id,
             node_id,
@@ -604,6 +630,7 @@ class ExecutionAuditOrchestratorV2:
             return
         thread_id = str(event.get("threadId") or "").strip()
         turn_id = str(event.get("turnId") or "").strip()
+        event_seq = event.get("eventSeq")
         params = event.get("params")
         turn = params.get("turn") if isinstance(params, dict) else None
         if isinstance(turn, dict):
@@ -614,7 +641,13 @@ class ExecutionAuditOrchestratorV2:
             status = ""
         if not thread_id or not turn_id:
             return
-        self.settle_terminal_turn(thread_id=thread_id, turn_id=turn_id, status=status, turn=turn)
+        self.settle_terminal_turn(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            status=status,
+            turn=turn,
+            event_seq=event_seq,
+        )
 
     def settle_terminal_turn(
         self,
@@ -623,6 +656,7 @@ class ExecutionAuditOrchestratorV2:
         turn_id: str,
         status: str | None = None,
         turn: dict[str, Any] | None = None,
+        event_seq: int | None = None,
     ) -> dict[str, Any] | None:
         terminal_status = str(status or "").strip() or str((turn or {}).get("status") or "").strip()
         if terminal_status and terminal_status != "completed":
@@ -633,8 +667,30 @@ class ExecutionAuditOrchestratorV2:
             return None
         match = self._find_active_run_by_turn(thread_id=thread_id, turn_id=turn_id)
         if match is None:
+            self._settlement_mismatch_count += 1
+            logger.warning(
+                "workflow_v2 settlement mismatch: no active run matched terminal turn",
+                extra={
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "eventSeq": event_seq,
+                    "settlementMismatchCount": self._settlement_mismatch_count,
+                },
+            )
             return None
         kind, project_id, node_id, state = match
+        logger.info(
+            "workflow_v2 settle terminal turn",
+            extra={
+                "projectId": project_id,
+                "nodeId": node_id,
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "eventSeq": event_seq,
+                "activeExecutionRunId": state.active_execution_run_id,
+                "activeAuditRunId": state.active_audit_run_id,
+            },
+        )
         text = _extract_turn_text(turn)
         if kind == "execution":
             run_id = state.active_execution_run_id or state.latest_execution_run_id
@@ -744,6 +800,18 @@ class ExecutionAuditOrchestratorV2:
                 "execution_runs": execution_runs,
             },
         )
+        logger.info(
+            "workflow_v2 start execution turn accepted",
+            extra={
+                "idempotencyKey": idempotency_key,
+                "projectId": project_id,
+                "nodeId": node_id,
+                "role": "execution",
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "executionRunId": run_id,
+            },
+        )
         return self._write_action_state(
             project_id,
             node_id,
@@ -838,7 +906,16 @@ class ExecutionAuditOrchestratorV2:
         turn = response.get("turn") if isinstance(response, dict) else None
         turn_id = str(turn.get("id") or "" if isinstance(turn, dict) else "").strip()
         if not turn_id:
-            turn_id = new_id("turn")
+            raise SessionCoreError(
+                code="ERR_INTERNAL",
+                message="turn/start response missing turnId (provider contract violation).",
+                status_code=502,
+                details={
+                    "threadId": thread_id,
+                    "clientActionId": client_action_id,
+                    "providerMethod": "turn/start",
+                },
+            )
         return turn_id
 
     def _resolve_idempotent(
