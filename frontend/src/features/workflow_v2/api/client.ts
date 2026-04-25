@@ -1,5 +1,5 @@
 import { appendAuthToken, initAuthToken } from '../../../api/client'
-import type { WorkflowEventV2, WorkflowStateV2 } from '../types'
+import type { WorkflowEventV2, WorkflowStateV2, WorkflowThreadRoleV2 } from '../types'
 
 type ErrorPayload = {
   code?: string
@@ -53,10 +53,151 @@ async function jsonFetchDirect<T>(path: string, init?: RequestInit): Promise<T> 
   return (await response.json()) as T
 }
 
+function workflowNodePath(projectId: string, nodeId: string): string {
+  return `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}`
+}
+
+async function jsonPostDirect<T>(path: string, payload: Record<string, unknown>): Promise<T> {
+  return jsonFetchDirect<T>(path, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export type WorkflowModelPolicyV2 = {
+  model?: string | null
+  modelProvider?: string | null
+}
+
+export type WorkflowMutationResponseV2 = {
+  workflowState?: WorkflowStateV2
+  accepted?: boolean
+  threadId?: string | null
+  turnId?: string | null
+  executionRunId?: string | null
+  auditRunId?: string | null
+  reviewCycleId?: string | null
+  reviewThreadId?: string | null
+  reviewCommitSha?: string | null
+}
+
+export type EnsureWorkflowThreadResponseV2 = WorkflowMutationResponseV2 & {
+  binding?: {
+    projectId: string
+    nodeId: string
+    role: WorkflowThreadRoleV2
+    threadId: string
+    createdFrom?: string | null
+    contextPacketHash?: string | null
+    sourceVersions?: Record<string, unknown>
+  }
+}
+
 export async function getWorkflowStateV2(projectId: string, nodeId: string): Promise<WorkflowStateV2> {
   await initAuthToken()
   return jsonFetchDirect<WorkflowStateV2>(
-    `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/workflow-state`,
+    `${workflowNodePath(projectId, nodeId)}/workflow-state`,
+  )
+}
+
+export async function ensureWorkflowThreadV2(
+  projectId: string,
+  nodeId: string,
+  role: WorkflowThreadRoleV2,
+  payload: WorkflowModelPolicyV2 & {
+    idempotencyKey: string
+    forceRebase?: boolean
+  },
+): Promise<EnsureWorkflowThreadResponseV2> {
+  await initAuthToken()
+  return jsonPostDirect<EnsureWorkflowThreadResponseV2>(
+    `${workflowNodePath(projectId, nodeId)}/threads/${encodeURIComponent(role)}/ensure`,
+    {
+      idempotencyKey: payload.idempotencyKey,
+      model: payload.model ?? null,
+      modelProvider: payload.modelProvider ?? null,
+      forceRebase: payload.forceRebase ?? false,
+    },
+  )
+}
+
+export async function startExecutionV2(
+  projectId: string,
+  nodeId: string,
+  payload: WorkflowModelPolicyV2 & { idempotencyKey: string },
+): Promise<WorkflowMutationResponseV2> {
+  await initAuthToken()
+  return jsonPostDirect<WorkflowMutationResponseV2>(
+    `${workflowNodePath(projectId, nodeId)}/execution/start`,
+    {
+      idempotencyKey: payload.idempotencyKey,
+      model: payload.model ?? null,
+      modelProvider: payload.modelProvider ?? null,
+    },
+  )
+}
+
+export async function markDoneFromExecutionV2(
+  projectId: string,
+  nodeId: string,
+  payload: { idempotencyKey: string; expectedWorkspaceHash: string },
+): Promise<WorkflowMutationResponseV2> {
+  await initAuthToken()
+  return jsonPostDirect<WorkflowMutationResponseV2>(
+    `${workflowNodePath(projectId, nodeId)}/execution/mark-done`,
+    payload,
+  )
+}
+
+export async function startAuditV2(
+  projectId: string,
+  nodeId: string,
+  payload: WorkflowModelPolicyV2 & {
+    idempotencyKey: string
+    expectedWorkspaceHash: string
+  },
+): Promise<WorkflowMutationResponseV2> {
+  await initAuthToken()
+  return jsonPostDirect<WorkflowMutationResponseV2>(
+    `${workflowNodePath(projectId, nodeId)}/audit/start`,
+    {
+      idempotencyKey: payload.idempotencyKey,
+      expectedWorkspaceHash: payload.expectedWorkspaceHash,
+      model: payload.model ?? null,
+      modelProvider: payload.modelProvider ?? null,
+    },
+  )
+}
+
+export async function improveExecutionV2(
+  projectId: string,
+  nodeId: string,
+  payload: WorkflowModelPolicyV2 & {
+    idempotencyKey: string
+    expectedReviewCommitSha: string
+  },
+): Promise<WorkflowMutationResponseV2> {
+  await initAuthToken()
+  return jsonPostDirect<WorkflowMutationResponseV2>(
+    `${workflowNodePath(projectId, nodeId)}/execution/improve`,
+    {
+      idempotencyKey: payload.idempotencyKey,
+      expectedReviewCommitSha: payload.expectedReviewCommitSha,
+      model: payload.model ?? null,
+      modelProvider: payload.modelProvider ?? null,
+    },
+  )
+}
+
+export async function acceptAuditV2(
+  projectId: string,
+  nodeId: string,
+  payload: { idempotencyKey: string; expectedReviewCommitSha: string },
+): Promise<WorkflowMutationResponseV2> {
+  await initAuthToken()
+  return jsonPostDirect<WorkflowMutationResponseV2>(
+    `${workflowNodePath(projectId, nodeId)}/audit/accept`,
+    payload,
   )
 }
 

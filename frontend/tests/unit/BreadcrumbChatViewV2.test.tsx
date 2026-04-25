@@ -141,19 +141,20 @@ vi.mock('../../src/features/node/NodeDetailCard', () => ({
   ),
 }))
 
-vi.mock('../../src/features/conversation/state/workflowEventBridgeV3', () => ({
-  useWorkflowEventBridgeV3: vi.fn(),
+vi.mock('../../src/features/workflow_v2/hooks/useWorkflowEventBridgeV2', () => ({
+  useWorkflowEventBridgeV2: vi.fn(),
 }))
 
 vi.mock('../../src/features/session_v2/facade/useSessionFacadeV2', () => ({
   useSessionFacadeV2: mockUseSessionFacadeV2,
 }))
 
-import type { NodeWorkflowView, Snapshot } from '../../src/api/types'
+import type { Snapshot } from '../../src/api/types'
 import { BreadcrumbViewV2 } from '../../src/features/conversation/BreadcrumbViewV2'
 import type { PendingServerRequest, SessionThread, SessionTurn } from '../../src/features/session_v2/contracts'
 import type { SessionFacadeV2 } from '../../src/features/session_v2/facade/useSessionFacadeV2'
-import { useWorkflowStateStoreV3 } from '../../src/features/conversation/state/workflowStateStoreV3'
+import { useWorkflowStateStoreV2 } from '../../src/features/workflow_v2/store/workflowStateStoreV2'
+import type { WorkflowStateV2 } from '../../src/features/workflow_v2/types'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useProjectStore } from '../../src/stores/project-store'
 import { useUIStore } from '../../src/stores/ui-store'
@@ -199,28 +200,53 @@ function makeProjectSnapshot(nodeKind: 'original' | 'review' = 'original'): Snap
   }
 }
 
-function makeWorkflowState(overrides: Partial<NodeWorkflowView> = {}): NodeWorkflowView {
-  return {
+type WorkflowStateOverrides = Partial<Omit<WorkflowStateV2, 'threads' | 'decisions' | 'context'>> & {
+  threads?: Partial<WorkflowStateV2['threads']>
+  decisions?: Partial<WorkflowStateV2['decisions']>
+  context?: Partial<WorkflowStateV2['context']>
+}
+
+function makeWorkflowState(overrides: WorkflowStateOverrides = {}): WorkflowStateV2 {
+  const base: WorkflowStateV2 = {
+    schemaVersion: 1,
+    projectId: 'project-1',
     nodeId: 'root',
-    workflowPhase: 'idle',
-    askThreadId: 'ask-thread-1',
-    executionThreadId: 'exec-thread-1',
-    auditLineageThreadId: 'audit-lineage-1',
-    reviewThreadId: null,
-    activeExecutionRunId: null,
-    latestExecutionRunId: null,
-    activeReviewCycleId: null,
-    latestReviewCycleId: null,
-    currentExecutionDecision: null,
-    currentAuditDecision: null,
-    acceptedSha: null,
-    runtimeBlock: null,
-    canSendExecutionMessage: false,
-    canReviewInAudit: false,
-    canImproveInExecution: false,
-    canMarkDoneFromExecution: false,
-    canMarkDoneFromAudit: false,
+    phase: 'ready_for_execution',
+    version: 1,
+    threads: {
+      askPlanning: 'ask-thread-1',
+      execution: 'exec-thread-1',
+      audit: null,
+      packageReview: null,
+    },
+    decisions: {
+      execution: null,
+      audit: null,
+    },
+    context: {
+      frameVersion: null,
+      specVersion: null,
+      splitManifestVersion: null,
+      stale: false,
+      staleReason: null,
+    },
+    allowedActions: [],
+  }
+  return {
+    ...base,
     ...overrides,
+    threads: {
+      ...base.threads,
+      ...(overrides.threads ?? {}),
+    },
+    decisions: {
+      ...base.decisions,
+      ...(overrides.decisions ?? {}),
+    },
+    context: {
+      ...base.context,
+      ...(overrides.context ?? {}),
+    },
   }
 }
 
@@ -318,7 +344,7 @@ function LocationProbe() {
 
 function seedStores(options: {
   nodeKind?: 'original' | 'review'
-  workflowState?: NodeWorkflowView
+  workflowState?: WorkflowStateV2
   workflowError?: string | null
 }) {
   const {
@@ -368,16 +394,18 @@ function seedStores(options: {
     },
     loadDetailState: vi.fn().mockResolvedValue(undefined),
   } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
-  useWorkflowStateStoreV3.setState({
+  useWorkflowStateStoreV2.setState({
     entries: { 'project-1::root': workflowState },
     errors: workflowError ? { 'project-1::root': workflowError } : {},
+    activeMutations: { 'project-1::root': null },
     loadWorkflowState: vi.fn().mockResolvedValue(undefined),
-    finishTask: vi.fn().mockResolvedValue(undefined),
-    markDoneFromExecution: vi.fn().mockResolvedValue(undefined),
-    reviewInAudit: vi.fn().mockResolvedValue(undefined),
-    markDoneFromAudit: vi.fn().mockResolvedValue(undefined),
-    improveInExecution: vi.fn().mockResolvedValue(undefined),
-  } as Partial<ReturnType<typeof useWorkflowStateStoreV3.getState>>)
+    ensureThread: vi.fn().mockResolvedValue(workflowState),
+    startExecution: vi.fn().mockResolvedValue(workflowState),
+    completeExecution: vi.fn().mockResolvedValue(workflowState),
+    startAudit: vi.fn().mockResolvedValue(workflowState),
+    improveExecution: vi.fn().mockResolvedValue(workflowState),
+    acceptAudit: vi.fn().mockResolvedValue(workflowState),
+  } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
 }
 
 describe('BreadcrumbViewV2', () => {
@@ -385,7 +413,7 @@ describe('BreadcrumbViewV2', () => {
     vi.clearAllMocks()
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
-    useWorkflowStateStoreV3.getState().reset()
+    useWorkflowStateStoreV2.getState().reset()
     useUIStore.setState(useUIStore.getInitialState())
     mockUseSessionFacadeV2.mockReturnValue(makeFacade())
   })
@@ -399,8 +427,7 @@ describe('BreadcrumbViewV2', () => {
     mockUseSessionFacadeV2.mockReturnValue(facade)
     seedStores({
       workflowState: makeWorkflowState({
-        workflowPhase: 'execution_decision_pending',
-        canSendExecutionMessage: true,
+        phase: 'execution_completed',
       }),
     })
 
@@ -447,7 +474,7 @@ describe('BreadcrumbViewV2', () => {
     mockUseSessionFacadeV2.mockReturnValue(facade)
     seedStores({
       workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
+        threads: { askPlanning: 'ask-thread-1', execution: 'exec-thread-1', audit: null, packageReview: null },
       }),
     })
 
@@ -486,7 +513,7 @@ describe('BreadcrumbViewV2', () => {
     mockUseSessionFacadeV2.mockReturnValue(facade)
     seedStores({
       workflowState: makeWorkflowState({
-        reviewThreadId: null,
+        threads: { audit: null },
       }),
     })
 
@@ -508,7 +535,7 @@ describe('BreadcrumbViewV2', () => {
   it('disables composer while selecting/hydrating and enables when active thread is ready', async () => {
     seedStores({
       workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
+        threads: { askPlanning: 'ask-thread-1' },
       }),
     })
 
@@ -551,22 +578,21 @@ describe('BreadcrumbViewV2', () => {
     expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
   })
 
-  it('submits via facade command and refreshes workflow state', async () => {
+  it('submits ask lane via facade command and refreshes workflow state', async () => {
     const facade = makeFacade({
-      activeThreadId: 'exec-thread-1',
-      activeThread: makeThread('exec-thread-1'),
+      activeThreadId: 'ask-thread-1',
+      activeThread: makeThread('ask-thread-1'),
       isActiveThreadReady: true,
       selectedModel: 'gpt-5.4',
     })
     mockUseSessionFacadeV2.mockReturnValue(facade)
     const workflowState = makeWorkflowState({
-      workflowPhase: 'execution_decision_pending',
-      canSendExecutionMessage: true,
+      threads: { askPlanning: 'ask-thread-1' },
     })
     seedStores({ workflowState })
 
     render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
         <Routes>
           <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
@@ -591,7 +617,7 @@ describe('BreadcrumbViewV2', () => {
       )
     })
     await waitFor(() => {
-      expect(useWorkflowStateStoreV3.getState().loadWorkflowState).toHaveBeenCalledWith('project-1', 'root')
+      expect(useWorkflowStateStoreV2.getState().loadWorkflowState).toHaveBeenCalledWith('project-1', 'root')
     })
   })
 
@@ -609,7 +635,7 @@ describe('BreadcrumbViewV2', () => {
     mockUseSessionFacadeV2.mockReturnValue(offLaneFacade)
     seedStores({
       workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
+        threads: { askPlanning: 'ask-thread-1' },
       }),
     })
 
@@ -661,7 +687,7 @@ describe('BreadcrumbViewV2', () => {
   it('routes overlay renderer by request method (user input, mcp, approval)', () => {
     seedStores({
       workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
+        threads: { askPlanning: 'ask-thread-1' },
       }),
     })
 
@@ -713,7 +739,7 @@ describe('BreadcrumbViewV2', () => {
   it('uses error precedence workflowError -> runtimeError -> connection.error', () => {
     seedStores({
       workflowState: makeWorkflowState({
-        askThreadId: 'ask-thread-1',
+        threads: { askPlanning: 'ask-thread-1' },
       }),
       workflowError: 'Workflow failed first',
     })

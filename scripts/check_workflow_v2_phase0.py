@@ -27,6 +27,7 @@ def main() -> int:
         "workflow-v2-api-contract.md",
         "workflow-v2-cutover-checklist.md",
         "phase-0-gate-report-v1.md",
+        "phase-6-breadcrumb-v2-cutover-plan-v1.md",
     ]
     for rel in required_docs:
         if not (MIGRATION / rel).exists():
@@ -129,10 +130,22 @@ def main() -> int:
     require_contains(errors, session_v4, '"/v4/session/threads/{threadId}/inject-items"', "session_v4")
     require_contains(errors, session_v4, "thread/inject_items", "session_v4")
     require_contains(errors, breadcrumb_controller, "useSessionFacadeV2", "Breadcrumb controller")
-    require_contains(errors, breadcrumb_controller, "useWorkflowStateStoreV3", "Breadcrumb controller")
-    require_contains(errors, breadcrumb_controller, "useWorkflowEventBridgeV3", "Breadcrumb controller")
+    require_contains(errors, breadcrumb_controller, "useWorkflowStateV2", "Breadcrumb controller")
+    require_contains(errors, breadcrumb_controller, "useWorkflowEventBridgeV2", "Breadcrumb controller")
     require_contains(errors, workflow_state_store, '"workflow_v2"', "WorkflowStateStore")
     require_contains(errors, workflow_state_store, '"workflowPhase"', "WorkflowStateStore")
+
+    forbidden_breadcrumb_terms = [
+        "useWorkflowStateStoreV3",
+        "useWorkflowEventBridgeV3",
+        "reviewInAudit",
+        "markDoneFromExecution",
+        "improveInExecution",
+        "markDoneFromAudit",
+    ]
+    for forbidden in forbidden_breadcrumb_terms:
+        if forbidden in breadcrumb_controller:
+            errors.append(f"Breadcrumb controller should stay on Workflow V2, found: {forbidden}")
 
     forbidden_session_route_terms = [
         "execution_audit_workflow_service",
@@ -155,7 +168,7 @@ def main() -> int:
     print(f"checked_docs={len(required_docs)}")
     print("route_family=/v4/projects/{projectId}/nodes/{nodeId}/...")
     print("session_boundary=/v4/session/*")
-    print("current_boundary=hybrid-session-v2-workflow-v3")
+    print("current_boundary=session-v2-workflow-v2-breadcrumb-with-legacy-adapters")
     return 0
 
 

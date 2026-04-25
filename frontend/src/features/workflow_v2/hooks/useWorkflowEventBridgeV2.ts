@@ -56,7 +56,12 @@ export function useWorkflowEventBridgeV2(
           if (event.projectId !== projectId || event.nodeId !== nodeId) {
             return
           }
-          if (event.type === 'workflow/state_changed' || event.type === 'workflow/context_stale') {
+          if (
+            event.type === 'workflow/state_changed' ||
+            event.type === 'workflow/context_stale' ||
+            event.type === 'workflow/action_completed' ||
+            event.type === 'workflow/action_failed'
+          ) {
             refreshWorkflowState()
           }
         } catch {

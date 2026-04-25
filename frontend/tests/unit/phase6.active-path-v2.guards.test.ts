@@ -12,16 +12,17 @@ function readFrontendSource(relativePath: string): string {
   }
 }
 
-describe('phase 5 active-path V3 guardrails', () => {
-  it('keeps chat-v2 active path wired to V3 workflow store + bridge', () => {
+describe('phase 6 active-path Workflow V2 guardrails', () => {
+  it('cuts chat-v2 active path over to Workflow V2 store + bridge', () => {
     const breadcrumbController = readFrontendSource('features/conversation/useBreadcrumbConversationControllerV2.tsx')
 
     expect(breadcrumbController).toContain("useSessionFacadeV2")
-    expect(breadcrumbController).toContain("useWorkflowStateStoreV3")
-    expect(breadcrumbController).toContain("useWorkflowEventBridgeV3")
-    expect(breadcrumbController).toContain("resolveWorkflowProjection")
-    expect(breadcrumbController).not.toContain("useWorkflowStateStoreV2")
-    expect(breadcrumbController).not.toContain("useWorkflowEventBridgeV2")
+    expect(breadcrumbController).toContain("useWorkflowStateV2")
+    expect(breadcrumbController).toContain("useWorkflowEventBridgeV2")
+    expect(breadcrumbController).toContain("buildWorkflowProjectionV2")
+    expect(breadcrumbController).not.toContain("useWorkflowStateStoreV3")
+    expect(breadcrumbController).not.toContain("useWorkflowEventBridgeV3")
+    expect(breadcrumbController).not.toContain("resolveWorkflowProjection")
   })
 
   it('keeps NodeDocumentEditor finish-task flow on V3 workflow store', () => {

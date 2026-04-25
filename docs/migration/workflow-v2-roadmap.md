@@ -217,6 +217,12 @@ Done when:
 
 ## Phase 6 - Breadcrumb V2 Frontend Cutover
 
+Status: complete.
+
+Detailed plan:
+
+- `docs/migration/phase-6-breadcrumb-v2-cutover-plan-v1.md`
+
 Rewrite `useBreadcrumbConversationControllerV2` to use:
 
 - `useSessionFacadeV2`
@@ -238,6 +244,7 @@ Done when:
   mutations.
 - Session transcript, composer, model selection, pending request overlays, and
   interrupt behavior still come from Session Core V2 components/facade.
+- `python scripts/check_workflow_v2_phase6.py` passes.
 
 ## Phase 7 - End-to-End Workflow Actions
 

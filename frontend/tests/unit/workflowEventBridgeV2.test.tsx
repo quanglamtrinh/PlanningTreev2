@@ -48,7 +48,7 @@ describe('workflowEventBridgeV2', () => {
     vi.useRealTimers()
   })
 
-  it('refreshes workflow state on state and context events', async () => {
+  it('refreshes workflow state on state, context, and action events', async () => {
     const loadWorkflowState = vi.fn().mockResolvedValue(undefined)
     useWorkflowStateStoreV2.setState({
       loadWorkflowState,
@@ -78,16 +78,36 @@ describe('workflowEventBridgeV2', () => {
           type: 'workflow/context_stale',
         }),
       )
+      eventSource.emitMessage(
+        JSON.stringify({
+          eventId: 'evt-action-completed',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          occurredAt: '2026-04-24T00:00:02Z',
+          type: 'workflow/action_completed',
+        }),
+      )
+      eventSource.emitMessage(
+        JSON.stringify({
+          eventId: 'evt-action-failed',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          occurredAt: '2026-04-24T00:00:03Z',
+          type: 'workflow/action_failed',
+        }),
+      )
       await Promise.resolve()
       await Promise.resolve()
     })
 
-    expect(loadWorkflowState).toHaveBeenCalledTimes(2)
+    expect(loadWorkflowState).toHaveBeenCalledTimes(4)
     expect(loadWorkflowState).toHaveBeenNthCalledWith(1, 'project-1', 'node-1')
     expect(loadWorkflowState).toHaveBeenNthCalledWith(2, 'project-1', 'node-1')
+    expect(loadWorkflowState).toHaveBeenNthCalledWith(3, 'project-1', 'node-1')
+    expect(loadWorkflowState).toHaveBeenNthCalledWith(4, 'project-1', 'node-1')
   })
 
-  it('filters other targets and ignores malformed or non-refresh events', async () => {
+  it('filters other targets and ignores malformed events', async () => {
     const loadWorkflowState = vi.fn().mockResolvedValue(undefined)
     useWorkflowStateStoreV2.setState({
       loadWorkflowState,
@@ -105,15 +125,6 @@ describe('workflowEventBridgeV2', () => {
           nodeId: 'node-2',
           occurredAt: '2026-04-24T00:00:00Z',
           type: 'workflow/state_changed',
-        }),
-      )
-      eventSource.emitMessage(
-        JSON.stringify({
-          eventId: 'evt-action',
-          projectId: 'project-1',
-          nodeId: 'node-1',
-          occurredAt: '2026-04-24T00:00:01Z',
-          type: 'workflow/action_completed',
         }),
       )
       eventSource.emitMessage('not-json')

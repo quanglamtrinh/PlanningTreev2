@@ -36,20 +36,22 @@ vi.mock('../../src/features/node/NodeDetailCard', () => ({
   NodeDetailCard: () => <div data-testid="node-detail-card">detail</div>,
 }))
 
-vi.mock('../../src/features/conversation/state/workflowEventBridgeV3', () => ({
-  useWorkflowEventBridgeV3: vi.fn(),
+vi.mock('../../src/features/workflow_v2/hooks/useWorkflowEventBridgeV2', () => ({
+  useWorkflowEventBridgeV2: vi.fn(),
 }))
 
 vi.mock('../../src/features/session_v2/facade/useSessionFacadeV2', () => ({
   useSessionFacadeV2: mockUseSessionFacadeV2,
 }))
 
-import type { NodeWorkflowView, Snapshot } from '../../src/api/types'
-import { BreadcrumbChatViewV2 } from '../../src/features/conversation/BreadcrumbChatViewV2'
+import type { Snapshot } from '../../src/api/types'
+import { BreadcrumbViewV2 } from '../../src/features/conversation/BreadcrumbViewV2'
 import type { SessionFacadeV2, SessionFacadeState } from '../../src/features/session_v2/facade/useSessionFacadeV2'
-import { useWorkflowStateStoreV3 } from '../../src/features/conversation/state/workflowStateStoreV3'
+import { useWorkflowStateStoreV2 } from '../../src/features/workflow_v2/store/workflowStateStoreV2'
+import type { WorkflowStateV2 } from '../../src/features/workflow_v2/types'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useProjectStore } from '../../src/stores/project-store'
+import { useUIStore } from '../../src/stores/ui-store'
 
 function makeProjectSnapshot(nodeKind: 'original' | 'review' = 'original'): Snapshot {
   return {
@@ -92,32 +94,36 @@ function makeProjectSnapshot(nodeKind: 'original' | 'review' = 'original'): Snap
   }
 }
 
-function makeWorkflowState(overrides: Partial<NodeWorkflowView> = {}): NodeWorkflowView {
+function makeWorkflowState(overrides: Partial<WorkflowStateV2> = {}): WorkflowStateV2 {
   return {
+    schemaVersion: 1,
+    projectId: 'project-1',
     nodeId: 'root',
-    workflowPhase: 'execution_decision_pending',
-    askThreadId: 'ask-thread-1',
-    executionThreadId: 'exec-thread-1',
-    auditLineageThreadId: 'audit-lineage-1',
-    reviewThreadId: null,
-    activeExecutionRunId: null,
-    latestExecutionRunId: null,
-    activeReviewCycleId: null,
-    latestReviewCycleId: null,
-    currentExecutionDecision: null,
-    currentAuditDecision: null,
-    acceptedSha: null,
-    runtimeBlock: null,
-    canSendExecutionMessage: true,
-    canReviewInAudit: false,
-    canImproveInExecution: false,
-    canMarkDoneFromExecution: false,
-    canMarkDoneFromAudit: false,
+    phase: 'execution_completed',
+    version: 1,
+    threads: {
+      askPlanning: 'ask-thread-1',
+      execution: 'exec-thread-1',
+      audit: 'audit-thread-1',
+      packageReview: null,
+    },
+    decisions: {
+      execution: null,
+      audit: null,
+    },
+    context: {
+      frameVersion: null,
+      specVersion: null,
+      splitManifestVersion: null,
+      stale: false,
+      staleReason: null,
+    },
+    allowedActions: [],
     ...overrides,
   }
 }
 
-function seedBaseStores(workflowState: NodeWorkflowView, snapshot: Snapshot) {
+function seedBaseStores(workflowState: WorkflowStateV2, snapshot: Snapshot) {
   useProjectStore.setState({
     activeProjectId: 'project-1',
     bootstrap: {
@@ -159,17 +165,15 @@ function seedBaseStores(workflowState: NodeWorkflowView, snapshot: Snapshot) {
     },
     loadDetailState: vi.fn().mockResolvedValue(undefined),
   } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
-  useWorkflowStateStoreV3.setState({
+  useWorkflowStateStoreV2.setState({
     entries: {
       'project-1::root': workflowState,
     },
+    activeMutations: {
+      'project-1::root': null,
+    },
     loadWorkflowState: vi.fn().mockResolvedValue(undefined),
-    finishTask: vi.fn().mockResolvedValue(undefined),
-    markDoneFromExecution: vi.fn().mockResolvedValue(undefined),
-    reviewInAudit: vi.fn().mockResolvedValue(undefined),
-    markDoneFromAudit: vi.fn().mockResolvedValue(undefined),
-    improveInExecution: vi.fn().mockResolvedValue(undefined),
-  } as Partial<ReturnType<typeof useWorkflowStateStoreV3.getState>>)
+  } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
 }
 
 function makeFacade(state: Partial<SessionFacadeState>): SessionFacadeV2 {
@@ -220,16 +224,17 @@ function makeFacade(state: Partial<SessionFacadeState>): SessionFacadeV2 {
   }
 }
 
-describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
+describe('BreadcrumbChatViewV2 Workflow V2 cutover integration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
-    useWorkflowStateStoreV3.getState().reset()
+    useWorkflowStateStoreV2.getState().reset()
+    useUIStore.setState(useUIStore.getInitialState())
     mockUseSessionFacadeV2.mockReturnValue(makeFacade({}))
   })
 
-  it('renders execution lane using facade-native transcript/composer pipeline', async () => {
+  it('renders execution lane from Workflow V2 thread binding and Session V2 transcript', async () => {
     seedBaseStores(makeWorkflowState(), makeProjectSnapshot('original'))
     const facade = makeFacade({
       activeThreadId: 'exec-thread-1',
@@ -240,7 +245,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -248,19 +253,12 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     await waitFor(() => {
       expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'exec-thread-1')
     })
-    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
     expect(facade.commands.selectThread).toHaveBeenCalledWith('exec-thread-1')
   })
 
-  it('renders audit lane with transcript when review thread exists', async () => {
-    seedBaseStores(
-      makeWorkflowState({
-        workflowPhase: 'audit_decision_pending',
-        reviewThreadId: 'audit-thread-1',
-        canSendExecutionMessage: false,
-      }),
-      makeProjectSnapshot('original'),
-    )
+  it('renders audit lane with transcript when Workflow V2 audit thread exists', async () => {
+    seedBaseStores(makeWorkflowState({ phase: 'review_pending' }), makeProjectSnapshot('original'))
     const facade = makeFacade({
       activeThreadId: 'audit-thread-1',
       isActiveThreadReady: true,
@@ -270,7 +268,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -281,12 +279,16 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     expect(facade.commands.selectThread).toHaveBeenCalledWith('audit-thread-1')
   })
 
-  it('clears selection for audit lane when review thread is missing', async () => {
+  it('clears selection for audit lane when Workflow V2 audit thread is missing', async () => {
     seedBaseStores(
       makeWorkflowState({
-        workflowPhase: 'audit_decision_pending',
-        reviewThreadId: null,
-        canSendExecutionMessage: false,
+        phase: 'review_pending',
+        threads: {
+          askPlanning: 'ask-thread-1',
+          execution: 'exec-thread-1',
+          audit: null,
+          packageReview: null,
+        },
       }),
       makeProjectSnapshot('original'),
     )
@@ -299,7 +301,7 @@ describe('BreadcrumbChatViewV2 hard-cutover integration', () => {
     render(
       <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=audit']}>
         <Routes>
-          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbChatViewV2 />} />
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )

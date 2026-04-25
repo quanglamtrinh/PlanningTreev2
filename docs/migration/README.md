@@ -7,11 +7,13 @@ Current boundary:
 
 - Session Core V2 is the native runtime/conversation surface under
   `/v4/session/*`.
-- Execution/audit workflow business logic is still owned by the V3 workflow
-  service and exposed to the new Breadcrumb UI through V3 state/mutations.
+- Execution/audit workflow business logic has moved behind Workflow Core V2 and
+  V4 workflow routes for the Breadcrumb V2 path.
+- Some legacy workflow entry points, such as V3 compatibility routes and
+  document-editor finish-task wiring, remain during the migration.
 - The migration target is a V2 workflow core that owns workflow state, thread
   binding, context packets, execution/audit orchestration, events, and V4
-  workflow routes. V3 routes become compatibility adapters.
+  workflow routes. Remaining V3 routes become compatibility adapters.
 
 Documents:
 
@@ -31,6 +33,9 @@ Documents:
 - [Phase 0 Gate Report](./phase-0-gate-report-v1.md) records the current hybrid
   audit, frozen contract decisions, blockers, and verification command for the
   contract-alignment phase.
+- [Phase 6 Breadcrumb Cutover Plan](./phase-6-breadcrumb-v2-cutover-plan-v1.md)
+  records the completed frontend cutover from V3 workflow state/mutations to
+  Workflow V2 while keeping Session Core V2 as the runtime surface.
 
 Migration rules:
 
