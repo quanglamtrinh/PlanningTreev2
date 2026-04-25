@@ -317,6 +317,12 @@ Done when:
 
 ## Phase 10 - V3 Compatibility, Deprecation, and Removal
 
+Status: complete.
+
+Detailed plan:
+
+- `docs/migration/phase-10-v3-compatibility-deprecation-removal-plan-v1.md`
+
 Convert V3 workflow routes into compatibility adapters:
 
 - `/v3/projects/.../workflow-state` reads V2 state and returns the old V3 view.
@@ -330,3 +336,4 @@ Done when:
 - V3 workflow routes can be marked deprecated or kept read-only.
 - V3-only workflow business logic is removed after telemetry and tests confirm
   no active dependency.
+- `python scripts/check_workflow_v2_phase10.py` passes.

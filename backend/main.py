@@ -16,6 +16,7 @@ from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.execution_audit_orchestrator import ExecutionAuditOrchestratorV2
 from backend.business.workflow_v2.artifact_orchestrator import ArtifactOrchestratorV2
+from backend.business.workflow_v2.legacy_v3_adapter import LegacyWorkflowV3CompatibilityAdapter
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
@@ -310,6 +311,11 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         review_service=review_service,
         git_checkpoint_service=git_checkpoint_service,
     )
+    workflow_v3_compat_adapter = LegacyWorkflowV3CompatibilityAdapter(
+        orchestrator=execution_audit_orchestrator_v2,
+        storage=storage,
+        legacy_event_publisher=workflow_event_publisher,
+    )
     artifact_orchestrator_v2 = ArtifactOrchestratorV2(
         repository=workflow_state_repository_v2,
         thread_binding_service=workflow_thread_binding_service_v2,
@@ -416,6 +422,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2
     app.state.workflow_thread_binding_service_v2 = workflow_thread_binding_service_v2
     app.state.execution_audit_orchestrator_v2 = execution_audit_orchestrator_v2
+    app.state.workflow_v3_compat_adapter = workflow_v3_compat_adapter
     app.state.artifact_orchestrator_v2 = artifact_orchestrator_v2
     app.state.session_runtime_store_v2 = session_runtime_store_v2
     app.state.session_connection_state_v2 = session_connection_state_v2

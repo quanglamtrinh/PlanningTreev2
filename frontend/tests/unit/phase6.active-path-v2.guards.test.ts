@@ -25,12 +25,13 @@ describe('phase 6 active-path Workflow V2 guardrails', () => {
     expect(breadcrumbController).not.toContain("resolveWorkflowProjection")
   })
 
-  it('keeps NodeDocumentEditor finish-task flow on V3 workflow store', () => {
+  it('cuts NodeDocumentEditor finish-task flow over to Workflow V2', () => {
     const nodeEditor = readFrontendSource('features/node/NodeDocumentEditor.tsx')
 
-    expect(nodeEditor).toContain("useWorkflowStateStoreV3")
-    expect(nodeEditor).not.toContain("useWorkflowStateStoreV2")
-    expect(nodeEditor).toContain("finishTaskWorkflowV3")
+    expect(nodeEditor).toContain("useWorkflowStateV2")
+    expect(nodeEditor).toContain("startExecution")
+    expect(nodeEditor).not.toContain("useWorkflowStateStoreV3")
+    expect(nodeEditor).not.toContain("finishTaskWorkflowV3")
   })
 
   it('uses /v3 project workflow events in the active V3 bridge', () => {

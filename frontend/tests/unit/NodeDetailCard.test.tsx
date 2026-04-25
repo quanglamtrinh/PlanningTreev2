@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { apiMock, MockApiError, navigateMock } = vi.hoisted(() => ({
+const { apiMock, workflowV2ApiMock, MockApiError, navigateMock } = vi.hoisted(() => ({
   MockApiError: class extends Error {
     status: number
     code: string | null
@@ -102,6 +102,17 @@ const { apiMock, MockApiError, navigateMock } = vi.hoisted(() => ({
       sha: 'sha256:accepted',
     }),
   },
+  workflowV2ApiMock: {
+    getWorkflowStateV2: vi.fn(),
+    ensureWorkflowThreadV2: vi.fn(),
+    startExecutionV2: vi.fn(),
+    markDoneFromExecutionV2: vi.fn(),
+    startAuditV2: vi.fn(),
+    improveExecutionV2: vi.fn(),
+    acceptAuditV2: vi.fn(),
+    startPackageReviewV2: vi.fn(),
+    rebaseContextV2: vi.fn(),
+  },
   navigateMock: vi.fn(),
 }))
 
@@ -127,6 +138,20 @@ vi.mock('@uiw/react-codemirror', () => ({
 vi.mock('../../src/api/client', () => ({
   api: apiMock,
   ApiError: MockApiError,
+  appendAuthToken: (url: string) => url,
+  initAuthToken: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../../src/features/workflow_v2/api/client', () => ({
+  getWorkflowStateV2: workflowV2ApiMock.getWorkflowStateV2,
+  ensureWorkflowThreadV2: workflowV2ApiMock.ensureWorkflowThreadV2,
+  startExecutionV2: workflowV2ApiMock.startExecutionV2,
+  markDoneFromExecutionV2: workflowV2ApiMock.markDoneFromExecutionV2,
+  startAuditV2: workflowV2ApiMock.startAuditV2,
+  improveExecutionV2: workflowV2ApiMock.improveExecutionV2,
+  acceptAuditV2: workflowV2ApiMock.acceptAuditV2,
+  startPackageReviewV2: workflowV2ApiMock.startPackageReviewV2,
+  rebaseContextV2: workflowV2ApiMock.rebaseContextV2,
 }))
 
 vi.mock('react-router-dom', async () => {
@@ -144,6 +169,7 @@ import { useNodeDocumentStore } from '../../src/stores/node-document-store'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useClarifyStore } from '../../src/stores/clarify-store'
 import { useProjectStore } from '../../src/stores/project-store'
+import { useWorkflowStateStoreV2 } from '../../src/features/workflow_v2/store/workflowStateStoreV2'
 
 function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
   return {
@@ -198,6 +224,35 @@ function makeReviewDetailState(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function makeWorkflowStateV2(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: 1,
+    projectId: 'project-1',
+    nodeId: 'root',
+    phase: 'executing',
+    version: 1,
+    threads: {
+      askPlanning: 'thread-ask-1',
+      execution: 'thread-execution-1',
+      audit: 'thread-audit-lineage-1',
+      packageReview: null,
+    },
+    decisions: {
+      execution: null,
+      audit: null,
+    },
+    context: {
+      frameVersion: 1,
+      specVersion: 1,
+      splitManifestVersion: null,
+      stale: false,
+      staleReason: null,
+    },
+    allowedActions: [],
+    ...overrides,
+  }
+}
+
 describe('NodeDetailCard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -207,6 +262,7 @@ describe('NodeDetailCard', () => {
     useDetailStateStore.getState().reset()
     useClarifyStore.getState().reset()
     useAskShellActionStore.getState().reset()
+    useWorkflowStateStoreV2.getState().reset()
     useProjectStore.setState(useProjectStore.getInitialState())
     apiMock.getFrameGenStatus.mockResolvedValue({
       status: 'idle',
@@ -309,6 +365,14 @@ describe('NodeDetailCard', () => {
       canMarkDoneFromExecution: false,
       canMarkDoneFromAudit: false,
     })
+    workflowV2ApiMock.startExecutionV2.mockResolvedValue({
+      accepted: true,
+      threadId: 'thread-execution-1',
+      turnId: 'turn-1',
+      executionRunId: 'run-1',
+      workflowState: makeWorkflowStateV2(),
+    })
+    workflowV2ApiMock.getWorkflowStateV2.mockResolvedValue(makeWorkflowStateV2())
   })
 
   it('graph variant shows only info (describe) without workflow stepper or editors', async () => {
@@ -1105,10 +1169,14 @@ describe('NodeDetailCard', () => {
       expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
     })
     await waitFor(() => {
-      expect(apiMock.finishTaskWorkflowV3).toHaveBeenCalledWith(
+      expect(workflowV2ApiMock.startExecutionV2).toHaveBeenCalledWith(
         'project-1',
         'root',
-        expect.stringMatching(/^finish_task:/),
+        expect.objectContaining({
+          idempotencyKey: expect.stringMatching(/^start_execution:/),
+          model: null,
+          modelProvider: null,
+        }),
       )
     })
   })
@@ -1200,16 +1268,19 @@ describe('NodeDetailCard', () => {
       expect(apiMock.confirmSpec).toHaveBeenCalledWith('project-1', 'root')
     })
     await waitFor(() => {
-      expect(apiMock.finishTaskWorkflowV3).toHaveBeenCalledWith(
+      expect(workflowV2ApiMock.startExecutionV2).toHaveBeenCalledWith(
         'project-1',
         'root',
-        expect.stringMatching(/^finish_task:/),
+        expect.objectContaining({
+          idempotencyKey: expect.stringMatching(/^start_execution:/),
+          model: null,
+          modelProvider: null,
+        }),
       )
     })
-    await waitFor(() => {
-      expect(apiMock.getWorkflowStateV3).toHaveBeenCalledWith('project-1', 'root')
-    })
+    expect(apiMock.getWorkflowStateV3).not.toHaveBeenCalled()
     expect(apiMock.finishTask).not.toHaveBeenCalled()
+    expect(apiMock.finishTaskWorkflowV3).not.toHaveBeenCalled()
     expect(navigateMock).toHaveBeenCalledWith('/projects/project-1/nodes/root/chat-v2?thread=execution')
   })
 
@@ -1319,10 +1390,14 @@ describe('NodeDetailCard', () => {
     resolveConfirmSpec()
 
     await waitFor(() => {
-      expect(apiMock.finishTaskWorkflowV3).toHaveBeenCalledWith(
+      expect(workflowV2ApiMock.startExecutionV2).toHaveBeenCalledWith(
         'project-1',
         'root',
-        expect.stringMatching(/^finish_task:/),
+        expect.objectContaining({
+          idempotencyKey: expect.stringMatching(/^start_execution:/),
+          model: null,
+          modelProvider: null,
+        }),
       )
     })
     await waitFor(() => {

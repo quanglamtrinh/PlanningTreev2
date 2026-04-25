@@ -9,8 +9,10 @@ Current boundary:
   `/v4/session/*`.
 - Execution/audit workflow business logic has moved behind Workflow Core V2 and
   V4 workflow routes for the Breadcrumb V2 path.
-- Some legacy workflow entry points, such as V3 compatibility routes and
-  document-editor finish-task wiring, remain during the migration.
+- Legacy V3 workflow state/mutation routes now exist only as deprecated
+  compatibility adapters over Workflow Core V2.
+- Active frontend workflow entry points use Workflow V2 state, events, and
+  mutations.
 - The migration target is a V2 workflow core that owns workflow state, thread
   binding, context packets, execution/audit orchestration, events, and V4
   workflow routes. Remaining V3 routes become compatibility adapters.
@@ -48,6 +50,10 @@ Documents:
   records the completed V2 ownership boundary for frame, clarify, spec, and split
   artifact workflows, including V4 routes, Workflow V2 events, and context
   freshness integration.
+- [Phase 10 V3 Compatibility, Deprecation, and Removal Plan](./phase-10-v3-compatibility-deprecation-removal-plan-v1.md)
+  records the completed conversion of remaining workflow V3 state/mutation routes
+  into explicit compatibility adapters over Workflow Core V2, plus deprecation
+  telemetry and removal gates.
 
 Migration rules:
 

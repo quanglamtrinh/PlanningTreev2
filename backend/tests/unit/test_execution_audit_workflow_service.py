@@ -4,6 +4,9 @@ import copy
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from backend.business.workflow_v2.errors import WorkflowV2Error
 from backend.services.execution_audit_workflow_service import (
     ExecutionAuditWorkflowService,
     GitArtifactService,
@@ -691,347 +694,82 @@ class _FlowThreadRuntimeService:
         self.begin_turn_calls.append(dict(kwargs))
 
 
-def test_mark_done_from_execution_writes_latest_commit_metadata() -> None:
-    state = {
-        "workflowPhase": "execution_decision_pending",
-        "currentExecutionDecision": {"sourceExecutionRunId": "run-1"},
-        "mutationCache": {},
-    }
-    runs = [{"runId": "run-1", "summaryText": "Execution summary"}]
-    storage = _InMemoryStorage(state=state, runs=runs)
-    artifact_service = _FlowArtifactService(
-        commit_result={
-            "initialSha": "a" * 40,
-            "headSha": "b" * 40,
-            "commitMessage": "pt(1.1): done build feature",
-            "committed": True,
-        }
-    )
-    metadata_service = _FlowMetadataService(
-        workspace_root=r"C:\repo\workspace",
-        hierarchical_number="1.1",
-        title="Build Feature",
-    )
-    progression_calls: list[dict[str, Any]] = []
-
+def _legacy_service_without_v2_orchestrator() -> ExecutionAuditWorkflowService:
     service = object.__new__(ExecutionAuditWorkflowService)
-    service._storage = storage  # type: ignore[attr-defined]
-    service._artifact_service = artifact_service  # type: ignore[attr-defined]
-    service._metadata_service = metadata_service  # type: ignore[attr-defined]
-    service._ensure_workflow_state_locked = lambda _project_id, _node_id: storage.workflow_state_store.state  # type: ignore[attr-defined]
-    service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-    service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-    service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
-    service._upsert_handoff_summary_locked = lambda **_kwargs: None  # type: ignore[attr-defined]
-    service.get_workflow_state = lambda _project_id, _node_id: copy.deepcopy(storage.workflow_state_store.state)  # type: ignore[attr-defined]
-    service._complete_node_progression = lambda _project_id, _node_id, *, accepted_sha, summary_text: progression_calls.append(  # type: ignore[attr-defined]
-        {"accepted_sha": accepted_sha, "summary_text": summary_text}
+    service._workflow_orchestrator_v2 = None  # type: ignore[attr-defined]
+    return service
+
+
+def _assert_requires_workflow_core_v2(callable_action) -> None:
+    with pytest.raises(WorkflowV2Error) as exc_info:
+        callable_action()
+    assert exc_info.value.code == "ERR_WORKFLOW_V2_ORCHESTRATOR_UNAVAILABLE"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.details == {"surface": "execution_audit_workflow_service"}
+
+
+def test_mark_done_from_execution_requires_workflow_core_v2() -> None:
+    service = _legacy_service_without_v2_orchestrator()
+
+    _assert_requires_workflow_core_v2(
+        lambda: service.mark_done_from_execution(
+            "project-1",
+            "node-1",
+            idempotency_key="idem-1",
+            expected_workspace_hash="workspace-hash-1",
+        )
     )
 
-    response = service.mark_done_from_execution(
-        "project-1",
-        "node-1",
-        idempotency_key="idem-1",
-        expected_workspace_hash="workspace-hash-1",
+
+def test_review_in_audit_requires_workflow_core_v2() -> None:
+    service = _legacy_service_without_v2_orchestrator()
+
+    _assert_requires_workflow_core_v2(
+        lambda: service.review_in_audit(
+            "project-1",
+            "node-1",
+            idempotency_key="idem-review-1",
+            expected_workspace_hash="workspace-hash-2",
+        )
     )
 
-    assert response["acceptedSha"] == "b" * 40
-    assert response["workflowPhase"] == "done"
-    latest_commit = storage.workflow_state_store.state.get("latestCommit")
-    assert isinstance(latest_commit, dict)
-    assert latest_commit["sourceAction"] == "mark_done_from_execution"
-    assert latest_commit["initialSha"] == "a" * 40
-    assert latest_commit["headSha"] == "b" * 40
-    assert latest_commit["commitMessage"] == "pt(1.1): done build feature"
-    assert latest_commit["committed"] is True
-    assert isinstance(latest_commit["recordedAt"], str) and latest_commit["recordedAt"]
-    assert storage.execution_run_store.runs[0]["committedHeadSha"] == "b" * 40
-    assert storage.execution_run_store.runs[0]["decision"] == "marked_done"
-    assert progression_calls == [{"accepted_sha": "b" * 40, "summary_text": "Execution summary"}]
 
+def test_improve_in_execution_requires_workflow_core_v2() -> None:
+    service = _legacy_service_without_v2_orchestrator()
 
-def test_review_in_audit_writes_latest_commit_metadata_and_uses_head_sha(monkeypatch) -> None:
-    state = {
-        "workflowPhase": "execution_decision_pending",
-        "currentExecutionDecision": {"sourceExecutionRunId": "run-2"},
-        "auditLineageThreadId": "audit-lineage-thread-1",
-        "reviewThreadId": None,
-        "mutationCache": {},
-    }
-    runs = [{"runId": "run-2"}]
-    storage = _InMemoryStorage(state=state, runs=runs)
-    artifact_service = _FlowArtifactService(
-        commit_result={
-            "initialSha": "c" * 40,
-            "headSha": "c" * 40,
-            "commitMessage": "pt(1.2): review add tests",
-            "committed": False,
-        }
-    )
-    metadata_service = _FlowMetadataService(
-        workspace_root=r"C:\repo\workspace",
-        hierarchical_number="1.2",
-        title="Add Tests",
-    )
-    runtime_service = _FlowThreadRuntimeService()
-
-    scheduled_threads: list[dict[str, Any]] = []
-
-    class _FakeThread:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            scheduled_threads.append({"args": args, "kwargs": kwargs})
-
-        def start(self) -> None:
-            return None
-
-    monkeypatch.setattr("backend.services.execution_audit_workflow_service.threading.Thread", _FakeThread)
-
-    service = object.__new__(ExecutionAuditWorkflowService)
-    service._storage = storage  # type: ignore[attr-defined]
-    service._artifact_service = artifact_service  # type: ignore[attr-defined]
-    service._metadata_service = metadata_service  # type: ignore[attr-defined]
-    service._thread_runtime_service_v2 = runtime_service  # type: ignore[attr-defined]
-    service._ensure_workflow_state_locked = lambda _project_id, _node_id: storage.workflow_state_store.state  # type: ignore[attr-defined]
-    service._ensure_audit_lineage_thread_id = lambda _project_id, _node_id, _workspace_root: "audit-lineage-thread-1"  # type: ignore[attr-defined]
-    service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-    service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-    service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
-    service._bind_audit_thread_to_review_thread = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-
-    response = service.review_in_audit(
-        "project-1",
-        "node-1",
-        idempotency_key="idem-review-1",
-        expected_workspace_hash="workspace-hash-2",
+    _assert_requires_workflow_core_v2(
+        lambda: service.improve_in_execution(
+            "project-1",
+            "node-1",
+            idempotency_key="idem-improve-1",
+            expected_review_commit_sha="f" * 40,
+        )
     )
 
-    assert response["accepted"] is True
-    assert response["workflowPhase"] == "audit_running"
-    assert response["reviewThreadId"] == "audit-lineage-thread-1"
-    assert len(storage.review_cycle_store.cycles) == 1
-    cycle = storage.review_cycle_store.cycles[0]
-    assert cycle["reviewCommitSha"] == "c" * 40
-    assert cycle["reviewThreadId"] == "audit-lineage-thread-1"
-    latest_commit = storage.workflow_state_store.state.get("latestCommit")
-    assert isinstance(latest_commit, dict)
-    assert latest_commit["sourceAction"] == "review_in_audit"
-    assert latest_commit["initialSha"] == "c" * 40
-    assert latest_commit["headSha"] == cycle["reviewCommitSha"]
-    assert latest_commit["commitMessage"] == "pt(1.2): review add tests"
-    assert latest_commit["committed"] is False
-    assert isinstance(latest_commit["recordedAt"], str) and latest_commit["recordedAt"]
-    assert storage.execution_run_store.runs[0]["committedHeadSha"] == "c" * 40
-    assert storage.execution_run_store.runs[0]["decision"] == "sent_to_review"
-    assert len(runtime_service.begin_turn_calls) == 1
-    assert len(scheduled_threads) == 1
-    assert scheduled_threads[0]["kwargs"]["kwargs"]["thread_id"] == "audit-lineage-thread-1"
-    assert "The commit hash is cccccccccccccccccccccccccccccccccccccccc" in str(
-        scheduled_threads[0]["kwargs"]["kwargs"]["prompt"]
-    )
-    assert scheduled_threads[0]["kwargs"]["kwargs"]["review_commit_sha"] == "c" * 40
 
+def test_mark_done_from_audit_requires_workflow_core_v2() -> None:
+    service = _legacy_service_without_v2_orchestrator()
 
-def test_mark_done_from_audit_uses_execution_summary_and_keeps_existing_latest_commit_metadata() -> None:
-    existing_latest_commit = {
-        "sourceAction": "review_in_audit",
-        "initialSha": "e" * 40,
-        "headSha": "f" * 40,
-        "commitMessage": "pt(1.3): review verify release",
-        "committed": True,
-        "recordedAt": "2026-04-04T00:00:00Z",
-    }
-    state = {
-        "workflowPhase": "audit_decision_pending",
-        "currentAuditDecision": {"sourceReviewCycleId": "cycle-1"},
-        "latestExecutionRunId": "run-9",
-        "latestCommit": copy.deepcopy(existing_latest_commit),
-        "mutationCache": {},
-    }
-    storage = _InMemoryStorage(
-        state=state,
-        runs=[{"runId": "run-9", "summaryText": "Execution summary from run"}],
-    )
-    storage.review_cycle_store.cycles = [
-        {
-            "cycleId": "cycle-1",
-            "sourceExecutionRunId": "run-9",
-            "finalReviewText": "Final audit summary",
-        }
-    ]
-    artifact_service = _FlowArtifactService(
-        commit_result={
-            "initialSha": "ignored",
-            "headSha": "ignored",
-            "commitMessage": "ignored",
-            "committed": False,
-        }
-    )
-    metadata_service = _FlowMetadataService(
-        workspace_root=r"C:\repo\workspace",
-        hierarchical_number="1.3",
-        title="Verify Release",
-    )
-    progression_calls: list[dict[str, Any]] = []
-
-    service = object.__new__(ExecutionAuditWorkflowService)
-    service._storage = storage  # type: ignore[attr-defined]
-    service._artifact_service = artifact_service  # type: ignore[attr-defined]
-    service._metadata_service = metadata_service  # type: ignore[attr-defined]
-    service._ensure_workflow_state_locked = lambda _project_id, _node_id: storage.workflow_state_store.state  # type: ignore[attr-defined]
-    service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-    service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-    service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
-    service._upsert_handoff_summary_locked = lambda **_kwargs: None  # type: ignore[attr-defined]
-    service.get_workflow_state = lambda _project_id, _node_id: copy.deepcopy(storage.workflow_state_store.state)  # type: ignore[attr-defined]
-    service._complete_node_progression = lambda _project_id, _node_id, *, accepted_sha, summary_text: progression_calls.append(  # type: ignore[attr-defined]
-        {"accepted_sha": accepted_sha, "summary_text": summary_text}
+    _assert_requires_workflow_core_v2(
+        lambda: service.mark_done_from_audit(
+            "project-1",
+            "node-1",
+            idempotency_key="idem-audit-1",
+            expected_review_commit_sha="f" * 40,
+        )
     )
 
-    response = service.mark_done_from_audit(
-        "project-1",
-        "node-1",
-        idempotency_key="idem-audit-1",
-        expected_review_commit_sha="f" * 40,
+
+def test_finish_task_requires_workflow_core_v2() -> None:
+    service = _legacy_service_without_v2_orchestrator()
+
+    _assert_requires_workflow_core_v2(
+        lambda: service.finish_task(
+            "project-1",
+            "node-1",
+            idempotency_key="idem-finish-1",
+        )
     )
-
-    assert response["workflowPhase"] == "done"
-    assert storage.workflow_state_store.state["acceptedSha"] == "f" * 40
-    assert storage.workflow_state_store.state.get("latestCommit") == existing_latest_commit
-    assert artifact_service.head_checks == [(r"C:\repo\workspace", "f" * 40)]
-    assert artifact_service.commit_calls == []
-    assert progression_calls == [{"accepted_sha": "f" * 40, "summary_text": "Execution summary from run"}]
-
-
-def test_mark_done_from_execution_writes_handoff_before_commit(tmp_path: Path) -> None:
-    workspace_root = tmp_path / "workspace"
-    workspace_root.mkdir()
-    handoff_path = workspace_root / "docs" / "handoff.md"
-
-    state = {
-        "workflowPhase": "execution_decision_pending",
-        "currentExecutionDecision": {"sourceExecutionRunId": "run-1"},
-        "mutationCache": {},
-    }
-    runs = [{"runId": "run-1", "summaryText": "Execution summary for handoff"}]
-    storage = _InMemoryStorage(state=state, runs=runs)
-
-    class _CommitOrderArtifactService(_FlowArtifactService):
-        def commit_workspace(
-            self,
-            *,
-            workspace_root: str | None,
-            hierarchical_number: str,
-            title: str,
-            verb: str,
-        ) -> dict[str, Any]:
-            assert handoff_path.exists()
-            content = handoff_path.read_text(encoding="utf-8")
-            assert "<!-- PT_HANDOFF_NODE:node-1 -->" in content
-            assert "Execution summary for handoff" in content
-            return super().commit_workspace(
-                workspace_root=workspace_root,
-                hierarchical_number=hierarchical_number,
-                title=title,
-                verb=verb,
-            )
-
-    artifact_service = _CommitOrderArtifactService(
-        commit_result={
-            "initialSha": "a" * 40,
-            "headSha": "b" * 40,
-            "commitMessage": "pt(1.1): done build feature",
-            "committed": True,
-        }
-    )
-    metadata_service = _FlowMetadataService(
-        workspace_root=str(workspace_root),
-        hierarchical_number="1.1",
-        title="Build Feature",
-        node_id="node-1",
-    )
-    progression_calls: list[dict[str, Any]] = []
-
-    service = object.__new__(ExecutionAuditWorkflowService)
-    service._storage = storage  # type: ignore[attr-defined]
-    service._artifact_service = artifact_service  # type: ignore[attr-defined]
-    service._metadata_service = metadata_service  # type: ignore[attr-defined]
-    service._ensure_workflow_state_locked = lambda _project_id, _node_id: storage.workflow_state_store.state  # type: ignore[attr-defined]
-    service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-    service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-    service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
-    service.get_workflow_state = lambda _project_id, _node_id: copy.deepcopy(storage.workflow_state_store.state)  # type: ignore[attr-defined]
-    service._complete_node_progression = lambda _project_id, _node_id, *, accepted_sha, summary_text: progression_calls.append(  # type: ignore[attr-defined]
-        {"accepted_sha": accepted_sha, "summary_text": summary_text}
-    )
-
-    response = service.mark_done_from_execution(
-        "project-1",
-        "node-1",
-        idempotency_key="idem-order-1",
-        expected_workspace_hash="workspace-hash-order-1",
-    )
-
-    assert response["workflowPhase"] == "done"
-    assert handoff_path.exists()
-    assert progression_calls == [{"accepted_sha": "b" * 40, "summary_text": "Execution summary for handoff"}]
-
-
-def test_mark_done_from_audit_uses_placeholder_when_execution_summary_missing() -> None:
-    state = {
-        "workflowPhase": "audit_decision_pending",
-        "currentAuditDecision": {"sourceReviewCycleId": "cycle-1"},
-        "latestExecutionRunId": None,
-        "mutationCache": {},
-    }
-    storage = _InMemoryStorage(state=state, runs=[])
-    storage.review_cycle_store.cycles = [
-        {
-            "cycleId": "cycle-1",
-            "sourceExecutionRunId": None,
-            "finalReviewText": "Audit-only summary should be ignored",
-        }
-    ]
-    artifact_service = _FlowArtifactService(
-        commit_result={
-            "initialSha": "ignored",
-            "headSha": "ignored",
-            "commitMessage": "ignored",
-            "committed": False,
-        }
-    )
-    metadata_service = _FlowMetadataService(
-        workspace_root=r"C:\repo\workspace",
-        hierarchical_number="1.4",
-        title="Missing Summary",
-        node_id="node-1",
-    )
-    progression_calls: list[dict[str, Any]] = []
-    handoff_calls: list[dict[str, Any]] = []
-
-    service = object.__new__(ExecutionAuditWorkflowService)
-    service._storage = storage  # type: ignore[attr-defined]
-    service._artifact_service = artifact_service  # type: ignore[attr-defined]
-    service._metadata_service = metadata_service  # type: ignore[attr-defined]
-    service._ensure_workflow_state_locked = lambda _project_id, _node_id: storage.workflow_state_store.state  # type: ignore[attr-defined]
-    service._get_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-    service._store_cached_mutation = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
-    service._publish_workflow_refresh = lambda **_kwargs: None  # type: ignore[attr-defined]
-    service._upsert_handoff_summary_locked = lambda **kwargs: handoff_calls.append(kwargs)  # type: ignore[attr-defined]
-    service.get_workflow_state = lambda _project_id, _node_id: copy.deepcopy(storage.workflow_state_store.state)  # type: ignore[attr-defined]
-    service._complete_node_progression = lambda _project_id, _node_id, *, accepted_sha, summary_text: progression_calls.append(  # type: ignore[attr-defined]
-        {"accepted_sha": accepted_sha, "summary_text": summary_text}
-    )
-
-    response = service.mark_done_from_audit(
-        "project-1",
-        "node-1",
-        idempotency_key="idem-audit-placeholder-1",
-        expected_review_commit_sha="d" * 40,
-    )
-
-    assert response["workflowPhase"] == "done"
-    assert handoff_calls and handoff_calls[0]["summary_text"] == "No execution summary."
-    assert progression_calls == [{"accepted_sha": "d" * 40, "summary_text": "No execution summary."}]
 
 
 def test_handoff_upsert_creates_replaces_orders_and_is_idempotent(tmp_path: Path) -> None:

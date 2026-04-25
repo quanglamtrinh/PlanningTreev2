@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.execution_audit_orchestrator import ExecutionAuditOrchestratorV2
+from backend.business.workflow_v2.legacy_v3_adapter import LegacyWorkflowV3CompatibilityAdapter
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.services import planningtree_workspace
 from backend.tests.conftest import init_git_repo
@@ -86,6 +87,11 @@ def _install_phase5_orchestrator(client: TestClient, manager: FakeSessionManager
     )
     app.state.workflow_thread_binding_service_v2 = binding_service
     app.state.execution_audit_orchestrator_v2 = orchestrator
+    app.state.workflow_v3_compat_adapter = LegacyWorkflowV3CompatibilityAdapter(
+        orchestrator=orchestrator,
+        storage=app.state.storage,
+        legacy_event_publisher=app.state.workflow_event_publisher,
+    )
     app.state.execution_audit_workflow_service._workflow_orchestrator_v2 = orchestrator
     return orchestrator
 

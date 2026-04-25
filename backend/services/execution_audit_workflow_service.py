@@ -7,12 +7,11 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 from backend.ai.codex_client import CodexTransportError
-from backend.ai.execution_prompt_builder import build_execution_prompt
-from backend.ai.split_context_builder import build_split_context
-from backend.business.workflow_v2.errors import WorkflowActionNotAllowedError
+from backend.business.workflow_v2.execution_audit_helpers import WorkspaceCommitResult
+from backend.business.workflow_v2.errors import WorkflowActionNotAllowedError, WorkflowV2Error
 from backend.conversation.projector.thread_event_projector import upsert_item as upsert_item_v2
 from backend.conversation.projector.thread_event_projector_runtime_v3 import upsert_item_v3
 from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
@@ -31,7 +30,6 @@ from backend.services.finish_task_service import FinishTaskService
 from backend.services.git_checkpoint_service import GitCheckpointService
 from backend.services.review_service import ReviewService
 from backend.services.tree_service import TreeService
-from backend.services.workspace_sha import compute_workspace_sha
 from backend.storage.file_utils import atomic_write_text, iso_now, load_text, new_id
 from backend.storage.storage import Storage
 
@@ -46,13 +44,6 @@ _HANDOFF_NODE_BLOCK_RE = re.compile(
     r"<!-- PT_HANDOFF_NODE:(?P<node_id>[^>\r\n]+) -->\n(?P<body>.*?)\n<!-- /PT_HANDOFF_NODE:(?P=node_id) -->\n?",
     re.DOTALL,
 )
-
-
-class WorkspaceCommitResult(TypedDict):
-    initialSha: str
-    headSha: str
-    commitMessage: str
-    committed: bool
 
 
 class WorkflowDecisionService:
@@ -418,6 +409,17 @@ class ExecutionAuditWorkflowService:
     def _resolve_workflow_orchestrator_v2(self) -> Any | None:
         return getattr(self, "_workflow_orchestrator_v2", None)
 
+    def _require_workflow_orchestrator_v2(self) -> Any:
+        orchestrator = self._resolve_workflow_orchestrator_v2()
+        if orchestrator is None:
+            raise WorkflowV2Error(
+                "ERR_WORKFLOW_V2_ORCHESTRATOR_UNAVAILABLE",
+                "Execution/audit workflow actions require Workflow Core V2.",
+                status_code=503,
+                details={"surface": "execution_audit_workflow_service"},
+            )
+        return orchestrator
+
     def _resolve_thread_query_service(self) -> Any | None:
         query_service = getattr(self, "_thread_query_service", None)
         if query_service is not None:
@@ -508,79 +510,45 @@ class ExecutionAuditWorkflowService:
         return upsert_item_v2(snapshot, item)
 
     def get_workflow_state(self, project_id: str, node_id: str) -> dict[str, Any]:
-        orchestrator = self._resolve_workflow_orchestrator_v2()
-        if orchestrator is not None:
-            with self._storage.project_lock(project_id):
-                legacy_state = self._storage.workflow_state_store.read_state(project_id, node_id)
-                if legacy_state is None:
-                    legacy_state = self._storage.workflow_state_store.default_state(node_id)
-                self._storage.workflow_state_store.write_state(project_id, node_id, legacy_state)
-            view = orchestrator.get_legacy_workflow_state(project_id, node_id)
-            view["askThreadId"] = self._resolve_ask_thread_id(project_id, node_id)
-            execution_entry = self._storage.thread_registry_store.read_entry(project_id, node_id, "execution")
-            audit_entry = self._storage.thread_registry_store.read_entry(project_id, node_id, "audit")
-            if not view.get("executionThreadId"):
-                view["executionThreadId"] = legacy_state.get("executionThreadId") or str(execution_entry.get("threadId") or "").strip() or None
-            if not view.get("auditLineageThreadId"):
-                view["auditLineageThreadId"] = legacy_state.get("auditLineageThreadId") or str(audit_entry.get("threadId") or "").strip() or None
-            if not view.get("reviewThreadId"):
-                view["reviewThreadId"] = legacy_state.get("reviewThreadId") or legacy_state.get("auditLineageThreadId") or str(audit_entry.get("threadId") or "").strip() or None
-            return view
-        with self._storage.project_lock(project_id):
-            state = self._ensure_workflow_state_locked(project_id, node_id)
-            self._storage.workflow_state_store.write_state(project_id, node_id, state)
-            return self._decision_service.build_view(state)
+        orchestrator = self._require_workflow_orchestrator_v2()
+        view = orchestrator.get_legacy_workflow_state(project_id, node_id)
+        view["askThreadId"] = self._resolve_ask_thread_id(project_id, node_id)
+        execution_entry = self._storage.thread_registry_store.read_entry(project_id, node_id, "execution")
+        audit_entry = self._storage.thread_registry_store.read_entry(project_id, node_id, "audit")
+        if not view.get("executionThreadId"):
+            view["executionThreadId"] = str(execution_entry.get("threadId") or "").strip() or None
+        if not view.get("auditLineageThreadId"):
+            view["auditLineageThreadId"] = str(audit_entry.get("threadId") or "").strip() or None
+        if not view.get("reviewThreadId"):
+            view["reviewThreadId"] = str(audit_entry.get("threadId") or "").strip() or None
+        return view
 
     def finish_task(self, project_id: str, node_id: str, *, idempotency_key: str) -> dict[str, Any]:
-        orchestrator = self._resolve_workflow_orchestrator_v2()
-        if orchestrator is not None:
-            refresh_reason = "finish_task_started"
-            try:
-                response = orchestrator.start_execution(
-                    project_id,
-                    node_id,
-                    idempotency_key=idempotency_key,
-                )
-            except WorkflowActionNotAllowedError as exc:
-                if exc.details.get("action") != "start_execution" or exc.details.get("phase") != "executing":
-                    raise
-                active_response = orchestrator.get_active_execution_start_response(project_id, node_id)
-                if active_response is None:
-                    raise
-                response = active_response
-                refresh_reason = "finish_task_already_executing"
-            state = orchestrator.get_legacy_workflow_state(project_id, node_id)
-            self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason=refresh_reason)
-            return {
-                "accepted": True,
-                "threadId": response.get("threadId"),
-                "turnId": response.get("turnId"),
-                "executionRunId": response.get("executionRunId"),
-                "workflowPhase": state.get("workflowPhase"),
-            }
-        cached = self._get_cached_mutation(project_id, node_id, "finish_task", idempotency_key)
-        if cached is not None:
-            return cached
-        metadata = self._metadata_service.load_execution_metadata(project_id, node_id, validate_finish_task=True)
-        prompt = build_execution_prompt(
-            spec_content=metadata["specContent"],
-            frame_content=metadata["frameContent"],
-            task_context=metadata["taskContext"],
-        )
-        response = self._start_execution_run(
-            project_id=project_id,
-            node_id=node_id,
-            idempotency_key=idempotency_key,
-            prompt=prompt,
-            start_sha=str(metadata["initialSha"]),
-            trigger_kind="finish_task",
-            source_review_cycle_id=None,
-            workspace_root=metadata["workspaceRoot"],
-            summary_seed=None,
-            local_user_text=None,
-        )
-        self._store_cached_mutation(project_id, node_id, "finish_task", idempotency_key, response)
-        return response
+        orchestrator = self._require_workflow_orchestrator_v2()
+        refresh_reason = "finish_task_started"
+        try:
+            response = orchestrator.start_execution(
+                project_id,
+                node_id,
+                idempotency_key=idempotency_key,
+            )
+        except WorkflowActionNotAllowedError as exc:
+            if exc.details.get("action") != "start_execution" or exc.details.get("phase") != "executing":
+                raise
+            active_response = orchestrator.get_active_execution_start_response(project_id, node_id)
+            if active_response is None:
+                raise
+            response = active_response
+            refresh_reason = "finish_task_already_executing"
+        state = orchestrator.get_legacy_workflow_state(project_id, node_id)
+        self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason=refresh_reason)
+        return {
+            "accepted": True,
+            "threadId": response.get("threadId"),
+            "turnId": response.get("turnId"),
+            "executionRunId": response.get("executionRunId"),
+            "workflowPhase": state.get("workflowPhase"),
+        }
 
     def start_execution_followup(
         self,
@@ -590,30 +558,13 @@ class ExecutionAuditWorkflowService:
         idempotency_key: str,
         text: str,
     ) -> dict[str, Any]:
-        cached = self._get_cached_mutation(project_id, node_id, "execution_follow_up", idempotency_key)
-        if cached is not None:
-            return cached
-        metadata = self._metadata_service.load_execution_metadata(project_id, node_id)
-        prompt = self._metadata_service.build_execution_followup_prompt(
-            spec_content=metadata["specContent"],
-            frame_content=metadata["frameContent"],
-            task_context=metadata["taskContext"],
-            instruction_text=text,
+        del project_id, node_id, idempotency_key, text
+        raise WorkflowV2Error(
+            "ERR_WORKFLOW_V3_EXECUTION_FOLLOWUP_DEPRECATED",
+            "V3 execution follow-up turns are deprecated. Use Session Core V2.",
+            status_code=410,
+            details={"surface": "workflow-v3", "replacement": "session-v2"},
         )
-        response = self._start_execution_run(
-            project_id=project_id,
-            node_id=node_id,
-            idempotency_key=idempotency_key,
-            prompt=prompt,
-            start_sha=str(metadata["initialSha"]),
-            trigger_kind="follow_up_message",
-            source_review_cycle_id=None,
-            workspace_root=metadata["workspaceRoot"],
-            summary_seed=text.strip() or None,
-            local_user_text=text,
-        )
-        self._store_cached_mutation(project_id, node_id, "execution_follow_up", idempotency_key, response)
-        return response
 
     def resolve_thread_route(self, project_id: str, node_id: str, thread_id: str) -> str:
         with self._storage.project_lock(project_id):
@@ -659,73 +610,15 @@ class ExecutionAuditWorkflowService:
         idempotency_key: str,
         expected_workspace_hash: str,
     ) -> dict[str, Any]:
-        orchestrator = self._resolve_workflow_orchestrator_v2()
-        if orchestrator is not None:
-            orchestrator.mark_done_from_execution(
-                project_id,
-                node_id,
-                idempotency_key=idempotency_key,
-                expected_workspace_hash=expected_workspace_hash,
-            )
-            self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason="mark_done_from_execution")
-            return orchestrator.get_legacy_workflow_state(project_id, node_id)
-        cached = self._get_cached_mutation(project_id, node_id, "mark_done_from_execution", idempotency_key)
-        if cached is not None:
-            return cached
-
-        with self._storage.project_lock(project_id):
-            state = self._ensure_workflow_state_locked(project_id, node_id)
-            if str(state.get("workflowPhase") or "") != "execution_decision_pending":
-                raise FinishTaskNotAllowed("Mark Done from Execution is only available in execution_decision_pending.")
-            current_execution_decision = state.get("currentExecutionDecision")
-            if not isinstance(current_execution_decision, dict):
-                raise FinishTaskNotAllowed("No current execution decision is available.")
-            metadata = self._metadata_service.load_execution_metadata(project_id, node_id)
-            self._artifact_service.require_workspace_hash(metadata["workspaceRoot"], expected_workspace_hash)
-            run_id = str(current_execution_decision.get("sourceExecutionRunId") or "").strip() or None
-            summary_text = self._resolve_execution_summary_text_locked(
-                project_id=project_id,
-                node_id=node_id,
-                run_id=run_id,
-            )
-            self._upsert_handoff_summary_locked(
-                project_id=project_id,
-                node_id=node_id,
-                workspace_root=metadata["workspaceRoot"],
-                snapshot=metadata.get("snapshot"),
-                node=metadata.get("node"),
-                summary_text=summary_text,
-            )
-            commit_result = self._artifact_service.commit_workspace(
-                workspace_root=metadata["workspaceRoot"],
-                hierarchical_number=str(metadata["node"].get("hierarchical_number") or "1"),
-                title=str(metadata["node"].get("title") or "task").strip() or "task",
-                verb="done",
-            )
-            accepted_sha = commit_result["headSha"]
-            runs = self._storage.execution_run_store.read_runs(project_id, node_id)
-            for run in runs:
-                if str(run.get("runId") or "") != str(run_id or ""):
-                    continue
-                run["committedHeadSha"] = accepted_sha
-                run["decision"] = "marked_done"
-                run["decidedAt"] = iso_now()
-                break
-            self._storage.execution_run_store.write_runs(project_id, node_id, runs)
-            state["acceptedSha"] = accepted_sha
-            state["latestCommit"] = self._materialize_latest_commit(
-                source_action="mark_done_from_execution",
-                commit_result=commit_result,
-            )
-            state["workflowPhase"] = "done"
-            state["activeExecutionRunId"] = None
-            self._storage.workflow_state_store.write_state(project_id, node_id, state)
-
-        self._complete_node_progression(project_id, node_id, accepted_sha=accepted_sha, summary_text=summary_text)
-        response = self.get_workflow_state(project_id, node_id)
-        self._store_cached_mutation(project_id, node_id, "mark_done_from_execution", idempotency_key, response)
+        orchestrator = self._require_workflow_orchestrator_v2()
+        orchestrator.mark_done_from_execution(
+            project_id,
+            node_id,
+            idempotency_key=idempotency_key,
+            expected_workspace_hash=expected_workspace_hash,
+        )
         self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason="mark_done_from_execution")
-        return response
+        return orchestrator.get_legacy_workflow_state(project_id, node_id)
 
     def improve_in_execution(
         self,
@@ -735,60 +628,22 @@ class ExecutionAuditWorkflowService:
         idempotency_key: str,
         expected_review_commit_sha: str,
     ) -> dict[str, Any]:
-        orchestrator = self._resolve_workflow_orchestrator_v2()
-        if orchestrator is not None:
-            response = orchestrator.request_improvements(
-                project_id,
-                node_id,
-                idempotency_key=idempotency_key,
-                expected_review_commit_sha=expected_review_commit_sha,
-            )
-            state = orchestrator.get_legacy_workflow_state(project_id, node_id)
-            self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason="improve_in_execution_started")
-            return {
-                "accepted": True,
-                "threadId": response.get("threadId"),
-                "turnId": response.get("turnId"),
-                "executionRunId": response.get("executionRunId"),
-                "workflowPhase": state.get("workflowPhase"),
-            }
-        cached = self._get_cached_mutation(project_id, node_id, "improve_in_execution", idempotency_key)
-        if cached is not None:
-            return cached
-
-        with self._storage.project_lock(project_id):
-            state = self._ensure_workflow_state_locked(project_id, node_id)
-            if str(state.get("workflowPhase") or "") != "audit_decision_pending":
-                raise ReviewNotAllowed("Improve in Execution is only available in audit_decision_pending.")
-            current_audit_decision = state.get("currentAuditDecision")
-            if not isinstance(current_audit_decision, dict):
-                raise ReviewNotAllowed("No current audit decision is available.")
-            metadata = self._metadata_service.load_execution_metadata(project_id, node_id)
-            self._artifact_service.require_head_sha(metadata["workspaceRoot"], expected_review_commit_sha)
-            review_text = str(current_audit_decision.get("finalReviewText") or "").strip()
-            if not review_text:
-                raise ReviewNotAllowed("No completed local review text is available for improvement.")
-
-        prompt = self._metadata_service.build_improve_prompt(
-            spec_content=metadata["specContent"],
-            frame_content=metadata["frameContent"],
-            task_context=metadata["taskContext"],
-            review_text=review_text,
-        )
-        response = self._start_execution_run(
-            project_id=project_id,
-            node_id=node_id,
+        orchestrator = self._require_workflow_orchestrator_v2()
+        response = orchestrator.request_improvements(
+            project_id,
+            node_id,
             idempotency_key=idempotency_key,
-            prompt=prompt,
-            start_sha=expected_review_commit_sha,
-            trigger_kind="improve_from_review",
-            source_review_cycle_id=str(state.get("latestReviewCycleId") or "") or None,
-            workspace_root=metadata["workspaceRoot"],
-            summary_seed=review_text,
-            local_user_text=None,
+            expected_review_commit_sha=expected_review_commit_sha,
         )
-        self._store_cached_mutation(project_id, node_id, "improve_in_execution", idempotency_key, response)
-        return response
+        state = orchestrator.get_legacy_workflow_state(project_id, node_id)
+        self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason="improve_in_execution_started")
+        return {
+            "accepted": True,
+            "threadId": response.get("threadId"),
+            "turnId": response.get("turnId"),
+            "executionRunId": response.get("executionRunId"),
+            "workflowPhase": state.get("workflowPhase"),
+        }
 
     def _start_execution_run(
         self,
@@ -1439,125 +1294,21 @@ class ExecutionAuditWorkflowService:
         idempotency_key: str,
         expected_workspace_hash: str,
     ) -> dict[str, Any]:
-        orchestrator = self._resolve_workflow_orchestrator_v2()
-        if orchestrator is not None:
-            response = orchestrator.start_audit(
-                project_id,
-                node_id,
-                idempotency_key=idempotency_key,
-                expected_workspace_hash=expected_workspace_hash,
-            )
-            state = orchestrator.get_legacy_workflow_state(project_id, node_id)
-            self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason="review_in_audit_started")
-            return {
-                "accepted": True,
-                "reviewCycleId": response.get("auditRunId") or response.get("reviewCycleId"),
-                "reviewThreadId": response.get("reviewThreadId") or response.get("threadId"),
-                "workflowPhase": state.get("workflowPhase"),
-            }
-        cached = self._get_cached_mutation(project_id, node_id, "review_in_audit", idempotency_key)
-        if cached is not None:
-            return cached
-
-        metadata = self._metadata_service.load_execution_metadata(project_id, node_id)
-        with self._storage.project_lock(project_id):
-            state = self._ensure_workflow_state_locked(project_id, node_id)
-            if str(state.get("workflowPhase") or "") != "execution_decision_pending":
-                raise ReviewNotAllowed("Review in Audit is only available in execution_decision_pending.")
-            current_execution_decision = state.get("currentExecutionDecision")
-            if not isinstance(current_execution_decision, dict):
-                raise ReviewNotAllowed("No current execution decision is available.")
-            self._artifact_service.require_workspace_hash(metadata["workspaceRoot"], expected_workspace_hash)
-            commit_result = self._artifact_service.commit_workspace(
-                workspace_root=metadata["workspaceRoot"],
-                hierarchical_number=str(metadata["node"].get("hierarchical_number") or "1"),
-                title=str(metadata["node"].get("title") or "task").strip() or "task",
-                verb="review",
-            )
-            review_commit_sha = commit_result["headSha"]
-            audit_lineage_thread_id = str(state.get("auditLineageThreadId") or "").strip()
-            if not audit_lineage_thread_id:
-                audit_lineage_thread_id = self._ensure_audit_lineage_thread_id(project_id, node_id, metadata["workspaceRoot"])
-                state["auditLineageThreadId"] = audit_lineage_thread_id
-
-            review_thread_id = audit_lineage_thread_id
-            review_prompt = self._metadata_service.build_audit_review_prompt(
-                node=metadata["node"],
-                spec_content=metadata["specContent"],
-                frame_content=metadata["frameContent"],
-                review_commit_sha=review_commit_sha,
-            )
-            cycle_id = new_id("review_cycle")
-            local_turn_id = new_id("review_turn")
-            source_execution_run_id = str(current_execution_decision.get("sourceExecutionRunId") or "")
-            cycle = {
-                "cycleId": cycle_id,
-                "projectId": project_id,
-                "nodeId": node_id,
-                "sourceExecutionRunId": source_execution_run_id,
-                "auditLineageThreadId": audit_lineage_thread_id,
-                "reviewThreadId": review_thread_id,
-                "reviewTurnId": None,
-                "reviewCommitSha": review_commit_sha,
-                "clientRequestId": idempotency_key,
-                "lifecycleStatus": "running",
-                "reviewDisposition": None,
-                "finalReviewText": None,
-                "errorMessage": None,
-                "startedAt": iso_now(),
-                "completedAt": None,
-            }
-            self._storage.review_cycle_store.append_cycle(project_id, node_id, cycle)
-            self._update_execution_run_decision(
-                project_id=project_id,
-                node_id=node_id,
-                run_id=source_execution_run_id,
-                committed_head_sha=review_commit_sha,
-                decision="sent_to_review",
-            )
-            state["workflowPhase"] = "audit_running"
-            state["activeReviewCycleId"] = cycle_id
-            state["latestReviewCycleId"] = cycle_id
-            state["activeExecutionRunId"] = None
-            state["reviewThreadId"] = review_thread_id
-            state["latestCommit"] = self._materialize_latest_commit(
-                source_action="review_in_audit",
-                commit_result=commit_result,
-            )
-            self._storage.workflow_state_store.write_state(project_id, node_id, state)
-
-        self._bind_audit_thread_to_review_thread(project_id, node_id, review_thread_id)
-        self._resolve_thread_runtime_service().begin_turn(
-            project_id=project_id,
-            node_id=node_id,
-            thread_role="audit",
-            origin="workflow_review",
-            created_items=[],
-            turn_id=local_turn_id,
+        orchestrator = self._require_workflow_orchestrator_v2()
+        response = orchestrator.start_audit(
+            project_id,
+            node_id,
+            idempotency_key=idempotency_key,
+            expected_workspace_hash=expected_workspace_hash,
         )
+        state = orchestrator.get_legacy_workflow_state(project_id, node_id)
         self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason="review_in_audit_started")
-        threading.Thread(
-            target=self._run_review_cycle_background,
-            kwargs={
-                "project_id": project_id,
-                "node_id": node_id,
-                "cycle_id": cycle_id,
-                "local_turn_id": local_turn_id,
-                "thread_id": review_thread_id,
-                "prompt": review_prompt,
-                "review_commit_sha": review_commit_sha,
-                "workspace_root": metadata["workspaceRoot"],
-            },
-            daemon=True,
-        ).start()
-        response = {
+        return {
             "accepted": True,
-            "reviewCycleId": cycle_id,
-            "reviewThreadId": review_thread_id,
-            "workflowPhase": "audit_running",
+            "reviewCycleId": response.get("auditRunId") or response.get("reviewCycleId"),
+            "reviewThreadId": response.get("reviewThreadId") or response.get("threadId"),
+            "workflowPhase": state.get("workflowPhase"),
         }
-        self._store_cached_mutation(project_id, node_id, "review_in_audit", idempotency_key, response)
-        return response
 
     def mark_done_from_audit(
         self,
@@ -1567,58 +1318,15 @@ class ExecutionAuditWorkflowService:
         idempotency_key: str,
         expected_review_commit_sha: str,
     ) -> dict[str, Any]:
-        orchestrator = self._resolve_workflow_orchestrator_v2()
-        if orchestrator is not None:
-            orchestrator.accept_audit(
-                project_id,
-                node_id,
-                idempotency_key=idempotency_key,
-                expected_review_commit_sha=expected_review_commit_sha,
-            )
-            self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason="mark_done_from_audit")
-            return orchestrator.get_legacy_workflow_state(project_id, node_id)
-        cached = self._get_cached_mutation(project_id, node_id, "mark_done_from_audit", idempotency_key)
-        if cached is not None:
-            return cached
-
-        with self._storage.project_lock(project_id):
-            state = self._ensure_workflow_state_locked(project_id, node_id)
-            if str(state.get("workflowPhase") or "") != "audit_decision_pending":
-                raise ReviewNotAllowed("Mark Done from Audit is only available in audit_decision_pending.")
-            current_audit_decision = state.get("currentAuditDecision")
-            if not isinstance(current_audit_decision, dict):
-                raise ReviewNotAllowed("No current audit decision is available.")
-            metadata = self._metadata_service.load_execution_metadata(project_id, node_id)
-            self._artifact_service.require_head_sha(metadata["workspaceRoot"], expected_review_commit_sha)
-            run_id = self._resolve_execution_run_id_for_audit_mark_done_locked(
-                project_id=project_id,
-                node_id=node_id,
-                state=state,
-                current_audit_decision=current_audit_decision,
-            )
-            summary_text = self._resolve_execution_summary_text_locked(
-                project_id=project_id,
-                node_id=node_id,
-                run_id=run_id,
-            )
-            self._upsert_handoff_summary_locked(
-                project_id=project_id,
-                node_id=node_id,
-                workspace_root=metadata["workspaceRoot"],
-                snapshot=metadata.get("snapshot"),
-                node=metadata.get("node"),
-                summary_text=summary_text,
-            )
-            state["acceptedSha"] = expected_review_commit_sha
-            state["workflowPhase"] = "done"
-            state["activeReviewCycleId"] = None
-            self._storage.workflow_state_store.write_state(project_id, node_id, state)
-
-        self._complete_node_progression(project_id, node_id, accepted_sha=expected_review_commit_sha, summary_text=summary_text)
-        response = self.get_workflow_state(project_id, node_id)
-        self._store_cached_mutation(project_id, node_id, "mark_done_from_audit", idempotency_key, response)
+        orchestrator = self._require_workflow_orchestrator_v2()
+        orchestrator.accept_audit(
+            project_id,
+            node_id,
+            idempotency_key=idempotency_key,
+            expected_review_commit_sha=expected_review_commit_sha,
+        )
         self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason="mark_done_from_audit")
-        return response
+        return orchestrator.get_legacy_workflow_state(project_id, node_id)
 
     def _run_review_cycle_background(
         self,

@@ -8,9 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.conversation.services.thread_runtime_service_v3 as thread_runtime_service_v3_module
+from backend.business.workflow_v2.errors import WorkflowV2Error
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_thread_envelope
-from backend.errors.app_errors import AuditLineageUnavailable
 from backend.routes import workflow_v3 as workflow_v3_route_module
 from backend.streaming.sse_broker import ChatEventBroker, GlobalEventBroker
 
@@ -670,11 +670,11 @@ def test_v3_workflow_state_reconciles_stale_ask_thread_id_from_registry(
     assert snapshot_payload["data"]["snapshot"]["threadId"] == active_ask_thread_id
 
 
-def test_v3_workflow_state_endpoint_calls_canonical_service(client: TestClient, workspace_root) -> None:
+def test_v3_workflow_state_endpoint_calls_phase10_compat_adapter(client: TestClient, workspace_root) -> None:
     project_id, node_id = _setup_project(client, workspace_root)
     calls: list[tuple[str, str]] = []
 
-    class _CanonicalWorkflowService:
+    class _CompatAdapter:
         def get_workflow_state(self, project_id_arg: str, node_id_arg: str) -> dict[str, Any]:
             calls.append((project_id_arg, node_id_arg))
             return {
@@ -694,41 +694,43 @@ def test_v3_workflow_state_endpoint_calls_canonical_service(client: TestClient, 
                 "source": "canonical",
             }
 
-    class _LegacyWorkflowService:
-        def get_workflow_state(self, *_args, **_kwargs):  # pragma: no cover - guard assertion
-            raise AssertionError("Legacy workflow service alias should not be used when canonical service is present.")
-
-    client.app.state.execution_audit_workflow_service = _CanonicalWorkflowService()
+    client.app.state.workflow_v3_compat_adapter = _CompatAdapter()
 
     response = client.get(f"/v3/projects/{project_id}/nodes/{node_id}/workflow-state")
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
     assert payload["data"]["source"] == "canonical"
+    assert response.headers["Deprecation"] == "true"
     assert calls == [(project_id, node_id)]
 
 
-def test_v3_workflow_state_endpoint_surfaces_app_error_with_status(client: TestClient, workspace_root) -> None:
+def test_v3_workflow_state_endpoint_surfaces_adapter_error_with_status(client: TestClient, workspace_root) -> None:
     project_id, node_id = _setup_project(client, workspace_root)
 
-    class _UnavailableWorkflowService:
+    class _UnavailableAdapter:
         def get_workflow_state(self, *_args, **_kwargs):  # pragma: no cover - assertion guard
-            raise AuditLineageUnavailable("Audit lineage bootstrap is temporarily unavailable.")
+            raise WorkflowV2Error(
+                "ERR_WORKFLOW_COMPAT_UNAVAILABLE",
+                "Workflow compatibility is temporarily unavailable.",
+                status_code=503,
+            )
 
-    client.app.state.execution_audit_workflow_service = _UnavailableWorkflowService()
+    client.app.state.workflow_v3_compat_adapter = _UnavailableAdapter()
 
     response = client.get(f"/v3/projects/{project_id}/nodes/{node_id}/workflow-state")
     assert response.status_code == 503
     payload = response.json()
     assert payload["ok"] is False
-    assert payload["error"]["code"] == "audit_lineage_unavailable"
+    assert payload["error"]["code"] == "ERR_WORKFLOW_COMPAT_UNAVAILABLE"
+    assert response.headers["Deprecation"] == "true"
 
 
-def test_v3_workflow_action_endpoints_dispatch_to_canonical_service(client: TestClient, workspace_root) -> None:
+def test_v3_workflow_action_endpoints_dispatch_to_phase10_compat_adapter(client: TestClient, workspace_root) -> None:
     project_id, node_id = _setup_project(client, workspace_root)
     calls: list[tuple[str, dict[str, Any]]] = []
 
-    class _CanonicalWorkflowService:
+    class _CompatAdapter:
         def finish_task(self, project_id_arg: str, node_id_arg: str, *, idempotency_key: str) -> dict[str, Any]:
             payload = {"projectId": project_id_arg, "nodeId": node_id_arg, "idempotencyKey": idempotency_key}
             calls.append(("finish_task", payload))
@@ -802,11 +804,7 @@ def test_v3_workflow_action_endpoints_dispatch_to_canonical_service(client: Test
             calls.append(("improve_in_execution", payload))
             return {"source": "canonical", "action": "improve-in-execution", **payload}
 
-    class _LegacyWorkflowService:
-        def __getattr__(self, _name: str):  # pragma: no cover - guard assertion
-            raise AssertionError("Legacy workflow service alias should not be used when canonical service is present.")
-
-    client.app.state.execution_audit_workflow_service = _CanonicalWorkflowService()
+    client.app.state.workflow_v3_compat_adapter = _CompatAdapter()
 
     finish_payload = {"idempotencyKey": "idem-finish"}
     finish_response = client.post(
@@ -1255,7 +1253,7 @@ def test_v3_ask_resolve_user_input_by_id_updates_snapshot_and_signal(client: Tes
     assert snapshot_v3["uiSignals"]["activeUserInputRequests"][0]["status"] == "answered"
 
 
-def test_v3_execution_plan_actions_by_id_validate_stale_and_dispatch_followup(
+def test_v3_execution_plan_actions_by_id_are_deprecated(
     client: TestClient, workspace_root
 ) -> None:
     project_id, node_id = _setup_project(client, workspace_root)
@@ -1269,31 +1267,7 @@ def test_v3_execution_plan_actions_by_id_validate_stale_and_dispatch_followup(
         revision=50,
     )
 
-    captured: dict[str, Any] = {}
-
-    def _fake_start_execution_followup(
-        project_id_arg: str,
-        node_id_arg: str,
-        *,
-        idempotency_key: str,
-        text: str,
-    ) -> dict[str, Any]:
-        captured["projectId"] = project_id_arg
-        captured["nodeId"] = node_id_arg
-        captured["idempotencyKey"] = idempotency_key
-        captured["text"] = text
-        return {
-            "accepted": True,
-            "threadId": thread_id,
-            "turnId": "turn-followup-1",
-            "snapshotVersion": 77,
-        }
-
-    client.app.state.execution_audit_workflow_service.start_execution_followup = (
-        _fake_start_execution_followup
-    )
-
-    ok_response = client.post(
+    response = client.post(
         f"/v3/projects/{project_id}/threads/by-id/{thread_id}/plan-actions",
         params={"node_id": node_id},
         json={
@@ -1302,29 +1276,28 @@ def test_v3_execution_plan_actions_by_id_validate_stale_and_dispatch_followup(
             "revision": 50,
         },
     )
-    assert ok_response.status_code == 200
-    ok_payload = ok_response.json()
-    assert ok_payload["ok"] is True
-    assert ok_payload["data"]["action"] == "implement_plan"
-    assert ok_payload["data"]["planItemId"] == "plan-1"
-    assert ok_payload["data"]["revision"] == 50
-    assert captured["projectId"] == project_id
-    assert captured["nodeId"] == node_id
-    assert captured["text"] == "Implement this plan."
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_request"
+    assert "deprecated" in payload["error"]["message"].lower()
 
-    stale_response = client.post(
-        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/plan-actions",
+
+def test_v3_execution_turns_by_id_are_deprecated(client: TestClient, workspace_root) -> None:
+    project_id, node_id = _setup_project(client, workspace_root)
+    thread_id = _seed_execution_thread(client, project_id, node_id)
+
+    response = client.post(
+        f"/v3/projects/{project_id}/threads/by-id/{thread_id}/turns",
         params={"node_id": node_id},
-        json={
-            "action": "send_changes",
-            "planItemId": "plan-1",
-            "revision": 49,
-        },
+        json={"text": "Execution follow-up", "metadata": {"idempotencyKey": "exec-legacy-1"}},
     )
-    assert stale_response.status_code == 400
-    stale_payload = stale_response.json()
-    assert stale_payload["ok"] is False
-    assert stale_payload["error"]["code"] == "invalid_request"
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_request"
+    assert "deprecated" in payload["error"]["message"].lower()
 
 
 def test_v3_plan_actions_on_ask_thread_reject_policy(client: TestClient, workspace_root) -> None:

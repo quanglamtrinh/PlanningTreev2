@@ -37,8 +37,8 @@ from backend.business.workflow_v2.state_machine import (
     start_package_review as transition_start_package_review,
 )
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
+from backend.business.workflow_v2.execution_audit_helpers import GitArtifactService, WorkflowMetadataService
 from backend.errors.app_errors import AppError, NodeNotFound
-from backend.services.execution_audit_workflow_service import GitArtifactService, WorkflowMetadataService
 from backend.storage.file_utils import iso_now, new_id
 
 _HANDOFF_SUMMARY_PLACEHOLDER = "Implementation completed. No execution summary was captured."

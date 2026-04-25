@@ -12,12 +12,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.business.workflow_v2.errors import WorkflowV2Error
+from backend.business.workflow_v2.legacy_v3_adapter import WORKFLOW_V3_DEPRECATION_HEADERS
 from backend.config.app_config import is_conversation_v3_bridge_allowed_for_project
 from backend.conversation.domain import events as event_types
 from backend.conversation.domain.events import build_stream_open_envelope, build_thread_envelope
 from backend.conversation.domain.types_v3 import normalize_thread_role_v3
 from backend.errors.app_errors import AppError, AskV3Disabled, ConversationStreamMismatch, InvalidRequest
-from backend.storage.file_utils import new_id
 
 router = APIRouter(tags=["workflow-v3"])
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ def _error_response(exc: AppError) -> JSONResponse:
     )
 
 
-def _workflow_v2_error_response(exc: WorkflowV2Error) -> JSONResponse:
+def _workflow_v2_error_response(exc: WorkflowV2Error, *, deprecated: bool = False) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -58,6 +58,7 @@ def _workflow_v2_error_response(exc: WorkflowV2Error) -> JSONResponse:
                 "details": exc.details,
             },
         },
+        headers=WORKFLOW_V3_DEPRECATION_HEADERS if deprecated else None,
     )
 
 
@@ -73,6 +74,10 @@ def _unexpected_error_response() -> JSONResponse:
             },
         },
     )
+
+
+def _deprecated_ok(data: dict[str, Any]) -> JSONResponse:
+    return JSONResponse(status_code=200, content=_ok(data), headers=WORKFLOW_V3_DEPRECATION_HEADERS)
 
 
 def _sse_frame(envelope: dict[str, object]) -> str:
@@ -112,8 +117,8 @@ class ReviewGuardMutationRequest(WorkflowMutationRequest):
     expectedReviewCommitSha: str
 
 
-def _workflow_service(request: Request) -> Any:
-    return request.app.state.execution_audit_workflow_service
+def _workflow_v3_adapter(request: Request) -> Any:
+    return request.app.state.workflow_v3_compat_adapter
 
 
 def _workflow_event_broker(request: Request) -> Any:
@@ -301,7 +306,10 @@ def _resolve_execution_audit_thread_role_by_state(
     node_id: str,
     thread_id: str,
 ) -> str | None:
-    state = request.app.state.storage.workflow_state_store.read_state(project_id, node_id)
+    try:
+        state = _workflow_v3_adapter(request).get_workflow_state(project_id, node_id)
+    except WorkflowV2Error:
+        return None
     if not isinstance(state, dict):
         return None
     if _normalize_thread_id(state.get("executionThreadId")) == thread_id:
@@ -374,10 +382,10 @@ def _resolve_thread_role_by_id_v3(
 @router.get("/projects/{project_id}/nodes/{node_id}/workflow-state")
 async def get_workflow_state_v3(request: Request, project_id: str, node_id: str):
     try:
-        payload = _workflow_service(request).get_workflow_state(project_id, node_id)
-        return _ok(payload)
+        payload = _workflow_v3_adapter(request).get_workflow_state(project_id, node_id)
+        return _deprecated_ok(payload)
     except WorkflowV2Error as exc:
-        return _workflow_v2_error_response(exc)
+        return _workflow_v2_error_response(exc, deprecated=True)
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -392,14 +400,14 @@ async def finish_task_v3(
     body: WorkflowMutationRequest,
 ):
     try:
-        payload = _workflow_service(request).finish_task(
+        payload = _workflow_v3_adapter(request).finish_task(
             project_id,
             node_id,
             idempotency_key=body.idempotencyKey,
         )
-        return _ok(payload)
+        return _deprecated_ok(payload)
     except WorkflowV2Error as exc:
-        return _workflow_v2_error_response(exc)
+        return _workflow_v2_error_response(exc, deprecated=True)
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -414,15 +422,15 @@ async def mark_done_from_execution_v3(
     body: WorkspaceGuardMutationRequest,
 ):
     try:
-        payload = _workflow_service(request).mark_done_from_execution(
+        payload = _workflow_v3_adapter(request).mark_done_from_execution(
             project_id,
             node_id,
             idempotency_key=body.idempotencyKey,
             expected_workspace_hash=body.expectedWorkspaceHash,
         )
-        return _ok(payload)
+        return _deprecated_ok(payload)
     except WorkflowV2Error as exc:
-        return _workflow_v2_error_response(exc)
+        return _workflow_v2_error_response(exc, deprecated=True)
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -437,15 +445,15 @@ async def review_in_audit_v3(
     body: WorkspaceGuardMutationRequest,
 ):
     try:
-        payload = _workflow_service(request).review_in_audit(
+        payload = _workflow_v3_adapter(request).review_in_audit(
             project_id,
             node_id,
             idempotency_key=body.idempotencyKey,
             expected_workspace_hash=body.expectedWorkspaceHash,
         )
-        return _ok(payload)
+        return _deprecated_ok(payload)
     except WorkflowV2Error as exc:
-        return _workflow_v2_error_response(exc)
+        return _workflow_v2_error_response(exc, deprecated=True)
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -460,15 +468,15 @@ async def mark_done_from_audit_v3(
     body: ReviewGuardMutationRequest,
 ):
     try:
-        payload = _workflow_service(request).mark_done_from_audit(
+        payload = _workflow_v3_adapter(request).mark_done_from_audit(
             project_id,
             node_id,
             idempotency_key=body.idempotencyKey,
             expected_review_commit_sha=body.expectedReviewCommitSha,
         )
-        return _ok(payload)
+        return _deprecated_ok(payload)
     except WorkflowV2Error as exc:
-        return _workflow_v2_error_response(exc)
+        return _workflow_v2_error_response(exc, deprecated=True)
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -483,15 +491,15 @@ async def improve_in_execution_v3(
     body: ReviewGuardMutationRequest,
 ):
     try:
-        payload = _workflow_service(request).improve_in_execution(
+        payload = _workflow_v3_adapter(request).improve_in_execution(
             project_id,
             node_id,
             idempotency_key=body.idempotencyKey,
             expected_review_commit_sha=body.expectedReviewCommitSha,
         )
-        return _ok(payload)
+        return _deprecated_ok(payload)
     except WorkflowV2Error as exc:
-        return _workflow_v2_error_response(exc)
+        return _workflow_v2_error_response(exc, deprecated=True)
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -852,16 +860,9 @@ async def start_turn_by_id_v3(
     node_id: str = Query(...),
 ):
     try:
-        workflow_service = _workflow_service(request)
         thread_role = _resolve_thread_role_by_id_v3(request, project_id, node_id, thread_id)
         if thread_role == "execution":
-            idempotency_key = str(body.metadata.get("idempotencyKey") or new_id("exec_followup"))
-            payload = workflow_service.start_execution_followup(
-                project_id,
-                node_id,
-                idempotency_key=idempotency_key,
-                text=body.text,
-            )
+            raise InvalidRequest("V3 execution follow-up turns are deprecated. Use Session Core V2.")
         elif thread_role == "ask_planning":
             payload = request.app.state.thread_runtime_service_v3.start_turn(
                 project_id,
@@ -888,50 +889,10 @@ async def apply_plan_action_by_id_v3(
     node_id: str = Query(...),
 ):
     try:
-        workflow_service = _workflow_service(request)
         thread_role = _resolve_thread_role_by_id_v3(request, project_id, node_id, thread_id)
         if thread_role != "execution":
             raise InvalidRequest("Plan-ready actions are supported only on execution threads.")
-
-        plan_item_id = str(body.planItemId or "").strip()
-        if not plan_item_id:
-            raise InvalidRequest("planItemId is required for plan-ready actions.")
-        if int(body.revision) < 0:
-            raise InvalidRequest("revision must be a non-negative integer.")
-
-        snapshot_v3 = request.app.state.thread_query_service_v3.get_thread_snapshot(
-            project_id,
-            node_id,
-            thread_role,
-            publish_repairs=True,
-            ensure_binding=False,
-        )
-        plan_ready = snapshot_v3.get("uiSignals", {}).get("planReady", {})
-        if not bool(plan_ready.get("ready")) or bool(plan_ready.get("failed")):
-            raise InvalidRequest("The current execution thread does not have a ready plan revision.")
-        if str(plan_ready.get("planItemId") or "") != plan_item_id:
-            raise InvalidRequest("planItemId does not match the active ready plan revision.")
-        if int(plan_ready.get("revision") or -1) != int(body.revision):
-            raise InvalidRequest("Plan revision is stale. Reload snapshot and retry.")
-
-        text = str(body.text or "").strip()
-        if not text:
-            text = "Implement this plan." if body.action == "implement_plan" else "Send changes."
-        idempotency_key = str(body.idempotencyKey or "").strip() or new_id("exec_followup")
-        payload = workflow_service.start_execution_followup(
-            project_id,
-            node_id,
-            idempotency_key=idempotency_key,
-            text=text,
-        )
-        return _ok(
-            {
-                **payload,
-                "action": body.action,
-                "planItemId": plan_item_id,
-                "revision": int(body.revision),
-            }
-        )
+        raise InvalidRequest("V3 execution plan actions are deprecated. Use Session Core V2.")
     except AppError as exc:
         return _error_response(exc)
     except Exception:
@@ -954,7 +915,7 @@ async def reset_thread_by_id_v3(
             node_id,
             thread_role,
         )
-        workflow_state = _workflow_service(request).get_workflow_state(project_id, node_id)
+        workflow_state = _workflow_v3_adapter(request).get_workflow_state(project_id, node_id)
         workflow_publisher = getattr(request.app.state, "workflow_event_publisher", None)
         if workflow_publisher is not None:
             workflow_publisher.publish_workflow_updated(
