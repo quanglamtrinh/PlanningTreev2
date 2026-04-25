@@ -40,6 +40,29 @@ class FakeSessionManager:
         return {"turn": {"id": f"turn-{len(self.turns)}", "status": "inProgress"}}
 
 
+class FastCompletingSessionManager(FakeSessionManager):
+    def __init__(self, *, completed_text: str) -> None:
+        super().__init__()
+        self.completed_text = completed_text
+        self.completed_turns: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def turn_start(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        response = super().turn_start(thread_id=thread_id, payload=payload)
+        turn = response.get("turn") if isinstance(response, dict) else None
+        turn_id = str(turn.get("id") or "" if isinstance(turn, dict) else "").strip()
+        if turn_id:
+            self.completed_turns[(thread_id, turn_id)] = {
+                "id": turn_id,
+                "status": "completed",
+                "items": [{"type": "agentMessage", "text": self.completed_text}],
+            }
+        return response
+
+    def get_runtime_turn(self, *, thread_id: str, turn_id: str) -> dict[str, Any] | None:
+        turn = self.completed_turns.get((thread_id, turn_id))
+        return dict(turn) if turn is not None else None
+
+
 def _project_with_confirmed_docs(client: TestClient, workspace_root: Path) -> tuple[str, str]:
     init_git_repo(workspace_root)
     response = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
@@ -173,6 +196,27 @@ def test_session_turn_completion_observer_settles_execution_turn(client: TestCli
 
     assert workflow_state["phase"] == "execution_completed"
     assert workflow_state["decisions"]["execution"]["summaryText"] == "Implemented the requested task."
+
+
+def test_execution_start_settles_fast_terminal_turn_after_state_write(
+    client: TestClient,
+    workspace_root: Path,
+) -> None:
+    project_id, node_id = _project_with_confirmed_docs(client, workspace_root)
+    manager = FastCompletingSessionManager(completed_text="Fast native completion.")
+    orchestrator = _install_phase5_orchestrator(client, manager)
+
+    start = client.post(
+        f"/v4/projects/{project_id}/nodes/{node_id}/execution/start",
+        json={"idempotencyKey": "exec-start-fast-terminal"},
+    )
+
+    assert start.status_code == 200, start.json()
+    start_payload = start.json()
+    assert start_payload["workflowState"]["phase"] == "execution_completed"
+    workflow_state = orchestrator.get_workflow_state(project_id, node_id)
+    assert workflow_state["phase"] == "execution_completed"
+    assert workflow_state["decisions"]["execution"]["summaryText"] == "Fast native completion."
 
 
 def test_v2_orchestrator_direct_settlement_is_idempotent_when_no_active_run(

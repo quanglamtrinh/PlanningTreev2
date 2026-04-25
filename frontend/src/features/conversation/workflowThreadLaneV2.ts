@@ -106,18 +106,18 @@ function resolveWorkflowPolicy(input: {
       disabledReason: 'No workflow thread is available for this lane.',
     }
   }
-  if (isReviewNode) {
-    return {
-      kind: 'review-readonly',
-      canSubmit: false,
-      disabledReason: 'Review nodes are read-only.',
-    }
-  }
   if (lane === 'ask') {
     return {
       kind: 'ask',
       canSubmit: true,
       disabledReason: null,
+    }
+  }
+  if (isReviewNode) {
+    return {
+      kind: 'review-readonly',
+      canSubmit: false,
+      disabledReason: 'Review nodes are read-only.',
     }
   }
   return {

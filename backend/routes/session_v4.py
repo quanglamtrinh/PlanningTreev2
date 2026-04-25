@@ -16,6 +16,21 @@ router = APIRouter(tags=["session-v4"])
 logger = logging.getLogger(__name__)
 _SESSION_EVENT_PREFIXES: tuple[str, ...] = ("thread/", "turn/", "item/", "serverRequest/")
 _SESSION_EVENT_EXPLICIT_METHODS: frozenset[str] = frozenset({"error"})
+_SESSION_TRACE_METHODS: frozenset[str] = frozenset(
+    {
+        "thread/started",
+        "thread/status/changed",
+        "thread/closed",
+        "turn/started",
+        "turn/completed",
+        "item/started",
+        "item/completed",
+        "serverRequest/created",
+        "serverRequest/updated",
+        "serverRequest/resolved",
+        "error",
+    }
+)
 
 
 def _is_allowed_session_event_method(method: str) -> bool:
@@ -573,6 +588,7 @@ def session_thread_events_v4(
             "session_thread_events_v4 opened",
             extra={
                 "threadId": threadId,
+                "subscriberId": subscriber_id,
                 "cursorEventId": effective_cursor,
                 "replayEventCount": len(replay_events),
             },
@@ -606,15 +622,37 @@ def session_thread_events_v4(
                             },
                         )
                         continue
+                    if method in _SESSION_TRACE_METHODS:
+                        logger.info(
+                            "session_thread_events_v4 replay emit",
+                            extra={
+                                "threadId": threadId,
+                                "subscriberId": subscriber_id,
+                                "eventSeq": replay_event.get("eventSeq"),
+                                "method": method,
+                            },
+                        )
                     yield _encode_sse(replay_event)
                 while True:
                     item = _manager(request).read_stream_event(subscriber_id=subscriber_id, timeout_sec=15.0)
                     if item is None:
+                        logger.info(
+                            "session_thread_events_v4 stream ended: subscriber missing",
+                            extra={"threadId": threadId, "subscriberId": subscriber_id},
+                        )
                         break
                     if item == {}:
                         yield ": keep-alive\n\n"
                         continue
                     if item.get("__control") == "lagged":
+                        logger.warning(
+                            "session_thread_events_v4 stream ended: lagged",
+                            extra={
+                                "threadId": threadId,
+                                "subscriberId": subscriber_id,
+                                "skipped": item.get("skipped"),
+                            },
+                        )
                         break
                     method = str(item.get("method") or "")
                     if not _is_allowed_session_event_method(method):
@@ -628,9 +666,23 @@ def session_thread_events_v4(
                             },
                         )
                         continue
+                    if method in _SESSION_TRACE_METHODS:
+                        logger.info(
+                            "session_thread_events_v4 live emit",
+                            extra={
+                                "threadId": threadId,
+                                "subscriberId": subscriber_id,
+                                "eventSeq": item.get("eventSeq"),
+                                "method": method,
+                            },
+                        )
                     yield _encode_sse(item)
             finally:
                 _manager(request).close_event_stream(subscriber_id=subscriber_id)
+                logger.info(
+                    "session_thread_events_v4 closed",
+                    extra={"threadId": threadId, "subscriberId": subscriber_id},
+                )
 
         return StreamingResponse(_iter_sse(), media_type="text/event-stream")
     except SessionCoreError as exc:

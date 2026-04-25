@@ -153,6 +153,7 @@ import type { Snapshot } from '../../src/api/types'
 import { BreadcrumbViewV2 } from '../../src/features/conversation/BreadcrumbViewV2'
 import type { PendingServerRequest, SessionThread, SessionTurn } from '../../src/features/session_v2/contracts'
 import type { SessionFacadeV2 } from '../../src/features/session_v2/facade/useSessionFacadeV2'
+import { useThreadSessionStore } from '../../src/features/session_v2/store/threadSessionStore'
 import { useWorkflowStateStoreV2 } from '../../src/features/workflow_v2/store/workflowStateStoreV2'
 import type { WorkflowStateV2 } from '../../src/features/workflow_v2/types'
 import { useDetailStateStore } from '../../src/stores/detail-state-store'
@@ -474,6 +475,7 @@ function seedStores(options: {
 describe('BreadcrumbViewV2', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    useThreadSessionStore.getState().clear()
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
     useWorkflowStateStoreV2.getState().reset()
@@ -922,6 +924,63 @@ describe('BreadcrumbViewV2', () => {
           modelProvider: 'openai',
         }),
       )
+    })
+  })
+
+  it('primes execution turn into session projection when workflow action returns turnId', async () => {
+    const workflowState = makeWorkflowState({
+      phase: 'ready_for_execution',
+      threads: {
+        execution: 'exec-thread-1',
+      },
+      allowedActions: ['start_execution'],
+    })
+    seedStores({ workflowState })
+    const startExecution = vi.fn().mockResolvedValue({
+      workflowState: makeWorkflowState({
+        phase: 'executing',
+        threads: { execution: 'exec-thread-1' },
+        allowedActions: [],
+      }),
+      threadId: 'exec-thread-1',
+      turnId: 'turn-exec-1',
+      executionRunId: 'exec-run-1',
+      auditRunId: null,
+      reviewCycleId: null,
+      reviewThreadId: null,
+      reviewCommitSha: null,
+    })
+    useWorkflowStateStoreV2.setState({
+      startExecution,
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+    mockUseSessionFacadeV2.mockReturnValue(
+      makeFacade({
+        activeThreadId: 'exec-thread-1',
+        activeThread: makeThread('exec-thread-1'),
+        isActiveThreadReady: true,
+      }),
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByTestId('workflow-start-execution'))
+
+    await waitFor(() => {
+      expect(startExecution).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.any(Object),
+      )
+    })
+    await waitFor(() => {
+      const turns = useThreadSessionStore.getState().turnsByThread['exec-thread-1'] ?? []
+      expect(turns.map((turn) => turn.id)).toContain('turn-exec-1')
     })
   })
 

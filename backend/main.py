@@ -4,7 +4,6 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,24 +11,15 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
+from backend.business.workflow_v2.artifact_orchestrator import ArtifactOrchestratorV2
 from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.execution_audit_orchestrator import ExecutionAuditOrchestratorV2
-from backend.business.workflow_v2.artifact_orchestrator import ArtifactOrchestratorV2
 from backend.business.workflow_v2.legacy_transcript_migrator import LegacyTranscriptMigratorV2
 from backend.business.workflow_v2.legacy_v3_adapter import LegacyWorkflowV3CompatibilityAdapter
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
-from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
-from backend.conversation.services.thread_actor_runtime_v3 import ThreadActorRuntimeV3
-from backend.conversation.services.thread_checkpoint_policy_v3 import ThreadCheckpointPolicyV3
-from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
-from backend.conversation.services.thread_replay_buffer_service_v3 import ThreadReplayBufferServiceV3
-from backend.conversation.services.thread_registry_service import ThreadRegistryService
-from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
-from backend.conversation.services.system_message_writer import ConversationSystemMessageWriter
-from backend.conversation.services.thread_transcript_builder import ThreadTranscriptBuilder
-from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
+from backend.config.api_version import API_PREFIX
 from backend.config.app_config import (
     build_app_paths,
     get_chat_timeout,
@@ -38,66 +28,89 @@ from backend.config.app_config import (
     get_execution_timeout,
     get_frame_gen_timeout,
     get_max_chat_message_chars,
-    get_port,
     get_phase5_log_compact_min_events,
+    get_port,
     get_rehearsal_workspace_root,
     get_session_core_v2_event_queue_capacity,
     get_session_core_v2_legacy_migration_mode,
     get_session_core_v2_protocol_gate_timeout_sec,
-    get_session_core_v2_server_request_queue_capacity,
     get_session_core_v2_retention_days,
     get_session_core_v2_retention_max_events,
-    get_thread_raw_event_coalesce_ms,
-    get_thread_stream_cadence_profile,
-    get_sse_subscriber_queue_max,
+    get_session_core_v2_server_request_queue_capacity,
     get_spec_gen_timeout,
     get_split_timeout,
+    get_sse_subscriber_queue_max,
     get_thread_actor_mode,
+    get_thread_raw_event_coalesce_ms,
+    get_thread_stream_cadence_profile,
+    is_ask_v3_backend_enabled,
+    is_ask_v3_frontend_enabled,
     is_session_core_v2_events_enabled,
     is_session_core_v2_protocol_gate_enabled,
     is_session_core_v2_requests_enabled,
     is_session_core_v2_turns_enabled,
-    is_ask_v3_backend_enabled,
-    is_ask_v3_frontend_enabled,
 )
-from backend.config.api_version import API_PREFIX
+from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
+from backend.conversation.services.system_message_writer import ConversationSystemMessageWriter
+from backend.conversation.services.thread_actor_runtime_v3 import ThreadActorRuntimeV3
+from backend.conversation.services.thread_checkpoint_policy_v3 import ThreadCheckpointPolicyV3
+from backend.conversation.services.thread_query_service_v3 import ThreadQueryServiceV3
+from backend.conversation.services.thread_registry_service import ThreadRegistryService
+from backend.conversation.services.thread_replay_buffer_service_v3 import (
+    ThreadReplayBufferServiceV3,
+)
+from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
+from backend.conversation.services.thread_transcript_builder import ThreadTranscriptBuilder
+from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
-from backend.routes import artifacts_v4, bootstrap, chat, codex, nodes, projects, session_v4, split, workflow_v3, workflow_v4
+from backend.routes import (
+    artifacts_v4,
+    bootstrap,
+    chat,
+    codex,
+    nodes,
+    projects,
+    session_v4,
+    split,
+    workflow_v3,
+    workflow_v4,
+)
+from backend.services.ask_rollout_metrics_service import AskRolloutMetricsService
+from backend.services.chat_service import ChatService
+from backend.services.clarify_generation_service import ClarifyGenerationService
+from backend.services.codex_account_service import CodexAccountService
+from backend.services.execution_audit_workflow_service import ExecutionAuditWorkflowService
+from backend.services.finish_task_service import FinishTaskService
+from backend.services.frame_generation_service import FrameGenerationService
+from backend.services.git_checkpoint_service import GitCheckpointService
+from backend.services.local_usage_snapshot_service import LocalUsageSnapshotService
+from backend.services.node_detail_service import NodeDetailService
+from backend.services.node_document_service import NodeDocumentService
+from backend.services.node_service import NodeService
+from backend.services.project_service import ProjectService
+from backend.services.review_service import ReviewService
+from backend.services.snapshot_view_service import SnapshotViewService
+from backend.services.spec_generation_service import SpecGenerationService
+from backend.services.split_service import SplitService
+from backend.services.thread_lineage_service import ThreadLineageService
+from backend.services.tree_service import TreeService
+from backend.services.workspace_file_service import WorkspaceFileService
 from backend.session_core_v2.connection import ConnectionStateMachine, SessionManagerV2
 from backend.session_core_v2.protocol import (
     SessionProtocolClientV2,
     ensure_session_core_v2_protocol_compatible,
 )
 from backend.session_core_v2.storage import RuntimeStoreV2
+from backend.session_core_v2.thread_store import ThreadMetadataStore, ThreadRolloutRecorder
 from backend.session_core_v2.transport import StdioJsonRpcTransportV2
-from backend.services.chat_service import ChatService
-from backend.services.ask_rollout_metrics_service import AskRolloutMetricsService
-from backend.services.codex_account_service import CodexAccountService
-from backend.services.clarify_generation_service import ClarifyGenerationService
-from backend.services.execution_audit_workflow_service import ExecutionAuditWorkflowService
-from backend.services.frame_generation_service import FrameGenerationService
-from backend.services.finish_task_service import FinishTaskService
-from backend.services.git_checkpoint_service import GitCheckpointService
-from backend.services.node_detail_service import NodeDetailService
-from backend.services.local_usage_snapshot_service import LocalUsageSnapshotService
-from backend.services.spec_generation_service import SpecGenerationService
-from backend.services.node_document_service import NodeDocumentService
-from backend.services.workspace_file_service import WorkspaceFileService
-from backend.services.node_service import NodeService
-from backend.services.project_service import ProjectService
-from backend.services.review_service import ReviewService
-from backend.services.snapshot_view_service import SnapshotViewService
-from backend.services.split_service import SplitService
-from backend.services.thread_lineage_service import ThreadLineageService
-from backend.services.tree_service import TreeService
 from backend.storage.storage import Storage
 from backend.streaming.sse_broker import ChatEventBroker, GlobalEventBroker
 
 logger = logging.getLogger(__name__)
 
 
-def create_app(data_root: Optional[Path] = None) -> FastAPI:
+def create_app(data_root: Path | None = None) -> FastAPI:
     paths = build_app_paths(data_root)
     storage = Storage(paths)
     tree_service = TreeService()
@@ -288,11 +301,20 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         retention_max_events=session_core_v2_retention_max_events,
         retention_days=session_core_v2_retention_days,
     )
+    native_thread_root_v2 = paths.data_root / "session_core_v2"
+    session_thread_metadata_store_v2 = ThreadMetadataStore(
+        db_path=native_thread_root_v2 / "thread_metadata.sqlite3",
+        rollout_root=native_thread_root_v2 / "rollouts",
+    )
+    session_thread_rollout_recorder_v2 = ThreadRolloutRecorder(
+        metadata_store=session_thread_metadata_store_v2,
+    )
     session_connection_state_v2 = ConnectionStateMachine()
     session_manager_v2 = SessionManagerV2(
         protocol_client=session_protocol_v2,
         runtime_store=session_runtime_store_v2,
         connection_state_machine=session_connection_state_v2,
+        thread_rollout_recorder=session_thread_rollout_recorder_v2,
     )
     workflow_state_repository_v2 = WorkflowStateRepositoryV2(storage)
     workflow_context_builder_v2 = WorkflowContextBuilderV2(storage)
@@ -333,8 +355,10 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     legacy_transcript_migrator_v2 = LegacyTranscriptMigratorV2(
         storage=storage,
         workflow_repository=workflow_state_repository_v2,
-        snapshot_store=storage.thread_snapshot_store_v2,
+        snapshot_store_v2=storage.thread_snapshot_store_v2,
+        snapshot_store_v3=storage.thread_snapshot_store_v3,
         runtime_store=session_runtime_store_v2,
+        thread_rollout_recorder=session_thread_rollout_recorder_v2,
     )
     legacy_migration_summary: dict[str, object] = {}
     pending_legacy: list[dict[str, object]] = []
@@ -400,6 +424,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
             yield
         finally:
             session_runtime_store_v2.close()
+            session_thread_metadata_store_v2.close()
             session_transport_v2.stop()
             codex_client.stop()
 
@@ -474,6 +499,8 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.artifact_orchestrator_v2 = artifact_orchestrator_v2
     app.state.legacy_transcript_migrator_v2 = legacy_transcript_migrator_v2
     app.state.session_runtime_store_v2 = session_runtime_store_v2
+    app.state.session_thread_metadata_store_v2 = session_thread_metadata_store_v2
+    app.state.session_thread_rollout_recorder_v2 = session_thread_rollout_recorder_v2
     app.state.session_connection_state_v2 = session_connection_state_v2
     app.state.session_core_v2_enable_turns = session_core_v2_enable_turns
     app.state.session_core_v2_enable_events = session_core_v2_enable_events

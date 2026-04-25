@@ -14,6 +14,7 @@ from backend.session_core_v2.connection import ConnectionStateMachine, SessionMa
 from backend.session_core_v2.errors import SessionCoreError
 from backend.session_core_v2.protocol import SessionProtocolClientV2
 from backend.session_core_v2.storage import RuntimeStoreV2
+from backend.session_core_v2.thread_store import ThreadRolloutRecorder
 
 
 @pytest.fixture
@@ -80,6 +81,37 @@ class _FakeTransport:
             self.server_request_handler(raw_request_id, method, params)
 
 
+class _EarlyTerminalTransport(_FakeTransport):
+    def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout_sec: int | None = None,
+    ) -> dict[str, Any]:
+        if method != "turn/start":
+            return super().request(method, params, timeout_sec=timeout_sec)
+        del timeout_sec
+        payload = params or {}
+        self.requests.append((method, payload))
+        if method in self.failures:
+            raise self.failures[method]
+        thread_id = str(payload.get("threadId") or "thread-1")
+        turn_id = "turn-early-terminal-1"
+        self.emit_notification(
+            "turn/completed",
+            {
+                "threadId": thread_id,
+                "turn": {
+                    "id": turn_id,
+                    "status": "completed",
+                    "items": [{"type": "agentMessage", "text": "done before response"}],
+                },
+            },
+        )
+        return {"turnId": turn_id}
+
+
 def _fake_thread(thread_id: str) -> dict[str, Any]:
     return {
         "id": thread_id,
@@ -97,12 +129,21 @@ def _fake_thread(thread_id: str) -> dict[str, Any]:
 
 def _install_fake_manager(client: TestClient, fake_transport: _FakeTransport) -> None:
     protocol = SessionProtocolClientV2(fake_transport)  # type: ignore[arg-type]
+    recorder = getattr(client.app.state, "session_thread_rollout_recorder_v2", None)
+    assert isinstance(recorder, ThreadRolloutRecorder)
     manager = SessionManagerV2(
         protocol_client=protocol,
         runtime_store=RuntimeStoreV2(),
         connection_state_machine=ConnectionStateMachine(),
+        thread_rollout_recorder=recorder,
     )
     client.app.state.session_manager_v2 = manager
+
+
+def _native_recorder(client: TestClient) -> ThreadRolloutRecorder:
+    recorder = getattr(client.app.state, "session_thread_rollout_recorder_v2", None)
+    assert isinstance(recorder, ThreadRolloutRecorder)
+    return recorder
 
 
 def _openapi_schema() -> dict[str, Any]:
@@ -213,9 +254,7 @@ def test_session_v4_roundtrip_and_guard(client: TestClient) -> None:
             "thread/start": {"thread": _fake_thread("thread-start-1"), "modelProvider": "openai"},
             "thread/resume": {"thread": _fake_thread("thread-resume-1"), "modelProvider": "openai"},
             "thread/list": {"data": [_fake_thread("thread-list-1")], "nextCursor": None},
-            "thread/read": {"thread": _fake_thread("thread-read-1")},
             "thread/fork": {"thread": _fake_thread("thread-fork-1"), "modelProvider": "openai"},
-            "thread/turns/list": {"data": [{"id": "turn-1", "status": "completed", "items": []}], "nextCursor": None},
             "thread/loaded/list": {"data": ["thread-resume-1"], "nextCursor": None},
             "thread/unsubscribe": {"status": "unsubscribed"},
             "model/list": {
@@ -262,15 +301,37 @@ def test_session_v4_roundtrip_and_guard(client: TestClient) -> None:
     assert list_response.status_code == 200
     assert list_response.json()["data"]["data"][0]["id"] == "thread-list-1"
 
-    read_response = client.get("/v4/session/threads/thread-read-1/read?includeTurns=false")
+    recorder = _native_recorder(client)
+    recorder.append_items(
+        "thread-start-1",
+        [
+            {
+                "type": "event_msg",
+                "event": {
+                    "method": "turn/completed",
+                    "threadId": "thread-start-1",
+                    "params": {
+                        "turn": {
+                            "id": "turn-1",
+                            "status": "completed",
+                            "items": [{"id": "item-1", "type": "agentMessage", "text": "done"}],
+                        }
+                    },
+                },
+            }
+        ],
+    )
+
+    read_response = client.get("/v4/session/threads/thread-start-1/read?includeTurns=false")
     assert read_response.status_code == 200
-    assert read_response.json()["data"]["thread"]["id"] == "thread-read-1"
+    assert read_response.json()["data"]["thread"]["id"] == "thread-start-1"
+    assert read_response.json()["data"]["thread"]["turns"] == []
 
     fork_response = client.post("/v4/session/threads/thread-resume-1/fork", json={})
     assert fork_response.status_code == 200
     assert fork_response.json()["data"]["thread"]["id"] == "thread-fork-1"
 
-    turns_response = client.get("/v4/session/threads/thread-read-1/turns?cursor=c1&limit=10")
+    turns_response = client.get("/v4/session/threads/thread-start-1/turns?limit=10")
     assert turns_response.status_code == 200
     assert turns_response.json()["data"]["data"][0]["id"] == "turn-1"
 
@@ -291,9 +352,7 @@ def test_session_v4_roundtrip_and_guard(client: TestClient) -> None:
         "thread/start",
         "thread/resume",
         "thread/list",
-        "thread/read",
         "thread/fork",
-        "thread/turns/list",
         "thread/loaded/list",
         "thread/unsubscribe",
         "model/list",
@@ -360,6 +419,146 @@ def test_session_v4_turn_runtime_and_idempotency(client: TestClient) -> None:
         json={"clientActionId": "interrupt-1"},
     )
     assert interrupt_response.status_code == 200
+
+
+def test_session_v4_turn_start_accepts_terminal_notification_before_response(client: TestClient) -> None:
+    fake_transport = _EarlyTerminalTransport(
+        responses={"initialize": {"serverInfo": {"version": "1.2.3"}}}
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+
+    start_payload = {
+        "clientActionId": "start-terminal-before-response",
+        "input": [{"type": "text", "text": "hello"}],
+    }
+    start_response = client.post("/v4/session/threads/thread-1/turns/start", json=start_payload)
+
+    assert start_response.status_code == 200
+    turn = start_response.json()["data"]["turn"]
+    assert turn["id"] == "turn-early-terminal-1"
+    assert turn["status"] == "completed"
+
+    runtime_store = client.app.state.session_manager_v2._runtime_store  # noqa: SLF001
+    assert runtime_store.get_active_turn(thread_id="thread-1") is None
+    journal = runtime_store.read_thread_journal("thread-1")
+    methods = [event.get("method") for event in journal]
+    assert "turn/completed" in methods
+    assert "turn/started" not in methods
+
+    replay = client.post("/v4/session/threads/thread-1/turns/start", json=start_payload)
+    assert replay.status_code == 200
+    assert replay.json()["data"]["turn"]["status"] == "completed"
+    assert [method for method, _ in fake_transport.requests].count("turn/start") == 1
+
+
+def test_session_v4_thread_read_include_turns_uses_native_rollout(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={"initialize": {"serverInfo": {"version": "1.2.3"}}},
+        failures={
+            "thread/read": SessionCoreError(
+                code="ERR_INTERNAL",
+                message="thread thread-1 is not materialized yet; includeTurns is unavailable before first user message",
+                status_code=400,
+                details={"rpcCode": -32602},
+            )
+        },
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+    _native_recorder(client).ensure_thread(thread_id="thread-1", title="Native thread")
+    _native_recorder(client).append_items(
+        "thread-1",
+        [
+            {
+                "type": "event_msg",
+                "event": {
+                    "method": "turn/completed",
+                    "threadId": "thread-1",
+                    "params": {"turn": {"id": "turn-native-1", "status": "completed"}},
+                },
+            }
+        ],
+    )
+
+    response = client.get("/v4/session/threads/thread-1/read?includeTurns=true")
+
+    assert response.status_code == 200, response.json()
+    thread = response.json()["data"]["thread"]
+    assert thread["id"] == "thread-1"
+    assert thread["name"] == "Native thread"
+    assert thread["turns"][0]["id"] == "turn-native-1"
+    assert thread["turns"][0]["status"] == "completed"
+    assert "thread/read" not in [method for method, _ in fake_transport.requests]
+
+
+def test_session_v4_turns_list_uses_native_rollout_when_provider_history_unavailable(
+    client: TestClient,
+) -> None:
+    fake_transport = _FakeTransport(
+        responses={"initialize": {"serverInfo": {"version": "1.2.3"}}},
+        failures={
+            "thread/turns/list": SessionCoreError(
+                code="ERR_INTERNAL",
+                message="thread thread-1 is not materialized yet; thread/turns/list is unavailable before first user message",
+                status_code=400,
+                details={"rpcCode": -32602},
+            )
+        },
+    )
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+    _native_recorder(client).ensure_thread(thread_id="thread-1")
+    _native_recorder(client).append_items(
+        "thread-1",
+        [
+            {
+                "type": "event_msg",
+                "event": {
+                    "method": "turn/started",
+                    "threadId": "thread-1",
+                    "turnId": "turn-native-1",
+                    "params": {"turnId": "turn-native-1"},
+                },
+            }
+        ],
+    )
+
+    response = client.get("/v4/session/threads/thread-1/turns?limit=10")
+
+    assert response.status_code == 200, response.json()
+    payload = response.json()["data"]
+    assert payload["nextCursor"] is None
+    assert payload["data"][0]["id"] == "turn-native-1"
+    assert payload["data"][0]["status"] == "inProgress"
+    assert "thread/turns/list" not in [method for method, _ in fake_transport.requests]
+
+
+def test_session_v4_thread_read_missing_native_rollout_returns_not_found(client: TestClient) -> None:
+    fake_transport = _FakeTransport(responses={"initialize": {"serverInfo": {"version": "1.2.3"}}})
+    _install_fake_manager(client, fake_transport)
+
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+
+    response = client.get("/v4/session/threads/missing-thread/read?includeTurns=true")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["message"] == "no rollout found for thread id missing-thread"
 
 
 def test_session_v4_turn_start_missing_turn_id_fails_deterministically_without_idempotent_commit(
@@ -485,7 +684,12 @@ def test_session_v4_turn_started_notification_dedupes_against_synthetic_event(cl
 
 
 def test_session_v4_inject_items_idempotent_without_starting_turn(client: TestClient) -> None:
-    injected_item = {"id": "context-item-1", "type": "systemMessage", "text": "Workflow context"}
+    injected_item = {
+        "id": "context-item-1",
+        "type": "systemMessage",
+        "text": "Workflow context",
+        "metadata": {"workflowContext": True},
+    }
     thread_with_context = _fake_thread("thread-1")
     thread_with_context["turns"] = [
         {"id": "context-turn-1", "status": "completed", "items": [injected_item]},
@@ -494,7 +698,6 @@ def test_session_v4_inject_items_idempotent_without_starting_turn(client: TestCl
         responses={
             "initialize": {"serverInfo": {"version": "1.2.3"}},
             "thread/inject_items": {"status": "accepted"},
-            "thread/read": {"thread": thread_with_context},
         }
     )
     _install_fake_manager(client, fake_transport)
@@ -535,7 +738,12 @@ def test_session_v4_inject_items_idempotent_without_starting_turn(client: TestCl
 
     read_response = client.get("/v4/session/threads/thread-1/read?includeTurns=true")
     assert read_response.status_code == 200
-    assert read_response.json()["data"]["thread"]["turns"][0]["items"] == [injected_item]
+    replayed_item = read_response.json()["data"]["thread"]["turns"][0]["items"][0]
+    assert replayed_item["id"] == injected_item["id"]
+    assert replayed_item["type"] == injected_item["type"]
+    assert replayed_item["text"] == injected_item["text"]
+    assert replayed_item["metadata"] == injected_item["metadata"]
+    assert replayed_item["status"] == "completed"
 
     mismatch_response = client.post(
         "/v4/session/threads/thread-1/inject-items",
@@ -964,8 +1172,7 @@ def test_session_v4_contract_conformance_for_phase3_endpoints(client: TestClient
             "thread/start": {"thread": _fake_thread("thread-start-1"), "modelProvider": "openai"},
             "thread/resume": {"thread": _fake_thread("thread-resume-1"), "modelProvider": "openai"},
             "thread/list": {"data": [_fake_thread("thread-list-1")], "nextCursor": None},
-            "thread/read": {"thread": _fake_thread("thread-read-1")},
-            "turn/start": {"turnId": "turn-start-1"},
+                "turn/start": {"turnId": "turn-start-1"},
             "turn/steer": {"turnId": "turn-start-1"},
             "turn/interrupt": {},
             "thread/inject_items": {"status": "accepted"},
@@ -982,7 +1189,7 @@ def test_session_v4_contract_conformance_for_phase3_endpoints(client: TestClient
     assert ("thread/start", {}) in fake_transport.requests
     resume_payload = client.post("/v4/session/threads/thread-resume-1/resume", json={}).json()
     list_payload = client.get("/v4/session/threads/list").json()
-    read_payload = client.get("/v4/session/threads/thread-read-1/read").json()
+    read_payload = client.get("/v4/session/threads/thread-start-1/read").json()
     turn_start_payload = client.post(
         "/v4/session/threads/thread-1/turns/start",
         json={"clientActionId": "start-1", "input": [{"type": "text", "text": "hi"}]},

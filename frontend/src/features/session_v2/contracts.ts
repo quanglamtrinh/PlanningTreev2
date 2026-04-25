@@ -36,6 +36,7 @@ export type EventSource = 'journal' | 'replay'
 
 export type SessionErrorCode =
   | 'ERR_SESSION_NOT_INITIALIZED'
+  | 'ERR_THREAD_NOT_FOUND'
   | 'ERR_CURSOR_INVALID'
   | 'ERR_CURSOR_EXPIRED'
   | 'ERR_TURN_TERMINAL'
