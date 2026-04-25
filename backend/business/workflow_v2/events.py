@@ -14,6 +14,11 @@ WorkflowEventType = Literal[
     "workflow/context_stale",
     "workflow/action_completed",
     "workflow/action_failed",
+    "workflow/artifact_job_started",
+    "workflow/artifact_job_completed",
+    "workflow/artifact_job_failed",
+    "workflow/artifact_confirmed",
+    "workflow/artifact_state_changed",
 ]
 
 
@@ -118,6 +123,32 @@ class WorkflowEventPublisherV2:
                 phase=state.phase,
                 version=state.state_version,
                 action=action,
+                details=details or {},
+            )
+        )
+
+    def publish_artifact_event(
+        self,
+        state: NodeWorkflowStateV2,
+        *,
+        event_type: str,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if event_type not in {
+            "workflow/artifact_job_started",
+            "workflow/artifact_job_completed",
+            "workflow/artifact_job_failed",
+            "workflow/artifact_confirmed",
+            "workflow/artifact_state_changed",
+        }:
+            raise ValueError(f"Unsupported Workflow V2 artifact event type: {event_type}")
+        return self._publish(
+            WorkflowEventV2(
+                type=event_type,  # type: ignore[arg-type]
+                projectId=state.project_id,
+                nodeId=state.node_id,
+                phase=state.phase,
+                version=state.state_version,
                 details=details or {},
             )
         )

@@ -48,7 +48,7 @@ describe('workflowEventBridgeV2', () => {
     vi.useRealTimers()
   })
 
-  it('refreshes workflow state on state, context, and action events', async () => {
+  it('refreshes workflow state on state, context, action, and artifact events', async () => {
     const loadWorkflowState = vi.fn().mockResolvedValue(undefined)
     useWorkflowStateStoreV2.setState({
       loadWorkflowState,
@@ -96,15 +96,25 @@ describe('workflowEventBridgeV2', () => {
           type: 'workflow/action_failed',
         }),
       )
+      eventSource.emitMessage(
+        JSON.stringify({
+          eventId: 'evt-artifact',
+          projectId: 'project-1',
+          nodeId: 'node-1',
+          occurredAt: '2026-04-24T00:00:04Z',
+          type: 'workflow/artifact_confirmed',
+        }),
+      )
       await Promise.resolve()
       await Promise.resolve()
     })
 
-    expect(loadWorkflowState).toHaveBeenCalledTimes(4)
+    expect(loadWorkflowState).toHaveBeenCalledTimes(5)
     expect(loadWorkflowState).toHaveBeenNthCalledWith(1, 'project-1', 'node-1')
     expect(loadWorkflowState).toHaveBeenNthCalledWith(2, 'project-1', 'node-1')
     expect(loadWorkflowState).toHaveBeenNthCalledWith(3, 'project-1', 'node-1')
     expect(loadWorkflowState).toHaveBeenNthCalledWith(4, 'project-1', 'node-1')
+    expect(loadWorkflowState).toHaveBeenNthCalledWith(5, 'project-1', 'node-1')
   })
 
   it('filters other targets and ignores malformed events', async () => {

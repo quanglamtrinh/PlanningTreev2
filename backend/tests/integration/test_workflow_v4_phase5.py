@@ -214,3 +214,31 @@ def test_v3_finish_task_delegates_to_attached_v2_orchestrator(client: TestClient
     assert payload["data"]["workflowPhase"] == "execution_running"
     assert payload["data"]["threadId"] == "thread-1"
     assert len(manager.turns) == 1
+
+
+def test_v3_finish_task_replay_while_v2_execution_running_returns_active_run(
+    client: TestClient,
+    workspace_root: Path,
+) -> None:
+    project_id, node_id = _project_with_confirmed_docs(client, workspace_root)
+    manager = FakeSessionManager()
+    _install_phase5_orchestrator(client, manager)
+
+    first = client.post(
+        f"/v3/projects/{project_id}/nodes/{node_id}/workflow/finish-task",
+        json={"idempotencyKey": "legacy-finish-1"},
+    )
+    second = client.post(
+        f"/v3/projects/{project_id}/nodes/{node_id}/workflow/finish-task",
+        json={"idempotencyKey": "legacy-finish-2"},
+    )
+
+    assert first.status_code == 200, first.json()
+    assert second.status_code == 200, second.json()
+    first_payload = first.json()["data"]
+    second_payload = second.json()["data"]
+    assert second_payload["workflowPhase"] == "execution_running"
+    assert second_payload["executionRunId"] == first_payload["executionRunId"]
+    assert second_payload["threadId"] == first_payload["threadId"]
+    assert second_payload["turnId"] == first_payload["turnId"]
+    assert len(manager.turns) == 1

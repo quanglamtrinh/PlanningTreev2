@@ -73,6 +73,29 @@ class WorkflowContextStaleError(WorkflowV2Error):
         )
 
 
+class WorkflowContextNotStaleError(WorkflowV2Error):
+    def __init__(self, project_id: str, node_id: str) -> None:
+        super().__init__(
+            "ERR_WORKFLOW_CONTEXT_NOT_STALE",
+            "Workflow context is not stale.",
+            status_code=409,
+            details={"projectId": project_id, "nodeId": node_id},
+        )
+
+
+class WorkflowVersionConflictError(WorkflowV2Error):
+    def __init__(self, *, expected_version: int, actual_version: int) -> None:
+        super().__init__(
+            "ERR_WORKFLOW_VERSION_CONFLICT",
+            "Workflow state version does not match the expected version.",
+            status_code=409,
+            details={
+                "expectedWorkflowVersion": expected_version,
+                "actualWorkflowVersion": actual_version,
+            },
+        )
+
+
 class WorkflowThreadBindingFailedError(WorkflowV2Error):
     def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
         super().__init__(
@@ -131,4 +154,3 @@ class WorkflowV2NotImplementedError(WorkflowV2Error):
             status_code=501,
             details={"feature": feature},
         )
-

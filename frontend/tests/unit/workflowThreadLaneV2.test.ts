@@ -228,6 +228,27 @@ describe('workflowThreadLaneV2', () => {
     ])
   })
 
+  it('returns only the rebase action while context is stale', () => {
+    const lane = resolveWorkflowThreadLaneV2({
+      workflowState: makeWorkflowState({
+        context: {
+          stale: true,
+          staleReason: 'execution context packet changed.',
+        },
+        allowedActions: ['rebase_context'],
+      }),
+      threadTab: 'execution',
+    })
+
+    expect(lane.actions).toEqual([
+      expect.objectContaining({
+        kind: 'rebase_context',
+        testId: 'workflow-rebase-context',
+        idleLabel: 'Rebase Context',
+      }),
+    ])
+  })
+
   it('marks review nodes as read-only even when a thread exists', () => {
     const lane = resolveWorkflowThreadLaneV2({
       workflowState: makeWorkflowState(),

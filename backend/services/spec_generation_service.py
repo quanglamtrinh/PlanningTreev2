@@ -469,7 +469,7 @@ class SpecGenerationService:
             "status": "idle",
             "job_id": None,
             "started_at": None,
-            "completed_at": None,
+            "completed_at": gen_state.get("last_completed_at"),
             "error": None,
         }
 

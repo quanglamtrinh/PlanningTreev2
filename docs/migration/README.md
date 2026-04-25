@@ -40,6 +40,14 @@ Documents:
   records the completed vertical slices and gates for proving ask, execution,
   audit, and package review actions end to end through Workflow V2 and Session
   Core V2.
+- [Phase 8 Context Stale and Rebase Plan](./phase-8-context-stale-rebase-plan-v1.md)
+  records the completed stale-context detection, dedicated context rebase route,
+  UI rebase action, and verification gates for keeping long-lived Workflow V2
+  threads aligned with updated source artifacts.
+- [Phase 9 Artifact Orchestrator Alignment Plan](./phase-9-artifact-orchestrator-alignment-plan-v1.md)
+  records the completed V2 ownership boundary for frame, clarify, spec, and split
+  artifact workflows, including V4 routes, Workflow V2 events, and context
+  freshness integration.
 
 Migration rules:
 

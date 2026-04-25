@@ -25,6 +25,11 @@ _V2_EVENT_TYPES = {
     "workflow/context_stale",
     "workflow/action_completed",
     "workflow/action_failed",
+    "workflow/artifact_job_started",
+    "workflow/artifact_job_completed",
+    "workflow/artifact_job_failed",
+    "workflow/artifact_confirmed",
+    "workflow/artifact_state_changed",
 }
 
 
@@ -51,6 +56,14 @@ class PackageReviewStartRequest(BaseModel):
     idempotencyKey: str = Field(min_length=1)
     model: str | None = None
     modelProvider: str | None = None
+
+
+class ContextRebaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=1)
+    expectedWorkflowVersion: int | None = None
+    roles: list[ThreadRole] | None = None
 
 
 class WorkspaceGuardMutationRequest(BaseModel):
@@ -132,15 +145,20 @@ def _sse_frame(envelope: dict[str, Any]) -> str:
     return f"data: {data}\n\n"
 
 
-def _state_response(repository: Any, project_id: str, node_id: str) -> dict[str, Any]:
-    state = repository.read_state(project_id, node_id)
+def _state_response(binding_service: Any, project_id: str, node_id: str) -> dict[str, Any]:
+    state = binding_service.refresh_context_freshness(project_id, node_id)
     return workflow_state_to_response(
         state,
         allowed_actions=derive_allowed_actions(state),
     ).to_public_dict()
 
 
-def _adapt_event_for_v4(repository: Any, event: dict[str, Any], project_id: str) -> dict[str, Any] | None:
+def _adapt_event_for_v4(
+    repository: Any,
+    binding_service: Any,
+    event: dict[str, Any],
+    project_id: str,
+) -> dict[str, Any] | None:
     if str(event.get("projectId") or "") != project_id:
         return None
 
@@ -155,7 +173,7 @@ def _adapt_event_for_v4(repository: Any, event: dict[str, Any], project_id: str)
     if not node_id:
         return None
 
-    state = repository.read_state(project_id, node_id)
+    state = binding_service.refresh_context_freshness(project_id, node_id)
     event_payload: dict[str, Any] = {
         "type": "workflow/state_changed",
         "projectId": project_id,
@@ -179,7 +197,7 @@ def _adapt_event_for_v4(repository: Any, event: dict[str, Any], project_id: str)
 @router.get("/v4/projects/{projectId}/nodes/{nodeId}/workflow-state")
 def get_workflow_state_v4(projectId: str, nodeId: str, request: Request) -> JSONResponse:
     try:
-        return JSONResponse(status_code=200, content=_state_response(_repository(request), projectId, nodeId))
+        return JSONResponse(status_code=200, content=_state_response(_service(request), projectId, nodeId))
     except WorkflowV2Error as exc:
         return _workflow_error_response(exc)
     except Exception:
@@ -191,6 +209,7 @@ def get_workflow_state_v4(projectId: str, nodeId: str, request: Request) -> JSON
 async def workflow_events_v4(request: Request, projectId: str) -> StreamingResponse:
     broker = _workflow_event_broker(request)
     repository = _repository(request)
+    binding_service = _service(request)
     queue = broker.subscribe()
 
     async def event_generator():
@@ -206,7 +225,7 @@ async def workflow_events_v4(request: Request, projectId: str) -> StreamingRespo
                             projectId,
                         )
                         break
-                    adapted = _adapt_event_for_v4(repository, event, projectId)
+                    adapted = _adapt_event_for_v4(repository, binding_service, event, projectId)
                     if adapted is not None:
                         yield _sse_frame(adapted)
                 except asyncio.TimeoutError:
@@ -263,6 +282,31 @@ def ensure_workflow_thread_v4(
         return _unexpected_error_response()
 
 
+@router.post("/v4/projects/{projectId}/nodes/{nodeId}/context/rebase")
+def rebase_workflow_context_v4(
+    projectId: str,
+    nodeId: str,
+    payload: ContextRebaseRequest,
+    request: Request,
+) -> JSONResponse:
+    try:
+        response = _service(request).rebase_context(
+            project_id=projectId,
+            node_id=nodeId,
+            idempotency_key=payload.idempotencyKey,
+            expected_workflow_version=payload.expectedWorkflowVersion,
+            roles=payload.roles,
+        )
+        return JSONResponse(status_code=200, content=response)
+    except WorkflowV2Error as exc:
+        return _workflow_error_response(exc)
+    except SessionCoreError as exc:
+        return _session_error_response(exc)
+    except Exception:
+        logger.exception("rebase_workflow_context_v4 failed")
+        return _unexpected_error_response()
+
+
 @router.post("/v4/projects/{projectId}/nodes/{nodeId}/execution/start")
 def start_execution_v4(
     projectId: str,
@@ -271,6 +315,7 @@ def start_execution_v4(
     request: Request,
 ) -> JSONResponse:
     try:
+        _service(request).refresh_context_freshness(projectId, nodeId)
         response = _orchestrator(request).start_execution(
             projectId,
             nodeId,
@@ -298,6 +343,7 @@ def mark_done_from_execution_v4(
     request: Request,
 ) -> JSONResponse:
     try:
+        _service(request).refresh_context_freshness(projectId, nodeId)
         response = _orchestrator(request).mark_done_from_execution(
             projectId,
             nodeId,
@@ -324,6 +370,7 @@ def improve_execution_v4(
     request: Request,
 ) -> JSONResponse:
     try:
+        _service(request).refresh_context_freshness(projectId, nodeId)
         response = _orchestrator(request).request_improvements(
             projectId,
             nodeId,
@@ -352,6 +399,7 @@ def start_audit_v4(
     request: Request,
 ) -> JSONResponse:
     try:
+        _service(request).refresh_context_freshness(projectId, nodeId)
         response = _orchestrator(request).start_audit(
             projectId,
             nodeId,
@@ -380,6 +428,7 @@ def accept_audit_v4(
     request: Request,
 ) -> JSONResponse:
     try:
+        _service(request).refresh_context_freshness(projectId, nodeId)
         response = _orchestrator(request).accept_audit(
             projectId,
             nodeId,
@@ -406,6 +455,7 @@ def start_package_review_v4(
     request: Request,
 ) -> JSONResponse:
     try:
+        _service(request).refresh_context_freshness(projectId, nodeId)
         response = _orchestrator(request).start_package_review(
             projectId,
             nodeId,

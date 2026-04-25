@@ -8,11 +8,15 @@ from typing import Any
 from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
 from backend.business.workflow_v2.context_packets import PlanningTreeContextPacket
 from backend.business.workflow_v2.errors import (
+    WorkflowActionNotAllowedError,
+    WorkflowContextNotStaleError,
     WorkflowContextStaleError,
     WorkflowIdempotencyConflictError,
     WorkflowThreadBindingFailedError,
+    WorkflowVersionConflictError,
 )
 from backend.business.workflow_v2.models import (
+    ContextStaleBindingV2,
     NodeWorkflowStateV2,
     SourceVersions,
     ThreadBinding,
@@ -21,7 +25,7 @@ from backend.business.workflow_v2.models import (
     workflow_state_to_response,
 )
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
-from backend.business.workflow_v2.state_machine import derive_allowed_actions
+from backend.business.workflow_v2.state_machine import derive_allowed_actions, rebase_context as transition_rebase_context
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 
 _ROLE_THREAD_ATTR: dict[str, str] = {
@@ -125,23 +129,15 @@ class ThreadBindingServiceV2:
 
         if binding is not None:
             if not force_rebase:
-                stale_state = state.model_copy(
-                    deep=True,
-                    update={
-                        "context_stale": True,
-                        "context_stale_reason": f"{role} context packet changed.",
-                    },
-                )
-                persisted_stale_state = self._repository.write_state(project_id, node_id, stale_state)
-                self._publish_context_stale(
-                    persisted_stale_state,
-                    reason=f"{role} context packet changed.",
-                    details={"role": role},
+                persisted_stale_state = self._refresh_context_freshness_state(
+                    state,
+                    publish=True,
+                    fallback_reason=f"{role} context packet changed.",
                 )
                 raise WorkflowContextStaleError(
                     project_id,
                     node_id,
-                    reason=f"{role} context packet changed.",
+                    reason=persisted_stale_state.context_stale_reason or f"{role} context packet changed.",
                 )
             update_packet = self._context_builder.build_context_update_packet(
                 project_id=project_id,
@@ -239,6 +235,269 @@ class ThreadBindingServiceV2:
             details={"reason": "new_thread", "role": role},
         )
         return _response(next_state, next_binding)
+
+    def refresh_context_freshness(self, project_id: str, node_id: str) -> NodeWorkflowStateV2:
+        state = self._repository.read_state(project_id, node_id)
+        return self._refresh_context_freshness_state(state, publish=True)
+
+    def rebase_context(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        idempotency_key: str,
+        expected_workflow_version: int | None = None,
+        roles: list[ThreadRole] | None = None,
+    ) -> dict[str, Any]:
+        key = idempotency_key.strip()
+        if not key:
+            raise WorkflowThreadBindingFailedError(
+                "idempotencyKey is required.",
+                details={"projectId": project_id, "nodeId": node_id},
+            )
+        normalized_roles = _normalize_role_subset(roles)
+        payload_hash = _payload_hash(
+            {
+                "action": "rebase_context",
+                "projectId": project_id,
+                "nodeId": node_id,
+                "expectedWorkflowVersion": expected_workflow_version,
+                "roles": normalized_roles,
+            }
+        )
+
+        state = self._refresh_context_freshness_state(
+            self._repository.read_state(project_id, node_id),
+            publish=True,
+        )
+        record_key = _rebase_record_key(key)
+        existing_record = state.idempotency_records.get(record_key)
+        if existing_record is not None:
+            if existing_record.get("payloadHash") != payload_hash:
+                raise WorkflowIdempotencyConflictError(key)
+            cached_response = existing_record.get("response")
+            if isinstance(cached_response, dict):
+                return copy.deepcopy(cached_response)
+
+        if expected_workflow_version is not None and state.state_version != expected_workflow_version:
+            raise WorkflowVersionConflictError(
+                expected_version=expected_workflow_version,
+                actual_version=state.state_version,
+            )
+
+        if "rebase_context" not in derive_allowed_actions(state):
+            if not state.context_stale:
+                raise WorkflowContextNotStaleError(project_id, node_id)
+            raise WorkflowActionNotAllowedError(
+                "rebase_context",
+                state.phase,
+                allowed_actions=derive_allowed_actions(state),
+            )
+
+        stale_details = list(state.context_stale_details)
+        if not stale_details:
+            stale_details = self._compute_stale_bindings(state)
+        if not stale_details:
+            raise WorkflowContextNotStaleError(project_id, node_id)
+
+        stale_roles = {detail.role for detail in stale_details}
+        target_roles = normalized_roles or sorted(stale_roles)
+        invalid_roles = [role for role in target_roles if role not in stale_roles]
+        if invalid_roles:
+            raise WorkflowActionNotAllowedError(
+                "rebase_context",
+                state.phase,
+                allowed_actions=derive_allowed_actions(state),
+                message="Requested rebase roles are not stale.",
+            )
+
+        bindings = dict(state.thread_bindings)
+        updated_bindings: list[dict[str, Any]] = []
+        latest_versions = SourceVersions()
+
+        for role in target_roles:
+            binding = bindings.get(role)
+            if binding is None:
+                raise WorkflowThreadBindingFailedError(
+                    "Cannot rebase a missing thread binding.",
+                    details={"projectId": project_id, "nodeId": node_id, "role": role},
+                )
+            next_packet = self._context_builder.build_context_packet(
+                project_id=project_id,
+                node_id=node_id,
+                role=role,
+                workflow_state=state,
+            )
+            next_hash = next_packet.packet_hash()
+            latest_versions = SourceVersions.model_validate(next_packet.source_versions)
+            update_packet = self._context_builder.build_context_update_packet(
+                project_id=project_id,
+                node_id=node_id,
+                role=role,
+                previous_context_packet_hash=binding.context_packet_hash,
+                next_packet=next_packet,
+            )
+            self._inject_context(
+                thread_id=binding.thread_id,
+                role=role,
+                packet=update_packet,
+                idempotency_key=key,
+                context_packet_hash=next_hash,
+            )
+            next_binding = _updated_binding(
+                binding,
+                source_versions=latest_versions,
+                context_packet_hash=next_hash,
+            )
+            bindings[role] = next_binding
+            updated_bindings.append(
+                {
+                    "role": role,
+                    "threadId": next_binding.thread_id,
+                    "contextPacketHash": next_binding.context_packet_hash,
+                }
+            )
+
+        if set(target_roles) == stale_roles:
+            next_state = transition_rebase_context(
+                state.model_copy(deep=True, update={"thread_bindings": bindings}),
+                frame_version=latest_versions.frame_version,
+                spec_version=latest_versions.spec_version,
+                split_manifest_version=latest_versions.split_manifest_version,
+            ).model_copy(deep=True, update={"context_stale_details": []})
+        else:
+            remaining_details = [
+                detail for detail in stale_details if detail.role not in set(target_roles)
+            ]
+            next_state = state.model_copy(
+                deep=True,
+                update={
+                    "thread_bindings": bindings,
+                    "context_stale": True,
+                    "context_stale_reason": _stale_reason(remaining_details),
+                    "context_stale_details": remaining_details,
+                },
+            )
+
+        projected = next_state.model_copy(deep=True, update={"state_version": next_state.state_version + 1})
+        response = _rebase_response(projected, updated_bindings)
+        records = copy.deepcopy(next_state.idempotency_records)
+        records[record_key] = {
+            "action": "rebase_context",
+            "payloadHash": payload_hash,
+            "response": copy.deepcopy(response),
+        }
+        persisted = self._repository.write_state(
+            project_id,
+            node_id,
+            next_state.model_copy(deep=True, update={"idempotency_records": records}),
+        )
+        final_response = _rebase_response(persisted, updated_bindings)
+        if self._event_publisher is not None:
+            self._event_publisher.publish_action_completed(
+                persisted,
+                action="rebase_context",
+                details={"reason": "context_rebased", "updatedBindings": copy.deepcopy(updated_bindings)},
+            )
+            self._event_publisher.publish_state_changed(
+                persisted,
+                details={"reason": "context_rebased", "action": "rebase_context"},
+            )
+        return final_response
+
+    def _refresh_context_freshness_state(
+        self,
+        state: NodeWorkflowStateV2,
+        *,
+        publish: bool,
+        fallback_reason: str | None = None,
+    ) -> NodeWorkflowStateV2:
+        if state.phase in {"done", "blocked"}:
+            if state.context_stale or state.context_stale_details:
+                cleared = state.model_copy(
+                    deep=True,
+                    update={
+                        "context_stale": False,
+                        "context_stale_reason": None,
+                        "context_stale_details": [],
+                    },
+                )
+                return self._repository.write_state(state.project_id, state.node_id, cleared)
+            return state
+
+        stale_details = self._compute_stale_bindings(state)
+        if stale_details:
+            reason = _stale_reason(stale_details) or fallback_reason
+            if (
+                state.context_stale
+                and state.context_stale_reason == reason
+                and _stale_details_equal(state.context_stale_details, stale_details)
+            ):
+                return state
+            stale_state = state.model_copy(
+                deep=True,
+                update={
+                    "context_stale": True,
+                    "context_stale_reason": reason,
+                    "context_stale_details": stale_details,
+                },
+            )
+            persisted = self._repository.write_state(state.project_id, state.node_id, stale_state)
+            if publish and not state.context_stale:
+                details: dict[str, Any] = {
+                    "staleBindings": [
+                        detail.model_dump(by_alias=True, mode="json") for detail in stale_details
+                    ],
+                }
+                if len(stale_details) == 1:
+                    details["role"] = stale_details[0].role
+                self._publish_context_stale(persisted, reason=reason, details=details)
+            return persisted
+
+        if state.context_stale or state.context_stale_details:
+            cleared = state.model_copy(
+                deep=True,
+                update={
+                    "context_stale": False,
+                    "context_stale_reason": None,
+                    "context_stale_details": [],
+                },
+            )
+            persisted = self._repository.write_state(state.project_id, state.node_id, cleared)
+            if publish:
+                self._publish_state_changed(persisted, details={"reason": "context_fresh"})
+            return persisted
+
+        return state
+
+    def _compute_stale_bindings(self, state: NodeWorkflowStateV2) -> list[ContextStaleBindingV2]:
+        stale_details: list[ContextStaleBindingV2] = []
+        for role_key in sorted(state.thread_bindings):
+            binding = state.thread_bindings[role_key]
+            role = binding.role
+            if role not in _ROLE_THREAD_ATTR:
+                continue
+            packet = self._context_builder.build_context_packet(
+                project_id=state.project_id,
+                node_id=state.node_id,
+                role=role,
+                workflow_state=state,
+            )
+            next_hash = packet.packet_hash()
+            next_versions = SourceVersions.model_validate(packet.source_versions)
+            if _binding_matches(binding, next_hash, next_versions):
+                continue
+            stale_details.append(
+                ContextStaleBindingV2(
+                    role=role,
+                    threadId=binding.thread_id,
+                    currentContextPacketHash=binding.context_packet_hash,
+                    nextContextPacketHash=next_hash,
+                    currentSourceVersions=copy.deepcopy(binding.source_versions),
+                    nextSourceVersions=next_versions,
+                )
+            )
+        return stale_details
 
     def _publish_state_changed(
         self,
@@ -422,8 +681,54 @@ def _response(state: NodeWorkflowStateV2, binding: ThreadBinding) -> dict[str, A
     }
 
 
+def _rebase_response(state: NodeWorkflowStateV2, updated_bindings: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "rebased": True,
+        "updatedBindings": copy.deepcopy(updated_bindings),
+        "workflowState": workflow_state_to_response(
+            state,
+            allowed_actions=derive_allowed_actions(state),
+        ).to_public_dict(),
+    }
+
+
+def _normalize_role_subset(roles: list[ThreadRole] | None) -> list[ThreadRole]:
+    if not roles:
+        return []
+    normalized: list[ThreadRole] = []
+    for role in roles:
+        if role not in _ROLE_THREAD_ATTR:
+            raise WorkflowThreadBindingFailedError(
+                "Unsupported workflow thread role.",
+                details={"role": role},
+            )
+        if role not in normalized:
+            normalized.append(role)
+    return sorted(normalized)
+
+
+def _stale_reason(details: list[ContextStaleBindingV2]) -> str | None:
+    if not details:
+        return None
+    if len(details) == 1:
+        return f"{details[0].role} context packet changed."
+    return "Multiple workflow context packets changed."
+
+
+def _stale_details_equal(left: list[ContextStaleBindingV2], right: list[ContextStaleBindingV2]) -> bool:
+    return [
+        item.model_dump(by_alias=True, mode="json") for item in left
+    ] == [
+        item.model_dump(by_alias=True, mode="json") for item in right
+    ]
+
+
 def _record_key(idempotency_key: str) -> str:
     return f"{_IDEMPOTENCY_ACTION}:{idempotency_key}"
+
+
+def _rebase_record_key(idempotency_key: str) -> str:
+    return f"rebase_context:{idempotency_key}"
 
 
 def _payload_hash(payload: dict[str, Any]) -> str:

@@ -76,6 +76,20 @@ class ExecutionAuditOrchestratorV2:
     def get_legacy_workflow_state(self, project_id: str, node_id: str) -> dict[str, Any]:
         return legacy_workflow_state_view(self._repository.read_state(project_id, node_id))
 
+    def get_active_execution_start_response(self, project_id: str, node_id: str) -> dict[str, Any] | None:
+        state = self._repository.read_state(project_id, node_id)
+        if state.phase != "executing":
+            return None
+        run_id = state.active_execution_run_id or state.latest_execution_run_id
+        run = state.execution_runs.get(str(run_id or ""))
+        return {
+            "accepted": True,
+            "threadId": run.thread_id if run is not None else state.execution_thread_id,
+            "turnId": run.turn_id if run is not None else None,
+            "executionRunId": run_id,
+            "workflowState": _public_state(state),
+        }
+
     def start_execution(
         self,
         project_id: str,

@@ -276,6 +276,12 @@ Done when:
 
 ## Phase 8 - Context Stale and Rebase
 
+Status: complete.
+
+Detailed plan:
+
+- `docs/migration/phase-8-context-stale-rebase-plan-v1.md`
+
 Implement context stale detection and rebase:
 
 - Pin source artifact versions in thread bindings and context packet metadata.
@@ -288,8 +294,15 @@ Done when:
 - V2 workflow state exposes stale context details and `rebase_context`.
 - Rebase injects context updates into affected threads and clears stale state.
 - UI exposes a deterministic rebase action.
+- `python scripts/check_workflow_v2_phase8.py` passes.
 
 ## Phase 9 - Artifact Orchestrator Alignment
+
+Status: complete.
+
+Detailed plan:
+
+- `docs/migration/phase-9-artifact-orchestrator-alignment-plan-v1.md`
 
 Move frame/spec/clarify/split workflow decisions behind
 `artifact_orchestrator.py` without forcing them into regular session chat.
@@ -300,6 +313,7 @@ Done when:
 - Confirmed artifact summaries can be injected into active threads when useful.
 - Artifact confirmation updates Workflow V2 state and publishes V2 workflow
   events.
+- `python scripts/check_workflow_v2_phase9.py` passes.
 
 ## Phase 10 - V3 Compatibility, Deprecation, and Removal
 

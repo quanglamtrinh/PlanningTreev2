@@ -72,6 +72,7 @@ export type WorkflowModelPolicyV2 = {
 export type WorkflowMutationResponseV2 = {
   workflowState?: WorkflowStateV2
   accepted?: boolean
+  rebased?: boolean
   threadId?: string | null
   turnId?: string | null
   executionRunId?: string | null
@@ -79,6 +80,11 @@ export type WorkflowMutationResponseV2 = {
   reviewCycleId?: string | null
   reviewThreadId?: string | null
   reviewCommitSha?: string | null
+  updatedBindings?: Array<{
+    role: WorkflowThreadRoleV2
+    threadId: string
+    contextPacketHash?: string | null
+  }>
 }
 
 export type EnsureWorkflowThreadResponseV2 = WorkflowMutationResponseV2 & {
@@ -213,6 +219,26 @@ export async function startPackageReviewV2(
       idempotencyKey: payload.idempotencyKey,
       model: payload.model ?? null,
       modelProvider: payload.modelProvider ?? null,
+    },
+  )
+}
+
+export async function rebaseContextV2(
+  projectId: string,
+  nodeId: string,
+  payload: {
+    idempotencyKey: string
+    expectedWorkflowVersion?: number | null
+    roles?: WorkflowThreadRoleV2[] | null
+  },
+): Promise<WorkflowMutationResponseV2> {
+  await initAuthToken()
+  return jsonPostDirect<WorkflowMutationResponseV2>(
+    `${workflowNodePath(projectId, nodeId)}/context/rebase`,
+    {
+      idempotencyKey: payload.idempotencyKey,
+      expectedWorkflowVersion: payload.expectedWorkflowVersion ?? null,
+      roles: payload.roles ?? null,
     },
   )
 }

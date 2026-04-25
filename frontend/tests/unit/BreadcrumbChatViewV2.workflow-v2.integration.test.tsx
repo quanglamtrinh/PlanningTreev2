@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -345,5 +345,58 @@ describe('BreadcrumbChatViewV2 Workflow V2 cutover integration', () => {
     })
     expect(facade.commands.selectThread).toHaveBeenCalledWith('package-thread-1')
     expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
+  })
+
+  it('renders and dispatches the context rebase action while stale', async () => {
+    const workflowState = makeWorkflowState({
+      version: 5,
+      context: {
+        frameVersion: 2,
+        specVersion: 2,
+        splitManifestVersion: null,
+        stale: true,
+        staleReason: 'execution context packet changed.',
+      },
+      allowedActions: ['rebase_context'],
+    })
+    seedBaseStores(workflowState, makeProjectSnapshot('original'))
+    const rebaseContext = vi.fn().mockResolvedValue({
+      ...workflowState,
+      version: 6,
+      context: {
+        ...workflowState.context,
+        stale: false,
+        staleReason: null,
+      },
+      allowedActions: ['start_execution'],
+    })
+    useWorkflowStateStoreV2.setState({
+      rebaseContext,
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+    mockUseSessionFacadeV2.mockReturnValue(
+      makeFacade({
+        activeThreadId: 'exec-thread-1',
+        isActiveThreadReady: true,
+      }),
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const rebaseButton = await screen.findByTestId('workflow-rebase-context')
+    expect(screen.queryByTestId('workflow-start-execution')).toBeNull()
+
+    fireEvent.click(rebaseButton)
+
+    await waitFor(() => {
+      expect(rebaseContext).toHaveBeenCalledWith('project-1', 'root', {
+        expectedWorkflowVersion: 5,
+      })
+    })
   })
 })

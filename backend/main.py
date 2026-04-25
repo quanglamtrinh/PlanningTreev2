@@ -15,6 +15,7 @@ from backend.ai.codex_client import CodexAppClient, StdioTransport
 from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.execution_audit_orchestrator import ExecutionAuditOrchestratorV2
+from backend.business.workflow_v2.artifact_orchestrator import ArtifactOrchestratorV2
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.conversation.services.request_ledger_service_v3 import RequestLedgerServiceV3
@@ -59,7 +60,7 @@ from backend.config.app_config import (
 from backend.config.api_version import API_PREFIX
 from backend.errors.app_errors import AppError
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
-from backend.routes import bootstrap, chat, codex, nodes, projects, session_v4, split, workflow_v3, workflow_v4
+from backend.routes import artifacts_v4, bootstrap, chat, codex, nodes, projects, session_v4, split, workflow_v3, workflow_v4
 from backend.session_core_v2.connection import ConnectionStateMachine, SessionManagerV2
 from backend.session_core_v2.protocol import (
     SessionProtocolClientV2,
@@ -309,6 +310,17 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
         review_service=review_service,
         git_checkpoint_service=git_checkpoint_service,
     )
+    artifact_orchestrator_v2 = ArtifactOrchestratorV2(
+        repository=workflow_state_repository_v2,
+        thread_binding_service=workflow_thread_binding_service_v2,
+        event_publisher=workflow_event_publisher_v2,
+        storage=storage,
+        node_detail_service=node_detail_service,
+        frame_generation_service=frame_generation_service,
+        clarify_generation_service=clarify_generation_service,
+        spec_generation_service=spec_generation_service,
+        split_service=split_service,
+    )
     session_runtime_store_v2.add_event_observer(execution_audit_orchestrator_v2.handle_session_event)
     execution_audit_workflow_service._workflow_orchestrator_v2 = execution_audit_orchestrator_v2
     project_service._chat_service = chat_service
@@ -404,6 +416,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2
     app.state.workflow_thread_binding_service_v2 = workflow_thread_binding_service_v2
     app.state.execution_audit_orchestrator_v2 = execution_audit_orchestrator_v2
+    app.state.artifact_orchestrator_v2 = artifact_orchestrator_v2
     app.state.session_runtime_store_v2 = session_runtime_store_v2
     app.state.session_connection_state_v2 = session_connection_state_v2
     app.state.session_core_v2_enable_turns = session_core_v2_enable_turns
@@ -441,6 +454,7 @@ def create_app(data_root: Optional[Path] = None) -> FastAPI:
     app.include_router(workflow_v3.router, prefix=API_PREFIX)
     app.include_router(session_v4.router)
     app.include_router(workflow_v4.router)
+    app.include_router(artifacts_v4.router)
 
     if getattr(sys, "frozen", False):
         dist = Path(sys._MEIPASS) / "frontend" / "dist"  # type: ignore[attr-defined]

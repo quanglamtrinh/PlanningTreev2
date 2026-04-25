@@ -13,6 +13,7 @@ from backend.storage.workspace_store import WorkspaceStore
 _DEFAULT_STATE = {
     "active_job": None,
     "last_error": None,
+    "last_completed": None,
 }
 
 
@@ -57,10 +58,12 @@ class SplitStateStore:
 
         active_job = payload.get("active_job")
         last_error = payload.get("last_error")
+        last_completed = payload.get("last_completed")
 
         return {
             "active_job": self._normalize_active_job(active_job),
             "last_error": self._normalize_last_error(last_error),
+            "last_completed": self._normalize_last_completed(last_completed),
         }
 
     def _normalize_active_job(self, payload: Any) -> dict[str, Any] | None:
@@ -97,4 +100,22 @@ class SplitStateStore:
             "started_at": started_at.strip(),
             "completed_at": completed_at.strip(),
             "error": error.strip(),
+        }
+
+    def _normalize_last_completed(self, payload: Any) -> dict[str, Any] | None:
+        if not isinstance(payload, dict):
+            return None
+        completed_at = payload.get("completed_at")
+        if not isinstance(completed_at, str) or not completed_at.strip():
+            return None
+        node_id = payload.get("node_id")
+        mode = payload.get("mode")
+        job_id = payload.get("job_id")
+        started_at = payload.get("started_at")
+        return {
+            "job_id": job_id.strip() if isinstance(job_id, str) and job_id.strip() else None,
+            "node_id": node_id.strip() if isinstance(node_id, str) and node_id.strip() else None,
+            "mode": mode.strip() if isinstance(mode, str) and mode.strip() else None,
+            "started_at": started_at.strip() if isinstance(started_at, str) and started_at.strip() else None,
+            "completed_at": completed_at.strip(),
         }

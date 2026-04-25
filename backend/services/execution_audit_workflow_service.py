@@ -12,6 +12,7 @@ from typing import Any, TypedDict
 from backend.ai.codex_client import CodexTransportError
 from backend.ai.execution_prompt_builder import build_execution_prompt
 from backend.ai.split_context_builder import build_split_context
+from backend.business.workflow_v2.errors import WorkflowActionNotAllowedError
 from backend.conversation.projector.thread_event_projector import upsert_item as upsert_item_v2
 from backend.conversation.projector.thread_event_projector_runtime_v3 import upsert_item_v3
 from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntimeServiceV3
@@ -533,13 +534,23 @@ class ExecutionAuditWorkflowService:
     def finish_task(self, project_id: str, node_id: str, *, idempotency_key: str) -> dict[str, Any]:
         orchestrator = self._resolve_workflow_orchestrator_v2()
         if orchestrator is not None:
-            response = orchestrator.start_execution(
-                project_id,
-                node_id,
-                idempotency_key=idempotency_key,
-            )
+            refresh_reason = "finish_task_started"
+            try:
+                response = orchestrator.start_execution(
+                    project_id,
+                    node_id,
+                    idempotency_key=idempotency_key,
+                )
+            except WorkflowActionNotAllowedError as exc:
+                if exc.details.get("action") != "start_execution" or exc.details.get("phase") != "executing":
+                    raise
+                active_response = orchestrator.get_active_execution_start_response(project_id, node_id)
+                if active_response is None:
+                    raise
+                response = active_response
+                refresh_reason = "finish_task_already_executing"
             state = orchestrator.get_legacy_workflow_state(project_id, node_id)
-            self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason="finish_task_started")
+            self._publish_workflow_refresh(project_id=project_id, node_id=node_id, reason=refresh_reason)
             return {
                 "accepted": True,
                 "threadId": response.get("threadId"),

@@ -60,7 +60,12 @@ export function useWorkflowEventBridgeV2(
             event.type === 'workflow/state_changed' ||
             event.type === 'workflow/context_stale' ||
             event.type === 'workflow/action_completed' ||
-            event.type === 'workflow/action_failed'
+            event.type === 'workflow/action_failed' ||
+            event.type === 'workflow/artifact_job_started' ||
+            event.type === 'workflow/artifact_job_completed' ||
+            event.type === 'workflow/artifact_job_failed' ||
+            event.type === 'workflow/artifact_confirmed' ||
+            event.type === 'workflow/artifact_state_changed'
           ) {
             refreshWorkflowState()
           }

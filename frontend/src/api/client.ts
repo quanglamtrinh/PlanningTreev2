@@ -114,6 +114,30 @@ function buildThreadByIdTurnPathV3(projectId: string, threadId: string, nodeId: 
   return `${buildThreadByIdBasePathV3(projectId, threadId)}/turns?node_id=${encodeURIComponent(nodeId)}`
 }
 
+function artifactNodePathV4(projectId: string, nodeId: string): string {
+  return `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/artifacts`
+}
+
+function artifactProjectPathV4(projectId: string): string {
+  return `/v4/projects/${encodeURIComponent(projectId)}`
+}
+
+function newIdempotencyKey(prefix: string): string {
+  const random =
+    typeof globalThis.crypto?.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return `${prefix}:${random}`
+}
+
+type ArtifactConfirmResponse = {
+  detailState: DetailState
+}
+
+type ClarifyUpdateV4Response = {
+  clarify: ClarifyState
+}
+
 export function buildThreadByIdEventsUrlV3(
   projectId: string,
   nodeId: string,
@@ -320,13 +344,13 @@ export const api = {
   },
   splitNode(projectId: string, nodeId: string, mode: SplitMode): Promise<SplitAcceptedResponse> {
     return jsonFetch<SplitAcceptedResponse>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/split`,
+      `${artifactNodePathV4(projectId, nodeId)}/split/start`,
       { method: 'POST' },
-      { mode },
+      { idempotencyKey: newIdempotencyKey('split_start'), mode },
     )
   },
   getSplitStatus(projectId: string): Promise<SplitStatusResponse> {
-    return jsonFetch<SplitStatusResponse>(`/v3/projects/${projectId}/split-status`)
+    return jsonFetch<SplitStatusResponse>(`${artifactProjectPathV4(projectId)}/artifact-jobs/split/status`)
   },
   updateNode(
     projectId: string,
@@ -379,69 +403,79 @@ export const api = {
   getReviewState(projectId: string, nodeId: string): Promise<ReviewState> {
     return jsonFetch<ReviewState>(`/v3/projects/${projectId}/nodes/${nodeId}/review-state`)
   },
-  confirmFrame(projectId: string, nodeId: string): Promise<DetailState> {
-    return jsonFetch<DetailState>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/confirm-frame`,
+  async confirmFrame(projectId: string, nodeId: string): Promise<DetailState> {
+    const response = await jsonFetch<ArtifactConfirmResponse>(
+      `${artifactNodePathV4(projectId, nodeId)}/frame/confirm`,
       { method: 'POST' },
+      { idempotencyKey: newIdempotencyKey('frame_confirm') },
     )
+    return response.detailState
   },
   getClarify(projectId: string, nodeId: string): Promise<ClarifyState> {
-    return jsonFetch<ClarifyState>(`/v3/projects/${projectId}/nodes/${nodeId}/clarify`)
+    return jsonFetch<ClarifyState>(`${artifactNodePathV4(projectId, nodeId)}/clarify`)
   },
-  updateClarify(
+  async updateClarify(
     projectId: string,
     nodeId: string,
     answers: { field_name: string; selected_option_id?: string | null; custom_answer?: string }[],
   ): Promise<ClarifyState> {
-    return jsonFetch<ClarifyState>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/clarify`,
+    const response = await jsonFetch<ClarifyUpdateV4Response>(
+      `${artifactNodePathV4(projectId, nodeId)}/clarify`,
       { method: 'PUT' },
-      { answers },
+      { answers, idempotencyKey: newIdempotencyKey('clarify_update') },
     )
+    return response.clarify
   },
-  confirmClarify(projectId: string, nodeId: string): Promise<DetailState> {
-    return jsonFetch<DetailState>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/confirm-clarify`,
+  async confirmClarify(projectId: string, nodeId: string): Promise<DetailState> {
+    const response = await jsonFetch<ArtifactConfirmResponse>(
+      `${artifactNodePathV4(projectId, nodeId)}/clarify/confirm`,
       { method: 'POST' },
+      { idempotencyKey: newIdempotencyKey('clarify_confirm') },
     )
+    return response.detailState
   },
-  confirmSpec(projectId: string, nodeId: string): Promise<DetailState> {
-    return jsonFetch<DetailState>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/confirm-spec`,
+  async confirmSpec(projectId: string, nodeId: string): Promise<DetailState> {
+    const response = await jsonFetch<ArtifactConfirmResponse>(
+      `${artifactNodePathV4(projectId, nodeId)}/spec/confirm`,
       { method: 'POST' },
+      { idempotencyKey: newIdempotencyKey('spec_confirm') },
     )
+    return response.detailState
   },
   generateFrame(projectId: string, nodeId: string): Promise<FrameGenAcceptedResponse> {
     return jsonFetch<FrameGenAcceptedResponse>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/generate-frame`,
+      `${artifactNodePathV4(projectId, nodeId)}/frame/generate`,
       { method: 'POST' },
+      { idempotencyKey: newIdempotencyKey('frame_generate') },
     )
   },
   getFrameGenStatus(projectId: string, nodeId: string): Promise<FrameGenStatusResponse> {
     return jsonFetch<FrameGenStatusResponse>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/frame-generation-status`,
+      `${artifactNodePathV4(projectId, nodeId)}/frame/generation-status`,
     )
   },
   generateClarify(projectId: string, nodeId: string): Promise<ClarifyGenAcceptedResponse> {
     return jsonFetch<ClarifyGenAcceptedResponse>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/generate-clarify`,
+      `${artifactNodePathV4(projectId, nodeId)}/clarify/generate`,
       { method: 'POST' },
+      { idempotencyKey: newIdempotencyKey('clarify_generate') },
     )
   },
   getClarifyGenStatus(projectId: string, nodeId: string): Promise<ClarifyGenStatusResponse> {
     return jsonFetch<ClarifyGenStatusResponse>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/clarify-generation-status`,
+      `${artifactNodePathV4(projectId, nodeId)}/clarify/generation-status`,
     )
   },
   generateSpec(projectId: string, nodeId: string): Promise<SpecGenAcceptedResponse> {
     return jsonFetch<SpecGenAcceptedResponse>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/generate-spec`,
+      `${artifactNodePathV4(projectId, nodeId)}/spec/generate`,
       { method: 'POST' },
+      { idempotencyKey: newIdempotencyKey('spec_generate') },
     )
   },
   getSpecGenStatus(projectId: string, nodeId: string): Promise<SpecGenStatusResponse> {
     return jsonFetch<SpecGenStatusResponse>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/spec-generation-status`,
+      `${artifactNodePathV4(projectId, nodeId)}/spec/generation-status`,
     )
   },
   getAskRolloutMetrics(): Promise<AskRolloutMetricsSnapshot> {

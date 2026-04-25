@@ -85,6 +85,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     improveExecution,
     acceptAudit,
     startPackageReview,
+    rebaseContext,
   } = useWorkflowStateV2(projectId, nodeId)
 
   const isReviewNode = useMemo(() => {
@@ -371,6 +372,12 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       if (action.kind === 'start_package_review') {
         await startPackageReview(projectId, nodeId, workflowModelPolicy)
         void navigate(buildChatV2Url(projectId, nodeId, 'package'))
+        return
+      }
+      if (action.kind === 'rebase_context') {
+        await rebaseContext(projectId, nodeId, {
+          expectedWorkflowVersion: workflowState?.version ?? null,
+        })
       }
     },
     [
@@ -381,10 +388,12 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       navigate,
       nodeId,
       projectId,
+      rebaseContext,
       setActiveSurface,
       startAudit,
       startExecution,
       startPackageReview,
+      workflowState?.version,
       workflowModelPolicy,
     ],
   )

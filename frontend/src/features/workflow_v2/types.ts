@@ -57,6 +57,14 @@ export type WorkflowStateContextV2 = {
   splitManifestVersion: number | null
   stale: boolean
   staleReason: string | null
+  staleBindings?: Array<{
+    role: WorkflowThreadRoleV2
+    threadId: string
+    currentContextPacketHash?: string | null
+    nextContextPacketHash?: string | null
+    currentSourceVersions?: Record<string, unknown>
+    nextSourceVersions?: Record<string, unknown>
+  }>
 }
 
 export type WorkflowStateV2 = {
@@ -76,6 +84,11 @@ export type WorkflowEventTypeV2 =
   | 'workflow/context_stale'
   | 'workflow/action_completed'
   | 'workflow/action_failed'
+  | 'workflow/artifact_job_started'
+  | 'workflow/artifact_job_completed'
+  | 'workflow/artifact_job_failed'
+  | 'workflow/artifact_confirmed'
+  | 'workflow/artifact_state_changed'
 
 export type WorkflowEventV2 = {
   type: WorkflowEventTypeV2
