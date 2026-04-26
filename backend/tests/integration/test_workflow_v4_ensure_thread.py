@@ -127,7 +127,11 @@ def test_session_v4_routes_remain_workflow_business_free(client) -> None:
     session_routes = [
         route for route in client.app.routes if getattr(route, "path", "").startswith("/v4/session")
     ]
+    workflow_route_fields = ("{projectId}", "{nodeId}", "{role}", "{project_id}", "{node_id}")
 
     assert session_routes
     assert all(route.endpoint.__module__ == "backend.routes.session_v4" for route in session_routes)
     assert not any("/projects/{projectId}/nodes/{nodeId}" in route.path for route in session_routes)
+    assert not any(
+        field in route.path for route in session_routes for field in workflow_route_fields
+    )

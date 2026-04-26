@@ -86,6 +86,7 @@ const EFFORT_LEVEL_VALUES: Record<ComposerEffortLevel, ComposerEffortIntent> = {
   'Extra High': 'extra-high',
 }
 const EFFORT_LEVELS: ComposerEffortLevel[] = ['Low', 'Medium', 'High', 'Extra High']
+const DEFAULT_EFFORT_LEVEL: ComposerEffortLevel = 'High'
 const WORK_MODE_LABELS: Record<ComposerWorkMode, string> = {
   local: 'locally',
   remote: 'remote',
@@ -216,7 +217,7 @@ export function ComposerPane({
   const [mentionBindings, setMentionBindings] = useState<Record<string, string>>({})
   const [pasteBurstUntilMs, setPasteBurstUntilMs] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [effortLevel, setEffortLevel] = useState<ComposerEffortLevel>('Extra High')
+  const [effortLevel, setEffortLevel] = useState<ComposerEffortLevel>(DEFAULT_EFFORT_LEVEL)
   const [workMode, setWorkMode] = useState<ComposerWorkMode>('local')
   const [streamMode, setStreamMode] = useState<ComposerStreamMode>('streaming')
   const [accessMode, setAccessMode] = useState<ComposerAccessMode>('full-access')

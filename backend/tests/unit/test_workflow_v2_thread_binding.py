@@ -82,6 +82,13 @@ def _service(storage: Any, fake_session: FakeSessionManager) -> tuple[WorkflowSt
     )
 
 
+def _assert_no_workflow_routing_fields(payload: dict[str, Any]) -> None:
+    assert "projectId" not in payload
+    assert "nodeId" not in payload
+    assert "role" not in payload
+    assert "idempotencyKey" not in payload
+
+
 def test_new_thread_starts_injects_context_and_persists_binding(storage, workspace_root) -> None:
     project_id, node_id, _ = _project_with_confirmed_docs(storage, workspace_root)
     fake_session = FakeSessionManager()
@@ -99,8 +106,10 @@ def test_new_thread_starts_injects_context_and_persists_binding(storage, workspa
     assert fake_session.starts == [
         {"cwd": str(workspace_root), "model": "gpt-5.4", "modelProvider": "openai"}
     ]
+    _assert_no_workflow_routing_fields(fake_session.starts[0])
     assert len(fake_session.injects) == 1
     assert fake_session.injects[0]["threadId"] == "thread-1"
+    _assert_no_workflow_routing_fields(fake_session.injects[0]["payload"])
     assert "clientActionId" not in fake_session.injects[0]["payload"]
     injected_item = fake_session.injects[0]["payload"]["items"][0]
     assert injected_item["type"] == "message"
@@ -166,6 +175,7 @@ def test_legacy_thread_id_is_adopted_and_receives_initial_context(storage, works
     assert fake_session.starts == []
     assert len(fake_session.injects) == 1
     assert fake_session.injects[0]["threadId"] == "legacy-exec"
+    _assert_no_workflow_routing_fields(fake_session.injects[0]["payload"])
     assert response["binding"]["createdFrom"] == "legacy_adopted"
     assert repository.read_state(project_id, node_id).thread_bindings["execution"].thread_id == "legacy-exec"
 
@@ -192,6 +202,7 @@ def test_changed_context_auto_updates_binding(storage, workspace_root) -> None:
 
     assert fake_session.starts == []
     assert len(fake_session.injects) == 1
+    _assert_no_workflow_routing_fields(fake_session.injects[0]["payload"])
     item = fake_session.injects[0]["payload"]["items"][0]
     assert item["type"] == "message"
     assert item["role"] == "developer"
@@ -284,6 +295,8 @@ def test_clears_stale_binding_when_native_rollout_is_missing_for_thread_id(
         model_provider="o",
     )
     assert len(fake.starts) == 1
+    _assert_no_workflow_routing_fields(fake.starts[0])
     assert fake.injects[-1]["threadId"] == "thread-1"
+    _assert_no_workflow_routing_fields(fake.injects[-1]["payload"])
     reloaded = repository.read_state(project_id, node_id)
     assert reloaded.thread_bindings["execution"].thread_id == "thread-1"

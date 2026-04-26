@@ -5,6 +5,37 @@ import { describe, expect, it, vi } from 'vitest'
 import { ComposerPane } from '../../src/features/session_v2/components/ComposerPane'
 
 describe('ComposerPane', () => {
+  it('defaults Codex composer submissions to GPT-5.3-Codex with high effort when selected by session state', async () => {
+    const onSubmit = vi.fn(async () => undefined)
+    const onInterrupt = vi.fn(async () => undefined)
+    render(
+      <ComposerPane
+        isTurnRunning={false}
+        onSubmit={onSubmit}
+        onInterrupt={onInterrupt}
+        modelOptions={[{ value: 'gpt-5.3-codex', label: 'GPT-5.3-Codex' }]}
+        selectedModel="gpt-5.3-codex"
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Select model and thinking effort' })).toHaveTextContent(
+      /GPT-5\.3-Codex High/,
+    )
+
+    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'Use the default Codex agent config' } })
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit.mock.calls[0]?.[0].requestedPolicy).toMatchObject({
+      model: 'gpt-5.3-codex',
+      effort: 'high',
+      accessMode: 'full-access',
+      workMode: 'local',
+      streamMode: 'streaming',
+    })
+  })
+
   it('routes slash text to command popup and submits on Enter', async () => {
     const onSubmit = vi.fn(async () => undefined)
     const onInterrupt = vi.fn(async () => undefined)

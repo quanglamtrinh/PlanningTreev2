@@ -9,7 +9,6 @@ import {
   listThreadTurnsV2,
   getThreadJournalHeadV2,
   readThreadV2,
-  recoverThreadV2,
   rejectPendingRequestV2,
   resolvePendingRequestV2,
   resumeThreadV2,
@@ -67,7 +66,6 @@ export const CODEX_MODEL_FALLBACK_OPTIONS: ComposerModelOption[] = [
   DEFAULT_CODEX_MODEL_OPTION,
   { value: 'gpt-5.2', label: 'GPT-5.2', isDefault: false },
   { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', isDefault: false },
-  { value: 'gpt-5.5', label: 'GPT-5.5', isDefault: false },
   { value: 'gpt-5.4', label: 'GPT-5.4', isDefault: false },
 ]
 
@@ -100,7 +98,6 @@ type RuntimeApi = {
   listThreadTurns: typeof listThreadTurnsV2
   getThreadJournalHead: typeof getThreadJournalHeadV2
   readThread: typeof readThreadV2
-  recoverThread: typeof recoverThreadV2
   rejectPendingRequest: typeof rejectPendingRequestV2
   resolvePendingRequest: typeof resolvePendingRequestV2
   resumeThread: typeof resumeThreadV2
@@ -149,7 +146,6 @@ export type SessionRuntimeController = {
   ensureThreadReady: (threadId: string, options?: EnsureThreadReadyOptions) => Promise<void>
   loadModels: () => Promise<void>
   pollPendingRequests: (options?: { surfaceErrors?: boolean }) => Promise<void>
-  recoverThreadFromProvider: (threadId: string) => Promise<void>
   selectThread: (threadId: string | null) => Promise<void>
   createThread: (policy?: ThreadCreationPolicy) => Promise<void>
   forkThread: (threadId: string) => Promise<void>
@@ -234,24 +230,21 @@ function resolveTurnStartPolicy(
 function deriveTurnPolicyFromRequestedPolicy(
   requestedPolicy: ComposerRequestedPolicy | null | undefined,
 ): TurnExecutionPolicy {
-  if (!requestedPolicy) {
-    return {}
-  }
-
   const nextPolicy: TurnExecutionPolicy = {}
-  if (requestedPolicy.effort === 'extra-high') {
+  if (requestedPolicy?.effort === 'extra-high') {
     nextPolicy.effort = 'xhigh'
-  } else if (requestedPolicy.effort) {
+  } else if (requestedPolicy?.effort) {
     nextPolicy.effort = requestedPolicy.effort
   }
 
-  if (requestedPolicy.accessMode === 'full-access') {
+  const accessMode = requestedPolicy?.accessMode ?? 'full-access'
+  if (accessMode === 'full-access') {
     nextPolicy.approvalPolicy = 'never'
     nextPolicy.sandboxPolicy = { type: 'dangerFullAccess' }
-  } else if (requestedPolicy.accessMode === 'default-permissions') {
+  } else if (accessMode === 'default-permissions') {
     nextPolicy.approvalPolicy = 'on-request'
     nextPolicy.sandboxPolicy = { type: 'workspaceWrite' }
-  } else if (requestedPolicy.accessMode === 'read-only') {
+  } else if (accessMode === 'read-only') {
     nextPolicy.approvalPolicy = 'on-request'
     nextPolicy.sandboxPolicy = { type: 'readOnly' }
   }
@@ -275,7 +268,6 @@ function defaultApi(): RuntimeApi {
     listThreadTurns: listThreadTurnsV2,
     getThreadJournalHead: getThreadJournalHeadV2,
     readThread: readThreadV2,
-    recoverThread: recoverThreadV2,
     rejectPendingRequest: rejectPendingRequestV2,
     resolvePendingRequest: resolvePendingRequestV2,
     resumeThread: resumeThreadV2,
@@ -382,20 +374,6 @@ export function createSessionRuntimeController(
     const guard = buildGuard('hydrateThread')
     const isCurrent = () => guard.isCurrent() && ensureStillCurrent(options?.isCurrent)
 
-    let replayHead: { lastEventSeq?: number | null; lastEventId?: string | null } | null = null
-    try {
-      replayHead = await api.getThreadJournalHead(threadId)
-      if (!isCurrent()) {
-        traceSessionRuntime('hydrate aborted after journal head: stale scope', {
-          threadId,
-        })
-        return
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      traceSessionRuntime('hydrate journal head skipped', { threadId, message })
-    }
-
     const read = await api.readThread(threadId, true)
     if (!isCurrent()) {
       traceSessionRuntime('hydrate aborted after read: stale scope', {
@@ -407,42 +385,12 @@ export function createSessionRuntimeController(
     const readTurns = Array.isArray(read.thread.turns) ? read.thread.turns : []
     dependencies.setThreadTurns(threadId, readTurns, { mode: 'replace' })
 
-    if (replayHead && typeof replayHead === 'object') {
-      const rawSeq = replayHead.lastEventSeq
-      if (rawSeq === null || rawSeq === undefined) {
-        dependencies.setReplayCursor(threadId, 0, null)
-        traceSessionRuntime('hydrate replay cursor cleared (empty journal)', { threadId })
-      } else if (typeof rawSeq === 'number' && Number.isFinite(rawSeq) && rawSeq >= 0) {
-        const lastId =
-          typeof replayHead.lastEventId === 'string' && replayHead.lastEventId.trim() !== ''
-            ? replayHead.lastEventId.trim()
-            : null
-        dependencies.setReplayCursor(threadId, rawSeq, lastId)
-        traceSessionRuntime('hydrate replay cursor aligned from journal', {
-          threadId,
-          lastEventSeq: rawSeq,
-          lastEventId: lastId,
-        })
-      }
-    }
-
     hydratedThreadIds.add(threadId)
     traceSessionRuntime('hydrate applied', {
       threadId,
       turns: readTurns.length,
       mode: 'replace',
     })
-  }
-
-  const recoverThreadFromProvider = async (threadId: string): Promise<void> => {
-    const normalized = threadId.trim()
-    if (!normalized) {
-      return
-    }
-    const recovered = await api.recoverThread(normalized, { source: 'frontend_resync' })
-    dependencies.upsertThread(recovered.thread, { preserveUpdatedAt: true })
-    const recoveredTurns = Array.isArray(recovered.thread.turns) ? recovered.thread.turns : []
-    dependencies.setThreadTurns(normalized, recoveredTurns, { mode: 'replace' })
   }
 
   const ensureThreadReady = async (threadId: string, options?: EnsureThreadReadyOptions): Promise<void> => {
@@ -965,7 +913,6 @@ export function createSessionRuntimeController(
     bootstrap,
     hydrateThreadState,
     ensureThreadReady,
-    recoverThreadFromProvider,
     loadModels,
     pollPendingRequests,
     selectThread,

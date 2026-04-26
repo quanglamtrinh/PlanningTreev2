@@ -120,7 +120,12 @@ def _project_with_confirmed_docs(client: TestClient, workspace_root: Path) -> tu
     return project_id, node_id
 
 
-def _install_phase5_orchestrator(client: TestClient, manager: FakeSessionManager) -> ExecutionAuditOrchestratorV2:
+def _install_phase5_orchestrator(
+    client: TestClient,
+    manager: FakeSessionManager,
+    *,
+    use_git_checkpoint_service: bool = False,
+) -> ExecutionAuditOrchestratorV2:
     app = client.app
     event_publisher = WorkflowEventPublisherV2(app.state.workflow_event_broker)
     binding_service = ThreadBindingServiceV2(
@@ -138,7 +143,7 @@ def _install_phase5_orchestrator(client: TestClient, manager: FakeSessionManager
         tree_service=app.state.tree_service,
         finish_task_service=app.state.finish_task_service,
         review_service=app.state.review_service,
-        git_checkpoint_service=None,
+        git_checkpoint_service=app.state.git_checkpoint_service if use_git_checkpoint_service else None,
     )
     app.state.workflow_thread_binding_service_v2 = binding_service
     app.state.execution_audit_orchestrator_v2 = orchestrator
@@ -301,6 +306,78 @@ def test_v2_orchestrator_direct_settlement_is_idempotent_when_no_active_run(
         turn_id=start_payload["turnId"],
         status="completed",
     ) is None
+
+
+def test_audit_settlement_uses_final_review_message_for_improve_prompt(
+    client: TestClient,
+    workspace_root: Path,
+) -> None:
+    project_id, node_id = _project_with_confirmed_docs(client, workspace_root)
+    manager = FakeSessionManager()
+    orchestrator = _install_phase5_orchestrator(client, manager, use_git_checkpoint_service=True)
+
+    start = client.post(
+        f"/v4/projects/{project_id}/nodes/{node_id}/execution/start",
+        json={"idempotencyKey": "exec-start-before-audit-review"},
+    )
+    assert start.status_code == 200, start.json()
+    start_payload = start.json()
+    execution_settled = orchestrator.settle_terminal_turn(
+        thread_id=start_payload["threadId"],
+        turn_id=start_payload["turnId"],
+        status="completed",
+        turn={
+            "status": "completed",
+            "items": [{"type": "agentMessage", "text": "Implemented the requested task."}],
+        },
+    )
+    assert execution_settled is not None
+    workspace_hash = execution_settled["workflowState"]["decisions"]["execution"]["candidateWorkspaceHash"]
+
+    audit = client.post(
+        f"/v4/projects/{project_id}/nodes/{node_id}/audit/start",
+        json={"idempotencyKey": "audit-start-final-review-text", "expectedWorkspaceHash": workspace_hash},
+    )
+    assert audit.status_code == 200, audit.json()
+    audit_payload = audit.json()
+    final_review_summary = "Final review summary: please tighten the frame copy."
+    audit_settled = orchestrator.settle_terminal_turn(
+        thread_id=audit_payload["threadId"],
+        turn_id=audit_payload["turnId"],
+        status="completed",
+        turn={
+            "status": "completed",
+            "items": [
+                {
+                    "type": "reasoning",
+                    "summary": "Reasoning summary should never become the improve request.",
+                },
+                {"type": "agentMessage", "text": "Earlier audit note should not drive improve."},
+                {
+                    "type": "agentMessage",
+                    "content": [{"type": "text", "text": final_review_summary}],
+                },
+            ],
+        },
+    )
+
+    assert audit_settled is not None
+    audit_decision = audit_settled["workflowState"]["decisions"]["audit"]
+    assert audit_decision["finalReviewText"] == final_review_summary
+
+    improve = client.post(
+        f"/v4/projects/{project_id}/nodes/{node_id}/execution/improve",
+        json={
+            "idempotencyKey": "execution-improve-from-final-review-text",
+            "expectedReviewCommitSha": audit_decision["reviewCommitSha"],
+        },
+    )
+
+    assert improve.status_code == 200, improve.json()
+    improve_prompt = manager.turns[-1]["payload"]["input"][0]["text"]
+    assert final_review_summary in improve_prompt
+    assert "Reasoning summary should never become the improve request." not in improve_prompt
+    assert "Earlier audit note should not drive improve." not in improve_prompt
 
 
 def test_v4_execution_start_fails_when_session_turn_start_missing_turn_id(

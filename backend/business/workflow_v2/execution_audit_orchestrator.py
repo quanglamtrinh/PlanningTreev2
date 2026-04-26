@@ -8,14 +8,18 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from backend.ai.execution_prompt_builder import build_execution_prompt
 from backend.ai.chat_prompt_builder import build_package_review_prompt
+from backend.ai.execution_prompt_builder import build_execution_prompt
 from backend.business.workflow_v2.errors import (
     WorkflowActionNotAllowedError,
     WorkflowArtifactVersionConflictError,
     WorkflowIdempotencyConflictError,
 )
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
+from backend.business.workflow_v2.execution_audit_helpers import (
+    GitArtifactService,
+    WorkflowMetadataService,
+)
 from backend.business.workflow_v2.models import (
     AuditRunV2,
     ExecutionRunV2,
@@ -28,18 +32,35 @@ from backend.business.workflow_v2.models import (
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.state_machine import (
     block as transition_block,
+)
+from backend.business.workflow_v2.state_machine import (
     complete_audit as transition_complete_audit,
+)
+from backend.business.workflow_v2.state_machine import (
     complete_execution as transition_complete_execution,
+)
+from backend.business.workflow_v2.state_machine import (
     derive_allowed_actions,
+)
+from backend.business.workflow_v2.state_machine import (
     improve_execution as transition_improve_execution,
+)
+from backend.business.workflow_v2.state_machine import (
     mark_done_from_audit as transition_mark_done_from_audit,
+)
+from backend.business.workflow_v2.state_machine import (
     mark_done_from_execution as transition_mark_done_from_execution,
+)
+from backend.business.workflow_v2.state_machine import (
     start_audit as transition_start_audit,
+)
+from backend.business.workflow_v2.state_machine import (
     start_execution as transition_start_execution,
+)
+from backend.business.workflow_v2.state_machine import (
     start_package_review as transition_start_package_review,
 )
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
-from backend.business.workflow_v2.execution_audit_helpers import GitArtifactService, WorkflowMetadataService
 from backend.errors.app_errors import AppError, NodeNotFound
 from backend.session_core_v2.errors import SessionCoreError
 from backend.storage.file_utils import iso_now, new_id
@@ -766,8 +787,8 @@ class ExecutionAuditOrchestratorV2:
                 "activeAuditRunId": state.active_audit_run_id,
             },
         )
-        text = _extract_turn_text(turn)
         if kind == "execution":
+            text = _extract_turn_text(turn)
             run_id = state.active_execution_run_id or state.latest_execution_run_id
             return self.complete_execution(
                 project_id,
@@ -785,6 +806,7 @@ class ExecutionAuditOrchestratorV2:
         )
         if not review_commit_sha:
             return None
+        text = _extract_final_review_text(turn)
         return self.complete_audit(
             project_id,
             node_id,
@@ -1307,13 +1329,58 @@ def _extract_turn_text(turn: dict[str, Any] | None) -> str | None:
     for item in turn.get("items") or []:
         if not isinstance(item, dict):
             continue
-        item_type = str(item.get("type") or item.get("kind") or "").strip()
-        if item_type not in {"agentMessage", "message", "assistantMessage"}:
+        if not _is_assistant_message_item(item):
             continue
-        text = item.get("text") or item.get("content")
-        if isinstance(text, str) and text.strip():
+        text = _extract_item_text(item)
+        if text:
             chunks.append(text.strip())
     return "\n\n".join(chunks) or None
+
+
+def _extract_final_review_text(turn: dict[str, Any] | None) -> str | None:
+    if not isinstance(turn, dict):
+        return None
+    items = turn.get("items")
+    if not isinstance(items, list):
+        return None
+    for item in reversed(items):
+        if not isinstance(item, dict):
+            continue
+        if not _is_assistant_message_item(item):
+            continue
+        text = _extract_item_text(item)
+        if text:
+            return text
+    return None
+
+
+def _is_assistant_message_item(item: dict[str, Any]) -> bool:
+    item_type = str(item.get("type") or item.get("kind") or "").strip()
+    if item_type not in {"agentMessage", "message", "assistantMessage"}:
+        return False
+    role = str(item.get("role") or "").strip().lower()
+    return role in {"", "agent", "assistant"}
+
+
+def _extract_item_text(item: dict[str, Any]) -> str | None:
+    for key in ("text", "output", "aggregatedOutput", "stdout"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    content = item.get("content")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for part in content:
+            if isinstance(part, str) and part.strip():
+                chunks.append(part.strip())
+            elif isinstance(part, dict):
+                text = part.get("text") or part.get("content")
+                if isinstance(text, str) and text.strip():
+                    chunks.append(text.strip())
+        return "\n".join(chunks) or None
+    return None
 
 
 def _require_key(idempotency_key: str) -> str:

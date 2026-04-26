@@ -132,6 +132,25 @@ describe('sessionEventStreamController', () => {
     expect(markDisconnected).toHaveBeenCalledWith('thread-1')
   })
 
+  it('opens with an explicit pre-action cursor instead of the stored cursor', () => {
+    const openEventSource = vi.fn(() => new FakeEventSource() as unknown as EventSource)
+    const controller = createSessionEventStreamController({
+      openEventSource,
+      applyEventsBatch: vi.fn(),
+      markStreamConnected: vi.fn(),
+      markStreamDisconnected: vi.fn(),
+      markStreamReconnect: vi.fn(),
+      clearGapDetected: vi.fn(),
+      getLastEventId: () => 'thread-1:99',
+      getGapDetected: () => false,
+      onRuntimeError: vi.fn(),
+    })
+
+    controller.open('thread-1', { cursorEventId: 'thread-1:12' })
+
+    expect(openEventSource).toHaveBeenCalledWith('thread-1', { cursorEventId: 'thread-1:12' })
+  })
+
   it('marks prior active thread disconnected when switching streams', () => {
     const sources: FakeEventSource[] = []
     const markDisconnected = vi.fn()

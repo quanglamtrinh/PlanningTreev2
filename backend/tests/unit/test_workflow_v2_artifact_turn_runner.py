@@ -83,8 +83,12 @@ def test_artifact_turn_runner_uses_v2_ask_thread_and_internal_metadata() -> None
 
     assert thread_id == "v2-ask-thread"
     assert binding.ensures[0]["role"] == "ask_planning"
+    assert binding.ensures[0]["model"] == "gpt-5.3-codex"
+    assert binding.ensures[0]["model_provider"] == "openai"
     assert session.starts[0]["threadId"] == "v2-ask-thread"
     payload = session.starts[0]["payload"]
+    assert payload["model"] == "gpt-5.3-codex"
+    assert payload["effort"] == "high"
     assert payload["metadata"]["workflowInternal"] is True
     assert payload["metadata"]["artifactKind"] == "frame"
     assert payload["outputSchema"] == {"type": "object"}

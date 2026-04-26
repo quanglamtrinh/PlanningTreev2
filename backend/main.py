@@ -38,6 +38,7 @@ from backend.config.app_config import (
     get_session_core_v2_retention_days,
     get_session_core_v2_retention_max_events,
     get_session_core_v2_server_request_queue_capacity,
+    get_session_core_v2_thread_read_mode,
     get_spec_gen_timeout,
     get_split_timeout,
     get_sse_subscriber_queue_max,
@@ -133,6 +134,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     session_core_v2_protocol_gate_enabled = is_session_core_v2_protocol_gate_enabled()
     session_core_v2_protocol_gate_timeout_sec = get_session_core_v2_protocol_gate_timeout_sec()
     session_core_v2_legacy_migration_mode = get_session_core_v2_legacy_migration_mode()
+    session_core_v2_thread_read_mode = get_session_core_v2_thread_read_mode()
     codex_cmd = get_codex_cmd() or "codex"
     ask_rollout_metrics_service = AskRolloutMetricsService()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
@@ -316,6 +318,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         runtime_store=session_runtime_store_v2,
         connection_state_machine=session_connection_state_v2,
         thread_rollout_recorder=session_thread_rollout_recorder_v2,
+        thread_read_mode=session_core_v2_thread_read_mode,
     )
     workflow_state_repository_v2 = WorkflowStateRepositoryV2(storage)
     workflow_context_builder_v2 = WorkflowContextBuilderV2(storage)
@@ -516,6 +519,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.state.session_core_v2_enable_events = session_core_v2_enable_events
     app.state.session_core_v2_enable_requests = session_core_v2_enable_requests
     app.state.session_core_v2_legacy_migration_mode = session_core_v2_legacy_migration_mode
+    app.state.session_core_v2_thread_read_mode = session_core_v2_thread_read_mode
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

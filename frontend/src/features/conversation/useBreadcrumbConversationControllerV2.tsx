@@ -6,6 +6,10 @@ import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { useSessionFacadeV2 } from '../session_v2/facade/useSessionFacadeV2'
+import {
+  captureWorkflowStreamCursor,
+  primeAndSelectWorkflowTurn,
+} from '../session_v2/facade/workflowLiveTurnBridge'
 import { useThreadSessionStore } from '../session_v2/store/threadSessionStore'
 import type { SessionItem } from '../session_v2/contracts'
 import { getWorkflowContextV2, type WorkflowContextPacketV2 } from '../workflow_v2/api/client'
@@ -366,16 +370,6 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     workflowDebugStateRecord.activeAuditRun && typeof workflowDebugStateRecord.activeAuditRun === 'object'
       ? (workflowDebugStateRecord.activeAuditRun as Record<string, unknown>)
       : null
-  const shouldRecoverProviderOnResync = Boolean(
-    (threadTab === 'execution' &&
-      activeExecutionRun &&
-      activeExecutionRun.threadId === activeThreadId &&
-      activeExecutionRun.status === 'running') ||
-      (threadTab === 'audit' &&
-        activeAuditRun &&
-        activeAuditRun.threadId === activeThreadId &&
-        activeAuditRun.status === 'running'),
-  )
   const laneTurns = activeThreadId ? sessionProjectionState.turnsByThread[activeThreadId] ?? [] : []
   const laneLastEventSeq = activeThreadId
     ? (sessionProjectionState.lastEventSeqByThread[activeThreadId] ?? null)
@@ -625,9 +619,8 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       return
     }
     pendingLaneResyncAfterTabChangeRef.current = false
-    void sessionCommands.resyncThreadTranscript(laneTid, { recoverFromProvider: shouldRecoverProviderOnResync }).catch(() => undefined)
+    void sessionCommands.resyncThreadTranscript(laneTid).catch(() => undefined)
   }, [
-    shouldRecoverProviderOnResync,
     sessionState.isSelectingThread,
     sessionState.activeThreadId,
     workflowLane.threadId,
@@ -658,7 +651,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         return
       }
       pendingLaneResyncAfterTabChangeRef.current = false
-      void sessionCommands.resyncThreadTranscript(laneTid, { recoverFromProvider: shouldRecoverProviderOnResync }).catch(() => undefined)
+      void sessionCommands.resyncThreadTranscript(laneTid).catch(() => undefined)
     }, 400)
     return () => {
       window.clearTimeout(t)
@@ -667,7 +660,6 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     threadTab,
     sessionCommands.resyncThreadTranscript,
     sessionState.connection.phase,
-    shouldRecoverProviderOnResync,
     workflowProjection.isLoaded,
   ])
 
@@ -692,7 +684,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       if (useThreadSessionStore.getState().activeThreadId !== laneTid) {
         return
       }
-      void sessionCommands.resyncThreadTranscript(laneTid, { recoverFromProvider: shouldRecoverProviderOnResync }).catch(() => undefined)
+      void sessionCommands.resyncThreadTranscript(laneTid).catch(() => undefined)
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => {
@@ -701,7 +693,6 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   }, [
     sessionCommands.resyncThreadTranscript,
     sessionState.connection.phase,
-    shouldRecoverProviderOnResync,
     workflowProjection.isLoaded,
   ])
 
@@ -915,55 +906,12 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     ],
   )
 
-  const primeWorkflowTurnProjection = useCallback((options: {
-    actionKind: WorkflowLaneActionV2['kind']
-    targetLane: ThreadTab
-    threadId: string | null
-    turnId: string | null
-  }) => {
-    const threadId = typeof options.threadId === 'string' ? options.threadId.trim() : ''
-    const turnId = typeof options.turnId === 'string' ? options.turnId.trim() : ''
-    if (!threadId || !turnId) {
-      return
-    }
-
-    const store = useThreadSessionStore.getState()
-    const turns = store.turnsByThread[threadId] ?? []
-    const alreadyPresent = turns.some((turn) => turn.id === turnId)
-    if (!alreadyPresent) {
-      const now = Date.now()
-      store.setThreadTurns(threadId, [
-        {
-          id: turnId,
-          threadId,
-          status: 'inProgress',
-          lastCodexStatus: 'inProgress',
-          startedAtMs: now,
-          completedAtMs: null,
-          items: [],
-          error: null,
-        },
-      ], { mode: 'merge' })
-    }
-
-    emitSessionCorrelation({
-      type: alreadyPresent ? 'workflow_action_turn_present' : 'workflow_action_turn_primed',
-      projectId: projectId ?? null,
-      nodeId: nodeId ?? null,
-      lane: options.targetLane,
-      action: options.actionKind,
-      threadId,
-      turnId,
-      turnsCount: (useThreadSessionStore.getState().turnsByThread[threadId] ?? []).length,
-    })
-  }, [nodeId, projectId])
-
   const handleWorkflowLaneAction = useCallback(
     async (action: WorkflowLaneActionV2) => {
       if (!projectId || !nodeId) {
         return
       }
-      const navigateAndSelectThread = async (targetTab: ThreadTab, targetThreadId: string | null) => {
+      const navigateTargetLane = (targetTab: ThreadTab, targetThreadId: string | null) => {
         emitSessionCorrelation({
           type: 'navigate_target_lane',
           projectId: projectId ?? null,
@@ -975,16 +923,9 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         if (!targetThreadId) {
           return
         }
-        emitSessionCorrelation({
-          type: 'select_thread_from_action',
-          projectId: projectId ?? null,
-          nodeId: nodeId ?? null,
-          lane: targetTab,
-          threadId: targetThreadId,
-        })
-        await sessionCommands.selectThread(targetThreadId)
       }
       if (action.kind === 'start_execution') {
+        const preActionCursor = captureWorkflowStreamCursor(workflowProjection.lanes.execution.threadId)
         const result = await startExecution(projectId, nodeId, workflowModelPolicy)
         const threadId = resolveThreadFromMutationResult(result, {
           workflowThreadKey: 'execution',
@@ -1001,19 +942,24 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        primeWorkflowTurnProjection({
+        navigateTargetLane('execution', threadId)
+        await primeAndSelectWorkflowTurn({
           actionKind: action.kind,
           targetLane: 'execution',
           threadId: threadId ?? null,
           turnId: result.turnId ?? null,
+          projectId,
+          nodeId,
+          preActionCursor,
+          selectThread: sessionCommands.selectThread,
         })
-        await navigateAndSelectThread('execution', threadId)
         return
       }
       if (action.kind === 'review_in_audit') {
         if (!action.candidateWorkspaceHash) {
           return
         }
+        const preActionCursor = captureWorkflowStreamCursor(workflowProjection.lanes.audit.threadId)
         const result = await startAudit(projectId, nodeId, action.candidateWorkspaceHash, workflowModelPolicy)
         const threadId = resolveThreadFromMutationResult(result, {
           workflowThreadKey: 'audit',
@@ -1030,13 +976,17 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        primeWorkflowTurnProjection({
+        navigateTargetLane('audit', threadId)
+        await primeAndSelectWorkflowTurn({
           actionKind: action.kind,
           targetLane: 'audit',
           threadId: threadId ?? null,
           turnId: result.turnId ?? null,
+          projectId,
+          nodeId,
+          preActionCursor,
+          selectThread: sessionCommands.selectThread,
         })
-        await navigateAndSelectThread('audit', threadId)
         return
       }
       if (action.kind === 'mark_done_from_execution') {
@@ -1052,6 +1002,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         if (!action.reviewCommitSha) {
           return
         }
+        const preActionCursor = captureWorkflowStreamCursor(workflowProjection.lanes.execution.threadId)
         const result = await improveExecution(projectId, nodeId, action.reviewCommitSha, workflowModelPolicy)
         const threadId = resolveThreadFromMutationResult(result, {
           workflowThreadKey: 'execution',
@@ -1068,13 +1019,17 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        primeWorkflowTurnProjection({
+        navigateTargetLane('execution', threadId)
+        await primeAndSelectWorkflowTurn({
           actionKind: action.kind,
           targetLane: 'execution',
           threadId: threadId ?? null,
           turnId: result.turnId ?? null,
+          projectId,
+          nodeId,
+          preActionCursor,
+          selectThread: sessionCommands.selectThread,
         })
-        await navigateAndSelectThread('execution', threadId)
         return
       }
       if (action.kind === 'mark_done_from_audit') {
@@ -1087,6 +1042,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         return
       }
       if (action.kind === 'start_package_review') {
+        const preActionCursor = captureWorkflowStreamCursor(workflowProjection.lanes.package.threadId)
         const result = await startPackageReview(projectId, nodeId, workflowModelPolicy)
         const threadId = resolveThreadFromMutationResult(result, {
           workflowThreadKey: 'packageReview',
@@ -1103,13 +1059,17 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        primeWorkflowTurnProjection({
+        navigateTargetLane('package', threadId)
+        await primeAndSelectWorkflowTurn({
           actionKind: action.kind,
           targetLane: 'package',
           threadId: threadId ?? null,
           turnId: result.turnId ?? null,
+          projectId,
+          nodeId,
+          preActionCursor,
+          selectThread: sessionCommands.selectThread,
         })
-        await navigateAndSelectThread('package', threadId)
       }
     },
     [
@@ -1118,7 +1078,6 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       improveExecution,
       navigate,
       nodeId,
-      primeWorkflowTurnProjection,
       projectId,
       sessionCommands.selectThread,
       setActiveSurface,

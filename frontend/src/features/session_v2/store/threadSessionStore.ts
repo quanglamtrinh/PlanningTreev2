@@ -757,7 +757,14 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
       let nextItemsByTurn: Record<string, SessionItem[]>
 
       if (mode === 'replace') {
-        nextTurns = normalizedTurns
+        const incomingIds = new Set(normalizedTurns.map((turn) => turn.id))
+        const existingActiveTurns = (state.turnsByThread[threadId] ?? []).filter(
+          (turn) =>
+            !incomingIds.has(turn.id) &&
+            !isTerminalTurnStatus(turn.status) &&
+            turn.metadata?.primedByWorkflowAction === true,
+        )
+        nextTurns = normalizeTurnsForThread(threadId, [...normalizedTurns, ...existingActiveTurns])
         const prefix = `${threadId}:`
         nextItemsByTurn = {}
         for (const [key, items] of Object.entries(state.itemsByTurn)) {

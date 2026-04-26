@@ -7,6 +7,9 @@ from uuid import uuid4
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 
 _TERMINAL_TURN_STATUSES = {"completed", "failed", "interrupted"}
+DEFAULT_ARTIFACT_MODEL = "gpt-5.3-codex"
+DEFAULT_ARTIFACT_MODEL_PROVIDER = "openai"
+DEFAULT_ARTIFACT_REASONING_EFFORT = "high"
 
 
 class WorkflowArtifactTurnError(RuntimeError):
@@ -38,6 +41,8 @@ class WorkflowArtifactTurnRunnerV2:
             node_id=node_id,
             role="ask_planning",
             idempotency_key=f"artifact:{artifact_kind}:ensure-ask:{uuid4().hex}",
+            model=DEFAULT_ARTIFACT_MODEL,
+            model_provider=DEFAULT_ARTIFACT_MODEL_PROVIDER,
         )
         thread_id = _thread_id_from_ensure_response(response)
         if not thread_id:
@@ -79,6 +84,8 @@ class WorkflowArtifactTurnRunnerV2:
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "input": [{"type": "text", "text": prompt}],
+            "model": DEFAULT_ARTIFACT_MODEL,
+            "effort": DEFAULT_ARTIFACT_REASONING_EFFORT,
             "metadata": {
                 "workflowInternal": True,
                 "workflowInternalKind": "artifact_generation",

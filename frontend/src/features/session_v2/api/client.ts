@@ -200,6 +200,7 @@ export async function recoverThreadV2(
   threadId: string,
   payload?: Record<string, unknown>,
 ): Promise<ThreadRecoverResponse> {
+  // Deprecated manual fallback only. Normal Session V2 resync must use thread/read.
   await initAuthToken()
   return jsonFetch<ThreadRecoverResponse>(
     `/v4/session/threads/${encodeURIComponent(threadId)}/recover`,

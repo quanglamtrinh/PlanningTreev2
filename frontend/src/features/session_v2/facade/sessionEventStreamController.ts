@@ -174,7 +174,7 @@ export type StreamControllerDependencies = {
 }
 
 export type SessionEventStreamController = {
-  open: (threadId: string) => void
+  open: (threadId: string, options?: { cursorEventId?: string | null }) => void
   close: (threadId?: string | null) => void
   dispose: () => void
 }
@@ -244,7 +244,7 @@ export function createSessionEventStreamController(
   }
 
   const controller: SessionEventStreamController = {
-    open(threadId) {
+    open(threadId, options) {
       if (disposed) {
         return
       }
@@ -259,7 +259,7 @@ export function createSessionEventStreamController(
       const token = generation
       activeThreadId = threadId
 
-      const cursorEventId = dependencies.getLastEventId(threadId)
+      const cursorEventId = options?.cursorEventId ?? dependencies.getLastEventId(threadId)
       traceStream('stream opening', {
         threadId,
         cursorEventId,

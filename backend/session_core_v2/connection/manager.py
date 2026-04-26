@@ -8,6 +8,7 @@ from typing import Any
 from backend.session_core_v2.connection.state_machine import ConnectionStateMachine
 from backend.session_core_v2.errors import SessionCoreError
 from backend.session_core_v2.protocol.client import SessionProtocolClientV2
+from backend.session_core_v2.protocol.compat_gate import is_thread_turns_list_unsupported_error
 from backend.session_core_v2.storage.runtime_store import RuntimeStoreV2
 from backend.session_core_v2.thread_store import (
     ThreadRolloutRecorder,
@@ -54,6 +55,7 @@ class SessionManagerV2:
         runtime_store: RuntimeStoreV2,
         connection_state_machine: ConnectionStateMachine,
         thread_rollout_recorder: ThreadRolloutRecorder | None = None,
+        thread_read_mode: str = "native",
     ) -> None:
         self._protocol_client = protocol_client
         self._runtime_store = runtime_store
@@ -61,6 +63,7 @@ class SessionManagerV2:
         self._connection_state_machine = connection_state_machine
         self._thread_service = ThreadServiceV2(protocol_client, logger=logger)
         self._turn_service = TurnServiceV2(protocol_client, logger=logger)
+        self._thread_read_mode = self._normalize_thread_read_mode(thread_read_mode)
         self._turn_metadata_by_key: dict[tuple[str, str], dict[str, Any]] = {}
         # Serialize initialize to avoid concurrent connecting->connecting races.
         self._initialize_lock = threading.Lock()
@@ -140,23 +143,70 @@ class SessionManagerV2:
             return False
         return recorder.metadata_store.get(normalized) is not None
 
+    def _has_native_thread(self, thread_id: str) -> bool:
+        return self.native_rollout_metadata_exists(thread_id)
+
+    @staticmethod
+    def _normalize_thread_read_mode(value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"native", "shadow", "codex"}:
+            return normalized
+        logger.warning(
+            "session_core_v2 invalid thread read mode; falling back to native",
+            extra={"threadReadMode": value},
+        )
+        return "native"
+
     def thread_start(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
         response = self._thread_service.thread_start(payload)
         self._record_thread_created_from_response(response)
         return response
 
+    def _thread_resume_native_or_provider(
+        self,
+        *,
+        thread_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if self._has_native_thread(thread_id):
+            return self._read_native_thread(thread_id=thread_id, include_turns=False)
+        return self._thread_service.thread_resume(thread_id=thread_id, params=payload)
+
     def thread_resume(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
-        recorder = self._thread_rollout_recorder
-        if recorder is not None and recorder.metadata_store.get(str(thread_id or "").strip()) is not None:
-            return read_native_thread(
-                metadata_store=recorder.metadata_store,
-                rollout_recorder=recorder,
+        if self._thread_read_mode == "shadow":
+            native = self._thread_resume_native_or_provider(thread_id=thread_id, payload=payload)
+            self._shadow_provider_projection(
+                method="thread/resume",
                 thread_id=thread_id,
-                include_history=False,
+                native_response=native,
+                provider_reader=lambda: self._thread_service.thread_resume(thread_id=thread_id, params=payload),
             )
-        return self._thread_service.thread_resume(thread_id=thread_id, params=payload)
+            return native
+        if self._thread_read_mode == "codex":
+            try:
+                response = self._thread_service.thread_resume(thread_id=thread_id, params=payload)
+                logger.info(
+                    "session_core_v2 read mode codex source",
+                    extra={"threadId": thread_id, "method": "thread/resume", "readSource": "provider"},
+                )
+                return response
+            except SessionCoreError as exc:
+                if self._has_native_thread(thread_id):
+                    logger.info(
+                        "session_core_v2 read mode codex fallback",
+                        extra={
+                            "threadId": thread_id,
+                            "method": "thread/resume",
+                            "readSource": "native_fallback",
+                            "fallbackReason": "provider_error",
+                            "errorCode": exc.code,
+                        },
+                    )
+                    return self._read_native_thread(thread_id=thread_id, include_turns=False)
+                raise
+        return self._thread_resume_native_or_provider(thread_id=thread_id, payload=payload)
 
     def thread_recover(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
@@ -206,6 +256,43 @@ class SessionManagerV2:
 
     def thread_read(self, *, thread_id: str, include_turns: bool) -> dict[str, Any]:
         self._ensure_initialized()
+        if self._thread_read_mode == "shadow":
+            native = self._read_native_thread(thread_id=thread_id, include_turns=include_turns)
+            self._shadow_provider_projection(
+                method="thread/read",
+                thread_id=thread_id,
+                native_response=native,
+                provider_reader=lambda: self._thread_service.thread_read(
+                    thread_id=thread_id,
+                    include_turns=include_turns,
+                ),
+            )
+            return native
+        if self._thread_read_mode == "codex":
+            try:
+                provider = self._thread_service.thread_read(thread_id=thread_id, include_turns=include_turns)
+                logger.info(
+                    "session_core_v2 read mode codex source",
+                    extra={"threadId": thread_id, "method": "thread/read", "readSource": "provider"},
+                )
+                return provider
+            except SessionCoreError as exc:
+                if not self._has_native_thread(thread_id):
+                    raise
+                logger.info(
+                    "session_core_v2 read mode codex fallback",
+                    extra={
+                        "threadId": thread_id,
+                        "method": "thread/read",
+                        "readSource": "native_fallback",
+                        "fallbackReason": "provider_error",
+                        "errorCode": exc.code,
+                    },
+                )
+                return self._read_native_thread(thread_id=thread_id, include_turns=include_turns)
+        return self._read_native_thread(thread_id=thread_id, include_turns=include_turns)
+
+    def _read_native_thread(self, *, thread_id: str, include_turns: bool) -> dict[str, Any]:
         recorder = self._require_thread_rollout_recorder()
         try:
             return read_native_thread(
@@ -228,6 +315,43 @@ class SessionManagerV2:
 
     def thread_turns_list(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
+        if self._thread_read_mode == "shadow":
+            native = self._list_native_thread_turns(thread_id=thread_id, payload=payload)
+            self._shadow_provider_projection(
+                method="thread/turns/list",
+                thread_id=thread_id,
+                native_response=native,
+                provider_reader=lambda: self._thread_service.thread_turns_list(thread_id=thread_id, params=payload),
+            )
+            return native
+        if self._thread_read_mode == "codex":
+            try:
+                response = self._thread_service.thread_turns_list(thread_id=thread_id, params=payload)
+                logger.info(
+                    "session_core_v2 read mode codex source",
+                    extra={"threadId": thread_id, "method": "thread/turns/list", "readSource": "provider"},
+                )
+                return response
+            except SessionCoreError as exc:
+                if is_thread_turns_list_unsupported_error(exc) or self._has_native_thread(thread_id):
+                    fallback_reason = (
+                        "unsupported" if is_thread_turns_list_unsupported_error(exc) else "provider_error"
+                    )
+                    logger.info(
+                        "session_core_v2 read mode codex fallback",
+                        extra={
+                            "threadId": thread_id,
+                            "method": "thread/turns/list",
+                            "readSource": "native_fallback",
+                            "fallbackReason": fallback_reason,
+                            "errorCode": exc.code,
+                        },
+                    )
+                    return self._list_native_thread_turns(thread_id=thread_id, payload=payload)
+                raise
+        return self._list_native_thread_turns(thread_id=thread_id, payload=payload)
+
+    def _list_native_thread_turns(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         recorder = self._require_thread_rollout_recorder()
         try:
             read_response = read_native_thread(
@@ -255,6 +379,103 @@ class SessionManagerV2:
             limit=(payload or {}).get("limit"),
             sort_direction=str((payload or {}).get("sortDirection") or "desc"),
         )
+
+    def _shadow_provider_projection(
+        self,
+        *,
+        method: str,
+        thread_id: str,
+        native_response: dict[str, Any],
+        provider_reader,
+    ) -> None:  # noqa: ANN001
+        try:
+            provider_response = provider_reader()
+        except SessionCoreError as exc:
+            logger.info(
+                "session_core_v2 thread read shadow diff",
+                extra={
+                    "threadId": thread_id,
+                    "method": method,
+                    "nativeTurnCount": self._projection_turn_count(native_response),
+                    "providerTurnCount": None,
+                    "statusMismatch": None,
+                    "missingProvider": True,
+                    "missingNative": False,
+                    "providerErrorCode": exc.code,
+                },
+            )
+            return
+        except Exception as exc:  # pragma: no cover - defensive telemetry path
+            logger.info(
+                "session_core_v2 thread read shadow diff",
+                extra={
+                    "threadId": thread_id,
+                    "method": method,
+                    "nativeTurnCount": self._projection_turn_count(native_response),
+                    "providerTurnCount": None,
+                    "statusMismatch": None,
+                    "missingProvider": True,
+                    "missingNative": False,
+                    "providerErrorCode": type(exc).__name__,
+                },
+            )
+            return
+
+        native_status = self._projection_status(native_response)
+        provider_status = self._projection_status(provider_response)
+        logger.info(
+            "session_core_v2 thread read shadow diff",
+            extra={
+                "threadId": thread_id,
+                "method": method,
+                "nativeTurnCount": self._projection_turn_count(native_response),
+                "providerTurnCount": self._projection_turn_count(provider_response),
+                "statusMismatch": native_status is not None
+                and provider_status is not None
+                and native_status != provider_status,
+                "missingProvider": self._projection_missing(provider_response),
+                "missingNative": self._projection_missing(native_response),
+                "providerErrorCode": None,
+            },
+        )
+
+    @staticmethod
+    def _projection_turn_count(response: dict[str, Any] | None) -> int | None:
+        if not isinstance(response, dict):
+            return None
+        data = response.get("data")
+        if isinstance(data, list):
+            return len(data)
+        thread = response.get("thread")
+        if not isinstance(thread, dict):
+            return None
+        turns = thread.get("turns")
+        if isinstance(turns, list):
+            return len(turns)
+        return None
+
+    @staticmethod
+    def _projection_status(response: dict[str, Any] | None) -> str | None:
+        if not isinstance(response, dict):
+            return None
+        thread = response.get("thread")
+        if not isinstance(thread, dict):
+            return None
+        status = thread.get("status")
+        if isinstance(status, dict):
+            value = status.get("type")
+            return str(value) if value is not None else None
+        if status is None:
+            return None
+        return str(status)
+
+    @staticmethod
+    def _projection_missing(response: dict[str, Any] | None) -> bool:
+        if not isinstance(response, dict):
+            return True
+        if "data" in response:
+            return not isinstance(response.get("data"), list)
+        return not isinstance(response.get("thread"), dict)
 
     def thread_loaded_list(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
@@ -378,7 +599,7 @@ class SessionManagerV2:
                 details={"threadId": thread_id, "activeTurnId": active_turn.get("id")},
             )
 
-        rpc_payload = dict(payload)
+        rpc_payload = self._with_default_turn_permissions(payload)
         rpc_payload.pop("clientActionId", None)
         rpc_payload.pop("metadata", None)
         response = self._turn_service.turn_start(thread_id=thread_id, params=rpc_payload)
@@ -466,6 +687,14 @@ class SessionManagerV2:
             },
         )
         return turn_payload
+
+    def _with_default_turn_permissions(self, payload: dict[str, Any]) -> dict[str, Any]:
+        rpc_payload = dict(payload)
+        if rpc_payload.get("approvalPolicy") is None:
+            rpc_payload["approvalPolicy"] = "never"
+        if rpc_payload.get("sandboxPolicy") is None:
+            rpc_payload["sandboxPolicy"] = {"type": "dangerFullAccess"}
+        return rpc_payload
 
     def turn_steer(self, *, thread_id: str, path_turn_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_initialized()

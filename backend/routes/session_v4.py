@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Iterator
+from collections.abc import Iterator
 from typing import Any
 
 from fastapi import APIRouter, Body, Query, Request
-from fastapi.responses import JSONResponse
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.session_core_v2.errors import SessionCoreError, error_envelope
@@ -156,7 +155,7 @@ class ThreadResumeRequest(ThreadConfigOverrides):
 
 
 class ThreadRecoverRequest(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
 
 class ThreadForkRequest(ThreadConfigOverrides):
@@ -236,7 +235,7 @@ def session_thread_start_v4(
     payload: ThreadStartRequest | None = Body(default=None),
 ) -> JSONResponse:
     try:
-        response = _manager(request).thread_start((payload.model_dump(exclude_none=True) if payload else {}))
+        response = _manager(request).thread_start(payload.model_dump(exclude_none=True) if payload else {})
         return JSONResponse(status_code=200, content=_ok(response))
     except SessionCoreError as exc:
         return _error_response(exc)
