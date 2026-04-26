@@ -55,9 +55,17 @@ class ThreadHistoryBuilder:
         occurred_at_ms = self._extract_timestamp_ms(event) or self._extract_timestamp_ms(params)
 
         if method == "turn/started":
-            started_turn_id = turn_id or self._extract_turn_id(params.get("turn") if isinstance(params.get("turn"), dict) else {})
+            payload_turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
+            started_turn_id = turn_id or self._extract_turn_id(payload_turn)
             if started_turn_id:
-                self._ensure_turn(started_turn_id, status="inProgress", thread_id=thread_id, timestamp_ms=occurred_at_ms)
+                metadata = payload_turn.get("metadata") if isinstance(payload_turn, dict) else None
+                self._ensure_turn(
+                    started_turn_id,
+                    status="inProgress",
+                    thread_id=thread_id,
+                    timestamp_ms=occurred_at_ms,
+                    metadata=metadata if isinstance(metadata, dict) else None,
+                )
             return
 
         if method in {"user/message", "user_message"}:
@@ -186,6 +194,7 @@ class ThreadHistoryBuilder:
         status: str = "inProgress",
         thread_id: str | None = None,
         timestamp_ms: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_turn_id = str(turn_id or "").strip() or f"synthetic-turn-{len(self.turns) + 1}"
         if not str(turn_id or "").strip():
@@ -198,6 +207,9 @@ class ThreadHistoryBuilder:
                 existing["threadId"] = thread_id
             if timestamp_ms is not None:
                 existing["updatedAtMs"] = max(int(existing.get("updatedAtMs") or timestamp_ms), timestamp_ms)
+            if metadata:
+                existing_metadata = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
+                existing["metadata"] = {**existing_metadata, **metadata}
             self.current_turn = existing
             return existing
         started_at_ms = timestamp_ms or 0
@@ -213,6 +225,8 @@ class ThreadHistoryBuilder:
             "updatedAtMs": started_at_ms,
             "rolloutStartIndex": self.current_rollout_index,
         }
+        if metadata:
+            turn["metadata"] = dict(metadata)
         self.turns.append(turn)
         self._turn_by_id[normalized_turn_id] = turn
         self.current_turn = turn

@@ -38,7 +38,6 @@ describe('session_v2 contract parity', () => {
 
   it('requires expectedTurnId on steer request', () => {
     const request: TurnSteerRequestV4 = {
-      clientActionId: 'steer-1',
       expectedTurnId: 'turn-1',
       input: [{ type: 'text', text: 'continue' }],
     }
@@ -47,11 +46,11 @@ describe('session_v2 contract parity', () => {
 
   it('rejects missing or nullable expectedTurnId', () => {
     // @ts-expect-error expectedTurnId must be required.
-    const missing: TurnSteerRequestV4 = { clientActionId: 'steer-2', input: [] }
+    const missing: TurnSteerRequestV4 = { input: [] }
     void missing
 
     // @ts-expect-error expectedTurnId must be a non-null string.
-    const nullable: TurnSteerRequestV4 = { clientActionId: 'steer-3', expectedTurnId: null, input: [] }
+    const nullable: TurnSteerRequestV4 = { expectedTurnId: null, input: [] }
     void nullable
   })
 })

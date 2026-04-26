@@ -40,6 +40,31 @@ class FakeSessionManager:
         return {"turn": {"id": f"turn-{len(self.turns)}", "status": "inProgress"}}
 
 
+class RecoveringSessionManager(FakeSessionManager):
+    def __init__(self, *, recovered_text: str) -> None:
+        super().__init__()
+        self.recovered_text = recovered_text
+        self.recoveries: list[dict[str, Any]] = []
+        self.completed_turns: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def thread_recover(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self.recoveries.append({"threadId": thread_id, "payload": dict(payload)})
+        for turn in self.turns:
+            if turn["threadId"] != thread_id:
+                continue
+            response_turn_id = f"turn-{self.turns.index(turn) + 1}"
+            self.completed_turns[(thread_id, response_turn_id)] = {
+                "id": response_turn_id,
+                "status": "completed",
+                "items": [{"type": "agentMessage", "text": self.recovered_text}],
+            }
+        return {"thread": {"id": thread_id}, "recovered": {"terminalTurnCount": len(self.completed_turns)}}
+
+    def get_runtime_turn(self, *, thread_id: str, turn_id: str) -> dict[str, Any] | None:
+        turn = self.completed_turns.get((thread_id, turn_id))
+        return dict(turn) if turn is not None else None
+
+
 class FastCompletingSessionManager(FakeSessionManager):
     def __init__(self, *, completed_text: str) -> None:
         super().__init__()
@@ -217,6 +242,29 @@ def test_execution_start_settles_fast_terminal_turn_after_state_write(
     workflow_state = orchestrator.get_workflow_state(project_id, node_id)
     assert workflow_state["phase"] == "execution_completed"
     assert workflow_state["decisions"]["execution"]["summaryText"] == "Fast native completion."
+
+
+def test_workflow_state_recovers_missed_execution_completion_from_provider(
+    client: TestClient,
+    workspace_root: Path,
+) -> None:
+    project_id, node_id = _project_with_confirmed_docs(client, workspace_root)
+    manager = RecoveringSessionManager(recovered_text="Recovered execution summary.")
+    _install_phase5_orchestrator(client, manager)
+
+    start = client.post(
+        f"/v4/projects/{project_id}/nodes/{node_id}/execution/start",
+        json={"idempotencyKey": "exec-start-recover"},
+    )
+    assert start.status_code == 200, start.json()
+
+    state_response = client.get(f"/v4/projects/{project_id}/nodes/{node_id}/workflow-state")
+
+    assert state_response.status_code == 200, state_response.json()
+    workflow_state = state_response.json()
+    assert manager.recoveries
+    assert workflow_state["phase"] == "execution_completed"
+    assert workflow_state["decisions"]["execution"]["summaryText"] == "Recovered execution summary."
 
 
 def test_v2_orchestrator_direct_settlement_is_idempotent_when_no_active_run(

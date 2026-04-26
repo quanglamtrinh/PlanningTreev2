@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from backend.session_core_v2.errors import SessionCoreError
@@ -66,7 +65,6 @@ def ensure_session_core_v2_protocol_compatible(
             turn_start_response = protocol.turn_start(
                 probe_thread_id,
                 {
-                    "clientActionId": f"protocol-gate-start-{uuid.uuid4()}",
                     "input": [
                         {
                             "type": "text",

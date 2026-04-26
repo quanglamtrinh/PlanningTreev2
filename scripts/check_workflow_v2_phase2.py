@@ -19,8 +19,8 @@ REQUIRED_IMPLEMENTATION = {
     ],
     "backend/session_core_v2/connection/manager.py": [
         "def thread_inject_items",
-        'action_type="thread/inject_items"',
-        "record_idempotent_result",
+        'rpc_payload.pop("clientActionId", None)',
+        "thread/inject_items accepts only threadId + raw Responses API items",
     ],
     "backend/routes/session_v4.py": ["class InjectItemsRequest", "def session_inject_items_v4"],
 }
@@ -30,15 +30,14 @@ REQUIRED_TEST_TOKENS = {
         "test_protocol_client_maps_thread_inject_items",
     ],
     "backend/tests/integration/test_session_v4_api.py": [
-        "test_session_v4_inject_items_idempotent_without_starting_turn",
-        "ERR_IDEMPOTENCY_PAYLOAD_MISMATCH",
+        "test_session_v4_inject_items_uses_codex_payload_without_starting_turn",
+        '"clientActionId" not in',
     ],
 }
 
 FORBIDDEN_MANAGER_TOKENS = [
     "turn_start(",
     ".turn_start(",
-    "create_turn(",
     "transition_turn(",
 ]
 

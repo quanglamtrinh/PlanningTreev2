@@ -78,7 +78,7 @@ export type SessionFacadeCommands = {
   resolveRequest: (requestId: string, result: Record<string, unknown>) => Promise<void>
   rejectRequest: (requestId: string, reason?: string | null) => Promise<void>
   /** Force `readThread` + replace turns (e.g. after tab switch / stream drift). Reopens the event stream if this thread is active. */
-  resyncThreadTranscript: (threadId: string) => Promise<void>
+  resyncThreadTranscript: (threadId: string, options?: { recoverFromProvider?: boolean }) => Promise<void>
 }
 
 export type SessionFacadeV2 = {
@@ -323,10 +323,13 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     await runtimeControllerRef.current?.refreshThreads()
   }, [])
 
-  const resyncThreadTranscript = useCallback(async (threadId: string) => {
+  const resyncThreadTranscript = useCallback(async (threadId: string, options?: { recoverFromProvider?: boolean }) => {
     const normalized = threadId.trim()
     if (!normalized) {
       return
+    }
+    if (options?.recoverFromProvider) {
+      await runtimeControllerRef.current?.recoverThreadFromProvider(normalized)
     }
     await runtimeControllerRef.current?.hydrateThreadState(normalized, { force: true })
     useThreadSessionStore.getState().clearGapDetected(normalized)

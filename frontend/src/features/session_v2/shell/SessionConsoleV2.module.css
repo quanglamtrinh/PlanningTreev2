@@ -199,14 +199,31 @@
   gap: 8px;
 }
 
+.threadWorkflowContextSlot {
+  flex-shrink: 0;
+  padding: 10px 16px 0;
+  background: var(--thread-chat-canvas);
+}
+
+.threadWorkflowContextSlot :global(.sessionV2WorkflowContextCard) {
+  width: min(860px, 100%);
+}
+
 .threadBodyMain {
   display: flex;
   flex: 1;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--thread-chat-canvas);
+}
+
+.threadBodyMain :global(.sessionV2Transcript) {
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
 }
 
 .threadBodyComposer {
@@ -920,6 +937,115 @@
   border-radius: 0 0 12px 12px;
 }
 
+:global(.sessionV2WorkflowContextCard) {
+  overflow: hidden;
+}
+
+:global(.sessionV2WorkflowContextCardSticky) {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--session-v2-bg);
+}
+
+:global(.sessionV2WorkflowContextToggle) {
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  color: var(--session-v2-fg-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+:global(.sessionV2WorkflowContextTitle) {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--session-v2-fg);
+}
+
+:global(.sessionV2WorkflowContextSummary) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+:global(.sessionV2WorkflowContextChevron) {
+  transition: transform 120ms ease;
+}
+
+:global(.sessionV2WorkflowContextChevronOpen) {
+  transform: rotate(90deg);
+}
+
+:global(.sessionV2WorkflowContextBody) {
+  border-top: 1px solid var(--session-v2-border);
+  padding: 10px 12px 12px;
+  display: grid;
+  gap: 12px;
+}
+
+:global(.sessionV2WorkflowContextNode) {
+  display: grid;
+  gap: 10px;
+}
+
+:global(.sessionV2WorkflowContextNode h4) {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--session-v2-fg);
+}
+
+:global(.sessionV2WorkflowContextNode h4 span) {
+  border: 1px solid var(--session-v2-border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--session-v2-fg-muted);
+}
+
+:global(.sessionV2WorkflowContextSection) {
+  border: 1px solid var(--session-v2-border);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: var(--session-v2-surface-subtle);
+}
+
+:global(.sessionV2WorkflowContextSection h5) {
+  margin: 0 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--session-v2-fg-muted);
+}
+
+:global(.sessionV2WorkflowContextSection ol),
+:global(.sessionV2WorkflowContextSection ul) {
+  margin: 0;
+  padding-left: 18px;
+}
+
+:global(.sessionV2WorkflowContextSection li) {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+:global(.sessionV2WorkflowContextSection li span) {
+  display: block;
+  color: var(--session-v2-fg-muted);
+}
+
 :global(.sessionV2Empty) {
   padding: 20px;
   border: 1px dashed color-mix(in srgb, var(--session-v2-fg) 18%, transparent);
@@ -940,6 +1066,8 @@
   padding: 12px 50px 16px;
   display: grid;
   gap: 8px;
+  position: relative;
+  z-index: 100;
 }
 
 :global(.sessionV2Composer > :not(input[type='file'])) {
@@ -987,7 +1115,7 @@
   border-radius: 16px;
   background: var(--session-v2-bg);
   box-shadow: 0 2px 8px rgb(0 0 0 / 6%), 0 0 0 1px rgb(0 0 0 / 2%);
-  overflow: hidden;
+  overflow: visible;
 }
 
 /* ─── Textarea Row ──────────────────────────────────────────────────────── */
@@ -1043,6 +1171,8 @@
   gap: 8px;
   padding: 8px 12px 10px;
   border-top: 1px solid var(--session-v2-border);
+  position: relative;
+  z-index: 2;
 }
 
 :global(.sessionV2ComposerActionLeft) {
@@ -1176,6 +1306,168 @@
   background: color-mix(in srgb, #ef4444 15%, transparent);
 }
 
+/* ─── Composer Dropdowns ───────────────────────────────────────────────── */
+
+:global(.sessionV2ComposerDropdown) {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+:global(.sessionV2ComposerPillModelEffort) {
+  max-width: min(240px, 34vw);
+}
+
+:global(.sessionV2ComposerModelEffortLabel) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.sessionV2ComposerDropdownMenu) {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  z-index: 1000;
+  width: min(260px, 72vw);
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--session-v2-border) 88%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--session-v2-bg) 94%, #fff);
+  box-shadow: 0 18px 42px rgb(15 23 42 / 16%), 0 3px 10px rgb(15 23 42 / 8%);
+  display: grid;
+  gap: 2px;
+}
+
+:global(.sessionV2ComposerDropdownMenuLeft) {
+  left: 0;
+}
+
+:global(.sessionV2ComposerDropdownMenuRight) {
+  right: 0;
+}
+
+:global(.sessionV2ComposerModelEffortMenu) {
+  right: 0;
+}
+
+:global(.sessionV2ComposerDropdownMenuPortal) {
+  position: fixed;
+  bottom: auto;
+  right: auto;
+  transform: translateY(-100%);
+  z-index: 10000;
+}
+
+:global(.sessionV2ComposerDropdownSectionLabel) {
+  padding: 5px 8px 6px;
+  color: color-mix(in srgb, var(--session-v2-fg-muted) 82%, transparent);
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+:global(.sessionV2ComposerDropdownItem) {
+  width: 100%;
+  min-height: 30px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--session-v2-fg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  font-size: 13px;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+}
+
+:global(.sessionV2ComposerDropdownItem:hover:not(:disabled)),
+:global(.sessionV2ComposerDropdownItem[aria-checked='true']) {
+  background: color-mix(in srgb, var(--session-v2-fg) 7%, transparent);
+}
+
+:global(.sessionV2ComposerDropdownItem:disabled) {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+:global(.sessionV2ComposerDropdownItem:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--session-v2-accent) 45%, transparent);
+  outline-offset: -1px;
+}
+
+:global(.sessionV2ComposerDropdownItemText) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+:global(.sessionV2ComposerDropdownItemText span:first-child) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.sessionV2ComposerDropdownItemText span:nth-child(2)) {
+  color: var(--session-v2-fg-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.sessionV2ComposerDropdownCheck) {
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--session-v2-accent);
+  font-size: 15px;
+  line-height: 1;
+  text-align: center;
+}
+
+:global(.sessionV2ComposerDropdownChevron) {
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--session-v2-fg-muted);
+  font-size: 18px;
+  line-height: 1;
+  text-align: center;
+}
+
+:global(.sessionV2ComposerSubmenu) {
+  position: static;
+}
+
+:global(.sessionV2ComposerDropdownSubmenuTrigger[aria-expanded='true']) {
+  background: color-mix(in srgb, var(--session-v2-fg) 7%, transparent);
+}
+
+:global(.sessionV2ComposerModelSubmenu) {
+  top: auto;
+  bottom: 0;
+  right: auto;
+  left: calc(100% + 8px);
+  z-index: 1001;
+  width: min(250px, 72vw);
+}
+
+:global(.sessionV2ComposerDropdownDivider) {
+  height: 1px;
+  margin: 5px 0;
+  background: var(--session-v2-border);
+}
+
+:global(.sessionV2ComposerDropdownEmpty) {
+  padding: 8px;
+  color: var(--session-v2-fg-muted);
+  font-size: 12px;
+}
+
 /* ─── Model Picker ──────────────────────────────────────────────────────── */
 
 :global(.sessionV2ComposerModelWrap) {
@@ -1295,6 +1587,8 @@
   gap: 6px;
   padding: 6px 14px 8px;
   border-top: 1px solid var(--session-v2-border);
+  border-radius: 0 0 16px 16px;
+  background: var(--session-v2-bg);
 }
 
 :global(.sessionV2ComposerEnvPill) {
@@ -1373,6 +1667,117 @@
   padding: 16px;
   display: grid;
   gap: 12px;
+}
+
+:global(.sessionV2ApprovalInline) {
+  background: var(--session-v2-bg);
+  padding: 10px 50px 0;
+}
+
+:global(.sessionV2ApprovalInline > .sessionV2ApprovalCard) {
+  width: min(860px, 100%);
+  margin: 0 auto;
+}
+
+:global(.sessionV2ApprovalCard) {
+  border: 1px solid color-mix(in srgb, var(--session-v2-accent) 28%, var(--session-v2-border));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--session-v2-accent) 4%, var(--session-v2-bg));
+  box-shadow: 0 1px 2px rgb(16 24 40 / 6%);
+  overflow: hidden;
+}
+
+:global(.sessionV2ApprovalHeader) {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--session-v2-accent) 18%, var(--session-v2-border));
+}
+
+:global(.sessionV2ApprovalHeader h3) {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+:global(.sessionV2ApprovalHeader p) {
+  margin: 3px 0 0;
+  color: var(--session-v2-fg-muted);
+  font-size: 12px;
+}
+
+:global(.sessionV2ApprovalBody) {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px 14px;
+}
+
+:global(.sessionV2ApprovalSummary) {
+  max-height: 3.2em;
+  overflow: hidden;
+  color: var(--session-v2-fg);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+:global(.sessionV2ApprovalDetails) {
+  border: 1px solid var(--session-v2-border);
+  border-radius: 10px;
+  background: var(--session-v2-bg);
+}
+
+:global(.sessionV2ApprovalDetails summary) {
+  padding: 8px 10px;
+  color: var(--session-v2-fg-muted);
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+}
+
+:global(.sessionV2ApprovalDetails .sessionV2Json) {
+  border: none;
+  border-top: 1px solid var(--session-v2-border);
+  border-radius: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+
+:global(.sessionV2ApprovalOptions) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+:global(.sessionV2ApprovalOption) {
+  border: 1px solid var(--session-v2-border);
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: var(--session-v2-bg);
+  color: var(--session-v2-fg);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:global(.sessionV2ApprovalOptionPrimary) {
+  border-color: color-mix(in srgb, var(--session-v2-accent) 52%, transparent);
+  background: color-mix(in srgb, var(--session-v2-accent) 10%, var(--session-v2-bg));
+  color: var(--session-v2-accent);
+}
+
+:global(.sessionV2ApprovalOptionDanger) {
+  border-color: color-mix(in srgb, #dc2626 36%, transparent);
+  background: color-mix(in srgb, #dc2626 7%, var(--session-v2-bg));
+  color: #b91c1c;
+}
+
+:global(.sessionV2ApprovalOption:hover:not(:disabled)) {
+  filter: brightness(0.98);
+}
+
+:global(.sessionV2ApprovalOption:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 :global(.sessionV2Question) {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -68,10 +69,44 @@ def _make_codex_mock(
     return mock
 
 
+class _ArtifactTurnRunnerMock:
+    def __init__(self, result: dict[str, Any]) -> None:
+        self.result = result
+        self.prompts: list[dict[str, Any]] = []
+
+    def ensure_ask_thread(
+        self,
+        *,
+        project_id: str,
+        node_id: str,
+        workspace_root: str | None,
+        artifact_kind: str,
+    ) -> str:
+        self.prompts.append(
+            {
+                "project_id": project_id,
+                "node_id": node_id,
+                "workspace_root": workspace_root,
+                "artifact_kind": artifact_kind,
+                "action": "ensure",
+            }
+        )
+        return "v2-ask-thread"
+
+    def run_prompt(self, **kwargs: Any) -> dict[str, Any]:
+        self.prompts.append({**kwargs, "action": "run"})
+        return self.result
+
+    def refresh_ask_context(self, **kwargs: Any) -> None:
+        self.prompts.append({**kwargs, "action": "refresh"})
+
+
 def _make_service(
     storage: Storage,
     tree_service: TreeService,
     codex_mock: MagicMock,
+    *,
+    artifact_turn_runner: Any | None = None,
 ) -> ClarifyGenerationService:
     return ClarifyGenerationService(
         storage,
@@ -79,6 +114,7 @@ def _make_service(
         codex_mock,
         thread_lineage_service=ThreadLineageService(storage, codex_mock, tree_service),
         clarify_gen_timeout=30,
+        artifact_turn_runner=artifact_turn_runner,
     )
 
 
@@ -306,6 +342,57 @@ def test_generate_clarify_stdout_fallback(
     assert clarify["questions"][0]["field_name"] == "fallback_q"
     assert clarify["questions"][0]["selected_option_id"] is None
     assert clarify["questions"][0]["custom_answer"] == ""
+
+
+def test_generate_clarify_v2_runner_writes_structured_questions(
+    storage: Storage, workspace_root: Path, tree_service: TreeService
+) -> None:
+    snapshot = _create_project(storage, str(workspace_root))
+    project_id = snapshot["project"]["id"]
+    root_id = snapshot["tree_state"]["root_node_id"]
+    question_payload = {
+        "questions": [
+            {
+                "field_name": "supported input methods",
+                "question": "Which input methods should the initial release support?",
+                "why_it_matters": "This determines device compatibility.",
+                "current_value": "",
+                "options": [
+                    {
+                        "id": "arrow_keys_only",
+                        "label": "Arrow keys only",
+                        "value": "Arrow keys only",
+                        "rationale": "Fastest to implement.",
+                        "recommended": False,
+                    },
+                    {
+                        "id": "arrow_keys_and_wasd",
+                        "label": "Arrows + WASD",
+                        "value": "Arrow keys and WASD",
+                        "rationale": "Common desktop control set.",
+                        "recommended": True,
+                    },
+                ],
+                "allow_custom": True,
+            }
+        ]
+    }
+    runner = _ArtifactTurnRunnerMock({"stdout": json.dumps(question_payload), "tool_calls": []})
+    codex_mock = _make_codex_mock()
+    service = _make_service(storage, tree_service, codex_mock, artifact_turn_runner=runner)
+
+    service.generate_clarify(project_id, root_id)
+    time.sleep(1)
+
+    detail_service = NodeDetailService(storage, tree_service)
+    clarify = detail_service.get_clarify(project_id, root_id)
+    assert len(clarify["questions"]) == 1
+    question = clarify["questions"][0]
+    assert question["question"] == "Which input methods should the initial release support?"
+    assert question["why_it_matters"] == "This determines device compatibility."
+    assert [option["label"] for option in question["options"]] == ["Arrow keys only", "Arrows + WASD"]
+    assert runner.prompts[-1]["action"] == "refresh"
+    codex_mock.run_turn_streaming.assert_not_called()
 
 
 def test_generate_clarify_zero_questions_auto_confirms(

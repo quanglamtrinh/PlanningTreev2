@@ -459,6 +459,9 @@ function normalizeTurnFromEvent(
           details: (payload.error as Record<string, unknown>).details as Record<string, unknown> | undefined,
         }
       : null,
+    metadata: payload.metadata && typeof payload.metadata === 'object'
+      ? { ...(payload.metadata as Record<string, unknown>) }
+      : undefined,
   }
 }
 
@@ -478,9 +481,20 @@ function resolveItemKindFromMethod(method: string): { kind: string; normalizedKi
 }
 
 function resolveItemKindFromRecord(itemRecord: Record<string, unknown>): { kind: string; normalizedKind: ItemKind | null } {
+  const codexType = normalizeRawKind(itemRecord.type)
+  if (codexType === 'message') {
+    const role = normalizeText(itemRecord.role)
+    if (role === 'user') {
+      return { kind: 'message', normalizedKind: 'userMessage' }
+    }
+    if (role === 'assistant') {
+      return { kind: 'message', normalizedKind: 'agentMessage' }
+    }
+    return { kind: 'message', normalizedKind: null }
+  }
   const rawKind =
     normalizeRawKind(itemRecord.kind) ??
-    normalizeRawKind(itemRecord.type) ??
+    codexType ??
     'unknown'
   return {
     kind: rawKind,
@@ -718,8 +732,12 @@ export function applySessionEvent(
     }
     case 'item/started':
     case 'item/completed':
+    case 'rawResponseItem/completed':
+    case 'item/autoApprovalReview/started':
+    case 'item/autoApprovalReview/completed':
     case 'item/agentMessage/delta':
     case 'item/plan/delta':
+    case 'item/mcpToolCall/progress':
     case 'item/reasoning/summaryTextDelta':
     case 'item/reasoning/summaryPartAdded':
     case 'item/reasoning/textDelta':
@@ -731,12 +749,30 @@ export function applySessionEvent(
         envelope.turnId,
         envelope.method,
         params,
-        envelope.method === 'item/completed' ? 'completed' : undefined,
+        envelope.method === 'item/completed' || envelope.method === 'rawResponseItem/completed'
+          ? 'completed'
+          : undefined,
       )
       if (item) {
         upsertItem(state, threadId, item.turnId, item, envelope.method)
         markThreadActivityAt(state, threadId, envelope.occurredAtMs)
       }
+      break
+    }
+    case 'turn/diff/updated':
+    case 'turn/plan/updated':
+    case 'thread/compacted':
+    case 'hook/started':
+    case 'hook/completed':
+    case 'thread/realtime/started':
+    case 'thread/realtime/itemAdded':
+    case 'thread/realtime/transcript/delta':
+    case 'thread/realtime/transcript/done':
+    case 'thread/realtime/outputAudio/delta':
+    case 'thread/realtime/sdp':
+    case 'thread/realtime/error':
+    case 'thread/realtime/closed': {
+      markThreadActivityAt(state, threadId, envelope.occurredAtMs)
       break
     }
     case 'serverRequest/created':

@@ -130,6 +130,7 @@ function createHarness() {
     readThread: vi.fn(async (threadId: string) => ({ thread: makeThread({ id: threadId }) })),
     listThreadTurns: vi.fn(async () => ({ data: [], nextCursor: null })),
     resumeThread: vi.fn(async (threadId: string) => ({ thread: makeThread({ id: threadId }) })),
+    recoverThread: vi.fn(async (threadId: string) => ({ thread: makeThread({ id: threadId }) })),
     listModels: vi.fn(async () => ({ data: [], nextCursor: null })),
     listPendingRequests: vi.fn(async () => ({ data: [] })),
     steerTurn: vi.fn(async (threadId: string, turnId: string) => ({
@@ -273,6 +274,30 @@ describe('sessionRuntimeController', () => {
     expect(harness.spies.setReplayCursor).toHaveBeenCalledWith('thread-1', 42, 'thread-1:42')
   })
 
+  it('captures replay cursor before reading history so live events are not skipped', async () => {
+    await harness.controller.hydrateThreadState('thread-1', { force: true })
+
+    expect(harness.api.getThreadJournalHead).toHaveBeenCalledWith('thread-1')
+    expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
+    expect(harness.api.getThreadJournalHead.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.api.readThread.mock.invocationCallOrder[0],
+    )
+  })
+
+  it('recovers thread from provider and replaces transcript projection', async () => {
+    const turn = makeTurn({ id: 'turn-recovered', threadId: 'thread-1', status: 'completed' })
+    harness.api.recoverThread.mockResolvedValue({
+      thread: makeThread({ id: 'thread-1', turns: [turn] }),
+      recovered: { terminalTurnCount: 1 },
+    })
+
+    await harness.controller.recoverThreadFromProvider('thread-1')
+
+    expect(harness.api.recoverThread).toHaveBeenCalledWith('thread-1', { source: 'frontend_resync' })
+    expect(harness.spies.upsertThread).toHaveBeenCalledWith(expect.objectContaining({ id: 'thread-1' }), { preserveUpdatedAt: true })
+    expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [turn], { mode: 'replace' })
+  })
+
   it('submits steer request when active turn is running', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeTurns = [
@@ -322,7 +347,6 @@ describe('sessionRuntimeController', () => {
       type: 'turn.start',
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'run tests' }],
-      clientActionId: 'action-1',
       policy: {
         model: 'gpt-5.2',
         approvalPolicy: 'never',
@@ -333,7 +357,6 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.startTurn).toHaveBeenCalledWith(
       'thread-1',
       expect.objectContaining({
-        clientActionId: 'action-1',
         input: [{ type: 'text', text: 'run tests' }],
         model: 'gpt-5.2',
         approvalPolicy: 'never',
@@ -609,7 +632,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.interruptTurn).toHaveBeenCalledWith(
       'thread-1',
       'turn-1',
-      expect.objectContaining({ clientActionId: expect.any(String) }),
+      {},
     )
   })
 })

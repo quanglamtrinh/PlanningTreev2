@@ -9,7 +9,9 @@ const mockApi = vi.hoisted(() => ({
   startThreadV2: vi.fn(),
   readThreadV2: vi.fn(),
   listThreadTurnsV2: vi.fn(),
+  getThreadJournalHeadV2: vi.fn(),
   resumeThreadV2: vi.fn(),
+  recoverThreadV2: vi.fn(),
   listModelsV2: vi.fn(),
   listPendingRequestsV2: vi.fn(),
   forkThreadV2: vi.fn(),
@@ -28,7 +30,9 @@ vi.mock('../../src/features/session_v2/api/client', () => ({
   startThreadV2: mockApi.startThreadV2,
   readThreadV2: mockApi.readThreadV2,
   listThreadTurnsV2: mockApi.listThreadTurnsV2,
+  getThreadJournalHeadV2: mockApi.getThreadJournalHeadV2,
   resumeThreadV2: mockApi.resumeThreadV2,
+  recoverThreadV2: mockApi.recoverThreadV2,
   listModelsV2: mockApi.listModelsV2,
   listPendingRequestsV2: mockApi.listPendingRequestsV2,
   forkThreadV2: mockApi.forkThreadV2,
@@ -121,7 +125,9 @@ function configureApiMocks(): void {
   mockApi.startThreadV2.mockResolvedValue({ thread: makeThread({ id: 'thread-new' }) })
   mockApi.readThreadV2.mockImplementation(async (threadId: string) => ({ thread: makeThread({ id: threadId }) }))
   mockApi.listThreadTurnsV2.mockResolvedValue({ data: [], nextCursor: null })
+  mockApi.getThreadJournalHeadV2.mockResolvedValue({ threadId: 'thread-1', firstEventSeq: null, lastEventSeq: null, lastEventId: null })
   mockApi.resumeThreadV2.mockImplementation(async (threadId: string) => ({ thread: makeThread({ id: threadId }) }))
+  mockApi.recoverThreadV2.mockImplementation(async (threadId: string) => ({ thread: makeThread({ id: threadId }) }))
   mockApi.listModelsV2.mockResolvedValue({ data: [], nextCursor: null })
   mockApi.listPendingRequestsV2.mockResolvedValue({ data: [] })
   mockApi.forkThreadV2.mockImplementation(async (threadId: string) => ({ thread: makeThread({ id: `${threadId}-fork` }) }))
@@ -185,6 +191,32 @@ describe('useSessionFacadeV2', () => {
       expect(latestFacade?.state.activeThreadId).toBe('thread-1')
       expect(latestFacade?.state.connection.phase).toBe('initialized')
     })
+  })
+
+  it('recovers provider data before transcript resync when requested', async () => {
+    let latestFacade: SessionFacadeV2 | null = null
+    render(
+      <FacadeHarness
+        onFacade={(facade) => {
+          latestFacade = facade
+        }}
+      />,
+    )
+    await waitFor(() => {
+      expect(latestFacade?.state.connection.phase).toBe('initialized')
+    })
+    mockApi.recoverThreadV2.mockClear()
+    mockApi.readThreadV2.mockClear()
+
+    await act(async () => {
+      await latestFacade?.commands.resyncThreadTranscript('thread-1', { recoverFromProvider: true })
+    })
+
+    expect(mockApi.recoverThreadV2).toHaveBeenCalledWith('thread-1', { source: 'frontend_resync' })
+    expect(mockApi.readThreadV2).toHaveBeenCalledWith('thread-1', true)
+    expect(mockApi.recoverThreadV2.mock.invocationCallOrder[0]).toBeLessThan(
+      mockApi.readThreadV2.mock.invocationCallOrder[0],
+    )
   })
 
   it('forwards threadCreationPolicy during auto bootstrap thread creation', async () => {

@@ -61,6 +61,7 @@ class SessionManagerV2:
         self._connection_state_machine = connection_state_machine
         self._thread_service = ThreadServiceV2(protocol_client, logger=logger)
         self._turn_service = TurnServiceV2(protocol_client, logger=logger)
+        self._turn_metadata_by_key: dict[tuple[str, str], dict[str, Any]] = {}
         # Serialize initialize to avoid concurrent connecting->connecting races.
         self._initialize_lock = threading.Lock()
         if self._thread_rollout_recorder is not None:
@@ -147,7 +148,53 @@ class SessionManagerV2:
 
     def thread_resume(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
+        recorder = self._thread_rollout_recorder
+        if recorder is not None and recorder.metadata_store.get(str(thread_id or "").strip()) is not None:
+            return read_native_thread(
+                metadata_store=recorder.metadata_store,
+                rollout_recorder=recorder,
+                thread_id=thread_id,
+                include_history=False,
+            )
         return self._thread_service.thread_resume(thread_id=thread_id, params=payload)
+
+    def thread_recover(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._ensure_initialized()
+        del payload
+        normalized_thread_id = self._require_non_empty(thread_id, "threadId")
+        recorder = self._require_thread_rollout_recorder()
+        provider_read = self._thread_service.thread_read(thread_id=normalized_thread_id, include_turns=True)
+        provider_thread = provider_read.get("thread") if isinstance(provider_read, dict) else None
+        if not isinstance(provider_thread, dict):
+            provider_thread = {"id": normalized_thread_id, "turns": []}
+        provider_thread["id"] = str(provider_thread.get("id") or normalized_thread_id)
+        provider_turns = provider_thread.get("turns")
+        if not isinstance(provider_turns, list):
+            provider_turns = []
+        recorder.ensure_thread(
+            thread_id=normalized_thread_id,
+            title=self._optional_non_empty_str(provider_thread.get("name")),
+            status=self._rollout_status_from_provider_thread(provider_thread),
+        )
+        recovered = self._merge_provider_turns_into_runtime(
+            thread_id=normalized_thread_id,
+            provider_turns=[turn for turn in provider_turns if isinstance(turn, dict)],
+        )
+        native = read_native_thread(
+            metadata_store=recorder.metadata_store,
+            rollout_recorder=recorder,
+            thread_id=normalized_thread_id,
+            include_history=True,
+        )
+        return {
+            "thread": native["thread"],
+            "recovered": recovered,
+            "providerThread": {
+                "id": provider_thread.get("id"),
+                "status": provider_thread.get("status"),
+                "turnCount": len(provider_turns),
+            },
+        }
 
     def thread_fork(self, *, thread_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self._ensure_initialized()
@@ -219,7 +266,6 @@ class SessionManagerV2:
 
     def thread_inject_items(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_initialized()
-        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
         items = payload.get("items")
         if not isinstance(items, list) or not items:
             raise SessionCoreError(
@@ -236,28 +282,12 @@ class SessionManagerV2:
                 details={"field": "items"},
             )
 
-        idempotency_payload = {"threadId": thread_id, **payload}
-        idempotent = self._runtime_store.resolve_idempotent_result(
-            action_type="thread/inject_items",
-            key=client_action_id,
-            payload=idempotency_payload,
-        )
-        if idempotent is not None:
-            logger.info(
-                "session_core_v2 thread/inject_items idempotent replay",
-                extra={
-                    "threadId": thread_id,
-                    "turnId": None,
-                    "clientActionId": client_action_id,
-                    "eventSeq": None,
-                    "errorCode": None,
-                },
-            )
-            return idempotent
-
+        rpc_payload = dict(payload)
+        # Codex app-server v2 thread/inject_items accepts only threadId + raw Responses API items.
+        rpc_payload.pop("clientActionId", None)
         accepted_payload = self._thread_service.thread_inject_items(
             thread_id=thread_id,
-            params=dict(payload),
+            params=rpc_payload,
         )
         replayable_context_items = 0
         for index, raw_item in enumerate(items):
@@ -269,7 +299,6 @@ class SessionManagerV2:
             replayable_context_items += 1
             context_turn_id = self._resolve_context_turn_id(
                 thread_id=thread_id,
-                client_action_id=client_action_id,
                 item=raw_item,
                 index=index,
             )
@@ -298,19 +327,12 @@ class SessionManagerV2:
                 params={"turn": api_turn},
                 thread_id_override=thread_id,
             )
-        self._runtime_store.record_idempotent_result(
-            action_type="thread/inject_items",
-            key=client_action_id,
-            payload=idempotency_payload,
-            response=accepted_payload,
-            thread_id=thread_id,
-        )
         logger.info(
             "session_core_v2 thread/inject_items accepted",
             extra={
                 "threadId": thread_id,
                 "turnId": None,
-                "clientActionId": client_action_id,
+                "clientActionId": None,
                 "eventSeq": None,
                 "contextItemsAppended": replayable_context_items,
                 "errorCode": None,
@@ -338,7 +360,6 @@ class SessionManagerV2:
     # ------------------------------------------------------------------
     def turn_start(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_initialized()
-        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
         input_payload = payload.get("input")
         if not isinstance(input_payload, list):
             raise SessionCoreError(
@@ -347,24 +368,6 @@ class SessionManagerV2:
                 status_code=400,
                 details={"field": "input"},
             )
-
-        idempotent = self._runtime_store.resolve_idempotent_result(
-            action_type="turn/start",
-            key=client_action_id,
-            payload={"threadId": thread_id, **payload},
-        )
-        if idempotent is not None:
-            logger.info(
-                "session_core_v2 turn/start idempotent replay",
-                extra={
-                    "threadId": thread_id,
-                    "turnId": (idempotent.get("turn") or {}).get("id") if isinstance(idempotent.get("turn"), dict) else None,
-                    "clientActionId": client_action_id,
-                    "eventSeq": None,
-                    "errorCode": None,
-                },
-            )
-            return idempotent
 
         active_turn = self._runtime_store.get_active_turn(thread_id=thread_id)
         if active_turn is not None and str(active_turn.get("status")) not in _TERMINAL_TURN_STATUSES:
@@ -377,6 +380,7 @@ class SessionManagerV2:
 
         rpc_payload = dict(payload)
         rpc_payload.pop("clientActionId", None)
+        rpc_payload.pop("metadata", None)
         response = self._turn_service.turn_start(thread_id=thread_id, params=rpc_payload)
         turn_id = self._extract_turn_id_from_response(response)
         if not turn_id:
@@ -386,28 +390,30 @@ class SessionManagerV2:
                 status_code=502,
                 details={
                     "threadId": thread_id,
-                    "clientActionId": client_action_id,
                     "providerMethod": "turn/start",
                 },
             )
 
+        turn_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None
+        if isinstance(turn_metadata, dict) and turn_metadata:
+            self._turn_metadata_by_key[(thread_id, turn_id)] = dict(turn_metadata)
         existing_turn = self._runtime_store.get_turn(thread_id=thread_id, turn_id=turn_id)
         if existing_turn is not None and str(existing_turn.get("status") or "") in _TERMINAL_TURN_STATUSES:
+            if isinstance(turn_metadata, dict) and turn_metadata:
+                existing_turn = self._runtime_store.merge_turn_metadata(
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    metadata=turn_metadata,
+                ) or existing_turn
             turn_payload = {"turn": self._to_api_turn(existing_turn)}
-            self._runtime_store.record_idempotent_result(
-                action_type="turn/start",
-                key=client_action_id,
-                payload={"threadId": thread_id, **payload},
-                response=turn_payload,
-                thread_id=thread_id,
-                turn_id=turn_id,
-            )
+            if isinstance(turn_metadata, dict) and turn_metadata:
+                self._append_turn_metadata_persisted(thread_id=thread_id, turn_id=turn_id, turn=turn_payload["turn"])
             logger.info(
                 "session_core_v2 turn/start observed terminal turn before response",
                 extra={
                     "threadId": thread_id,
                     "turnId": turn_id,
-                    "clientActionId": client_action_id,
+                    "clientActionId": None,
                     "eventSeq": None,
                     "eventId": None,
                     "errorCode": None,
@@ -416,7 +422,18 @@ class SessionManagerV2:
             return turn_payload
 
         if existing_turn is None:
-            self._runtime_store.create_turn(thread_id=thread_id, turn_id=turn_id, status="idle")
+            self._runtime_store.create_turn(
+                thread_id=thread_id,
+                turn_id=turn_id,
+                status="idle",
+                metadata=turn_metadata if isinstance(turn_metadata, dict) else None,
+            )
+        elif isinstance(turn_metadata, dict) and turn_metadata:
+            self._runtime_store.merge_turn_metadata(
+                thread_id=thread_id,
+                turn_id=turn_id,
+                metadata=turn_metadata,
+            )
         turn = self._runtime_store.transition_turn(
             thread_id=thread_id,
             turn_id=turn_id,
@@ -430,20 +447,19 @@ class SessionManagerV2:
             turn_id=turn_id,
             turn=turn_payload["turn"],
         )
-        self._runtime_store.record_idempotent_result(
-            action_type="turn/start",
-            key=client_action_id,
-            payload={"threadId": thread_id, **payload},
-            response=turn_payload,
-            thread_id=thread_id,
-            turn_id=turn_id,
-        )
+        if isinstance(turn_metadata, dict) and turn_metadata:
+            # Persist/broadcast metadata even if the provider emitted turn/started first.
+            turn_started_event = self._append_turn_metadata_persisted(
+                thread_id=thread_id,
+                turn_id=turn_id,
+                turn=turn_payload["turn"],
+            )
         logger.info(
             "session_core_v2 turn/start accepted",
             extra={
                 "threadId": thread_id,
                 "turnId": turn_id,
-                "clientActionId": client_action_id,
+                "clientActionId": None,
                 "eventSeq": turn_started_event.get("eventSeq"),
                 "eventId": turn_started_event.get("eventId"),
                 "errorCode": None,
@@ -453,7 +469,6 @@ class SessionManagerV2:
 
     def turn_steer(self, *, thread_id: str, path_turn_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_initialized()
-        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
         expected_turn_id = self._require_non_empty(payload.get("expectedTurnId"), "expectedTurnId")
         input_payload = payload.get("input")
         if not isinstance(input_payload, list):
@@ -463,24 +478,6 @@ class SessionManagerV2:
                 status_code=400,
                 details={"field": "input"},
             )
-
-        idempotent = self._runtime_store.resolve_idempotent_result(
-            action_type="turn/steer",
-            key=client_action_id,
-            payload={"threadId": thread_id, "pathTurnId": path_turn_id, **payload},
-        )
-        if idempotent is not None:
-            logger.info(
-                "session_core_v2 turn/steer idempotent replay",
-                extra={
-                    "threadId": thread_id,
-                    "turnId": path_turn_id,
-                    "clientActionId": client_action_id,
-                    "eventSeq": None,
-                    "errorCode": None,
-                },
-            )
-            return idempotent
 
         active_turn = self._runtime_store.get_active_turn(thread_id=thread_id)
         if active_turn is None:
@@ -530,20 +527,12 @@ class SessionManagerV2:
             last_codex_status="inProgress",
         )
         turn_payload = {"turn": self._to_api_turn(turn)}
-        self._runtime_store.record_idempotent_result(
-            action_type="turn/steer",
-            key=client_action_id,
-            payload={"threadId": thread_id, "pathTurnId": path_turn_id, **payload},
-            response=turn_payload,
-            thread_id=thread_id,
-            turn_id=active_turn_id,
-        )
         logger.info(
             "session_core_v2 turn/steer accepted",
             extra={
                 "threadId": thread_id,
                 "turnId": active_turn_id,
-                "clientActionId": client_action_id,
+                "clientActionId": None,
                 "eventSeq": None,
                 "errorCode": None,
             },
@@ -552,25 +541,7 @@ class SessionManagerV2:
 
     def turn_interrupt(self, *, thread_id: str, turn_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_initialized()
-        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
-
-        idempotent = self._runtime_store.resolve_idempotent_result(
-            action_type="turn/interrupt",
-            key=client_action_id,
-            payload={"threadId": thread_id, "turnId": turn_id, **payload},
-        )
-        if idempotent is not None:
-            logger.info(
-                "session_core_v2 turn/interrupt idempotent replay",
-                extra={
-                    "threadId": thread_id,
-                    "turnId": turn_id,
-                    "clientActionId": client_action_id,
-                    "eventSeq": None,
-                    "errorCode": None,
-                },
-            )
-            return idempotent
+        del payload
 
         turn = self._runtime_store.get_turn(thread_id=thread_id, turn_id=turn_id)
         if turn is None:
@@ -614,20 +585,12 @@ class SessionManagerV2:
             last_codex_status="interrupted",
         )
         response = {"status": "accepted"}
-        self._runtime_store.record_idempotent_result(
-            action_type="turn/interrupt",
-            key=client_action_id,
-            payload={"threadId": thread_id, "turnId": turn_id, **payload},
-            response=response,
-            thread_id=thread_id,
-            turn_id=turn_id,
-        )
         logger.info(
             "session_core_v2 turn/interrupt accepted",
             extra={
                 "threadId": thread_id,
                 "turnId": turn_id,
-                "clientActionId": client_action_id,
+                "clientActionId": None,
                 "eventSeq": None,
                 "errorCode": None,
             },
@@ -992,6 +955,7 @@ class SessionManagerV2:
         thread_id_override: str | None = None,
     ) -> dict[str, Any]:
         self._require_thread_rollout_recorder()
+        params = self._params_with_internal_turn_metadata(method, params, thread_id_override=thread_id_override)
         envelope = self._runtime_store.append_notification(
             method=method,
             params=params,
@@ -1005,6 +969,53 @@ class SessionManagerV2:
                 details={"method": method, "threadId": thread_id_override or params.get("threadId")},
             )
         return envelope
+
+    def _append_turn_metadata_persisted(self, *, thread_id: str, turn_id: str, turn: dict[str, Any]) -> dict[str, Any]:
+        self._require_thread_rollout_recorder()
+        params = self._params_with_internal_turn_metadata(
+            "turn/started",
+            {"turnId": turn_id, "turn": dict(turn)},
+            thread_id_override=thread_id,
+        )
+        return self._runtime_store.append_event(
+            thread_id=thread_id,
+            method="turn/started",
+            params=params,
+            turn_id=turn_id,
+            source="journal",
+            replayable=True,
+            tier="tier0",
+        )
+
+    def _params_with_internal_turn_metadata(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        thread_id_override: str | None = None,
+    ) -> dict[str, Any]:
+        thread_id = str(thread_id_override or "").strip() or self._thread_id_from_params(params)
+        turn_id = self._turn_id_from_params(params)
+        if not thread_id or not turn_id:
+            return params
+        metadata = self._turn_metadata_by_key.get((thread_id, turn_id))
+        if not metadata:
+            return params
+        next_params = dict(params)
+        if method in {"turn/started", "turn/completed"}:
+            turn = dict(next_params.get("turn")) if isinstance(next_params.get("turn"), dict) else {}
+            turn["id"] = str(turn.get("id") or turn_id)
+            turn["threadId"] = str(turn.get("threadId") or thread_id)
+            existing = turn.get("metadata") if isinstance(turn.get("metadata"), dict) else {}
+            turn["metadata"] = {**existing, **metadata}
+            next_params["turn"] = turn
+        item = next_params.get("item")
+        if isinstance(item, dict):
+            next_item = dict(item)
+            existing_item_metadata = next_item.get("metadata") if isinstance(next_item.get("metadata"), dict) else {}
+            next_item["metadata"] = {**existing_item_metadata, **metadata}
+            next_params["item"] = next_item
+        return next_params
 
     def _append_turn_started_if_absent_persisted(
         self,
@@ -1143,7 +1154,7 @@ class SessionManagerV2:
                 {
                     "type": "event_msg",
                     "event": {
-                        "method": "thread/created",
+                        "method": "thread/started",
                         "threadId": thread_id,
                         "turnId": None,
                         "eventId": self._event_id_from_params(response),
@@ -1290,6 +1301,95 @@ class SessionManagerV2:
                 return nested.strip()
         return ""
 
+    def _merge_provider_turns_into_runtime(self, *, thread_id: str, provider_turns: list[dict[str, Any]]) -> dict[str, Any]:
+        recovered_turn_ids: list[str] = []
+        terminal_turn_ids: list[str] = []
+        recovered_item_count = 0
+        for raw_turn in provider_turns:
+            turn = self._normalize_provider_turn(raw_turn, thread_id=thread_id)
+            turn_id = str(turn.get("id") or "").strip()
+            if not turn_id:
+                continue
+            recovered_turn_ids.append(turn_id)
+            self._append_notification_persisted(
+                method="turn/started",
+                params={
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "turn": {
+                        "id": turn_id,
+                        "threadId": thread_id,
+                        "status": "inProgress",
+                        **({"metadata": turn["metadata"]} if isinstance(turn.get("metadata"), dict) else {}),
+                    },
+                },
+                thread_id_override=thread_id,
+            )
+            items = turn.get("items")
+            if isinstance(items, list):
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    recovered_item_count += 1
+                    next_item = dict(item)
+                    next_item.setdefault("threadId", thread_id)
+                    next_item.setdefault("turnId", turn_id)
+                    self._append_notification_persisted(
+                        method="item/completed",
+                        params={"threadId": thread_id, "turnId": turn_id, "item": next_item},
+                        thread_id_override=thread_id,
+                    )
+            status = str(turn.get("status") or "inProgress")
+            if status not in _TERMINAL_TURN_STATUSES:
+                continue
+            terminal_turn_ids.append(turn_id)
+            self._append_notification_persisted(
+                method="turn/completed",
+                params={
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "turn": turn,
+                },
+                thread_id_override=thread_id,
+            )
+        return {
+            "turnIds": recovered_turn_ids,
+            "turnCount": len(recovered_turn_ids),
+            "itemCount": recovered_item_count,
+            "terminalTurnIds": terminal_turn_ids,
+            "terminalTurnCount": len(terminal_turn_ids),
+        }
+
+    @staticmethod
+    def _normalize_provider_turn(turn: dict[str, Any], *, thread_id: str) -> dict[str, Any]:
+        normalized = dict(turn)
+        normalized["id"] = str(normalized.get("id") or normalized.get("turnId") or "").strip()
+        normalized["threadId"] = str(normalized.get("threadId") or thread_id)
+        status = str(normalized.get("status") or "inProgress")
+        if status == "idle" or status == "waitingUserInput":
+            status = "inProgress"
+        if status not in {"inProgress", "completed", "failed", "interrupted"}:
+            status = "failed"
+        normalized["status"] = status
+        items = normalized.get("items")
+        normalized["items"] = [dict(item) for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+        return normalized
+
+    @staticmethod
+    def _rollout_status_from_provider_thread(thread: dict[str, Any]) -> str:
+        status = thread.get("status")
+        status_type = str(status.get("type") or "") if isinstance(status, dict) else str(status or "")
+        if status_type in {"active", "running"}:
+            return "running"
+        if status_type in {"systemError", "failed"}:
+            return "failed"
+        turns = thread.get("turns")
+        if isinstance(turns, list):
+            for turn in turns:
+                if isinstance(turn, dict) and str(turn.get("status") or "") not in _TERMINAL_TURN_STATUSES:
+                    return "running"
+        return "closed"
+
     @staticmethod
     def _merge_turns_for_api(
         *,
@@ -1348,6 +1448,9 @@ class SessionManagerV2:
             "completedAtMs": turn.get("completedAtMs"),
             "lastCodexStatus": turn.get("lastCodexStatus"),
         }
+        metadata = turn.get("metadata")
+        if isinstance(metadata, dict):
+            payload["metadata"] = dict(metadata)
         error = turn.get("error")
         if isinstance(error, dict):
             payload["error"] = error
@@ -1385,13 +1488,15 @@ class SessionManagerV2:
     def _resolve_context_turn_id(
         *,
         thread_id: str,
-        client_action_id: str,
         item: dict[str, Any],
         index: int,
     ) -> str:
         explicit_turn_id = str(item.get("turnId") or "").strip()
         if explicit_turn_id:
             return explicit_turn_id
-        item_id = str(item.get("id") or "").strip() or f"ctx-item-{index + 1}"
-        # Keep turn ids deterministic to preserve replay/idempotency behavior.
-        return f"ctx-{thread_id}-{client_action_id}-{item_id}"
+        metadata = SessionManagerV2._extract_item_metadata(item)
+        context_hash = str(metadata.get("contextPacketHash") or "").strip().replace(":", "-")
+        role = str(metadata.get("role") or "").strip() or "workflow"
+        suffix = context_hash or f"ctx-item-{index + 1}"
+        # Keep synthetic context turns deterministic without adding non-Codex idempotency fields.
+        return f"ctx-{thread_id}-{role}-{suffix}"

@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from backend.business.workflow_v2.errors import (
     WorkflowIdempotencyConflictError,
@@ -329,6 +330,7 @@ class ArtifactOrchestratorV2:
     ) -> dict[str, Any]:
         detail_state = confirm()
         workflow_state = self.sync_artifact_source_versions(project_id, node_id, reason=reason)
+        self._refresh_ask_context(project_id, node_id, reason=reason)
         artifact = self._artifact_summary(project_id, node_id, kind)
         response = {
             "confirmed": True,
@@ -352,6 +354,7 @@ class ArtifactOrchestratorV2:
     def _clarify_update_response(self, project_id: str, node_id: str, answers: list[dict[str, Any]]) -> dict[str, Any]:
         clarify = self._node_detail_service.update_clarify_answers(project_id, node_id, answers)
         state = self._repository.read_state(project_id, node_id)
+        self._refresh_ask_context(project_id, node_id, reason="clarify_updated")
         self._publish_artifact_event(
             state,
             "workflow/artifact_state_changed",
@@ -362,6 +365,18 @@ class ArtifactOrchestratorV2:
             "artifactState": self._artifact_state(project_id, node_id),
             "workflowState": _workflow_response(state),
         }
+
+    def _refresh_ask_context(self, project_id: str, node_id: str, *, reason: str) -> None:
+        try:
+            self._thread_binding_service.ensure_thread(
+                project_id=project_id,
+                node_id=node_id,
+                role="ask_planning",
+                idempotency_key=f"artifact:{reason}:ask-context:{uuid4().hex}",
+            )
+        except Exception:
+            # Artifact persistence is canonical; the next Ask-thread ensure can heal context.
+            pass
 
     def _status_response(self, project_id: str, node_id: str, kind: str, status: dict[str, Any]) -> dict[str, Any]:
         state = self._repository.read_state(project_id, node_id)

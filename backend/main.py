@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
 from backend.business.workflow_v2.artifact_orchestrator import ArtifactOrchestratorV2
+from backend.business.workflow_v2.artifact_turn_runner import WorkflowArtifactTurnRunnerV2
 from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.execution_audit_orchestrator import ExecutionAuditOrchestratorV2
@@ -325,6 +326,15 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         session_manager=session_manager_v2,
         event_publisher=workflow_event_publisher_v2,
     )
+    artifact_turn_runner_v2 = WorkflowArtifactTurnRunnerV2(
+        thread_binding_service=workflow_thread_binding_service_v2,
+        session_manager=session_manager_v2,
+        timeout_sec=max(get_frame_gen_timeout(), get_clarify_gen_timeout(), get_spec_gen_timeout(), get_split_timeout()),
+    )
+    frame_generation_service._artifact_turn_runner = artifact_turn_runner_v2
+    clarify_generation_service._artifact_turn_runner = artifact_turn_runner_v2
+    spec_generation_service._artifact_turn_runner = artifact_turn_runner_v2
+    split_service._artifact_turn_runner = artifact_turn_runner_v2
     execution_audit_orchestrator_v2 = ExecutionAuditOrchestratorV2(
         repository=workflow_state_repository_v2,
         thread_binding_service=workflow_thread_binding_service_v2,

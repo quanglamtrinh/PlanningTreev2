@@ -336,6 +336,13 @@ function withAccessPolicy(
       sandboxPolicy: { type: 'workspaceWrite' },
     }
   }
+  if (requestedPolicy?.accessMode === 'read-only') {
+    return {
+      ...basePolicy,
+      approvalPolicy: 'on-request',
+      sandboxPolicy: { type: 'readOnly' },
+    }
+  }
   return basePolicy
 }
 

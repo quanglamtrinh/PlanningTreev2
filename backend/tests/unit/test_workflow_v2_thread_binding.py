@@ -101,14 +101,16 @@ def test_new_thread_starts_injects_context_and_persists_binding(storage, workspa
     ]
     assert len(fake_session.injects) == 1
     assert fake_session.injects[0]["threadId"] == "thread-1"
-    assert fake_session.injects[0]["payload"]["clientActionId"].startswith(
-        "ensure-thread:new:inject:execution:sha256:"
-    )
+    assert "clientActionId" not in fake_session.injects[0]["payload"]
     injected_item = fake_session.injects[0]["payload"]["items"][0]
+    assert "end_turn" not in injected_item
+    assert injected_item["type"] == "message"
+    assert injected_item["role"] == "developer"
+    assert injected_item["content"][0]["type"] == "input_text"
     assert injected_item["metadata"]["workflowContext"] is True
     assert injected_item["metadata"]["contextPayload"]["artifactContext"]["currentContext"]["frame"]["content"] == "Frame v2"
     assert injected_item["workflowContext"]["contextPayload"]["artifactContext"]["currentContext"]["spec"]["content"] == "Spec v2"
-    assert injected_item["text"].startswith('<planning_tree_context kind="execution_context"')
+    assert injected_item["content"][0]["text"].startswith('<planning_tree_context kind="execution_context"')
     state = repository.read_state(project_id, node_id)
     assert state.execution_thread_id == "thread-1"
     assert state.thread_bindings["execution"].created_from == "new_thread"
@@ -191,9 +193,11 @@ def test_changed_context_auto_updates_binding(storage, workspace_root) -> None:
     assert fake_session.starts == []
     assert len(fake_session.injects) == 1
     item = fake_session.injects[0]["payload"]["items"][0]
-    assert item["metadata"]["packetKind"] == "context_update"
+    assert item["type"] == "message"
+    assert item["role"] == "developer"
+    assert item["metadata"]["packetKind"] == "execution_context"
     assert item["metadata"]["contextPayload"]["artifactContext"]["currentContext"]["frame"]["content"] == "Frame v3"
-    assert '"kind":"context_update"' in item["text"]
+    assert '"kind":"execution_context"' in item["content"][0]["text"]
     assert response["binding"]["threadId"] == "thread-1"
     assert response["binding"]["contextPacketHash"] != first["binding"]["contextPacketHash"]
     state = repository.read_state(project_id, node_id)

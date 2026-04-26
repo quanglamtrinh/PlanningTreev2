@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -26,6 +27,7 @@ from backend.business.workflow_v2.models import (
 )
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.state_machine import (
+    block as transition_block,
     complete_audit as transition_complete_audit,
     complete_execution as transition_complete_execution,
     derive_allowed_actions,
@@ -71,6 +73,7 @@ class ExecutionAuditOrchestratorV2:
         self._metadata_service = WorkflowMetadataService(tree_service, finish_task_service)
         self._artifact_service = GitArtifactService(git_checkpoint_service)
         self._settlement_mismatch_count = 0
+        self._last_reconcile_ms_by_turn: dict[tuple[str, str], int] = {}
 
     def get_workflow_state(self, project_id: str, node_id: str) -> dict[str, Any]:
         return _public_state(self._repository.read_state(project_id, node_id))
@@ -91,6 +94,68 @@ class ExecutionAuditOrchestratorV2:
             "executionRunId": run_id,
             "workflowState": _public_state(state),
         }
+
+    def reconcile_active_run_from_provider(
+        self,
+        project_id: str,
+        node_id: str,
+        *,
+        force: bool = False,
+    ) -> NodeWorkflowStateV2:
+        state = self._repository.read_state(project_id, node_id)
+        if state.phase == "executing":
+            run_id = state.active_execution_run_id
+            run = state.execution_runs.get(str(run_id or ""))
+            kind = "execution"
+        elif state.phase == "audit_running":
+            run_id = state.active_audit_run_id
+            run = state.audit_runs.get(str(run_id or ""))
+            kind = "audit"
+        else:
+            return state
+        if run is None or not run.thread_id or not run.turn_id:
+            return state
+        key = (str(run.thread_id), str(run.turn_id))
+        now_ms = int(time.time() * 1000)
+        if not force and now_ms - int(self._last_reconcile_ms_by_turn.get(key) or 0) < 5_000:
+            return state
+        self._last_reconcile_ms_by_turn[key] = now_ms
+        recover = getattr(self._session_manager, "thread_recover", None)
+        if callable(recover):
+            try:
+                recover(thread_id=run.thread_id, payload={"source": "workflow_reconcile", "kind": kind})
+            except Exception:
+                logger.debug(
+                    "workflow_v2 provider recovery failed during active run reconcile",
+                    exc_info=True,
+                    extra={"projectId": project_id, "nodeId": node_id, "threadId": run.thread_id, "turnId": run.turn_id},
+                )
+        runtime_turn_getter = getattr(self._session_manager, "get_runtime_turn", None)
+        if not callable(runtime_turn_getter):
+            return self._repository.read_state(project_id, node_id)
+        try:
+            turn = runtime_turn_getter(thread_id=run.thread_id, turn_id=run.turn_id)
+        except Exception:
+            logger.debug(
+                "workflow_v2 runtime turn lookup failed during active run reconcile",
+                exc_info=True,
+                extra={"projectId": project_id, "nodeId": node_id, "threadId": run.thread_id, "turnId": run.turn_id},
+            )
+            return self._repository.read_state(project_id, node_id)
+        if not isinstance(turn, dict):
+            return self._repository.read_state(project_id, node_id)
+        status = str(turn.get("status") or "").strip()
+        if status not in {"completed", "failed", "interrupted"}:
+            return self._repository.read_state(project_id, node_id)
+        settled = self.settle_terminal_turn(
+            thread_id=run.thread_id,
+            turn_id=run.turn_id,
+            status=status,
+            turn=turn,
+        )
+        if isinstance(settled, dict) and isinstance(settled.get("workflowState"), dict):
+            return self._repository.read_state(project_id, node_id)
+        return self._repository.read_state(project_id, node_id)
 
     def start_execution(
         self,
@@ -664,12 +729,6 @@ class ExecutionAuditOrchestratorV2:
         event_seq: int | None = None,
     ) -> dict[str, Any] | None:
         terminal_status = str(status or "").strip() or str((turn or {}).get("status") or "").strip()
-        if terminal_status and terminal_status != "completed":
-            logger.info(
-                "Workflow V2 terminal turn settlement skipped for non-completed turn",
-                extra={"threadId": thread_id, "turnId": turn_id, "status": terminal_status},
-            )
-            return None
         match = self._find_active_run_by_turn(thread_id=thread_id, turn_id=turn_id)
         if match is None:
             self._settlement_mismatch_count += 1
@@ -684,6 +743,17 @@ class ExecutionAuditOrchestratorV2:
             )
             return None
         kind, project_id, node_id, state = match
+        if terminal_status and terminal_status != "completed":
+            return self._fail_terminal_turn(
+                kind=kind,
+                project_id=project_id,
+                node_id=node_id,
+                state=state,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                status=terminal_status,
+                turn=turn,
+            )
         logger.info(
             "workflow_v2 settle terminal turn",
             extra={
@@ -722,6 +792,47 @@ class ExecutionAuditOrchestratorV2:
             review_commit_sha=review_commit_sha,
             final_review_text=text,
         )
+
+    def _fail_terminal_turn(
+        self,
+        *,
+        kind: str,
+        project_id: str,
+        node_id: str,
+        state: NodeWorkflowStateV2,
+        thread_id: str,
+        turn_id: str,
+        status: str,
+        turn: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        message = _terminal_turn_error_message(status=status, turn=turn)
+        error = {
+            "code": "ERR_WORKFLOW_TURN_FAILED",
+            "message": message,
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "status": status,
+        }
+        next_state = transition_block(state, reason=message, error=error)
+        if kind == "execution":
+            next_state = _update_execution_run(
+                next_state,
+                run_id=state.active_execution_run_id or state.latest_execution_run_id,
+                status="failed",
+                completed_at=utc_now_iso(),
+                error_message=message,
+            )
+        else:
+            next_state = _update_audit_run(
+                next_state,
+                run_id=state.active_audit_run_id or state.latest_audit_run_id,
+                status="failed",
+                completed_at=utc_now_iso(),
+                error_message=message,
+            )
+        persisted = self._repository.write_state(project_id, node_id, next_state)
+        self._publish_state_changed(persisted, action="start_execution" if kind == "execution" else "start_audit", reason="turn_failed")
+        return {"workflowState": _public_state(persisted)}
 
     def _start_execution_turn(
         self,
@@ -939,7 +1050,6 @@ class ExecutionAuditOrchestratorV2:
         model: str | None,
     ) -> str:
         payload: dict[str, Any] = {
-            "clientActionId": client_action_id,
             "input": [{"type": "text", "text": text}],
         }
         if cwd:
@@ -965,7 +1075,6 @@ class ExecutionAuditOrchestratorV2:
                 status_code=502,
                 details={
                     "threadId": thread_id,
-                    "clientActionId": client_action_id,
                     "providerMethod": "turn/start",
                 },
             )
@@ -1223,6 +1332,15 @@ def _payload_hash(payload: dict[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
+def _terminal_turn_error_message(*, status: str, turn: dict[str, Any] | None) -> str:
+    error = turn.get("error") if isinstance(turn, dict) else None
+    if isinstance(error, dict):
+        message = str(error.get("message") or "").strip()
+        if message:
+            return message
+    return f"Workflow turn ended with status {status or 'failed'}."
+
+
 def _public_action(action: str) -> WorkflowAction | None:
     mapping: dict[str, WorkflowAction] = {
         "start_execution": "start_execution",
@@ -1243,6 +1361,7 @@ def _update_execution_run(
     candidate_workspace_hash: str | None = None,
     summary_text: str | None = None,
     completed_at: str | None = None,
+    error_message: str | None = None,
 ) -> NodeWorkflowStateV2:
     if not run_id:
         return state
@@ -1257,6 +1376,7 @@ def _update_execution_run(
             "candidate_workspace_hash": candidate_workspace_hash or existing.candidate_workspace_hash,
             "summary_text": summary_text if summary_text is not None else existing.summary_text,
             "completed_at": completed_at or existing.completed_at,
+            "error_message": error_message if error_message is not None else existing.error_message,
         },
     )
     return state.model_copy(deep=True, update={"execution_runs": runs})
@@ -1291,6 +1411,7 @@ def _update_audit_run(
     final_review_text: str | None = None,
     review_disposition: str | None = None,
     completed_at: str | None = None,
+    error_message: str | None = None,
 ) -> NodeWorkflowStateV2:
     if not run_id:
         return state
@@ -1306,6 +1427,7 @@ def _update_audit_run(
             "final_review_text": final_review_text if final_review_text is not None else existing.final_review_text,
             "review_disposition": review_disposition if review_disposition is not None else existing.review_disposition,
             "completed_at": completed_at or existing.completed_at,
+            "error_message": error_message if error_message is not None else existing.error_message,
         },
     )
     return state.model_copy(deep=True, update={"audit_runs": runs})

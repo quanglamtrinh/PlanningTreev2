@@ -235,17 +235,10 @@ class ThreadBindingServiceV2:
             return _response(persisted, persisted_binding)
 
         if binding is not None:
-            update_packet = self._context_builder.build_context_update_packet(
-                project_id=project_id,
-                node_id=node_id,
-                role=role,
-                previous_context_packet_hash=binding.context_packet_hash,
-                next_packet=packet,
-            )
             self._inject_context(
                 thread_id=binding.thread_id,
                 role=role,
-                packet=update_packet,
+                packet=packet,
                 idempotency_key=key,
                 context_packet_hash=packet_hash,
             )
@@ -408,7 +401,6 @@ class ThreadBindingServiceV2:
     ) -> None:
         injected_packet_hash = packet.packet_hash()
         action_context_hash = context_packet_hash or injected_packet_hash
-        client_action_id = f"{idempotency_key}:inject:{role}:{action_context_hash}"
         metadata = {
             "workflowContext": True,
             "role": role,
@@ -422,12 +414,16 @@ class ThreadBindingServiceV2:
         self._session_manager.thread_inject_items(
             thread_id=thread_id,
             payload={
-                "clientActionId": client_action_id,
                 "items": [
                     {
-                        "id": f"workflow-context-{role}-{_hash_suffix(action_context_hash)}",
-                        "type": "systemMessage",
-                        "text": packet.render_model_visible_message(),
+                        "type": "message",
+                        "role": "developer",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": packet.render_model_visible_message(),
+                            }
+                        ],
                         "metadata": metadata,
                         "workflowContext": copy.deepcopy(metadata),
                     }

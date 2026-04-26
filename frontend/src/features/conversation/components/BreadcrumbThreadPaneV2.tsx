@@ -4,7 +4,7 @@ import type { PendingServerRequest, SessionItem, SessionTurn } from '../../sessi
 import { ComposerPane } from '../../session_v2/components/ComposerPane'
 import { McpElicitationOverlay } from '../../session_v2/components/McpElicitationOverlay'
 import { RequestUserInputOverlay } from '../../session_v2/components/RequestUserInputOverlay'
-import { TranscriptPanel } from '../../session_v2/components/TranscriptPanel'
+import { TranscriptPanel, WorkflowContextCard } from '../../session_v2/components/TranscriptPanel'
 import sessionShellStyles from '../../session_v2/shell/SessionConsoleV2.module.css'
 import type { NodeRecord } from '../../../api/types'
 import type { ComposerSubmitPayload } from '../../session_v2/components/ComposerPane'
@@ -26,6 +26,7 @@ export type BreadcrumbThreadTranscriptProps = {
   threadId: string | null
   turns: SessionTurn[]
   itemsByTurn: Record<string, SessionItem[]>
+  workflowContextItem?: SessionItem | null
 }
 
 export type BreadcrumbThreadComposerProps = {
@@ -153,11 +154,16 @@ export function BreadcrumbThreadPaneV2({
                 isExecutionTab ? ` ${sessionShellStyles.threadWhiteCanvas}` : ''
               }`}
             >
+              {transcriptProps.workflowContextItem ? (
+                <div className={sessionShellStyles.threadWorkflowContextSlot}>
+                  <WorkflowContextCard item={transcriptProps.workflowContextItem} />
+                </div>
+              ) : null}
               <TranscriptPanel
                 threadId={transcriptProps.threadId}
                 turns={transcriptProps.turns}
                 itemsByTurn={transcriptProps.itemsByTurn}
-                showWorkflowContext={Boolean(debugPanelProps?.enabled && debugPanelProps.showWorkflowContextItems)}
+                showWorkflowContext={false}
               />
             </div>
 
@@ -169,6 +175,16 @@ export function BreadcrumbThreadPaneV2({
               }`}
               data-testid="breadcrumb-thread-composer"
             >
+              {pendingRequestProps.request &&
+              pendingRequestProps.request.method !== 'item/tool/requestUserInput' &&
+              pendingRequestProps.request.method !== 'mcpServer/elicitation/request' ? (
+                <ApprovalOverlay
+                  request={pendingRequestProps.request}
+                  onResolve={pendingRequestProps.onResolve}
+                  onReject={pendingRequestProps.onReject}
+                  variant="inline"
+                />
+              ) : null}
               <ComposerPane
                 isTurnRunning={composerProps.isTurnRunning}
                 disabled={composerProps.disabled}
@@ -195,16 +211,6 @@ export function BreadcrumbThreadPaneV2({
 
       {pendingRequestProps.request?.method === 'mcpServer/elicitation/request' ? (
         <McpElicitationOverlay
-          request={pendingRequestProps.request}
-          onResolve={pendingRequestProps.onResolve}
-          onReject={pendingRequestProps.onReject}
-        />
-      ) : null}
-
-      {pendingRequestProps.request &&
-      pendingRequestProps.request.method !== 'item/tool/requestUserInput' &&
-      pendingRequestProps.request.method !== 'mcpServer/elicitation/request' ? (
-        <ApprovalOverlay
           request={pendingRequestProps.request}
           onResolve={pendingRequestProps.onResolve}
           onReject={pendingRequestProps.onReject}

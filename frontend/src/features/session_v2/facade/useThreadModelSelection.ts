@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { SessionThread } from '../contracts'
 import { useThreadSessionStore } from '../store/threadSessionStore'
-import type { ComposerModelOption } from './sessionRuntimeController'
+import {
+  CODEX_MODEL_FALLBACK_OPTIONS,
+  DEFAULT_CODEX_MODEL_OPTION,
+  type ComposerModelOption,
+} from './sessionRuntimeController'
+
+const COMPOSER_FALLBACK_MODEL_KEY = '__composer__'
 
 type UseThreadModelSelectionOptions = {
   activeThreadId: string | null
@@ -12,11 +18,11 @@ type UseThreadModelSelectionOptions = {
 function resolveSelectedModel(
   activeThreadId: string | null,
   activeThread: SessionThread | null,
-  modelOptions: ComposerModelOption[],
   selectedModelByThread: Record<string, string>,
 ): string | null {
   if (!activeThreadId) {
-    return null
+    return selectedModelByThread[COMPOSER_FALLBACK_MODEL_KEY] ??
+      DEFAULT_CODEX_MODEL_OPTION.value
   }
 
   const selectedFromState = selectedModelByThread[activeThreadId]
@@ -29,7 +35,20 @@ function resolveSelectedModel(
     return threadModel
   }
 
-  return modelOptions.find((option) => option.isDefault)?.value ?? modelOptions[0]?.value ?? null
+  return DEFAULT_CODEX_MODEL_OPTION.value
+}
+
+function ensureFallbackModelOptions(options: ComposerModelOption[]): ComposerModelOption[] {
+  const rows = [...CODEX_MODEL_FALLBACK_OPTIONS]
+  const seen = new Set(rows.map((option) => option.value))
+  for (const option of options) {
+    if (seen.has(option.value)) {
+      continue
+    }
+    seen.add(option.value)
+    rows.push(option)
+  }
+  return rows
 }
 
 export function useThreadModelSelection({
@@ -41,8 +60,9 @@ export function useThreadModelSelection({
   const [selectedModelByThread, setSelectedModelByThread] = useState<Record<string, string>>({})
 
   const selectedModel = useMemo(() => {
-    return resolveSelectedModel(activeThreadId, activeThread, modelOptions, selectedModelByThread)
-  }, [activeThread, activeThreadId, modelOptions, selectedModelByThread])
+    return resolveSelectedModel(activeThreadId, activeThread, selectedModelByThread)
+  }, [activeThread, activeThreadId, selectedModelByThread])
+  const composerModelOptions = useMemo(() => ensureFallbackModelOptions(modelOptions), [modelOptions])
 
   useEffect(() => {
     if (!activeThreadId || !selectedModel) {
@@ -62,20 +82,18 @@ export function useThreadModelSelection({
 
   const setModel = useCallback((model: string) => {
     const currentActiveThreadId = useThreadSessionStore.getState().activeThreadId
-    if (!currentActiveThreadId) {
-      return
-    }
+    const selectionKey = currentActiveThreadId ?? COMPOSER_FALLBACK_MODEL_KEY
 
     setSelectedModelByThread((previous) => ({
       ...previous,
-      [currentActiveThreadId]: model,
+      [selectionKey]: model,
     }))
   }, [])
 
   return {
     isModelLoading,
     setIsModelLoading,
-    modelOptions,
+    modelOptions: composerModelOptions,
     setModelOptions,
     selectedModel,
     setModel,

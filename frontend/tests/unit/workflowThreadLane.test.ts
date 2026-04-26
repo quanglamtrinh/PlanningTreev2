@@ -239,6 +239,32 @@ describe('workflowThreadLane', () => {
     })
   })
 
+  it('maps read-only composer intent to read-only turn policy', () => {
+    const lane = resolveWorkflowThreadLane({
+      workflowState: makeWorkflowState({ canSendExecutionMessage: true }),
+      threadTab: 'execution',
+      selectedModel: 'gpt-5.4',
+      projectPath: 'C:/repo',
+    })
+
+    expect(
+      resolveWorkflowSubmitTurnPolicy({
+        lane,
+        requestedPolicy: {
+          accessMode: 'read-only',
+          effort: 'medium',
+        },
+      }),
+    ).toMatchObject({
+      model: 'gpt-5.4',
+      cwd: 'C:/repo',
+      approvalPolicy: 'on-request',
+      sandboxPolicy: { type: 'readOnly' },
+      effort: 'medium',
+      summary: null,
+    })
+  })
+
   it('merges nested reasoning and config without losing base values', () => {
     expect(
       mergeSessionConfig(

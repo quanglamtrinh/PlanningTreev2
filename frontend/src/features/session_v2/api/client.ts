@@ -46,6 +46,12 @@ type ThreadConfigResponse = {
   serviceTier?: string | null
 }
 
+type ThreadRecoverResponse = {
+  thread: SessionThread
+  recovered?: Record<string, unknown>
+  providerThread?: Record<string, unknown>
+}
+
 type ThreadListResponse = {
   data: SessionThread[]
   nextCursor: string | null
@@ -185,6 +191,18 @@ export async function resumeThreadV2(
   await initAuthToken()
   return jsonFetch<ThreadConfigResponse>(
     `/v4/session/threads/${encodeURIComponent(threadId)}/resume`,
+    { method: 'POST' },
+    payload ?? {},
+  )
+}
+
+export async function recoverThreadV2(
+  threadId: string,
+  payload?: Record<string, unknown>,
+): Promise<ThreadRecoverResponse> {
+  await initAuthToken()
+  return jsonFetch<ThreadRecoverResponse>(
+    `/v4/session/threads/${encodeURIComponent(threadId)}/recover`,
     { method: 'POST' },
     payload ?? {},
   )

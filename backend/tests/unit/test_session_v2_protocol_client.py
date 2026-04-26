@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.session_core_v2.protocol.parity_inventory import (
+    EXPLICITLY_UNSUPPORTED_CLIENT_METHODS,
+    SUPPORTED_CLIENT_METHODS,
+    SUPPORTED_SERVER_NOTIFICATIONS,
+    UNSUPPORTED_SERVER_NOTIFICATIONS,
+)
 from backend.session_core_v2.protocol.client import SessionProtocolClientV2
 
 
@@ -64,7 +70,6 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     client.turn_start(
         "thread-1",
         {
-            "clientActionId": "start-1",
             "input": [{"type": "text", "text": "hello"}],
             "approvalPolicy": "onRequest",
         },
@@ -72,7 +77,6 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     client.turn_steer(
         "thread-1",
         {
-            "clientActionId": "steer-1",
             "expectedTurnId": "turn-1",
             "input": [{"type": "text", "text": "continue"}],
         },
@@ -106,9 +110,10 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     assert transport.requests[9] == ("model/list", {"limit": 50, "includeHidden": False})
     assert transport.requests[10][0] == "turn/start"
     assert transport.requests[10][1]["threadId"] == "thread-1"
-    assert transport.requests[10][1]["clientActionId"] == "start-1"
+    assert "clientActionId" not in transport.requests[10][1]
     assert transport.requests[11][0] == "turn/steer"
     assert transport.requests[11][1]["expectedTurnId"] == "turn-1"
+    assert "clientActionId" not in transport.requests[11][1]
     assert transport.requests[12] == ("turn/interrupt", {"threadId": "thread-1", "turnId": "turn-1"})
     assert transport.server_responses == [(123, {"decision": "accept"})]
     assert transport.server_failures == [(124, {"code": -32000, "message": "rejected"})]
@@ -121,8 +126,7 @@ def test_protocol_client_maps_thread_inject_items() -> None:
     client.thread_inject_items(
         "thread-1",
         {
-            "clientActionId": "inject-1",
-            "items": [{"id": "context-1", "type": "systemMessage", "text": "context"}],
+            "items": [{"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "context"}]}],
         },
     )
 
@@ -131,11 +135,35 @@ def test_protocol_client_maps_thread_inject_items() -> None:
             "thread/inject_items",
             {
                 "threadId": "thread-1",
-                "clientActionId": "inject-1",
-                "items": [{"id": "context-1", "type": "systemMessage", "text": "context"}],
+                "items": [{"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "context"}]}],
             },
         )
     ]
+
+
+def test_protocol_parity_inventory_is_disjoint_and_matches_adapter_methods() -> None:
+    assert not set(SUPPORTED_CLIENT_METHODS) & set(EXPLICITLY_UNSUPPORTED_CLIENT_METHODS)
+    assert not set(SUPPORTED_SERVER_NOTIFICATIONS) & set(UNSUPPORTED_SERVER_NOTIFICATIONS)
+
+    transport = _FakeTransport()
+    client = SessionProtocolClientV2(transport)  # type: ignore[arg-type]
+    client.initialize({})
+    client.thread_start({})
+    client.thread_resume("thread-1", {})
+    client.thread_fork("thread-1", {})
+    client.thread_list({})
+    client.thread_loaded_list({})
+    client.thread_read("thread-1", include_turns=False)
+    client.thread_turns_list("thread-1", {})
+    client.thread_unsubscribe("thread-1")
+    client.thread_inject_items("thread-1", {"items": [{"type": "other"}]})
+    client.model_list({})
+    client.turn_start("thread-1", {"input": [{"type": "text", "text": "hi"}]})
+    client.turn_steer("thread-1", {"expectedTurnId": "turn-1", "input": [{"type": "text", "text": "continue"}]})
+    client.turn_interrupt("thread-1", "turn-1")
+
+    emitted_methods = tuple(method for method, _ in transport.requests)
+    assert emitted_methods == SUPPORTED_CLIENT_METHODS
 
 
 def test_protocol_client_wires_server_request_handler() -> None:
