@@ -347,6 +347,7 @@ describe('sessionRuntimeController', () => {
       type: 'turn.start',
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'run tests' }],
+      clientActionId: 'action-1',
       policy: {
         model: 'gpt-5.2',
         approvalPolicy: 'never',
@@ -357,6 +358,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.startTurn).toHaveBeenCalledWith(
       'thread-1',
       expect.objectContaining({
+        clientActionId: 'action-1',
         input: [{ type: 'text', text: 'run tests' }],
         model: 'gpt-5.2',
         approvalPolicy: 'never',
@@ -632,7 +634,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.interruptTurn).toHaveBeenCalledWith(
       'thread-1',
       'turn-1',
-      {},
+      expect.objectContaining({ clientActionId: expect.any(String) }),
     )
   })
 })

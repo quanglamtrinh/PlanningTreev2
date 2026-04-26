@@ -4,22 +4,18 @@ Status: Normative
 
 ## Scope
 
-Defines idempotency rules that remain in PlanningTree after adopting Codex
-app-server semantics below `threadId`.
+Defines idempotency rules for mutating Session Core V2 actions.
 
 ## Keys
 
-1. `resolutionKey` (required):
+1. `clientActionId` (required):
+   - `turn/start`
+   - `turn/steer`
+   - `turn/interrupt`
+   - `thread/inject_items`
+2. `resolutionKey` (required):
    - `requests/{requestId}/resolve`
    - `requests/{requestId}/reject`
-2. Workflow `idempotencyKey` (required by workflow APIs):
-   - `projectId + nodeId + role -> threadId` binding creation/adoption
-   - workflow business mutations
-   - workflow context refresh/rebase decisions
-
-`turn/start`, `turn/steer`, `turn/interrupt`, and `thread/inject_items` do not
-accept PlanningTree `clientActionId` fields. Retries at those methods follow
-Codex app-server behavior.
 
 ## Deterministic behaviors
 

@@ -165,6 +165,7 @@ class ThreadForkRequest(ThreadConfigOverrides):
 
 class TurnStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    clientActionId: str = Field(min_length=1)
     input: list[dict[str, Any]]
     model: str | None = None
     cwd: str | None = None
@@ -180,17 +181,19 @@ class TurnStartRequest(BaseModel):
 
 class TurnSteerRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    clientActionId: str = Field(min_length=1)
     expectedTurnId: str = Field(min_length=1)
     input: list[dict[str, Any]]
 
 
 class TurnInterruptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    pass
+    clientActionId: str = Field(min_length=1)
 
 
 class InjectItemsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    clientActionId: str = Field(min_length=1)
     items: list[dict[str, Any]] = Field(min_length=1)
 
 

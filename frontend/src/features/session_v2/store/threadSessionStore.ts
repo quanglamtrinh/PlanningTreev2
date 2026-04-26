@@ -72,21 +72,10 @@ function normalizeItemKindValue(
   explicitKind: unknown,
   payload: Record<string, unknown>,
 ): { kind: string; normalizedKind: ItemKind | null } {
-  const payloadType = toNonEmptyString(payload.type)
-  if (!explicitKind && payloadType === 'message') {
-    const role = toNonEmptyString(payload.role)
-    if (role === 'user') {
-      return { kind: 'message', normalizedKind: 'userMessage' }
-    }
-    if (role === 'assistant') {
-      return { kind: 'message', normalizedKind: 'agentMessage' }
-    }
-    return { kind: 'message', normalizedKind: null }
-  }
   const rawKind =
     toNonEmptyString(explicitKind) ??
     toNonEmptyString(payload.kind) ??
-    payloadType ??
+    toNonEmptyString(payload.type) ??
     'unknown'
   const normalizedKind =
     (isItemKind(explicitKind) ? explicitKind : null) ??

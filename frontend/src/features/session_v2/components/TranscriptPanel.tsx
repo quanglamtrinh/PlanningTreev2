@@ -438,7 +438,7 @@ function extractUserContent(content: unknown): string {
       continue
     }
     const type = normalizeText(entry.type)
-    if (type === 'text' || type === 'input_text' || type === 'output_text') {
+    if (type === 'text') {
       const text = normalizeText(entry.text)
       if (text) {
         rows.push(text)
@@ -446,7 +446,7 @@ function extractUserContent(content: unknown): string {
       continue
     }
     if (type === 'image') {
-      const imageUrl = normalizeText(entry.imageUrl ?? entry.image_url)
+      const imageUrl = normalizeText(entry.imageUrl)
       if (imageUrl) {
         rows.push(`[Image] ${imageUrl}`)
       }
@@ -501,10 +501,6 @@ function extractFileChanges(payload: Record<string, unknown>): string {
 function formatPayloadFallback(payload: Record<string, unknown>): string {
   const json = JSON.stringify(payload, null, 2)
   return json === '{}' ? '' : json
-}
-
-function extractContentText(record: Record<string, unknown>): string {
-  return Array.isArray(record.content) ? extractUserContent(record.content) : ''
 }
 
 function renderItemText(item: SessionItem): string {
@@ -599,7 +595,7 @@ function isInternalWorkflowItem(item: SessionItem): boolean {
   if (metadata.workflowInternal === true) {
     return true
   }
-  const rawItem = isRecord(item.rawItem) ? (item.rawItem as Record<string, unknown>) : {}
+  const rawItem = isRecord(item.rawItem) ? item.rawItem : {}
   const rawMetadata = isRecord(rawItem.metadata) ? rawItem.metadata : {}
   return rawMetadata.workflowInternal === true
 }
@@ -610,7 +606,7 @@ function isWorkflowContextItem(item: SessionItem): boolean {
   if (metadata.workflowContext === true) {
     return true
   }
-  const rawItem = isRecord(item.rawItem) ? (item.rawItem as Record<string, unknown>) : {}
+  const rawItem = isRecord(item.rawItem) ? item.rawItem : {}
   const rawMetadata = isRecord(rawItem.metadata) ? rawItem.metadata : {}
   return rawMetadata.workflowContext === true
 }
@@ -621,7 +617,7 @@ function workflowContextMetadata(item: SessionItem): Record<string, unknown> {
   if (metadata.workflowContext === true) {
     return metadata
   }
-  const rawItem = isRecord(item.rawItem) ? (item.rawItem as Record<string, unknown>) : {}
+  const rawItem = isRecord(item.rawItem) ? item.rawItem : {}
   const rawMetadata = isRecord(rawItem.metadata) ? rawItem.metadata : {}
   return rawMetadata
 }
@@ -648,12 +644,8 @@ function workflowContextPayload(item: SessionItem): Record<string, unknown> | nu
 
 function planningContextPayloadFromText(item: SessionItem): Record<string, unknown> | null {
   const payload = isRecord(item.payload) ? item.payload : {}
-  const rawItem = isRecord(item.rawItem) ? (item.rawItem as Record<string, unknown>) : {}
-  const text =
-    normalizeText(payload.text) ||
-    normalizeText(rawItem.text) ||
-    extractContentText(payload) ||
-    extractContentText(rawItem)
+  const rawItem = isRecord(item.rawItem) ? item.rawItem : {}
+  const text = normalizeText(payload.text) || normalizeText(rawItem.text)
   if (!text) {
     return null
   }

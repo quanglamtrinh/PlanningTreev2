@@ -106,8 +106,7 @@ Implement the Session Core capabilities that Workflow Core V2 needs:
 - Add manager support in `backend/session_core_v2/connection/manager.py`.
 - Replace the current `/v4/session/threads/{threadId}/inject-items` stub with a
   real implementation or expose an internal manager method used by workflow V2.
-- Keep inject operations Codex-compatible; workflow-owned idempotency decides
-  when context is injected.
+- Add idempotency for inject operations.
 - Confirm existing `turn/start` `outputSchema` support is sufficient for audit
   runs.
 - Add `review/start` protocol support only if the V2 audit path chooses that

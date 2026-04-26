@@ -23,8 +23,8 @@ Phase 1 skeleton:
 Session prerequisite gate:
 
 - `backend/session_core_v2/protocol/client.py` exposes `thread/inject_items`.
-- `backend/session_core_v2/connection/manager.py` forwards Codex-compatible
-  inject payloads without thread-runtime idempotency.
+- `backend/session_core_v2/connection/manager.py` supports inject with
+  idempotency.
 - `/v4/session/threads/{threadId}/inject-items` is implemented or an equivalent
   internal method exists for Workflow V2.
 - Session Core V2 route code remains workflow-business-free.
@@ -93,7 +93,7 @@ Backend:
 - Integration tests for V4 workflow state, ensure thread, and each migrated
   mutation.
 - Adapter tests proving V3 routes call V2 orchestrator behavior.
-- Session Core V2 tests for Codex-compatible `thread/inject_items` payloads.
+- Session Core V2 tests for `thread/inject_items` and idempotency.
 
 Frontend:
 

@@ -50,7 +50,7 @@ function buildWorkflowContextItem(
   const now = Date.now()
   return {
     id: `canonical-workflow-context-${role}-${packet.contextPacketHash}`,
-    threadId: `workflow-context:${role}`,
+    threadId: `workflow-context:${packet.projectId}:${packet.nodeId}:${role}`,
     turnId: `canonical-workflow-context-${role}-turn`,
     kind: 'systemMessage',
     normalizedKind: null,

@@ -696,6 +696,7 @@ export function createSessionRuntimeController(
         threadId: activeThreadId,
         turnId: runtime.activeRunningTurn.id,
         input: payload.input,
+        clientActionId: createSessionActionId(),
       }
     }
 
@@ -704,6 +705,7 @@ export function createSessionRuntimeController(
       threadId: activeThreadId,
       input: payload.input,
       policy: resolveTurnStartPolicy(policy, payload, runtime.selectedModel),
+      clientActionId: createSessionActionId(),
     }
   }
 
@@ -718,6 +720,7 @@ export function createSessionRuntimeController(
       type: 'turn.interrupt',
       threadId: activeThreadId,
       turnId: activeRunningTurn.id,
+      clientActionId: createSessionActionId(),
     }
   }
 
@@ -736,6 +739,7 @@ export function createSessionRuntimeController(
     delete policyWithoutModel.model
     const request: TurnStartRequestV4 = {
       ...policyWithoutModel,
+      clientActionId: action.clientActionId,
       input: action.input,
     }
     if (model) {
@@ -753,6 +757,7 @@ export function createSessionRuntimeController(
     action: Extract<SessionInputAction, { type: 'turn.steer' }>,
   ): Promise<void> => {
     const result = await api.steerTurn(action.threadId, action.turnId, {
+      clientActionId: action.clientActionId,
       expectedTurnId: action.turnId,
       input: action.input,
     })
@@ -765,7 +770,9 @@ export function createSessionRuntimeController(
   const interruptTurnFromAction = async (
     action: Extract<SessionInputAction, { type: 'turn.interrupt' }>,
   ): Promise<void> => {
-    await api.interruptTurn(action.threadId, action.turnId, {})
+    await api.interruptTurn(action.threadId, action.turnId, {
+      clientActionId: action.clientActionId,
+    })
   }
 
   const resolveRequestFromAction = async (

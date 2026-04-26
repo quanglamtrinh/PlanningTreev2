@@ -266,6 +266,7 @@ class SessionManagerV2:
 
     def thread_inject_items(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_initialized()
+        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
         items = payload.get("items")
         if not isinstance(items, list) or not items:
             raise SessionCoreError(
@@ -282,12 +283,28 @@ class SessionManagerV2:
                 details={"field": "items"},
             )
 
-        rpc_payload = dict(payload)
-        # Codex app-server v2 thread/inject_items accepts only threadId + raw Responses API items.
-        rpc_payload.pop("clientActionId", None)
+        idempotency_payload = {"threadId": thread_id, **payload}
+        idempotent = self._runtime_store.resolve_idempotent_result(
+            action_type="thread/inject_items",
+            key=client_action_id,
+            payload=idempotency_payload,
+        )
+        if idempotent is not None:
+            logger.info(
+                "session_core_v2 thread/inject_items idempotent replay",
+                extra={
+                    "threadId": thread_id,
+                    "turnId": None,
+                    "clientActionId": client_action_id,
+                    "eventSeq": None,
+                    "errorCode": None,
+                },
+            )
+            return idempotent
+
         accepted_payload = self._thread_service.thread_inject_items(
             thread_id=thread_id,
-            params=rpc_payload,
+            params=dict(payload),
         )
         replayable_context_items = 0
         for index, raw_item in enumerate(items):
@@ -299,6 +316,7 @@ class SessionManagerV2:
             replayable_context_items += 1
             context_turn_id = self._resolve_context_turn_id(
                 thread_id=thread_id,
+                client_action_id=client_action_id,
                 item=raw_item,
                 index=index,
             )
@@ -327,12 +345,19 @@ class SessionManagerV2:
                 params={"turn": api_turn},
                 thread_id_override=thread_id,
             )
+        self._runtime_store.record_idempotent_result(
+            action_type="thread/inject_items",
+            key=client_action_id,
+            payload=idempotency_payload,
+            response=accepted_payload,
+            thread_id=thread_id,
+        )
         logger.info(
             "session_core_v2 thread/inject_items accepted",
             extra={
                 "threadId": thread_id,
                 "turnId": None,
-                "clientActionId": None,
+                "clientActionId": client_action_id,
                 "eventSeq": None,
                 "contextItemsAppended": replayable_context_items,
                 "errorCode": None,
@@ -360,6 +385,7 @@ class SessionManagerV2:
     # ------------------------------------------------------------------
     def turn_start(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_initialized()
+        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
         input_payload = payload.get("input")
         if not isinstance(input_payload, list):
             raise SessionCoreError(
@@ -368,6 +394,24 @@ class SessionManagerV2:
                 status_code=400,
                 details={"field": "input"},
             )
+
+        idempotent = self._runtime_store.resolve_idempotent_result(
+            action_type="turn/start",
+            key=client_action_id,
+            payload={"threadId": thread_id, **payload},
+        )
+        if idempotent is not None:
+            logger.info(
+                "session_core_v2 turn/start idempotent replay",
+                extra={
+                    "threadId": thread_id,
+                    "turnId": (idempotent.get("turn") or {}).get("id") if isinstance(idempotent.get("turn"), dict) else None,
+                    "clientActionId": client_action_id,
+                    "eventSeq": None,
+                    "errorCode": None,
+                },
+            )
+            return idempotent
 
         active_turn = self._runtime_store.get_active_turn(thread_id=thread_id)
         if active_turn is not None and str(active_turn.get("status")) not in _TERMINAL_TURN_STATUSES:
@@ -390,6 +434,7 @@ class SessionManagerV2:
                 status_code=502,
                 details={
                     "threadId": thread_id,
+                    "clientActionId": client_action_id,
                     "providerMethod": "turn/start",
                 },
             )
@@ -408,12 +453,20 @@ class SessionManagerV2:
             turn_payload = {"turn": self._to_api_turn(existing_turn)}
             if isinstance(turn_metadata, dict) and turn_metadata:
                 self._append_turn_metadata_persisted(thread_id=thread_id, turn_id=turn_id, turn=turn_payload["turn"])
+            self._runtime_store.record_idempotent_result(
+                action_type="turn/start",
+                key=client_action_id,
+                payload={"threadId": thread_id, **payload},
+                response=turn_payload,
+                thread_id=thread_id,
+                turn_id=turn_id,
+            )
             logger.info(
                 "session_core_v2 turn/start observed terminal turn before response",
                 extra={
                     "threadId": thread_id,
                     "turnId": turn_id,
-                    "clientActionId": None,
+                    "clientActionId": client_action_id,
                     "eventSeq": None,
                     "eventId": None,
                     "errorCode": None,
@@ -454,12 +507,20 @@ class SessionManagerV2:
                 turn_id=turn_id,
                 turn=turn_payload["turn"],
             )
+        self._runtime_store.record_idempotent_result(
+            action_type="turn/start",
+            key=client_action_id,
+            payload={"threadId": thread_id, **payload},
+            response=turn_payload,
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
         logger.info(
             "session_core_v2 turn/start accepted",
             extra={
                 "threadId": thread_id,
                 "turnId": turn_id,
-                "clientActionId": None,
+                "clientActionId": client_action_id,
                 "eventSeq": turn_started_event.get("eventSeq"),
                 "eventId": turn_started_event.get("eventId"),
                 "errorCode": None,
@@ -469,6 +530,7 @@ class SessionManagerV2:
 
     def turn_steer(self, *, thread_id: str, path_turn_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_initialized()
+        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
         expected_turn_id = self._require_non_empty(payload.get("expectedTurnId"), "expectedTurnId")
         input_payload = payload.get("input")
         if not isinstance(input_payload, list):
@@ -478,6 +540,24 @@ class SessionManagerV2:
                 status_code=400,
                 details={"field": "input"},
             )
+
+        idempotent = self._runtime_store.resolve_idempotent_result(
+            action_type="turn/steer",
+            key=client_action_id,
+            payload={"threadId": thread_id, "pathTurnId": path_turn_id, **payload},
+        )
+        if idempotent is not None:
+            logger.info(
+                "session_core_v2 turn/steer idempotent replay",
+                extra={
+                    "threadId": thread_id,
+                    "turnId": path_turn_id,
+                    "clientActionId": client_action_id,
+                    "eventSeq": None,
+                    "errorCode": None,
+                },
+            )
+            return idempotent
 
         active_turn = self._runtime_store.get_active_turn(thread_id=thread_id)
         if active_turn is None:
@@ -527,12 +607,20 @@ class SessionManagerV2:
             last_codex_status="inProgress",
         )
         turn_payload = {"turn": self._to_api_turn(turn)}
+        self._runtime_store.record_idempotent_result(
+            action_type="turn/steer",
+            key=client_action_id,
+            payload={"threadId": thread_id, "pathTurnId": path_turn_id, **payload},
+            response=turn_payload,
+            thread_id=thread_id,
+            turn_id=active_turn_id,
+        )
         logger.info(
             "session_core_v2 turn/steer accepted",
             extra={
                 "threadId": thread_id,
                 "turnId": active_turn_id,
-                "clientActionId": None,
+                "clientActionId": client_action_id,
                 "eventSeq": None,
                 "errorCode": None,
             },
@@ -541,7 +629,25 @@ class SessionManagerV2:
 
     def turn_interrupt(self, *, thread_id: str, turn_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_initialized()
-        del payload
+        client_action_id = self._require_non_empty(payload.get("clientActionId"), "clientActionId")
+
+        idempotent = self._runtime_store.resolve_idempotent_result(
+            action_type="turn/interrupt",
+            key=client_action_id,
+            payload={"threadId": thread_id, "turnId": turn_id, **payload},
+        )
+        if idempotent is not None:
+            logger.info(
+                "session_core_v2 turn/interrupt idempotent replay",
+                extra={
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "clientActionId": client_action_id,
+                    "eventSeq": None,
+                    "errorCode": None,
+                },
+            )
+            return idempotent
 
         turn = self._runtime_store.get_turn(thread_id=thread_id, turn_id=turn_id)
         if turn is None:
@@ -585,12 +691,20 @@ class SessionManagerV2:
             last_codex_status="interrupted",
         )
         response = {"status": "accepted"}
+        self._runtime_store.record_idempotent_result(
+            action_type="turn/interrupt",
+            key=client_action_id,
+            payload={"threadId": thread_id, "turnId": turn_id, **payload},
+            response=response,
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
         logger.info(
             "session_core_v2 turn/interrupt accepted",
             extra={
                 "threadId": thread_id,
                 "turnId": turn_id,
-                "clientActionId": None,
+                "clientActionId": client_action_id,
                 "eventSeq": None,
                 "errorCode": None,
             },
@@ -1154,7 +1268,7 @@ class SessionManagerV2:
                 {
                     "type": "event_msg",
                     "event": {
-                        "method": "thread/started",
+                        "method": "thread/created",
                         "threadId": thread_id,
                         "turnId": None,
                         "eventId": self._event_id_from_params(response),
@@ -1488,15 +1602,13 @@ class SessionManagerV2:
     def _resolve_context_turn_id(
         *,
         thread_id: str,
+        client_action_id: str,
         item: dict[str, Any],
         index: int,
     ) -> str:
         explicit_turn_id = str(item.get("turnId") or "").strip()
         if explicit_turn_id:
             return explicit_turn_id
-        metadata = SessionManagerV2._extract_item_metadata(item)
-        context_hash = str(metadata.get("contextPacketHash") or "").strip().replace(":", "-")
-        role = str(metadata.get("role") or "").strip() or "workflow"
-        suffix = context_hash or f"ctx-item-{index + 1}"
-        # Keep synthetic context turns deterministic without adding non-Codex idempotency fields.
-        return f"ctx-{thread_id}-{role}-{suffix}"
+        item_id = str(item.get("id") or "").strip() or f"ctx-item-{index + 1}"
+        # Keep turn ids deterministic to preserve replay/idempotency behavior.
+        return f"ctx-{thread_id}-{client_action_id}-{item_id}"
