@@ -18,7 +18,7 @@ import {
   steerTurnV2,
   type SessionModelEntryV2,
 } from '../api/client'
-import { type ComposerSubmitPayload } from '../components/ComposerPane'
+import type { ComposerRequestedPolicy, ComposerSubmitPayload } from '../components/ComposerPane'
 import type {
   PendingServerRequest,
   SessionError,
@@ -218,13 +218,45 @@ function resolveTurnStartPolicy(
   payload: ComposerSubmitPayload,
   selectedModel: string | null,
 ): TurnExecutionPolicy | undefined {
-  const nextPolicy: TurnExecutionPolicy = { ...(policy ?? {}) }
+  const derivedPolicy = deriveTurnPolicyFromRequestedPolicy(payload.requestedPolicy)
+  const nextPolicy: TurnExecutionPolicy = {
+    ...derivedPolicy,
+    ...(policy ?? {}),
+  }
   delete nextPolicy.model
   const model = resolveTurnModel(policy, payload, selectedModel)
   if (model) {
     nextPolicy.model = model
   }
   return Object.keys(nextPolicy).length > 0 ? nextPolicy : undefined
+}
+
+function deriveTurnPolicyFromRequestedPolicy(
+  requestedPolicy: ComposerRequestedPolicy | null | undefined,
+): TurnExecutionPolicy {
+  if (!requestedPolicy) {
+    return {}
+  }
+
+  const nextPolicy: TurnExecutionPolicy = {}
+  if (requestedPolicy.effort === 'extra-high') {
+    nextPolicy.effort = 'xhigh'
+  } else if (requestedPolicy.effort) {
+    nextPolicy.effort = requestedPolicy.effort
+  }
+
+  if (requestedPolicy.accessMode === 'full-access') {
+    nextPolicy.approvalPolicy = 'never'
+    nextPolicy.sandboxPolicy = { type: 'dangerFullAccess' }
+  } else if (requestedPolicy.accessMode === 'default-permissions') {
+    nextPolicy.approvalPolicy = 'on-request'
+    nextPolicy.sandboxPolicy = { type: 'workspaceWrite' }
+  } else if (requestedPolicy.accessMode === 'read-only') {
+    nextPolicy.approvalPolicy = 'on-request'
+    nextPolicy.sandboxPolicy = { type: 'readOnly' }
+  }
+
+  return nextPolicy
 }
 
 function assertNever(value: never): never {
@@ -696,7 +728,6 @@ export function createSessionRuntimeController(
         threadId: activeThreadId,
         turnId: runtime.activeRunningTurn.id,
         input: payload.input,
-        clientActionId: createSessionActionId(),
       }
     }
 
@@ -705,7 +736,6 @@ export function createSessionRuntimeController(
       threadId: activeThreadId,
       input: payload.input,
       policy: resolveTurnStartPolicy(policy, payload, runtime.selectedModel),
-      clientActionId: createSessionActionId(),
     }
   }
 
@@ -720,7 +750,6 @@ export function createSessionRuntimeController(
       type: 'turn.interrupt',
       threadId: activeThreadId,
       turnId: activeRunningTurn.id,
-      clientActionId: createSessionActionId(),
     }
   }
 
@@ -739,7 +768,6 @@ export function createSessionRuntimeController(
     delete policyWithoutModel.model
     const request: TurnStartRequestV4 = {
       ...policyWithoutModel,
-      clientActionId: action.clientActionId,
       input: action.input,
     }
     if (model) {
@@ -757,7 +785,6 @@ export function createSessionRuntimeController(
     action: Extract<SessionInputAction, { type: 'turn.steer' }>,
   ): Promise<void> => {
     const result = await api.steerTurn(action.threadId, action.turnId, {
-      clientActionId: action.clientActionId,
       expectedTurnId: action.turnId,
       input: action.input,
     })
@@ -770,9 +797,7 @@ export function createSessionRuntimeController(
   const interruptTurnFromAction = async (
     action: Extract<SessionInputAction, { type: 'turn.interrupt' }>,
   ): Promise<void> => {
-    await api.interruptTurn(action.threadId, action.turnId, {
-      clientActionId: action.clientActionId,
-    })
+    await api.interruptTurn(action.threadId, action.turnId, {})
   }
 
   const resolveRequestFromAction = async (

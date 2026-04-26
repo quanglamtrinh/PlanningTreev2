@@ -77,9 +77,7 @@ class WorkflowArtifactTurnRunnerV2:
         sandbox_policy: str | dict[str, Any] | None = None,
         timeout_sec: int | None = None,
     ) -> dict[str, Any]:
-        client_action_id = f"artifact:{artifact_kind}:turn:{uuid4().hex}"
         payload: dict[str, Any] = {
-            "clientActionId": client_action_id,
             "input": [{"type": "text", "text": prompt}],
             "metadata": {
                 "workflowInternal": True,

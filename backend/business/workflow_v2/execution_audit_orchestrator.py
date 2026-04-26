@@ -1050,7 +1050,6 @@ class ExecutionAuditOrchestratorV2:
         model: str | None,
     ) -> str:
         payload: dict[str, Any] = {
-            "clientActionId": client_action_id,
             "input": [{"type": "text", "text": text}],
         }
         if cwd:
@@ -1076,7 +1075,6 @@ class ExecutionAuditOrchestratorV2:
                 status_code=502,
                 details={
                     "threadId": thread_id,
-                    "clientActionId": client_action_id,
                     "providerMethod": "turn/start",
                 },
             )

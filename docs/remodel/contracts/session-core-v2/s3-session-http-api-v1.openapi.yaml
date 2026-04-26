@@ -366,7 +366,7 @@ paths:
   /v4/session/threads/{threadId}/turns/start:
     post:
       tags: [turns]
-      summary: Start a turn (idempotent by clientActionId).
+      summary: Start a turn using Codex app-server parameters.
       operationId: sessionTurnStartV4
       parameters:
         - $ref: "#/components/parameters/ThreadId"
@@ -389,7 +389,7 @@ paths:
   /v4/session/threads/{threadId}/turns/{turnId}/steer:
     post:
       tags: [turns]
-      summary: Steer active turn (idempotent by clientActionId).
+      summary: Steer active turn using Codex app-server parameters.
       operationId: sessionTurnSteerV4
       parameters:
         - $ref: "#/components/parameters/ThreadId"
@@ -413,7 +413,7 @@ paths:
   /v4/session/threads/{threadId}/turns/{turnId}/interrupt:
     post:
       tags: [turns]
-      summary: Interrupt a running turn (idempotent by clientActionId).
+      summary: Interrupt a running turn using Codex app-server parameters.
       operationId: sessionTurnInterruptV4
       parameters:
         - $ref: "#/components/parameters/ThreadId"
@@ -966,11 +966,8 @@ components:
     TurnStartRequest:
       type: object
       additionalProperties: false
-      required: [clientActionId, input]
+      required: [input]
       properties:
-        clientActionId:
-          type: string
-          minLength: 1
         input:
           type: array
           items:
@@ -1006,11 +1003,8 @@ components:
     TurnSteerRequest:
       type: object
       additionalProperties: false
-      required: [clientActionId, expectedTurnId, input]
+      required: [expectedTurnId, input]
       properties:
-        clientActionId:
-          type: string
-          minLength: 1
         expectedTurnId:
           type: string
           minLength: 1
@@ -1022,19 +1016,12 @@ components:
     TurnInterruptRequest:
       type: object
       additionalProperties: false
-      required: [clientActionId]
-      properties:
-        clientActionId:
-          type: string
-          minLength: 1
+      properties: {}
     InjectItemsRequest:
       type: object
       additionalProperties: false
-      required: [clientActionId, items]
+      required: [items]
       properties:
-        clientActionId:
-          type: string
-          minLength: 1
         items:
           type: array
           items:

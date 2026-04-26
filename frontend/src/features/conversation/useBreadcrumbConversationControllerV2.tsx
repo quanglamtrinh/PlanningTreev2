@@ -50,7 +50,7 @@ function buildWorkflowContextItem(
   const now = Date.now()
   return {
     id: `canonical-workflow-context-${role}-${packet.contextPacketHash}`,
-    threadId: `workflow-context:${packet.projectId}:${packet.nodeId}:${role}`,
+    threadId: `workflow-context:${role}`,
     turnId: `canonical-workflow-context-${role}-turn`,
     kind: 'systemMessage',
     normalizedKind: null,
@@ -516,13 +516,16 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           ? null
           : ('execution' as const)
         : null
-  const workflowModelPolicy = useMemo(
-    () => ({
+  const workflowModelPolicy = useMemo(() => {
+    const normalizedProvider = sessionState.activeThread?.modelProvider?.trim() ?? ''
+    return {
       model: sessionState.selectedModel,
-      modelProvider: sessionState.activeThread?.modelProvider ?? null,
-    }),
-    [sessionState.activeThread?.modelProvider, sessionState.selectedModel],
-  )
+      modelProvider:
+        normalizedProvider.length > 0 && normalizedProvider.toLowerCase() !== 'unknown'
+          ? normalizedProvider
+          : null,
+    }
+  }, [sessionState.activeThread?.modelProvider, sessionState.selectedModel])
 
   useEffect(() => {
     if (

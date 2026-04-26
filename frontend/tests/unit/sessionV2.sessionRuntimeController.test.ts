@@ -320,7 +320,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.spies.markThreadActivity).toHaveBeenCalledWith('thread-1')
   })
 
-  it('starts new turn without deriving execution policy from access mode', async () => {
+  it('starts new turn with execution policy derived from composer access mode', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeTurns = []
     harness.runtimeSnapshot.activeRunningTurn = null
@@ -338,8 +338,8 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.startTurn).toHaveBeenCalledTimes(1)
     const [, request] = harness.api.startTurn.mock.calls[0]
     expect(request.model).toBe('gpt-5')
-    expect(request.approvalPolicy).toBeUndefined()
-    expect(request.sandboxPolicy).toBeUndefined()
+    expect(request.approvalPolicy).toBe('never')
+    expect(request.sandboxPolicy).toEqual({ type: 'dangerFullAccess' })
   })
 
   it('dispatches explicit turn start actions through the unified input pipeline', async () => {
@@ -347,7 +347,6 @@ describe('sessionRuntimeController', () => {
       type: 'turn.start',
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'run tests' }],
-      clientActionId: 'action-1',
       policy: {
         model: 'gpt-5.2',
         approvalPolicy: 'never',
@@ -358,7 +357,6 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.startTurn).toHaveBeenCalledWith(
       'thread-1',
       expect.objectContaining({
-        clientActionId: 'action-1',
         input: [{ type: 'text', text: 'run tests' }],
         model: 'gpt-5.2',
         approvalPolicy: 'never',
@@ -442,6 +440,27 @@ describe('sessionRuntimeController', () => {
         effort: 'high',
       }),
     )
+  })
+
+  it('maps composer extra-high effort to xhigh when no explicit policy provided', async () => {
+    harness.runtimeSnapshot.activeThreadId = 'thread-1'
+    harness.runtimeSnapshot.activeTurns = []
+    harness.runtimeSnapshot.activeRunningTurn = null
+    harness.runtimeSnapshot.selectedModel = 'gpt-5'
+
+    await harness.controller.submit({
+      input: [{ type: 'text', text: 'think deeper' }],
+      text: 'think deeper',
+      requestedPolicy: {
+        accessMode: 'default-permissions',
+        effort: 'extra-high',
+      },
+    })
+
+    const [, request] = harness.api.startTurn.mock.calls[0]
+    expect(request.approvalPolicy).toBe('on-request')
+    expect(request.sandboxPolicy).toEqual({ type: 'workspaceWrite' })
+    expect(request.effort).toBe('xhigh')
   })
 
   it('skips null, undefined, and blank model values before selected model fallback', async () => {
@@ -634,7 +653,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.interruptTurn).toHaveBeenCalledWith(
       'thread-1',
       'turn-1',
-      expect.objectContaining({ clientActionId: expect.any(String) }),
+      {},
     )
   })
 })

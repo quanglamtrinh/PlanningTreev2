@@ -67,6 +67,35 @@ export type ThreadStatus =
   | { type: 'systemError' }
   | { type: 'active'; activeFlags: string[] }
 
+export type CodexContentItem =
+  | { type: 'text' | 'input_text' | 'output_text'; text: string }
+  | { type: 'image'; imageUrl?: string; image_url?: string }
+  | { type: 'localImage'; path: string }
+  | Record<string, unknown>
+
+export type CodexResponseItem =
+  | {
+      type: 'message'
+      role: string
+      content: CodexContentItem[]
+      end_turn?: boolean
+      phase?: string
+      metadata?: Record<string, unknown>
+    }
+  | {
+      type: 'reasoning'
+      summary: unknown[]
+      content?: unknown[]
+      encrypted_content: string | null
+    }
+  | { type: 'function_call'; name: string; namespace?: string; arguments: string; call_id: string }
+  | { type: 'function_call_output'; call_id: string; output: unknown }
+  | { type: 'local_shell_call'; call_id: string | null; status: string; action: Record<string, unknown> }
+  | { type: 'other' }
+  | Record<string, unknown>
+
+export type ThreadItem = CodexResponseItem
+
 export interface SessionItem {
   id: string
   threadId: string
@@ -77,7 +106,7 @@ export interface SessionItem {
   createdAtMs: number
   updatedAtMs: number
   payload: Record<string, unknown>
-  rawItem?: Record<string, unknown>
+  rawItem?: ThreadItem
   rawParams?: Record<string, unknown>
 }
 
@@ -141,22 +170,39 @@ export type SessionNotificationMethod =
   | 'thread/unarchived'
   | 'thread/name/updated'
   | 'thread/tokenUsage/updated'
+  | 'thread/compacted'
   | 'turn/started'
   | 'turn/completed'
   | 'turn/failed'
+  | 'turn/diff/updated'
+  | 'turn/plan/updated'
   | 'task/started'
   | 'task/completed'
   | 'task/failed'
   | 'item/started'
   | 'item/completed'
+  | 'item/autoApprovalReview/started'
+  | 'item/autoApprovalReview/completed'
   | 'item/agentMessage/delta'
   | 'item/plan/delta'
+  | 'item/mcpToolCall/progress'
   | 'item/reasoning/summaryTextDelta'
   | 'item/reasoning/summaryPartAdded'
   | 'item/reasoning/textDelta'
   | 'item/commandExecution/outputDelta'
   | 'item/commandExecution/terminalInteraction'
   | 'item/fileChange/outputDelta'
+  | 'rawResponseItem/completed'
+  | 'hook/started'
+  | 'hook/completed'
+  | 'thread/realtime/started'
+  | 'thread/realtime/itemAdded'
+  | 'thread/realtime/transcript/delta'
+  | 'thread/realtime/transcript/done'
+  | 'thread/realtime/outputAudio/delta'
+  | 'thread/realtime/sdp'
+  | 'thread/realtime/error'
+  | 'thread/realtime/closed'
   | 'serverRequest/created'
   | 'serverRequest/updated'
   | 'serverRequest/resolved'
@@ -189,7 +235,6 @@ export interface ServerRequestEnvelope {
 }
 
 export interface TurnStartRequestV4 {
-  clientActionId: string
   input: Array<Record<string, unknown>>
   model?: string | null
   cwd?: string | null
@@ -218,7 +263,7 @@ export type ThreadCreationPolicy = Partial<{
   ephemeral: boolean | null
 }>
 
-export type TurnExecutionPolicy = Omit<TurnStartRequestV4, 'clientActionId' | 'input'>
+export type TurnExecutionPolicy = Omit<TurnStartRequestV4, 'input'>
 
 export type SessionInputAction =
   | {
@@ -226,20 +271,17 @@ export type SessionInputAction =
       threadId: string
       input: Array<Record<string, unknown>>
       policy?: TurnExecutionPolicy
-      clientActionId: string
     }
   | {
       type: 'turn.steer'
       threadId: string
       turnId: string
       input: Array<Record<string, unknown>>
-      clientActionId: string
     }
   | {
       type: 'turn.interrupt'
       threadId: string
       turnId: string
-      clientActionId: string
     }
   | {
       type: 'request.resolve'
@@ -308,14 +350,11 @@ export function toTurnExecutionPolicy(config: SessionConfig): TurnExecutionPolic
 }
 
 export interface TurnSteerRequestV4 {
-  clientActionId: string
   expectedTurnId: string
   input: Array<Record<string, unknown>>
 }
 
-export interface TurnInterruptRequestV4 {
-  clientActionId: string
-}
+export type TurnInterruptRequestV4 = Record<string, never>
 
 export interface ResolveRequestV4 {
   resolutionKey: string

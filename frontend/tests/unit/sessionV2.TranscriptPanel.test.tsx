@@ -253,6 +253,58 @@ describe('TranscriptPanel', () => {
     expect(container.textContent).not.toContain('<planning_tree_context')
   })
 
+  it('renders workflow context from Codex message response item content', () => {
+    const packet = {
+      kind: 'execution_context',
+      payload: {
+        artifactContext: {
+          ancestorContext: [],
+          currentContext: {
+            node: { node_id: 'child', hierarchical_number: '1.1', title: 'Codex Item Child' },
+            frame: { content: 'Codex item frame content' },
+          },
+        },
+      },
+    }
+    const item: SessionItem = {
+      id: 'workflow-context-codex-message',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'message',
+      normalizedKind: null,
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'message',
+        role: 'developer',
+        content: [
+          {
+            type: 'input_text',
+            text: `<planning_tree_context kind="execution_context">\n${JSON.stringify(packet)}\n</planning_tree_context>`,
+          },
+        ],
+        metadata: {
+          workflowContext: true,
+          packetKind: 'execution_context',
+        },
+      },
+    }
+
+    render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn([item])]}
+        itemsByTurn={{ 'thread-1:turn-1': [item] }}
+      />,
+    )
+
+    expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
+    expandWorkflowContext()
+    expect(screen.getAllByText('1.1 Codex Item Child').length).toBeGreaterThan(0)
+    expect(screen.getByText('Codex item frame content')).toBeInTheDocument()
+  })
+
   it('renders workflow context update payloads from nextContext wrappers', () => {
     const item: SessionItem = {
       id: 'workflow-context-update',
