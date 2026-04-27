@@ -63,6 +63,16 @@ function toErrorMessage(error: unknown): string {
   return String(error)
 }
 
+function clarifyAnswerChanged(
+  left: Pick<ClarifyQuestion, 'selected_option_id' | 'custom_answer'> | undefined,
+  right: Pick<ClarifyQuestion, 'selected_option_id' | 'custom_answer'> | undefined,
+): boolean {
+  return (
+    (left?.selected_option_id ?? null) !== (right?.selected_option_id ?? null) ||
+    (left?.custom_answer ?? '') !== (right?.custom_answer ?? '')
+  )
+}
+
 const pendingTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
 const pendingSaves = new Map<string, Promise<void>>()
 const loadRequestVersions = new Map<string, number>()
@@ -111,10 +121,13 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
     const entry = get().entries[key]
     if (!entry || !entry.hasLoaded || entry.isLoading) return
 
-    // Compute dirty fields by comparing current questions to saved
+    // Compute dirty fields by comparing current questions to saved.
+    // Keep a snapshot so we can preserve any newer edits made while save is in flight.
+    const preSaveQuestions = entry.clarify.questions.map((q) => ({ ...q }))
+    const preSaveByField = new Map(preSaveQuestions.map((q) => [q.field_name, q]))
     const savedByField = new Map(entry.savedQuestions.map((q) => [q.field_name, q]))
     const dirtyUpdates: { field_name: string; selected_option_id?: string | null; custom_answer?: string }[] = []
-    for (const q of entry.clarify.questions) {
+    for (const q of preSaveQuestions) {
       const saved = savedByField.get(q.field_name)
       if (
         !saved ||
@@ -143,12 +156,36 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
       .then((updated) => {
         set((s) => {
           if (!s.entries[key]) return s // entry was invalidated
+          const currentEntry = s.entries[key]
+          const latestByField = new Map(
+            currentEntry.clarify.questions.map((q) => [q.field_name, q]),
+          )
+          const mergedQuestions = updated.questions.map((serverQuestion) => {
+            const latestQuestion = latestByField.get(serverQuestion.field_name)
+            const preSaveQuestion = preSaveByField.get(serverQuestion.field_name)
+            if (!latestQuestion) {
+              return serverQuestion
+            }
+            if (!clarifyAnswerChanged(latestQuestion, preSaveQuestion)) {
+              return serverQuestion
+            }
+            return {
+              ...serverQuestion,
+              selected_option_id: latestQuestion.selected_option_id,
+              custom_answer: latestQuestion.custom_answer,
+            }
+          })
+          for (const latestQuestion of currentEntry.clarify.questions) {
+            if (!updated.questions.some((q) => q.field_name === latestQuestion.field_name)) {
+              mergedQuestions.push(latestQuestion)
+            }
+          }
           return {
             entries: {
               ...s.entries,
               [key]: {
-                ...s.entries[key],
-                clarify: updated,
+                ...currentEntry,
+                clarify: { ...updated, questions: mergedQuestions },
                 savedQuestions: updated.questions,
                 isSaving: false,
                 saveError: '',
@@ -179,6 +216,10 @@ export const useClarifyStore = create<ClarifyStoreState>((set, get) => {
           if (!s.entries[key]) return s // entry was invalidated
           const current = s.entries[key]
           const rolledBackQuestions = current.clarify.questions.map((q) => {
+            const preSave = preSaveByField.get(q.field_name)
+            if (clarifyAnswerChanged(q, preSave)) {
+              return q
+            }
             const saved = savedByField.get(q.field_name)
             return saved ? { ...saved } : q
           })

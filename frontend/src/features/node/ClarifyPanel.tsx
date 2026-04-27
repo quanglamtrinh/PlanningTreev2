@@ -28,6 +28,10 @@ function optionLabelAlreadyIncludesRecommended(label: string): boolean {
   return /\(\s*Recommended\s*\)/i.test(label)
 }
 
+function isAgentRewrittenQuestion(question: { options: { id: string }[] }): boolean {
+  return question.options.length > 0
+}
+
 function ClarifyCustomInlineTextarea({
   id,
   value,
@@ -89,6 +93,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
   const [genStatus, setGenStatus] = useState<GenJobStatus>('idle')
   const [genError, setGenError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
+  const autoGenerateAttemptRef = useRef<string | null>(null)
 
   const isGenerating = genStatus === 'active'
 
@@ -203,16 +208,25 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
   const isLoading = entry?.isLoading ?? false
   const loadError = entry?.loadError ?? ''
   const saveError = entry?.saveError ?? ''
-  const isSaving = entry?.isSaving ?? false
   const questions = clarify?.questions ?? []
+  const rewrittenQuestions = useMemo(
+    () => questions.filter((q) => isAgentRewrittenQuestion(q)),
+    [questions],
+  )
+  const hasUnrewrittenQuestions =
+    questions.length > 0 && rewrittenQuestions.length !== questions.length
+  const visibleQuestions = hasUnrewrittenQuestions ? rewrittenQuestions : questions
+  const generationRevisionKey = `${projectId}::${node.node_id}::${clarify?.source_frame_revision ?? 0}`
+  const hasQuestionHistory = questions.length > 0 || Boolean(clarify?.updated_at)
+  const generateButtonLabel = hasQuestionHistory ? 'Regenerate Questions' : 'Generate Questions'
 
   const allResolved = useMemo(
     () =>
-      questions.length > 0 &&
-      questions.every(
+      visibleQuestions.length > 0 &&
+      visibleQuestions.every(
         (q) => q.selected_option_id != null || q.custom_answer.trim() !== '',
       ),
-    [questions],
+    [visibleQuestions],
   )
 
   const handleConfirmClarify = useCallback(async () => {
@@ -257,25 +271,75 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
   const detailState = useDetailStateStore((s) => s.entries[key])
   const isAlreadyConfirmed = detailState?.clarify_confirmed ?? false
   const isDisabled = readOnly || isAlreadyConfirmed
+  const optionInteractionDisabled = isDisabled || isConfirming || isGenerating
+
+  useEffect(() => {
+    if (!hasUnrewrittenQuestions || isGenerating || isDisabled) {
+      return
+    }
+    if (autoGenerateAttemptRef.current === generationRevisionKey) {
+      return
+    }
+    autoGenerateAttemptRef.current = generationRevisionKey
+    void handleGenerate()
+  }, [
+    generationRevisionKey,
+    handleGenerate,
+    hasUnrewrittenQuestions,
+    isDisabled,
+    isGenerating,
+  ])
 
   // Exclude already-confirmed state from the no-questions early return so the
   // confirmed UI (disabled questions + "Clarify confirmed." status) always renders
   // regardless of whether the backend cleared the questions array post-confirmation.
-  const noQuestions = hasLoaded && questions.length === 0 && !isAlreadyConfirmed
+  const noQuestions =
+    hasLoaded &&
+    visibleQuestions.length === 0 &&
+    !isAlreadyConfirmed &&
+    !hasUnrewrittenQuestions
 
   // ── Generating state ────────────────────────────────────────
 
   if (isGenerating) {
     return (
       <div className={detailStyles.documentPanel}>
-        <p className={detailStyles.body} data-testid="clarify-generating">
+        <div className={detailStyles.editorGeneratingBody} data-testid="clarify-generating">
           <AgentSpinner words={SPINNER_WORDS_GENERATING} />
-        </p>
+        </div>
       </div>
     )
   }
 
   // ── Loading state ───────────────────────────────────────────
+
+  if (hasUnrewrittenQuestions && !isAlreadyConfirmed) {
+    return (
+      <div className={detailStyles.documentPanel}>
+        {genError ? (
+          <div className={detailStyles.documentErrorPanel} data-testid="generate-error-clarify">
+            <p className={detailStyles.body}>{genError}</p>
+          </div>
+        ) : null}
+        <div className={detailStyles.editorGeneratingBody} data-testid="clarify-awaiting-rewrite">
+          <AgentSpinner words={SPINNER_WORDS_GENERATING} />
+        </div>
+        {!isDisabled ? (
+          <div className={detailStyles.tabConfirmRow}>
+            <button
+              type="button"
+              className={detailStyles.generateButton}
+              data-testid="generate-clarify-button"
+              disabled={isConfirming || isGenerating}
+              onClick={handleGenerate}
+            >
+              {generateButtonLabel}
+            </button>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
 
   if (isLoading && !hasLoaded) {
     return (
@@ -319,6 +383,15 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
           <div className={detailStyles.tabConfirmRow}>
             <button
               type="button"
+              className={detailStyles.generateButton}
+              data-testid="generate-clarify-button"
+              onClick={handleGenerate}
+              disabled={isConfirming || isGenerating}
+            >
+              {generateButtonLabel}
+            </button>
+            <button
+              type="button"
               className={detailStyles.confirmButton}
               data-testid="confirm-clarify"
               onClick={handleConfirmClarify}
@@ -334,7 +407,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
 
   // ── Questions state ─────────────────────────────────────────
 
-  const canConfirm = allResolved && !isConfirming && !isSaving && !isDisabled && !isGenerating
+  const canConfirm = allResolved && !isConfirming && !isDisabled && !isGenerating && !hasUnrewrittenQuestions
 
   return (
     <div className={detailStyles.documentPanel}>
@@ -357,7 +430,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
       ) : null}
 
       <div className={styles.clarifyBody}>
-        {questions.map((q, idx) => (
+        {visibleQuestions.map((q, idx) => (
           <div key={q.field_name}>
             {idx > 0 && <div className={styles.divider} />}
             <div className={styles.question}>
@@ -384,10 +457,9 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
                       className={`${styles.optionBtn} ${q.selected_option_id === opt.id ? styles.optionBtnActive : ''}`}
                       aria-pressed={q.selected_option_id === opt.id}
                       onClick={() => {
-                        const newId = q.selected_option_id === opt.id ? null : opt.id
-                        selectOption(projectId, node.node_id, q.field_name, newId)
+                        selectOption(projectId, node.node_id, q.field_name, opt.id)
                       }}
-                      disabled={isDisabled}
+                      disabled={optionInteractionDisabled}
                     >
                       <span className={styles.optionLetter} aria-hidden="true">
                         {clarifyOptionLetter(oi)}
@@ -407,10 +479,10 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
                           ? styles.optionBtnActive
                           : ''
                       }`}
-                      aria-disabled={isDisabled}
+                      aria-disabled={optionInteractionDisabled}
                       data-testid={`clarify-custom-option-${q.field_name}`}
                       onMouseDown={(e) => {
-                        if (isDisabled) return
+                        if (optionInteractionDisabled) return
                         const t = e.target as HTMLElement
                         if (t.closest('textarea')) return
                         e.preventDefault()
@@ -423,7 +495,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
                       <ClarifyCustomInlineTextarea
                         id={`clarify-custom-${q.field_name}`}
                         value={q.custom_answer}
-                        disabled={isDisabled}
+                        disabled={optionInteractionDisabled}
                         placeholder="Describe in your own words…"
                         ariaLabel={`Custom answer for: ${q.field_name}`}
                         onChange={(text) => updateCustomAnswer(projectId, node.node_id, q.field_name, text)}
@@ -483,7 +555,7 @@ export function ClarifyPanel({ projectId, node, readOnly }: Props) {
               disabled={isConfirming || isGenerating}
               onClick={handleGenerate}
             >
-              Regenerate Questions
+              {generateButtonLabel}
             </button>
             <button
               type="button"
