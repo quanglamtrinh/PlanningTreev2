@@ -22,7 +22,17 @@ _SESSION_EVENT_PREFIXES: tuple[str, ...] = (
     "rawResponseItem/",
     "serverRequest/",
 )
-_SESSION_EVENT_EXPLICIT_METHODS: frozenset[str] = frozenset({"error"})
+_SESSION_EVENT_EXPLICIT_METHODS: frozenset[str] = frozenset(
+    {
+        "error",
+        "warning",
+        "user/message",
+        "user_message",
+        "assistant/message",
+        "assistant_message",
+        "agent/message",
+    }
+)
 _SESSION_TRACE_METHODS: frozenset[str] = frozenset(
     {
         "thread/started",

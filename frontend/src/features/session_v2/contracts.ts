@@ -163,6 +163,12 @@ export interface PendingServerRequest {
 
 export type SessionNotificationMethod =
   | 'error'
+  | 'warning'
+  | 'user/message'
+  | 'user_message'
+  | 'assistant/message'
+  | 'assistant_message'
+  | 'agent/message'
   | 'thread/started'
   | 'thread/status/changed'
   | 'thread/closed'

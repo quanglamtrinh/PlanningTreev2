@@ -1510,6 +1510,93 @@ def test_session_v4_events_stream_replay_format(client: TestClient) -> None:
     assert any(line.startswith("data: ") for line in lines)
 
 
+def test_session_v4_events_stream_replays_legacy_semantic_messages(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    init_response = client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    )
+    assert init_response.status_code == 200
+
+    fake_transport.emit_notification(
+        "assistant/message",
+        {
+            "threadId": "thread-stream-legacy-1",
+            "turnId": "turn-1",
+            "itemId": "msg-1",
+            "text": "streamed semantic text",
+        },
+    )
+
+    manager = client.app.state.session_manager_v2
+    original_read_stream_event = manager.read_stream_event
+    manager.read_stream_event = lambda **_: None
+    try:
+        response = client.get("/v4/session/threads/thread-stream-legacy-1/events?cursor=0")
+    finally:
+        manager.read_stream_event = original_read_stream_event
+
+    assert response.status_code == 200
+    lines = [line for line in response.text.splitlines() if line]
+    assert any(line == "event: assistant/message" for line in lines)
+    data_lines = [line[len("data: ") :] for line in lines if line.startswith("data: ")]
+    payloads = [json.loads(line) for line in data_lines]
+    assert any(
+        payload.get("method") == "assistant/message"
+        and payload.get("params", {}).get("text") == "streamed semantic text"
+        for payload in payloads
+    )
+
+
+def test_session_v4_events_stream_replays_warning_notifications(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+
+    init_response = client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    )
+    assert init_response.status_code == 200
+
+    fake_transport.emit_notification(
+        "warning",
+        {
+            "threadId": "thread-stream-warning-1",
+            "turnId": "turn-1",
+            "message": "token budget nearly exhausted",
+        },
+    )
+
+    manager = client.app.state.session_manager_v2
+    original_read_stream_event = manager.read_stream_event
+    manager.read_stream_event = lambda **_: None
+    try:
+        response = client.get("/v4/session/threads/thread-stream-warning-1/events?cursor=0")
+    finally:
+        manager.read_stream_event = original_read_stream_event
+
+    assert response.status_code == 200
+    lines = [line for line in response.text.splitlines() if line]
+    assert any(line == "event: warning" for line in lines)
+    data_lines = [line[len("data: ") :] for line in lines if line.startswith("data: ")]
+    payloads = [json.loads(line) for line in data_lines]
+    assert any(
+        payload.get("method") == "warning"
+        and payload.get("params", {}).get("message") == "token budget nearly exhausted"
+        for payload in payloads
+    )
+
+
 def test_session_v4_feature_flags_gate_turns_and_events(client: TestClient) -> None:
     client.app.state.session_core_v2_enable_turns = False
     client.app.state.session_core_v2_enable_events = False

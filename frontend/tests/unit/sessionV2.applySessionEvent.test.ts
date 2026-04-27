@@ -36,6 +36,33 @@ function event(partial: Partial<SessionEventEnvelope>): SessionEventEnvelope {
 }
 
 describe('applySessionEvent', () => {
+  it('materializes legacy semantic assistant messages while streaming', () => {
+    const next = applySessionEvent(
+      baseState(),
+      event({
+        eventId: 'thread-1:2',
+        eventSeq: 2,
+        method: 'assistant/message',
+        turnId: 'turn-1',
+        params: { itemId: 'msg-1', text: 'hello while streaming' },
+      }),
+    )
+
+    expect(next.itemsByTurn['thread-1:turn-1']).toEqual([
+      expect.objectContaining({
+        id: 'msg-1',
+        kind: 'message',
+        normalizedKind: 'agentMessage',
+        status: 'inProgress',
+        payload: expect.objectContaining({
+          text: 'hello while streaming',
+          type: 'message',
+          role: 'assistant',
+        }),
+      }),
+    ])
+  })
+
   it('deduplicates older events by eventSeq', () => {
     const initial = applySessionEvent(
       baseState(),
@@ -77,6 +104,50 @@ describe('applySessionEvent', () => {
     expect(withGap.gapDetectedByThread['thread-1']).toBe(true)
     expect(withGap.lastEventSeqByThread['thread-1']).toBe(1)
     expect(withGap.itemsByTurn['thread-1:turn-1']).toBeUndefined()
+  })
+
+  it('accepts warning events between deltas without triggering a false gap', () => {
+    const afterFirstDelta = applySessionEvent(
+      baseState(),
+      event({
+        eventId: 'thread-1:1',
+        eventSeq: 1,
+        method: 'item/agentMessage/delta',
+        turnId: 'turn-1',
+        params: { itemId: 'item-1', delta: 'hello ' },
+      }),
+    )
+    const afterWarning = applySessionEvent(
+      afterFirstDelta,
+      event({
+        eventId: 'thread-1:2',
+        eventSeq: 2,
+        method: 'warning',
+        params: { message: 'slow model response' },
+      }),
+    )
+    const afterSecondDelta = applySessionEvent(
+      afterWarning,
+      event({
+        eventId: 'thread-1:3',
+        eventSeq: 3,
+        method: 'item/agentMessage/delta',
+        turnId: 'turn-1',
+        params: { itemId: 'item-1', delta: 'world' },
+      }),
+    )
+
+    expect(afterSecondDelta.gapDetectedByThread['thread-1']).not.toBe(true)
+    expect(afterSecondDelta.lastEventSeqByThread['thread-1']).toBe(3)
+    expect(afterSecondDelta.itemsByTurn['thread-1:turn-1']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'item-1',
+          normalizedKind: 'agentMessage',
+          status: 'inProgress',
+        }),
+      ]),
+    )
   })
 
   it('does not bump thread ordering timestamp for status-only events', () => {

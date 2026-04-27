@@ -504,6 +504,41 @@ function resolveItemKindFromRecord(itemRecord: Record<string, unknown>): { kind:
   }
 }
 
+function normalizeLegacyMessageItem(
+  threadId: string,
+  turnId: string | null,
+  method: string,
+  params: Record<string, unknown>,
+  fallbackItemId: string,
+): SessionItem | null {
+  const itemId = String(params.itemId ?? params.item_id ?? params.id ?? fallbackItemId).trim()
+  if (!itemId) {
+    return null
+  }
+  const normalizedKind: ItemKind = method === 'user/message' || method === 'user_message' ? 'userMessage' : 'agentMessage'
+  const role = normalizedKind === 'userMessage' ? 'user' : 'assistant'
+  const text = normalizeText(params.text ?? params.delta) || extractContentText(params.content)
+  const payload: Record<string, unknown> = {
+    ...params,
+    type: 'message',
+    role,
+  }
+  if (text) {
+    payload.text = text
+  }
+  return {
+    id: itemId,
+    threadId,
+    turnId,
+    kind: 'message',
+    normalizedKind,
+    status: 'inProgress',
+    createdAtMs: typeof params.createdAtMs === 'number' ? params.createdAtMs : Date.now(),
+    updatedAtMs: Date.now(),
+    payload,
+  }
+}
+
 function normalizeItemFromParams(
   threadId: string,
   turnId: string | null,
@@ -593,6 +628,19 @@ export function applySessionEvent(
   const ensuredThread = ensureThread(state, threadId)
 
   switch (envelope.method) {
+    case 'user/message':
+    case 'user_message':
+    case 'assistant/message':
+    case 'assistant_message':
+    case 'agent/message': {
+      const resolvedTurnId = String(envelope.turnId ?? params.turnId ?? '').trim()
+      const item = normalizeLegacyMessageItem(threadId, resolvedTurnId || null, envelope.method, params, envelope.eventId)
+      if (item) {
+        upsertItem(state, threadId, item.turnId, item, envelope.method)
+        markThreadActivityAt(state, threadId, envelope.occurredAtMs)
+      }
+      break
+    }
     case 'thread/started': {
       const threadPayload = params.thread
       if (threadPayload && typeof threadPayload === 'object') {
@@ -778,6 +826,10 @@ export function applySessionEvent(
     case 'serverRequest/created':
     case 'serverRequest/updated':
     case 'serverRequest/resolved': {
+      markThreadActivityAt(state, threadId, envelope.occurredAtMs)
+      break
+    }
+    case 'warning': {
       markThreadActivityAt(state, threadId, envelope.occurredAtMs)
       break
     }
