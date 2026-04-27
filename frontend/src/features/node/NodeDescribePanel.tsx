@@ -17,6 +17,34 @@ const INFO_TAB_DOCS_PATHS = [
   'workflows/development-rules.md',
 ] as const
 
+type DummyInfoExtension = {
+  id: string
+  name: string
+  description: string
+  badge: string
+}
+
+const INFO_TAB_DUMMY_EXTENSIONS: readonly DummyInfoExtension[] = [
+  {
+    id: 'context-sync',
+    name: 'Context Sync',
+    description: 'Keeps node context, docs, and latest workspace notes aligned before execution.',
+    badge: 'Workspace',
+  },
+  {
+    id: 'risk-scan',
+    name: 'Risk Scan',
+    description: 'Highlights dependency, migration, and rollout risks while planning a task.',
+    badge: 'Review',
+  },
+  {
+    id: 'handoff-pack',
+    name: 'Handoff Pack',
+    description: 'Drafts a compact handoff with open questions, changed files, and next actions.',
+    badge: 'Docs',
+  },
+] as const
+
 /** Maps list row path to project-root path for workspace-text-file API. */
 export function infoTabListPathToWorkspaceRelative(
   variant: 'docs' | 'skills',
@@ -112,6 +140,47 @@ function InfoPathList({
   )
 }
 
+function InfoExtensionList({
+  extensions,
+  enabledExtensionIds,
+  onToggleExtension,
+}: {
+  extensions: readonly DummyInfoExtension[]
+  enabledExtensionIds: ReadonlySet<string>
+  onToggleExtension: (id: string) => void
+}) {
+  return (
+    <ul className={styles.infoExtensionList} data-testid="info-tab-extensions">
+      {extensions.map((extension) => {
+        const enabled = enabledExtensionIds.has(extension.id)
+        return (
+          <li key={extension.id} className={styles.infoExtensionItem}>
+            <div className={styles.infoExtensionCopy}>
+              <div className={styles.infoExtensionTitleRow}>
+                <span className={styles.infoExtensionName}>{extension.name}</span>
+                <span className={styles.infoExtensionBadge}>{extension.badge}</span>
+              </div>
+              <p className={styles.infoExtensionDescription}>{extension.description}</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={enabled}
+              className={enabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
+              onClick={() => onToggleExtension(extension.id)}
+            >
+              <span className={styles.infoExtensionToggleTrack} aria-hidden>
+                <span className={styles.infoExtensionToggleThumb} />
+              </span>
+              <span className={styles.infoExtensionToggleLabel}>{enabled ? 'On' : 'Off'}</span>
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 type Props = {
   node: NodeRecord
   projectId: string
@@ -169,6 +238,9 @@ export function NodeDescribePanel({
     variant: 'docs' | 'skills'
     path: string
   } | null>(null)
+  const [enabledExtensionIds, setEnabledExtensionIds] = useState<ReadonlySet<string>>(
+    () => new Set(['context-sync', 'handoff-pack']),
+  )
 
   const initialSha = displaySha(detailState?.initial_sha)
   const headSha = displaySha(detailState?.head_sha)
@@ -246,9 +318,21 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeExtensionsSection}>
               <h2 className={styles.describeSectionTitle}>Extensions</h2>
-              <p className={styles.changedFilesEmpty} data-testid="info-tab-extensions">
-                No extensions registered for this node.
-              </p>
+              <InfoExtensionList
+                extensions={INFO_TAB_DUMMY_EXTENSIONS}
+                enabledExtensionIds={enabledExtensionIds}
+                onToggleExtension={(extensionId) => {
+                  setEnabledExtensionIds((current) => {
+                    const next = new Set(current)
+                    if (next.has(extensionId)) {
+                      next.delete(extensionId)
+                    } else {
+                      next.add(extensionId)
+                    }
+                    return next
+                  })
+                }}
+              />
             </div>
           </div>
 

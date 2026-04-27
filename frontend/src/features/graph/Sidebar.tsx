@@ -75,12 +75,13 @@ export function Sidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const usageSnapshotRoute = '/usage-snapshot'
+  const extensionsRoute = '/extensions'
   const usageSnapshotLabel = 'Usage Snapshot'
   const usageSnapshotTitle = 'Open Usage Snapshot'
   const isUsageSnapshotRoute = location.pathname === usageSnapshotRoute
+  const isExtensionsRoute = location.pathname === extensionsRoute
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isProjectsPanelExpanded, setIsProjectsPanelExpanded] = useState(true)
-  const [isExtensionsPanelExpanded, setIsExtensionsPanelExpanded] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [isPickerLoading, setIsPickerLoading] = useState(false)
@@ -349,18 +350,31 @@ export function Sidebar() {
         </div>
 
         <div className={styles.extensionsSection}>
-          <SidebarCollapsibleTab
-            label="Extensions"
-            expanded={isExtensionsPanelExpanded}
-            onToggle={() => setIsExtensionsPanelExpanded((v) => !v)}
-            expandLabel="Expand extensions panel"
-            collapseLabel="Collapse extensions panel"
-          />
-          {isExtensionsPanelExpanded ? (
-            <div className={styles.extensionsSectionBody}>
-              <p>No extensions configured yet.</p>
-            </div>
-          ) : null}
+          <div className={`${styles.extensionsNavGroup} ${isExtensionsRoute ? styles.extensionsNavGroupActive : ''}`}>
+            <button
+              type="button"
+              className={styles.extensionsNavButton}
+              onClick={() => navigate(extensionsRoute)}
+              aria-current={isExtensionsRoute ? 'page' : undefined}
+              title="Open extensions page"
+            >
+              <span className={styles.extensionsNavLabel}>Extensions</span>
+              <svg
+                className={styles.extensionsNavChevron}
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 

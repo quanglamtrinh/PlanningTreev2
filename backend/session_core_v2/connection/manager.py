@@ -510,44 +510,13 @@ class SessionManagerV2:
             thread_id=thread_id,
             params=rpc_payload,
         )
-        replayable_context_items = 0
-        for index, raw_item in enumerate(items):
+        workflow_context_items = 0
+        for raw_item in items:
             if not isinstance(raw_item, dict):
                 continue
             metadata = self._extract_item_metadata(raw_item)
-            if metadata.get("workflowContext") is not True:
-                continue
-            replayable_context_items += 1
-            context_turn_id = self._resolve_context_turn_id(
-                thread_id=thread_id,
-                item=raw_item,
-                index=index,
-            )
-            turn = self._runtime_store.create_turn(
-                thread_id=thread_id,
-                turn_id=context_turn_id,
-                status="completed",
-            )
-            api_turn = self._to_api_turn(turn)
-            self._append_turn_started_if_absent_persisted(
-                thread_id=thread_id,
-                turn_id=context_turn_id,
-                turn=api_turn,
-            )
-            item_payload = dict(raw_item)
-            item_payload["turnId"] = context_turn_id
-            item_payload["status"] = "completed"
-            item_payload["metadata"] = {**metadata, "workflowContext": True}
-            self._append_notification_persisted(
-                method="item/completed",
-                params={"item": item_payload},
-                thread_id_override=thread_id,
-            )
-            self._append_notification_persisted(
-                method="turn/completed",
-                params={"turn": api_turn},
-                thread_id_override=thread_id,
-            )
+            if metadata.get("workflowContext") is True:
+                workflow_context_items += 1
         logger.info(
             "session_core_v2 thread/inject_items accepted",
             extra={
@@ -555,7 +524,7 @@ class SessionManagerV2:
                 "turnId": None,
                 "clientActionId": None,
                 "eventSeq": None,
-                "contextItemsAppended": replayable_context_items,
+                "workflowContextItems": workflow_context_items,
                 "errorCode": None,
             },
         )

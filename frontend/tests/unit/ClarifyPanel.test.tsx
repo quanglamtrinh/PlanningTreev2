@@ -129,6 +129,17 @@ const CLARIFY_STATE: ClarifyState = {
   updated_at: null,
 }
 
+const RAW_SEEDED_QUESTION: ClarifyQuestion = {
+  field_name: 'target_platform',
+  question: 'What target_platform should this task use?',
+  why_it_matters: 'Affects implementation choices',
+  current_value: '',
+  options: [],
+  selected_option_id: null,
+  custom_answer: '',
+  allow_custom: false,
+}
+
 function seedStore(questions: ClarifyQuestion[] = TWO_QUESTIONS) {
   useClarifyStore.setState({
     entries: {
@@ -243,6 +254,66 @@ describe('ClarifyPanel', () => {
       expect(apiMock.updateClarify).toHaveBeenCalledWith('p1', 'root', [
         expect.objectContaining({ field_name: 'target_platform', custom_answer: 'web' }),
       ])
+    })
+
+    it('keeps latest option selected when clicking quickly during in-flight autosave', async () => {
+      const firstSave = deferred<ClarifyState>()
+      const secondSave = deferred<ClarifyState>()
+      apiMock.updateClarify
+        .mockImplementationOnce(() => firstSave.promise)
+        .mockImplementationOnce(() => secondSave.promise)
+
+      render(<ClarifyPanel projectId="p1" node={makeNode()} />)
+
+      const webOption = screen.getByRole('button', { name: /Web/i })
+      const mobileOption = screen.getByRole('button', { name: /Mobile/i })
+
+      await act(async () => {
+        fireEvent.click(webOption)
+      })
+      expect(webOption).toHaveAttribute('aria-pressed', 'true')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(900)
+      })
+      expect(apiMock.updateClarify).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        fireEvent.click(mobileOption)
+      })
+      expect(mobileOption).toHaveAttribute('aria-pressed', 'true')
+
+      await act(async () => {
+        firstSave.resolve({
+          ...CLARIFY_STATE,
+          questions: [
+            { ...TWO_QUESTIONS[0], selected_option_id: 'web' },
+            TWO_QUESTIONS[1],
+          ],
+        })
+        await Promise.resolve()
+      })
+
+      // The stale first save response must not overwrite the newer local click.
+      expect(mobileOption).toHaveAttribute('aria-pressed', 'true')
+      expect(webOption).toHaveAttribute('aria-pressed', 'false')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(900)
+      })
+      expect(apiMock.updateClarify).toHaveBeenCalledTimes(2)
+
+      await act(async () => {
+        secondSave.resolve({
+          ...CLARIFY_STATE,
+          questions: [
+            { ...TWO_QUESTIONS[0], selected_option_id: 'mobile' },
+            TWO_QUESTIONS[1],
+          ],
+        })
+        await Promise.resolve()
+      })
+      expect(mobileOption).toHaveAttribute('aria-pressed', 'true')
     })
 
     it('confirmClarify aborts when flush fails — confirm button stays disabled', async () => {
@@ -452,5 +523,65 @@ describe('ClarifyPanel', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('hides raw seeded questions and auto-starts clarify generation', async () => {
+    apiMock.getClarify.mockResolvedValue({
+      ...CLARIFY_STATE,
+      questions: [RAW_SEEDED_QUESTION],
+    })
+    apiMock.generateClarify.mockResolvedValue({
+      status: 'accepted',
+      job_id: 'cgen_1',
+      node_id: 'root',
+    })
+    seedStore([RAW_SEEDED_QUESTION])
+
+    render(<ClarifyPanel projectId="p1" node={makeNode()} />)
+
+    expect(screen.queryByText(RAW_SEEDED_QUESTION.question)).not.toBeInTheDocument()
+    expect(screen.getByTestId('clarify-awaiting-rewrite')).toBeInTheDocument()
+    expect(screen.getByTestId('generate-clarify-button')).toHaveTextContent('Regenerate Questions')
+
+    await waitFor(() => {
+      expect(apiMock.generateClarify).toHaveBeenCalledWith('p1', 'root')
+    })
+  })
+
+  it('keeps selected option active when user clicks the same option again', async () => {
+    seedStore()
+
+    render(<ClarifyPanel projectId="p1" node={makeNode()} />)
+
+    const option = screen.getByRole('button', { name: /Web/i })
+    fireEvent.click(option)
+    expect(option).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(option)
+    expect(option).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('keeps clarify confirm enabled while autosave is in progress', () => {
+    const answeredQuestions = TWO_QUESTIONS.map((q) => ({
+      ...q,
+      selected_option_id: q.options[0]?.id ?? null,
+    }))
+    useClarifyStore.setState({
+      entries: {
+        'p1::root': {
+          clarify: { ...CLARIFY_STATE, questions: answeredQuestions },
+          savedQuestions: answeredQuestions,
+          isLoading: false,
+          isSaving: true,
+          loadError: '',
+          saveError: '',
+          hasLoaded: true,
+        },
+      },
+    })
+
+    render(<ClarifyPanel projectId="p1" node={makeNode()} />)
+
+    expect(screen.getByTestId('confirm-clarify')).not.toBeDisabled()
   })
 })

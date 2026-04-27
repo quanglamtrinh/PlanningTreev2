@@ -169,10 +169,6 @@ class ThreadResumeRequest(ThreadConfigOverrides):
     pass
 
 
-class ThreadRecoverRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
 class ThreadForkRequest(ThreadConfigOverrides):
     pass
 
@@ -275,25 +271,6 @@ def session_thread_resume_v4(
         return _error_response(exc)
     except Exception:
         logger.exception("session_thread_resume_v4 failed")
-        return _unexpected_error_response()
-
-
-@router.post("/v4/session/threads/{threadId}/recover")
-def session_thread_recover_v4(
-    threadId: str,
-    request: Request,
-    payload: ThreadRecoverRequest | None = Body(default=None),
-) -> JSONResponse:
-    try:
-        response = _manager(request).thread_recover(
-            thread_id=threadId,
-            payload=(payload.model_dump(exclude_none=True) if payload else {}),
-        )
-        return JSONResponse(status_code=200, content=_ok(response))
-    except SessionCoreError as exc:
-        return _error_response(exc)
-    except Exception:
-        logger.exception("session_thread_recover_v4 failed")
         return _unexpected_error_response()
 
 

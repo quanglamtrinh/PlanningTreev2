@@ -34,7 +34,7 @@ Phase 1 guard coverage:
 
 Deprecated compatibility endpoint:
 
-- `/v4/session/threads/{threadId}/recover` remains available for explicit manual fallback only and uses a strict request body. It must not accept PlanningTree-only fields or participate in normal render/resync.
+- `/v4/session/threads/{threadId}/recover` has been removed from Session V4. Recovery/backfill remains an internal adapter concern and is not exposed via client-facing HTTP.
 
 ## Phase 2-3 Guard Status
 
@@ -50,7 +50,7 @@ Phase 3 UI behavior:
 
 - `resyncThreadTranscript(threadId, { recoverFromProvider })` kept the option for compatibility, but normal resync hydrated with `thread/read(includeTurns=true)` and reopened the event stream.
 - Breadcrumb V2 tab switch and `visibilitychange` resync no longer pass `recoverFromProvider`.
-- `recoverThreadFromProvider` and `/v4/session/threads/{threadId}/recover` remain deprecated internal fallback surfaces for explicit/manual use only.
+- `recoverThreadFromProvider` and `/v4/session/threads/{threadId}/recover` are removed from client-facing surfaces.
 
 ## Phase 4-5 Guard Status
 
@@ -60,7 +60,7 @@ Phase 4 recover hardening:
 
 - `resyncThreadTranscript(threadId)` no longer accepts `recoverFromProvider`.
 - Session facade/runtime controller no longer expose `recoverThreadFromProvider`.
-- `/v4/session/threads/{threadId}/recover` rejects extra fields, including `projectId`, `nodeId`, `role`, and `idempotencyKey`.
+- `/v4/session/threads/{threadId}/recover` is no longer exposed.
 
 Phase 5 read source:
 

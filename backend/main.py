@@ -16,7 +16,6 @@ from backend.business.workflow_v2.artifact_turn_runner import WorkflowArtifactTu
 from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.execution_audit_orchestrator import ExecutionAuditOrchestratorV2
-from backend.business.workflow_v2.legacy_transcript_migrator import LegacyTranscriptMigratorV2
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.config.api_version import API_PREFIX
@@ -32,7 +31,6 @@ from backend.config.app_config import (
     get_port,
     get_rehearsal_workspace_root,
     get_session_core_v2_event_queue_capacity,
-    get_session_core_v2_legacy_migration_mode,
     get_session_core_v2_protocol_gate_timeout_sec,
     get_session_core_v2_retention_days,
     get_session_core_v2_retention_max_events,
@@ -130,7 +128,6 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     session_core_v2_enable_requests = is_session_core_v2_requests_enabled()
     session_core_v2_protocol_gate_enabled = is_session_core_v2_protocol_gate_enabled()
     session_core_v2_protocol_gate_timeout_sec = get_session_core_v2_protocol_gate_timeout_sec()
-    session_core_v2_legacy_migration_mode = get_session_core_v2_legacy_migration_mode()
     session_core_v2_thread_read_mode = get_session_core_v2_thread_read_mode()
     codex_cmd = get_codex_cmd() or "codex"
     ask_rollout_metrics_service = AskRolloutMetricsService()
@@ -357,53 +354,6 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         spec_generation_service=spec_generation_service,
         split_service=split_service,
     )
-    legacy_transcript_migrator_v2 = LegacyTranscriptMigratorV2(
-        storage=storage,
-        workflow_repository=workflow_state_repository_v2,
-        snapshot_store_v2=storage.thread_snapshot_store_v2,
-        snapshot_store_v3=storage.thread_snapshot_store_v3,
-        runtime_store=session_runtime_store_v2,
-        thread_rollout_recorder=session_thread_rollout_recorder_v2,
-    )
-    legacy_migration_summary: dict[str, object] = {}
-    pending_legacy: list[dict[str, object]] = []
-    if session_core_v2_legacy_migration_mode != "off":
-        legacy_migration_summary = legacy_transcript_migrator_v2.migrate_all()
-        pending_legacy = legacy_transcript_migrator_v2.find_unmigrated_candidates()
-        failed_count = int(legacy_migration_summary.get("failed") or 0)
-        pending_count = len(pending_legacy)
-        migration_log_extra = {
-            "legacyMigrationMode": session_core_v2_legacy_migration_mode,
-            "legacyMigrationCandidates": legacy_migration_summary.get("candidates"),
-            "legacyMigrationMigrated": legacy_migration_summary.get("migrated"),
-            "legacyMigrationSkipped": legacy_migration_summary.get("skipped"),
-            "legacyMigrationFailed": failed_count,
-            "legacyMigrationPending": pending_count,
-        }
-        if session_core_v2_legacy_migration_mode == "enforce":
-            if failed_count > 0:
-                raise RuntimeError(
-                    f"Legacy transcript migration failed for {failed_count} thread(s). "
-                    "Set SESSION_CORE_V2_LEGACY_MIGRATION_MODE=warn/off to boot while investigating."
-                )
-            if pending_count > 0:
-                raise RuntimeError(
-                    f"Legacy transcript migration incomplete: {pending_count} legacy thread(s) remain unmigrated."
-                )
-            logger.info("Workflow V2 legacy transcript migration completed (enforce)", extra=migration_log_extra)
-        else:
-            if failed_count > 0 or pending_count > 0:
-                logger.warning(
-                    "Workflow V2 legacy transcript migration completed with outstanding legacy threads (warn mode)",
-                    extra=migration_log_extra,
-                )
-            else:
-                logger.info("Workflow V2 legacy transcript migration completed (warn mode)", extra=migration_log_extra)
-    else:
-        logger.info(
-            "Workflow V2 legacy transcript migration skipped (off mode)",
-            extra={"legacyMigrationMode": session_core_v2_legacy_migration_mode},
-        )
     session_runtime_store_v2.add_event_observer(execution_audit_orchestrator_v2.handle_session_event)
     execution_audit_workflow_service._workflow_orchestrator_v2 = execution_audit_orchestrator_v2
     project_service._chat_service = chat_service
@@ -501,7 +451,6 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.state.workflow_thread_binding_service_v2 = workflow_thread_binding_service_v2
     app.state.execution_audit_orchestrator_v2 = execution_audit_orchestrator_v2
     app.state.artifact_orchestrator_v2 = artifact_orchestrator_v2
-    app.state.legacy_transcript_migrator_v2 = legacy_transcript_migrator_v2
     app.state.session_runtime_store_v2 = session_runtime_store_v2
     app.state.session_thread_metadata_store_v2 = session_thread_metadata_store_v2
     app.state.session_thread_rollout_recorder_v2 = session_thread_rollout_recorder_v2
@@ -509,7 +458,6 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.state.session_core_v2_enable_turns = session_core_v2_enable_turns
     app.state.session_core_v2_enable_events = session_core_v2_enable_events
     app.state.session_core_v2_enable_requests = session_core_v2_enable_requests
-    app.state.session_core_v2_legacy_migration_mode = session_core_v2_legacy_migration_mode
     app.state.session_core_v2_thread_read_mode = session_core_v2_thread_read_mode
 
     @app.exception_handler(AppError)

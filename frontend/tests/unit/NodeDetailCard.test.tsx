@@ -714,6 +714,9 @@ describe('NodeDetailCard', () => {
       expect(apiMock.confirmFrame).toHaveBeenCalledWith('project-1', 'root')
     })
     await waitFor(() => {
+      expect(apiMock.generateClarify).toHaveBeenCalledWith('project-1', 'root')
+    })
+    await waitFor(() => {
       expect(apiMock.getSnapshot).toHaveBeenCalledWith('project-1')
     })
     expect(confirmBtn).toHaveTextContent('Confirm')
@@ -1369,6 +1372,13 @@ describe('NodeDetailCard', () => {
     await waitFor(() => {
       expect(navigateMock).toHaveBeenCalledWith('/projects/project-1/nodes/root/chat-v2?thread=execution')
     })
+    await waitFor(() => {
+      expect(finishButton).toBeDisabled()
+    })
+    expect(finishButton).toHaveTextContent('Confirm and Finish Task')
+    expect(screen.getByTestId('finish-task-disabled-hint')).toHaveTextContent(
+      'Finish Task was already confirmed for this run.',
+    )
   })
 
   it('does not refetch spec generation status on a stable rerender', async () => {
@@ -1839,6 +1849,7 @@ describe('NodeDetailCard', () => {
     await waitFor(() => {
       expect(apiMock.generateSpec).toHaveBeenCalledWith('project-1', 'root')
     })
+    expect(apiMock.generateClarify).not.toHaveBeenCalled()
 
     expect(await screen.findByDisplayValue('# Generated spec content')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Split', hidden: true })).toBeDisabled()
@@ -1908,7 +1919,7 @@ describe('NodeDetailCard', () => {
     expect(screen.getByTestId('generate-frame-button')).toHaveTextContent('Generate Frame')
   })
 
-  it('calls generateFrame and shows Generating state', async () => {
+  it('calls generateFrame and shows body loading state', async () => {
     apiMock.getNodeDocument.mockResolvedValue({
       node_id: 'root',
       kind: 'frame',
@@ -1941,7 +1952,7 @@ describe('NodeDetailCard', () => {
     fireEvent.click(genBtn)
 
     await waitFor(() => {
-      expect(within(genBtn).getByRole('status', { name: 'Generating' })).toBeInTheDocument()
+      expect(screen.getByTestId('document-generating-frame')).toBeInTheDocument()
     })
     expect(apiMock.generateFrame).toHaveBeenCalledWith('project-1', 'root')
     const actionState = useAskShellActionStore.getState().entries[
@@ -2004,13 +2015,9 @@ describe('NodeDetailCard', () => {
       />,
     )
 
-    // Should show Generating state from recovery
+    // Should show generating state from recovery in the document body
     await waitFor(() => {
-      expect(
-        within(screen.getByTestId('generate-frame-button')).getByRole('status', {
-          name: 'Generating',
-        }),
-      ).toBeInTheDocument()
+      expect(screen.getByTestId('document-generating-frame')).toBeInTheDocument()
     })
     // Confirm should be disabled while generating
     expect(screen.getByTestId('confirm-document-frame')).toBeDisabled()
@@ -2041,17 +2048,15 @@ describe('NodeDetailCard', () => {
     )
 
     await waitFor(() => {
-      expect(
-        within(screen.getByTestId('generate-frame-button')).getByRole('status', {
-          name: 'Generating',
-        }),
-      ).toBeInTheDocument()
+      expect(screen.getByTestId('document-generating-frame')).toBeInTheDocument()
     })
 
     // Confirm button should be disabled
     expect(screen.getByTestId('confirm-document-frame')).toBeDisabled()
     // Generate button should also be disabled
     expect(screen.getByTestId('generate-frame-button')).toBeDisabled()
+    // Editor is replaced by the body spinner while generation is active
+    expect(screen.queryByTestId('mock-codemirror')).not.toBeInTheDocument()
   })
 
   it('aborts generation when flush fails instead of overwriting unsaved content', async () => {
@@ -2134,13 +2139,9 @@ describe('NodeDetailCard', () => {
     const genBtn = await screen.findByTestId('generate-frame-button')
     fireEvent.click(genBtn)
 
-    // Should show "Generating..." (attached to existing job) instead of error
+    // Should attach to the active job and show body spinner instead of an error
     await waitFor(() => {
-      expect(
-        within(screen.getByTestId('generate-frame-button')).getByRole('status', {
-          name: 'Generating',
-        }),
-      ).toBeInTheDocument()
+      expect(screen.getByTestId('document-generating-frame')).toBeInTheDocument()
     })
     // No error banner should be shown
     expect(screen.queryByTestId('generate-error-frame')).not.toBeInTheDocument()

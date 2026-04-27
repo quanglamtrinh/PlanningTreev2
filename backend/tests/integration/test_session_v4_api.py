@@ -674,58 +674,6 @@ def test_session_v4_thread_resume_uses_native_rollout_when_thread_exists(client:
     assert "thread/resume" not in [method for method, _ in fake_transport.requests]
 
 
-def test_session_v4_thread_recover_backfills_provider_turn_into_native_rollout(client: TestClient) -> None:
-    fake_transport = _FakeTransport(
-        responses={
-            "initialize": {"serverInfo": {"version": "1.2.3"}},
-            "thread/read": {
-                "thread": {
-                    "id": "thread-1",
-                    "name": "Provider thread",
-                    "status": {"type": "idle"},
-                    "turns": [
-                        {
-                            "id": "turn-provider-1",
-                            "threadId": "thread-1",
-                            "status": "completed",
-                            "items": [
-                                {
-                                    "id": "item-provider-1",
-                                    "type": "agentMessage",
-                                    "text": "Recovered from provider",
-                                }
-                            ],
-                        }
-                    ],
-                }
-            },
-        },
-    )
-    _install_fake_manager(client, fake_transport)
-
-    assert client.post(
-        "/v4/session/initialize",
-        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
-    ).status_code == 200
-
-    response = client.post("/v4/session/threads/thread-1/recover", json={})
-
-    assert response.status_code == 200, response.json()
-    thread = response.json()["data"]["thread"]
-    assert thread["id"] == "thread-1"
-    assert thread["turns"][0]["id"] == "turn-provider-1"
-    assert thread["turns"][0]["status"] == "completed"
-    assert thread["turns"][0]["items"][0]["text"] == "Recovered from provider"
-    assert ("thread/read", {"threadId": "thread-1", "includeTurns": True}) in fake_transport.requests
-
-    runtime_turn = client.app.state.session_manager_v2.get_runtime_turn(
-        thread_id="thread-1",
-        turn_id="turn-provider-1",
-    )
-    assert runtime_turn["status"] == "completed"
-    assert runtime_turn["items"][0]["text"] == "Recovered from provider"
-
-
 def test_session_v4_turns_list_uses_native_rollout_when_provider_history_unavailable(
     client: TestClient,
 ) -> None:
@@ -787,7 +735,7 @@ def test_session_v4_thread_read_missing_native_rollout_returns_not_found(client:
     assert response.json()["error"]["message"] == "no rollout found for thread id missing-thread"
 
 
-def test_session_v4_thread_recover_rejects_workflow_only_fields(client: TestClient) -> None:
+def test_session_v4_thread_recover_endpoint_not_exposed(client: TestClient) -> None:
     fake_transport = _FakeTransport(responses={"initialize": {"serverInfo": {"version": "1.2.3"}}})
     _install_fake_manager(client, fake_transport)
 
@@ -796,17 +744,8 @@ def test_session_v4_thread_recover_rejects_workflow_only_fields(client: TestClie
         json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
     ).status_code == 200
 
-    response = client.post(
-        "/v4/session/threads/thread-1/recover",
-        json={
-            "projectId": "project-1",
-            "nodeId": "node-1",
-            "role": "execution",
-            "idempotencyKey": "workflow-only",
-        },
-    )
-
-    assert response.status_code == 422
+    response = client.post("/v4/session/threads/thread-1/recover", json={})
+    assert response.status_code in {404, 405}
 
 
 def test_session_v4_thread_read_shadow_mode_returns_native_and_calls_provider(
@@ -1186,10 +1125,6 @@ def test_session_v4_inject_items_uses_codex_payload_without_starting_turn(client
         "content": [{"type": "input_text", "text": "Workflow context"}],
         "metadata": {"workflowContext": True},
     }
-    thread_with_context = _fake_thread("thread-1")
-    thread_with_context["turns"] = [
-        {"id": "context-turn-1", "status": "completed", "items": [injected_item]},
-    ]
     fake_transport = _FakeTransport(
         responses={
             "initialize": {"serverInfo": {"version": "1.2.3"}},
@@ -1232,16 +1167,11 @@ def test_session_v4_inject_items_uses_codex_payload_without_starting_turn(client
     active_turn = runtime_store.get_active_turn(thread_id="thread-1")
     assert active_turn is None
 
-    read_response = client.get("/v4/session/threads/thread-1/read?includeTurns=true")
-    assert read_response.status_code == 200
-    replayed_item = read_response.json()["data"]["thread"]["turns"][0]["items"][0]
-    assert replayed_item["type"] == injected_item["type"]
-    assert replayed_item["content"] == injected_item["content"]
-    assert replayed_item["metadata"] == injected_item["metadata"]
-    assert replayed_item["status"] == "completed"
+    journal = runtime_store.read_thread_journal("thread-1")
+    assert journal == []
 
 
-def test_session_v4_inject_items_workflow_context_is_replayable_and_marked_hidden_metadata(client: TestClient) -> None:
+def test_session_v4_inject_items_workflow_context_is_passthrough_without_synthetic_events(client: TestClient) -> None:
     fake_transport = _FakeTransport(
         responses={
             "initialize": {"serverInfo": {"version": "1.2.3"}},
@@ -1249,7 +1179,7 @@ def test_session_v4_inject_items_workflow_context_is_replayable_and_marked_hidde
             "thread/turns/list": {"data": [], "nextCursor": None},
         }
     )
-    _install_fake_manager(client, fake_transport)
+    _install_fake_manager(client, fake_transport, thread_read_mode="codex")
 
     assert client.post(
         "/v4/session/initialize",
@@ -1276,20 +1206,14 @@ def test_session_v4_inject_items_workflow_context_is_replayable_and_marked_hidde
     runtime_store = client.app.state.session_manager_v2._runtime_store  # noqa: SLF001
     journal = runtime_store.read_thread_journal("thread-1")
     methods = [str(event.get("method") or "") for event in journal]
-    assert "turn/started" in methods
-    assert "item/completed" in methods
-    assert "turn/completed" in methods
-    context_item_events = [event for event in journal if str(event.get("method") or "") == "item/completed"]
-    assert context_item_events
-    context_item = context_item_events[-1]["params"]["item"]
-    assert context_item["metadata"]["workflowContext"] is True
-    assert context_item["metadata"]["role"] == "execution"
-    assert context_item["metadata"]["contextPacketHash"] == "sha256:packet"
+    assert "turn/started" not in methods
+    assert "item/completed" not in methods
+    assert "turn/completed" not in methods
 
     turns_response = client.get("/v4/session/threads/thread-1/turns")
     assert turns_response.status_code == 200
     turns = turns_response.json()["data"]["data"]
-    assert any(str(turn.get("status") or "") == "completed" for turn in turns)
+    assert turns == []
 
 
 def test_session_v4_pending_requests_lists_all_phase3_methods(client: TestClient) -> None:

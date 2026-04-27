@@ -102,9 +102,11 @@ export function NodeDocumentEditor({
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [genStatus, setGenStatus] = useState<FrameGenJobStatus>('idle')
   const [genError, setGenError] = useState<string | null>(null)
+  const [hasGeneratedArtifact, setHasGeneratedArtifact] = useState(false)
   const [viewMode, setViewMode] = useState<'edit' | 'rich'>('edit')
   const pollRef = useRef<ReturnType<typeof globalThis.setInterval> | undefined>(undefined)
   const editorSurfaceRef = useRef<HTMLDivElement>(null)
+  const [isFinishLocked, setIsFinishLocked] = useState(false)
   const isFinishingTask = activeWorkflowMutation === 'start_execution'
   const isFinishActionPending = pendingAction === 'finish' || isFinishingTask
 
@@ -158,6 +160,14 @@ export function NodeDocumentEditor({
     setViewMode('edit')
   }, [kind, node.node_id, projectId])
 
+  useEffect(() => {
+    setIsFinishLocked(false)
+  }, [projectId, node.node_id])
+
+  useEffect(() => {
+    setHasGeneratedArtifact(false)
+  }, [kind, node.node_id, projectId])
+
   const refreshSnapshot = useCallback(async () => {
     const snapshot = await api.getSnapshot(projectId)
     useProjectStore.setState((prev) => ({
@@ -207,6 +217,7 @@ export function NodeDocumentEditor({
             kind === 'spec' ? 'spec' : 'frame',
             'generate',
           )
+          setHasGeneratedArtifact(true)
           invalidateDocument(projectId, node.node_id, kind)
           void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
           void loadDetailState(projectId, node.node_id).catch(() => undefined)
@@ -256,6 +267,8 @@ export function NodeDocumentEditor({
             'generate',
             status.error ?? 'Generation failed',
           )
+        } else if (status.completed_at) {
+          setHasGeneratedArtifact(true)
         }
       })
       .catch(() => {
@@ -274,7 +287,31 @@ export function NodeDocumentEditor({
     startPolling,
   ])
 
-  const handleGenerateFrame = useCallback(async () => {
+  const triggerClarifyGeneration = useCallback(
+    async (activeProjectId: string, activeNodeId: string) => {
+      markActionRunning(activeProjectId, activeNodeId, 'clarify', 'generate')
+      try {
+        await api.generateClarify(activeProjectId, activeNodeId)
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'clarify_generation_not_allowed') {
+          return
+        }
+        markActionFailed(
+          activeProjectId,
+          activeNodeId,
+          'clarify',
+          'generate',
+          error instanceof Error ? error.message : 'Generate clarify failed',
+        )
+      }
+    },
+    [markActionFailed, markActionRunning],
+  )
+
+  const handleGenerateDocument = useCallback(async () => {
+    if (kind !== 'frame' && kind !== 'spec') {
+      return
+    }
     setGenError(null)
     try {
       await flushDocument(projectId, node.node_id, kind)
@@ -284,19 +321,26 @@ export function NodeDocumentEditor({
     }
 
     setGenStatus('active')
-    markActionRunning(projectId, node.node_id, 'frame', 'generate')
+    const artifact = kind === 'spec' ? 'spec' : 'frame'
+    markActionRunning(projectId, node.node_id, artifact, 'generate')
     try {
-      await api.generateFrame(projectId, node.node_id)
+      if (kind === 'spec') {
+        await api.generateSpec(projectId, node.node_id)
+      } else {
+        await api.generateFrame(projectId, node.node_id)
+      }
       startPolling()
     } catch (error) {
-      if (error instanceof ApiError && error.code === 'frame_generation_not_allowed') {
+      const generationNotAllowedCode =
+        kind === 'spec' ? 'spec_generation_not_allowed' : 'frame_generation_not_allowed'
+      if (error instanceof ApiError && error.code === generationNotAllowedCode) {
         startPolling()
         return
       }
       setGenStatus('failed')
       const message = error instanceof Error ? error.message : 'Generate failed'
       setGenError(message)
-      markActionFailed(projectId, node.node_id, 'frame', 'generate', message)
+      markActionFailed(projectId, node.node_id, artifact, 'generate', message)
     }
   }, [
     flushDocument,
@@ -308,13 +352,17 @@ export function NodeDocumentEditor({
     startPolling,
   ])
 
-  const handleConfirmFrame = useCallback(async () => {
+  const handleConfirmFrame = useCallback(async (options?: { autoGenerateClarify?: boolean }) => {
+    const shouldAutoGenerateClarify = options?.autoGenerateClarify === true
     markActionRunning(projectId, node.node_id, 'frame', 'confirm')
     try {
       await flushDocument(projectId, node.node_id, 'frame')
       const nextState = await confirmFrame(projectId, node.node_id)
       invalidateClarify(projectId, node.node_id)
       invalidateDocument(projectId, node.node_id, 'spec')
+      if (shouldAutoGenerateClarify && nextState?.clarify_confirmed !== true) {
+        await triggerClarifyGeneration(projectId, node.node_id)
+      }
       await refreshSnapshot()
       markActionSucceeded(projectId, node.node_id, 'frame', 'confirm')
       return nextState
@@ -339,6 +387,7 @@ export function NodeDocumentEditor({
     node.node_id,
     projectId,
     refreshSnapshot,
+    triggerClarifyGeneration,
   ])
 
   const handleConfirmAndCreateSpec = useCallback(async () => {
@@ -350,7 +399,7 @@ export function NodeDocumentEditor({
       await flushDocument(projectId, node.node_id, 'frame')
 
       if (detailState?.frame_needs_reconfirm || detailState?.frame_confirmed !== true) {
-        await handleConfirmFrame()
+        await handleConfirmFrame({ autoGenerateClarify: false })
       }
 
       invalidateDocument(projectId, node.node_id, 'spec')
@@ -413,7 +462,7 @@ export function NodeDocumentEditor({
   }, [handleConfirmFrame, onFramePostUpdateCommit, onWorkflowTabChange])
 
   const handleConfirmAndFinish = useCallback(async () => {
-    if (pendingAction === 'finish' || isFinishingTask) {
+    if (pendingAction === 'finish' || isFinishingTask || isFinishLocked) {
       return
     }
     setIsConfirming(true)
@@ -461,6 +510,7 @@ export function NodeDocumentEditor({
     confirmSpec,
     flushDocument,
     isFinishingTask,
+    isFinishLocked,
     markActionFailed,
     markActionRunning,
     markActionSucceeded,
@@ -485,7 +535,7 @@ export function NodeDocumentEditor({
 
     try {
       if (kind === 'frame') {
-        await handleConfirmFrame()
+        await handleConfirmFrame({ autoGenerateClarify: true })
       } else if (kind === 'spec') {
         await handleConfirmAndFinish()
         return
@@ -527,6 +577,7 @@ export function NodeDocumentEditor({
     (node.status === 'ready' || node.status === 'in_progress') &&
     detailState?.shaping_frozen !== true &&
     detailState?.git_ready !== false
+  const isArtifactActionBusy = isGenerating || isConfirming || pendingAction !== null
   const canFinishTask =
     canConfirm &&
     !isFinishActionPending &&
@@ -534,13 +585,21 @@ export function NodeDocumentEditor({
       detailState?.can_finish_task === true ||
       (detailState?.spec_confirmed !== true && canFinishTaskAfterConfirm)
     )
-  const isFinishTaskDisabled = !canFinishTask || isFinishActionPending
+  const isFinishTaskDisabled = isFinishLocked || isArtifactActionBusy || !canFinishTask || isFinishActionPending
+  const frameGenerateLabel = hasGeneratedArtifact ? 'Regenerate Frame' : 'Generate Frame'
+  const specGenerateLabel = hasGeneratedArtifact ? 'Regenerate Spec' : 'Generate Spec'
   const finishTaskDisabledHint = (() => {
     if (!isSpecStep || !isFinishTaskDisabled) {
       return null
     }
+    if (isFinishLocked) {
+      return 'Finish Task was already confirmed for this run.'
+    }
     if (isFinishActionPending) {
       return 'Processing finish task request...'
+    }
+    if (isArtifactActionBusy) {
+      return 'Another action is in progress. Please wait.'
     }
     if (!hasContent) {
       return 'Add spec content before finishing the task.'
@@ -706,37 +765,45 @@ export function NodeDocumentEditor({
           </div>
         </div>
         <div className={styles.editorSurfaceBody}>
-          {isRichView ? (
-            <div className={styles.richViewSurface} data-testid={`document-rich-view-${kind}`}>
-              {entry.content.trim() ? (
-                <SharedMarkdownRenderer
-                  content={entry.content}
-                  projectRootPath={projectRootPath}
-                  variant="document"
-                />
-              ) : (
-                <p className={styles.richViewEmpty}>No content yet.</p>
-              )}
+          {isGenerating ? (
+            <div className={styles.editorGeneratingBody} data-testid={`document-generating-${kind}`}>
+              <AgentSpinner words={SPINNER_WORDS_GENERATING} />
             </div>
           ) : (
-            <CodeMirror
-              className={styles.codemirrorHost}
-              value={entry.content}
-              height="100%"
-              theme="none"
-              extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
-              basicSetup={{
-                foldGutter: false,
-                lineNumbers: true,
-              }}
-              editable={!isReadOnly}
-              onChange={(value) => {
-                updateDraft(projectId, node.node_id, kind, value)
-              }}
-              onBlur={() => {
-                void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
-              }}
-            />
+            <>
+              {isRichView ? (
+                <div className={styles.richViewSurface} data-testid={`document-rich-view-${kind}`}>
+                  {entry.content.trim() ? (
+                    <SharedMarkdownRenderer
+                      content={entry.content}
+                      projectRootPath={projectRootPath}
+                      variant="document"
+                    />
+                  ) : (
+                    <p className={styles.richViewEmpty}>No content yet.</p>
+                  )}
+                </div>
+              ) : (
+                <CodeMirror
+                  className={styles.codemirrorHost}
+                  value={entry.content}
+                  height="100%"
+                  theme="none"
+                  extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
+                  basicSetup={{
+                    foldGutter: false,
+                    lineNumbers: true,
+                  }}
+                  editable={!isReadOnly}
+                  onChange={(value) => {
+                    updateDraft(projectId, node.node_id, kind, value)
+                  }}
+                  onBlur={() => {
+                    void flushDocument(projectId, node.node_id, kind).catch(() => undefined)
+                  }}
+                />
+              )}
+            </>
           )}
         </div>
       </div>
@@ -748,16 +815,16 @@ export function NodeDocumentEditor({
               <button
                 type="button"
                 className={styles.generateButton}
-                disabled={isGenerating || isConfirming}
+                disabled={isArtifactActionBusy}
                 data-testid="generate-frame-button"
-                onClick={handleGenerateFrame}
+                onClick={handleGenerateDocument}
               >
-                {isGenerating ? <AgentSpinner words={SPINNER_WORDS_GENERATING} /> : 'Generate Frame'}
+                {frameGenerateLabel}
               </button>
               <button
                 type="button"
                 className={styles.confirmButton}
-                disabled={!canConfirm}
+                disabled={!canConfirm || isArtifactActionBusy}
                 data-testid="confirm-document-frame"
                 onClick={handleConfirm}
               >
@@ -771,7 +838,7 @@ export function NodeDocumentEditor({
               <button
                 type="button"
                 className={styles.generateButton}
-                disabled={!canConfirm || confirmAndSplitDisabled}
+                disabled={!canConfirm || confirmAndSplitDisabled || isArtifactActionBusy}
                 data-testid="confirm-and-split-button"
                 onClick={handleConfirmAndSplit}
                 title={
@@ -780,12 +847,12 @@ export function NodeDocumentEditor({
                     : undefined
                 }
               >
-                {pendingAction === 'split' ? 'Preparing Split...' : 'Confirm and Split'}
+                Confirm and Split
               </button>
               <button
                 type="button"
                 className={styles.confirmButton}
-                disabled={!canConfirm || confirmAndCreateSpecDisabled}
+                disabled={!canConfirm || confirmAndCreateSpecDisabled || isArtifactActionBusy}
                 data-testid="confirm-and-create-spec-button"
                 onClick={handleConfirmAndCreateSpec}
                 title={
@@ -794,32 +861,43 @@ export function NodeDocumentEditor({
                     : undefined
                 }
               >
-                {pendingAction === 'create_spec' ? 'Creating Spec...' : 'Confirm and Create Spec'}
+                Confirm and Create Spec
               </button>
             </>
           ) : null}
 
           {isSpecStep ? (
-            <div className={styles.finishTaskActionGroup}>
+            <>
               <button
                 type="button"
-                className={`${styles.confirmButton} ${isFinishTaskDisabled ? styles.finishTaskButtonDisabled : ''}`}
-                disabled={isFinishTaskDisabled}
-                data-testid="confirm-and-finish-task-button"
-                title={isFinishTaskDisabled ? finishTaskDisabledHint ?? 'Finish Task is currently unavailable.' : undefined}
-                onClick={(event) => {
-                  event.currentTarget.disabled = true
-                  void handleConfirmAndFinish()
-                }}
+                className={styles.generateButton}
+                data-testid="generate-spec-button"
+                disabled={isArtifactActionBusy}
+                onClick={handleGenerateDocument}
               >
-                {isFinishActionPending ? 'Finishing...' : 'Confirm and Finish Task'}
+                {specGenerateLabel}
               </button>
-              {isFinishTaskDisabled && finishTaskDisabledHint ? (
-                <p className={styles.finishTaskDisabledHint} role="status" data-testid="finish-task-disabled-hint">
-                  {finishTaskDisabledHint}
-                </p>
-              ) : null}
-            </div>
+              <div className={styles.finishTaskActionGroup}>
+                <button
+                  type="button"
+                  className={`${styles.confirmButton} ${isFinishTaskDisabled ? styles.finishTaskButtonDisabled : ''}`}
+                  disabled={isFinishTaskDisabled}
+                  data-testid="confirm-and-finish-task-button"
+                  title={isFinishTaskDisabled ? finishTaskDisabledHint ?? 'Finish Task is currently unavailable.' : undefined}
+                  onClick={() => {
+                    setIsFinishLocked(true)
+                    void handleConfirmAndFinish()
+                  }}
+                >
+                  {isFinishActionPending ? 'Finishing...' : 'Confirm and Finish Task'}
+                </button>
+                {isFinishTaskDisabled && finishTaskDisabledHint ? (
+                  <p className={styles.finishTaskDisabledHint} role="status" data-testid="finish-task-disabled-hint">
+                    {finishTaskDisabledHint}
+                  </p>
+                ) : null}
+              </div>
+            </>
           ) : null}
         </div>
       ) : null}
