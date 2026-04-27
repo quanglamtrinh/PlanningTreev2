@@ -17,7 +17,6 @@ from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.execution_audit_orchestrator import ExecutionAuditOrchestratorV2
 from backend.business.workflow_v2.legacy_transcript_migrator import LegacyTranscriptMigratorV2
-from backend.business.workflow_v2.legacy_v3_adapter import LegacyWorkflowV3CompatibilityAdapter
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.config.api_version import API_PREFIX
@@ -69,13 +68,11 @@ from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import (
     artifacts_v4,
     bootstrap,
-    chat,
     codex,
     nodes,
     projects,
     session_v4,
     split,
-    workflow_v3,
     workflow_v4,
 )
 from backend.services.ask_rollout_metrics_service import AskRolloutMetricsService
@@ -349,11 +346,6 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         review_service=review_service,
         git_checkpoint_service=git_checkpoint_service,
     )
-    workflow_v3_compat_adapter = LegacyWorkflowV3CompatibilityAdapter(
-        orchestrator=execution_audit_orchestrator_v2,
-        storage=storage,
-        legacy_event_publisher=workflow_event_publisher,
-    )
     artifact_orchestrator_v2 = ArtifactOrchestratorV2(
         repository=workflow_state_repository_v2,
         thread_binding_service=workflow_thread_binding_service_v2,
@@ -508,7 +500,6 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2
     app.state.workflow_thread_binding_service_v2 = workflow_thread_binding_service_v2
     app.state.execution_audit_orchestrator_v2 = execution_audit_orchestrator_v2
-    app.state.workflow_v3_compat_adapter = workflow_v3_compat_adapter
     app.state.artifact_orchestrator_v2 = artifact_orchestrator_v2
     app.state.legacy_transcript_migrator_v2 = legacy_transcript_migrator_v2
     app.state.session_runtime_store_v2 = session_runtime_store_v2
@@ -548,8 +539,6 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.include_router(projects.router, prefix=API_PREFIX)
     app.include_router(nodes.router, prefix=API_PREFIX)
     app.include_router(split.router, prefix=API_PREFIX)
-    app.include_router(chat.router, prefix=API_PREFIX)
-    app.include_router(workflow_v3.router, prefix=API_PREFIX)
     app.include_router(session_v4.router)
     app.include_router(workflow_v4.router)
     app.include_router(artifacts_v4.router)

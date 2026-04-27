@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.execution_audit_orchestrator import ExecutionAuditOrchestratorV2
-from backend.business.workflow_v2.legacy_v3_adapter import LegacyWorkflowV3CompatibilityAdapter
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.services import planningtree_workspace
 from backend.tests.conftest import init_git_repo
@@ -147,11 +146,6 @@ def _install_phase5_orchestrator(
     )
     app.state.workflow_thread_binding_service_v2 = binding_service
     app.state.execution_audit_orchestrator_v2 = orchestrator
-    app.state.workflow_v3_compat_adapter = LegacyWorkflowV3CompatibilityAdapter(
-        orchestrator=orchestrator,
-        storage=app.state.storage,
-        legacy_event_publisher=app.state.workflow_event_publisher,
-    )
     app.state.execution_audit_workflow_service._workflow_orchestrator_v2 = orchestrator
     return orchestrator
 
@@ -493,47 +487,3 @@ def test_v4_execution_start_fails_when_session_turn_start_missing_turn_id(
     assert workflow_state_payload["phase"] == "ready_for_execution"
 
 
-def test_v3_finish_task_delegates_to_attached_v2_orchestrator(client: TestClient, workspace_root: Path) -> None:
-    project_id, node_id = _project_with_confirmed_docs(client, workspace_root)
-    manager = FakeSessionManager()
-    _install_phase5_orchestrator(client, manager)
-
-    response = client.post(
-        f"/v3/projects/{project_id}/nodes/{node_id}/workflow/finish-task",
-        json={"idempotencyKey": "legacy-finish-1"},
-    )
-
-    assert response.status_code == 200, response.json()
-    payload = response.json()
-    assert payload["ok"] is True
-    assert payload["data"]["workflowPhase"] == "execution_running"
-    assert payload["data"]["threadId"] == "thread-1"
-    assert len(manager.turns) == 1
-
-
-def test_v3_finish_task_replay_while_v2_execution_running_returns_active_run(
-    client: TestClient,
-    workspace_root: Path,
-) -> None:
-    project_id, node_id = _project_with_confirmed_docs(client, workspace_root)
-    manager = FakeSessionManager()
-    _install_phase5_orchestrator(client, manager)
-
-    first = client.post(
-        f"/v3/projects/{project_id}/nodes/{node_id}/workflow/finish-task",
-        json={"idempotencyKey": "legacy-finish-1"},
-    )
-    second = client.post(
-        f"/v3/projects/{project_id}/nodes/{node_id}/workflow/finish-task",
-        json={"idempotencyKey": "legacy-finish-2"},
-    )
-
-    assert first.status_code == 200, first.json()
-    assert second.status_code == 200, second.json()
-    first_payload = first.json()["data"]
-    second_payload = second.json()["data"]
-    assert second_payload["workflowPhase"] == "execution_running"
-    assert second_payload["executionRunId"] == first_payload["executionRunId"]
-    assert second_payload["threadId"] == first_payload["threadId"]
-    assert second_payload["turnId"] == first_payload["turnId"]
-    assert len(manager.turns) == 1
