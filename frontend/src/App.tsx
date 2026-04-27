@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { BreadcrumbViewV2 } from './features/conversation/BreadcrumbViewV2'
+import { ExtensionsPage } from './features/extensions/ExtensionsPage'
 import { GraphWorkspace } from './features/graph/GraphWorkspace'
 import { SessionConsoleV2 } from './features/session_v2/shell/SessionConsoleV2'
 import { UsageSnapshotPage } from './features/usage-snapshot/UsageSnapshotPage'
@@ -12,6 +13,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate replace to="/session-v2" />} />
           <Route path="/graph" element={<GraphWorkspace />} />
+          <Route path="/extensions" element={<ExtensionsPage />} />
           <Route path="/usage-snapshot" element={<UsageSnapshotPage />} />
           <Route
             path="/projects/:projectId/nodes/:nodeId/chat"

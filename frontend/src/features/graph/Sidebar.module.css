@@ -191,6 +191,11 @@
   color: var(--on-surface);
 }
 
+.sidebarSectionTabActive {
+  background: var(--color-explorer-item-active);
+  color: var(--color-explorer-icon-active);
+}
+
 .sidebarSectionTabLabel {
   flex: 1;
 }
@@ -296,18 +301,66 @@
   flex-direction: column;
   flex-shrink: 0;
   border-top: 1px solid color-mix(in srgb, var(--on-surface) 8%, transparent);
-  padding-bottom: 8px;
+  padding: var(--space-2) 0;
 }
 
-.extensionsSectionBody {
-  padding: 4px 16px 0;
-  font-size: var(--font-size-sm);
+.extensionsNavGroup {
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.extensionsNavGroupActive {
+  background: var(--surface-container-lowest);
+  box-shadow: var(--shadow-sm);
+}
+
+.extensionsNavButton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px 8px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--on-surface);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: var(--line-height-ui);
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.extensionsNavGroup:not(.extensionsNavGroupActive) .extensionsNavButton:hover {
+  background: var(--color-explorer-item-hover);
+}
+
+.extensionsNavGroupActive .extensionsNavButton {
+  cursor: default;
+}
+
+.extensionsNavLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extensionsNavChevron {
+  flex-shrink: 0;
   color: var(--text-tertiary);
-  line-height: 1.45;
+  opacity: 0.75;
 }
 
-.extensionsSectionBody p {
-  margin: 0;
+.extensionsNavGroupActive .extensionsNavChevron {
+  color: color-mix(in srgb, var(--primary) 55%, var(--text-tertiary));
+  opacity: 1;
 }
 
 /* ─── Project group ──────────────────────────────────────────────────────────── */
